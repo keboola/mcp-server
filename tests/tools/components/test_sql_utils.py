@@ -795,6 +795,40 @@ def test_format_sql(input_sql, dialect, expected, test_id):
 
 
 @pytest.mark.parametrize(
+    ('input_sql', 'dialect', 'expected_chars', 'test_id'),
+    [
+        # AI-2773: Czech diacritics in string literals
+        (
+            "SELECT '#ČÍSLO!' FROM t",
+            'snowflake',
+            ['Č', 'Í'],
+            'czech_in_string_literal',
+        ),
+        # AI-2773: French diacritics in string literals
+        (
+            "SELECT 'données' FROM t",
+            'bigquery',
+            ['é'],
+            'french_in_string_literal',
+        ),
+        # AI-2773: Czech diacritics in comments
+        (
+            '-- Komentář s háčky\nSELECT 1',
+            'snowflake',
+            ['á', 'č'],
+            'czech_in_comment',
+        ),
+    ],
+)
+def test_format_sql_preserves_non_ascii(input_sql, dialect, expected_chars, test_id):
+    """AI-2773: format_sql must preserve non-ASCII characters."""
+    result = format_sql(input_sql, dialect)
+    for char in expected_chars:
+        assert char in result, f"Non-ASCII char '{char}' was lost. Result: {result!r}"
+    assert '\\u0' not in result, f'Unicode escape sequences found: {result!r}'
+
+
+@pytest.mark.parametrize(
     ('input_sql', 'dialect', 'test_id'),
     [
         # Invalid dialect handling

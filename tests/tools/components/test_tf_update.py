@@ -762,7 +762,7 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
 @pytest.mark.parametrize(
     ('initial_params', 'operation', 'expected_params', 'expected_message'),
     [
-        # Set code script
+        # Set code script — stored as-is without reformatting
         (
             {
                 'blocks': [
@@ -782,14 +782,14 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT\n  *\nFROM new_table;'},
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM new_table'},
                         ],
                     },
                 ]
             },
-            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Changed code with id 'b0.c0' in block 'b0'",
         ),
-        # Set multiline script
+        # Set multiline script — stored as-is without reformatting
         (
             {
                 'blocks': [
@@ -809,12 +809,12 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT\n  *\nFROM table1\nWHERE\n  col = 1;'},
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT *\nFROM table1\nWHERE col = 1'},
                         ],
                     },
                 ]
             },
-            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Changed code with id 'b0.c0' in block 'b0'",
         ),
     ],
 )
@@ -852,7 +852,7 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
 @pytest.mark.parametrize(
     ('initial_params', 'operation', 'expected_params', 'expected_message'),
     [
-        # Append to existing script
+        # Append to existing script — stored as-is without reformatting
         (
             {
                 'blocks': [
@@ -875,15 +875,15 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                             {
                                 'id': 'b0.c0',
                                 'name': 'Code X',
-                                'script': 'SELECT\n  *\nFROM table1\nWHERE\n  col = 1;',
+                                'script': 'SELECT * FROM table1 WHERE col = 1',
                             },
                         ],
                     },
                 ]
             },
-            "Added script to code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Added script to code with id 'b0.c0' in block 'b0'",
         ),
-        # Prepend to existing script
+        # Prepend to existing script — stored as-is without reformatting
         (
             {
                 'blocks': [
@@ -908,15 +908,15 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                             {
                                 'id': 'b0.c0',
                                 'name': 'Code X',
-                                'script': 'SELECT\n  *\nFROM table0;\n\nSELECT\n  *\nFROM table1;',
+                                'script': 'SELECT * FROM table0; SELECT * FROM table1',
                             },
                         ],
                     },
                 ]
             },
-            "Added script to code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Added script to code with id 'b0.c0' in block 'b0'",
         ),
-        # Prepend to existing script (creates invalid SQL, not reformatted)
+        # Prepend to existing script (stores as-is)
         (
             {
                 'blocks': [
@@ -949,7 +949,7 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
             },
             "Added script to code with id 'b0.c0' in block 'b0'",
         ),
-        # Append to empty script
+        # Append to empty script — stored as-is without reformatting
         (
             {
                 'blocks': [
@@ -969,12 +969,12 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT\n  1;'},
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT 1'},
                         ],
                     },
                 ]
             },
-            "Added script to code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Added script to code with id 'b0.c0' in block 'b0'",
         ),
     ],
 )
@@ -1277,3 +1277,161 @@ def test_operations_preserve_unaffected_data(sample_params):
 
     # Verify second block unchanged
     assert params['blocks'][1] == original_second_block
+
+
+# ============================================================================
+# NON-ASCII CHARACTER PRESERVATION TESTS (AI-2773)
+# ============================================================================
+
+
+@pytest.mark.parametrize(
+    ('initial_params', 'operation', 'expected_script', 'test_id'),
+    [
+        # set_code: Czech diacritics in string literals (original bug report)
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Block A',
+                        'codes': [{'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT 1'}],
+                    }
+                ]
+            },
+            TfSetCode(
+                op='set_code',
+                block_id='b0',
+                code_id='b0.c0',
+                script="SELECT CASE WHEN col IN ('#ČÍSLO!', '#NUM!') THEN '' ELSE col END FROM t",
+            ),
+            "SELECT CASE WHEN col IN ('#ČÍSLO!', '#NUM!') THEN '' ELSE col END FROM t",
+            'set_code_czech_diacritics',
+        ),
+        # set_code: mixed non-ASCII (German, French, Japanese)
+        (
+            {
+                'blocks': [
+                    {
+                        'id': 'b0',
+                        'name': 'Block A',
+                        'codes': [{'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT 1'}],
+                    }
+                ]
+            },
+            TfSetCode(
+                op='set_code',
+                block_id='b0',
+                code_id='b0.c0',
+                script="SELECT 'Ärger', 'café', '日本語' FROM t",
+            ),
+            "SELECT 'Ärger', 'café', '日本語' FROM t",
+            'set_code_mixed_unicode',
+        ),
+    ],
+)
+def test_set_code_preserves_non_ascii(initial_params, operation, expected_script, test_id):
+    """AI-2773: Verify set_code preserves non-ASCII characters without escaping."""
+    params = copy.deepcopy(initial_params)
+    result_params, _ = set_code(params, operation, sql_dialect='snowflake')
+    actual_script = result_params['blocks'][0]['codes'][0]['script']
+    assert actual_script == expected_script, (
+        f'Non-ASCII characters were corrupted. Expected:\n  {expected_script!r}\nGot:\n  {actual_script!r}'
+    )
+    # Ensure no unicode escape sequences leaked in
+    assert '\\u0' not in actual_script, f'Unicode escape sequences found in script: {actual_script!r}'
+
+
+@pytest.mark.parametrize(
+    ('operation', 'expected_fragment', 'test_id'),
+    [
+        # str_replace: replace ASCII with non-ASCII
+        (
+            TfStrReplace(
+                op='str_replace',
+                block_id='b0',
+                code_id='b0.c0',
+                search_for='table1',
+                replace_with='tabulka_účetní',
+            ),
+            'tabulka_účetní',
+            'str_replace_insert_diacritics',
+        ),
+        # str_replace: replace ASCII with French diacritics
+        (
+            TfStrReplace(
+                op='str_replace',
+                block_id=None,
+                code_id=None,
+                search_for='table1',
+                replace_with='données_café',
+            ),
+            'données_café',
+            'str_replace_french_diacritics',
+        ),
+    ],
+)
+def test_str_replace_preserves_non_ascii(sample_params, operation, expected_fragment, test_id):
+    """AI-2773: Verify str_replace preserves non-ASCII characters."""
+    params = copy.deepcopy(sample_params)
+    result_params, _ = str_replace(params, operation, sql_dialect='snowflake')
+    all_scripts = [code['script'] for block in result_params['blocks'] for code in block['codes']]
+    found = any(expected_fragment in s for s in all_scripts)
+    assert found, f"Expected '{expected_fragment}' in scripts but got: {all_scripts}"
+
+
+def test_str_replace_preserves_existing_non_ascii():
+    """AI-2773: str_replace on unrelated text must not corrupt existing non-ASCII."""
+    params = {
+        'blocks': [
+            {
+                'id': 'b0',
+                'name': 'Block A',
+                'codes': [
+                    {
+                        'id': 'b0.c0',
+                        'name': 'Code X',
+                        'script': "SELECT CASE WHEN col IN ('#ČÍSLO!') THEN 'žlutý' ELSE col END FROM t WHERE x = 1",
+                    }
+                ],
+            }
+        ]
+    }
+    op = TfStrReplace(
+        op='str_replace', block_id='b0', code_id='b0.c0', search_for='x = 1', replace_with='x = 2'
+    )
+    result_params, _ = str_replace(params, op, sql_dialect='snowflake')
+    script = result_params['blocks'][0]['codes'][0]['script']
+    assert 'ČÍSLO' in script, f'Czech diacritics were corrupted: {script!r}'
+    assert 'žlutý' in script, f'Czech diacritics were corrupted: {script!r}'
+    assert 'x = 2' in script
+
+
+def test_add_script_preserves_non_ascii():
+    """AI-2773: add_script preserves non-ASCII characters."""
+    params = {
+        'blocks': [
+            {
+                'id': 'b0',
+                'name': 'Block A',
+                'codes': [
+                    {
+                        'id': 'b0.c0',
+                        'name': 'Code X',
+                        'script': "SELECT '#ČÍSLO!' FROM t",
+                    }
+                ],
+            }
+        ]
+    }
+    op = TfAddScript(
+        op='add_script',
+        block_id='b0',
+        code_id='b0.c0',
+        script="SELECT 'données' FROM t2",
+        position='end',
+    )
+    result_params, _ = add_script(params, op, sql_dialect='snowflake')
+    script = result_params['blocks'][0]['codes'][0]['script']
+    assert 'ČÍSLO' in script, f'Existing Czech diacritics were corrupted: {script!r}'
+    assert 'données' in script, f'Appended French diacritics were corrupted: {script!r}'
+    assert '\\u0' not in script, f'Unicode escape sequences found: {script!r}'

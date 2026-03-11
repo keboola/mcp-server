@@ -1,3 +1,4 @@
+import json
 import logging
 from http import HTTPStatus
 from typing import Any, Optional, Union, cast
@@ -142,6 +143,11 @@ class RawKeboolaClient:
             self._raise_for_status(response)
             return cast(str, response.text)
 
+    @staticmethod
+    def _encode_json(data: dict[str, Any]) -> bytes:
+        """Encode JSON payload with ensure_ascii=False to preserve non-ASCII characters."""
+        return json.dumps(data, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+
     async def post(
         self,
         endpoint: str,
@@ -167,7 +173,7 @@ class RawKeboolaClient:
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
                 headers=headers,
-                json=data or {},
+                content=self._encode_json(data or {}),
             )
             self._raise_for_status(response)
             return cast(JsonStruct, response.json())
@@ -197,7 +203,7 @@ class RawKeboolaClient:
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
                 headers=headers,
-                json=data or {},
+                content=self._encode_json(data or {}),
             )
             self._raise_for_status(response)
             return cast(JsonStruct, response.json())
@@ -255,7 +261,7 @@ class RawKeboolaClient:
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
                 headers=headers,
-                json=data or {},
+                content=self._encode_json(data or {}),
             )
             self._raise_for_status(response)
             return cast(JsonStruct, response.json())
