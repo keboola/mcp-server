@@ -60,6 +60,22 @@ get_configs(component_ids=["keboola.sandboxes"])
 update_config(component_id="keboola.sandboxes", configuration_id="<id>", ...)
 ```
 
+**CRITICAL — `script` must always be an array of strings, never a plain string.**
+The workspace configuration stores SQL in `parameters.script` as a list of individual
+SQL statements. Setting it as a string will corrupt the configuration and crash the UI.
+
+Correct:
+```json
+{"parameters": {"script": ["SELECT 1;", "SELECT 2;"]}}
+```
+Wrong (causes UI crash):
+```json
+{"parameters": {"script": "SELECT 1;\nSELECT 2;"}}
+```
+
+When reading an existing workspace config via `get_configs`, `parameters.script` will already
+be an array — preserve that structure when writing back.
+
 **Creating new workspaces is NOT supported via the API** — use the Keboola UI to create workspaces.
 
 #### Disambiguation — SQL Transformation vs SQL Editor
