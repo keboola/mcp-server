@@ -222,19 +222,19 @@ class TestAsyncStorageClient:
 
             assert result == {'id': '13008826', 'uuid': '01958f48-b1fc-7f05-b9b9-8a4a7b385bc3'}
             expected_data = {
-                    key: value
-                    for key, value in [
-                        ('message', message),
-                        ('component', component_id),
-                        ('configurationId', configuration_id),
-                        ('type', event_type),
-                        ('params', params),
-                        ('results', results),
-                        ('duration', duration),
-                        ('runId', run_id),
-                    ]
-                    if value
-                }
+                key: value
+                for key, value in [
+                    ('message', message),
+                    ('component', component_id),
+                    ('configurationId', configuration_id),
+                    ('type', event_type),
+                    ('params', params),
+                    ('results', results),
+                    ('duration', duration),
+                    ('runId', run_id),
+                ]
+                if value
+            }
             mock_client.post.assert_called_once_with(
                 'https://connection.nowhere/v2/storage/events',
                 params=None,
@@ -652,3 +652,14 @@ def test_get_metadata_property(
         default=default,
     )
     assert result == expected
+
+
+def test_encode_json_preserves_non_ascii() -> None:
+    """Regression test for AI-2773: non-ASCII characters must be sent as raw UTF-8, not \\uXXXX escapes."""
+    data = {'script': '#ČÍSLO!', 'note': 'données', 'label': '日本語'}
+    result = RawKeboolaClient._encode_json(data)
+    decoded = result.decode('utf-8')
+    assert 'ČÍSLO' in decoded, 'Czech diacritics were Unicode-escaped'
+    assert 'données' in decoded, 'French diacritics were Unicode-escaped'
+    assert '日本語' in decoded, 'Japanese characters were Unicode-escaped'
+    assert '\\u0' not in decoded, f'Unicode escape sequences found in encoded output: {decoded!r}'

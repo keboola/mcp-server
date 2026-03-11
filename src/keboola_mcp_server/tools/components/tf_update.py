@@ -226,9 +226,9 @@ def add_script(params: dict, op: TfAddScript, sql_dialect: str) -> tuple[dict, s
 
     # Compute new script based on position — store as-is, do not reformat
     if op.position == 'start':
-        new_script = f'{op.script} {current_script}' if current_script else op.script
+        new_script = f'{op.script}\n{current_script}' if current_script else op.script
     else:  # 'end'
-        new_script = f'{current_script} {op.script}' if current_script else op.script
+        new_script = f'{current_script}\n{op.script}' if current_script else op.script
 
     # Update the script field
     message = f"Added script to code with id '{op.code_id}' in block '{op.block_id}'"
