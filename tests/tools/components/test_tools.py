@@ -1,4 +1,5 @@
 import asyncio
+import re
 from typing import Any, Callable
 
 import pytest
@@ -50,6 +51,7 @@ from keboola_mcp_server.tools.components.tools import (
 )
 from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
+    SANDBOXES_COMPONENT_ID,
     SNOWFLAKE_TRANSFORMATION_ID,
     clean_bucket_name,
 )
@@ -1194,6 +1196,12 @@ async def test_update_config(
             'Use the SQL transformation tools.',
         ),
         (
+            create_config,
+            {'name': 'foo', 'description': 'bar', 'parameters': {}},
+            SANDBOXES_COMPONENT_ID,
+            'Creating SQL editor configurations via the API is not supported.',
+        ),
+        (
             add_config_row,
             {'name': 'foo', 'description': 'bar', 'configuration_id': 'baz', 'parameters': {}},
             DATA_APP_COMPONENT_ID,
@@ -1223,6 +1231,12 @@ async def test_update_config(
             SNOWFLAKE_TRANSFORMATION_ID,
             'Use the SQL transformation tools.',
         ),
+        (
+            add_config_row,
+            {'name': 'foo', 'description': 'bar', 'configuration_id': 'baz', 'parameters': {}},
+            SANDBOXES_COMPONENT_ID,
+            'Creating SQL editor configurations via the API is not supported.',
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -1232,8 +1246,8 @@ async def test_generic_tools_reject_specialized_components(
     component_id: str,
     message: str,
     mcp_context_components_configs: Context,
-):
-    m = f'The "{tool_fn.__name__}" tool cannot be used with {component_id} component. {message}'
+) -> None:
+    m = re.escape(f'The "{tool_fn.__name__}" tool cannot be used with {component_id} component. {message}')
     with pytest.raises(ValueError, match=m):
         await tool_fn(
             ctx=mcp_context_components_configs,

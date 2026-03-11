@@ -63,6 +63,7 @@ T = TypeVar('T')
 
 SNOWFLAKE_TRANSFORMATION_ID = 'keboola.snowflake-transformation'
 BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
+SANDBOXES_COMPONENT_ID = 'keboola.sandboxes'
 
 
 # ============================================================================
@@ -736,4 +737,32 @@ def check_suitable(tool_name: str, component_id: str) -> None:
     :raises ValueError: If the component needs to be handled by special tools.
     """
     if message := _UNSUITABLE_COMPONENTS_MESSAGES.get(component_id):
+        raise ValueError(f'The "{tool_name}" tool cannot be used with {component_id} component. {message}')
+
+
+# Components that cannot be created via the API (create-only restriction)
+_CREATE_UNSUITABLE_COMPONENTS_MESSAGES: Mapping[str, str] = {
+    SANDBOXES_COMPONENT_ID: (
+        'Creating SQL editor configurations via the API is not supported. ' 'Use the Keboola UI to create workspaces.'
+    ),
+}
+
+
+def check_suitable_for_create(tool_name: str, component_id: str) -> None:
+    """
+    Checks if a component supports creation or row-addition via the API.
+
+    Extends check_suitable with creation-specific blocks. Some components
+    (e.g., keboola.sandboxes) are readable and updatable via the API but cannot
+    be created programmatically — they must be created via the Keboola UI.
+
+    Use this for creation operations (create_config, add_config_row) only.
+    Update operations (update_config, update_config_row) should use check_suitable
+    so that existing configurations of these components remain manageable.
+
+    :raises ValueError: If the component is unsuitable for any operation,
+        or if it specifically cannot be created via the API.
+    """
+    check_suitable(tool_name, component_id)
+    if message := _CREATE_UNSUITABLE_COMPONENTS_MESSAGES.get(component_id):
         raise ValueError(f'The "{tool_name}" tool cannot be used with {component_id} component. {message}')

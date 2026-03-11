@@ -3,6 +3,7 @@ from typing import Any, Sequence
 
 import pytest
 
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
     ComponentType,
@@ -23,8 +24,12 @@ from keboola_mcp_server.tools.components.model import (
     TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
+    BIGQUERY_TRANSFORMATION_ID,
+    SANDBOXES_COMPONENT_ID,
     _apply_param_update,
     _normalize_jsonpath,
+    check_suitable,
+    check_suitable_for_create,
     clean_bucket_name,
     create_transformation_configuration,
     expand_component_types,
@@ -1370,3 +1375,59 @@ def test_update_transformation_parameters(
     else:
         # For simple patterns, check exact match
         assert result_msg == expected_msg
+
+
+# ============================================================================
+# check_suitable / check_suitable_for_create
+# ============================================================================
+
+
+@pytest.mark.parametrize(
+    ('tool_name', 'component_id'),
+    [
+        ('update_config', SANDBOXES_COMPONENT_ID),
+        ('update_config_row', SANDBOXES_COMPONENT_ID),
+        ('get_configs', SANDBOXES_COMPONENT_ID),
+    ],
+    ids=['update_config_sandboxes', 'update_config_row_sandboxes', 'get_configs_sandboxes'],
+)
+def test_check_suitable_allows_sandboxes(tool_name: str, component_id: str) -> None:
+    """check_suitable must NOT block keboola.sandboxes so that read/update operations work."""
+    check_suitable(tool_name, component_id)  # should not raise
+
+
+@pytest.mark.parametrize(
+    ('tool_name', 'component_id', 'expected_fragment'),
+    [
+        (
+            'create_config',
+            SANDBOXES_COMPONENT_ID,
+            'Creating SQL editor configurations via the API is not supported.',
+        ),
+        (
+            'add_config_row',
+            SANDBOXES_COMPONENT_ID,
+            'Creating SQL editor configurations via the API is not supported.',
+        ),
+        (
+            'create_config',
+            DATA_APP_COMPONENT_ID,
+            'Use the data applications tools.',
+        ),
+        (
+            'create_config',
+            BIGQUERY_TRANSFORMATION_ID,
+            'Use the SQL transformation tools.',
+        ),
+    ],
+    ids=[
+        'create_config_sandboxes',
+        'add_config_row_sandboxes',
+        'create_config_data_app',
+        'create_config_bigquery',
+    ],
+)
+def test_check_suitable_for_create_blocks(tool_name: str, component_id: str, expected_fragment: str) -> None:
+    """check_suitable_for_create blocks both generally-unsuitable and create-only-blocked components."""
+    with pytest.raises(ValueError, match=re.escape(expected_fragment)):
+        check_suitable_for_create(tool_name, component_id)

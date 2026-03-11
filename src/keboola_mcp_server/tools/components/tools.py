@@ -67,6 +67,7 @@ from keboola_mcp_server.tools.components.utils import (
     SNOWFLAKE_TRANSFORMATION_ID,
     add_ids,
     check_suitable,
+    check_suitable_for_create,
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
@@ -938,7 +939,7 @@ async def create_config(
         - set the component_id and configuration parameters accordingly
         - returns the created component configuration if successful.
     """
-    check_suitable('create_config', component_id)
+    check_suitable_for_create('create_config', component_id)
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -1072,7 +1073,7 @@ async def add_config_row(
         - set the component_id, configuration_id and configuration parameters accordingly
         - returns the created component configuration if successful.
     """
-    check_suitable('add_config_row', component_id)
+    check_suitable_for_create('add_config_row', component_id)
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
