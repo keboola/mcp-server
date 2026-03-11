@@ -1,4 +1,5 @@
 import importlib.metadata
+import json
 from typing import Any, Mapping
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
@@ -150,6 +151,26 @@ class TestRawKeboolaClient:
             with pytest.raises(httpx.HTTPStatusError, match=match):
                 await raw_client.get('test-endpoint')
 
+    @pytest.mark.asyncio
+    async def test_post_preserves_non_ascii_characters(self, raw_client: RawKeboolaClient):
+        """Test that POST requests preserve non-ASCII characters (e.g. Czech diacritics) in JSON payloads."""
+        with patch('httpx.AsyncClient') as mock_client_class:
+            mock_client_class.return_value.__aenter__.return_value = (mock_client := AsyncMock())
+            mock_client.post.return_value = (response := Mock(spec=httpx.Response))
+            response.status_code = 200
+            response.json.return_value = {}
+
+            data = {'script': "SELECT * WHERE name = 'Česká republika'"}
+            await raw_client.post('test-endpoint', data=data)
+
+            call_kwargs = mock_client.post.call_args
+            content_bytes = call_kwargs.kwargs['content']
+            content_str = content_bytes.decode('utf-8')
+
+            # Verify non-ASCII characters are preserved, not escaped to \uXXXX
+            assert 'Česká republika' in content_str
+            assert '\\u010c' not in content_str
+
 
 class TestAsyncStorageClient:
     @pytest.fixture
@@ -220,6 +241,20 @@ class TestAsyncStorageClient:
             )
 
             assert result == {'id': '13008826', 'uuid': '01958f48-b1fc-7f05-b9b9-8a4a7b385bc3'}
+            expected_payload = {
+                key: value
+                for key, value in [
+                    ('message', message),
+                    ('component', component_id),
+                    ('configurationId', configuration_id),
+                    ('type', event_type),
+                    ('params', params),
+                    ('results', results),
+                    ('duration', duration),
+                    ('runId', run_id),
+                ]
+                if value
+            }
             mock_client.post.assert_called_once_with(
                 'https://connection.nowhere/v2/storage/events',
                 params=None,
@@ -228,20 +263,7 @@ class TestAsyncStorageClient:
                     'Accept-Encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
                 },
-                json={
-                    key: value
-                    for key, value in [
-                        ('message', message),
-                        ('component', component_id),
-                        ('configurationId', configuration_id),
-                        ('type', event_type),
-                        ('params', params),
-                        ('results', results),
-                        ('duration', duration),
-                        ('runId', run_id),
-                    ]
-                    if value
-                },
+                content=json.dumps(expected_payload, ensure_ascii=False).encode('utf-8'),
             )
 
     @pytest.mark.asyncio
@@ -311,7 +333,7 @@ class TestAsyncStorageClient:
                     'Accept-Encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
                 },
-                json=expected_data,
+                content=json.dumps(expected_data, ensure_ascii=False).encode('utf-8'),
             )
 
 

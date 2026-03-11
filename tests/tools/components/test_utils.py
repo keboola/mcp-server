@@ -69,7 +69,7 @@ def test_expand_component_types(
                             codes=[
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
-                                    script=['SELECT\n  *\nFROM test;', 'SELECT\n  *\nFROM test2;'],
+                                    script=['SELECT * FROM test;', 'SELECT * FROM test2;'],
                                 )
                             ],
                         )
@@ -105,9 +105,9 @@ def test_expand_component_types(
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
                                     script=[
-                                        'CREATE OR REPLACE TABLE "test_table_1" AS\nSELECT\n  *\nFROM "test";',
-                                        '/* comment */\nCREATE OR REPLACE TABLE "test_table_2" AS\nSELECT\n  *\n'
-                                        'FROM "test";',
+                                        'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
+                                        '-- comment\n'
+                                        'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";',
                                     ],
                                 )
                             ],
@@ -149,7 +149,7 @@ def test_expand_component_types(
                             codes=[
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
-                                    script=['CREATE OR REPLACE TABLE "test_table_1" AS\nSELECT\n  *\nFROM "test";'],
+                                    script=['CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";'],
                                 )
                             ],
                         )
@@ -1105,12 +1105,12 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(
                         name='Block A',
                         codes=[
-                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT\n  *\nFROM new_table;'),
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
                         ],
                     ),
                 ]
             ),
-            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Changed code with id 'b0.c0' in block 'b0'",
         ),
         # Multiple non-structural operations - should return message from set_code
         (
@@ -1133,12 +1133,12 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(
                         name='Renamed Block',
                         codes=[
-                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT\n  *\nFROM new_table;'),
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
                         ],
                     ),
                 ]
             ),
-            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Changed code with id 'b0.c0' in block 'b0'",
         ),
         # Structural change + string replacement - should report both
         (
@@ -1174,13 +1174,13 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(
                         name='New Block',
                         codes=[
-                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT\n  *\nIN table2;'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * IN table2'),
                         ],
                     ),
                 ]
             ),
             (
-                'Added block with name "New Block" (code was automatically reformatted)\n'
+                'Added block with name "New Block"\n'
                 'Replaced 2 occurrences of "FROM" in the transformation\n## Updated Transformation Structure'
             ),
         ),
@@ -1248,12 +1248,12 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                         name='Block A',
                         codes=[
                             SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * IN table1'),
-                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT\n  *\nIN table2;'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * IN table2'),
                         ],
                     ),
                 ]
             ),
-            'Added code with name "New Code" (code was automatically reformatted)\nReplaced 2 occurrences of "FROM" in '
+            'Added code with name "New Code"\nReplaced 2 occurrences of "FROM" in '
             'the transformation\n## Updated Transformation Structure',
         ),
         # Remove code (structural) - should report structure
@@ -1315,7 +1315,7 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                         name='Block A',
                         codes=[
                             SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
-                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT\n  1;'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT 1'),
                         ],
                     ),
                     SimplifiedTfBlocks.Block(name='New Block', codes=[]),
@@ -1323,7 +1323,7 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
             ),
             (
                 'Added block with name "New Block"\n'
-                'Added code with name "New Code" (code was automatically reformatted)\n'
+                'Added code with name "New Code"\n'
                 '## Updated Transformation Structure'
             ),
         ),
