@@ -1,4 +1,5 @@
 import importlib.metadata
+import json
 from typing import Any, Mapping
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
@@ -220,15 +221,7 @@ class TestAsyncStorageClient:
             )
 
             assert result == {'id': '13008826', 'uuid': '01958f48-b1fc-7f05-b9b9-8a4a7b385bc3'}
-            mock_client.post.assert_called_once_with(
-                'https://connection.nowhere/v2/storage/events',
-                params=None,
-                headers={
-                    'Content-Type': 'application/json',
-                    'Accept-Encoding': 'gzip',
-                    'X-StorageAPI-Token': 'test-token',
-                },
-                json={
+            expected_data = {
                     key: value
                     for key, value in [
                         ('message', message),
@@ -241,7 +234,16 @@ class TestAsyncStorageClient:
                         ('runId', run_id),
                     ]
                     if value
+                }
+            mock_client.post.assert_called_once_with(
+                'https://connection.nowhere/v2/storage/events',
+                params=None,
+                headers={
+                    'Content-Type': 'application/json',
+                    'Accept-Encoding': 'gzip',
+                    'X-StorageAPI-Token': 'test-token',
                 },
+                content=json.dumps(expected_data, ensure_ascii=False, separators=(',', ':')).encode('utf-8'),
             )
 
     @pytest.mark.asyncio
@@ -311,7 +313,7 @@ class TestAsyncStorageClient:
                     'Accept-Encoding': 'gzip',
                     'X-StorageAPI-Token': 'test-token',
                 },
-                json=expected_data,
+                content=json.dumps(expected_data, ensure_ascii=False, separators=(',', ':')).encode('utf-8'),
             )
 
 
