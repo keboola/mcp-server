@@ -44,6 +44,37 @@ Keboola Storage.
 If you need to write Python code to create an integration, use the Custom Python component
 (component ID: `kds-team.app-custom-python`).
 
+### Workspaces / SQL Editor
+
+**Workspaces** (also called SQL Editor) are interactive SQL environments backed by the
+`keboola.sandboxes` component. Unlike SQL Transformations, workspaces are not pipeline
+components — they are used for ad-hoc exploration and editing SQL queries directly.
+
+**Reading workspace configurations:**
+```
+get_configs(component_ids=["keboola.sandboxes"])
+```
+
+**Updating a workspace SQL query:**
+```
+update_config(component_id="keboola.sandboxes", configuration_id="<id>", ...)
+```
+
+**Creating new workspaces is NOT supported via the API** — use the Keboola UI to create workspaces.
+
+#### Disambiguation — SQL Transformation vs SQL Editor
+
+When a user asks to "write SQL", "update a SQL query", "change SQL code", or similar, and the
+context does not make it clear whether they mean a **SQL Transformation** or the
+**SQL Editor (workspace)**, always ask for clarification before acting:
+
+> "Do you mean a SQL **Transformation** (part of a pipeline, processes data in Storage), or
+> the SQL **Editor** / workspace (interactive SQL environment)?"
+
+- For SQL Transformations → use `create_sql_transformation` / `update_sql_transformation`
+- For SQL Editor workspaces → use `get_configs` / `update_config` with
+  `component_id="keboola.sandboxes"`
+
 ### Creating Custom Integrations
 
 Sometimes users require integrations or complex applications that are not available via the `find_component_id` tool.
