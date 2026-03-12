@@ -9,6 +9,7 @@
 - **Never use `git push --force`** or rebase commits that have already been pushed - use merge commits instead to avoid rewriting history for others
 
 ## Testing
+- **All tox checks must pass before pushing** — CI runs the same checks (pytest, black, flake8, check-tools-docs) and will fail the build if any of them fail
 - **Use tox** for final testing - it runs pytest, black (formatting), flake8 (linter), and check-tools-docs (verifies TOOLS.md is up-to-date)
 - It's OK to use pytest directly for running individual tests during development
 - Activate the virtual environment first (e.g., `source <venv>/bin/activate`)

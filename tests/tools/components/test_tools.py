@@ -44,6 +44,7 @@ from keboola_mcp_server.tools.components.tools import (
     get_components,
     get_config_examples,
     get_configs,
+    run_sync_action,
     update_config,
     update_config_row,
     update_sql_transformation,
@@ -241,6 +242,7 @@ async def test_get_configs_detail(
     mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
     keboola_client.ai_service_client = mock_ai_service
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
     # mock the configuration_detail method to return the mock_configuration
     # simulate the response from the API
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
@@ -300,6 +302,7 @@ async def test_get_configs_detail_multiple(
     mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
     keboola_client.ai_service_client = mock_ai_service
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
 
     # Return different configs based on the configuration_id
     async def mock_config_detail(component_id: str, configuration_id: str):
@@ -350,6 +353,7 @@ async def test_get_configs_detail_transformation(
     mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_tf_component)
 
     keboola_client.ai_service_client = mock_ai_service
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_tf_component)
     # mock the configuration_detail method to return the mock_configuration
     # simulate the response from the API
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
@@ -396,6 +400,7 @@ async def test_get_configs_detail_ignores_other_params(
     mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
     keboola_client.ai_service_client = mock_ai_service
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
         return_value={**mock_configuration, 'component': mock_component, 'configurationMetadata': mock_metadata}
     )
@@ -558,6 +563,7 @@ async def test_create_sql_transformation(
     # Set up the mock for ai_service_client
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=configuration)
 
     transformation_name = mock_configuration['name']
@@ -755,6 +761,7 @@ async def test_update_sql_transformation(
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing_configuration)
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
 
     new_change_description = 'Test transformation update'
 
@@ -845,6 +852,7 @@ async def test_create_config(
     # Set up the mock for ai_service_client and storage_client
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=configuration)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
 
@@ -898,6 +906,7 @@ async def test_add_config_row(
     # Set up the mock for ai_service_client and storage_client
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.configuration_row_create = mocker.AsyncMock(return_value=row_configuration)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
 
@@ -1057,6 +1066,7 @@ async def test_update_config(
     # Set up the mock for ai_service_client and storage_client
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing_configuration)
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
@@ -1315,6 +1325,7 @@ async def test_update_config_row(
     # Set up the mock for ai_service_client and storage_client
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.configuration_row_detail = mocker.AsyncMock(return_value=existing_row_configuration)
     keboola_client.storage_client.configuration_row_update = mocker.AsyncMock(return_value=updated_row_configuration)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
@@ -1353,3 +1364,115 @@ async def test_update_config_row(
         updated_description=updated_description,
         is_disabled=None,
     )
+
+
+# ============================================================================
+# run_sync_action TESTS
+# ============================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('root_params', 'root_storage', 'row_params', 'row_storage', 'expected_params', 'expected_storage'),
+    [
+        # No row - uses root config only
+        (
+            {'host': 'db.example.com', 'port': 3306},
+            {'input': {'tables': []}},
+            None,
+            None,
+            {'host': 'db.example.com', 'port': 3306},
+            {'input': {'tables': []}},
+        ),
+        # With row - row params override root params (shallow merge)
+        (
+            {'host': 'db.example.com', 'port': 3306, 'database': 'prod'},
+            {'input': {'tables': [{'source': 't1'}]}},
+            {'database': 'staging', 'schema': 'public'},
+            {'input': {'tables': [{'source': 't2'}]}},
+            {'host': 'db.example.com', 'port': 3306, 'database': 'staging', 'schema': 'public'},
+            {'input': {'tables': [{'source': 't2'}]}},
+        ),
+        # With row - empty root, row provides all
+        (
+            {},
+            {},
+            {'key': 'value'},
+            {'output': {'tables': []}},
+            {'key': 'value'},
+            {'output': {'tables': []}},
+        ),
+    ],
+    ids=['no-row', 'row-overrides-root', 'empty-root-with-row'],
+)
+async def test_run_sync_action(
+    mcp_context_components_configs: Context,
+    root_params: dict,
+    root_storage: dict,
+    row_params: dict | None,
+    row_storage: dict | None,
+    expected_params: dict,
+    expected_storage: dict,
+):
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    component_id = 'keboola.ex-db-mysql'
+    configuration_id = '123'
+    action_name = 'testConnection'
+    expected_response = {'status': 'ok'}
+
+    keboola_client.storage_client.configuration_detail.return_value = {
+        'id': configuration_id,
+        'componentId': component_id,
+        'name': 'Test Config',
+        'version': 1,
+        'isDisabled': False,
+        'isDeleted': False,
+        'configuration': {
+            'parameters': root_params,
+            'storage': root_storage,
+        },
+        'rows': [],
+    }
+
+    if row_params and row_storage:
+        row_id = 'row-1'
+        keboola_client.storage_client.configuration_row_detail.return_value = {
+            'id': row_id,
+            'configuration': {
+                'parameters': row_params,
+                'storage': row_storage,
+            },
+        }
+    else:
+        row_id = None
+
+    keboola_client.sync_actions_client.execute_action.return_value = expected_response
+
+    result = await run_sync_action(
+        ctx=context,
+        action_name=action_name,
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_row_id=row_id,
+    )
+
+    assert result == expected_response
+
+    keboola_client.storage_client.configuration_detail.assert_called_once_with(component_id, configuration_id)
+    keboola_client.sync_actions_client.execute_action.assert_called_once_with(
+        component_id=component_id,
+        action=action_name,
+        config_data={
+            'parameters': expected_params,
+            'storage': expected_storage,
+        },
+    )
+
+    if row_id:
+        keboola_client.storage_client.configuration_row_detail.assert_called_once_with(
+            component_id, configuration_id, row_id
+        )
+    else:
+        keboola_client.storage_client.configuration_row_detail.assert_not_called()

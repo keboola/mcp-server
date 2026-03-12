@@ -12,6 +12,7 @@ from keboola_mcp_server.clients.encryption import EncryptionClient
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
 from keboola_mcp_server.clients.scheduler import SchedulerClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
+from keboola_mcp_server.clients.sync_actions import SyncActionsClient
 
 LOG = logging.getLogger(__name__)
 
@@ -156,6 +157,7 @@ class KeboolaClient:
         data_science_api_url = urlunparse(('https', f'data-science.{self._hostname_suffix}', '', '', '', ''))
         encryption_api_url = urlunparse(('https', f'encryption.{self._hostname_suffix}', '', '', '', ''))
         scheduler_api_url = urlunparse(('https', f'scheduler.{self._hostname_suffix}', '', '', '', ''))
+        sync_actions_api_url = urlunparse(('https', f'sync-actions.{self._hostname_suffix}', '', '', '', ''))
 
         # Initialize clients for individual services
         bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
@@ -174,7 +176,7 @@ class KeboolaClient:
         )
         self._data_science_client = DataScienceClient.create(
             root_url=data_science_api_url,
-            token=self.token,
+            token=self._token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
@@ -185,6 +187,13 @@ class KeboolaClient:
         )
         self._scheduler_client = SchedulerClient.create(
             root_url=scheduler_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
+        )
+        self._sync_actions_client = SyncActionsClient.create(
+            root_url=sync_actions_api_url,
+            token=self._token,
+            branch_id=branch_id,
+            headers=self._headers,
+            readonly=readonly,
         )
 
     @property
@@ -242,3 +251,7 @@ class KeboolaClient:
     @property
     def scheduler_client(self) -> 'SchedulerClient':
         return self._scheduler_client
+
+    @property
+    def sync_actions_client(self) -> 'SyncActionsClient':
+        return self._sync_actions_client

@@ -240,6 +240,11 @@ async def fetch_component(
         # First attempt: AI Service catalog (includes documentation & schemas)
         raw_component = await client.ai_service_client.get_component_detail(component_id=component_id)
         LOG.info(f'Retrieved component {component_id} from AI service catalog.')
+        # Get sync actions until they are present in the AI service catalog response
+        # TODO: Consider adding the entire `data` section into the AI service catalog response
+        #  to avoid this in the future
+        component_detail_raw = await client.storage_client.component_detail(component_id=component_id)
+        raw_component['data'] = component_detail_raw.get('data', {})
 
         return ComponentAPIResponse.model_validate(raw_component)
 

@@ -177,6 +177,7 @@ async def _assert_basic_setup(client: Client):
         'modify_flow',
         'query_data',
         'run_job',
+        'run_sync_action',
         'search',
         'update_config',
         'update_config_row',
