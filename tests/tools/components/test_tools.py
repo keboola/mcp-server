@@ -36,7 +36,6 @@ from keboola_mcp_server.tools.components.model import (
     TfSetCode,
     TfStrReplace,
 )
-from keboola_mcp_server.tools.components.sql_utils import format_simplified_tf_code
 from keboola_mcp_server.tools.components.tools import (
     add_config_row,
     create_config,
