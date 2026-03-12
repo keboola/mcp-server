@@ -115,6 +115,7 @@ def mock_tf_component() -> dict[str, Any]:
             'genericVariablesUI',
             'genericDockerUI-tableInput',
         ],
+        'data': {},
     }
 
 

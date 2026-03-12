@@ -75,6 +75,11 @@ class ComponentAPIResponse(BaseModel):
         description='Configuration row schema',
         validation_alias=AliasChoices('configurationRowSchema', 'configuration_row_schema', 'configuration-row-schema'),
     )
+    data: dict[str, Any] | None = Field(
+        default=None,
+        description='Additional component metadata',
+        validation_alias=AliasChoices('data'),
+    )
 
 
 class ConfigurationAPIResponse(BaseModel):
