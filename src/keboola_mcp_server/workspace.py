@@ -130,6 +130,10 @@ class _Workspace(abc.ABC):
         """Returns the branch ID."""
         pass
 
+    @classmethod
+    def _dump(cls, json_data: Mapping[str, Any]) -> str:
+        return json.dumps(json_data, ensure_ascii=False, separators=(',', ':'))
+
 
 class _SnowflakeWorkspace(_Workspace):
     _PAGE_SIZE = 1_000
@@ -218,7 +222,10 @@ class _SnowflakeWorkspace(_Workspace):
                 if result.data and result.data.rows:
                     db_name = result.data.rows[0]['DATABASE_NAME']
                 else:
-                    LOG.warning(f'No database found for {source_project_id} project: {sql}, SAPI response: {result}')
+                    LOG.warning(
+                        f'No database found for {source_project_id} project: {sql}, SAPI response: {result}\n'
+                        f'Table: {self._dump(table)}'
+                    )
             else:
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
@@ -239,7 +246,7 @@ class _SnowflakeWorkspace(_Workspace):
                         schema_name = self._schema
                         table_name = table['name']
                 else:
-                    LOG.warning(f'No current database: {sql}, SAPI response: {result}')
+                    LOG.warning(f'No current database: {sql}, SAPI response: {result}\n' f'Table: {self._dump(table)}')
             else:
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
@@ -268,7 +275,11 @@ class _SnowflakeWorkspace(_Workspace):
                         },
                     )
                 else:
-                    LOG.warning(f'No "{table_id}" table in the database: {sql}, SAPI response: {result}')
+                    # the sql shows the db_name, schema_name and table_name
+                    LOG.warning(
+                        f'No "{table_id}" table in the database: {sql}, SAPI response: {result}\n'
+                        f'Table: {self._dump(table)}'
+                    )
             else:
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
