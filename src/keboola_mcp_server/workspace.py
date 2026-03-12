@@ -214,26 +214,32 @@ class _SnowflakeWorkspace(_Workspace):
                 f'where "DATABASE_NAME" like \'%^_{source_project_id}\' escape \'^\';'
             )
             result = await self.execute_query(sql)
-            if result.is_ok and result.data and result.data.rows:
-                db_name = result.data.rows[0]['DATABASE_NAME']
+            if result.is_ok:
+                if result.data and result.data.rows:
+                    db_name = result.data.rows[0]['DATABASE_NAME']
+                else:
+                    LOG.warning(f'No database found for {source_project_id} project: {sql}, SAPI response: {result}')
             else:
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
         else:
             sql = 'select CURRENT_DATABASE() as "current_database";'
             result = await self.execute_query(sql)
-            if result.is_ok and result.data and result.data.rows:
-                row = result.data.rows[0]
-                db_name = row['current_database']
-                if '.' in table_id:
-                    # a table local in a project for which the snowflake connection/workspace is open
-                    schema_name, table_name = table_id.rsplit(sep='.', maxsplit=1)
+            if result.is_ok:
+                if result.data and result.data.rows:
+                    row = result.data.rows[0]
+                    db_name = row['current_database']
+                    if '.' in table_id:
+                        # a table local in a project for which the snowflake connection/workspace is open
+                        schema_name, table_name = table_id.rsplit(sep='.', maxsplit=1)
+                    else:
+                        # a table not in the project, but in the writable schema created for the workspace
+                        # TODO: we should never come here, because the tools for listing tables can only see
+                        #  tables that are in the project
+                        schema_name = self._schema
+                        table_name = table['name']
                 else:
-                    # a table not in the project, but in the writable schema created for the workspace
-                    # TODO: we should never come here, because the tools for listing tables can only see
-                    #  tables that are in the project
-                    schema_name = self._schema
-                    table_name = table['name']
+                    LOG.warning(f'No current database: {sql}, SAPI response: {result}')
             else:
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
@@ -246,20 +252,23 @@ class _SnowflakeWorkspace(_Workspace):
                 f'ORDER BY "ORDINAL_POSITION";'
             )
             result = await self.execute_query(sql)
-            if result.is_ok and result.data:
-                return DbTableInfo(
-                    id=table_id,
-                    fqn=TableFqn(db_name, schema_name, table_name, quote_char='"'),
-                    columns={
-                        row['COLUMN_NAME']: DbColumnInfo(
-                            name=row['COLUMN_NAME'],
-                            quoted_name=self.get_quoted_name(row['COLUMN_NAME']),
-                            native_type=row['DATA_TYPE'],
-                            nullable=row['IS_NULLABLE'] == 'YES',
-                        )
-                        for row in result.data.rows
-                    },
-                )
+            if result.is_ok:
+                if result.data and result.data.rows:
+                    return DbTableInfo(
+                        id=table_id,
+                        fqn=TableFqn(db_name, schema_name, table_name, quote_char='"'),
+                        columns={
+                            row['COLUMN_NAME']: DbColumnInfo(
+                                name=row['COLUMN_NAME'],
+                                quoted_name=self.get_quoted_name(row['COLUMN_NAME']),
+                                native_type=row['DATA_TYPE'],
+                                nullable=row['IS_NULLABLE'] == 'YES',
+                            )
+                            for row in result.data.rows
+                        },
+                    )
+                else:
+                    LOG.warning(f'No "{table_id}" table in the database: {sql}, SAPI response: {result}')
             else:
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 

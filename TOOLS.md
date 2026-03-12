@@ -2873,6 +2873,10 @@ scopes=["storage"]
 
 Executes an SQL SELECT query to get the data from the underlying database.
 
+BEFORE QUERYING:
+* Always verify the table has a non-null fullyQualifiedName from get_tables tool.
+  If it does not, the table is not SQL-accessible from this workspace — do not attempt the query and inform user.
+
 CRITICAL SQL REQUIREMENTS:
 
 * ALWAYS check the SQL dialect before constructing queries. The SQL dialect can be found in the project info.
@@ -3009,6 +3013,14 @@ COLUMN DATA TYPES:
   available. When present, it reveals the actual type of data stored in the column - for example,
   a column with database_native_type VARCHAR might have keboola_base_type INTEGER, indicating
   it stores integer values despite being stored as text in the backend.
+
+QUERYABILITY RULE:
+- A table is directly queryable via query_data tool only if fullyQualifiedName is present and non-null
+  in the response.
+- If fullyQualifiedName is absent or null (e.g. for linked/alias tables from other projects),
+  the table cannot be queried via SQL from this workspace.
+- Do not attempt to construct or guess the FQN — it will not work. In that case,
+  inform the user of the limitation immediately.
 
 EXAMPLES:
 - `bucket_ids=["id1", ...]` → summary info of the tables in the buckets with the specified IDs
