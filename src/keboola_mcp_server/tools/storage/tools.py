@@ -1,7 +1,6 @@
 """Storage-related tools for the MCP server (buckets, tables, etc.)."""
 
 import logging
-import re
 from collections import defaultdict
 from datetime import datetime
 from typing import Annotated, Any, Iterable, Literal, Sequence, cast
@@ -32,6 +31,7 @@ from keboola_mcp_server.tools.storage.usage import (
     get_created_by,
     get_last_updated_by,
 )
+from keboola_mcp_server.utils import parse_iso_timestamp
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -87,10 +87,8 @@ def _max_timestamp(*timestamps: str | None) -> str | None:
         return None
 
     def _parse(ts: str) -> tuple:
-        # Normalize +HHMM → +HH:MM for Python ≤ 3.10 fromisoformat compatibility
-        normalized = re.sub(r'([+-]\d{2})(\d{2})$', r'\1:\2', ts)
         try:
-            return (1, datetime.fromisoformat(normalized))
+            return (1, parse_iso_timestamp(ts))
         except ValueError:
             return (0, ts)
 

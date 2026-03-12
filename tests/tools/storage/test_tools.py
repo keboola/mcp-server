@@ -1,5 +1,4 @@
 import json
-from datetime import datetime
 from typing import Any, Mapping, Sequence
 from unittest.mock import AsyncMock, call
 
@@ -28,11 +27,8 @@ from keboola_mcp_server.tools.storage.tools import (
     get_tables,
     update_descriptions,
 )
+from keboola_mcp_server.utils import parse_iso_timestamp
 from keboola_mcp_server.workspace import DbColumnInfo, DbTableInfo, TableFqn, WorkspaceManager
-
-
-def parse_iso_timestamp(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace('Z', '+00:00'))
 
 
 def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
