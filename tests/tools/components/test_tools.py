@@ -1373,13 +1373,12 @@ async def test_update_config_row(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('root_params', 'root_storage', 'row_id', 'row_params', 'row_storage', 'expected_params', 'expected_storage'),
+    ('root_params', 'root_storage', 'row_params', 'row_storage', 'expected_params', 'expected_storage'),
     [
         # No row - uses root config only
         (
             {'host': 'db.example.com', 'port': 3306},
             {'input': {'tables': []}},
-            None,
             None,
             None,
             {'host': 'db.example.com', 'port': 3306},
@@ -1389,7 +1388,6 @@ async def test_update_config_row(
         (
             {'host': 'db.example.com', 'port': 3306, 'database': 'prod'},
             {'input': {'tables': [{'source': 't1'}]}},
-            'row-1',
             {'database': 'staging', 'schema': 'public'},
             {'input': {'tables': [{'source': 't2'}]}},
             {'host': 'db.example.com', 'port': 3306, 'database': 'staging', 'schema': 'public'},
@@ -1399,7 +1397,6 @@ async def test_update_config_row(
         (
             {},
             {},
-            'row-2',
             {'key': 'value'},
             {'output': {'tables': []}},
             {'key': 'value'},
@@ -1412,7 +1409,6 @@ async def test_run_sync_action(
     mcp_context_components_configs: Context,
     root_params: dict,
     root_storage: dict,
-    row_id: str | None,
     row_params: dict | None,
     row_storage: dict | None,
     expected_params: dict,
@@ -1440,7 +1436,8 @@ async def test_run_sync_action(
         'rows': [],
     }
 
-    if row_id:
+    if row_params and row_storage:
+        row_id = 'row-1'
         keboola_client.storage_client.configuration_row_detail.return_value = {
             'id': row_id,
             'configuration': {
@@ -1448,6 +1445,8 @@ async def test_run_sync_action(
                 'storage': row_storage,
             },
         }
+    else:
+        row_id = None
 
     keboola_client.sync_actions_client.execute_action.return_value = expected_response
 
