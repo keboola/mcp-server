@@ -466,6 +466,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
                 description='The foo bucket.',
                 stage='in',
                 created='2025-07-03T11:02:54+0200',
+                updated='2025-08-17T07:37:42+0200',
                 data_size_bytes=1024,
                 links=[
                     Link(
@@ -487,6 +488,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
                 description='The foo bucket.',
                 stage='in',
                 created='2025-07-03T11:02:54+0200',
+                updated='2025-08-17T07:37:42+0200',
                 data_size_bytes=4608 + 1024,
                 links=[
                     Link(
@@ -508,6 +510,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
                 description='Sample of Restaurant Reviews',
                 stage='out',
                 created='2024-04-03T14:11:53+0200',
+                updated=None,
                 data_size_bytes=2048,
                 links=[
                     Link(
@@ -529,6 +532,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
                 description='Sample of Restaurant Reviews',
                 stage='out',
                 created='2024-04-03T14:11:53+0200',
+                updated=None,
                 data_size_bytes=2048,
                 links=[
                     Link(
@@ -550,6 +554,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
                 description='The dev branch baz bucket.',
                 stage='in',
                 created='2025-01-02T03:04:05+0600',
+                updated='2025-01-02T03:04:55+0600',
                 data_size_bytes=987654321,
                 links=[
                     Link(
@@ -617,6 +622,7 @@ async def test_get_bucket(
                     description='The foo bucket.',
                     stage='in',
                     created='2025-07-03T11:02:54+0200',
+                    updated='2025-08-17T07:37:42+0200',
                     data_size_bytes=1024,
                 ),
                 BucketDetail(
@@ -626,6 +632,7 @@ async def test_get_bucket(
                     description='Sample of Restaurant Reviews',
                     stage='out',
                     created='2024-04-03T14:11:53+0200',
+                    updated=None,
                     data_size_bytes=2048,
                     source_project='A demo project (ID: 1234)',
                 ),
@@ -641,6 +648,7 @@ async def test_get_bucket(
                     description='The foo bucket.',
                     stage='in',
                     created='2025-07-03T11:02:54+0200',
+                    updated='2025-08-17T07:37:42+0200',
                     data_size_bytes=4608 + 1024,
                 ),
                 BucketDetail(
@@ -650,6 +658,7 @@ async def test_get_bucket(
                     description='Sample of Restaurant Reviews',
                     stage='out',
                     created='2024-04-03T14:11:53+0200',
+                    updated=None,
                     data_size_bytes=2048,
                     source_project='A demo project (ID: 1234)',
                 ),
@@ -660,6 +669,7 @@ async def test_get_bucket(
                     description='The dev branch baz bucket.',
                     stage='in',
                     created='2025-01-02T03:04:05+0600',
+                    updated='2025-01-02T03:04:55+0600',
                     data_size_bytes=987654321,
                 ),
             ],
@@ -702,6 +712,7 @@ async def test_get_buckets(
                 display_name='All system users.',
                 primary_key=['user_id'],
                 created='2025-08-17T07:39:18+0200',
+                updated='2025-08-20T19:11:52+0200',
                 rows_count=10,
                 data_size_bytes=10240,
                 columns=[
@@ -746,6 +757,7 @@ async def test_get_buckets(
                 display_name='All system users.',
                 primary_key=['user_id'],
                 created='2025-08-17T07:39:18+0200',
+                updated='2025-08-20T19:11:52+0200',
                 rows_count=10,
                 data_size_bytes=10240,
                 columns=[
@@ -791,6 +803,7 @@ async def test_get_buckets(
                 display_name='All user emails.',
                 primary_key=['email_id'],
                 created='2025-08-17T07:39:18+0200',
+                updated='2025-08-20T19:11:52+0200',
                 rows_count=33,
                 data_size_bytes=332211,
                 columns=[
@@ -827,6 +840,7 @@ async def test_get_buckets(
                 display_name='All user emails.',
                 primary_key=['email_id'],
                 created='2025-08-21T01:02:03+0400',
+                updated='2025-08-21T01:02:03+0400',
                 rows_count=22,
                 data_size_bytes=2211,
                 columns=[
@@ -865,6 +879,7 @@ async def test_get_buckets(
                 display_name='All user emails.',
                 primary_key=['email_id'],
                 created='2025-08-21T01:02:03+0400',
+                updated='2025-08-21T01:02:03+0400',
                 rows_count=22,
                 data_size_bytes=2211,
                 columns=[
@@ -902,6 +917,7 @@ async def test_get_buckets(
                 display_name='Company assets.',
                 primary_key=['asset_id'],
                 created='2025-08-22T11:22:33+0200',
+                updated='2025-08-22T11:22:33+0200',
                 rows_count=123,
                 data_size_bytes=123456,
                 columns=[
@@ -1013,6 +1029,7 @@ async def test_get_table(
                     display_name='All system users.',
                     primary_key=['user_id'],
                     created='2025-08-17T07:39:18+0200',
+                    updated='2025-08-20T19:11:52+0200',
                     rows_count=10,
                     data_size_bytes=10240,
                     links=[
@@ -1029,6 +1046,7 @@ async def test_get_table(
                     display_name='All user emails.',
                     primary_key=['email_id'],
                     created='2025-08-17T07:39:18+0200',
+                    updated='2025-08-20T19:11:52+0200',
                     rows_count=33,
                     data_size_bytes=332211,
                     links=[
@@ -1052,6 +1070,7 @@ async def test_get_table(
                     display_name='All system users.',
                     primary_key=['user_id'],
                     created='2025-08-17T07:39:18+0200',
+                    updated='2025-08-20T19:11:52+0200',
                     rows_count=10,
                     data_size_bytes=10240,
                     links=[
@@ -1070,6 +1089,7 @@ async def test_get_table(
                     display_name='All user emails.',
                     primary_key=['email_id'],
                     created='2025-08-21T01:02:03+0400',
+                    updated='2025-08-21T01:02:03+0400',
                     rows_count=22,
                     data_size_bytes=2211,
                     links=[
@@ -1087,6 +1107,7 @@ async def test_get_table(
                     display_name='Company assets.',
                     primary_key=['asset_id'],
                     created='2025-08-22T11:22:33+0200',
+                    updated='2025-08-22T11:22:33+0200',
                     rows_count=123,
                     data_size_bytes=123456,
                     source_project='Source Project (ID: 1234)',
@@ -1241,6 +1262,97 @@ def test_table_detail_description_fallback(raw_data: dict[str, Any], expected_de
     }
     table = TableDetail.model_validate(base | raw_data)
     assert table.description == expected_description
+
+
+_LINEAGE_METADATA = [
+    {'key': 'KBC.lastUpdatedBy.component.id', 'value': 'keboola.c', 'timestamp': '2025-09-15T00:00:00+0200'},
+    {'key': 'KBC.lastUpdatedBy.configuration.id', 'value': '1', 'timestamp': '2025-09-15T00:00:00+0200'},
+]
+
+
+@pytest.mark.parametrize(
+    ('raw_data', 'expected_updated'),
+    [
+        # lastChangeDate wins when later
+        (
+            {'lastChangeDate': '2025-09-01T12:00:00+0200', 'lastImportDate': '2025-08-01T12:00:00+0200'},
+            '2025-09-01T12:00:00+0200',
+        ),
+        # lastImportDate wins when later
+        (
+            {'lastChangeDate': '2025-08-01T12:00:00+0200', 'lastImportDate': '2025-09-01T12:00:00+0200'},
+            '2025-09-01T12:00:00+0200',
+        ),
+        # only lastChangeDate present
+        ({'lastChangeDate': '2025-08-01T12:00:00+0200'}, '2025-08-01T12:00:00+0200'),
+        # only lastImportDate present
+        ({'lastImportDate': '2025-08-01T12:00:00+0200'}, '2025-08-01T12:00:00+0200'),
+        # no timestamps → None
+        ({'lastChangeDate': None, 'lastImportDate': None}, None),
+        # round-trip guard: explicit 'updated' must not be overwritten
+        (
+            {'updated': '2025-07-01T00:00:00+0200', 'lastChangeDate': '2025-09-01T12:00:00+0200'},
+            '2025-07-01T00:00:00+0200',
+        ),
+        # lineage timestamp newer → promoted over lastChangeDate
+        (
+            {'lastChangeDate': '2025-08-01T12:00:00+0200', 'metadata': _LINEAGE_METADATA},
+            '2025-09-15T00:00:00+0200',
+        ),
+        # lineage timestamp older → lastChangeDate wins
+        (
+            {'lastChangeDate': '2025-10-01T00:00:00+0200', 'metadata': _LINEAGE_METADATA},
+            '2025-10-01T00:00:00+0200',
+        ),
+        # metadata only, no date fields → metadata timestamp
+        ({'metadata': _LINEAGE_METADATA}, '2025-09-15T00:00:00+0200'),
+    ],
+)
+def test_table_detail_updated_resolution(raw_data: dict[str, Any], expected_updated: str | None) -> None:
+    """Test TableDetail.updated is resolved from lastChangeDate / lastImportDate / lineage metadata."""
+    base = {'id': 'in.c-test.t1', 'name': 't1', 'displayName': 't1'}
+    table = TableDetail.model_validate(base | raw_data).with_lineage_metadata(raw_data)
+    assert table.updated == expected_updated
+
+
+@pytest.mark.parametrize(
+    ('raw_data', 'expected_updated'),
+    [
+        # lastChangeDate present
+        ({'lastChangeDate': '2025-09-01T12:00:00+0200'}, '2025-09-01T12:00:00+0200'),
+        # no timestamps → None
+        ({'lastChangeDate': None}, None),
+        # round-trip guard: explicit 'updated' must not be overwritten
+        (
+            {'updated': '2025-07-01T00:00:00+0200', 'lastChangeDate': '2025-09-01T12:00:00+0200'},
+            '2025-07-01T00:00:00+0200',
+        ),
+        # lineage timestamp newer → promoted over lastChangeDate
+        (
+            {'lastChangeDate': '2025-08-01T00:00:00+0200', 'metadata': _LINEAGE_METADATA},
+            '2025-09-15T00:00:00+0200',
+        ),
+        # lineage timestamp older → lastChangeDate wins
+        (
+            {'lastChangeDate': '2025-10-01T00:00:00+0200', 'metadata': _LINEAGE_METADATA},
+            '2025-10-01T00:00:00+0200',
+        ),
+        # metadata only, no date fields → metadata timestamp
+        ({'metadata': _LINEAGE_METADATA}, '2025-09-15T00:00:00+0200'),
+    ],
+)
+def test_bucket_detail_updated_resolution(raw_data: dict[str, Any], expected_updated: str | None) -> None:
+    """Test BucketDetail.updated is resolved from lastChangeDate / lineage metadata."""
+    base = {
+        'id': 'in.c-test',
+        'name': 'c-test',
+        'displayName': 'test',
+        'stage': 'in',
+        'created': '2025-01-01T00:00:00+0200',
+        'dataSizeBytes': 0,
+    }
+    bucket = BucketDetail.model_validate(base | raw_data).with_lineage_metadata(raw_data)
+    assert bucket.updated == expected_updated
 
 
 @pytest.mark.asyncio
@@ -1622,6 +1734,7 @@ async def test_update_descriptions_empty_updates(mcp_context_client) -> None:
                     description='',
                     stage='in',
                     created='2025-06-05T08:16:36+0200',
+                    updated='2025-06-05T08:17:12+0200',
                     data_size_bytes=112233,
                 )
             ],

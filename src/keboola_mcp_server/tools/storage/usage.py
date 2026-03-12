@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 from datetime import datetime
 from typing import Mapping, Optional, Sequence, cast
@@ -173,7 +174,8 @@ def _get_latest_metadata_timestamp(metadata: list[Mapping[str, JsonStruct]], key
         if not isinstance(raw_ts, str):
             continue
         try:
-            parsed = datetime.fromisoformat(raw_ts.replace('Z', '+00:00'))
+            normalized = re.sub(r'([+-]\d{2})(\d{2})$', r'\1:\2', raw_ts.replace('Z', '+00:00'))
+            parsed = datetime.fromisoformat(normalized)
         except ValueError:
             continue
         if latest_ts is None or parsed > latest_ts:
