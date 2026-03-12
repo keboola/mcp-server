@@ -12,7 +12,7 @@ description, and a list of created table names.
 - [get_components](#get_components): Retrieves detailed information about one or more components by their IDs.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
 - [get_configs](#get_configs): Retrieves component configurations in the project with optional filtering.
-- [run_sync_action](#run_sync_action): Execute a synchronous action for a component configuration.
+- [run_sync_action](#run_sync_action): Executes a synchronous action for a component configuration or a component row configuration.
 - [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
@@ -520,18 +520,18 @@ EXAMPLES:
 ---
 <a name="run_sync_action"></a>
 ## run_sync_action
-**Annotations**: 
+**Annotations**: `read-only`
 
 **Tags**: `components`
 
 **Description**:
 
-Execute a synchronous action for a component configuration.
+Executes a synchronous action for a component configuration or a component row configuration.
 
-Sync actions run component code synchronously (e.g., test connections,
-list remote tables/columns, validate credentials). The available sync
-actions for a component can be found in the component's sync_actions field
-returned by get_components.
+WHEN TO USE:
+- For finding available values of a configuration field
+- For validating already configured values (e.g. testing a database connection)
+- For listing remote resources such as endpoints, schemas or tables
 
 
 **Input JSON Schema**:

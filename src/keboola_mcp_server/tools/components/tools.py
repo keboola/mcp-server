@@ -160,7 +160,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             run_sync_action,
             tags={COMPONENT_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
         )
     )
 
@@ -1711,20 +1711,21 @@ async def run_sync_action(
         ),
     ] = None,
 ) -> dict[str, Any] | list[Any]:
-    """Execute a synchronous action for a component configuration.
+    """
+    Executes a synchronous action for a component configuration or a component row configuration.
 
-    Sync actions run component code synchronously (e.g., test connections,
-    list remote tables/columns, validate credentials). The available sync
-    actions for a component can be found in the component's sync_actions field
-    returned by get_components.
+    WHEN TO USE:
+    - For finding available values of a configuration field
+    - For validating already configured values (e.g. testing a database connection)
+    - For listing remote resources such as endpoints, schemas or tables
     """
     client = KeboolaClient.from_state(ctx.session.state)
 
     config_detail = await client.storage_client.configuration_detail(component_id, configuration_id)
     config_response = ConfigurationAPIResponse.model_validate({**config_detail, 'componentId': component_id})
     root_configuration = config_response.configuration
-    parameters = dict(root_configuration.get('parameters') or {})
-    storage = dict(root_configuration.get('storage') or {})
+    parameters = root_configuration.get('parameters') or {}
+    storage = root_configuration.get('storage') or {}
 
     if configuration_row_id:
         row_detail = await client.storage_client.configuration_row_detail(

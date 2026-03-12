@@ -349,7 +349,7 @@ async def test_tool_annotations_and_tags():
         ('update_config', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
         ('add_config_row', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_config_row', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
-        ('run_sync_action', False, None, None, {COMPONENT_TOOLS_TAG}),
+        ('run_sync_action', True, None, None, {COMPONENT_TOOLS_TAG}),
         ('create_sql_transformation', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
         # storage
