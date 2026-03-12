@@ -176,7 +176,7 @@ class KeboolaClient:
         )
         self._data_science_client = DataScienceClient.create(
             root_url=data_science_api_url,
-            token=self.token,
+            token=self._token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
@@ -189,7 +189,11 @@ class KeboolaClient:
             root_url=scheduler_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
         )
         self._sync_actions_client = SyncActionsClient.create(
-            root_url=sync_actions_api_url, token=self._token, headers=self._headers, readonly=readonly
+            root_url=sync_actions_api_url,
+            token=self._token,
+            branch_id=branch_id,
+            headers=self._headers,
+            readonly=readonly,
         )
 
     @property

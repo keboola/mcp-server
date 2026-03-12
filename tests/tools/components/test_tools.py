@@ -1469,7 +1469,6 @@ async def test_run_sync_action(
             'parameters': expected_params,
             'storage': expected_storage,
         },
-        branch_id=keboola_client.branch_id,
     )
 
     if row_id:

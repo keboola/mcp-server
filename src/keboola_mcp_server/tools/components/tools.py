@@ -1745,6 +1745,5 @@ async def run_sync_action(
         component_id=component_id,
         action=action_name,
         config_data=config_data,
-        branch_id=client.branch_id,
     )
     return result
