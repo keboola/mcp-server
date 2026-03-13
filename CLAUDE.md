@@ -43,6 +43,28 @@ tox
 ```
 All four tox environments (pytest, black, flake8, check-tools-docs) should exit 0.
 
+## Integration Tests — Adding a New Client
+
+- **Derive service URLs from existing stack env vars** — do NOT introduce new `INTEGTEST_<SERVICE>_URL`
+  env vars. All services on a stack share the same base domain; derive the URL by replacing the
+  `connection.` prefix in `INTEGTEST_POOL_STORAGE_API_URL`.
+  Example: `storage_api_url.replace('connection.', 'metastore.', 1)`
+- **Reuse the storage API token** — services on the same stack accept the same token. Only add a
+  separate token env var if the service uses a different auth scheme that cannot accept the storage token.
+- This keeps CI configuration minimal (no new secrets per service) and avoids drift between
+  integration test fixtures and the actual stack topology.
+
+## Versioning
+
+- **Every PR must bump `pyproject.toml` version** before merging.
+- Use semantic versioning:
+  - **Patch** (`1.x.y` → `1.x.y+1`): bug fixes, refactoring, docs, tests, chores
+  - **Minor** (`1.x.y` → `1.x+1.0`): new features, new tools, new capabilities
+  - **Major**: breaking API/protocol changes (rare)
+- After bumping, always sync the lock file: `uv lock`
+- Commit the version bump and `uv.lock` change together (can be a separate commit or bundled with
+  the main feature commit).
+
 ## Security Considerations
 - When whitelisting domains in OAuth, prefer **explicit domain lists over regex patterns**
 - Regex could unintentionally allow future domains that weren't reviewed (principle of least privilege)
