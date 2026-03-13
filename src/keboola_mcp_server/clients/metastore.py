@@ -43,14 +43,14 @@ class SchemaDocument(BaseModel):
 class JsonApiResource(BaseModel):
     model_config = ConfigDict(extra='allow')
 
-    type: str = Field(default='', description='Resource type.')
+    type: str = Field(description='Resource type.')
     id: str | None = Field(default=None, description='Resource id.')
     attributes: dict[str, Any] = Field(default_factory=dict, description='Resource attributes.')
     meta: dict[str, Any] = Field(default_factory=dict, description='Resource metadata.')
 
 
 class JsonApiListEnvelope(BaseModel):
-    data: list[JsonApiResource] = Field(default_factory=list)
+    data: list[JsonApiResource] = Field()
 
 
 class JsonApiObjectEnvelope(BaseModel):
@@ -72,6 +72,14 @@ class MetastoreClient(KeboolaServiceClient):
         headers: dict[str, Any] | None = None,
         readonly: bool | None = None,
     ) -> 'MetastoreClient':
+        """Create a MetastoreClient instance.
+
+        Args:
+            root_url: Base URL of the Metastore service.
+            token: Keboola Storage API token used for authentication.
+            headers: Optional extra headers forwarded to every request.
+            readonly: If True, mutating operations raise an error.
+        """
         return cls(
             raw_client=RawKeboolaClient(
                 base_api_url=root_url,

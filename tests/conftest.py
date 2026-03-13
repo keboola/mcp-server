@@ -7,6 +7,7 @@ from keboola_mcp_server.clients.ai_service import AIServiceClient
 from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
+from keboola_mcp_server.clients.metastore import MetastoreClient
 from keboola_mcp_server.clients.scheduler import SchedulerClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -32,6 +33,7 @@ def keboola_client(mocker) -> KeboolaClient:
     client.jobs_queue_client = mocker.AsyncMock(JobsQueueClient)
     client.ai_service_client = mocker.AsyncMock(AIServiceClient)
     client.scheduler_client = mocker.AsyncMock(SchedulerClient)
+    client.metastore_client = mocker.AsyncMock(MetastoreClient)
 
     # Mock the underlying api_client for async clients if needed for deeper testing
     client.storage_client.api_client = mocker.AsyncMock(RawKeboolaClient)
