@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from uuid import uuid4
 
 import httpx
@@ -9,21 +8,18 @@ import pytest
 
 from keboola_mcp_server.clients.metastore import MetastoreClient
 
-METASTORE_URL_ENV_VAR = 'INTEGTEST_METASTORE_URL'
-METASTORE_TOKEN_ENV_VAR = 'INTEGTEST_METASTORE_TOKEN'
-DEFAULT_METASTORE_URL = 'https://metastore.canary-orion.keboola.dev'
 LOG = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope='session')
-def metastore_url() -> str:
-    return os.getenv(METASTORE_URL_ENV_VAR, DEFAULT_METASTORE_URL)
+def metastore_url(storage_api_url: str) -> str:
+    """Derive metastore URL from storage API URL by replacing 'connection.' prefix."""
+    return storage_api_url.replace('connection.', 'metastore.', 1)
 
 
 @pytest.fixture
 def metastore_client(storage_api_token: str, metastore_url: str) -> MetastoreClient:
-    token = os.getenv(METASTORE_TOKEN_ENV_VAR, storage_api_token)
-    return MetastoreClient.create(root_url=metastore_url, token=token)
+    return MetastoreClient.create(root_url=metastore_url, token=storage_api_token)
 
 
 def _skip_unauthorized(exc: httpx.HTTPStatusError) -> None:
@@ -34,10 +30,7 @@ def _skip_unauthorized(exc: httpx.HTTPStatusError) -> None:
         except Exception:
             details = '<no response text>'
         LOG.warning(f'Metastore unauthorized (401) for {exc.request.url}: {details}')
-        pytest.skip(
-            'Token is not authorized for configured Metastore. '
-            'Set INTEGTEST_METASTORE_TOKEN for the target metastore.'
-        )
+        pytest.skip('Token is not authorized for configured Metastore.')
 
 
 @pytest.mark.asyncio
