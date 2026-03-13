@@ -1,14 +1,14 @@
 """Semantic layer MCP tools backed by Metastore."""
 
 import asyncio
-import re
+from difflib import SequenceMatcher
 from typing import Annotated, Any, Literal, Sequence
 
 import jsonschema
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
-from mcp.types import ToolAnnotations
-from pydantic import Field
+from mcp.types import ClientCapabilities, SamplingCapability, ToolAnnotations
+from pydantic import BaseModel, Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.metastore import INTERNAL_META_FIELDS, JsonApiResource
@@ -129,19 +129,40 @@ def _get_project_id(resource: JsonApiResource) -> int | None:
     return None
 
 
-def _tokenize(query: str) -> list[str]:
-    return [token for token in re.split(r'[^a-zA-Z0-9_]+', query.lower()) if token]
+def _fuzzy_score(query: str, text: str) -> float:
+    """Compute fuzzy similarity between query and text using difflib."""
+    return SequenceMatcher(None, query.lower(), text.lower()).ratio()
 
 
-def _score_text(query_tokens: list[str], *texts: str) -> float:
-    if not query_tokens:
-        return 0.0
-    normalized = ' '.join(text.lower() for text in texts if text)
-    score = 0.0
-    for token in query_tokens:
-        if token in normalized:
-            score += 1.0
-    return score / len(query_tokens)
+class _SamplingRanking(BaseModel):
+    ranked_indices: list[int]
+
+
+async def _rank_with_sampling(ctx: Context, query: str, blobs: list[str]) -> list[float]:
+    """Ask the LLM to rank candidates by semantic relevance; returns score per candidate."""
+    numbered = '\n'.join(f'{i}: {blob}' for i, blob in enumerate(blobs))
+    result = await ctx.sample(
+        messages=f'Rank the following semantic objects by relevance to: "{query}"\n\n{numbered}',
+        system_prompt='Return only the indices in descending relevance order.',
+        result_type=_SamplingRanking,
+        max_tokens=256,
+    )
+    scores = [0.0] * len(blobs)
+    for rank, idx in enumerate(result.result.ranked_indices):
+        if 0 <= idx < len(blobs):
+            scores[idx] = 1.0 - rank / len(blobs)
+    return scores
+
+
+async def _rank_candidates(ctx: Context, query: str, blobs: list[str]) -> list[float]:
+    """Rank candidates using LLM sampling if available, otherwise fuzzy lexical scoring."""
+    supports_sampling = ctx.session.check_client_capability(ClientCapabilities(sampling=SamplingCapability()))
+    if supports_sampling:
+        try:
+            return await _rank_with_sampling(ctx, query, blobs)
+        except Exception:
+            pass
+    return [_fuzzy_score(query, blob) for blob in blobs]
 
 
 def _build_search_blob(data: dict[str, Any]) -> str:
@@ -264,25 +285,28 @@ async def semantic_discover(
     if not query:
         return SemanticDiscoverOutput(status=ToolStatus.OK, models=models, matches=[])
 
-    query_tokens = _tokenize(query)
-    ranked_matches: list[SemanticDiscoverMatch] = []
     target_entity_types = tuple(entity_types) if entity_types else SEARCH_ENTITY_TYPES
 
+    # Collect all candidate resources before scoring so ranking can be batched
+    _candidates: list[tuple[SemanticEntityType, SemanticObjectType, JsonApiResource, dict[str, Any]]] = []
     for entity_type in target_entity_types:
         object_type = ENTITY_TO_OBJECT_TYPE[entity_type]
         resources = await _list_objects_by_scope(client, object_type, scope_enum)
         for resource in resources:
             data = _extract_semantic_data(resource.attributes)
-            current_model_id = data.get('modelUUID')
-            if model_id and current_model_id != model_id:
+            if model_id and data.get('modelUUID') != model_id:
                 continue
             if project_id is not None and _get_project_id(resource) != project_id:
                 continue
+            _candidates.append((entity_type, object_type, resource, data))
 
-            score = _score_text(query_tokens, _build_search_blob(data))
-            if score <= 0:
+    ranked_matches: list[SemanticDiscoverMatch] = []
+    if _candidates:
+        blobs = [_build_search_blob(data) for _, _, _, data in _candidates]
+        scores = await _rank_candidates(ctx, query, blobs)
+        for (entity_type, object_type, resource, data), score in zip(_candidates, scores):
+            if score <= 0.0:
                 continue
-
             source = _resource_source(resource, object_type)
             ranked_matches.append(
                 SemanticDiscoverMatch(
@@ -296,7 +320,7 @@ async def semantic_discover(
                 )
             )
 
-    ranked_matches = sorted(ranked_matches, key=lambda item: (-item.match_score, item.name))[: max(limit, 1)]
+    ranked_matches = sorted(ranked_matches, key=lambda item: (-item.match_score, item.name))[: max(limit, 0)]
 
     return SemanticDiscoverOutput(
         status=ToolStatus.OK,
@@ -374,6 +398,8 @@ async def semantic_get_definition(
     """
     if not uuid and not name:
         raise ValueError('Provide either uuid or name to retrieve semantic definition.')
+    if uuid and name:
+        raise ValueError('Provide either uuid or name, not both.')
 
     client = KeboolaClient.from_state(ctx.session.state)
     entity_type_enum = SemanticEntityType(entity_type)
@@ -692,9 +718,6 @@ async def semantic_define(
     entity_type_enum = SemanticEntityType(entity_type)
     object_type = ENTITY_TO_OBJECT_TYPE[entity_type_enum]
 
-    schema_document = await client.metastore_client.get_schema(object_type.value)
-    schema = schema_document.model_dump(exclude_none=True)
-
     if action_enum == SemanticDefineAction.DELETE:
         if not uuid:
             raise ValueError('uuid is required for delete action.')
@@ -715,6 +738,9 @@ async def semantic_define(
             source=SemanticSource(object_type=object_type.value, uuid=uuid, model_id=model_id),
             next_action='semantic_discover',
         )
+
+    schema_document = await client.metastore_client.get_schema(object_type.value)
+    schema = schema_document.model_dump(exclude_none=True)
 
     payload = dict(data or {})
     if model_id and entity_type_enum != SemanticEntityType.MODEL and 'modelUUID' not in payload:

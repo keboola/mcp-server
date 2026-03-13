@@ -14,6 +14,13 @@ class ToolStatus(str, Enum):
 
 
 class SemanticEntityType(str, Enum):
+    """Semantic entity types scoped to the Keboola semantic layer (Metastore).
+
+    These types represent objects managed within the semantic layer only.
+    Generic Metastore object access (e.g. arbitrary resource types) is out of scope
+    for this toolset and should be handled through storage or config tools instead.
+    """
+
     MODEL = 'model'
     DATASET = 'dataset'
     METRIC = 'metric'
@@ -133,12 +140,8 @@ class QueryPlanJoin(BaseModel):
 class SemanticQueryPlan(BaseModel):
     metric_name: str = Field(description='Resolved metric name.')
     sql_expression: str = Field(default='', description='Canonical metric SQL expression.')
-    source_dataset_table_id: str | None = Field(
-        default=None, description='Primary dataset tableId for the metric.'
-    )
-    requested_dimensions: list[str] = Field(
-        default_factory=list, description='Requested dimensions from user input.'
-    )
+    source_dataset_table_id: str | None = Field(default=None, description='Primary dataset tableId for the metric.')
+    requested_dimensions: list[str] = Field(default_factory=list, description='Requested dimensions from user input.')
     resolved_dimensions: list[str] = Field(
         default_factory=list, description='Dimensions resolved in source/joined datasets.'
     )

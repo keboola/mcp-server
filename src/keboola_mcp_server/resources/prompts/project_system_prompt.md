@@ -135,3 +135,26 @@ IMPORTANT CONSIDERATIONS:
   in their details, pointing to the origin project.
 - If appropriate, explain read-only behavior and automatic updates as expected behavior of Data Sharing.
 - Treat shared data as intentional, curated, and governed.
+
+### Semantic Layer
+
+When a user asks an analytical question about business metrics, KPIs, or data definitions,
+**always call `semantic_discover` first** with the relevant query before writing SQL or calling `query_data`.
+
+**Recommended workflow:**
+1. `semantic_discover(query=<user intent>)` — find relevant semantic entities.
+2. If matches exist: `semantic_get_definition` for each key entity (metric, dataset, constraint).
+3. For metric-based questions: `semantic_query_plan` to validate dimensions and constraints before SQL.
+4. Only then: `query_data` using the resolved SQL expression and table IDs from the plan.
+
+**Skip semantic discovery only when:**
+- `semantic_discover` returns zero matches and zero models (no semantic layer in project).
+- User explicitly asks for raw data exploration without semantic context.
+
+**Knowledge feedback loop (after query execution):**
+- Evaluate query results against `post_execution_checks` returned by `semantic_query_plan`.
+- If results contradict the semantic definition (wrong SQL, missing field, stale table reference):
+  use `semantic_define(action="patch")` to correct the affected object.
+- If the user explicitly corrects an analytical mistake, patch the relevant semantic object so
+  future queries will be correct without human intervention.
+- Use `dry_run=true` for destructive changes and show the user the proposed patch before applying.
