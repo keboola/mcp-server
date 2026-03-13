@@ -161,20 +161,43 @@ class TestWorkspaceManagerSnowflake:
             'status': 'completed',
             'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
         }
-        qsclient.get_job_results.side_effect = [
-            {
-                'status': 'completed',
-                'data': [[value for value in sapi_result.values()]],
-                'columns': [{'name': key} for key in sapi_result.keys()],
-                'message': '',
-            },
-            {
-                'status': 'completed',
-                'data': [['col1', 'STRING', True]],
-                'columns': [{'name': 'COLUMN_NAME'}, {'name': 'DATA_TYPE'}, {'name': 'IS_NULLABLE'}],
-                'message': '',
-            },
-        ]
+        if 'sourceTable' in table:
+            qsclient.get_job_results.side_effect = [
+                {
+                    'status': 'completed',
+                    'data': [[value for value in sapi_result.values()]],
+                    'columns': [{'name': key} for key in sapi_result.keys()],
+                    'message': '',
+                },
+                {
+                    'status': 'completed',
+                    'data': [],
+                    'columns': [],
+                    'message': 'Not found',
+                },
+                {
+                    'status': 'completed',
+                    'data': [[123]],
+                    'columns': [{'name': 'count(*)'}],
+                    'message': '',
+                },
+            ]
+        else:
+            qsclient.get_job_results.side_effect = [
+                {
+                    'status': 'completed',
+                    'data': [[value for value in sapi_result.values()]],
+                    'columns': [{'name': key} for key in sapi_result.keys()],
+                    'message': '',
+                },
+                {
+                    'status': 'completed',
+                    'data': [['col1', 'STRING', True]],
+                    'columns': [{'name': 'COLUMN_NAME'}, {'name': 'DATA_TYPE'}, {'name': 'IS_NULLABLE'}],
+                    'message': '',
+                },
+            ]
+
         mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
 
         m = WorkspaceManager.from_state(context.session.state)
@@ -230,6 +253,12 @@ class TestWorkspaceManagerSnowflake:
                         'data': [],
                         'columns': [{'name': 'COLUMN_NAME'}, {'name': 'DATA_TYPE'}, {'name': 'IS_NULLABLE'}],
                         'message': '',
+                    },
+                    {
+                        'status': 'failed',
+                        'data': [],
+                        'columns': [],
+                        'message': 'Table does not exist or not authorized',
                     },
                 ],
             ),
