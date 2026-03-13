@@ -26,7 +26,7 @@ Cron Tab Expression should be in the format: `* * * * *`.
 Field order:
 1. Minute (0-59)
 2. Hour (0-23)
-3. Day of month (1-31)
+3. Day of month (1-31, or L for last day of month)
 4. Month (1-12)
 5. Day of week (0-6, where 0 = Sunday)
 
@@ -36,6 +36,7 @@ Examples:
 3. schedule monthly on the 1st and 20th day of the month at 10:00 AM would be `0 10 1,20 * *`
 4. schedule yearly on the 1st of january and august at 11:00 AM would be `0 11 1 1,8 *`
 5. schedule hourly every 15 minutes would be `0,15,30,45 * * * *`
+6. schedule monthly on the last day of the month at 10:00 AM would be `0 10 L * *`
 """
 
 
@@ -50,15 +51,29 @@ def validate_cron_tab(cron_tab: str | None) -> None:
                 f'Cron expression must have exactly 5 parts got: {cron_tab} which has {len(split_cron_tab)} parts.'
             )
 
-        def to_int_list(field: str) -> list[int]:
+        def to_int_list(field: str, allow_l: bool = False) -> tuple[list[int], bool]:
+            """Parse a cron field into a list of integers and a flag indicating if L was found."""
             if field == '*':
-                return []
-            try:
-                return [int(x.strip()) for x in field.split(',')]
-            except ValueError:
-                raise ValueError(f'Cron expression must have only digits got: {field} in "{cron_tab}".')
+                return [], False
+            has_l = False
+            parts = []
+            for x in field.split(','):
+                x = x.strip()
+                if allow_l and x.upper() == 'L':
+                    has_l = True
+                else:
+                    try:
+                        parts.append(int(x))
+                    except ValueError:
+                        raise ValueError(f'Cron expression must have only digits got: {field} in "{cron_tab}".')
+            return parts, has_l
 
-        minutes, hours, days, months, weekdays = [to_int_list(x.strip()) for x in split_cron_tab]
+        minutes, _ = to_int_list(split_cron_tab[0].strip())
+        hours, _ = to_int_list(split_cron_tab[1].strip())
+        days, has_last_day = to_int_list(split_cron_tab[2].strip(), allow_l=True)
+        months, _ = to_int_list(split_cron_tab[3].strip())
+        weekdays, _ = to_int_list(split_cron_tab[4].strip())
+
         if any(x < 0 or x > 59 for x in minutes):
             raise ValueError(f'Minutes of hour `M _ _ _ _` must be between 0 and 59, got: {split_cron_tab[0]}')
         if any(x < 0 or x > 23 for x in hours):
@@ -71,15 +86,15 @@ def validate_cron_tab(cron_tab: str | None) -> None:
             raise ValueError(
                 f'Days of week `_ _ _ _ W` must be between 0=Sunday and 6=Saturday, got: {split_cron_tab[4]}'
             )
-        if months and not days:
+        if months and not days and not has_last_day:
             raise ValueError('Months of year must be specified with days of month. Example: `35 12 31 1,3 *`')
-        if days and not hours:
+        if (days or has_last_day) and not hours:
             raise ValueError('Days of month must be specified with hours of day. Example: `55 12 31 * *`')
         if hours and not minutes:
             raise ValueError('Hours of day must be specified with minutes of hour. Example: `55 12 * * *`')
         if weekdays and not hours:
             raise ValueError('Days of week must be specified with hours of day. Example: `55 12 * * 0`')
-        if weekdays and (days or months):
+        if weekdays and (days or months or has_last_day):
             raise ValueError('Days of week must not be specified with days of month nor months of year.')
     except ValueError as e:
         raise ValueError(f'Invalid cron tab expression: {str(e)}.\n{CRON_TAB_INSTRUCTIONS}') from e
