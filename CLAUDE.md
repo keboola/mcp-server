@@ -44,6 +44,20 @@ tox
 ```
 All four tox environments (pytest, black, flake8, check-tools-docs) should exit 0.
 
+## Versioning
+
+- **Every PR must bump `pyproject.toml` version** before merging.
+- Use semantic versioning:
+  - **Patch** (`1.x.y` → `1.x.y+1`): bug fixes, refactoring, docs, tests, chores
+  - **Minor** (`1.x.y` → `1.x+1.0`): new features, new tools, new capabilities
+  - **Major**: breaking API/protocol changes (rare)
+- After bumping, always sync the lock file: `uv lock`
+- Commit the version bump and `uv.lock` change together (can be a separate commit or bundled with
+  the main feature commit).
+- **After rebasing onto main, always re-check the version** — if main advanced (e.g. `1.48.3`
+  was merged after you last bumped), bump again so your branch stays strictly ahead of main.
+  Example: main moves `1.48.3` → your branch must be `1.48.4` (or higher), never equal.
+
 ## Security Considerations
 - When whitelisting domains in OAuth, prefer **explicit domain lists over regex patterns**
 - Regex could unintentionally allow future domains that weren't reviewed (principle of least privilege)
