@@ -750,6 +750,8 @@ async def semantic_define(
         inferred_name = name or str(payload.get('name', ''))
         if not inferred_name:
             raise ValueError('name is required for create action.')
+        if 'name' not in payload:
+            payload['name'] = inferred_name
         _validate_payload(schema, payload)
 
         if dry_run:
@@ -779,6 +781,8 @@ async def semantic_define(
 
     if action_enum == SemanticDefineAction.PATCH:
         merged_payload = current_data | payload
+        if name:
+            merged_payload['name'] = name
         _validate_payload(schema, merged_payload)
 
         if dry_run:
@@ -805,6 +809,8 @@ async def semantic_define(
         replace_name = name or str(payload.get('name') or current_data.get('name') or '')
         if not replace_name:
             raise ValueError('name is required for replace action.')
+        if 'name' not in payload:
+            payload['name'] = replace_name
 
         _validate_payload(schema, payload)
 
