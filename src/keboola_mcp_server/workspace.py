@@ -260,10 +260,11 @@ class _SnowflakeWorkspace(_Workspace):
             )
             result = await self.execute_query(sql)
             if result.is_ok:
+                fqn = TableFqn(db_name, schema_name, table_name, quote_char='"')
                 if result.data and result.data.rows:
                     return DbTableInfo(
                         id=table_id,
-                        fqn=TableFqn(db_name, schema_name, table_name, quote_char='"'),
+                        fqn=fqn,
                         columns={
                             row['COLUMN_NAME']: DbColumnInfo(
                                 name=row['COLUMN_NAME'],
@@ -280,6 +281,21 @@ class _SnowflakeWorkspace(_Workspace):
                         f'No "{table_id}" table in the database: {sql}, SAPI response: {result}\n'
                         f'Table: {self._dump(table)}'
                     )
+
+                    # The linked tables are not visible in INFORMATION_SCHEMA.COLUMNS. Fall back to count(*) query
+                    # to verify whether the fqn is valid.
+                    sql = f'SELECT count(*) FROM {fqn};'
+                    result = await self.execute_query(sql)
+                    if result.is_ok:
+                        if result.data and result.data.rows:
+                            return DbTableInfo(id=table_id, fqn=fqn, columns={})
+                        else:
+                            LOG.warning(
+                                f'Unexpected empty result from count(*): {sql}, SAPI response: {result}\n'
+                                f'Table: {self._dump(table)}'
+                            )
+                    else:
+                        LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
             else:
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
