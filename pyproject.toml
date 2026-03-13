@@ -27,7 +27,7 @@ dependencies = [
 ]
 [project.optional-dependencies]
 codestyle = [
-    "black ~= 25.11",
+    "black>=25.11,<27.0",
     "isort ~= 7.0",
     "flake8 ~= 7.3",
     "Flake8-pyproject ~= 1.2",
