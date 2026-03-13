@@ -57,10 +57,10 @@ including essential context and base instructions for working with it
 - [search](#search): Searches for Keboola items (tables, buckets, components, configurations, transformations, flows, data-apps, etc.
 
 ### Semantic Tools
-- [semantic_define](#semantic_define): Create, update, delete, or publish semantic definitions with schema validation.
-- [semantic_discover](#semantic_discover): Discover semantic models and ranked semantic entities for a query.
-- [semantic_get_definition](#semantic_get_definition): Get one authoritative semantic object definition by UUID or name.
-- [semantic_query_plan](#semantic_query_plan): Build a structured semantic query plan for a metric with deterministic checks.
+- [semantic_define](#semantic_define): Performs semantic authoring actions over Metastore with schema validation guardrails.
+- [semantic_discover](#semantic_discover): Discovers semantic definitions relevant to user intent and returns ranked candidates.
+- [semantic_get_definition](#semantic_get_definition): Retrieves one canonical semantic definition by UUID or by name with optional model disambiguation.
+- [semantic_query_plan](#semantic_query_plan): Builds a structured query plan from semantic metric definition and related model objects.
 
 ### Storage Tools
 - [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including descriptions,
@@ -2933,7 +2933,23 @@ scopes=["storage"]
 
 **Description**:
 
-Create, update, delete, or publish semantic definitions with schema validation.
+Performs semantic authoring actions over Metastore with schema validation guardrails.
+
+WHEN TO USE:
+- For create/patch/replace/delete/publish lifecycle over semantic objects.
+- As follow-up when analytical metric is undefined and authoring is requested.
+
+RULES:
+- `delete` requires `uuid`.
+- `patch`, `replace`, and `publish` require `uuid`.
+- `create` requires a resolvable name (`name` arg or `data.name`).
+- All write-like actions validate payload against object schema before persistence.
+- `dry_run=true` performs validation and returns review guidance without mutation.
+
+OUTPUT CONTRACT:
+- Returns action flags: `created`, `updated`, `deleted`, `published`.
+- Returns `source` metadata and optional `definition` for mutated objects.
+- Uses `next_action` to guide subsequent retrieval/discovery flow.
 
 
 **Input JSON Schema**:
@@ -3035,7 +3051,21 @@ Create, update, delete, or publish semantic definitions with schema validation.
 
 **Description**:
 
-Discover semantic models and ranked semantic entities for a query.
+Discovers semantic definitions relevant to user intent and returns ranked candidates.
+
+WHEN TO USE:
+- First step for analytical questions to find semantic entities before planning SQL.
+- Also for inventory mode (query omitted) to list available semantic models and model statistics.
+
+RULES:
+- If `query` is empty, only model inventory is returned (no ranked matches).
+- If `scope="organization"`, search uses organization listing endpoints.
+- Ranking is deterministic lexical matching over semantic object content.
+
+OUTPUT CONTRACT:
+- Always returns `status`.
+- Returns `matches` sorted by descending score and deterministic tie-break by name.
+- Sets `next_action="semantic_get_definition"` when at least one match exists.
 
 
 **Input JSON Schema**:
@@ -3043,6 +3073,7 @@ Discover semantic models and ranked semantic entities for a query.
 {
   "$defs": {
     "SemanticEntityType": {
+      "description": "Semantic entity types scoped to the Keboola semantic layer (Metastore).\n\nThese types represent objects managed within the semantic layer only.\nGeneric Metastore object access (e.g. arbitrary resource types) is out of scope\nfor this toolset and should be handled through storage or config tools instead.",
       "enum": [
         "model",
         "dataset",
@@ -3127,7 +3158,20 @@ Discover semantic models and ranked semantic entities for a query.
 
 **Description**:
 
-Get one authoritative semantic object definition by UUID or name.
+Retrieves one canonical semantic definition by UUID or by name with optional model disambiguation.
+
+WHEN TO USE:
+- After `semantic_discover` to fetch the authoritative object used for reasoning or citation.
+- Whenever caller needs deterministic source metadata (uuid/model/revision).
+
+RULES:
+- Exactly one selector is required: `uuid` or `name`.
+- If `revision` is supplied, lookup is executed against revision endpoint (requires `uuid`).
+- Optional `include_schema` attaches current JSON schema for the selected object type.
+
+OUTPUT CONTRACT:
+- Returns `defined=true` with canonical `definition` when object is found.
+- Returns `defined=false` and `next_action="semantic_discover"` when not found.
 
 
 **Input JSON Schema**:
@@ -3216,7 +3260,20 @@ Get one authoritative semantic object definition by UUID or name.
 
 **Description**:
 
-Build a structured semantic query plan for a metric with deterministic checks.
+Builds a structured query plan from semantic metric definition and related model objects.
+
+WHEN TO USE:
+- Before SQL generation/execution for metric-based analytical questions.
+- To validate requested dimensions and constraints in strict semantic mode.
+
+RULES:
+- Metric must exist in semantic layer; otherwise returns `defined=false`.
+- Planner resolves source dataset, relationship joins, and relevant constraints.
+- `strict=true` marks plan invalid when error-severity warnings are present.
+
+OUTPUT CONTRACT:
+- Returns `defined`, `valid`, `plan`, `warnings`, and `post_execution_checks`.
+- Sets `next_action="query_data"` for valid plans, otherwise `semantic_get_definition`.
 
 
 **Input JSON Schema**:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from mcp.server.fastmcp import Context
@@ -15,6 +15,8 @@ from keboola_mcp_server.tools.semantic.model import (
     SemanticScope,
 )
 from keboola_mcp_server.tools.semantic.tools import (
+    _fuzzy_score,
+    _rank_candidates,
     semantic_define,
     semantic_discover,
     semantic_get_definition,
@@ -352,3 +354,103 @@ async def test_semantic_define_schema_validation_error(mcp_context_client: Conte
             entity_type=SemanticEntityType.METRIC,
             data={'name': 'broken_metric'},
         )
+
+
+@pytest.mark.asyncio
+async def test_semantic_discover_limit_zero_returns_empty(mcp_context_client: Context) -> None:
+    """semantic_discover with limit=0 must return an empty matches list."""
+    client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+    async def list_objects(object_type: str, **kwargs: object) -> list[JsonApiResource]:
+        if object_type == 'semantic-model':
+            return []
+        if object_type in ('semantic-dataset', 'semantic-metric'):
+            return []
+        return [_resource(object_type, 'obj-1', {'name': 'revenue', 'modelUUID': 'model-1'})]
+
+    client.metastore_client.list_objects = AsyncMock(side_effect=list_objects)
+    mcp_context_client.session.check_client_capability = MagicMock(return_value=False)
+
+    result = await semantic_discover(mcp_context_client, query='revenue', limit=0)
+
+    assert result.status == 'ok'
+    assert result.matches == []
+
+
+@pytest.mark.asyncio
+async def test_semantic_define_delete_does_not_call_get_schema(mcp_context_client: Context) -> None:
+    """semantic_define with action=delete must NOT call get_schema."""
+    client = KeboolaClient.from_state(mcp_context_client.session.state)
+    client.metastore_client.get_schema = AsyncMock()
+    client.metastore_client.delete_object = AsyncMock(return_value=None)
+
+    result = await semantic_define(
+        mcp_context_client,
+        action=SemanticDefineAction.DELETE,
+        entity_type=SemanticEntityType.METRIC,
+        uuid='metric-1',
+    )
+
+    assert result.deleted is True
+    client.metastore_client.get_schema.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_semantic_get_definition_uuid_and_name_raises(mcp_context_client: Context) -> None:
+    """semantic_get_definition with both uuid and name must raise ValueError."""
+    with pytest.raises(ValueError, match='not both'):
+        await semantic_get_definition(
+            mcp_context_client,
+            entity_type=SemanticEntityType.METRIC,
+            uuid='metric-1',
+            name='revenue',
+        )
+
+
+@pytest.mark.parametrize(
+    ('query', 'text', 'expect_above'),
+    [
+        ('revenue', 'revenue metric', 0.5),
+        ('revenue', 'revenues total', 0.4),
+        ('rev', 'revenue metric', 0.3),
+        ('revenue', 'xyz abc def', 0.0),
+    ],
+    ids=['exact_match', 'plural_match', 'prefix_match', 'no_match'],
+)
+def test_fuzzy_score(query: str, text: str, expect_above: float) -> None:
+    score = _fuzzy_score(query, text)
+    assert score >= expect_above, f'Expected score >= {expect_above}, got {score}'
+
+
+@pytest.mark.asyncio
+async def test_rank_candidates_fuzzy_fallback(mcp_context_client: Context) -> None:
+    """When sampling is unavailable, _rank_candidates falls back to fuzzy scoring."""
+    mcp_context_client.session.check_client_capability = MagicMock(return_value=False)
+
+    blobs = ['revenue metric sql sum', 'orders table customer data', 'revenue total by region']
+    scores = await _rank_candidates(mcp_context_client, 'revenue', blobs)
+
+    assert len(scores) == 3
+    # revenue blobs should score higher than orders blob
+    assert scores[0] > scores[1]
+    assert scores[2] > scores[1]
+
+
+@pytest.mark.asyncio
+async def test_rank_candidates_uses_sampling_when_available(mcp_context_client: Context) -> None:
+    """When sampling is available, _rank_candidates uses LLM ranking."""
+    from unittest.mock import MagicMock
+
+    mcp_context_client.session.check_client_capability = MagicMock(return_value=True)
+
+    # Mock ctx.sample to return a ranking that reverses the order
+    sampling_result = MagicMock()
+    sampling_result.result.ranked_indices = [2, 0, 1]
+    mcp_context_client.sample = AsyncMock(return_value=sampling_result)
+
+    blobs = ['blob-a', 'blob-b', 'blob-c']
+    scores = await _rank_candidates(mcp_context_client, 'query', blobs)
+
+    assert len(scores) == 3
+    assert scores[2] > scores[0] > scores[1]  # indices [2, 0, 1] → highest score at index 2
+    mcp_context_client.sample.assert_called_once()

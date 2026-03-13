@@ -100,9 +100,7 @@ async def test_get_schema(
 @pytest.mark.asyncio
 async def test_health_check_true_when_status_ok() -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
-    client.raw_client.get = AsyncMock(  # type: ignore[assignment]
-        return_value={'status': 'ok'}
-    )
+    client.raw_client.get = AsyncMock(return_value={'status': 'ok'})  # type: ignore[assignment]
 
     health = await client.health_check()
     assert health.status == 'ok'
@@ -197,7 +195,9 @@ async def test_list_objects_organization_scope_and_params() -> None:
 @pytest.mark.asyncio
 async def test_get_revision_calls_expected_endpoint() -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
-    client.raw_client.get = AsyncMock(return_value={'data': _jsonapi_item('finance-core', 'u1')})  # type: ignore[assignment]
+    client.raw_client.get = AsyncMock(  # type: ignore[assignment]
+        return_value={'data': _jsonapi_item('finance-core', 'u1')}
+    )
 
     result = await client.get_revision('semantic-model', 'u1', 4, simplified=False)
 
