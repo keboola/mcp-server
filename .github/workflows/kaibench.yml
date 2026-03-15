@@ -1,0 +1,355 @@
+name: KaiBench Evaluation
+
+# Runs KaiBench evaluations against the MCP server built from the current branch.
+# Spins up the MCP server (from this repo), kai-assistant (pre-built image),
+# Postgres, and Redis, then runs the KaiBench evaluation suite.
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      question_types:
+        description: 'Question types (comma-separated, or "all")'
+        default: 'Data Analysis Query,Configuration Reasoning,Storage Object Reasoning,MCP Tool Validation'
+        type: string
+      regression_only:
+        description: 'Only regression-flagged questions'
+        type: boolean
+        default: false
+      kai_assistant_image_tag:
+        description: 'kai-assistant image tag (default: latest production)'
+        required: false
+        type: string
+        default: ''
+  workflow_call:
+
+jobs:
+  evaluate:
+    name: Run KaiBench evaluation
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      status: ${{ steps.parse.outputs.status }}
+      passed: ${{ steps.parse.outputs.passed }}
+      failed: ${{ steps.parse.outputs.failed }}
+      total: ${{ steps.parse.outputs.total }}
+      pass_rate: ${{ steps.parse.outputs.pass_rate }}
+      duration: ${{ steps.parse.outputs.duration }}
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: kai_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=5
+
+    steps:
+      - name: Checkout MCP server
+        uses: actions/checkout@v4
+
+      - name: Checkout KaiBench
+        uses: actions/checkout@v4
+        with:
+          repository: keboola-rnd/KaiBench
+          token: ${{ secrets.KAIBENCH_REPO_TOKEN }}
+          path: kaibench
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Hub login
+        uses: docker/login-action@v3
+        with:
+          username: keboolabot
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build MCP server from branch
+        uses: docker/build-push-action@v6
+        with:
+          load: true
+          tags: keboola/mcp-server:kaibench-test
+          context: .
+          file: ./Dockerfile
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Resolve kai-assistant image tag
+        id: resolve-kai
+        run: |
+          if [ -n "${{ inputs.kai_assistant_image_tag }}" ]; then
+            echo "tag=${{ inputs.kai_assistant_image_tag }}" >> $GITHUB_OUTPUT
+          else
+            # Use latest production image
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pull kai-assistant image
+        run: docker pull keboola/kai-assistant:${{ steps.resolve-kai.outputs.tag }}
+
+      - name: Start MCP server
+        run: |
+          docker run -d --name mcp-server --network host \
+            keboola/mcp-server:kaibench-test \
+            --transport streamable-http --host 0.0.0.0 --port 8000
+          echo "Waiting for MCP server..."
+          for i in $(seq 1 30); do
+            if curl -so /dev/null http://localhost:8000/mcp 2>&1; then
+              echo "MCP server is ready"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "::error::MCP server failed to start"
+              docker logs mcp-server
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Run database migrations
+        env:
+          KAI_IMAGE_TAG: ${{ steps.resolve-kai.outputs.tag }}
+        run: |
+          docker run --rm --network host \
+            -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
+            --workdir /app/apps/kai-assistant-backend \
+            keboola/kai-assistant:$KAI_IMAGE_TAG \
+            node dist/lib/db/migrate.js
+
+      - name: Start kai-assistant
+        env:
+          KAI_IMAGE_TAG: ${{ steps.resolve-kai.outputs.tag }}
+          KAIBENCH_API_URL: ${{ secrets.KAIBENCH_API_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.KAI_GOOGLE_VERTEX_CREDENTIALS }}
+          GOOGLE_VERTEX_PROJECT: ${{ secrets.KAI_GOOGLE_VERTEX_PROJECT }}
+          GOOGLE_VERTEX_LOCATION: ${{ secrets.KAI_GOOGLE_VERTEX_LOCATION }}
+        run: |
+          AUTH_SECRET=$(openssl rand -base64 32)
+          docker run -d --name kai-assistant --network host \
+            -e AUTH_SECRET="$AUTH_SECRET" \
+            -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
+            -e REDIS_URL="redis://localhost:6379" \
+            -e MCP_SERVER_URL="http://localhost:8000/mcp" \
+            -e KEBOOLA_STORAGE_API_URL="$KAIBENCH_API_URL" \
+            -e KEBOOLA_STACK="dev-keboola-canary-orion" \
+            -e CLOUD_LLM_PROVIDER="google-vertex" \
+            -e GOOGLE_SERVICE_ACCOUNT_JSON="$GOOGLE_SERVICE_ACCOUNT_JSON" \
+            -e GOOGLE_VERTEX_PROJECT="$GOOGLE_VERTEX_PROJECT" \
+            -e GOOGLE_VERTEX_LOCATION="$GOOGLE_VERTEX_LOCATION" \
+            keboola/kai-assistant:$KAI_IMAGE_TAG
+          echo "Waiting for kai-assistant..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/ping > /dev/null 2>&1; then
+              echo "kai-assistant is ready"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "::error::kai-assistant failed to start"
+              docker logs kai-assistant
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        run: uv python install 3.11
+
+      - name: Install KaiBench dependencies
+        working-directory: kaibench
+        run: uv sync
+
+      - name: Run evaluation
+        working-directory: kaibench
+        env:
+          KAIBENCH_STATIC_TOKEN: ${{ secrets.KAIBENCH_STATIC_TOKEN }}
+          KAIBENCH_STATIC_HOST: connection.canary-orion.keboola.dev
+          KAIBENCH_STATIC_PROJECT_ID: '293'
+          KAIBENCH_MANAGEMENT_TOKEN: ${{ secrets.KAIBENCH_MANAGEMENT_TOKEN }}
+          KAIBENCH_API_URL: ${{ secrets.KAIBENCH_API_URL }}
+          KAIBENCH_ORGANIZATION_ID: '58'
+          KAIBENCH_EVAL_PARALLEL_WORKERS: '4'
+          KAIBENCH_EVAL_KAI_BACKEND_URL: http://localhost:3000
+        run: >
+          uv run kaibench run
+          -t "Data Analysis Query"
+          -t "Configuration Reasoning"
+          -t "Storage Object Reasoning"
+          -t "MCP Tool Validation"
+        continue-on-error: true
+
+      - name: Parse results
+        id: parse
+        if: always()
+        working-directory: kaibench
+        run: |
+          LATEST=$(ls -td results/run_* 2>/dev/null | head -1)
+          if [ -z "$LATEST" ]; then
+            echo "status=error" >> $GITHUB_OUTPUT
+            echo "passed=0" >> $GITHUB_OUTPUT
+            echo "failed=0" >> $GITHUB_OUTPUT
+            echo "total=0" >> $GITHUB_OUTPUT
+            echo "pass_rate=0" >> $GITHUB_OUTPUT
+            echo "duration=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          python3 << 'PYEOF' >> $GITHUB_OUTPUT
+          import json
+          from pathlib import Path
+
+          latest = sorted(Path('results').glob('run_*'))[-1]
+          s = json.loads((latest / 'summary.json').read_text())
+          m = s['metrics']
+
+          print(f"passed={m['passed']}")
+          print(f"failed={m['failed']}")
+          print(f"total={m['total_questions']}")
+          print(f"pass_rate={m['overall_pass_rate']:.2f}")
+          print(f"duration={m['duration_seconds']:.0f}")
+          status = 'passed' if m['failed'] == 0 and m['errors'] == 0 else 'failed'
+          print(f"status={status}")
+          PYEOF
+
+      - name: Step summary
+        if: always()
+        working-directory: kaibench
+        run: |
+          LATEST=$(ls -td results/run_* 2>/dev/null | head -1)
+          [ -z "$LATEST" ] && exit 0
+          python3 << 'PYEOF' >> $GITHUB_STEP_SUMMARY
+          import json, os
+          from pathlib import Path
+          from collections import Counter
+
+          latest = sorted(Path('results').glob('run_*'))[-1]
+          s = json.loads((latest / 'summary.json').read_text())
+          m = s['metrics']
+          mcp_sha = os.environ.get('GITHUB_SHA', 'N/A')[:12]
+
+          # Load per-question results
+          results = []
+          results_file = latest / 'results.jsonl'
+          if results_file.exists():
+              for line in results_file.read_text().splitlines():
+                  if line.strip():
+                      results.append(json.loads(line))
+
+          evaluated = [r for r in results if r.get('status') != 'skipped']
+
+          # Aggregate tool stats
+          all_tool_calls = []
+          for r in evaluated:
+              all_tool_calls.extend(r.get('trace', {}).get('tool_calls', []))
+          total_tools = len(all_tool_calls)
+          avg_tools = total_tools / len(evaluated) if evaluated else 0
+          avg_duration = sum(r.get('duration_ms', 0) for r in evaluated) / len(evaluated) / 1000 if evaluated else 0
+          total_tokens = sum(r.get('trace', {}).get('total_tokens', 0) or 0 for r in evaluated)
+          avg_tokens = total_tokens / len(evaluated) if evaluated else 0
+
+          # Tool call metrics
+          tool_errors = [tc for tc in all_tool_calls if tc.get('is_error')]
+          tool_success_rate = (total_tools - len(tool_errors)) / total_tools if total_tools else 0
+
+          print('## KaiBench Evaluation Results')
+          print()
+          print(f'MCP server commit: `{mcp_sha}`')
+          print()
+          print('| Metric | Value |')
+          print('|--------|-------|')
+          print(f'| Run ID | `{s["run_id"]}` |')
+          print(f'| Duration | {m["duration_seconds"]:.0f}s |')
+          print(f'| **Total** | **{m["total_questions"]}** |')
+          print(f'| Passed | {m["passed"]} |')
+          print(f'| Failed | {m["failed"]} |')
+          print(f'| Skipped | {m["skipped"]} |')
+          print(f'| Errors | {m["errors"]} |')
+          print(f'| **Pass Rate** | **{m["overall_pass_rate"]:.1%}** |')
+          print(f'| Total Tool Calls | {total_tools} |')
+          print(f'| Avg Tool Calls/Question | {avg_tools:.1f} |')
+          print(f'| Avg Duration/Question | {avg_duration:.0f}s |')
+          print(f'| Total Tokens | {total_tokens:,} |')
+          print(f'| Avg Tokens/Question | {avg_tokens:,.0f} |')
+
+          if all_tool_calls:
+              print()
+              print('### Tool Call Metrics')
+              print()
+              print('| Metric | Value |')
+              print('|--------|-------|')
+              print(f'| Tool Success Rate | {tool_success_rate:.1%} ({total_tools - len(tool_errors)}/{total_tools}) |')
+              if tool_errors:
+                  print(f'| Tool Errors | {len(tool_errors)} |')
+              print()
+              print('<details><summary>Tool usage breakdown</summary>')
+              print()
+              print('| Tool | Calls | Errors |')
+              print('|------|-------|--------|')
+              tool_freq = Counter(tc.get('tool_name', 'unknown') for tc in all_tool_calls)
+              error_by_tool = Counter(tc.get('tool_name', 'unknown') for tc in tool_errors)
+              for tool_name, count in tool_freq.most_common(20):
+                  errs = error_by_tool.get(tool_name, 0)
+                  err_str = str(errs) if errs else '-'
+                  print(f'| `{tool_name}` | {count} | {err_str} |')
+              print()
+              print('</details>')
+
+          # Per-type breakdown
+          for t in s.get('by_question_type', []):
+              print()
+              print(f'### {t["question_type"]}')
+              print(f'{t["passed_count"]}/{t["total_count"]} passed ({t["pass_rate"]:.1%})')
+
+          # Per-question table
+          if evaluated:
+              print()
+              print('### Per-Question Results')
+              print()
+              print('| Q | Type | Status | Tools | Tokens | Duration | Notes |')
+              print('|---|------|--------|-------|--------|----------|-------|')
+              def sort_key(x):
+                  qid = str(x.get('question_id', '0'))
+                  try:
+                      return (0, int(qid), '')
+                  except ValueError:
+                      return (1, 0, qid)
+              for r in sorted(evaluated, key=sort_key):
+                  qid = r.get('question_id', '?')
+                  qtype = (r.get('question_type') or '')[:12]
+                  status = r.get('status', '?')
+                  emoji = {'passed': ':white_check_mark:', 'failed': ':x:', 'error': ':warning:'}.get(status, status)
+                  tools = len(r.get('trace', {}).get('tool_calls', []))
+                  tokens = r.get('trace', {}).get('total_tokens', 0) or 0
+                  tokens_str = f'{tokens:,}' if tokens else '-'
+                  dur = f'{r.get("duration_ms", 0)/1000:.0f}s'
+                  notes = (r.get('verification', {}).get('notes') or '')[:40]
+                  print(f'| {qid} | {qtype} | {emoji} | {tools} | {tokens_str} | {dur} | {notes} |')
+          PYEOF
+
+      - name: Dump container logs
+        if: always()
+        run: |
+          echo "=== kai-assistant logs ==="
+          docker logs kai-assistant 2>&1 || true
+          echo ""
+          echo "=== mcp-server logs ==="
+          docker logs mcp-server 2>&1 || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaibench-results-${{ github.run_id }}
+          path: kaibench/results/
+          retention-days: 90
