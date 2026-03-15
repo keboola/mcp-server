@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Job Monitor</title>
+  <style>
+    /* ── Theme Variables ── */
+    :root {
+      --bg-primary: #ffffff;
+      --bg-secondary: #f8f9fa;
+      --bg-tertiary: #e9ecef;
+      --text-primary: #212529;
+      --text-secondary: #6c757d;
+      --text-muted: #adb5bd;
+      --border-color: #dee2e6;
+      --row-hover: #f1f3f5;
+      --log-bg: #1e1e2e;
+      --log-text: #cdd6f4;
+      --badge-blue-bg: #dbeafe;
+      --badge-blue-text: #1e40af;
+      --badge-green-bg: #dcfce7;
+      --badge-green-text: #166534;
+      --badge-red-bg: #fee2e2;
+      --badge-red-text: #991b1b;
+      --badge-amber-bg: #fef3c7;
+      --badge-amber-text: #92400e;
+      --badge-grey-bg: #f3f4f6;
+      --badge-grey-text: #6b7280;
+      --log-info: #9ca3af;
+      --log-warn: #f59e0b;
+      --log-error: #ef4444;
+      --log-success: #22c55e;
+    }
+
+    /* NOTE: The dark theme variables below are duplicated in the media query and
+       the .dark class override. Keep them in sync when changing colors. */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #1a1b26;
+        --bg-secondary: #24253a;
+        --bg-tertiary: #2f3047;
+        --text-primary: #c0caf5;
+        --text-secondary: #9aa5ce;
+        --text-muted: #565f89;
+        --border-color: #3b3d57;
+        --row-hover: #2a2b3d;
+        --log-bg: #13141f;
+        --log-text: #c0caf5;
+        --badge-blue-bg: #1e3a5f;
+        --badge-blue-text: #7dcfff;
+        --badge-green-bg: #1a3a2a;
+        --badge-green-text: #9ece6a;
+        --badge-red-bg: #3a1a1a;
+        --badge-red-text: #f7768e;
+        --badge-amber-bg: #3a2e1a;
+        --badge-amber-text: #e0af68;
+        --badge-grey-bg: #2a2b3d;
+        --badge-grey-text: #9aa5ce;
+        --log-info: #9aa5ce;
+        --log-warn: #e0af68;
+        --log-error: #f7768e;
+        --log-success: #9ece6a;
+      }
+    }
+
+    /* Dark class override for host-provided theme (keep in sync with media query above) */
+    :root.dark {
+      --bg-primary: #1a1b26;
+      --bg-secondary: #24253a;
+      --bg-tertiary: #2f3047;
+      --text-primary: #c0caf5;
+      --text-secondary: #9aa5ce;
+      --text-muted: #565f89;
+      --border-color: #3b3d57;
+      --row-hover: #2a2b3d;
+      --log-bg: #13141f;
+      --log-text: #c0caf5;
+      --badge-blue-bg: #1e3a5f;
+      --badge-blue-text: #7dcfff;
+      --badge-green-bg: #1a3a2a;
+      --badge-green-text: #9ece6a;
+      --badge-red-bg: #3a1a1a;
+      --badge-red-text: #f7768e;
+      --badge-amber-bg: #3a2e1a;
+      --badge-amber-text: #e0af68;
+      --badge-grey-bg: #2a2b3d;
+      --badge-grey-text: #9aa5ce;
+      --log-info: #9aa5ce;
+      --log-warn: #e0af68;
+      --log-error: #f7768e;
+      --log-success: #9ece6a;
+    }
+
+    /* Light class override for host-provided theme (keep in sync with :root defaults above) */
+    :root.light {
+      --bg-primary: #ffffff;
+      --bg-secondary: #f8f9fa;
+      --bg-tertiary: #e9ecef;
+      --text-primary: #212529;
+      --text-secondary: #6c757d;
+      --text-muted: #adb5bd;
+      --border-color: #dee2e6;
+      --row-hover: #f1f3f5;
+      --log-bg: #1e1e2e;
+      --log-text: #cdd6f4;
+      --badge-blue-bg: #dbeafe;
+      --badge-blue-text: #1e40af;
+      --badge-green-bg: #dcfce7;
+      --badge-green-text: #166534;
+      --badge-red-bg: #fee2e2;
+      --badge-red-text: #991b1b;
+      --badge-amber-bg: #fef3c7;
+      --badge-amber-text: #92400e;
+      --badge-grey-bg: #f3f4f6;
+      --badge-grey-text: #6b7280;
+      --log-info: #9ca3af;
+      --log-warn: #f59e0b;
+      --log-error: #ef4444;
+      --log-success: #22c55e;
+    }
+
+    /* ── Reset & Base ── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        Oxygen, Ubuntu, Cantarell, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      background: var(--bg-primary);
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .header-title {
+      font-size: 16px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .header-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+
+    .status-dot.active {
+      background: #22c55e;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+
+    .status-dot.paused {
+      background: var(--text-muted);
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .refresh-btn {
+      background: none;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .refresh-btn:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    /* ── Loading State ── */
+    .loading-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 20px;
+      color: var(--text-secondary);
+    }
+
+    .loading-spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--border-color);
+      border-top-color: var(--badge-blue-text);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 12px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── Empty State ── */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-secondary);
+    }
+
+    .empty-state-icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+      opacity: 0.5;
+    }
+
+    /* ── Table ── */
+    .jobs-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .jobs-table th {
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      position: sticky;
+      top: 45px;
+      z-index: 5;
+    }
+
+    .jobs-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-color);
+      vertical-align: middle;
+    }
+
+    .job-row {
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+
+    .job-row:hover {
+      background: var(--row-hover);
+    }
+
+    .job-row.expanded {
+      background: var(--row-hover);
+    }
+
+    /* ── Status Badge ── */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .badge-processing {
+      background: var(--badge-blue-bg);
+      color: var(--badge-blue-text);
+      animation: pulse-badge 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-badge {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    .badge-waiting, .badge-created {
+      background: var(--badge-grey-bg);
+      color: var(--badge-grey-text);
+    }
+
+    .badge-success {
+      background: var(--badge-green-bg);
+      color: var(--badge-green-text);
+    }
+
+    .badge-error {
+      background: var(--badge-red-bg);
+      color: var(--badge-red-text);
+    }
+
+    .badge-warning {
+      background: var(--badge-amber-bg);
+      color: var(--badge-amber-text);
+    }
+
+    .badge-terminating, .badge-terminated, .badge-cancelled {
+      background: var(--badge-grey-bg);
+      color: var(--badge-grey-text);
+      text-decoration: line-through;
+    }
+
+    /* ── Job ID Link ── */
+    .job-id-link {
+      color: var(--badge-blue-text);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .job-id-link:hover {
+      text-decoration: underline;
+    }
+
+    /* ── Expand Arrow ── */
+    .expand-arrow {
+      display: inline-block;
+      width: 16px;
+      font-size: 10px;
+      color: var(--text-muted);
+      transition: transform 0.15s;
+    }
+
+    .expand-arrow.open {
+      transform: rotate(90deg);
+    }
+
+    /* ── Log Viewer ── */
+    .log-panel {
+      display: none;
+    }
+
+    .log-panel.visible {
+      display: table-row;
+    }
+
+    .log-panel td {
+      padding: 0;
+    }
+
+    .log-viewer {
+      background: var(--log-bg);
+      color: var(--log-text);
+      font-family: 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      padding: 12px 16px;
+      max-height: 300px;
+      overflow-y: auto;
+      margin: 0 12px 12px;
+      border-radius: 6px;
+    }
+
+    .log-line {
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .log-line.log-info { color: var(--log-info); }
+    .log-line.log-warn { color: var(--log-warn); }
+    .log-line.log-error { color: var(--log-error); }
+    .log-line.log-success { color: var(--log-success); }
+
+    .no-logs {
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      .jobs-table th:nth-child(5),
+      .jobs-table td:nth-child(5) {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span class="header-title">Job Monitor</span>
+    <div class="header-meta">
+      <span id="last-refresh">--</span>
+      <span id="status-dot" class="status-dot paused" title="Polling paused"></span>
+      <button id="refresh-btn" class="refresh-btn" disabled>Refresh</button>
+    </div>
+  </div>
+
+  <div id="content">
+    <div class="loading-container" id="loading-state">
+      <div class="loading-spinner"></div>
+      <span>Connecting...</span>
+    </div>
+  </div>
+
+  <script type="module">
+    import { App } from 'https://unpkg.com/@modelcontextprotocol/ext-apps@0.4.0/app-with-deps';
+
+    // ── State ──
+    let jobs = [];
+    let filterParams = {};
+    let expandedRows = new Set();
+    let pollingActive = false;
+    let pollTimer = null;
+    const POLL_INTERVAL_MS = 5000;
+    const TERMINAL_STATES = new Set([
+      'success', 'error', 'cancelled', 'terminated', 'warning'
+    ]);
+
+    // ── DOM refs ──
+    const contentEl = document.getElementById('content');
+    const lastRefreshEl = document.getElementById('last-refresh');
+    const statusDotEl = document.getElementById('status-dot');
+    const refreshBtn = document.getElementById('refresh-btn');
+
+    // ── App Setup ──
+    const app = new App();
+
+    app.ontoolresult = (result) => {
+      handleData(result);
+    };
+
+    app.onhostcontextchanged = (ctx) => {
+      if (ctx && ctx.theme) {
+        const root = document.documentElement;
+        root.classList.remove('light', 'dark');
+        if (ctx.theme === 'dark') {
+          root.classList.add('dark');
+        } else if (ctx.theme === 'light') {
+          root.classList.add('light');
+        }
+      }
+    };
+
+    app.connect();
+
+    // ── Refresh Button ──
+    refreshBtn.addEventListener('click', () => {
+      refreshBtn.disabled = true;
+      triggerPoll();
+      // Re-enable polling even if all jobs are terminal
+      startPolling();
+    });
+
+    // ── Data Handling ──
+    function handleData(result) {
+      const structured = result && result.structuredContent
+        ? result.structuredContent
+        : result;
+
+      if (!structured) return;
+
+      if (structured.filterParams) {
+        filterParams = structured.filterParams;
+      }
+
+      if (Array.isArray(structured.jobs)) {
+        jobs = structured.jobs;
+      }
+
+      render();
+      updateRefreshTimestamp();
+
+      // Decide whether to poll
+      if (allJobsTerminal()) {
+        stopPolling();
+      } else {
+        startPolling();
+      }
+
+      refreshBtn.disabled = false;
+    }
+
+    // ── Polling ──
+    function allJobsTerminal() {
+      if (jobs.length === 0) return true;
+      return jobs.every(j => TERMINAL_STATES.has(j.status));
+    }
+
+    function startPolling() {
+      if (pollingActive) return;
+      pollingActive = true;
+      statusDotEl.className = 'status-dot active';
+      statusDotEl.title = 'Polling active';
+      schedulePoll();
+    }
+
+    function stopPolling() {
+      pollingActive = false;
+      statusDotEl.className = 'status-dot paused';
+      statusDotEl.title = 'Polling paused';
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    }
+
+    function schedulePoll() {
+      if (!pollingActive) return;
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = setTimeout(async () => {
+        await triggerPoll();
+        schedulePoll();
+      }, POLL_INTERVAL_MS);
+    }
+
+    async function triggerPoll() {
+      try {
+        const result = await app.callServerTool({
+          name: 'poll_job_monitor',
+          arguments: filterParams
+        });
+        handleData(result);
+      } catch (err) {
+        console.error('Poll error:', err);
+      }
+    }
+
+    function updateRefreshTimestamp() {
+      const now = new Date();
+      lastRefreshEl.textContent = 'Updated ' + now.toLocaleTimeString();
+    }
+
+    // ── Rendering ──
+    function render() {
+      if (jobs.length === 0) {
+        contentEl.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">&#128270;</div>
+            <div>No jobs found</div>
+          </div>`;
+        return;
+      }
+
+      let html = `<table class="jobs-table">
+        <thead>
+          <tr>
+            <th style="width:24px"></th>
+            <th>Status</th>
+            <th>Job ID</th>
+            <th>Component</th>
+            <th>Config ID</th>
+            <th>Duration</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>`;
+
+      for (const job of jobs) {
+        const isExpanded = expandedRows.has(job.id);
+        const arrowClass = isExpanded ? 'expand-arrow open' : 'expand-arrow';
+        const rowClass = isExpanded ? 'job-row expanded' : 'job-row';
+
+        html += `<tr class="${rowClass}" data-job-id="${esc(job.id)}">
+          <td><span class="${arrowClass}">&#9654;</span></td>
+          <td>${statusBadge(job.status)}</td>
+          <td>${jobIdCell(job)}</td>
+          <td title="${esc(job.componentId || '')}">${esc(shortComponent(job.componentId))}</td>
+          <td>${esc(job.configId || '--')}</td>
+          <td>${formatDuration(job.durationSeconds)}</td>
+          <td>${formatTime(job.createdTime)}</td>
+        </tr>`;
+
+        // Log panel row
+        const logVisibility = isExpanded ? 'log-panel visible' : 'log-panel';
+        html += `<tr class="${logVisibility}" data-log-for="${esc(job.id)}">
+          <td colspan="7">
+            <div class="log-viewer">${renderLogs(job.logs)}</div>
+          </td>
+        </tr>`;
+      }
+
+      html += '</tbody></table>';
+      contentEl.innerHTML = html;
+
+      // Attach row click handlers
+      contentEl.querySelectorAll('.job-row').forEach(row => {
+        row.addEventListener('click', () => {
+          const id = row.getAttribute('data-job-id');
+          toggleRow(id);
+        });
+      });
+
+      // Scroll expanded log viewers to bottom
+      contentEl.querySelectorAll('.log-panel.visible .log-viewer').forEach(lv => {
+        lv.scrollTop = lv.scrollHeight;
+      });
+    }
+
+    function toggleRow(jobId) {
+      if (expandedRows.has(jobId)) {
+        expandedRows.delete(jobId);
+      } else {
+        expandedRows.add(jobId);
+      }
+      render();
+    }
+
+    // ── Formatters ──
+    function statusBadge(status) {
+      const cls = 'badge badge-' + (status || 'created');
+      return `<span class="${cls}">${esc(status || 'unknown')}</span>`;
+    }
+
+    function jobIdCell(job) {
+      if (job.url) {
+        return `<a class="job-id-link" href="${esc(job.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(job.id)}</a>`;
+      }
+      return esc(job.id);
+    }
+
+    function shortComponent(componentId) {
+      if (!componentId) return '--';
+      // "keboola.snowflake-transformation" -> "snowflake-transformation"
+      const parts = componentId.split('.');
+      return parts.length > 1 ? parts.slice(1).join('.') : componentId;
+    }
+
+    function formatDuration(seconds) {
+      if (seconds == null || seconds < 0) return '--';
+      const total = Math.round(seconds);
+      const m = Math.floor(total / 60);
+      const s = total % 60;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+
+    function formatTime(isoString) {
+      if (!isoString) return '--';
+      try {
+        const d = new Date(isoString);
+        return d.toLocaleString(undefined, {
+          month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+      } catch {
+        return isoString;
+      }
+    }
+
+    function renderLogs(logs) {
+      if (!logs || logs.length === 0) {
+        return '<div class="no-logs">No log entries</div>';
+      }
+      return logs.map(entry => {
+        const typeClass = 'log-line log-' + (entry.type || 'info');
+        const ts = entry.created ? formatLogTime(entry.created) + '  ' : '';
+        return `<div class="${typeClass}">${esc(ts)}${esc(entry.message || '')}</div>`;
+      }).join('');
+    }
+
+    function formatLogTime(isoString) {
+      try {
+        const d = new Date(isoString);
+        return d.toLocaleTimeString(undefined, {
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+      } catch {
+        return '';
+      }
+    }
+
+    function esc(str) {
+      if (str == null) return '';
+      const d = document.createElement('div');
+      d.textContent = String(str);
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>

@@ -30,6 +30,10 @@ name or description.
 - [modify_flow](#modify_flow): Updates an existing flow configuration (either legacy `keboola.
 - [update_flow](#update_flow): Updates an existing flow configuration (either legacy `keboola.
 
+### Job Monitor App
+- [job_monitor](#job_monitor): Opens an interactive Job Monitor dashboard.
+- [poll_job_monitor](#poll_job_monitor): Polls for fresh job data.
+
 ### Jobs Tools
 - [get_jobs](#get_jobs): Retrieves job execution information from the Keboola project.
 - [run_job](#run_job): Starts a new job for a given component or transformation.
@@ -2602,6 +2606,161 @@ Starts a new job for a given component or transformation.
     "component_id",
     "configuration_id"
   ],
+  "type": "object"
+}
+```
+
+---
+
+# Job Monitor App
+<a name="job_monitor"></a>
+## job_monitor
+**Annotations**: `read-only`
+
+**Tags**: `job_monitor`
+
+**Description**:
+
+Opens an interactive Job Monitor dashboard.
+
+Displays a live-updating table of jobs with status badges, timing info,
+and expandable log viewers. The dashboard auto-refreshes every 5 seconds
+while jobs are still running.
+
+Use this tool when you want to visually monitor job execution, debug
+failed jobs, or show the user an overview of recent activity.
+
+EXAMPLES:
+- job_ids=["12345"] -> monitor a specific job with live log updates
+- job_ids=["12345", "67890"] -> monitor multiple jobs side by side
+- status="processing" -> show all currently running jobs
+- component_id="keboola.snowflake-transformation" -> show recent
+  transformation jobs
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "job_ids": {
+      "default": [],
+      "description": "IDs of specific jobs to monitor. When provided, shows full details with logs. When empty, lists recent jobs with optional filtering.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "component_id": {
+      "default": null,
+      "description": "Filter by component ID (only used when job_ids is empty).",
+      "type": "string"
+    },
+    "status": {
+      "default": null,
+      "description": "Filter by job status (only used when job_ids is empty).",
+      "enum": [
+        "waiting",
+        "processing",
+        "success",
+        "error",
+        "created",
+        "warning",
+        "terminating",
+        "cancelled",
+        "terminated"
+      ],
+      "type": "string"
+    },
+    "limit": {
+      "default": 20,
+      "description": "Max jobs to show (default 20, max 100).",
+      "maximum": 100,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "include_logs": {
+      "default": true,
+      "description": "Include execution logs for each job. Default True.",
+      "type": "boolean"
+    },
+    "log_tail_lines": {
+      "default": 50,
+      "description": "Max log events per job (default 50, max 500).",
+      "maximum": 500,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="poll_job_monitor"></a>
+## poll_job_monitor
+**Annotations**: `read-only`
+
+**Tags**: `job_monitor`
+
+**Description**:
+
+Polls for fresh job data. Called by the Job Monitor app for live updates.
+This tool is app-only -- it is not visible to the LLM.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "job_ids": {
+      "default": [],
+      "description": "IDs of specific jobs to poll.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "component_id": {
+      "default": null,
+      "description": "Filter by component ID.",
+      "type": "string"
+    },
+    "status": {
+      "default": null,
+      "description": "Filter by job status.",
+      "enum": [
+        "waiting",
+        "processing",
+        "success",
+        "error",
+        "created",
+        "warning",
+        "terminating",
+        "cancelled",
+        "terminated"
+      ],
+      "type": "string"
+    },
+    "limit": {
+      "default": 20,
+      "description": "Max jobs to return.",
+      "maximum": 100,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "include_logs": {
+      "default": true,
+      "description": "Include execution logs.",
+      "type": "boolean"
+    },
+    "log_tail_lines": {
+      "default": 50,
+      "description": "Max log events per job.",
+      "maximum": 500,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
   "type": "object"
 }
 ```
