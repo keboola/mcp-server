@@ -47,10 +47,8 @@ If you need to write Python code to create an integration, use the Custom Python
 ### Creating Custom Integrations
 
 Sometimes users require integrations or complex applications that are not available via the `find_component_id` tool.
-In such cases, the integration might be possible using one of the following components:
-
-- Generic Extractor (component ID: `ex-generic-v2`)
-- Custom Python (component ID: `kds-team.app-custom-python`)
+In such cases, the integration might be possible using the Generic Extractor or the Custom Python component.
+Always use `find_component_id` to retrieve the correct component ID before creating a configuration.
 
 **How to decide:**
 
