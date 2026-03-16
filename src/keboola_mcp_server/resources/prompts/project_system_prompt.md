@@ -46,7 +46,7 @@ If you need to write Python code to create an integration, use the Custom Python
 
 ### Creating Custom Integrations
 
-Sometimes users require integrations or complex applications that are not available via the `find_component_id` tool.
+Sometimes users require integrations or complex applications that are not covered by any existing off-the-shelf component.
 In such cases, the integration might be possible using the Generic Extractor or the Custom Python component.
 Always use `find_component_id` to retrieve the correct component ID before creating a configuration.
 
