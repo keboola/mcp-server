@@ -56,6 +56,10 @@ async def query_data(
     """
     Executes an SQL SELECT query to get the data from the underlying database.
 
+    BEFORE QUERYING:
+    * Always verify the table has a non-null fullyQualifiedName from get_tables tool.
+      If it does not, the table is not SQL-accessible from this workspace — do not attempt the query and inform user.
+
     CRITICAL SQL REQUIREMENTS:
 
     * ALWAYS check the SQL dialect before constructing queries. The SQL dialect can be found in the project info.

@@ -161,20 +161,43 @@ class TestWorkspaceManagerSnowflake:
             'status': 'completed',
             'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
         }
-        qsclient.get_job_results.side_effect = [
-            {
-                'status': 'completed',
-                'data': [[value for value in sapi_result.values()]],
-                'columns': [{'name': key} for key in sapi_result.keys()],
-                'message': '',
-            },
-            {
-                'status': 'completed',
-                'data': [],
-                'columns': [{'name': 'COLUMN_NAME'}, {'name': 'DATA_TYPE'}, {'name': 'IS_NULLABLE'}],
-                'message': '',
-            },
-        ]
+        if 'sourceTable' in table:
+            qsclient.get_job_results.side_effect = [
+                {
+                    'status': 'completed',
+                    'data': [[value for value in sapi_result.values()]],
+                    'columns': [{'name': key} for key in sapi_result.keys()],
+                    'message': '',
+                },
+                {
+                    'status': 'completed',
+                    'data': [],
+                    'columns': [],
+                    'message': 'Not found',
+                },
+                {
+                    'status': 'completed',
+                    'data': [[123]],
+                    'columns': [{'name': 'count(*)'}],
+                    'message': '',
+                },
+            ]
+        else:
+            qsclient.get_job_results.side_effect = [
+                {
+                    'status': 'completed',
+                    'data': [[value for value in sapi_result.values()]],
+                    'columns': [{'name': key} for key in sapi_result.keys()],
+                    'message': '',
+                },
+                {
+                    'status': 'completed',
+                    'data': [['col1', 'STRING', True]],
+                    'columns': [{'name': 'COLUMN_NAME'}, {'name': 'DATA_TYPE'}, {'name': 'IS_NULLABLE'}],
+                    'message': '',
+                },
+            ]
+
         mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
 
         m = WorkspaceManager.from_state(context.session.state)
@@ -186,6 +209,101 @@ class TestWorkspaceManagerSnowflake:
         qsclient.submit_job.assert_called()
         qsclient.get_job_status.assert_called()
         qsclient.get_job_results.assert_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('table', 'job_results'),
+        [
+            (
+                # local table — CURRENT_DATABASE() SQL fails
+                {'id': 'in.c-foo.bar', 'name': 'bar'},
+                [{'status': 'failed', 'data': [], 'columns': [], 'message': 'SQL error'}],
+            ),
+            (
+                # local table — CURRENT_DATABASE() returns no rows
+                {'id': 'in.c-foo.bar', 'name': 'bar'},
+                [{'status': 'completed', 'data': [], 'columns': [{'name': 'current_database'}], 'message': ''}],
+            ),
+            (
+                # local table — COLUMNS query SQL fails
+                {'id': 'in.c-foo.bar', 'name': 'bar'},
+                [
+                    {
+                        'status': 'completed',
+                        'data': [['db_xyz']],
+                        'columns': [{'name': 'current_database'}],
+                        'message': '',
+                    },
+                    {'status': 'failed', 'data': [], 'columns': [], 'message': 'SQL error'},
+                ],
+            ),
+            (
+                # local table — COLUMNS query returns no rows (table not in INFORMATION_SCHEMA)
+                # key behavioral change: was DbTableInfo(columns={}), now None
+                {'id': 'in.c-foo.bar', 'name': 'bar'},
+                [
+                    {
+                        'status': 'completed',
+                        'data': [['db_xyz']],
+                        'columns': [{'name': 'current_database'}],
+                        'message': '',
+                    },
+                    {
+                        'status': 'completed',
+                        'data': [],
+                        'columns': [{'name': 'COLUMN_NAME'}, {'name': 'DATA_TYPE'}, {'name': 'IS_NULLABLE'}],
+                        'message': '',
+                    },
+                    {
+                        'status': 'failed',
+                        'data': [],
+                        'columns': [],
+                        'message': 'Table does not exist or not authorized',
+                    },
+                ],
+            ),
+            (
+                # sourceTable — database lookup SQL fails
+                {
+                    'id': 'in.c-foo.bar',
+                    'name': 'bar',
+                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam'},
+                },
+                [{'status': 'failed', 'data': [], 'columns': [], 'message': 'SQL error'}],
+            ),
+            (
+                # sourceTable — database lookup returns no rows (linked project not accessible from workspace)
+                {
+                    'id': 'in.c-foo.bar',
+                    'name': 'bar',
+                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam'},
+                },
+                [{'status': 'completed', 'data': [], 'columns': [{'name': 'DATABASE_NAME'}], 'message': ''}],
+            ),
+        ],
+    )
+    async def test_get_table_info_returns_none(
+        self,
+        table: dict[str, Any],
+        job_results: list,
+        keboola_client: KeboolaClient,
+        context: Context,
+        mocker,
+    ):
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-1234'
+        qsclient.get_job_status.return_value = {
+            'status': 'completed',
+            'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
+        }
+        qsclient.get_job_results.side_effect = job_results
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+
+        m = WorkspaceManager.from_state(context.session.state)
+        info = await m.get_table_info(table)
+        assert info is None
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
