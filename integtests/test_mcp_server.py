@@ -184,6 +184,10 @@ async def _assert_basic_setup(client: Client):
         'update_descriptions',
         'update_flow',
         'update_sql_transformation',
+        'semantic_define',
+        'semantic_discover',
+        'semantic_get_definition',
+        'semantic_query_plan',
     }
     expected_tools = expected_tools - exclude
 
