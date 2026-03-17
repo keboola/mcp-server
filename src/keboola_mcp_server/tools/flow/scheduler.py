@@ -66,6 +66,8 @@ def validate_cron_tab(cron_tab: str | None) -> None:
                         parts.append(int(x))
                     except ValueError:
                         raise ValueError(f'Cron expression must have only digits got: {field} in "{cron_tab}".')
+            if allow_l and has_l and parts:
+                raise ValueError('Day of month must use either `L` or numeric values, not both.')
             return parts, has_l
 
         minutes, _ = to_int_list(split_cron_tab[0].strip())
