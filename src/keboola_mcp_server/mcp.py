@@ -32,7 +32,7 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.oauth import ProxyAccessToken
-from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
+from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, SEMANTIC_TOOLS_TAG, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -42,6 +42,8 @@ R = TypeVar('R')
 T = TypeVar('T')
 
 DEFAULT_CONCURRENCY = 10
+
+SEMANTIC_TOOLING_FEATURE = 'mcp-semantic-tooling'
 
 
 def is_read_only_tool(tool: Tool) -> bool:
@@ -363,6 +365,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             tools = [t for t in tools if is_read_only_tool(t)]
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
 
+        if SEMANTIC_TOOLING_FEATURE not in features:
+            tools = [t for t in tools if SEMANTIC_TOOLS_TAG not in (t.tags or set())]
+
         return tools
 
     async def on_call_tool(
@@ -381,6 +386,13 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     f'Access denied: The tool "{tool.name}" requires write permissions. '
                     f'Your current role ({token_role}) only allows read-only operations. '
                     f'Contact your administrator to request write access.'
+                )
+
+        if SEMANTIC_TOOLING_FEATURE not in features:
+            if SEMANTIC_TOOLS_TAG in (tool.tags or set()):
+                raise ToolError(
+                    f'The tool "{tool.name}" is not available in this project. '
+                    'Please ask Keboola support to enable "Semantic Layer Tooling" feature.'
                 )
 
         if 'hide-conditional-flows' in features:

@@ -14,6 +14,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.metastore import INTERNAL_META_FIELDS, JsonApiResource
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import KeboolaMcpServer
+from keboola_mcp_server.tools.constants import SEMANTIC_TOOLS_TAG
 from keboola_mcp_server.tools.semantic.model import (
     ENTITY_TO_OBJECT_TYPE,
     OBJECT_TO_ENTITY_TYPE,
@@ -35,8 +36,6 @@ from keboola_mcp_server.tools.semantic.model import (
     SemanticSource,
     ToolStatus,
 )
-
-SEMANTIC_TOOLS_TAG = 'semantic'
 
 SEARCH_ENTITY_TYPES: tuple[SemanticEntityType, ...] = (
     SemanticEntityType.METRIC,

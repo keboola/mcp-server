@@ -211,8 +211,8 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     async with Client(mcp) as client:
         tools = await client.list_tools()
         # plus the one we've added in this test minus two filtered tools
-        # create_flow() and update_flow()
-        assert len(tools) == tools_count + 1 - 2
+        # create_flow() and update_flow(), and four semantic tools (feature not enabled in mock)
+        assert len(tools) == tools_count + 1 - 2 - 4
         assert tools[-1].name == 'assessed-function'
         assert tools[-1].description == 'custom text'
         # check if the inputSchema contains the expected param description
