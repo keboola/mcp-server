@@ -23,7 +23,6 @@ class TestValidateCronTab:
             # L (last day of month) support
             pytest.param('0 10 L * *', id='last_day_of_month_10am'),
             pytest.param('0 0 L * *', id='last_day_of_month_midnight'),
-            pytest.param('0 10 1,L * *', id='first_and_last_day_of_month'),
             pytest.param('0 10 L 1,6 *', id='last_day_jan_and_june'),
             pytest.param('0 10 l * *', id='last_day_lowercase'),
         ],
@@ -81,6 +80,9 @@ class TestValidateCronTab:
             pytest.param('0 8 * * L', 'Cron expression must have only digits', id='L_in_weekdays'),
             # L with weekdays not allowed
             pytest.param('0 8 L * 0', 'Days of week must not be specified with days of month', id='L_with_weekdays'),
+            pytest.param(
+                '0 10 1,L * *', 'Day of month must use either `L` or numeric values, not both', id='L_with_days'
+            ),
         ],
     )
     def test_invalid_cron_tab(self, cron_tab: str, error_match: str):
