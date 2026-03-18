@@ -1,3 +1,5 @@
+import sys
+from types import ModuleType
 from typing import Literal, cast
 
 import pytest
@@ -177,6 +179,117 @@ def test_inject_query_to_source_code_default_path():
     result = _inject_query_to_source_code(src, backend)
     assert result.startswith(query_code)
     assert result.endswith(src)
+
+
+def _load_query_data_function(code: str, result_pages: list[JsonDict], mocker):
+    """Load injected query_data code with mocked httpx/pandas modules for isolated testing."""
+    calls: JsonDict = {'get': [], 'post': []}
+    result_pages = [page.copy() for page in result_pages]
+
+    class FakeResponse:
+        def __init__(self, payload: JsonDict) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> JsonDict:
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *, timeout, limits) -> None:
+            self.timeout = timeout
+            self.limits = limits
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, json: JsonDict, headers: JsonDict) -> FakeResponse:
+            calls['post'].append({'url': url, 'json': json, 'headers': headers})
+            return FakeResponse({'queryJobId': 'job-1'})
+
+        def get(self, url: str, headers: JsonDict, params: JsonDict | None = None) -> FakeResponse:
+            calls['get'].append({'url': url, 'headers': headers, 'params': params})
+            if url.endswith('/queries/job-1'):
+                return FakeResponse({'status': 'completed', 'statements': [{'id': 'stmt-1'}]})
+            if url.endswith('/results'):
+                return FakeResponse(result_pages.pop(0))
+            raise AssertionError(f'Unexpected GET URL: {url}')
+
+    httpx_module = ModuleType('httpx')
+    httpx_module.Timeout = lambda **kwargs: kwargs
+    httpx_module.Limits = lambda **kwargs: kwargs
+    httpx_module.Client = FakeClient
+
+    pandas_module = ModuleType('pandas')
+    pandas_module.DataFrame = lambda rows: rows
+
+    mocker.patch.dict(sys.modules, {'httpx': httpx_module, 'pandas': pandas_module})
+
+    namespace: dict[str, object] = {}
+    exec(code, namespace)
+    return namespace['query_data'], calls
+
+
+def test_query_service_query_data_paginates_results(mocker, monkeypatch) -> None:
+    query_data, calls = _load_query_data_function(
+        _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
+        [
+            {
+                'status': 'completed',
+                'columns': [{'name': 'id'}],
+                'numberOfRows': 3,
+                'data': [['1'], ['2']],
+            },
+            {
+                'status': 'completed',
+                'columns': [{'name': 'id'}],
+                'numberOfRows': 3,
+                'data': [['3']],
+            },
+        ],
+        mocker,
+    )
+    monkeypatch.setenv('BRANCH_ID', '123')
+    monkeypatch.setenv('WORKSPACE_ID', '456')
+    monkeypatch.setenv('KBC_TOKEN', 'test-token')
+    monkeypatch.setenv('KBC_URL', 'https://connection.keboola.com')
+
+    result = query_data('SELECT * FROM test')
+
+    assert result == [{'id': '1'}, {'id': '2'}, {'id': '3'}]
+    result_calls = [call for call in calls['get'] if call['url'].endswith('/results')]
+    assert len(result_calls) == 2
+    assert result_calls[0]['params']['offset'] == 0
+    assert result_calls[1]['params']['offset'] == 2
+    assert 'pageSize' in result_calls[0]['params']
+
+
+def test_query_service_query_data_stops_on_short_page_without_total_count(mocker, monkeypatch) -> None:
+    query_data, calls = _load_query_data_function(
+        _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
+        [
+            {
+                'status': 'completed',
+                'columns': [{'name': 'id'}],
+                'data': [['1'], ['2']],
+            }
+        ],
+        mocker,
+    )
+    monkeypatch.setenv('BRANCH_ID', '123')
+    monkeypatch.setenv('WORKSPACE_ID', '456')
+    monkeypatch.setenv('KBC_TOKEN', 'test-token')
+    monkeypatch.setenv('KBC_URL', 'https://connection.keboola.com')
+
+    result = query_data('SELECT * FROM test')
+
+    assert result == [{'id': '1'}, {'id': '2'}]
+    result_calls = [call for call in calls['get'] if call['url'].endswith('/results')]
+    assert len(result_calls) == 1
 
 
 def test_build_data_app_config_merges_defaults_and_secrets():
