@@ -38,7 +38,7 @@ from keboola_mcp_server.tools.components.model import (
     TfStrReplace,
     TransformationConfiguration,
 )
-from keboola_mcp_server.tools.components.sql_utils import format_sql, split_sql_statements
+from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
 from keboola_mcp_server.tools.components.utils import (
     clean_bucket_name,
     expand_component_types,
