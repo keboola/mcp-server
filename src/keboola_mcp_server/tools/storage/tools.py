@@ -31,6 +31,7 @@ from keboola_mcp_server.tools.storage.usage import (
     get_created_by,
     get_last_updated_by,
 )
+from keboola_mcp_server.utils import parse_iso_timestamp
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -79,6 +80,21 @@ def _sum(a: int | None, b: int | None) -> int | None:
         return (a or 0) + (b or 0)
 
 
+def _max_timestamp(*timestamps: str | None) -> str | None:
+    """Return the most recent timestamp from the given ISO 8601 strings, or None if all are None."""
+    valid = [ts for ts in timestamps if ts]
+    if not valid:
+        return None
+
+    def _parse(ts: str) -> tuple:
+        try:
+            return (1, parse_iso_timestamp(ts))
+        except ValueError:
+            return (0, ts)
+
+    return max(valid, key=_parse)
+
+
 class BucketDetail(BaseModel):
     id: str = Field(description='Unique identifier for the bucket.')
     name: str = Field(description='Name of the bucket.')
@@ -90,6 +106,7 @@ class BucketDetail(BaseModel):
     description: str | None = Field(None, description='Description of the bucket.')
     stage: str = Field(description='Stage of the bucket (in for input stage, out for output stage).')
     created: str = Field(description='Creation timestamp of the bucket.')
+    updated: str | None = Field(default=None, description='Timestamp of the most recent change to the bucket.')
     data_size_bytes: int | None = Field(
         None,
         description='Total data size of the bucket in bytes.',
@@ -152,9 +169,24 @@ class BucketDetail(BaseModel):
         metadata = values.get('metadata', [])
         if not metadata or not isinstance(metadata, list):
             return self
+        last_updated_by = get_last_updated_by(metadata)
         return self.model_copy(
-            update={'created_by': get_created_by(metadata), 'last_updated_by': get_last_updated_by(metadata)}
+            update={
+                'created_by': get_created_by(metadata),
+                'last_updated_by': last_updated_by,
+                'updated': _max_timestamp(
+                    self.updated,
+                    last_updated_by.timestamp if last_updated_by else None,
+                ),
+            }
         )
+
+    @model_validator(mode='before')
+    @classmethod
+    def set_updated(cls, values: dict[str, Any]) -> dict[str, Any]:
+        if not values.get('updated'):
+            values['updated'] = _max_timestamp(values.get('lastChangeDate'))
+        return values
 
     @model_validator(mode='before')
     @classmethod
@@ -250,6 +282,7 @@ class TableDetail(BaseModel):
         serialization_alias='primaryKey',
     )
     created: str | None = Field(default=None, description='Creation timestamp of the table.')
+    updated: str | None = Field(default=None, description='Timestamp of the most recent change to the table.')
     rows_count: int | None = Field(
         default=None,
         description='Number of rows in the table.',
@@ -294,9 +327,27 @@ class TableDetail(BaseModel):
         metadata = values.get('metadata', [])
         if not metadata or not isinstance(metadata, list):
             return self
+        last_updated_by = get_last_updated_by(metadata)
         return self.model_copy(
-            update={'created_by': get_created_by(metadata), 'last_updated_by': get_last_updated_by(metadata)}
+            update={
+                'created_by': get_created_by(metadata),
+                'last_updated_by': last_updated_by,
+                'updated': _max_timestamp(
+                    self.updated,
+                    last_updated_by.timestamp if last_updated_by else None,
+                ),
+            }
         )
+
+    @model_validator(mode='before')
+    @classmethod
+    def set_updated(cls, values: dict[str, Any]) -> dict[str, Any]:
+        if not values.get('updated'):
+            values['updated'] = _max_timestamp(
+                values.get('lastChangeDate'),
+                values.get('lastImportDate'),
+            )
+        return values
 
     @model_validator(mode='before')
     @classmethod
@@ -596,6 +647,14 @@ async def get_tables(
       available. When present, it reveals the actual type of data stored in the column - for example,
       a column with database_native_type VARCHAR might have keboola_base_type INTEGER, indicating
       it stores integer values despite being stored as text in the backend.
+
+    QUERYABILITY RULE:
+    - A table is directly queryable via query_data tool only if fullyQualifiedName is present and non-null
+      in the response.
+    - If fullyQualifiedName is absent or null (e.g. for linked/alias tables from other projects),
+      the table cannot be queried via SQL from this workspace.
+    - Do not attempt to construct or guess the FQN — it will not work. In that case,
+      inform the user of the limitation immediately.
 
     EXAMPLES:
     - `bucket_ids=["id1", ...]` → summary info of the tables in the buckets with the specified IDs
