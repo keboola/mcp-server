@@ -148,43 +148,25 @@ def empty_params():
                             {
                                 'name': 'Code 1',
                                 'script': (
-                                    'SELECT\n'
-                                    '  u.id,\n'
-                                    '  u.name,\n'
-                                    '  COUNT(o.id) AS order_count\n'
-                                    'FROM users AS u\n'
-                                    'LEFT JOIN orders AS o\n'
-                                    '  ON u.id = o.user_id\n'
-                                    'WHERE\n'
-                                    "  u.created_at > '2024-01-01'\n"
-                                    'GROUP BY\n'
-                                    '  u.id,\n'
-                                    '  u.name\n'
-                                    'HAVING\n'
-                                    '  COUNT(o.id) > 5;'
+                                    'SELECT u.id, u.name, COUNT(o.id) as order_count '
+                                    'FROM users u LEFT JOIN orders o ON u.id = o.user_id '
+                                    "WHERE u.created_at > '2024-01-01' "
+                                    'GROUP BY u.id, u.name HAVING COUNT(o.id) > 5'
                                 ),
                             },
                             {
                                 'name': 'Code 2',
                                 'script': (
-                                    'SELECT\n'
-                                    '  p.product_name,\n'
-                                    '  SUM(oi.quantity * oi.price) AS revenue\n'
-                                    'FROM products AS p\n'
-                                    'INNER JOIN order_items AS oi\n'
-                                    '  ON p.id = oi.product_id\n'
-                                    'GROUP BY\n'
-                                    '  p.product_name\n'
-                                    'ORDER BY\n'
-                                    '  revenue DESC\n'
-                                    'LIMIT 10;'
+                                    'SELECT p.product_name, SUM(oi.quantity * oi.price) as revenue '
+                                    'FROM products p INNER JOIN order_items oi ON p.id = oi.product_id '
+                                    'GROUP BY p.product_name ORDER BY revenue DESC LIMIT 10'
                                 ),
                             },
                         ],
                     },
                 ]
             },
-            'Added block with name "Multi Code Block" (code was automatically reformatted)',
+            'Added block with name "Multi Code Block"',
         ),
     ],
 )
@@ -460,12 +442,12 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
                         'codes': [
                             {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM table1'},
                             {'id': 'b0.c1', 'name': 'Code Y', 'script': 'SELECT * FROM table2'},
-                            {'name': 'New Code at End', 'script': 'SELECT\n  col1\nFROM table1;'},
+                            {'name': 'New Code at End', 'script': 'SELECT col1 FROM table1;'},
                         ],
                     },
                 ]
             },
-            'Added code with name "New Code at End" (code was automatically reformatted)',
+            'Added code with name "New Code at End"',
         ),
         # Add code to start
         (
@@ -501,14 +483,8 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
                             {
                                 'name': 'New Code at Start',
                                 'script': (
-                                    'SELECT DISTINCT\n'
-                                    '  category,\n'
-                                    '  AVG(price) OVER (PARTITION BY category) AS avg_price\n'
-                                    'FROM products\n'
-                                    'WHERE\n'
-                                    '  in_stock = TRUE\n'
-                                    'ORDER BY\n'
-                                    '  category;'
+                                    'SELECT DISTINCT category, AVG(price) OVER (PARTITION BY category) as avg_price '
+                                    'FROM products WHERE in_stock = true ORDER BY category'
                                 ),
                             },
                             {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM table1'},
@@ -516,7 +492,7 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
                     },
                 ]
             },
-            'Added code with name "New Code at Start" (code was automatically reformatted)',
+            'Added code with name "New Code at Start"',
         ),
     ],
 )
@@ -782,12 +758,12 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT\n  *\nFROM new_table;'},
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM new_table'},
                         ],
                     },
                 ]
             },
-            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Changed code with id 'b0.c0' in block 'b0'",
         ),
         # Set multiline script
         (
@@ -809,12 +785,12 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT\n  *\nFROM table1\nWHERE\n  col = 1;'},
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT *\nFROM table1\nWHERE col = 1'},
                         ],
                     },
                 ]
             },
-            "Changed code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Changed code with id 'b0.c0' in block 'b0'",
         ),
     ],
 )
@@ -875,13 +851,13 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                             {
                                 'id': 'b0.c0',
                                 'name': 'Code X',
-                                'script': 'SELECT\n  *\nFROM table1\nWHERE\n  col = 1;',
+                                'script': 'SELECT * FROM table1 WHERE col = 1',
                             },
                         ],
                     },
                 ]
             },
-            "Added script to code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Added script to code with id 'b0.c0' in block 'b0'",
         ),
         # Prepend to existing script
         (
@@ -908,13 +884,13 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                             {
                                 'id': 'b0.c0',
                                 'name': 'Code X',
-                                'script': 'SELECT\n  *\nFROM table0;\n\nSELECT\n  *\nFROM table1;',
+                                'script': 'SELECT * FROM table0; SELECT * FROM table1',
                             },
                         ],
                     },
                 ]
             },
-            "Added script to code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Added script to code with id 'b0.c0' in block 'b0'",
         ),
         # Prepend to existing script (creates invalid SQL, not reformatted)
         (
@@ -969,12 +945,12 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT\n  1;'},
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT 1'},
                         ],
                     },
                 ]
             },
-            "Added script to code with id 'b0.c0' in block 'b0' (code was automatically reformatted)",
+            "Added script to code with id 'b0.c0' in block 'b0'",
         ),
     ],
 )

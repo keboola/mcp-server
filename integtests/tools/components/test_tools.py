@@ -38,7 +38,7 @@ from keboola_mcp_server.tools.components.model import (
     TfStrReplace,
     TransformationConfiguration,
 )
-from keboola_mcp_server.tools.components.sql_utils import format_sql, split_sql_statements
+from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
 from keboola_mcp_server.tools.components.utils import (
     clean_bucket_name,
     expand_component_types,
@@ -728,7 +728,7 @@ async def test_create_sql_transformation(mcp_context: Context, keboola_project: 
 
         # Verify the parameters structure matches expected
         bucket_name = clean_bucket_name(test_name)
-        expected_script = format_sql(test_sql_code_blocks[0].script, sql_dialect)
+        expected_script = test_sql_code_blocks[0].script
         expected_script = await split_sql_statements(expected_script)
         expected_parameters = {
             'blocks': [
@@ -842,8 +842,8 @@ async def initial_sqltrfm(
                     op='str_replace',
                     block_id='b0',
                     code_id='b0.c0',
-                    search_for='SELECT\n  1',
-                    replace_with='SELECT\n  12',
+                    search_for='SELECT 1',
+                    replace_with='SELECT 12',
                 ),
                 TfAddScript(
                     op='add_script',
