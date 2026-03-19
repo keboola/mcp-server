@@ -1,3 +1,4 @@
+import json
 import logging
 from http import HTTPStatus
 from typing import Any, Optional, Union, cast
@@ -167,7 +168,7 @@ class RawKeboolaClient:
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
                 headers=headers,
-                json=data or {},
+                content=json.dumps(data or {}, ensure_ascii=False).encode('utf-8'),
             )
             self._raise_for_status(response)
             return cast(JsonStruct, response.json())
@@ -197,7 +198,7 @@ class RawKeboolaClient:
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
                 headers=headers,
-                json=data or {},
+                content=json.dumps(data or {}, ensure_ascii=False).encode('utf-8'),
             )
             self._raise_for_status(response)
             return cast(JsonStruct, response.json())
@@ -255,7 +256,7 @@ class RawKeboolaClient:
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
                 headers=headers,
-                json=data or {},
+                content=json.dumps(data or {}, ensure_ascii=False).encode('utf-8'),
             )
             self._raise_for_status(response)
             return cast(JsonStruct, response.json())

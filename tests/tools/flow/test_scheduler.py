@@ -20,6 +20,11 @@ class TestValidateCronTab:
             pytest.param('30 14 * * *', id='daily_2_30pm'),
             pytest.param('0 0 * * *', id='midnight_daily'),
             pytest.param('59 23 * * *', id='max_values'),
+            # L (last day of month) support
+            pytest.param('0 10 L * *', id='last_day_of_month_10am'),
+            pytest.param('0 0 L * *', id='last_day_of_month_midnight'),
+            pytest.param('0 10 L 1,6 *', id='last_day_jan_and_june'),
+            pytest.param('0 10 l * *', id='last_day_lowercase'),
         ],
     )
     def test_valid_cron_tab(self, cron_tab: str | None):
@@ -68,6 +73,16 @@ class TestValidateCronTab:
             pytest.param(
                 '0 8 1,3 1,3 0', 'Days of week must not be specified with days of month', id='weekdays_with_both'
             ),
+            # L not allowed in fields other than day-of-month
+            pytest.param('L 8 * * *', 'Cron expression must have only digits', id='L_in_minutes'),
+            pytest.param('0 L * * *', 'Cron expression must have only digits', id='L_in_hours'),
+            pytest.param('0 8 * L *', 'Cron expression must have only digits', id='L_in_months'),
+            pytest.param('0 8 * * L', 'Cron expression must have only digits', id='L_in_weekdays'),
+            # L with weekdays not allowed
+            pytest.param('0 8 L * 0', 'Days of week must not be specified with days of month', id='L_with_weekdays'),
+            pytest.param(
+                '0 10 1,L * *', 'Day of month must use either `L` or numeric values, not both', id='L_with_days'
+            ),
         ],
     )
     def test_invalid_cron_tab(self, cron_tab: str, error_match: str):
@@ -84,7 +99,7 @@ class TestValidateCronTab:
         assert 'Field order:' in error_message
         assert '1. Minute (0-59)' in error_message
         assert '2. Hour (0-23)' in error_message
-        assert '3. Day of month (1-31)' in error_message
+        assert '3. Day of month (1-31, or L for last day of month)' in error_message
         assert '4. Month (1-12)' in error_message
         assert '5. Day of week (0-6, where 0 = Sunday)' in error_message
 

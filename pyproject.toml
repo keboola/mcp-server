@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.48.4"
+version = "1.48.7"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,7 +27,7 @@ dependencies = [
 ]
 [project.optional-dependencies]
 codestyle = [
-    "black ~= 25.11",
+    "black>=25.11,<27.0",
     "isort ~= 7.0",
     "flake8 ~= 7.3",
     "Flake8-pyproject ~= 1.2",
