@@ -4,64 +4,64 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
 
 from keboola_mcp_server.clients.base import JsonStruct, KeboolaServiceClient, RawKeboolaClient
 
-INTERNAL_META_FIELDS = {
-    'uuid',
-    'name',
-    'revision',
-    'revisionCreatedAt',
-    'createdAt',
-    'updatedAt',
-    'deletedAt',
-    'lastUpdated',
-    'projectId',
-    'organizationId',
-    'objectType',
-    'schemaVersion',
-    'branch',
-}
+
+class MetaObjectMeta(BaseModel):
+    """Metadata from the JSON:API 'meta' field — same structure for all object types."""
+
+    branch: str = Field(default='')
+    name: str = Field(default='')
+    revision: int = Field(default=0)
+    schema_version: str = Field(
+        validation_alias=AliasChoices('schemaVersion', 'schema_version'),
+        serialization_alias='schemaVersion',
+        default='',
+    )
+    project_id: int = Field(
+        validation_alias=AliasChoices('projectId', 'project_id'),
+        serialization_alias='projectId',
+        default=0,
+    )
+    organization_id: str = Field(
+        validation_alias=AliasChoices('organizationId', 'organization_id'),
+        serialization_alias='organizationId',
+        default='',
+    )
+    created_at: str = Field(
+        validation_alias=AliasChoices('createdAt', 'created_at'),
+        serialization_alias='createdAt',
+        default='',
+    )
+    last_updated: str = Field(
+        validation_alias=AliasChoices('lastUpdated', 'last_updated'),
+        serialization_alias='lastUpdated',
+        default='',
+    )
+    revision_created_at: str = Field(
+        validation_alias=AliasChoices('revisionCreatedAt', 'revision_created_at'),
+        serialization_alias='revisionCreatedAt',
+        default='',
+    )
 
 
-class HealthCheckResponse(BaseModel):
-    status: str = Field(description='Service health status.')
+class MetastoreObject(BaseModel):
+    """Single object from the Metastore JSON:API response."""
 
-    @property
-    def is_ok(self) -> bool:
-        return self.status == 'ok'
-
-
-class SchemaDocument(BaseModel):
-    model_config = ConfigDict(extra='allow')
-
-    title: str | None = Field(default=None, description='Schema title, usually objectType.')
-    version: str | None = Field(default=None, description='Schema version.')
+    type: str = Field(default='')
+    id: str = Field(default='')
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    meta: MetaObjectMeta = Field(default_factory=MetaObjectMeta)
 
 
-class JsonApiResource(BaseModel):
-    model_config = ConfigDict(extra='allow')
-
-    type: str = Field(default='', description='Resource type.')
-    id: str | None = Field(default=None, description='Resource id.')
-    attributes: dict[str, Any] = Field(default_factory=dict, description='Resource attributes.')
-    meta: dict[str, Any] = Field(default_factory=dict, description='Resource metadata.')
-
-
-class JsonApiListEnvelope(BaseModel):
-    data: list[JsonApiResource] = Field(default_factory=list)
-
-
-class JsonApiObjectEnvelope(BaseModel):
-    data: JsonApiResource
+_list_adapter: TypeAdapter[list[MetastoreObject]] = TypeAdapter(list[MetastoreObject])
+_object_adapter: TypeAdapter[MetastoreObject] = TypeAdapter(MetastoreObject)
 
 
 class MetastoreClient(KeboolaServiceClient):
     """Client for interacting with the Metastore API."""
-
-    def __init__(self, raw_client: RawKeboolaClient) -> None:
-        super().__init__(raw_client=raw_client)
 
     @classmethod
     def create(
@@ -69,31 +69,27 @@ class MetastoreClient(KeboolaServiceClient):
         root_url: str,
         token: str | None,
         *,
+        branch: str = 'main',
         headers: dict[str, Any] | None = None,
         readonly: bool | None = None,
     ) -> 'MetastoreClient':
-        return cls(
+        client = cls(
             raw_client=RawKeboolaClient(
                 base_api_url=root_url,
                 api_token=token,
                 headers=headers,
                 readonly=readonly,
-            )
+            ),
         )
+        client.branch = branch
+        return client
 
-    async def health_check(self) -> HealthCheckResponse:
-        response = await self.get(endpoint='health-check')
-        if not isinstance(response, dict):
-            raise ValueError('Unexpected metastore health-check response format.')
-        return HealthCheckResponse.model_validate(response)
-
-    async def get_schema(self, object_type: str, version: str | None = None) -> SchemaDocument:
+    async def get_schema(self, object_type: str, version: str | None = None) -> dict[str, Any]:
         endpoint = f'api/v1/schema/{object_type}/{version}' if version else f'api/v1/schema/{object_type}'
         response = await self.get(endpoint=endpoint)
         if not isinstance(response, dict):
             raise ValueError('Unexpected metastore schema response format.')
-        body = response.get('schema') if isinstance(response.get('schema'), dict) else response
-        return SchemaDocument.model_validate(body)
+        return response
 
     async def list_objects(
         self,
@@ -102,9 +98,8 @@ class MetastoreClient(KeboolaServiceClient):
         filter_by: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
-        simplified: bool | None = None,
         organization_scope: bool = False,
-    ) -> list[JsonApiResource]:
+    ) -> list[MetastoreObject]:
         endpoint = (
             f'api/v1/repository/{object_type}/organization'
             if organization_scope
@@ -117,28 +112,22 @@ class MetastoreClient(KeboolaServiceClient):
             params['limit'] = limit
         if offset is not None:
             params['offset'] = offset
-        if simplified is not None:
-            params['simplified'] = simplified
 
         response = await self.get(
             endpoint=endpoint,
             params=params or None,
         )
-        return self._parse_jsonapi_list(response)
+        return self._parse_list(response)
 
     async def get_object(
         self,
         object_type: str,
         uuid: str,
-        *,
-        simplified: bool | None = None,
-    ) -> JsonApiResource:
-        params = {'simplified': simplified} if simplified is not None else None
+    ) -> MetastoreObject:
         response = await self.get(
             endpoint=f'api/v1/repository/{object_type}/{uuid}',
-            params=params,
         )
-        return self._parse_jsonapi_object(response)
+        return self._parse_object(response)
 
     async def create_object(
         self,
@@ -148,8 +137,7 @@ class MetastoreClient(KeboolaServiceClient):
         data: dict[str, Any],
         schema_version: str | None = None,
         scope: str | None = None,
-        branch: str | None = None,
-    ) -> JsonApiResource:
+    ) -> MetastoreObject:
         payload: dict[str, Any] = {'data': data}
         if name is not None:
             payload['name'] = name
@@ -157,11 +145,10 @@ class MetastoreClient(KeboolaServiceClient):
             payload['schemaVersion'] = schema_version
         if scope is not None:
             payload['scope'] = scope
-        if branch is not None:
-            payload['branch'] = branch
+        payload['branch'] = self.branch
 
         response = await self.post(endpoint=f'api/v1/repository/{object_type}', data=payload)
-        return self._parse_jsonapi_object(response)
+        return self._parse_object(response)
 
     async def patch_object(
         self,
@@ -170,7 +157,7 @@ class MetastoreClient(KeboolaServiceClient):
         *,
         name: str | None = None,
         data: dict[str, Any] | None = None,
-    ) -> JsonApiResource:
+    ) -> MetastoreObject:
         payload: dict[str, Any] = {}
         if name is not None:
             payload['name'] = name
@@ -178,7 +165,7 @@ class MetastoreClient(KeboolaServiceClient):
             payload['data'] = data
 
         response = await self.patch(endpoint=f'api/v1/repository/{object_type}/{uuid}', data=payload)
-        return self._parse_jsonapi_object(response)
+        return self._parse_object(response)
 
     async def put_object(
         self,
@@ -187,12 +174,12 @@ class MetastoreClient(KeboolaServiceClient):
         *,
         name: str,
         data: dict[str, Any],
-    ) -> JsonApiResource:
+    ) -> MetastoreObject:
         response = await self.put(
             endpoint=f'api/v1/repository/{object_type}/{uuid}',
             data={'name': name, 'data': data},
         )
-        return self._parse_jsonapi_object(response)
+        return self._parse_object(response)
 
     async def delete_object(self, object_type: str, uuid: str) -> JsonStruct | None:
         return await self.delete(endpoint=f'api/v1/repository/{object_type}/{uuid}')
@@ -202,47 +189,50 @@ class MetastoreClient(KeboolaServiceClient):
         object_type: str,
         *,
         filter_by: str | None = None,
-        simplified: bool | None = None,
-    ) -> list[JsonApiResource]:
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[MetastoreObject]:
         params: dict[str, Any] = {}
         if filter_by is not None:
             params['filter'] = filter_by
-        if simplified is not None:
-            params['simplified'] = simplified
+        if limit is not None:
+            params['limit'] = limit
+        if offset is not None:
+            params['offset'] = offset
         response = await self.get(
             endpoint=f'api/v1/repository/{object_type}/revisions',
             params=params or None,
         )
-        return self._parse_jsonapi_list(response)
+        return self._parse_list(response)
 
     async def get_revision(
         self,
         object_type: str,
         uuid: str,
         revision: int,
-        *,
-        simplified: bool | None = None,
-    ) -> JsonApiResource:
-        params = {'simplified': simplified} if simplified is not None else None
+    ) -> MetastoreObject:
         response = await self.get(
             endpoint=f'api/v1/repository/{object_type}/{uuid}/revisions/{revision}',
-            params=params,
         )
-        return self._parse_jsonapi_object(response)
+        return self._parse_object(response)
 
     async def delete_revision(self, object_type: str, uuid: str, revision: int) -> JsonStruct | None:
         return await self.delete(endpoint=f'api/v1/repository/{object_type}/{uuid}/revisions/{revision}')
 
     @staticmethod
-    def _parse_jsonapi_list(response: JsonStruct) -> list[JsonApiResource]:
+    def _parse_list(response: JsonStruct) -> list[MetastoreObject]:
         if not isinstance(response, dict):
-            raise ValueError('Unexpected metastore response format: expected JSON object.')
-        envelope = JsonApiListEnvelope.model_validate(response)
-        return envelope.data
+            raise ValueError('Unexpected metastore response format: expected JSON object with "data" key.')
+        data = response.get('data')
+        if not isinstance(data, list):
+            raise ValueError('Unexpected metastore response format: "data" is not an array.')
+        return _list_adapter.validate_python(data)
 
     @staticmethod
-    def _parse_jsonapi_object(response: JsonStruct) -> JsonApiResource:
+    def _parse_object(response: JsonStruct) -> MetastoreObject:
         if not isinstance(response, dict):
-            raise ValueError('Unexpected metastore response format.')
-        envelope = JsonApiObjectEnvelope.model_validate(response)
-        return envelope.data
+            raise ValueError('Unexpected metastore response format: expected JSON object.')
+        data = response.get('data', response)
+        if not isinstance(data, dict):
+            raise ValueError('Unexpected metastore response format: "data" is not an object.')
+        return _object_adapter.validate_python(data)
