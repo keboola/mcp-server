@@ -115,7 +115,7 @@ async def test_list_objects_organization_scope() -> None:
 
 @pytest.mark.asyncio
 async def test_create_object_calls_post_with_branch() -> None:
-    client = MetastoreClient.create('https://metastore.example.com', token='test-token', branch='dev')
+    client = MetastoreClient.create('https://metastore.example.com', token='test-token', branch_id='dev')
     client.raw_client.post = AsyncMock(  # type: ignore[assignment]
         return_value=_single_response(_jsonapi_object('new-metric', 'm1', 'semantic-metric')),
     )

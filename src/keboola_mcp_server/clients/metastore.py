@@ -63,13 +63,17 @@ _object_adapter: TypeAdapter[MetastoreObject] = TypeAdapter(MetastoreObject)
 class MetastoreClient(KeboolaServiceClient):
     """Client for interacting with the Metastore API."""
 
+    def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
+        super().__init__(raw_client=raw_client)
+        self._branch_id: str = branch_id or 'main'
+
     @classmethod
     def create(
         cls,
         root_url: str,
         token: str | None,
         *,
-        branch: str = 'main',
+        branch_id: str | None = None,
         headers: dict[str, Any] | None = None,
         readonly: bool | None = None,
     ) -> 'MetastoreClient':
@@ -80,8 +84,8 @@ class MetastoreClient(KeboolaServiceClient):
                 headers=headers,
                 readonly=readonly,
             ),
+            branch_id=branch_id,
         )
-        client.branch = branch
         return client
 
     async def get_schema(self, object_type: str, version: str | None = None) -> dict[str, Any]:
@@ -145,7 +149,7 @@ class MetastoreClient(KeboolaServiceClient):
             payload['schemaVersion'] = schema_version
         if scope is not None:
             payload['scope'] = scope
-        payload['branch'] = self.branch
+        payload['branch'] = self._branch_id
 
         response = await self.post(endpoint=f'api/v1/repository/{object_type}', data=payload)
         return self._parse_object(response)
