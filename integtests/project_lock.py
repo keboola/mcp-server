@@ -171,6 +171,7 @@ class ProjectLock:
         if winner is not None and winner.lock_id == lock_id:
             LOG.info(f'[project_lock] Acquired lock {lock_id}')
             self._cleanup_old_locks(lock_id)
+            self.clean_project()
             return LockInfo(
                 lock_id=lock_id,
                 acquired_at=acquired_at,
@@ -188,7 +189,7 @@ class ProjectLock:
             for stale in active:
                 if self._is_stale(stale):
                     self._release_lock_entry(stale.lock_id)
-            self._clean_project()
+            self.clean_project()
             # Release our pending entry and write a fresh candidate
             self._release_lock_entry(lock_id)
             time.sleep(2)
@@ -352,7 +353,7 @@ class ProjectLock:
                 except Exception as exc:
                     LOG.warning(f'[project_lock] Failed to delete orphaned .released entry {lock_id}: {exc}')
 
-    def _clean_project(self) -> None:
+    def clean_project(self) -> None:
         """Delete all buckets and component configurations from the project."""
         LOG.info('[project_lock] Cleaning project (deleting all buckets and configs)')
 

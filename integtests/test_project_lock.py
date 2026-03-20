@@ -85,6 +85,7 @@ def test_acquire_happy_path(mocker):
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
+    mocker.patch.object(lock, 'clean_project')
 
     # _read_metadata returns only our own entry after the anti-collision sleep
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
@@ -118,6 +119,7 @@ def test_acquire_anti_collision_waits(mocker):
 
     mocker.patch.object(lock, '_post', return_value=[])
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
+    mocker.patch.object(lock, 'clean_project')
 
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
     mocker.patch.object(lock, '_read_metadata', return_value=[my_entry])
@@ -142,6 +144,7 @@ def test_acquire_win_oldest_timestamp(mocker):
 
     mocker.patch.object(lock, '_post', return_value=[])
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
+    mocker.patch.object(lock, 'clean_project')
 
     # Our entry is 5 minutes older than the other
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=5)
@@ -173,6 +176,7 @@ def test_acquire_lose_to_older(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
+    mocker.patch.object(lock, 'clean_project')
 
     other_entry = _make_lock(lock_id=other_lock_id, minutes_ago=10)
 
@@ -228,7 +232,7 @@ def test_acquire_stale_detected(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     # Build a stale entry (acquired 120 minutes ago, TTL=60)
     stale_entry = _make_lock(lock_id=stale_lock_id, minutes_ago=120)
@@ -284,7 +288,7 @@ def test_clean_project_deletes_buckets(mocker):
     )
     delete_mock = mocker.patch.object(lock, '_delete')
 
-    lock._clean_project()
+    lock.clean_project()
 
     delete_calls = [c for c in delete_mock.call_args_list if 'buckets' in c.args[0]]
     deleted_bucket_paths = {c.args[0] for c in delete_calls}
@@ -318,7 +322,7 @@ def test_clean_project_deletes_configs(mocker):
     )
     delete_mock = mocker.patch.object(lock, '_delete')
 
-    lock._clean_project()
+    lock.clean_project()
 
     config_delete_paths = [c.args[0] for c in delete_mock.call_args_list if 'configs' in c.args[0]]
     # Each config deleted twice
@@ -481,6 +485,7 @@ def test_try_acquire_once_happy_path(mocker):
     mocker.patch.object(lock, '_read_metadata', return_value=[my_entry])
     sleep_mock = mocker.patch('time.sleep')
     cleanup_mock = mocker.patch.object(lock, '_cleanup_old_locks')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     result = lock._try_acquire_once()
 
@@ -489,6 +494,7 @@ def test_try_acquire_once_happy_path(mocker):
     assert result.metadata_key == LOCK_KEY_PREFIX + my_lock_id
     assert any(c == call(0) for c in sleep_mock.call_args_list)  # anti_collision=0
     cleanup_mock.assert_called_once_with(my_lock_id)
+    clean_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -504,7 +510,7 @@ def test_try_acquire_once_loses_to_active_runner(mocker):
 
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     other_entry = _make_lock(lock_id=other_lock_id, minutes_ago=5)  # older
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
@@ -542,7 +548,7 @@ def test_try_acquire_once_stale_then_wins(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
     cleanup_mock = mocker.patch.object(lock, '_cleanup_old_locks')
 
     stale_entry = _make_lock(lock_id=stale_id, minutes_ago=120)
@@ -594,7 +600,7 @@ def test_try_acquire_once_stale_then_loses(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     stale_entry = _make_lock(lock_id=stale_id, minutes_ago=120)
 
