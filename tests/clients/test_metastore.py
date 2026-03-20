@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -7,32 +8,57 @@ import pytest
 from keboola_mcp_server.clients.metastore import MetastoreClient
 
 
-def _jsonapi_item(name: str, resource_id: str, object_type: str = 'semantic-model') -> dict:
+def _jsonapi_object(
+    name: str,
+    uuid: str,
+    object_type: str = 'semantic-model',
+    revision: int = 1,
+    **extra_attrs: Any,
+) -> dict:
+    """Build a single JSON:API resource object (inside the 'data' envelope)."""
     return {
         'type': object_type,
-        'id': resource_id,
-        'attributes': {
-            'uuid': resource_id,
+        'id': uuid,
+        'attributes': {'name': name, **extra_attrs},
+        'meta': {
+            'branch': 'main',
             'name': name,
-            'data': {'name': name},
-            'revision': 1,
+            'revision': revision,
+            'schemaVersion': '1.0.0',
+            'projectId': 123,
+            'organizationId': '456',
+            'createdAt': '2026-01-01T00:00:00Z',
+            'lastUpdated': '2026-01-01T00:00:00Z',
             'revisionCreatedAt': '2026-01-01T00:00:00Z',
         },
     }
 
 
+def _list_response(*objects: dict) -> dict:
+    """Wrap objects in a JSON:API list envelope."""
+    return {'data': list(objects)}
+
+
+def _single_response(obj: dict) -> dict:
+    """Wrap a single object in a JSON:API envelope."""
+    return {'data': obj}
+
+
 @pytest.mark.asyncio
-async def test_list_objects_maps_jsonapi() -> None:
+async def test_list_objects_returns_meta_objects() -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
     client.raw_client.get = AsyncMock(  # type: ignore[assignment]
-        return_value={'data': [_jsonapi_item('finance-core', 'u1')]}
+        return_value=_list_response(_jsonapi_object('finance-core', 'u1')),
     )
 
-    first = await client.list_objects('semantic-model')
+    result = await client.list_objects('semantic-model')
 
-    assert len(first) == 1
-    assert first[0].id == 'u1'
-    assert first[0].attributes.get('name') == 'finance-core'
+    assert len(result) == 1
+    assert result[0].id == 'u1'
+    assert result[0].type == 'semantic-model'
+    assert result[0].attributes['name'] == 'finance-core'
+    assert result[0].meta.revision == 1
+    assert result[0].meta.project_id == 123
     client.raw_client.get.assert_awaited_once_with(  # type: ignore[attr-defined]
         endpoint='api/v1/repository/semantic-model',
         params=None,
@@ -40,10 +66,58 @@ async def test_list_objects_maps_jsonapi() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_object_calls_post() -> None:
+async def test_list_objects_with_filter() -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
+    client.raw_client.get = AsyncMock(  # type: ignore[assignment]
+        return_value=_list_response(_jsonapi_object('filtered', 'u2')),
+    )
+
+    result = await client.list_objects('semantic-model', filter_by='name=filtered')
+
+    assert len(result) == 1
+    client.raw_client.get.assert_awaited_once_with(  # type: ignore[attr-defined]
+        endpoint='api/v1/repository/semantic-model',
+        params={'filter': 'name=filtered'},
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_objects_with_limit_offset() -> None:
+    client = MetastoreClient.create('https://metastore.example.com', token='test-token')
+    client.raw_client.get = AsyncMock(  # type: ignore[assignment]
+        return_value=_list_response(_jsonapi_object('ds', 'd1', 'semantic-dataset')),
+    )
+
+    result = await client.list_objects('semantic-dataset', limit=10, offset=5)
+
+    assert len(result) == 1
+    client.raw_client.get.assert_awaited_once_with(  # type: ignore[attr-defined]
+        endpoint='api/v1/repository/semantic-dataset',
+        params={'limit': 10, 'offset': 5},
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_objects_organization_scope() -> None:
+    client = MetastoreClient.create('https://metastore.example.com', token='test-token')
+    client.raw_client.get = AsyncMock(  # type: ignore[assignment]
+        return_value=_list_response(_jsonapi_object('org-model', 'u3')),
+    )
+
+    result = await client.list_objects('semantic-model', organization_scope=True)
+
+    assert len(result) == 1
+    client.raw_client.get.assert_awaited_once_with(  # type: ignore[attr-defined]
+        endpoint='api/v1/repository/semantic-model/organization',
+        params=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_object_calls_post_with_branch() -> None:
+    client = MetastoreClient.create('https://metastore.example.com', token='test-token', branch_id='dev')
     client.raw_client.post = AsyncMock(  # type: ignore[assignment]
-        return_value={'data': _jsonapi_item('new-metric', 'm1', 'semantic-metric')}
+        return_value=_single_response(_jsonapi_object('new-metric', 'm1', 'semantic-metric')),
     )
 
     created = await client.create_object(
@@ -53,27 +127,49 @@ async def test_create_object_calls_post() -> None:
     )
 
     assert created.id == 'm1'
-    assert created.attributes.get('name') == 'new-metric'
-    client.raw_client.post.assert_awaited_once()  # type: ignore[attr-defined]
+    assert created.attributes['name'] == 'new-metric'
+    call_args = client.raw_client.post.call_args  # type: ignore[attr-defined]
+    assert call_args.kwargs['data']['branch'] == 'dev'
+
+
+@pytest.mark.asyncio
+async def test_create_object_default_branch() -> None:
+    client = MetastoreClient.create('https://metastore.example.com', token='test-token')
+    client.raw_client.post = AsyncMock(  # type: ignore[assignment]
+        return_value=_single_response(_jsonapi_object('obj', 'o1')),
+    )
+
+    await client.create_object('semantic-model', data={'name': 'obj'})
+
+    call_args = client.raw_client.post.call_args  # type: ignore[attr-defined]
+    assert call_args.kwargs['data']['branch'] == 'main'
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('version', 'response', 'expected_endpoint', 'expected_title', 'expected_version'),
+    ('version', 'response', 'expected_endpoint'),
     [
         (
             None,
-            {'schema': {'title': 'semantic-model'}},
+            {
+                'type': 'object',
+                'title': 'semantic-model',
+                '$schema': 'https://json-schema.org/draft/2020-12/schema',
+                'version': '1.0.0',
+                'required': ['name', 'sql_dialect'],
+                'properties': {'name': {'type': 'string'}},
+            },
             'api/v1/schema/semantic-model',
-            'semantic-model',
-            None,
         ),
         (
             '1.0.0',
-            {'schema': {'version': '1.0.0'}},
+            {
+                'type': 'object',
+                'title': 'semantic-model',
+                'version': '1.0.0',
+                'properties': {'name': {'type': 'string'}},
+            },
             'api/v1/schema/semantic-model/1.0.0',
-            None,
-            '1.0.0',
         ),
     ],
     ids=['latest', 'versioned'],
@@ -82,127 +178,85 @@ async def test_get_schema(
     version: str | None,
     response: dict,
     expected_endpoint: str,
-    expected_title: str | None,
-    expected_version: str | None,
 ) -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
     client.raw_client.get = AsyncMock(return_value=response)  # type: ignore[assignment]
 
     schema = await client.get_schema('semantic-model', version=version)
 
-    assert schema.title == expected_title
-    assert schema.version == expected_version
+    assert isinstance(schema, dict)
+    assert schema['title'] == 'semantic-model'
     client.raw_client.get.assert_awaited_once_with(  # type: ignore[attr-defined]
         endpoint=expected_endpoint, params=None
     )
 
 
 @pytest.mark.asyncio
-async def test_health_check_true_when_status_ok() -> None:
+async def test_get_object() -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
-    client.raw_client.get = AsyncMock(return_value={'status': 'ok'})  # type: ignore[assignment]
-
-    health = await client.health_check()
-    assert health.status == 'ok'
-    assert health.is_ok is True
-    client.raw_client.get.assert_awaited_once_with(endpoint='health-check', params=None)  # type: ignore[attr-defined]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ('response_data', 'expected_id', 'expected_attributes'),
-    [
-        (
-            {
-                'type': 'semantic-model',
-                'id': 'id-123',
-                'attributes': {
-                    'name': 'flat-model',
-                    'sql_dialect': 'Snowflake',
-                    'description': 'Flat payload',
-                },
-            },
-            'id-123',
-            {'sql_dialect': 'Snowflake', 'description': 'Flat payload'},
-        ),
-        (
-            {
-                'type': 'semantic-model',
-                'id': 'id-123',
-                'attributes': {
-                    'uuid': 'uuid-456',
-                    'name': 'bad-model',
-                    'sql_dialect': 'Snowflake',
-                },
-            },
-            'id-123',
-            {'uuid': 'uuid-456'},
-        ),
-        (
-            {
-                'type': 'semantic-model',
-                'attributes': {
-                    'uuid': 'uuid-456',
-                    'name': 'bad-model',
-                    'sql_dialect': 'Snowflake',
-                },
-            },
-            None,
-            {'uuid': 'uuid-456'},
-        ),
-    ],
-    ids=['flat-attributes', 'mismatched-id-and-uuid', 'missing-id'],
-)
-async def test_jsonapi_object_mapping_variants(
-    response_data: dict,
-    expected_id: str | None,
-    expected_attributes: dict[str, str],
-) -> None:
-    client = MetastoreClient.create('https://metastore.example.com', token='test-token')
-    client.raw_client.post = AsyncMock(return_value={'data': response_data})  # type: ignore[assignment]
-
-    created = await client.create_object(
-        'semantic-model',
-        name='flat-model',
-        data={'name': 'flat-model', 'sql_dialect': 'Snowflake'},
-    )
-
-    assert created.id == expected_id
-    for key, value in expected_attributes.items():
-        assert created.attributes.get(key) == value
-
-
-@pytest.mark.asyncio
-async def test_list_objects_organization_scope_and_params() -> None:
-    client = MetastoreClient.create('https://metastore.example.com', token='test-token')
-    client.raw_client.get = AsyncMock(return_value={'data': []})  # type: ignore[assignment]
-
-    await client.list_objects(
-        'semantic-model',
-        organization_scope=True,
-        filter_by='name=finance-core',
-        limit=5,
-        offset=10,
-        simplified=True,
-    )
-
-    client.raw_client.get.assert_awaited_once_with(  # type: ignore[attr-defined]
-        endpoint='api/v1/repository/semantic-model/organization',
-        params={'filter': 'name=finance-core', 'limit': 5, 'offset': 10, 'simplified': True},
-    )
-
-
-@pytest.mark.asyncio
-async def test_get_revision_calls_expected_endpoint() -> None:
-    client = MetastoreClient.create('https://metastore.example.com', token='test-token')
+    obj = _jsonapi_object('my-model', 'u1', sql_dialect='Snowflake')
     client.raw_client.get = AsyncMock(  # type: ignore[assignment]
-        return_value={'data': _jsonapi_item('finance-core', 'u1')}
+        return_value=_single_response(obj),
     )
 
-    result = await client.get_revision('semantic-model', 'u1', 4, simplified=False)
+    result = await client.get_object('semantic-model', 'u1')
 
     assert result.id == 'u1'
-    client.raw_client.get.assert_awaited_once_with(  # type: ignore[attr-defined]
-        endpoint='api/v1/repository/semantic-model/u1/revisions/4',
-        params={'simplified': False},
+    assert result.attributes['name'] == 'my-model'
+    assert result.attributes['sql_dialect'] == 'Snowflake'
+
+
+@pytest.mark.asyncio
+async def test_put_object() -> None:
+    client = MetastoreClient.create('https://metastore.example.com', token='test-token')
+    client.raw_client.put = AsyncMock(  # type: ignore[assignment]
+        return_value=_single_response(_jsonapi_object('updated', 'u1', revision=2)),
     )
+
+    result = await client.put_object('semantic-model', 'u1', name='updated', data={'name': 'updated'})
+
+    assert result.id == 'u1'
+    assert result.meta.revision == 2
+
+
+@pytest.mark.asyncio
+async def test_patch_object() -> None:
+    client = MetastoreClient.create('https://metastore.example.com', token='test-token')
+    client.raw_client.patch = AsyncMock(  # type: ignore[assignment]
+        return_value=_single_response(_jsonapi_object('patched', 'u1', revision=2)),
+    )
+
+    result = await client.patch_object('semantic-model', 'u1', name='patched')
+
+    assert result.id == 'u1'
+    assert result.attributes['name'] == 'patched'
+
+
+@pytest.mark.asyncio
+async def test_list_revisions() -> None:
+    client = MetastoreClient.create('https://metastore.example.com', token='test-token')
+    client.raw_client.get = AsyncMock(  # type: ignore[assignment]
+        return_value=_list_response(
+            _jsonapi_object('m', 'u1', revision=1),
+            _jsonapi_object('m', 'u1', revision=2),
+        ),
+    )
+
+    result = await client.list_revisions('semantic-model', filter_by='id=u1')
+
+    assert len(result) == 2
+    assert result[0].meta.revision == 1
+    assert result[1].meta.revision == 2
+
+
+@pytest.mark.asyncio
+async def test_get_revision() -> None:
+    client = MetastoreClient.create('https://metastore.example.com', token='test-token')
+    client.raw_client.get = AsyncMock(  # type: ignore[assignment]
+        return_value=_single_response(_jsonapi_object('m', 'u1', revision=3)),
+    )
+
+    result = await client.get_revision('semantic-model', 'u1', 3)
+
+    assert result.id == 'u1'
+    assert result.meta.revision == 3

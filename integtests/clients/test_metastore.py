@@ -34,12 +34,6 @@ def _skip_unauthorized(exc: httpx.HTTPStatusError) -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_check(metastore_client: MetastoreClient) -> None:
-    health = await metastore_client.health_check()
-    assert health.is_ok is True
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     'object_type',
     [
@@ -53,24 +47,26 @@ async def test_health_check(metastore_client: MetastoreClient) -> None:
 )
 async def test_get_schema_for_semantic_types(metastore_client: MetastoreClient, object_type: str) -> None:
     schema_doc = await metastore_client.get_schema(object_type)
-    assert schema_doc.title == object_type
-    assert schema_doc.version
+    assert isinstance(schema_doc, dict)
+    assert schema_doc.get('title') == object_type
+    assert schema_doc.get('version')
 
 
 @pytest.mark.asyncio
 async def test_get_schema_specific_version(metastore_client: MetastoreClient) -> None:
     latest = await metastore_client.get_schema('semantic-model')
-    if not latest.version:
+    version = latest.get('version')
+    if not version:
         pytest.skip('Schema version not available in metastore response.')
-    specific = await metastore_client.get_schema('semantic-model', version=latest.version)
-    assert specific.title == 'semantic-model'
-    assert specific.version == latest.version
+    specific = await metastore_client.get_schema('semantic-model', version=version)
+    assert specific.get('title') == 'semantic-model'
+    assert specific.get('version') == version
 
 
 @pytest.mark.asyncio
 async def test_list_semantic_models_and_optional_detail(metastore_client: MetastoreClient) -> None:
     try:
-        models = await metastore_client.list_objects('semantic-model', limit=10)
+        models = await metastore_client.list_objects('semantic-model')
     except httpx.HTTPStatusError as exc:
         _skip_unauthorized(exc)
         raise
@@ -78,9 +74,6 @@ async def test_list_semantic_models_and_optional_detail(metastore_client: Metast
 
     if not models:
         pytest.skip('No semantic-model objects available in project scope for this token.')
-
-    if not models[0].id:
-        pytest.skip('First listed model has no id in response.')
 
     model = await metastore_client.get_object('semantic-model', models[0].id)
     assert model.id
@@ -90,7 +83,7 @@ async def test_list_semantic_models_and_optional_detail(metastore_client: Metast
 @pytest.mark.asyncio
 async def test_get_organization_models_list(metastore_client: MetastoreClient) -> None:
     try:
-        models = await metastore_client.list_objects('semantic-model', organization_scope=True, limit=10)
+        models = await metastore_client.list_objects('semantic-model', organization_scope=True)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403, 404):
             pytest.skip('Organization scope endpoint is not accessible for this token/environment.')
@@ -102,7 +95,7 @@ async def test_get_organization_models_list(metastore_client: MetastoreClient) -
 async def test_crud_walkthrough_post_get_put_delete_and_revisions(metastore_client: MetastoreClient) -> None:
     object_type = 'semantic-model'
     model_name = f'ai2607-it-model-{uuid4().hex[:8]}'
-    model_id: str | None = None
+    model_uuid: str | None = None
 
     try:
         try:
@@ -113,66 +106,60 @@ async def test_crud_walkthrough_post_get_put_delete_and_revisions(metastore_clie
                     'name': model_name,
                     'sql_dialect': 'Snowflake',
                     'description': 'Integration test model',
-                    'status': 'draft',
                 },
             )
         except httpx.HTTPStatusError as exc:
             _skip_unauthorized(exc)
             raise
 
-        model_id = created.id
-        assert model_id
-        assert created.attributes.get('name') == model_name
+        model_uuid = created.id
+        assert model_uuid
         assert created.type == object_type
+        assert created.attributes.get('name') == model_name
 
-        fetched = await metastore_client.get_object(object_type, model_id)
-        assert fetched.id == model_id
+        fetched = await metastore_client.get_object(object_type, model_uuid)
+        assert fetched.id == model_uuid
         assert fetched.attributes.get('sql_dialect') == 'Snowflake'
-        assert fetched.attributes.get('status') == 'draft'
 
         replaced = await metastore_client.put_object(
             object_type,
-            model_id,
+            model_uuid,
             name=model_name,
             data={
                 'name': model_name,
                 'sql_dialect': 'BigQuery',
                 'description': 'Replaced via PUT',
-                'status': 'published',
             },
         )
-        assert replaced.id == model_id
+        assert replaced.id == model_uuid
 
-        fetched_after_put = await metastore_client.get_object(object_type, model_id)
+        fetched_after_put = await metastore_client.get_object(object_type, model_uuid)
         assert fetched_after_put.attributes.get('sql_dialect') == 'BigQuery'
-        assert fetched_after_put.attributes.get('status') == 'published'
-        after_put_revision = fetched_after_put.meta.get('revision')
-        assert isinstance(after_put_revision, int)
-        assert after_put_revision >= 2
+        assert fetched_after_put.meta.revision >= 2
 
-        revisions = await metastore_client.list_revisions(object_type, filter_by=f'id={model_id}')
+        revisions = await metastore_client.list_revisions(object_type, filter_by=f'id={model_uuid}')
         assert isinstance(revisions, list)
         assert len(revisions) >= 1
 
-        rev1 = await metastore_client.get_revision(object_type, model_id, 1)
-        assert rev1.id == model_id
+        rev1 = await metastore_client.get_revision(object_type, model_uuid, 1)
+        assert rev1.id == model_uuid
         assert rev1.attributes.get('sql_dialect') == 'Snowflake'
 
-        if after_put_revision >= 2:
-            rev2 = await metastore_client.get_revision(object_type, model_id, 2)
-            assert rev2.id == model_id
+        if fetched_after_put.meta.revision >= 2:
+            rev2 = await metastore_client.get_revision(object_type, model_uuid, 2)
+            assert rev2.id == model_uuid
             assert rev2.attributes.get('sql_dialect') == 'BigQuery'
 
-        await metastore_client.delete_object(object_type, model_id)
+        await metastore_client.delete_object(object_type, model_uuid)
 
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            await metastore_client.get_object(object_type, model_id)
+            await metastore_client.get_object(object_type, model_uuid)
         assert exc_info.value.response.status_code == 404
 
     finally:
-        if model_id:
+        if model_uuid:
             try:
-                await metastore_client.delete_object(object_type, model_id)
+                await metastore_client.delete_object(object_type, model_uuid)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code not in (401, 403, 404):
                     raise

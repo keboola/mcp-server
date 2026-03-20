@@ -1,5 +1,4 @@
 from collections import defaultdict
-from datetime import datetime
 from typing import Mapping, Optional, Sequence, cast
 
 from pydantic import BaseModel, Field
@@ -16,6 +15,7 @@ from keboola_mcp_server.tools.search import (
     SearchSpec,
     fetch_configurations,
 )
+from keboola_mcp_server.utils import parse_iso_timestamp
 
 
 class ComponentUsageReference(BaseModel):
@@ -173,7 +173,7 @@ def _get_latest_metadata_timestamp(metadata: list[Mapping[str, JsonStruct]], key
         if not isinstance(raw_ts, str):
             continue
         try:
-            parsed = datetime.fromisoformat(raw_ts.replace('Z', '+00:00'))
+            parsed = parse_iso_timestamp(raw_ts)
         except ValueError:
             continue
         if latest_ts is None or parsed > latest_ts:

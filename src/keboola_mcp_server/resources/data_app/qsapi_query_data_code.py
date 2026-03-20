@@ -6,6 +6,8 @@ import time
 import httpx
 import pandas as pd
 
+_RESULTS_PAGE_SIZE = 500
+
 
 def query_data(query: str) -> pd.DataFrame:
     branch_id = os.environ.get('BRANCH_ID')
@@ -64,18 +66,41 @@ def query_data(query: str) -> pd.DataFrame:
             raise RuntimeError('Query Service returned no statements for the executed query.')
         statement_id = statements[0]['id']
 
-        results_response = client.get(
-            f'{query_service_url}/queries/{job_id}/{statement_id}/results',
-            headers=headers,
-        )
-        results_response.raise_for_status()
-        results = results_response.json()
+        columns: list[str] = []
+        all_rows: list[list[str]] = []
+        offset = 0
+        total_rows = None
 
-        if results.get('status') != 'completed':
-            raise ValueError(f'Error when executing query "{query}": {results.get("message")}.')
+        while True:
+            results_response = client.get(
+                f'{query_service_url}/queries/{job_id}/{statement_id}/results',
+                headers=headers,
+                params={'offset': offset, 'pageSize': _RESULTS_PAGE_SIZE},
+            )
+            results_response.raise_for_status()
+            results = results_response.json()
 
-        columns = [col['name'] for col in results.get('columns', [])]
-        data_rows = [{col_name: value for col_name, value in zip(columns, row)} for row in results.get('data', [])]
+            if results.get('status') != 'completed':
+                raise ValueError(f'Error when executing query "{query}": {results.get("message")}.')
+
+            if not columns:
+                columns = [col['name'] for col in results.get('columns', [])]
+                total_rows = results.get('numberOfRows')
+
+            page_rows = results.get('data', [])
+            if not page_rows:
+                break
+
+            all_rows.extend(page_rows)
+            offset += len(page_rows)
+
+            if total_rows is not None:
+                if offset >= total_rows:
+                    break
+            elif len(page_rows) < _RESULTS_PAGE_SIZE:
+                break
+
+        data_rows = [{col_name: value for col_name, value in zip(columns, row)} for row in all_rows]
         return pd.DataFrame(data_rows)
 
 
