@@ -1,4 +1,4 @@
-"""Pydantic models for semantic layer MCP tools."""
+"""Models shared by the current semantic read tools."""
 
 from __future__ import annotations
 
@@ -7,26 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
-class ToolStatus(str, Enum):
-    OK = 'ok'
-    ERROR = 'error'
-
-
-class SemanticEntityType(str, Enum):
-    """Semantic entity types scoped to the Keboola semantic layer (Metastore).
-
-    These types represent objects managed within the semantic layer only.
-    Generic Metastore object access (e.g. arbitrary resource types) is out of scope
-    for this toolset and should be handled through storage or config tools instead.
-    """
-
-    MODEL = 'model'
-    DATASET = 'dataset'
-    METRIC = 'metric'
-    RELATIONSHIP = 'relationship'
-    GLOSSARY = 'glossary'
-    CONSTRAINT = 'constraint'
+from keboola_mcp_server.clients.metastore import MetastoreObject
 
 
 class SemanticObjectType(str, Enum):
@@ -38,146 +19,315 @@ class SemanticObjectType(str, Enum):
     SEMANTIC_CONSTRAINT = 'semantic-constraint'
 
 
-ENTITY_TO_OBJECT_TYPE: dict[SemanticEntityType, SemanticObjectType] = {
-    SemanticEntityType.MODEL: SemanticObjectType.SEMANTIC_MODEL,
-    SemanticEntityType.DATASET: SemanticObjectType.SEMANTIC_DATASET,
-    SemanticEntityType.METRIC: SemanticObjectType.SEMANTIC_METRIC,
-    SemanticEntityType.RELATIONSHIP: SemanticObjectType.SEMANTIC_RELATIONSHIP,
-    SemanticEntityType.GLOSSARY: SemanticObjectType.SEMANTIC_GLOSSARY,
-    SemanticEntityType.CONSTRAINT: SemanticObjectType.SEMANTIC_CONSTRAINT,
-}
-OBJECT_TO_ENTITY_TYPE: dict[SemanticObjectType, SemanticEntityType] = {
-    object_type: entity_type for entity_type, object_type in ENTITY_TO_OBJECT_TYPE.items()
-}
+# Shared input models
 
 
-class SemanticScope(str, Enum):
-    PROJECT = 'project'
-    ORGANIZATION = 'organization'
+class SemanticObjectTypeSelection(BaseModel):
+    """Semantic object type selection used by semantic tools."""
 
-
-class SemanticDefineAction(str, Enum):
-    CREATE = 'create'
-    PATCH = 'patch'
-    REPLACE = 'replace'
-    DELETE = 'delete'
-    PUBLISH = 'publish'
-
-
-class SemanticSource(BaseModel):
-    object_type: str = Field(description='Semantic object type, e.g. semantic-metric.')
-    uuid: str | None = Field(default=None, description='Object UUID in Metastore.')
-    model_id: str | None = Field(default=None, description='Referenced semantic model UUID.')
-    revision: int | None = Field(default=None, description='Metastore revision number.')
-
-
-class SemanticToolResponse(BaseModel):
-    status: ToolStatus = Field(default=ToolStatus.OK, description='Tool execution status.')
-    reason: str | None = Field(default=None, description='Reason for non-standard states or errors.')
-    source: SemanticSource | None = Field(default=None, description='Primary source reference.')
-    next_action: str | None = Field(default=None, description='Recommended next semantic tool call.')
-
-
-class SemanticModelSummary(BaseModel):
-    model_id: str = Field(description='Semantic model UUID.')
-    name: str = Field(description='Semantic model name.')
-    scope: SemanticScope = Field(description='Model scope where it was discovered.')
-    project_id: int | None = Field(default=None, description='Owning Keboola project ID.')
-    status: str | None = Field(default=None, description='Model lifecycle status.')
-    revision: int | None = Field(default=None, description='Current model revision.')
-    dataset_count: int = Field(default=0, description='Number of datasets in model.')
-    metric_count: int = Field(default=0, description='Number of metrics in model.')
-
-
-class SemanticDiscoverMatch(BaseModel):
-    entity_type: SemanticEntityType = Field(description='Resolved semantic entity type.')
-    object_type: SemanticObjectType = Field(description='Underlying metastore object type.')
-    uuid: str | None = Field(default=None, description='Matched object UUID.')
-    model_id: str | None = Field(default=None, description='Resolved semantic model UUID.')
-    name: str = Field(description='Matched entity name.')
-    match_score: float = Field(description='Simple deterministic lexical ranking score.')
-    revision: int | None = Field(default=None, description='Metastore revision for the object.')
-
-
-class SemanticDiscoverOutput(SemanticToolResponse):
-    models: list[SemanticModelSummary] = Field(default_factory=list, description='Discovered semantic models.')
-    matches: list[SemanticDiscoverMatch] = Field(default_factory=list, description='Ranked semantic matches.')
-
-
-class SemanticObjectDefinition(BaseModel):
-    entity_type: SemanticEntityType = Field(description='Entity type from MCP contract.')
-    object_type: SemanticObjectType = Field(description='Object type in metastore repository.')
-    uuid: str | None = Field(default=None, description='Object UUID.')
-    name: str = Field(default='', description='Object name.')
-    data: dict[str, Any] = Field(default_factory=dict, description='Canonical semantic definition payload.')
-
-
-class SemanticGetDefinitionOutput(SemanticToolResponse):
-    defined: bool = Field(description='Whether requested definition was found.')
-    definition: SemanticObjectDefinition | None = Field(
-        default=None, description='Canonical semantic object definition.'
+    object_type: SemanticObjectType = Field(description='Semantic object type to load.')
+    ids: tuple[str, ...] = Field(
+        default=tuple(),
+        description='Specific object UUIDs to include. Empty list [] means include all objects of this type.',
     )
-    definition_schema: dict[str, Any] | None = Field(
+
+
+# Service-only models
+
+
+class SemanticSearchHit(BaseModel):
+    """Raw semantic search hit returned by the service layer."""
+
+    object_type: SemanticObjectType = Field(description='Matched semantic object type.')
+    object: MetastoreObject = Field(description='Matched metastore object.')
+    semantic_model_id: str = Field(description='Parent semantic model UUID.')
+    matched_patterns: list[str] = Field(default_factory=list, description='Regex patterns that matched.')
+    matched_paths: list[str] = Field(default_factory=list, description='Search sources where the match happened.')
+
+
+class SemanticObjectTypeGroup(BaseModel):
+    """Raw semantic objects grouped by semantic object type."""
+
+    object_type: SemanticObjectType = Field(description='Semantic object type.')
+    objects: list[MetastoreObject] = Field(
+        default_factory=list,
+        description='Raw semantic metastore objects of the requested type.',
+    )
+
+
+class ConstraintValidationFinding(BaseModel):
+    """Semantic constraint finding produced by validation."""
+
+    constraint_id: str = Field(description='Constraint UUID.')
+    constraint_name: str = Field(description='Constraint name.')
+    severity: str = Field(description='Constraint severity.')
+    status: str = Field(description='Validation status.')
+    message: str = Field(description='Human-readable validation finding.')
+    validation_query: str | None = Field(
         default=None,
-        description='Optional JSON schema for this object type.',
-        serialization_alias='schema',
+        description='Optional SQL validation query suggested by the semantic constraint.',
     )
 
 
-class SemanticFilter(BaseModel):
-    field: str = Field(description='Filter field name.')
-    operator: str = Field(default='=', description='Filter operator.')
-    value: str | int | float | bool = Field(description='Filter value.')
+class RawSemanticValidationResult(BaseModel):
+    """Raw validation result returned by the service layer."""
 
-
-class QueryPlanJoin(BaseModel):
-    from_table_id: str = Field(description='Source tableId.')
-    to_table_id: str = Field(description='Joined tableId.')
-    join_type: str = Field(default='left', description='Join type.')
-    on: str = Field(default='', description='Join condition from semantic relationship.')
-
-
-class SemanticQueryPlan(BaseModel):
-    metric_name: str = Field(description='Resolved metric name.')
-    sql_expression: str = Field(default='', description='Canonical metric SQL expression.')
-    source_dataset_table_id: str | None = Field(default=None, description='Primary dataset tableId for the metric.')
-    requested_dimensions: list[str] = Field(default_factory=list, description='Requested dimensions from user input.')
-    resolved_dimensions: list[str] = Field(
-        default_factory=list, description='Dimensions resolved in source/joined datasets.'
+    valid: bool = Field(description='False when an error-severity pre-execution finding was detected.')
+    used_object_groups: list[SemanticObjectTypeGroup] = Field(
+        default_factory=list,
+        description='Used semantic objects grouped by semantic object type.',
     )
-    unresolved_dimensions: list[str] = Field(
-        default_factory=list, description='Dimensions not found in semantic model.'
+    matched_relationships: list[str] = Field(
+        default_factory=list,
+        description='Relationship names heuristically detected in the SQL.',
     )
-    joins: list[QueryPlanJoin] = Field(default_factory=list, description='Relationships used by the planner.')
-    time_grain: str | None = Field(default=None, description='Requested time granularity.')
-    filters: list[SemanticFilter] = Field(default_factory=list, description='Normalized filter list.')
-
-
-class ConstraintCheck(BaseModel):
-    name: str = Field(description='Constraint name.')
-    constraint_type: str = Field(description='Constraint type from semantic-constraint schema.')
-    severity: str = Field(default='warning', description='Constraint severity.')
-    rule: str = Field(default='', description='Constraint rule expression.')
-    status: str = Field(description='Planner status for this check.')
-    note: str = Field(description='Human-readable validation note.')
-
-
-class SemanticQueryPlanOutput(SemanticToolResponse):
-    defined: bool = Field(description='Whether metric definition exists.')
-    valid: bool = Field(description='Whether plan is valid under requested strictness.')
-    plan: SemanticQueryPlan | None = Field(default=None, description='Structured semantic query plan.')
-    warnings: list[ConstraintCheck] = Field(default_factory=list, description='Pre-execution warnings.')
-    post_execution_checks: list[ConstraintCheck] = Field(
-        default_factory=list, description='Post-execution validations.'
+    violations: list[ConstraintValidationFinding] = Field(
+        default_factory=list,
+        description='Pre-execution semantic violations.',
+    )
+    post_execution_checks: list[ConstraintValidationFinding] = Field(
+        default_factory=list,
+        description='Checks that should be verified against query results.',
     )
 
 
-class SemanticDefineOutput(SemanticToolResponse):
-    created: bool = Field(default=False, description='Whether object was created.')
-    updated: bool = Field(default=False, description='Whether object was patched/replaced.')
-    deleted: bool = Field(default=False, description='Whether object was deleted.')
-    published: bool = Field(default=False, description='Whether object was marked as published.')
-    review_required: bool = Field(default=False, description='Whether manual review is recommended.')
-    definition: SemanticObjectDefinition | None = Field(
-        default=None, description='Resulting semantic object, if available.'
+# Tool-only compact and output models
+
+
+class CompactSemanticObject(BaseModel):
+    id: str
+    name: str | None = None
+
+
+class SemanticModelCompact(CompactSemanticObject):
+    description: str | None = None
+
+    @classmethod
+    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticModelCompact':
+        attributes = obj.attributes
+        return cls(
+            id=obj.id,
+            name=attributes.get('name') or obj.meta.name,
+            description=attributes.get('description'),
+        )
+
+
+class SemanticDatasetCompact(CompactSemanticObject):
+    table_id: str | None = Field(default=None, serialization_alias='tableId')
+    description: str | None = None
+    model_uuid: str | None = None
+    fqn: str | None = None
+
+    @classmethod
+    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticDatasetCompact':
+        attributes = obj.attributes
+        return cls(
+            id=obj.id,
+            name=attributes.get('name') or obj.meta.name,
+            table_id=attributes.get('tableId'),
+            description=attributes.get('description'),
+            model_uuid=attributes.get('modelUUID'),
+            fqn=attributes.get('fqn'),
+        )
+
+
+class SemanticMetricCompact(CompactSemanticObject):
+    description: str | None = None
+    dataset: str | None = None
+    model_uuid: str | None = None
+
+    @classmethod
+    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticMetricCompact':
+        attributes = obj.attributes
+        return cls(
+            id=obj.id,
+            name=attributes.get('name') or obj.meta.name,
+            description=attributes.get('description'),
+            dataset=attributes.get('dataset'),
+            model_uuid=attributes.get('modelUUID'),
+        )
+
+
+class SemanticRelationshipCompact(CompactSemanticObject):
+    from_: str | None = Field(default=None, serialization_alias='from')
+    to: str | None = None
+    type: str | None = None
+    on: str | None = None
+    model_uuid: str | None = None
+
+    @classmethod
+    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticRelationshipCompact':
+        attributes = obj.attributes
+        return cls(
+            id=obj.id,
+            name=attributes.get('name') or obj.meta.name,
+            from_=attributes.get('from'),
+            to=attributes.get('to'),
+            type=attributes.get('type'),
+            on=attributes.get('on'),
+            model_uuid=attributes.get('modelUUID'),
+        )
+
+
+class SemanticGlossaryCompact(CompactSemanticObject):
+    term: str | None = None
+    definition: str | None = None
+    model_uuid: str | None = None
+
+    @classmethod
+    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticGlossaryCompact':
+        attributes = obj.attributes
+        return cls(
+            id=obj.id,
+            name=attributes.get('term') or obj.meta.name,
+            term=attributes.get('term') or obj.meta.name,
+            definition=attributes.get('definition'),
+            model_uuid=attributes.get('modelUUID'),
+        )
+
+
+class SemanticConstraintCompact(CompactSemanticObject):
+    description: str | None = None
+    type: str | None = None
+    rule: str | None = None
+    severity: str | None = None
+    model_uuid: str | None = None
+
+    @classmethod
+    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticConstraintCompact':
+        attributes = obj.attributes
+        return cls(
+            id=obj.id,
+            name=attributes.get('name') or obj.meta.name,
+            description=attributes.get('description'),
+            type=attributes.get('constraintType'),
+            rule=attributes.get('rule'),
+            severity=attributes.get('severity'),
+            model_uuid=attributes.get('modelUUID'),
+        )
+
+
+class SemanticObject(CompactSemanticObject):
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+    @classmethod
+    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticObject':
+        return cls(
+            id=obj.id,
+            name=obj.meta.name,
+            attributes=obj.attributes,
+        )
+
+
+class SemanticObjectMatch(BaseModel):
+    """Matched semantic object returned by semantic search."""
+
+    object_type: SemanticObjectType = Field(description='Matched semantic object type.')
+    matched_paths: list[str] = Field(default_factory=list, description='Matched paths inside the semantic object.')
+    data: CompactSemanticObject = Field(description='Compact matched semantic object detail.')
+
+
+class SemanticModelSearchResult(BaseModel):
+    """Search matches grouped by semantic model."""
+
+    semantic_model_id: str = Field(description='Semantic model UUID.')
+    matches: list[SemanticObjectMatch] = Field(default_factory=list, description='Matched objects for this model.')
+
+
+class SearchSemanticContextOutput(BaseModel):
+    """Output for the semantic search tool."""
+
+    models: list[SemanticModelSearchResult] = Field(
+        default_factory=list,
+        description='Matched objects grouped by semantic model.',
     )
+
+
+class SemanticObjectTypeContext(BaseModel):
+    """Tool output context for a single semantic object type."""
+
+    object_type: SemanticObjectType = Field(description='Semantic object type.')
+    objects: list[CompactSemanticObject] = Field(
+        default_factory=list,
+        description='Semantic objects of the requested type.',
+    )
+
+
+class GetSemanticContextOutput(BaseModel):
+    """Output for semantic context loading."""
+
+    semantic_objects: list[SemanticObjectTypeContext] = Field(
+        default_factory=list,
+        description='Requested semantic contexts grouped by semantic object type.',
+    )
+
+
+class SemanticUsedDataset(BaseModel):
+    """Dataset referenced by the validated SQL."""
+
+    name: str = Field(description='Dataset name.')
+    table_id: str = Field(description='Keboola table ID.', serialization_alias='tableId')
+    description: str = Field(description='Dataset description.')
+    fqn: str = Field(description='Dataset fully qualified SQL name.')
+
+
+class SemanticUsedMetric(BaseModel):
+    """Metric referenced by the validated SQL."""
+
+    name: str = Field(description='Metric name.')
+    description: str = Field(description='Metric description.')
+    sql: str = Field(description='Metric SQL expression.')
+    dataset: str = Field(description='Source dataset table ID.')
+
+
+class SemanticValidationModelResult(BaseModel):
+    """Validation result for a single semantic model."""
+
+    semantic_model_id: str = Field(description='Semantic model UUID.')
+    semantic_model_name: str | None = Field(default=None, description='Semantic model name.')
+    sql_dialect: str | None = Field(default=None, description='SQL dialect of the semantic model.')
+    selected_object_ids: list[str] = Field(default_factory=list, description='Selected semantic object UUIDs.')
+    used_datasets: list[SemanticUsedDataset] = Field(
+        default_factory=list,
+        description='Semantic datasets referenced by the SQL.',
+    )
+    used_metrics: list[SemanticUsedMetric] = Field(
+        default_factory=list,
+        description='Semantic metrics used or approximated by the SQL.',
+    )
+    matched_relationships: list[str] = Field(default_factory=list, description='Relationship names detected in SQL.')
+    violations: list[ConstraintValidationFinding] = Field(
+        default_factory=list,
+        description='Pre-execution semantic violations.',
+    )
+    post_execution_checks: list[ConstraintValidationFinding] = Field(
+        default_factory=list,
+        description='Checks that should be verified against query results.',
+    )
+
+
+class ValidateSemanticQueryOutput(BaseModel):
+    """Output for semantic SQL validation."""
+
+    valid: bool = Field(description='False when an error-severity pre-execution finding was detected.')
+    used_datasets: list[SemanticUsedDataset] = Field(
+        default_factory=list,
+        description='All semantic datasets referenced by the SQL across selected models.',
+    )
+    used_metrics: list[SemanticUsedMetric] = Field(
+        default_factory=list,
+        description='All semantic metrics referenced by the SQL across selected models.',
+    )
+    violations: list[ConstraintValidationFinding] = Field(
+        default_factory=list,
+        description='All pre-execution violations across selected models.',
+    )
+    post_execution_checks: list[ConstraintValidationFinding] = Field(
+        default_factory=list,
+        description='All post-execution checks across selected models.',
+    )
+    semantic_models: list[SemanticValidationModelResult] = Field(
+        default_factory=list,
+        description='Validation result grouped by semantic model.',
+    )
+    summary: str = Field(description='Short validation summary.')
