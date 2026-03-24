@@ -44,6 +44,12 @@ T = TypeVar('T')
 DEFAULT_CONCURRENCY = 10
 
 SEMANTIC_TOOLING_FEATURE = 'mcp-semantic-tooling'
+SEMANTIC_TOOL_NAMES = {
+    'search_semantic_context',
+    'get_semantic_context',
+    'get_semantic_schema',
+    'validate_semantic_query',
+}
 
 
 def is_read_only_tool(tool: Tool) -> bool:
@@ -51,6 +57,11 @@ def is_read_only_tool(tool: Tool) -> bool:
     if tool.annotations is None:
         return False
     return tool.annotations.readOnlyHint is True
+
+
+def is_semantic_tool(tool: Tool) -> bool:
+    """Check whether a tool belongs to semantic tooling."""
+    return SEMANTIC_TOOLS_TAG in (tool.tags or set()) or tool.name in SEMANTIC_TOOL_NAMES
 
 
 @dataclasses.dataclass(frozen=True)
@@ -366,7 +377,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
 
         if SEMANTIC_TOOLING_FEATURE not in features:
-            tools = [t for t in tools if SEMANTIC_TOOLS_TAG not in (t.tags or set())]
+            tools = [t for t in tools if not is_semantic_tool(t)]
 
         return tools
 
@@ -389,7 +400,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                 )
 
         if SEMANTIC_TOOLING_FEATURE not in features:
-            if SEMANTIC_TOOLS_TAG in (tool.tags or set()):
+            if is_semantic_tool(tool):
                 raise ToolError(
                     f'The tool "{tool.name}" is not available in this project. '
                     'Please ask Keboola support to enable "Semantic Layer Tooling" feature.'
