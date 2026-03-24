@@ -34,7 +34,7 @@ VALIDATION_OBJECT_TYPES: tuple[SemanticObjectType, ...] = (
 DEFAULT_PAGE_LIMIT = 20
 DEFAULT_PAGE_LIMITS: dict[SemanticObjectType, int] = {
     SemanticObjectType.SEMANTIC_DATASET: 1,
-    SemanticObjectType.SEMANTIC_METRIC: 1,
+    SemanticObjectType.SEMANTIC_METRIC: 5,
 }
 
 ALL_ATTRIBUTE_NODES_EXPR = jsonpath_ng.parse('$..*')
