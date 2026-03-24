@@ -301,7 +301,7 @@ class ProjectLock:
             self._delete(f'/v2/storage/buckets/{bucket_id}', force='true')
 
         # Delete all component configurations
-        components = self._get('/v2/storage/branch/default/components', include='configurations')
+        components = self._get('/v2/storage/components', include='configurations')
         for component in components:
             comp_id = component['id']
             for cfg in component.get('configurations', []):
