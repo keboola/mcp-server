@@ -420,12 +420,14 @@ async def get_transformation_folders(client: KeboolaClient, component_id: str) -
         component_id=component_id,
         metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
     )
+    seen: set[str] = set()
     folders: list[str] = []
     for cfg in folder_configs:
         for meta in cfg.get('metadata', []):
             if meta.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME:
                 folder_name = meta.get('value', '').strip()
-                if folder_name and folder_name not in folders:
+                if folder_name and folder_name not in seen:
+                    seen.add(folder_name)
                     folders.append(folder_name)
     return len(raw_configs), folders
 

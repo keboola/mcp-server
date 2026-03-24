@@ -491,23 +491,32 @@ async def create_sql_transformation(
         await set_transformation_folder_metadata(client, component_id, configuration_id, folder)
         change_summary = None
     else:
-        total, existing_folders = await get_transformation_folders(client, component_id)
-        if total >= 20:
-            folder_hint = (
-                f'Note: This project already has {total} SQL transformations. Consider organizing them with folders. '
-            )
-            if existing_folders:
-                folder_hint += (
-                    f'Existing folders: {existing_folders}. '
-                    'Call update_sql_transformation with a folder= parameter to assign this transformation to one.'
+        try:
+            total, existing_folders = await get_transformation_folders(client, component_id)
+            if total >= 20:
+                folder_hint = (
+                    f'Note: This project already has {total} SQL transformations. '
+                    'Consider organizing them with folders. '
                 )
+                if existing_folders:
+                    folder_hint += (
+                        f'Existing folders: {existing_folders}. '
+                        'Call update_sql_transformation with a folder= parameter to assign this transformation to one.'
+                    )
+                else:
+                    folder_hint += (
+                        'No folders have been created yet. '
+                        'Call update_sql_transformation with a folder= parameter to start organizing.'
+                    )
+                change_summary = folder_hint
             else:
-                folder_hint += (
-                    'No folders have been created yet. '
-                    'Call update_sql_transformation with a folder= parameter to start organizing.'
-                )
-            change_summary = folder_hint
-        else:
+                change_summary = None
+        except Exception:
+            LOG.warning(
+                'Unable to fetch transformation folders for component "%s" when creating configuration "%s".',
+                component_id,
+                configuration_id,
+            )
             change_summary = None
 
     LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
@@ -860,22 +869,31 @@ async def update_sql_transformation(
         await set_transformation_folder_metadata(client, sql_transformation_id, configuration_id, folder)
         folder_hint = None
     else:
-        total, existing_folders = await get_transformation_folders(client, sql_transformation_id)
-        if total >= 20:
-            folder_hint = (
-                f'Note: This project already has {total} SQL transformations. Consider organizing them with folders. '
-            )
-            if existing_folders:
-                folder_hint += (
-                    f'Existing folders: {existing_folders}. '
-                    'Call update_sql_transformation with a folder= parameter to assign this transformation to one.'
+        try:
+            total, existing_folders = await get_transformation_folders(client, sql_transformation_id)
+            if total >= 20:
+                folder_hint = (
+                    f'Note: This project already has {total} SQL transformations. '
+                    'Consider organizing them with folders. '
                 )
+                if existing_folders:
+                    folder_hint += (
+                        f'Existing folders: {existing_folders}. '
+                        'Call update_sql_transformation with a folder= parameter to assign this transformation to one.'
+                    )
+                else:
+                    folder_hint += (
+                        'No folders have been created yet. '
+                        'Call update_sql_transformation with a folder= parameter to start organizing.'
+                    )
             else:
-                folder_hint += (
-                    'No folders have been created yet. '
-                    'Call update_sql_transformation with a folder= parameter to start organizing.'
-                )
-        else:
+                folder_hint = None
+        except Exception:
+            LOG.warning(
+                'Unable to fetch transformation folders for component "%s" when updating configuration "%s".',
+                sql_transformation_id,
+                configuration_id,
+            )
             folder_hint = None
 
     change_summary = ' '.join(filter(None, [msg, folder_hint])) or None
