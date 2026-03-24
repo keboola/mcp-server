@@ -172,6 +172,7 @@ async def _assert_basic_setup(client: Client):
         'get_flows',
         'get_jobs',
         'get_project_info',
+        'get_semantic_context',
         'get_tables',
         'modify_data_app',
         'modify_flow',
@@ -179,15 +180,13 @@ async def _assert_basic_setup(client: Client):
         'run_job',
         'run_sync_action',
         'search',
+        'search_semantic_context',
         'update_config',
         'update_config_row',
         'update_descriptions',
         'update_flow',
         'update_sql_transformation',
-        'semantic_define',
-        'semantic_discover',
-        'semantic_get_definition',
-        'semantic_query_plan',
+        'validate_semantic_query',
     }
     expected_tools = expected_tools - exclude
 
