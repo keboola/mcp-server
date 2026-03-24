@@ -60,7 +60,7 @@ get_configs(component_ids=["keboola.sandboxes"])
 update_config(component_id="keboola.sandboxes", configuration_id="<id>", ...)
 ```
 
-**Creating new workspaces is NOT supported via the API** — use the Keboola UI to create workspaces.
+**Creating new workspaces is NOT supported via the API** — tell user to create workspaces in Keboola UI.
 
 #### Disambiguation — SQL Transformation vs SQL Editor
 
