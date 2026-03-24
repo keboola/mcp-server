@@ -458,10 +458,11 @@ async def search_semantic_context(
     - The search is case-insensitive by default. Use `case_sensitive=True` when exact casing matters.
     - The search is performed against semantic object names and data attributes which are stringified JSON objects
     following their corresponding JSON schema.
-    - The search can be scoped to a specific semantic model or semantic object types or both.
+    - The search can be scoped to a specific semantic model or semantic object types but prefer broader search without
+    scoping unless required by the context.
 
     WHEN TO USE:
-    - When you need to discover which semantic models or semantic objects are relevant to a user request.
+    - When you need to discover which semantic objects are relevant to a user request.
     - When you know business terms, column names, metric fragments, or rule names, but not exact object UUIDs.
     - When you need to find semantic objects by keyword or values used in their attributes.
 
@@ -470,7 +471,7 @@ async def search_semantic_context(
 
     EXAMPLES:
     - Find semantic objects by business concepts for revenue or sales:
-      `patterns=["revenue", "sales"]`
+      `patterns=["revenue", "sales"]` 
     - Find semantic objects using a Keboola table ID:
       `patterns=["out.c-sales-main.fact_orders"]`
     - Find semantic dataset for a certain table:
@@ -694,12 +695,6 @@ async def validate_semantic_query(
     Performs best-effort semantic validation of an SQL query against one semantic model and compares it with the
     expected semantic objects provided.
 
-    LIMITATIONS:
-    - Detection is heuristic and based on string matching over SQL and semantic metadata.
-    - The tool does not parse SQL semantically and does not execute the query.
-    - Detected objects, missing objects, and relationship matches may therefore be imperfect.
-    - Use the result as a best-effort semantic check, not as a formal proof that the query is correct.
-
     RETURNS:
     - detected semantic datasets and metrics used by the SQL
     - expected semantic objects that were matched or missing
@@ -707,20 +702,36 @@ async def validate_semantic_query(
     - pre-execution violations
     - post-execution checks with optional validation SQL
 
+    LIMITATIONS:
+    - Detection is heuristic and based on string matching over SQL and semantic metadata.
+    - The tool does not parse SQL semantically and does not execute the query.
+    - Detected objects, missing objects, and relationship matches may therefore be imperfect.
+    - Use the result as a best-effort semantic check, not as a formal proof that the query is correct.
+
+    CONSIDERATIONS:
+    -  Prefer calling this tool before executing any SQL that touches a semantic objects.
+    - This tool confirms the SQL dialect, surfaces semantic constraint violations, and provides post-execution checks.
+    - Only proceed to query_data once this tool returns valid=True and violations is empty. If violations are found,
+    fix the query first or consider the limitations of this tool.
+
     WHEN TO USE:
     - Before generating or approving a query that should follow a semantic model.
+    - When you want to validate a SQL query against the semantic objects before executing it using "query_data" tool
+    or creating a new SQL transformation out of it.
+    issues.
     - When you want to verify that a query uses the intended semantic objects.
     - When you need to surface semantic business-rule violations or follow-up checks.
 
     EXAMPLES:
-    - Validate a SQL query against one semantic model:
-      `sql_query="SELECT SUM(\\"REVENUE\\") FROM ...", semantic_model_id="semantic-model-uuid"`
+    - Validate a SQL query against semantic model:
+      `sql_query="SELECT SUM(\\"REVENUE\\") FROM ...", semantic_model_id="semantic-model-uuid",`
+      `expected_semantic_objects=[{"object_type": "semantic-dataset"}]`
     - Validate a query and assert that a specific dataset is expected:
       `sql_query="SELECT * FROM ...", semantic_model_id="semantic-model-uuid",`
       `expected_semantic_objects=[{"object_type": "semantic-dataset", "ids": ["dataset-uuid-1"]}]`
     - Validate a query and compare it against expected objects:
       `sql_query="SELECT SUM(\\"REVENUE\\") FROM ...", semantic_model_id="semantic-model-uuid",`
-      `expected_semantic_objects= fill expected objects accordingly`
+      `expected_semantic_objects=[{"object_type": "semantic-metric", "ids": ["metric-uuid-1"]}]`
 
     """
     if not sql_query.strip():
