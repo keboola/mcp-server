@@ -1442,16 +1442,33 @@ async def test_get_transformation_folders(
     )
 
 
+@pytest.mark.parametrize(
+    ('folder', 'expected_saved', 'expect_call'),
+    [
+        ('Analytics', 'Analytics', True),
+        ('  Analytics  ', 'Analytics', True),  # whitespace stripped
+        ('', None, False),
+        ('   ', None, False),  # whitespace-only skipped
+    ],
+    ids=['normal', 'whitespace_stripped', 'empty', 'whitespace_only'],
+)
 @pytest.mark.asyncio
-async def test_set_transformation_folder_metadata_calls_update() -> None:
-    """Test that set_transformation_folder_metadata calls configuration_metadata_update correctly."""
+async def test_set_transformation_folder_metadata(
+    folder: str,
+    expected_saved: str | None,
+    expect_call: bool,
+) -> None:
+    """Test set_transformation_folder_metadata: strips whitespace, skips empty, swallows errors."""
     client = _make_client([], [])
-    await set_transformation_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1', 'Analytics')
-    client.storage_client.configuration_metadata_update.assert_called_once_with(
-        component_id='keboola.snowflake-transformation',
-        configuration_id='cfg-1',
-        metadata={MetadataField.CONFIGURATION_FOLDER_NAME: 'Analytics'},
-    )
+    await set_transformation_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1', folder)
+    if expect_call:
+        client.storage_client.configuration_metadata_update.assert_called_once_with(
+            component_id='keboola.snowflake-transformation',
+            configuration_id='cfg-1',
+            metadata={MetadataField.CONFIGURATION_FOLDER_NAME: expected_saved},
+        )
+    else:
+        client.storage_client.configuration_metadata_update.assert_not_called()
 
 
 @pytest.mark.asyncio

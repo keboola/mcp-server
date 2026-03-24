@@ -71,6 +71,7 @@ from keboola_mcp_server.tools.components.utils import (
     expand_component_types,
     fetch_component,
     get_sql_transformation_id_from_sql_dialect,
+    get_transformation_folders,
     list_configs_by_ids,
     list_configs_by_types,
     set_cfg_creation_metadata,
@@ -485,8 +486,29 @@ async def create_sql_transformation(
         configuration_id=configuration_id,
     )
 
+    folder = folder.strip()
     if folder:
         await set_transformation_folder_metadata(client, component_id, configuration_id, folder)
+        change_summary = None
+    else:
+        total, existing_folders = await get_transformation_folders(client, component_id)
+        if total >= 20:
+            folder_hint = (
+                f'Note: This project already has {total} SQL transformations. Consider organizing them with folders. '
+            )
+            if existing_folders:
+                folder_hint += (
+                    f'Existing folders: {existing_folders}. '
+                    'Call update_sql_transformation with a folder= parameter to assign this transformation to one.'
+                )
+            else:
+                folder_hint += (
+                    'No folders have been created yet. '
+                    'Call update_sql_transformation with a folder= parameter to start organizing.'
+                )
+            change_summary = folder_hint
+        else:
+            change_summary = None
 
     LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
 
@@ -504,6 +526,7 @@ async def create_sql_transformation(
         success=True,
         links=links,
         version=new_raw_transformation_configuration['version'],
+        change_summary=change_summary,
     )
 
 
@@ -832,8 +855,30 @@ async def update_sql_transformation(
         configuration_version=updated_raw_configuration.get('version'),
     )
 
+    folder = folder.strip()
     if folder:
         await set_transformation_folder_metadata(client, sql_transformation_id, configuration_id, folder)
+        folder_hint = None
+    else:
+        total, existing_folders = await get_transformation_folders(client, sql_transformation_id)
+        if total >= 20:
+            folder_hint = (
+                f'Note: This project already has {total} SQL transformations. Consider organizing them with folders. '
+            )
+            if existing_folders:
+                folder_hint += (
+                    f'Existing folders: {existing_folders}. '
+                    'Call update_sql_transformation with a folder= parameter to assign this transformation to one.'
+                )
+            else:
+                folder_hint += (
+                    'No folders have been created yet. '
+                    'Call update_sql_transformation with a folder= parameter to start organizing.'
+                )
+        else:
+            folder_hint = None
+
+    change_summary = ' '.join(filter(None, [msg, folder_hint])) or None
 
     links = links_manager.get_transformation_links(
         transformation_type=sql_transformation_id,
@@ -854,7 +899,7 @@ async def update_sql_transformation(
         success=True,
         links=links,
         version=updated_raw_configuration['version'],
-        change_summary=msg,
+        change_summary=change_summary,
     )
 
 

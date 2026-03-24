@@ -435,17 +435,21 @@ async def set_transformation_folder_metadata(
 ) -> None:
     """
     Sets the KBC.configuration.folderName metadata for a transformation configuration.
+    Strips whitespace from the folder name; does nothing if the result is empty.
 
     :param client: KeboolaClient instance
     :param component_id: ID of the component
     :param configuration_id: ID of the configuration
     :param folder: Folder name to assign
     """
+    normalized = folder.strip()
+    if not normalized:
+        return
     try:
         await client.storage_client.configuration_metadata_update(
             component_id=component_id,
             configuration_id=configuration_id,
-            metadata={MetadataField.CONFIGURATION_FOLDER_NAME: folder},
+            metadata={MetadataField.CONFIGURATION_FOLDER_NAME: normalized},
         )
     except HTTPStatusError as e:
         logging.exception(f'Failed to set folder metadata for configuration {configuration_id}: {e}')
