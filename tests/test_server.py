@@ -58,6 +58,8 @@ class TestServer:
             'get_flows',
             'get_jobs',
             'get_project_info',
+            'get_semantic_context',
+            'get_semantic_schema',
             'get_tables',
             'modify_data_app',
             'modify_flow',
@@ -65,15 +67,13 @@ class TestServer:
             'run_job',
             'run_sync_action',
             'search',
-            'semantic_define',
-            'semantic_discover',
-            'semantic_get_definition',
-            'semantic_query_plan',
+            'search_semantic_context',
             'update_config',
             'update_config_row',
             'update_descriptions',
             'update_flow',
             'update_sql_transformation',
+            'validate_semantic_query',
         ]
 
     @pytest.mark.asyncio
@@ -379,10 +379,10 @@ async def test_tool_annotations_and_tags():
         ('docs_query', True, None, None, {DOC_TOOLS_TAG}),
         ('find_component_id', True, None, None, {SEARCH_TOOLS_TAG}),
         # semantic
-        ('semantic_discover', True, None, None, {SEMANTIC_TOOLS_TAG}),
-        ('semantic_get_definition', True, None, None, {SEMANTIC_TOOLS_TAG}),
-        ('semantic_query_plan', True, None, None, {SEMANTIC_TOOLS_TAG}),
-        ('semantic_define', None, True, None, {SEMANTIC_TOOLS_TAG}),
+        ('search_semantic_context', True, None, None, {SEMANTIC_TOOLS_TAG}),
+        ('get_semantic_context', True, None, None, {SEMANTIC_TOOLS_TAG}),
+        ('get_semantic_schema', True, None, None, {SEMANTIC_TOOLS_TAG}),
+        ('validate_semantic_query', True, None, None, {SEMANTIC_TOOLS_TAG}),
         # oauth
         ('create_oauth_url', None, True, None, {OAUTH_TOOLS_TAG}),
         # data apps
