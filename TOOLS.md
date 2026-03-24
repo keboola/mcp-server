@@ -57,10 +57,12 @@ including essential context and base instructions for working with it
 - [search](#search): Searches for Keboola items (tables, buckets, components, configurations, transformations, flows, data-apps, etc.
 
 ### Semantic Tools
-- [semantic_define](#semantic_define): Performs semantic authoring actions over Metastore with schema validation guardrails.
-- [semantic_discover](#semantic_discover): Discovers semantic definitions relevant to user intent and returns ranked candidates.
-- [semantic_get_definition](#semantic_get_definition): Retrieves one canonical semantic definition by UUID or by name with optional model disambiguation.
-- [semantic_query_plan](#semantic_query_plan): Builds a structured query plan from semantic metric definition and related model objects.
+- [get_semantic_context](#get_semantic_context): Loads semantic objects grouped by semantic object type.
+- [get_semantic_schema](#get_semantic_schema): Returns JSON schemas for the requested semantic object types.
+- [search_semantic_context](#search_semantic_context): Searches semantic models and semantic objects using regex patterns matched against their names, descriptions and
+stringified JSON attributes.
+- [validate_semantic_query](#validate_semantic_query): Performs best-effort semantic validation of an SQL query against one semantic model and compares it with the
+expected semantic objects provided.
 
 ### Storage Tools
 - [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including descriptions,
@@ -2925,431 +2927,235 @@ scopes=["storage"]
 ---
 
 # Semantic Tools
-<a name="semantic_define"></a>
-## semantic_define
-**Annotations**: `destructive`
-
-**Tags**: `semantic`
-
-**Description**:
-
-Performs semantic authoring actions over Metastore with schema validation guardrails.
-
-WHEN TO USE:
-- For create/patch/replace/delete/publish lifecycle over semantic objects.
-- As follow-up when analytical metric is undefined and authoring is requested.
-
-RULES:
-- `delete` requires `uuid`.
-- `patch`, `replace`, and `publish` require `uuid`.
-- `create` requires a resolvable name (`name` arg or `data.name`).
-- All write-like actions validate payload against object schema before persistence.
-- `dry_run=true` performs validation and returns review guidance without mutation.
-
-OUTPUT CONTRACT:
-- Returns action flags: `created`, `updated`, `deleted`, `published`.
-- Returns `source` metadata and optional `definition` for mutated objects.
-- Uses `next_action` to guide subsequent retrieval/discovery flow.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "action": {
-      "description": "Define action: create, patch, replace, delete, publish.",
-      "enum": [
-        "create",
-        "patch",
-        "replace",
-        "delete",
-        "publish"
-      ],
-      "type": "string"
-    },
-    "entity_type": {
-      "description": "Semantic entity type being modified.",
-      "enum": [
-        "model",
-        "dataset",
-        "metric",
-        "relationship",
-        "glossary",
-        "constraint"
-      ],
-      "type": "string"
-    },
-    "name": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Optional object name (required for create when not present in data)."
-    },
-    "uuid": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Object UUID for patch/replace/delete/publish actions."
-    },
-    "data": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Semantic payload for create/patch/replace actions."
-    },
-    "model_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Optional model UUID injected into payload when absent."
-    },
-    "dry_run": {
-      "default": false,
-      "description": "Validate and plan action without persisting changes.",
-      "type": "boolean"
-    }
-  },
-  "required": [
-    "action",
-    "entity_type"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="semantic_discover"></a>
-## semantic_discover
+<a name="get_semantic_context"></a>
+## get_semantic_context
 **Annotations**: `read-only`
 
 **Tags**: `semantic`
 
 **Description**:
 
-Discovers semantic definitions relevant to user intent and returns ranked candidates.
+Loads semantic objects grouped by semantic object type.
+
+CONSIDERATIONS:
+- If a selection has empty `ids`, the tool returns all objects of that type in compact form.
+- If a selection has non-empty `ids`, the tool returns only those specific objects with full attributes.
+- `semantic_model_id` optionally narrows the lookup to a single semantic model.
 
 WHEN TO USE:
-- First step for analytical questions to find semantic entities before planning SQL.
-- Also for inventory mode (query omitted) to list available semantic models and model statistics.
+- When you already know IDs of the semantic objects you want to load and want to inspect them in detail.
+- When you want to list all semantic objects of a certain types or semantic model.
+- When you want to list semantic models.
 
-RULES:
-- If `query` is empty, only model inventory is returned (no ranked matches).
-- If `scope="organization"`, search uses organization listing endpoints.
-- Ranking is deterministic lexical matching over semantic object content.
+WHEN NOT TO USE:
+- When you need to discover semantic objects.
 
-OUTPUT CONTRACT:
-- Always returns `status`.
-- Returns `matches` sorted by descending score and deterministic tie-break by name.
-- Sets `next_action="semantic_get_definition"` when at least one match exists.
+EXAMPLES:
+- List all semantic models:
+  `semantic_objects=[{"object_type": "semantic-model"}]`
+- List semantic datasets and metrics for one semantic model:
+  `semantic_objects=[{"object_type": "semantic-dataset"}, {"object_type": "semantic-metric"}],`
+  `semantic_model_id="123"`
+- Get detailed context for specific semantic objects by their id:
+  `semantic_objects=[{"object_type": "semantic-dataset", "ids": ["dataset-uuid-1"]},`
+  `{"object_type": "semantic-metric", "ids": ["metric-uuid-1", "metric-uuid-2"]}]`
+- List all constraints for one semantic model:
+  `semantic_objects=[{"object_type": "semantic-constraint"}], semantic_model_id="123"`
 
 
 **Input JSON Schema**:
 ```json
 {
   "$defs": {
-    "SemanticEntityType": {
-      "description": "Semantic entity types scoped to the Keboola semantic layer (Metastore).\n\nThese types represent objects managed within the semantic layer only.\nGeneric Metastore object access (e.g. arbitrary resource types) is out of scope\nfor this toolset and should be handled through storage or config tools instead.",
+    "SemanticObjectType": {
       "enum": [
-        "model",
-        "dataset",
-        "metric",
-        "relationship",
-        "glossary",
-        "constraint"
-      ],
-      "type": "string"
-    }
-  },
-  "properties": {
-    "query": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Optional free-text query for semantic discovery."
-    },
-    "entity_types": {
-      "default": [],
-      "description": "Optional entity type filters for discovery ranking.",
-      "items": {
-        "$ref": "#/$defs/SemanticEntityType"
-      },
-      "type": "array"
-    },
-    "project_id": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Optional project ID filter."
-    },
-    "model_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Optional semantic model UUID filter."
-    },
-    "scope": {
-      "default": "project",
-      "description": "Repository scope for list operations.",
-      "enum": [
-        "project",
-        "organization"
+        "semantic-model",
+        "semantic-dataset",
+        "semantic-metric",
+        "semantic-relationship",
+        "semantic-glossary",
+        "semantic-constraint"
       ],
       "type": "string"
     },
-    "limit": {
-      "default": 10,
-      "description": "Maximum number of ranked matches to return.",
-      "type": "integer"
-    }
-  },
-  "type": "object"
-}
-```
-
----
-<a name="semantic_get_definition"></a>
-## semantic_get_definition
-**Annotations**: `read-only`
-
-**Tags**: `semantic`
-
-**Description**:
-
-Retrieves one canonical semantic definition by UUID or by name with optional model disambiguation.
-
-WHEN TO USE:
-- After `semantic_discover` to fetch the authoritative object used for reasoning or citation.
-- Whenever caller needs deterministic source metadata (uuid/model/revision).
-
-RULES:
-- Exactly one selector is required: `uuid` or `name`.
-- If `revision` is supplied, lookup is executed against revision endpoint (requires `uuid`).
-- Optional `include_schema` attaches current JSON schema for the selected object type.
-
-OUTPUT CONTRACT:
-- Returns `defined=true` with canonical `definition` when object is found.
-- Returns `defined=false` and `next_action="semantic_discover"` when not found.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "entity_type": {
-      "description": "Semantic entity type to retrieve.",
-      "enum": [
-        "model",
-        "dataset",
-        "metric",
-        "relationship",
-        "glossary",
-        "constraint"
-      ],
-      "type": "string"
-    },
-    "name": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Semantic object name (or glossary term) for lookup."
-    },
-    "uuid": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Semantic object UUID for direct retrieval."
-    },
-    "model_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Optional semantic model UUID to disambiguate name lookup."
-    },
-    "include_schema": {
-      "default": false,
-      "description": "Include metastore JSON schema in response.",
-      "type": "boolean"
-    },
-    "revision": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Optional revision number for historical retrieval."
-    }
-  },
-  "required": [
-    "entity_type"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="semantic_query_plan"></a>
-## semantic_query_plan
-**Annotations**: `read-only`
-
-**Tags**: `semantic`
-
-**Description**:
-
-Builds a structured query plan from semantic metric definition and related model objects.
-
-WHEN TO USE:
-- Before SQL generation/execution for metric-based analytical questions.
-- To validate requested dimensions and constraints in strict semantic mode.
-
-RULES:
-- Metric must exist in semantic layer; otherwise returns `defined=false`.
-- Planner resolves source dataset, relationship joins, and relevant constraints.
-- `strict=true` marks plan invalid when error-severity warnings are present.
-
-OUTPUT CONTRACT:
-- Returns `defined`, `valid`, `plan`, `warnings`, and `post_execution_checks`.
-- Sets `next_action="query_data"` for valid plans, otherwise `semantic_get_definition`.
-
-
-**Input JSON Schema**:
-```json
-{
-  "$defs": {
-    "SemanticFilter": {
+    "SemanticObjectTypeSelection": {
+      "description": "Semantic object type selection used by semantic tools.",
       "properties": {
-        "field": {
-          "description": "Filter field name.",
-          "type": "string"
+        "object_type": {
+          "$ref": "#/$defs/SemanticObjectType",
+          "description": "Semantic object type to load."
         },
-        "operator": {
-          "default": "=",
-          "description": "Filter operator.",
-          "type": "string"
-        },
-        "value": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "integer"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "boolean"
-            }
-          ],
-          "description": "Filter value."
+        "ids": {
+          "default": [],
+          "description": "Specific object UUIDs to include. Empty list [] means include all objects of this type.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
-        "field",
-        "value"
+        "object_type"
       ],
       "type": "object"
     }
   },
   "properties": {
-    "metric_name": {
-      "description": "Metric name to plan query for.",
-      "type": "string"
+    "semantic_objects": {
+      "description": "List of semantic object selections to load. Each item contains \"object_type\" and optional \"ids\". If \"ids\" is empty, all objects of that type are returned in compact form. If \"ids\" is non-empty, only those objects are returned with full attributes.",
+      "items": {
+        "$ref": "#/$defs/SemanticObjectTypeSelection"
+      },
+      "type": "array"
     },
-    "dimensions": {
-      "default": [],
-      "description": "Optional list of requested dimensions.",
+    "semantic_model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional semantic model ID that restricts loading to a single semantic model. Use this when object types should be resolved only within one model."
+    }
+  },
+  "required": [
+    "semantic_objects"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_semantic_schema"></a>
+## get_semantic_schema
+**Annotations**: `read-only`
+
+**Tags**: `semantic`
+
+**Description**:
+
+Returns JSON schemas for the requested semantic object types.
+
+WHEN TO USE:
+- When you want to know the JSON schema of a semantic object type, e.g. before searching something specific.
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "SemanticObjectType": {
+      "enum": [
+        "semantic-model",
+        "semantic-dataset",
+        "semantic-metric",
+        "semantic-relationship",
+        "semantic-glossary",
+        "semantic-constraint"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "semantic_types": {
+      "description": "List of semantic object types for which JSON schemas should be returned. Each returned item contains the requested semantic type and its metastore schema.",
+      "items": {
+        "$ref": "#/$defs/SemanticObjectType"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "semantic_types"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="search_semantic_context"></a>
+## search_semantic_context
+**Annotations**: `read-only`
+
+**Tags**: `semantic`
+
+**Description**:
+
+Searches semantic models and semantic objects using regex patterns matched against their names, descriptions and
+stringified JSON attributes.
+
+Returns compact matches grouped by semantic model. Each match includes the semantic object type,
+the paths where the patterns matched, and compact object view.
+
+CONSIDERATIONS:
+- The search is case-insensitive by default. Use `case_sensitive=True` when exact casing matters.
+- The search is performed against semantic object names and data attributes which are stringified JSON objects
+following their corresponding JSON schema.
+- The search can be scoped to a specific semantic model or semantic object types or both.
+
+WHEN TO USE:
+- When you need to discover which semantic models or semantic objects are relevant to a user request.
+- When you know business terms, column names, metric fragments, or rule names, but not exact object UUIDs.
+- When you need to find semantic objects by keyword or values used in their attributes.
+
+WHEN NOT TO USE:
+- When you know the exact IDs.
+
+EXAMPLES:
+- Find semantic objects by business concepts for revenue or sales:
+  `patterns=["revenue", "sales"]`
+- Find semantic objects using a Keboola table ID:
+  `patterns=["out.c-sales-main.fact_orders"]`
+- Find semantic dataset for a certain table:
+  `patterns=["in.c-sales-main.fact_orders"], semantic_types=["semantic-dataset"]`
+- Find semantic datasets that mention a column name:
+  `patterns=["column_name"], semantic_types=["semantic-dataset"]`
+- Search semantic objects e.g. semantic metrics, relationships, and constraints using a certain semantic dataset:
+  `patterns=["table-id-of-the-dataset"], semantic_types=["semantic-metric",`
+  `"semantic-relationship", "semantic-constraint"]`
+- Search semantic constraints using e.g. certain semantic metrics and certain semantic datasets:
+  `patterns=["metric-name-1", "metric-name-2", "table-id-from-the-dataset"],`
+  `semantic_types=["semantic-metric", "semantic-relationship"]`
+- Search something within one semantic model only:
+  `patterns=["something"], semantic_model_id="<semantic-model-uuid>"`
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "SemanticObjectType": {
+      "enum": [
+        "semantic-model",
+        "semantic-dataset",
+        "semantic-metric",
+        "semantic-relationship",
+        "semantic-glossary",
+        "semantic-constraint"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "patterns": {
+      "description": "One or more regex patterns used to search semantic metadata. The search checks semantic model names plus semantic object names and nested attribute values. Use multiple patterns when you need to find objects related to several business terms at once.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
-    "time_grain": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Optional requested time grain, e.g. day/week/month."
-    },
-    "filters": {
+    "semantic_types": {
       "default": [],
-      "description": "Optional normalized filters for query planning.",
+      "description": "Optional semantic object types to search. Empty list [] means ALL semantic object types are searched. Use this to narrow the search when you already know whether you want datasets, metrics, relationships, glossary terms, constraints, or models.",
       "items": {
-        "$ref": "#/$defs/SemanticFilter"
+        "$ref": "#/$defs/SemanticObjectType"
       },
       "type": "array"
     },
-    "model_id": {
+    "semantic_model_id": {
       "anyOf": [
         {
           "type": "string"
@@ -3359,16 +3165,125 @@ OUTPUT CONTRACT:
         }
       ],
       "default": null,
-      "description": "Optional semantic model UUID to disambiguate the metric."
+      "description": "Optional semantic model ID that restricts the search to a single semantic model. Leave empty to search across all semantic models."
     },
-    "strict": {
-      "default": true,
-      "description": "If true, unresolved dimensions and severe constraints invalidate the plan.",
+    "case_sensitive": {
+      "default": false,
+      "description": "Whether regex matching should be case-sensitive. Leave false for normal discovery; set true only when exact casing matters.",
       "type": "boolean"
+    },
+    "max_results": {
+      "default": 100,
+      "description": "Maximum number of matched semantic objects to return. Use a smaller value for quick discovery and a larger value only when you need a broader result set.",
+      "type": "integer"
     }
   },
   "required": [
-    "metric_name"
+    "patterns"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="validate_semantic_query"></a>
+## validate_semantic_query
+**Annotations**: `read-only`
+
+**Tags**: `semantic`
+
+**Description**:
+
+Performs best-effort semantic validation of an SQL query against one semantic model and compares it with the
+expected semantic objects provided.
+
+LIMITATIONS:
+- Detection is heuristic and based on string matching over SQL and semantic metadata.
+- The tool does not parse SQL semantically and does not execute the query.
+- Detected objects, missing objects, and relationship matches may therefore be imperfect.
+- Use the result as a best-effort semantic check, not as a formal proof that the query is correct.
+
+RETURNS:
+- detected semantic datasets and metrics used by the SQL
+- expected semantic objects that were matched or missing
+- unexpected detected objects outside the expected scope
+- pre-execution violations
+- post-execution checks with optional validation SQL
+
+WHEN TO USE:
+- Before generating or approving a query that should follow a semantic model.
+- When you want to verify that a query uses the intended semantic objects.
+- When you need to surface semantic business-rule violations or follow-up checks.
+
+EXAMPLES:
+- Validate a SQL query against one semantic model:
+  `sql_query="SELECT SUM(\"REVENUE\") FROM ...", semantic_model_id="semantic-model-uuid"`
+- Validate a query and assert that a specific dataset is expected:
+  `sql_query="SELECT * FROM ...", semantic_model_id="semantic-model-uuid",`
+  `expected_semantic_objects=[{"object_type": "semantic-dataset", "ids": ["dataset-uuid-1"]}]`
+- Validate a query and compare it against expected objects:
+  `sql_query="SELECT SUM(\"REVENUE\") FROM ...", semantic_model_id="semantic-model-uuid",`
+  `expected_semantic_objects= fill expected objects accordingly`
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "SemanticObjectType": {
+      "enum": [
+        "semantic-model",
+        "semantic-dataset",
+        "semantic-metric",
+        "semantic-relationship",
+        "semantic-glossary",
+        "semantic-constraint"
+      ],
+      "type": "string"
+    },
+    "SemanticObjectTypeSelection": {
+      "description": "Semantic object type selection used by semantic tools.",
+      "properties": {
+        "object_type": {
+          "$ref": "#/$defs/SemanticObjectType",
+          "description": "Semantic object type to load."
+        },
+        "ids": {
+          "default": [],
+          "description": "Specific object UUIDs to include. Empty list [] means include all objects of this type.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "object_type"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "sql_query": {
+      "description": "SQL query that should be checked against the semantic layer. The query is not executed; the tool performs best-effort semantic detection and rule validation using heuristic string matching, so the detected objects may be incomplete or imperfect.",
+      "type": "string"
+    },
+    "semantic_model_id": {
+      "description": "Semantic model ID against which the SQL should be validated. This defines the semantic universe used for detecting datasets, metrics, relationships, and constraints.",
+      "type": "string"
+    },
+    "expected_semantic_objects": {
+      "description": "Optional semantic object selections that define the expected semantic scope of the query. These expectations are compared with the objects actually detected in the SQL. Use `ids` when you want to assert that specific semantic objects should be present.",
+      "items": {
+        "$ref": "#/$defs/SemanticObjectTypeSelection"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "sql_query",
+    "semantic_model_id",
+    "expected_semantic_objects"
   ],
   "type": "object"
 }
