@@ -260,6 +260,8 @@ CONSIDERATIONS:
   fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
 - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
   and user intent.
+- If there are 20 or more SQL transformations in the project, always assign a folder: first call get_configs
+  on the transformation component to find existing folder names, then pick the most appropriate one.
 
 USAGE:
 - Use when you want to create a new SQL transformation.
@@ -319,6 +321,11 @@ EXAMPLES:
         "type": "string"
       },
       "type": "array"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this transformation in the Keboola UI. Use get_configs on the transformation component to list existing transformations and their folders before calling this tool. If there are 20 or more transformations in the project, always provide a folder based on the existing folder names \u2014 choose the most fitting one based on the transformation purpose. If no existing folder fits, leave this empty.",
+      "type": "string"
     }
   },
   "required": [
@@ -1616,6 +1623,11 @@ Example 4 - Update storage mappings:
       "default": null,
       "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this transformation in the Keboola UI. Use get_configs on the transformation component to list existing transformations and their folders before calling this tool. If there are 20 or more transformations in the project, always provide a folder based on the existing folder names \u2014 choose the most fitting one based on the transformation purpose. If no existing folder fits, leave this empty.",
+      "type": "string"
     }
   },
   "required": [

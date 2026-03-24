@@ -76,6 +76,7 @@ from keboola_mcp_server.tools.components.utils import (
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
     set_nested_value,
+    set_transformation_folder_metadata,
     update_params,
     update_transformation_parameters,
 )
@@ -406,6 +407,19 @@ async def create_sql_transformation(
             ),
         ),
     ] = tuple(),
+    folder: Annotated[
+        str,
+        Field(
+            description=(
+                'Folder name to organize this transformation in the Keboola UI. '
+                'Use get_configs on the transformation component to list existing transformations and their folders '
+                'before calling this tool. '
+                'If there are 20 or more transformations in the project, always provide a folder '
+                'based on the existing folder names — choose the most fitting one based on the '
+                'transformation purpose. If no existing folder fits, leave this empty.'
+            ),
+        ),
+    ] = '',
 ) -> ConfigToolOutput:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
@@ -424,6 +438,8 @@ async def create_sql_transformation(
       fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
     - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
       and user intent.
+    - If there are 20 or more SQL transformations in the project, always assign a folder: first call get_configs
+      on the transformation component to find existing folder names, then pick the most appropriate one.
 
     USAGE:
     - Use when you want to create a new SQL transformation.
@@ -468,6 +484,9 @@ async def create_sql_transformation(
         component_id=component_id,
         configuration_id=configuration_id,
     )
+
+    if folder:
+        await set_transformation_folder_metadata(client, component_id, configuration_id, folder)
 
     LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
 
@@ -576,6 +595,19 @@ async def update_sql_transformation(
             )
         ),
     ] = None,
+    folder: Annotated[
+        str,
+        Field(
+            description=(
+                'Folder name to organize this transformation in the Keboola UI. '
+                'Use get_configs on the transformation component to list existing transformations and their folders '
+                'before calling this tool. '
+                'If there are 20 or more transformations in the project, always provide a folder '
+                'based on the existing folder names — choose the most fitting one based on the '
+                'transformation purpose. If no existing folder fits, leave this empty.'
+            ),
+        ),
+    ] = '',
 ) -> ConfigToolOutput:
     """
     Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
@@ -799,6 +831,9 @@ async def update_sql_transformation(
         configuration_id=configuration_id,
         configuration_version=updated_raw_configuration.get('version'),
     )
+
+    if folder:
+        await set_transformation_folder_metadata(client, sql_transformation_id, configuration_id, folder)
 
     links = links_manager.get_transformation_links(
         transformation_type=sql_transformation_id,

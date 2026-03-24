@@ -11,6 +11,7 @@ from keboola_mcp_server.clients.client import (
     ORCHESTRATOR_COMPONENT_ID,
     KeboolaClient,
 )
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.model import (
     Component,
@@ -637,6 +638,122 @@ async def test_create_sql_transformation_fail(
             description='test_description',
             sql_code_blocks=[SimplifiedTfBlocks.Block.Code(name='Code 0', script='SELECT * FROM test')],
         )
+
+
+@pytest.mark.parametrize(
+    ('folder', 'expect_folder_call'),
+    [
+        ('Analytics', True),
+        ('', False),
+    ],
+    ids=['folder_provided', 'folder_empty'],
+)
+@pytest.mark.parametrize(
+    ('sql_dialect', 'expected_component_id'),
+    [('Snowflake', 'keboola.snowflake-transformation')],
+)
+@pytest.mark.asyncio
+async def test_create_sql_transformation_folder(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+    sql_dialect: str,
+    expected_component_id: str,
+    folder: str,
+    expect_folder_call: bool,
+) -> None:
+    """Test that folder metadata is set (or not) based on the folder parameter."""
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    mock_component['id'] = expected_component_id
+    mock_configuration['id'] = '9999'
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
+
+    await create_sql_transformation(
+        ctx=context,
+        name='Test',
+        description='desc',
+        sql_code_blocks=[SimplifiedTfBlocks.Block.Code(name='c', script='SELECT 1;')],
+        folder=folder,
+    )
+
+    metadata_calls = [
+        call
+        for call in keboola_client.storage_client.configuration_metadata_update.call_args_list
+        if call.kwargs.get('metadata', {}).get(MetadataField.CONFIGURATION_FOLDER_NAME)
+    ]
+    if expect_folder_call:
+        assert len(metadata_calls) == 1
+        assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: folder}
+    else:
+        assert len(metadata_calls) == 0
+
+
+@pytest.mark.parametrize(
+    ('folder', 'expect_folder_call'),
+    [
+        ('Sales', True),
+        ('', False),
+    ],
+    ids=['folder_provided', 'folder_empty'],
+)
+@pytest.mark.parametrize(
+    ('sql_dialect', 'expected_component_id'),
+    [('Snowflake', 'keboola.snowflake-transformation')],
+)
+@pytest.mark.asyncio
+async def test_update_sql_transformation_folder(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+    sql_dialect: str,
+    expected_component_id: str,
+    folder: str,
+    expect_folder_call: bool,
+) -> None:
+    """Test that folder metadata is set (or not) on update based on the folder parameter."""
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    mock_component['id'] = expected_component_id
+    configuration_id = 'cfg-folder-test'
+    existing = {
+        'id': configuration_id,
+        'name': 'T',
+        'description': 'D',
+        'configuration': {'parameters': {'blocks': []}, 'storage': {}},
+        'version': 1,
+    }
+    updated = {**existing, 'version': 2}
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated)
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+
+    await update_sql_transformation(
+        context,
+        change_description='test',
+        configuration_id=configuration_id,
+        folder=folder,
+    )
+
+    metadata_calls = [
+        call
+        for call in keboola_client.storage_client.configuration_metadata_update.call_args_list
+        if call.kwargs.get('metadata', {}).get(MetadataField.CONFIGURATION_FOLDER_NAME)
+    ]
+    if expect_folder_call:
+        assert len(metadata_calls) == 1
+        assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: folder}
+    else:
+        assert len(metadata_calls) == 0
 
 
 @pytest.mark.parametrize(
