@@ -547,6 +547,28 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
 
+    async def component_configurations_search(
+        self,
+        component_id: str | None = None,
+        metadata_keys: list[str] | None = None,
+    ) -> list[JsonDict]:
+        """
+        Searches component configurations by metadata keys.
+
+        :param component_id: Optional component ID to filter results.
+        :param metadata_keys: List of metadata keys to filter by — returns only configurations
+            that have at least one of the specified metadata keys set.
+        :return: List of matching configurations as dictionaries.
+        """
+        endpoint = f'branch/{self._branch_id}/search/component-configurations'
+        params: dict[str, Any] = {}
+        if component_id:
+            params['componentId'] = component_id
+        if metadata_keys:
+            for i, key in enumerate(metadata_keys):
+                params[f'metadataKeys[{i}]'] = key
+        return cast(list[JsonDict], await self.get(endpoint=endpoint, params=params or None))
+
     async def configuration_metadata_get(self, component_id: str, configuration_id: str) -> list[JsonDict]:
         """
         Retrieves metadata for a given configuration.

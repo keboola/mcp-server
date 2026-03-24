@@ -406,6 +406,51 @@ async def set_cfg_update_metadata(
         logging.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}')
 
 
+async def get_transformation_folders(client: KeboolaClient, component_id: str) -> tuple[int, list[str]]:
+    """
+    Returns the total number of existing transformation configurations and the distinct folder names
+    already in use, fetched via the component-configurations search endpoint.
+
+    :param client: KeboolaClient instance
+    :param component_id: ID of the transformation component (e.g. keboola.snowflake-transformation)
+    :return: Tuple of (total_config_count, list_of_distinct_folder_names)
+    """
+    raw_configs = await client.storage_client.configuration_list(component_id=component_id)
+    folder_configs = await client.storage_client.component_configurations_search(
+        component_id=component_id,
+        metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
+    )
+    folders: list[str] = []
+    for cfg in folder_configs:
+        for meta in cfg.get('metadata', []):
+            if meta.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME:
+                folder_name = meta.get('value', '').strip()
+                if folder_name and folder_name not in folders:
+                    folders.append(folder_name)
+    return len(raw_configs), folders
+
+
+async def set_transformation_folder_metadata(
+    client: KeboolaClient, component_id: str, configuration_id: str, folder: str
+) -> None:
+    """
+    Sets the KBC.configuration.folderName metadata for a transformation configuration.
+
+    :param client: KeboolaClient instance
+    :param component_id: ID of the component
+    :param configuration_id: ID of the configuration
+    :param folder: Folder name to assign
+    """
+    try:
+        await client.storage_client.configuration_metadata_update(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            metadata={MetadataField.CONFIGURATION_FOLDER_NAME: folder},
+        )
+    except HTTPStatusError as e:
+        logging.exception(f'Failed to set folder metadata for configuration {configuration_id}: {e}')
+
+
 # ============================================================================
 # PARAMETER UPDATE UTILITIES
 # ============================================================================

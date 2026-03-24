@@ -1,8 +1,10 @@
 import re
 from typing import Any, Sequence
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
     ComponentType,
@@ -28,7 +30,9 @@ from keboola_mcp_server.tools.components.utils import (
     clean_bucket_name,
     create_transformation_configuration,
     expand_component_types,
+    get_transformation_folders,
     set_nested_value,
+    set_transformation_folder_metadata,
     structure_summary,
     update_params,
     update_transformation_parameters,
@@ -1370,3 +1374,94 @@ def test_update_transformation_parameters(
     else:
         # For simple patterns, check exact match
         assert result_msg == expected_msg
+
+
+# ============================================================================
+# get_transformation_folders / set_transformation_folder_metadata TESTS
+# ============================================================================
+
+
+def _make_client(
+    configs: list[dict[str, Any]],
+    folder_configs: list[dict[str, Any]],
+) -> MagicMock:
+    """Create a minimal mock KeboolaClient for folder tests."""
+    client = MagicMock()
+    client.storage_client.configuration_list = AsyncMock(return_value=configs)
+    client.storage_client.component_configurations_search = AsyncMock(return_value=folder_configs)
+    client.storage_client.configuration_metadata_update = AsyncMock(return_value=[])
+    return client
+
+
+@pytest.mark.parametrize(
+    ('all_configs', 'folder_configs', 'expected_count', 'expected_folders'),
+    [
+        # No configs at all
+        ([], [], 0, []),
+        # Configs exist but none have folder metadata
+        ([{'id': '1'}, {'id': '2'}], [], 2, []),
+        # Two configs with distinct folders
+        (
+            [{'id': '1'}, {'id': '2'}, {'id': '3'}],
+            [
+                {'id': '1', 'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}]},
+                {'id': '2', 'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Sales'}]},
+            ],
+            3,
+            ['Analytics', 'Sales'],
+        ),
+        # Duplicate folder names are deduplicated
+        (
+            [{'id': '1'}, {'id': '2'}],
+            [
+                {'id': '1', 'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}]},
+                {'id': '2', 'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}]},
+            ],
+            2,
+            ['Analytics'],
+        ),
+    ],
+    ids=['no_configs', 'no_folders', 'distinct_folders', 'deduplicated_folders'],
+)
+@pytest.mark.asyncio
+async def test_get_transformation_folders(
+    all_configs: list[dict[str, Any]],
+    folder_configs: list[dict[str, Any]],
+    expected_count: int,
+    expected_folders: list[str],
+) -> None:
+    """Test that get_transformation_folders returns correct counts and folder names."""
+    client = _make_client(all_configs, folder_configs)
+    count, folders = await get_transformation_folders(client, 'keboola.snowflake-transformation')
+    assert count == expected_count
+    assert folders == expected_folders
+    client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
+    client.storage_client.component_configurations_search.assert_called_once_with(
+        component_id='keboola.snowflake-transformation',
+        metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
+    )
+
+
+@pytest.mark.asyncio
+async def test_set_transformation_folder_metadata_calls_update() -> None:
+    """Test that set_transformation_folder_metadata calls configuration_metadata_update correctly."""
+    client = _make_client([], [])
+    await set_transformation_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1', 'Analytics')
+    client.storage_client.configuration_metadata_update.assert_called_once_with(
+        component_id='keboola.snowflake-transformation',
+        configuration_id='cfg-1',
+        metadata={MetadataField.CONFIGURATION_FOLDER_NAME: 'Analytics'},
+    )
+
+
+@pytest.mark.asyncio
+async def test_set_transformation_folder_metadata_swallows_error() -> None:
+    """Test that set_transformation_folder_metadata swallows HTTPStatusError without raising."""
+    from httpx import HTTPStatusError, Request, Response
+
+    client = _make_client([], [])
+    client.storage_client.configuration_metadata_update = AsyncMock(
+        side_effect=HTTPStatusError('err', request=Request('POST', 'http://x'), response=Response(500))
+    )
+    # Should not raise
+    await set_transformation_folder_metadata(client, 'comp', 'cfg', 'Folder')
