@@ -562,12 +562,13 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         endpoint = f'branch/{self._branch_id}/search/component-configurations'
         params: dict[str, Any] = {}
-        if component_id:
-            params['componentId'] = component_id
         if metadata_keys:
             for i, key in enumerate(metadata_keys):
                 params[f'metadataKeys[{i}]'] = key
-        return cast(list[JsonDict], await self.get(endpoint=endpoint, params=params or None))
+        results = cast(list[JsonDict], await self.get(endpoint=endpoint, params=params or None))
+        if component_id:
+            results = [r for r in results if r.get('componentId') == component_id]
+        return results
 
     async def configuration_metadata_get(self, component_id: str, configuration_id: str) -> list[JsonDict]:
         """

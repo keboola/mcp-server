@@ -1404,8 +1404,16 @@ def _make_client(
         (
             [{'id': '1'}, {'id': '2'}, {'id': '3'}],
             [
-                {'id': '1', 'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}]},
-                {'id': '2', 'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Sales'}]},
+                {
+                    'id': '1',
+                    'componentId': 'keboola.snowflake-transformation',
+                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
+                },
+                {
+                    'id': '2',
+                    'componentId': 'keboola.snowflake-transformation',
+                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Sales'}],
+                },
             ],
             3,
             ['Analytics', 'Sales'],
@@ -1414,8 +1422,16 @@ def _make_client(
         (
             [{'id': '1'}, {'id': '2'}],
             [
-                {'id': '1', 'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}]},
-                {'id': '2', 'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}]},
+                {
+                    'id': '1',
+                    'componentId': 'keboola.snowflake-transformation',
+                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
+                },
+                {
+                    'id': '2',
+                    'componentId': 'keboola.snowflake-transformation',
+                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
+                },
             ],
             2,
             ['Analytics'],
