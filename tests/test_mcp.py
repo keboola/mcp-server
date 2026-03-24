@@ -552,18 +552,29 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('features', 'expect_filtered'),
+        ('features', 'tool_name', 'expect_filtered'),
         [
-            ([], True),
-            (['mcp-semantic-tooling'], False),
-            (['other-feature'], True),
+            ([], 'search_semantic_context', True),
+            ([], 'get_semantic_schema', True),
+            (['mcp-semantic-tooling'], 'search_semantic_context', False),
+            (['mcp-semantic-tooling'], 'get_semantic_schema', False),
+            (['other-feature'], 'search_semantic_context', True),
+            (['other-feature'], 'get_semantic_schema', True),
         ],
-        ids=['no_feature', 'with_semantic_feature', 'unrelated_feature'],
+        ids=[
+            'no_feature_search',
+            'no_feature_schema',
+            'with_feature_search',
+            'with_feature_schema',
+            'unrelated_feature_search',
+            'unrelated_feature_schema',
+        ],
     )
     async def test_list_tools_filters_semantic_tools_by_feature(
         self,
         mcp_context_client,
         features: list[str],
+        tool_name: str,
         expect_filtered: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
@@ -572,8 +583,10 @@ class TestToolsFilteringMiddleware:
         )
 
         tools = [
-            _tool('semantic_discover', tags={'semantic'}),
-            _tool('semantic_get_definition', tags={'semantic'}),
+            _tool('search_semantic_context', tags={'semantic'}),
+            _tool('get_semantic_context', tags={'semantic'}),
+            _tool('get_semantic_schema', tags={'semantic'}),
+            _tool('validate_semantic_query', tags={'semantic'}),
             _tool('other_tool'),
         ]
 
@@ -586,27 +599,34 @@ class TestToolsFilteringMiddleware:
 
         result_names = {t.name for t in result}
         if expect_filtered:
-            assert 'semantic_discover' not in result_names
-            assert 'semantic_get_definition' not in result_names
+            assert tool_name not in result_names
         else:
-            assert 'semantic_discover' in result_names
-            assert 'semantic_get_definition' in result_names
+            assert tool_name in result_names
         assert 'other_tool' in result_names
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('features', 'tool_tags', 'expect_error'),
+        ('features', 'tool_name', 'tool_tags', 'expect_error'),
         [
-            ([], {'semantic'}, True),
-            (['mcp-semantic-tooling'], {'semantic'}, False),
-            ([], set(), False),
+            ([], 'search_semantic_context', {'semantic'}, True),
+            ([], 'get_semantic_schema', {'semantic'}, True),
+            (['mcp-semantic-tooling'], 'search_semantic_context', {'semantic'}, False),
+            (['mcp-semantic-tooling'], 'get_semantic_schema', {'semantic'}, False),
+            ([], 'other_tool', set(), False),
         ],
-        ids=['no_feature_semantic_tool', 'with_feature_semantic_tool', 'no_feature_non_semantic_tool'],
+        ids=[
+            'no_feature_search_tool',
+            'no_feature_schema_tool',
+            'with_feature_search_tool',
+            'with_feature_schema_tool',
+            'no_feature_non_semantic_tool',
+        ],
     )
     async def test_call_tool_blocks_semantic_tools_by_feature(
         self,
         mcp_context_client,
         features: list[str],
+        tool_name: str,
         tool_tags: set[str],
         expect_error: bool,
     ) -> None:
@@ -615,9 +635,9 @@ class TestToolsFilteringMiddleware:
             return_value={'owner': {'features': features}, 'admin': {}}
         )
 
-        tool = _tool('semantic_discover', tags=tool_tags)
+        tool = _tool(tool_name, tags=tool_tags)
         mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
-        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name='semantic_discover'))
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool_name))
 
         expected = MagicMock()
 
