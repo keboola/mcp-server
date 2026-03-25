@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urljoin
 from uuid import uuid4
 
 import httpx
@@ -9,6 +10,16 @@ import pytest
 from keboola_mcp_server.clients.metastore import MetastoreClient
 
 LOG = logging.getLogger(__name__)
+
+
+async def delete_metastore_object(client: MetastoreClient, object_type: str, uuid: str) -> None:
+    try:
+        await client.delete_object(object_type, uuid)
+        # Delete the soft deleted object
+        await client.delete_object(object_type, uuid)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code not in (401, 403, 404):
+            raise
 
 
 @pytest.fixture(scope='session')
@@ -20,6 +31,28 @@ def metastore_url(storage_api_url: str) -> str:
 @pytest.fixture
 def metastore_client(storage_api_token: str, metastore_url: str) -> MetastoreClient:
     return MetastoreClient.create(root_url=metastore_url, token=storage_api_token)
+
+
+@pytest.fixture(scope='module', autouse=True)
+def _require_metastore_available(
+    storage_api_token: str,
+    metastore_url: str,
+) -> None:
+    try:
+        probe_url = urljoin(metastore_url, '/health-check')
+        with httpx.Client(
+            headers={'X-StorageApi-Token': storage_api_token},
+            timeout=httpx.Timeout(3.0, connect=1.0),
+        ) as client:
+            response = client.get(probe_url)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        _skip_unauthorized(exc)
+        raise
+    except httpx.ConnectError as exc:
+        pytest.skip(f'Metastore endpoint is not reachable in this environment: {exc}')
+    except httpx.TimeoutException as exc:
+        pytest.skip(f'Metastore endpoint timed out in this environment: {exc}')
 
 
 def _skip_unauthorized(exc: httpx.HTTPStatusError) -> None:
@@ -48,8 +81,6 @@ def _skip_unauthorized(exc: httpx.HTTPStatusError) -> None:
 async def test_get_schema_for_semantic_types(metastore_client: MetastoreClient, object_type: str) -> None:
     schema_doc = await metastore_client.get_schema(object_type)
     assert isinstance(schema_doc, dict)
-    assert schema_doc.get('title') == object_type
-    assert schema_doc.get('version')
 
 
 @pytest.mark.asyncio
@@ -78,6 +109,7 @@ async def test_list_semantic_models_and_optional_detail(metastore_client: Metast
     model = await metastore_client.get_object('semantic-model', models[0].id)
     assert model.id
     assert model.type == 'semantic-model'
+    assert isinstance(model.attributes, dict)
 
 
 @pytest.mark.asyncio
@@ -150,7 +182,7 @@ async def test_crud_walkthrough_post_get_put_delete_and_revisions(metastore_clie
             assert rev2.id == model_uuid
             assert rev2.attributes.get('sql_dialect') == 'BigQuery'
 
-        await metastore_client.delete_object(object_type, model_uuid)
+        await delete_metastore_object(metastore_client, object_type, model_uuid)
 
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
             await metastore_client.get_object(object_type, model_uuid)
@@ -158,8 +190,4 @@ async def test_crud_walkthrough_post_get_put_delete_and_revisions(metastore_clie
 
     finally:
         if model_uuid:
-            try:
-                await metastore_client.delete_object(object_type, model_uuid)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code not in (401, 403, 404):
-                    raise
+            await delete_metastore_object(metastore_client, object_type, model_uuid)

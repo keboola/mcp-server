@@ -12,52 +12,57 @@ from keboola_mcp_server.clients.base import JsonStruct, KeboolaServiceClient, Ra
 class MetaObjectMeta(BaseModel):
     """Metadata from the JSON:API 'meta' field — same structure for all object types."""
 
-    branch: str = Field(default='')
-    name: str = Field(default='')
-    revision: int = Field(default=0)
-    schema_version: str = Field(
+    branch: str | None = Field(default=None)
+    name: str | None = Field(default=None)
+    revision: int | None = Field(default=None)
+    schema_version: str | None = Field(
         validation_alias=AliasChoices('schemaVersion', 'schema_version'),
         serialization_alias='schemaVersion',
-        default='',
+        default=None,
     )
-    project_id: int = Field(
+    project_id: int | None = Field(
         validation_alias=AliasChoices('projectId', 'project_id'),
         serialization_alias='projectId',
-        default=0,
+        default=None,
     )
-    organization_id: str = Field(
+    organization_id: str | None = Field(
         validation_alias=AliasChoices('organizationId', 'organization_id'),
         serialization_alias='organizationId',
-        default='',
+        default=None,
     )
-    created_at: str = Field(
+    created_at: str | None = Field(
         validation_alias=AliasChoices('createdAt', 'created_at'),
         serialization_alias='createdAt',
-        default='',
+        default=None,
     )
-    last_updated: str = Field(
+    last_updated: str | None = Field(
         validation_alias=AliasChoices('lastUpdated', 'last_updated'),
         serialization_alias='lastUpdated',
-        default='',
+        default=None,
     )
-    revision_created_at: str = Field(
+    deleted_at: str | None = Field(
+        validation_alias=AliasChoices('deletedAt', 'deleted_at'),
+        serialization_alias='deletedAt',
+        default=None,
+    )
+    revision_created_at: str | None = Field(
         validation_alias=AliasChoices('revisionCreatedAt', 'revision_created_at'),
         serialization_alias='revisionCreatedAt',
-        default='',
+        default=None,
     )
 
 
 class MetastoreObject(BaseModel):
     """Single object from the Metastore JSON:API response."""
 
-    type: str = Field(default='')
-    id: str = Field(default='')
-    attributes: dict[str, Any] = Field(default_factory=dict)
-    meta: MetaObjectMeta = Field(default_factory=MetaObjectMeta)
+    type: str | None = Field(default=None)
+    id: str | None = Field(default=None)
+    attributes: dict[str, Any] | None = Field(default=None)
+    relationships: dict[str, Any] | None = Field(default=None)
+    meta: MetaObjectMeta | None = Field(default=None)
 
 
-_list_adapter: TypeAdapter[list[MetastoreObject]] = TypeAdapter(list[MetastoreObject])
-_object_adapter: TypeAdapter[MetastoreObject] = TypeAdapter(MetastoreObject)
+LIST_ADAPTER: TypeAdapter[list[MetastoreObject]] = TypeAdapter(list[MetastoreObject])
 
 
 class MetastoreClient(KeboolaServiceClient):
@@ -230,7 +235,7 @@ class MetastoreClient(KeboolaServiceClient):
         data = response.get('data')
         if not isinstance(data, list):
             raise ValueError('Unexpected metastore response format: "data" is not an array.')
-        return _list_adapter.validate_python(data)
+        return LIST_ADAPTER.validate_python(data)
 
     @staticmethod
     def _parse_object(response: JsonStruct) -> MetastoreObject:
@@ -239,4 +244,4 @@ class MetastoreClient(KeboolaServiceClient):
         data = response.get('data', response)
         if not isinstance(data, dict):
             raise ValueError('Unexpected metastore response format: "data" is not an object.')
-        return _object_adapter.validate_python(data)
+        return MetastoreObject.model_validate(data)

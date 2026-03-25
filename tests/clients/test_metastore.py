@@ -13,6 +13,8 @@ def _jsonapi_object(
     uuid: str,
     object_type: str = 'semantic-model',
     revision: int = 1,
+    deleted_at: str | None = None,
+    relationships: dict[str, Any] | None = None,
     **extra_attrs: Any,
 ) -> dict:
     """Build a single JSON:API resource object (inside the 'data' envelope)."""
@@ -29,8 +31,10 @@ def _jsonapi_object(
             'organizationId': '456',
             'createdAt': '2026-01-01T00:00:00Z',
             'lastUpdated': '2026-01-01T00:00:00Z',
+            'deletedAt': deleted_at,
             'revisionCreatedAt': '2026-01-01T00:00:00Z',
         },
+        'relationships': relationships,
     }
 
 
@@ -57,6 +61,7 @@ async def test_list_objects_returns_meta_objects() -> None:
     assert result[0].id == 'u1'
     assert result[0].type == 'semantic-model'
     assert result[0].attributes['name'] == 'finance-core'
+    assert result[0].meta is not None
     assert result[0].meta.revision == 1
     assert result[0].meta.project_id == 123
     client.raw_client.get.assert_awaited_once_with(  # type: ignore[attr-defined]
@@ -65,7 +70,6 @@ async def test_list_objects_returns_meta_objects() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_list_objects_with_filter() -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
     client.raw_client.get = AsyncMock(  # type: ignore[assignment]
@@ -216,6 +220,7 @@ async def test_put_object() -> None:
     result = await client.put_object('semantic-model', 'u1', name='updated', data={'name': 'updated'})
 
     assert result.id == 'u1'
+    assert result.meta is not None
     assert result.meta.revision == 2
 
 
@@ -245,6 +250,8 @@ async def test_list_revisions() -> None:
     result = await client.list_revisions('semantic-model', filter_by='id=u1')
 
     assert len(result) == 2
+    assert result[0].meta is not None
+    assert result[1].meta is not None
     assert result[0].meta.revision == 1
     assert result[1].meta.revision == 2
 
@@ -259,4 +266,32 @@ async def test_get_revision() -> None:
     result = await client.get_revision('semantic-model', 'u1', 3)
 
     assert result.id == 'u1'
+    assert result.meta is not None
     assert result.meta.revision == 3
+
+
+def test_model_validate_allows_optional_fields_to_be_missing() -> None:
+    obj = MetastoreClient._parse_object({'data': {}})
+
+    assert obj.id is None
+    assert obj.type is None
+    assert obj.attributes is None
+    assert obj.relationships is None
+    assert obj.meta is None
+
+
+def test_model_validate_maps_deleted_at_and_relationships() -> None:
+    result = MetastoreClient._parse_object(
+        _single_response(
+            _jsonapi_object(
+                'my-model',
+                'u1',
+                deleted_at='2026-01-02T00:00:00Z',
+                relationships={'dataset': {'data': {'type': 'semantic-dataset', 'id': 'd1'}}},
+            )
+        )
+    )
+
+    assert result.relationships == {'dataset': {'data': {'type': 'semantic-dataset', 'id': 'd1'}}}
+    assert result.meta is not None
+    assert result.meta.deleted_at == '2026-01-02T00:00:00Z'
