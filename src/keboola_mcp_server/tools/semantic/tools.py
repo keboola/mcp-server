@@ -6,7 +6,7 @@ from typing import Annotated, Any
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
@@ -56,7 +56,9 @@ class SemanticModelCompact(CompactSemanticObject):
 
 
 class SemanticDatasetCompact(CompactSemanticObject):
-    table_id: str | None = Field(default=None, serialization_alias='tableId')
+    model_config = ConfigDict(populate_by_name=True)
+
+    table_id: str | None = Field(default=None, validation_alias='tableId', serialization_alias='tableId')
     description: str | None = None
     model_uuid: str | None = None
     fqn: str | None = None
@@ -92,8 +94,8 @@ class SemanticMetricCompact(CompactSemanticObject):
 
 
 class SemanticRelationshipCompact(CompactSemanticObject):
-    from_: str | None = Field(default=None, serialization_alias='from')
-    to: str | None = None
+    from_dataset: str | None = None
+    to_dataset: str | None = None
     type: str | None = None
     on: str | None = None
     model_uuid: str | None = None
@@ -104,8 +106,8 @@ class SemanticRelationshipCompact(CompactSemanticObject):
         return cls(
             id=obj.id,
             name=obj.display_name,
-            from_=attributes.get('from'),
-            to=attributes.get('to'),
+            from_dataset=attributes.get('from'),
+            to_dataset=attributes.get('to'),
             type=attributes.get('type'),
             on=attributes.get('on'),
             model_uuid=attributes.get('modelUUID'),
@@ -206,9 +208,11 @@ class SemanticObjectTypeContext(BaseModel):
 class SemanticUsedDataset(BaseModel):
     """Dataset referenced by the validated SQL."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(description='Dataset UUID.')
     name: str = Field(description='Dataset name.')
-    table_id: str = Field(description='Keboola table ID.', serialization_alias='tableId')
+    table_id: str = Field(description='Keboola table ID.', validation_alias='tableId', serialization_alias='tableId')
     description: str = Field(description='Dataset description.')
     fqn: str = Field(description='Dataset fully qualified SQL name.')
 
