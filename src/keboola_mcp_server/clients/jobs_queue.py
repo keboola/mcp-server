@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any, Optional, cast
 
 from keboola_mcp_server.clients.base import JsonDict, JsonList, KeboolaServiceClient, RawKeboolaClient
@@ -91,12 +92,14 @@ class JobsQueueClient(KeboolaServiceClient):
         self,
         component_id: str,
         configuration_id: str,
+        config_row_ids: Sequence[str] | None = None,
     ) -> JsonDict:
         """
         Creates a new job.
 
         :param component_id: The id of the component.
         :param configuration_id: The id of the configuration.
+        :param config_row_ids: Optional list of configuration row IDs to run.
         :return: The response from the API call - created job or raise an error.
         """
         payload = {
@@ -106,6 +109,8 @@ class JobsQueueClient(KeboolaServiceClient):
         }
         if self._branch_id:
             payload['branchId'] = self._branch_id
+        if config_row_ids:
+            payload['configRowIds'] = list(config_row_ids)
         return cast(JsonDict, await self.post(endpoint='jobs', data=payload))
 
     async def _search(self, params: dict[str, Any]) -> JsonList:

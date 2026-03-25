@@ -261,6 +261,37 @@ async def test_run_job(
     keboola_client.jobs_queue_client.create_job.assert_called_once_with(
         component_id=component_id,
         configuration_id=configuration_id,
+        config_row_ids=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_job_with_config_row_ids(
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+    mock_job: dict[str, Any],
+):
+    """Tests run_job tool with specific config row IDs."""
+    context = mcp_context_client
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    mock_job['result'] = []
+    mock_job['status'] = 'created'
+    keboola_client.jobs_queue_client.create_job = mocker.AsyncMock(return_value=mock_job)
+
+    component_id = mock_job['component']
+    configuration_id = mock_job['config']
+    row_ids = ['row-1', 'row-2']
+    job_detail = await run_job(
+        ctx=context, component_id=component_id, configuration_id=configuration_id, config_row_ids=row_ids
+    )
+
+    assert isinstance(job_detail, JobDetail)
+    assert job_detail.id == mock_job['id']
+
+    keboola_client.jobs_queue_client.create_job.assert_called_once_with(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        config_row_ids=row_ids,
     )
 
 
@@ -280,6 +311,7 @@ async def test_run_job_fail(mocker: MockerFixture, mcp_context_client: Context, 
     keboola_client.jobs_queue_client.create_job.assert_called_once_with(
         component_id=component_id,
         configuration_id=configuration_id,
+        config_row_ids=None,
     )
 
 
