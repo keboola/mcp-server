@@ -263,7 +263,7 @@ async def preview_config_diff(rq: Request) -> Response:
 
     try:
         original_config, new_config, *mutator_preview = await mutator_fn(**mutator_params)
-        mutator_preview = mutator_preview[0] if mutator_preview else None
+        mutator_preview = next((x for x in mutator_preview if isinstance(x, dict)), None)
         if isinstance(original_config, BaseModel):
             original_config = original_config.model_dump()
 

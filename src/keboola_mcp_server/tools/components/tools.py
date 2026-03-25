@@ -38,6 +38,7 @@ from pydantic import Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse, JsonDict
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import (
@@ -837,7 +838,7 @@ async def update_sql_transformation(
         f'SQL dialect: {sql_dialect}'
     )
 
-    _, updated_configuration, msg = await update_sql_transformation_internal(
+    _, updated_configuration, msg, *_ = await update_sql_transformation_internal(
         client=client,
         workspace_manager=workspace_manager,
         change_description=change_description,
@@ -846,6 +847,7 @@ async def update_sql_transformation(
         description=description,
         parameter_updates=parameter_updates,
         storage=storage,
+        folder=folder,
     )
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=sql_transformation_id,
@@ -917,7 +919,7 @@ async def update_sql_transformation_internal(
     parameter_updates: list[TfParamUpdate] | None = None,
     storage: dict[str, Any] | None = None,
     folder: str = '',
-) -> tuple[JsonDict, JsonDict, str]:
+) -> tuple[JsonDict, JsonDict, str, dict | None]:
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     config_details = await client.storage_client.configuration_detail(
@@ -960,7 +962,20 @@ async def update_sql_transformation_internal(
         )
         updated_configuration['storage'] = storage_cfg
 
-    return config_details, updated_configuration, msg
+    folder_preview: dict | None = None
+    normalized_folder = folder.strip()
+    if normalized_folder:
+        current_metadata = await client.storage_client.configuration_metadata_get(
+            component_id=sql_transformation_id, configuration_id=configuration_id
+        )
+        current_folder = next(
+            (m.get('value', '') for m in current_metadata if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME),
+            '',
+        )
+        if normalized_folder != current_folder:
+            folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
+
+    return config_details, updated_configuration, msg, folder_preview
 
 
 @tool_errors()
