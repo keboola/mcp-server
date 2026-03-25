@@ -173,6 +173,7 @@ async def _assert_basic_setup(client: Client):
         'get_jobs',
         'get_project_info',
         'get_semantic_context',
+        'get_semantic_schema',
         'get_tables',
         'modify_data_app',
         'modify_flow',
