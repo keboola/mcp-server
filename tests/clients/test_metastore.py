@@ -70,6 +70,7 @@ async def test_list_objects_returns_meta_objects() -> None:
     )
 
 
+@pytest.mark.asyncio
 async def test_list_objects_with_filter() -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
     client.raw_client.get = AsyncMock(  # type: ignore[assignment]
