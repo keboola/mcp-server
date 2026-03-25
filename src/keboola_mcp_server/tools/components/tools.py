@@ -372,6 +372,24 @@ async def get_components(
 # ============================================================================
 
 
+def _build_folder_hint(total: int, existing_folders: list[str]) -> str | None:
+    """Returns a folder-organization hint for the LLM when a project has ≥20 transformations."""
+    if total < 20:
+        return None
+    hint = f'Note: This project already has {total} SQL transformations. ' 'Consider organizing them with folders. '
+    if existing_folders:
+        hint += (
+            f'Existing folders: {existing_folders}. '
+            'Call update_sql_transformation with a folder= parameter to assign this transformation to one.'
+        )
+    else:
+        hint += (
+            'No folders have been created yet. '
+            'Call update_sql_transformation with a folder= parameter to start organizing.'
+        )
+    return hint
+
+
 @tool_errors()
 async def create_sql_transformation(
     ctx: Context,
@@ -413,11 +431,10 @@ async def create_sql_transformation(
         Field(
             description=(
                 'Folder name to organize this transformation in the Keboola UI. '
-                'Use get_configs on the transformation component to list existing transformations and their folders '
-                'before calling this tool. '
-                'If there are 20 or more transformations in the project, always provide a folder '
-                'based on the existing folder names — choose the most fitting one based on the '
-                'transformation purpose. If no existing folder fits, leave this empty.'
+                'Existing folder names are returned in the response change_summary when no folder is provided '
+                'and there are 20 or more transformations in the project. '
+                'If there are 20 or more transformations, always assign one of the existing folders or create a '
+                'new one based on the transformation purpose. If no existing folder fits, leave this empty.'
             ),
         ),
     ] = '',
@@ -439,8 +456,8 @@ async def create_sql_transformation(
       fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
     - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
       and user intent.
-    - If there are 20 or more SQL transformations in the project, always assign a folder: first call get_configs
-      on the transformation component to find existing folder names, then pick the most appropriate one.
+    - If there are 20 or more SQL transformations in the project, always assign a folder: existing folder names
+      are surfaced in the response's change_summary — use those to pick the most fitting one.
 
     USAGE:
     - Use when you want to create a new SQL transformation.
@@ -493,24 +510,7 @@ async def create_sql_transformation(
     else:
         try:
             total, existing_folders = await get_transformation_folders(client, component_id)
-            if total >= 20:
-                folder_hint = (
-                    f'Note: This project already has {total} SQL transformations. '
-                    'Consider organizing them with folders. '
-                )
-                if existing_folders:
-                    folder_hint += (
-                        f'Existing folders: {existing_folders}. '
-                        'Call update_sql_transformation with a folder= parameter to assign this transformation to one.'
-                    )
-                else:
-                    folder_hint += (
-                        'No folders have been created yet. '
-                        'Call update_sql_transformation with a folder= parameter to start organizing.'
-                    )
-                change_summary = folder_hint
-            else:
-                change_summary = None
+            change_summary = _build_folder_hint(total, existing_folders)
         except Exception:
             LOG.warning(
                 'Unable to fetch transformation folders for component "%s" when creating configuration "%s".',
@@ -632,11 +632,10 @@ async def update_sql_transformation(
         Field(
             description=(
                 'Folder name to organize this transformation in the Keboola UI. '
-                'Use get_configs on the transformation component to list existing transformations and their folders '
-                'before calling this tool. '
-                'If there are 20 or more transformations in the project, always provide a folder '
-                'based on the existing folder names — choose the most fitting one based on the '
-                'transformation purpose. If no existing folder fits, leave this empty.'
+                'Existing folder names are returned in the response change_summary when no folder is provided '
+                'and there are 20 or more transformations in the project. '
+                'If there are 20 or more transformations, always assign one of the existing folders or create a '
+                'new one based on the transformation purpose. If no existing folder fits, leave this empty.'
             ),
         ),
     ] = '',
@@ -871,23 +870,7 @@ async def update_sql_transformation(
     else:
         try:
             total, existing_folders = await get_transformation_folders(client, sql_transformation_id)
-            if total >= 20:
-                folder_hint = (
-                    f'Note: This project already has {total} SQL transformations. '
-                    'Consider organizing them with folders. '
-                )
-                if existing_folders:
-                    folder_hint += (
-                        f'Existing folders: {existing_folders}. '
-                        'Call update_sql_transformation with a folder= parameter to assign this transformation to one.'
-                    )
-                else:
-                    folder_hint += (
-                        'No folders have been created yet. '
-                        'Call update_sql_transformation with a folder= parameter to start organizing.'
-                    )
-            else:
-                folder_hint = None
+            folder_hint = _build_folder_hint(total, existing_folders)
         except Exception:
             LOG.warning(
                 'Unable to fetch transformation folders for component "%s" when updating configuration "%s".',
