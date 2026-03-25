@@ -471,7 +471,7 @@ async def search_semantic_context(
 
     EXAMPLES:
     - Find semantic objects by business concepts for revenue or sales:
-      `patterns=["revenue", "sales"]` 
+      `patterns=["revenue", "sales"]`
     - Find semantic objects using a Keboola table ID:
       `patterns=["out.c-sales-main.fact_orders"]`
     - Find semantic dataset for a certain table:
