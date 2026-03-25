@@ -560,12 +560,13 @@ class AsyncStorageClient(KeboolaServiceClient):
             that have at least one of the specified metadata keys set.
         :return: List of matching configurations as dictionaries.
         """
+        if not metadata_keys:
+            return []
         endpoint = f'branch/{self._branch_id}/search/component-configurations'
         params: dict[str, Any] = {}
-        if metadata_keys:
-            for i, key in enumerate(metadata_keys):
-                params[f'metadataKeys[{i}]'] = key
-        results = cast(list[JsonDict], await self.get(endpoint=endpoint, params=params or None))
+        for i, key in enumerate(metadata_keys):
+            params[f'metadataKeys[{i}]'] = key
+        results = cast(list[JsonDict], await self.get(endpoint=endpoint, params=params))
         if component_id:
             results = [r for r in results if r.get('componentId') == component_id]
         return results

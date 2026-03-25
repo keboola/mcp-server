@@ -416,6 +416,9 @@ async def get_transformation_folders(client: KeboolaClient, component_id: str) -
     :return: Tuple of (total_config_count, list_of_distinct_folder_names)
     """
     raw_configs = await client.storage_client.configuration_list(component_id=component_id)
+    total = len(raw_configs)
+    if total < 20:
+        return total, []
     folder_configs = await client.storage_client.component_configurations_search(
         component_id=component_id,
         metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
@@ -429,7 +432,7 @@ async def get_transformation_folders(client: KeboolaClient, component_id: str) -
                 if folder_name and folder_name not in seen:
                     seen.add(folder_name)
                     folders.append(folder_name)
-    return len(raw_configs), folders
+    return total, folders
 
 
 async def set_transformation_folder_metadata(
@@ -453,8 +456,8 @@ async def set_transformation_folder_metadata(
             configuration_id=configuration_id,
             metadata={MetadataField.CONFIGURATION_FOLDER_NAME: normalized},
         )
-    except HTTPStatusError as e:
-        logging.exception(f'Failed to set folder metadata for configuration {configuration_id}: {e}')
+    except Exception as e:
+        logging.warning(f'Failed to set folder metadata for configuration {configuration_id}: {e}')
 
 
 # ============================================================================
