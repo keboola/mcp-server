@@ -40,6 +40,60 @@ DEFAULT_PAGE_LIMITS: dict[SemanticObjectType, int] = {
 ALL_ATTRIBUTE_NODES_EXPR = jsonpath_ng.parse('$..*')
 POST_QUERY_CONSTRAINT_TYPES = {'inequality', 'equality', 'range', 'temporal', 'conditional'}
 
+# Regex that captures the single column name from a simple aggregate metric SQL expression,
+# e.g.  SUM("REVENUE_YTD") → "REVENUE_YTD",  AVG(margin_pct) → "margin_pct".
+# Complex expressions (CASE, arithmetic, multi-arg) do not match and return None.
+_AGGREGATE_COLUMN_RE = re.compile(r'^\s*\w+\s*\(\s*"?([A-Za-z_][A-Za-z0-9_]*)\"?\s*\)\s*$')
+
+# SQL function names and keywords that should never be treated as column identifiers when
+# parsing relationship ON clauses.  Upper-case only because _extract_join_columns only
+# looks at uppercase tokens.
+_SQL_KEYWORDS_UPPER = frozenset(
+    {
+        'AND',
+        'OR',
+        'NOT',
+        'IN',
+        'IS',
+        'NULL',
+        'TRUE',
+        'FALSE',
+        'LEFT',
+        'RIGHT',
+        'INNER',
+        'OUTER',
+        'FULL',
+        'CROSS',
+        'JOIN',
+        'ON',
+        'WHERE',
+        'SELECT',
+        'FROM',
+        'AS',
+        'BY',
+        'GROUP',
+        'AVG',
+        'SUM',
+        'COUNT',
+        'MIN',
+        'MAX',
+        'COALESCE',
+        'NULLIF',
+        'CAST',
+        'CONCAT',
+        'TRIM',
+        'LENGTH',
+        'UPPER',
+        'LOWER',
+        'IFF',
+        'CASE',
+        'WHEN',
+        'THEN',
+        'ELSE',
+        'END',
+    }
+)
+
 
 class SemanticTypeData(BaseModel):
     """Minimal typed semantic object used by the service layer."""
@@ -415,9 +469,31 @@ def _dataset_identifiers(dataset: SemanticDatasetData) -> list[str]:
     return [str(candidate).strip() for candidate in candidates if isinstance(candidate, str) and candidate.strip()]
 
 
+def _extract_metric_column(sql: str) -> str | None:
+    """Extract the bare column name from a simple aggregate metric SQL expression.
+
+    Handles forms like ``SUM("REVENUE_YTD")``, ``AVG(margin_pct)``, ``SUM(AMOUNT)``.
+    Returns *None* for complex expressions (CASE, arithmetic, multi-argument, ``COUNT(*)``).
+
+    The extracted column is added as a secondary match candidate so that the metric is
+    detected even when the column appears with a table-alias prefix in the SQL query
+    (e.g. ``ep."REVENUE_YTD"``), which would otherwise defeat full-string matching.
+    """
+    m = _AGGREGATE_COLUMN_RE.match(sql)
+    return m.group(1) if m else None
+
+
 def _metric_identifiers(metric: SemanticMetricData) -> list[str]:
-    candidates = [metric.sql]
-    return [str(candidate).strip() for candidate in candidates if isinstance(candidate, str) and candidate.strip()]
+    candidates: list[str] = []
+    if metric.sql:
+        candidates.append(metric.sql)
+        # Also add the bare column name so that `SUM("REVENUE_YTD")` matches even when
+        # the SQL writes `SUM(ep."REVENUE_YTD")` — the alias prefix breaks substring
+        # matching but word-boundary matching on the column name still works.
+        col = _extract_metric_column(metric.sql)
+        if col:
+            candidates.append(col)
+    return [c.strip() for c in candidates if c.strip()]
 
 
 def _detect_used_datasets(sql_query: str, datasets: Sequence[SemanticDatasetData]) -> list[SemanticDatasetData]:
@@ -445,6 +521,31 @@ def _detect_used_metrics_for_datasets(
     return matches
 
 
+def _extract_join_columns(on_clause: str) -> list[str]:
+    """Extract bare column identifiers from a relationship ON clause.
+
+    Strategy:
+    1. Strip single-quoted string literals so constant values like ``'AVG'`` or ``'USD'``
+       are not mistaken for column names.
+    2. Find all uppercase identifiers of three or more characters (the convention used in
+       Snowflake/BigQuery schemas for column names), de-duplicated and in order of appearance.
+    3. Drop known SQL function names and keywords from ``_SQL_KEYWORDS_UPPER``.
+
+    Returns an empty list when no uppercase identifiers are found — this happens for
+    all-lowercase on-clauses (test fixtures, BigQuery style), which signals the caller to
+    fall back to the original full-string match.
+    """
+    cleaned = re.sub(r"'[^']*'", '', on_clause)
+    tokens = re.findall(r'\b([A-Z][A-Z0-9_]{2,})\b', cleaned)
+    seen: set[str] = set()
+    result: list[str] = []
+    for token in tokens:
+        if token not in _SQL_KEYWORDS_UPPER and token not in seen:
+            seen.add(token)
+            result.append(token)
+    return result
+
+
 def _detect_used_relationships(
     sql_query: str,
     relationships: Sequence[SemanticRelationshipData],
@@ -459,11 +560,20 @@ def _detect_used_relationships(
         # because an "on" fragment happens to appear in an unrelated query.
         if relationship.from_dataset not in used_dataset_ids or relationship.to_dataset not in used_dataset_ids:
             continue
-        # The `on` clause check is heuristic and intentionally strict: if a relationship defines
-        # an explicit join condition and we do not see it in the SQL, we do not claim the
-        # relationship is used.
-        if relationship.on and relationship.on.strip() and not _matches_sql(sql_query, relationship.on):
-            continue
+        if relationship.on and relationship.on.strip():
+            col_names = _extract_join_columns(relationship.on)
+            if col_names:
+                # Column-based matching: require ALL column names from the ON clause to
+                # appear in the SQL.  Word-boundary matching handles quoted identifiers
+                # (e.g. "FK_COL") and tolerates different table-alias conventions
+                # (fact./dim. in the definition vs. bsu./coa. in the actual query).
+                if not all(_matches_sql(sql_query, col) for col in col_names):
+                    continue
+            else:
+                # No uppercase columns found (all-lowercase on-clause): fall back to
+                # the original full-string match to preserve existing behaviour.
+                if not _matches_sql(sql_query, relationship.on):
+                    continue
         matches.append(relationship)
     return matches
 
