@@ -119,8 +119,8 @@ extend-ignore = ["E203", "W503", "I101"]
 
 [tool.tox]
 requires = ["tox>=4.23"]
-env_list = ["python", "black", "flake8", "check-tools-docs"]
-labels = { cs-fix = ["black"], cs = ["flake8"] }
+env_list = ["python", "black", "isort", "flake8", "check-tools-docs"]
+labels = { cs-fix = ["black", "isort"], cs = ["isort", "flake8"] }
 
 [tool.tox.env_run_base]
 description = "Run tests"
@@ -173,6 +173,14 @@ deps = [
     "black ~= 25.1",
 ]
 commands = [["black", "src/", "tests/", "integtests/"]]
+
+[tool.tox.env.isort]
+description = "Sort imports using isort"
+package = "skip"
+deps = [
+    "isort ~= 7.0",
+]
+commands = [["isort", "src/", "tests/", "integtests/"]]
 
 [tool.tox.env.flake8]
 description = "Run code style check using flake8"

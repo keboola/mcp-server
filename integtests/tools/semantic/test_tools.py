@@ -3,12 +3,12 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, cast
+from urllib.parse import urljoin
 
 import httpx
 import pytest
 import pytest_asyncio
 from fastmcp import Client
-from urllib.parse import urljoin
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.tools.semantic.model import SemanticObjectType, SemanticSchemaDefinition
@@ -52,7 +52,7 @@ def metastore_url(storage_api_url: str) -> str:
 
 
 @pytest.fixture(scope='module', autouse=True)
-def require_metastore_available(
+def _require_metastore_available(
     storage_api_token: str,
     metastore_url: str,
 ) -> None:

@@ -34,7 +34,7 @@ def metastore_client(storage_api_token: str, metastore_url: str) -> MetastoreCli
 
 
 @pytest.fixture(scope='module', autouse=True)
-def require_metastore_available(
+def _require_metastore_available(
     storage_api_token: str,
     metastore_url: str,
 ) -> None:
