@@ -1394,15 +1394,37 @@ def _make_client(
 
 
 @pytest.mark.parametrize(
-    ('all_configs', 'folder_configs', 'expected_count', 'expected_folders'),
+    ('all_configs', 'expected_count'),
     [
-        # No configs at all
-        ([], [], 0, []),
-        # Configs exist but none have folder metadata
-        ([{'id': '1'}, {'id': '2'}], [], 2, []),
+        ([], 0),
+        ([{'id': str(i)} for i in range(5)], 5),
+    ],
+    ids=['no_configs', 'few_configs'],
+)
+@pytest.mark.asyncio
+async def test_get_transformation_folders_short_circuit(
+    all_configs: list[dict[str, Any]],
+    expected_count: int,
+) -> None:
+    """Test that the search endpoint is skipped when count < 20."""
+    client = _make_client(all_configs, [])
+    count, folders = await get_transformation_folders(client, 'keboola.snowflake-transformation')
+    assert count == expected_count
+    assert folders == []
+    client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
+    client.storage_client.component_configurations_search.assert_not_called()
+
+
+_MANY_CONFIGS = [{'id': str(i)} for i in range(25)]
+
+
+@pytest.mark.parametrize(
+    ('folder_configs', 'expected_folders'),
+    [
+        # No folder metadata on any config
+        ([], []),
         # Two configs with distinct folders
         (
-            [{'id': '1'}, {'id': '2'}, {'id': '3'}],
             [
                 {
                     'id': '1',
@@ -1415,12 +1437,10 @@ def _make_client(
                     'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Sales'}],
                 },
             ],
-            3,
             ['Analytics', 'Sales'],
         ),
         # Duplicate folder names are deduplicated
         (
-            [{'id': '1'}, {'id': '2'}],
             [
                 {
                     'id': '1',
@@ -1433,23 +1453,20 @@ def _make_client(
                     'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
                 },
             ],
-            2,
             ['Analytics'],
         ),
     ],
-    ids=['no_configs', 'no_folders', 'distinct_folders', 'deduplicated_folders'],
+    ids=['no_folders', 'distinct_folders', 'deduplicated_folders'],
 )
 @pytest.mark.asyncio
 async def test_get_transformation_folders(
-    all_configs: list[dict[str, Any]],
     folder_configs: list[dict[str, Any]],
-    expected_count: int,
     expected_folders: list[str],
 ) -> None:
-    """Test that get_transformation_folders returns correct counts and folder names."""
-    client = _make_client(all_configs, folder_configs)
+    """Test get_transformation_folders when count >= 20 (search endpoint is called)."""
+    client = _make_client(_MANY_CONFIGS, folder_configs)
     count, folders = await get_transformation_folders(client, 'keboola.snowflake-transformation')
-    assert count == expected_count
+    assert count == len(_MANY_CONFIGS)
     assert folders == expected_folders
     client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
     client.storage_client.component_configurations_search.assert_called_once_with(

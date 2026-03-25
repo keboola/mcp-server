@@ -324,7 +324,7 @@ EXAMPLES:
     },
     "folder": {
       "default": "",
-      "description": "Folder name to organize this transformation in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, always assign one of the existing folders or create a new one based on the transformation purpose. If no existing folder fits, leave this empty.",
+      "description": "Folder name to organize this transformation in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose.",
       "type": "string"
     }
   },
@@ -1626,7 +1626,7 @@ Example 4 - Update storage mappings:
     },
     "folder": {
       "default": "",
-      "description": "Folder name to organize this transformation in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, always assign one of the existing folders or create a new one based on the transformation purpose. If no existing folder fits, leave this empty.",
+      "description": "Folder name to organize this transformation in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose.",
       "type": "string"
     }
   },
