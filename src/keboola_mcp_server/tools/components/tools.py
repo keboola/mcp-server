@@ -916,6 +916,7 @@ async def update_sql_transformation_internal(
     description: str = '',
     parameter_updates: list[TfParamUpdate] | None = None,
     storage: dict[str, Any] | None = None,
+    folder: str = '',
 ) -> tuple[JsonDict, JsonDict, str]:
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
