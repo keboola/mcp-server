@@ -19,6 +19,8 @@ from keboola_mcp_server.tools.semantic.tools import (
 )
 from keboola_mcp_server.workspace import WorkspaceManager
 
+SEMANTIC_TOOLING_FEATURE = 'mcp-semantic-tooling'
+
 
 @dataclass(frozen=True)
 class SemanticTestSetup:
@@ -71,18 +73,12 @@ def _require_metastore_available(
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def semantic_tools_enabled(mcp_client: Client) -> None:
-    tool_names = {tool.name for tool in await mcp_client.list_tools()}
-    required_tools = {
-        'search_semantic_context',
-        'get_semantic_context',
-        'get_semantic_schema',
-        'validate_semantic_query',
-    }
-    missing_tools = required_tools - tool_names
-    if missing_tools:
-        missing = ', '.join(sorted(missing_tools))
-        pytest.skip(f'Semantic tooling is not enabled in this environment. Missing tools: {missing}')
+async def semantic_tools_enabled(keboola_client: KeboolaClient) -> None:
+    token_info = await keboola_client.storage_client.verify_token()
+    owner = token_info.get('owner', {})
+    features = owner.get('features', []) if isinstance(owner, dict) else []
+    if SEMANTIC_TOOLING_FEATURE not in features:
+        pytest.skip(f'Semantic tooling feature "{SEMANTIC_TOOLING_FEATURE}" is not enabled in this environment.')
 
 
 @pytest_asyncio.fixture

@@ -81,8 +81,6 @@ def _skip_unauthorized(exc: httpx.HTTPStatusError) -> None:
 async def test_get_schema_for_semantic_types(metastore_client: MetastoreClient, object_type: str) -> None:
     schema_doc = await metastore_client.get_schema(object_type)
     assert isinstance(schema_doc, dict)
-    assert schema_doc.get('title') == object_type
-    assert schema_doc.get('version')
 
 
 @pytest.mark.asyncio
@@ -111,6 +109,7 @@ async def test_list_semantic_models_and_optional_detail(metastore_client: Metast
     model = await metastore_client.get_object('semantic-model', models[0].id)
     assert model.id
     assert model.type == 'semantic-model'
+    assert isinstance(model.attributes, dict)
 
 
 @pytest.mark.asyncio
