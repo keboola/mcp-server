@@ -11,6 +11,8 @@ from keboola_mcp_server.tools.semantic.service import (
     SemanticServiceDataTypeGroup,
     SemanticValidationServiceOutput,
     _constraint_is_relevant,
+    _extract_join_columns,
+    _extract_metric_column,
     _matches_sql,
     _to_semantic_service_data,
     detect_used_objects_from_context,
@@ -391,6 +393,56 @@ def test_matches_sql_handles_identifiers_and_substrings(
 
 
 @pytest.mark.parametrize(
+    ('sql', 'expected'),
+    [
+        # Simple double-quoted column.
+        ('SUM("REVENUE_YTD")', 'REVENUE_YTD'),
+        # Unquoted column.
+        ('AVG(margin_pct)', 'margin_pct'),
+        # SUM without quotes, uppercase.
+        ('SUM(AMOUNT)', 'AMOUNT'),
+        # COUNT(*) has no column name.
+        ('COUNT(*)', None),
+        # Complex expression — no match.
+        ('SUM(CASE WHEN x = 1 THEN amount ELSE 0 END)', None),
+        # Multi-argument — no match.
+        ('COALESCE(a, b)', None),
+    ],
+)
+def test_extract_metric_column(sql: str, expected: str | None) -> None:
+    assert _extract_metric_column(sql) == expected
+
+
+@pytest.mark.parametrize(
+    ('on_clause', 'expected'),
+    [
+        # Standard Snowflake-style uppercase ON clause with alias prefixes.
+        (
+            'fact.FK_BUSINESS_SUBUNIT = dim.PK_BUSINESS_SUBUNIT',
+            ['FK_BUSINESS_SUBUNIT', 'PK_BUSINESS_SUBUNIT'],
+        ),
+        # Multi-condition clause.
+        (
+            'fact.FK_BUSINESS_SUBUNIT = dim.FK_BUSINESS_SUBUNIT AND fact.CODE_FIN_STAT = dim.CODE_FIN_STAT',
+            ['FK_BUSINESS_SUBUNIT', 'CODE_FIN_STAT'],
+        ),
+        # Function call + string literal — LEFT and AVG (keyword) are filtered; string literal stripped.
+        (
+            'fact.DIM_CURRENCY = dim.CURRENCY_FROM AND LEFT(dim.CODE_PERIOD_VALUE, 6) = fact.CODE_PERIOD_VALUE '
+            "AND dim.RATE_TYPE = 'AVG'",
+            ['DIM_CURRENCY', 'CURRENCY_FROM', 'CODE_PERIOD_VALUE', 'RATE_TYPE'],
+        ),
+        # All-lowercase on-clause returns empty list (triggers full-string fallback).
+        ('orders.customer_id = customers.id', []),
+        # Short tokens (< 3 chars after first letter) are excluded.
+        ('fact.FK = dim.PK', []),
+    ],
+)
+def test_extract_join_columns(on_clause: str, expected: list[str]) -> None:
+    assert _extract_join_columns(on_clause) == expected
+
+
+@pytest.mark.parametrize(
     ('constraint_attributes', 'used_metric_names', 'used_dataset_ids', 'expected'),
     [
         ({'metrics': ['Revenue']}, {'Revenue'}, set(), True),
@@ -547,6 +599,134 @@ def test_constraint_is_relevant_edge_cases(
                         'from': 'in.c-main.orders',
                         'to': 'in.c-main.customers',
                         'on': 'orders.customer_id = customers.id',
+                        'modelUUID': 'model-1',
+                    },
+                )
+            ],
+            {
+                SemanticObjectType.SEMANTIC_DATASET: ['dataset-orders', 'dataset-customers'],
+            },
+        ),
+        # Metric SQL uses a quoted column (SUM("REVENUE_YTD")); the query writes the column with a
+        # table-alias prefix (ep."REVENUE_YTD").  The old full-string match failed; the new
+        # column-extraction path should detect the metric.
+        (
+            'SELECT SUM(ep."REVENUE_YTD") FROM "DB"."schema"."FACT_PERFORMANCE" ep',
+            [
+                (
+                    'dataset-fact',
+                    'Fact Performance',
+                    {
+                        'name': 'Fact Performance',
+                        'tableId': 'out.c-main.FACT_PERFORMANCE',
+                        'fqn': '"DB"."schema"."FACT_PERFORMANCE"',
+                        'modelUUID': 'model-1',
+                    },
+                )
+            ],
+            [
+                (
+                    'metric-revenue-ytd',
+                    'Revenue YTD',
+                    {
+                        'name': 'Revenue YTD',
+                        'sql': 'SUM("REVENUE_YTD")',
+                        'dataset': 'out.c-main.FACT_PERFORMANCE',
+                        'modelUUID': 'model-1',
+                    },
+                )
+            ],
+            [],
+            {
+                SemanticObjectType.SEMANTIC_DATASET: ['dataset-fact'],
+                SemanticObjectType.SEMANTIC_METRIC: ['metric-revenue-ytd'],
+            },
+        ),
+        # Relationship ON clause uses uppercase Snowflake-style column names with template aliases
+        # (fact./dim.); the SQL uses different aliases (o./c.).  Column-extraction should detect
+        # the relationship because all column names are present in the SQL.
+        (
+            (
+                'SELECT * FROM "DB"."s"."ORDERS" o '
+                'JOIN "DB"."s"."CUSTOMERS" c ON o."FK_CUSTOMER_ID" = c."PK_CUSTOMER_ID"'
+            ),
+            [
+                (
+                    'dataset-orders',
+                    'Orders',
+                    {
+                        'name': 'Orders',
+                        'tableId': 'out.c-main.ORDERS',
+                        'fqn': '"DB"."s"."ORDERS"',
+                        'modelUUID': 'model-1',
+                    },
+                ),
+                (
+                    'dataset-customers',
+                    'Customers',
+                    {
+                        'name': 'Customers',
+                        'tableId': 'out.c-main.CUSTOMERS',
+                        'fqn': '"DB"."s"."CUSTOMERS"',
+                        'modelUUID': 'model-1',
+                    },
+                ),
+            ],
+            [],
+            [
+                (
+                    'rel-orders-customers',
+                    'Orders to Customers',
+                    {
+                        'name': 'Orders to Customers',
+                        'from': 'out.c-main.ORDERS',
+                        'to': 'out.c-main.CUSTOMERS',
+                        'on': 'fact.FK_CUSTOMER_ID = dim.PK_CUSTOMER_ID',
+                        'modelUUID': 'model-1',
+                    },
+                )
+            ],
+            {
+                SemanticObjectType.SEMANTIC_DATASET: ['dataset-orders', 'dataset-customers'],
+                SemanticObjectType.SEMANTIC_RELATIONSHIP: ['rel-orders-customers'],
+            },
+        ),
+        # Relationship with uppercase ON clause columns — but the actual SQL uses DIFFERENT columns
+        # in the join (FK_ORDER_ID instead of FK_CUSTOMER_ID).  Should NOT detect the relationship.
+        (
+            ('SELECT * FROM "DB"."s"."ORDERS" o ' 'JOIN "DB"."s"."CUSTOMERS" c ON o."FK_ORDER_ID" = c."PK_ORDER_ID"'),
+            [
+                (
+                    'dataset-orders',
+                    'Orders',
+                    {
+                        'name': 'Orders',
+                        'tableId': 'out.c-main.ORDERS',
+                        'fqn': '"DB"."s"."ORDERS"',
+                        'modelUUID': 'model-1',
+                    },
+                ),
+                (
+                    'dataset-customers',
+                    'Customers',
+                    {
+                        'name': 'Customers',
+                        'tableId': 'out.c-main.CUSTOMERS',
+                        'fqn': '"DB"."s"."CUSTOMERS"',
+                        'modelUUID': 'model-1',
+                    },
+                ),
+            ],
+            [],
+            [
+                (
+                    'rel-orders-customers',
+                    'Orders to Customers',
+                    {
+                        'name': 'Orders to Customers',
+                        'from': 'out.c-main.ORDERS',
+                        'to': 'out.c-main.CUSTOMERS',
+                        'on': 'fact.FK_CUSTOMER_ID = dim.PK_CUSTOMER_ID',
                         'modelUUID': 'model-1',
                     },
                 )
