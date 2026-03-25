@@ -260,8 +260,8 @@ CONSIDERATIONS:
   fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
 - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
   and user intent.
-- If there are 20 or more SQL transformations in the project, always assign a folder: first call get_configs
-  on the transformation component to find existing folder names, then pick the most appropriate one.
+- If there are 20 or more SQL transformations in the project, always assign a folder: existing folder names
+  are surfaced in the response's change_summary — use those to pick the most fitting one.
 
 USAGE:
 - Use when you want to create a new SQL transformation.
@@ -324,7 +324,7 @@ EXAMPLES:
     },
     "folder": {
       "default": "",
-      "description": "Folder name to organize this transformation in the Keboola UI. Use get_configs on the transformation component to list existing transformations and their folders before calling this tool. If there are 20 or more transformations in the project, always provide a folder based on the existing folder names \u2014 choose the most fitting one based on the transformation purpose. If no existing folder fits, leave this empty.",
+      "description": "Folder name to organize this transformation in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, always assign one of the existing folders or create a new one based on the transformation purpose. If no existing folder fits, leave this empty.",
       "type": "string"
     }
   },
@@ -1626,7 +1626,7 @@ Example 4 - Update storage mappings:
     },
     "folder": {
       "default": "",
-      "description": "Folder name to organize this transformation in the Keboola UI. Use get_configs on the transformation component to list existing transformations and their folders before calling this tool. If there are 20 or more transformations in the project, always provide a folder based on the existing folder names \u2014 choose the most fitting one based on the transformation purpose. If no existing folder fits, leave this empty.",
+      "description": "Folder name to organize this transformation in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, always assign one of the existing folders or create a new one based on the transformation purpose. If no existing folder fits, leave this empty.",
       "type": "string"
     }
   },
