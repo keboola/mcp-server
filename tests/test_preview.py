@@ -413,6 +413,7 @@ class TestPreviewConfigDiff:
             'toolParams': {
                 'configuration_id': 'config-123',
                 'change_description': 'Update transformation',
+                'folder': 'My Folder',
                 'parameter_updates': [
                     {
                         'op': 'add_block',
