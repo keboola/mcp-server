@@ -170,6 +170,7 @@ class ProjectLock:
         # Case 1: We are the winner
         if winner is not None and winner.lock_id == lock_id:
             LOG.info(f'[project_lock] Acquired lock {lock_id}')
+            self._cleanup_old_locks(lock_id)
             return LockInfo(
                 lock_id=lock_id,
                 acquired_at=acquired_at,
@@ -210,6 +211,7 @@ class ProjectLock:
             winner2 = min(active2, key=lambda li: (li.acquired_at, li.lock_id)) if active2 else None
             if winner2 is not None and winner2.lock_id == lock_id2:
                 LOG.info(f'[project_lock] Acquired lock {lock_id2} after stale cleanup')
+                self._cleanup_old_locks(lock_id2)
                 return LockInfo(
                     lock_id=lock_id2,
                     acquired_at=acquired_at2,
@@ -288,6 +290,67 @@ class ProjectLock:
     def _release_lock_entry(self, lock_id: str) -> None:
         released_key = LOCK_KEY_PREFIX + lock_id + '.released'
         self._write_metadata({released_key: datetime.now(timezone.utc).isoformat()})
+
+    def _delete_metadata_by_id(self, metadata_id: str) -> None:
+        """Delete a single branch metadata entry by its numeric Storage API id."""
+        self._delete(f'/v2/storage/branch/default/metadata/{metadata_id}')
+
+    def _cleanup_old_locks(self, current_lock_id: str) -> None:
+        """
+        Delete all released lock metadata entries to prevent metadata accumulation.
+
+        Deletion order per pair: main entry first, then .released entry.
+        This prevents transient reappearance of a released lock as active.
+        Errors are swallowed so cleanup never breaks lock acquisition.
+        """
+        try:
+            entries = self._read_metadata()
+        except Exception as exc:
+            LOG.warning(f'[project_lock] _cleanup_old_locks: failed to read metadata: {exc}')
+            return
+
+        main_entries: dict[str, dict[str, Any]] = {}  # lock_id -> raw entry
+        released_entries: dict[str, dict[str, Any]] = {}  # lock_id -> raw entry
+
+        for entry in entries:
+            key: str = entry.get('key', '')
+            if not key.startswith(LOCK_KEY_PREFIX):
+                continue
+            suffix = key[len(LOCK_KEY_PREFIX) :]
+            if suffix.endswith('.released'):
+                lock_id = suffix[: -len('.released')]
+                released_entries[lock_id] = entry
+            else:
+                main_entries[suffix] = entry
+
+        for lock_id, released_entry in released_entries.items():
+            if lock_id == current_lock_id:
+                continue  # never touch the active lock
+            main_entry = main_entries.get(lock_id)
+            if main_entry is not None:
+                # Delete main entry FIRST (safety: prevents transient reactivation)
+                try:
+                    LOG.info(f'[project_lock] Cleaning up released lock {lock_id} (main)')
+                    self._delete_metadata_by_id(str(main_entry['id']))
+                except Exception as exc:
+                    LOG.warning(
+                        f'[project_lock] Failed to delete main lock entry {lock_id}: {exc}. '
+                        'Skipping .released deletion to avoid reactivating the lock.'
+                    )
+                    continue
+                # Delete .released entry SECOND — only if main was successfully deleted
+                try:
+                    LOG.info(f'[project_lock] Cleaning up released lock {lock_id} (.released)')
+                    self._delete_metadata_by_id(str(released_entry['id']))
+                except Exception as exc:
+                    LOG.warning(f'[project_lock] Failed to delete .released entry {lock_id}: {exc}')
+            else:
+                # Orphaned .released entry — main was already deleted or never written
+                try:
+                    LOG.info(f'[project_lock] Cleaning up orphaned .released entry {lock_id}')
+                    self._delete_metadata_by_id(str(released_entry['id']))
+                except Exception as exc:
+                    LOG.warning(f'[project_lock] Failed to delete orphaned .released entry {lock_id}: {exc}')
 
     def _clean_project(self) -> None:
         """Delete all buckets and component configurations from the project."""

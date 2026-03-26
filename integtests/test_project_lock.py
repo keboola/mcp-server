@@ -33,6 +33,7 @@ def _make_lock(
     lock_id: str = 'test-uuid',
     minutes_ago: float = 0,
     runner_info: str = 'host/1',
+    meta_id: int | None = None,
 ) -> dict:
     """Build a raw branch-metadata dict as returned by the Storage API."""
     acquired_at = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
@@ -43,14 +44,20 @@ def _make_lock(
             'runner_info': runner_info,
         }
     )
-    return {'key': LOCK_KEY_PREFIX + lock_id, 'value': payload}
+    result = {'key': LOCK_KEY_PREFIX + lock_id, 'value': payload}
+    if meta_id is not None:
+        result['id'] = meta_id
+    return result
 
 
-def _released_entry(lock_id: str) -> dict:
-    return {
+def _released_entry(lock_id: str, meta_id: int | None = None) -> dict:
+    result = {
         'key': LOCK_KEY_PREFIX + lock_id + '.released',
         'value': datetime.now(timezone.utc).isoformat(),
     }
+    if meta_id is not None:
+        result['id'] = meta_id
+    return result
 
 
 def _make_project_lock(**kwargs) -> ProjectLock:
@@ -473,6 +480,7 @@ def test_try_acquire_once_happy_path(mocker):
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
     mocker.patch.object(lock, '_read_metadata', return_value=[my_entry])
     sleep_mock = mocker.patch('time.sleep')
+    cleanup_mock = mocker.patch.object(lock, '_cleanup_old_locks')
 
     result = lock._try_acquire_once()
 
@@ -480,6 +488,7 @@ def test_try_acquire_once_happy_path(mocker):
     assert result.lock_id == my_lock_id
     assert result.metadata_key == LOCK_KEY_PREFIX + my_lock_id
     assert any(c == call(0) for c in sleep_mock.call_args_list)  # anti_collision=0
+    cleanup_mock.assert_called_once_with(my_lock_id)
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +543,7 @@ def test_try_acquire_once_stale_then_wins(mocker):
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
     clean_mock = mocker.patch.object(lock, '_clean_project')
+    cleanup_mock = mocker.patch.object(lock, '_cleanup_old_locks')
 
     stale_entry = _make_lock(lock_id=stale_id, minutes_ago=120)
 
@@ -554,6 +564,7 @@ def test_try_acquire_once_stale_then_wins(mocker):
     assert isinstance(result, LockInfo)
     assert result.lock_id == my_id_2
     clean_mock.assert_called_once()
+    cleanup_mock.assert_called_once_with(my_id_2)
 
     released_keys = [
         entry['key']
@@ -970,3 +981,105 @@ def test_verify_project_endpoint_bad_token_raises(mocker):
             storage_api_token='bad-token',
             workspace_schema='WORKSPACE_00000',
         )
+
+
+# ===========================================================================
+# _delete_metadata_by_id / _cleanup_old_locks tests
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# test_delete_metadata_by_id
+# ---------------------------------------------------------------------------
+
+
+def test_delete_metadata_by_id(mocker):
+    """_delete_metadata_by_id calls DELETE on the correct metadata path."""
+    lock = _make_project_lock()
+    delete_mock = mocker.patch.object(lock, '_delete')
+    lock._delete_metadata_by_id('9876')
+    delete_mock.assert_called_once_with('/v2/storage/branch/default/metadata/9876')
+
+
+# ---------------------------------------------------------------------------
+# test_cleanup_old_locks
+# ---------------------------------------------------------------------------
+
+_OLD_ID = 'old-lock-id-0001'
+_CUR_ID = 'cur-lock-id-0001'
+
+
+@pytest.mark.parametrize(
+    ('scenario', 'entries', 'current_lock_id', 'expected_delete_calls'),
+    [
+        (
+            'no_released_entries',
+            lambda: [_make_lock(lock_id=_OLD_ID, meta_id=1)],
+            _CUR_ID,
+            [],
+        ),
+        (
+            'full_released_pair',
+            lambda: [
+                _make_lock(lock_id=_OLD_ID, meta_id=10),
+                _released_entry(_OLD_ID, meta_id=11),
+            ],
+            _CUR_ID,
+            ['10', '11'],
+        ),
+        (
+            'orphaned_released_only',
+            lambda: [_released_entry(_OLD_ID, meta_id=20)],
+            _CUR_ID,
+            ['20'],
+        ),
+        (
+            'skip_current_lock',
+            lambda: [
+                _make_lock(lock_id=_CUR_ID, meta_id=30),
+                _released_entry(_CUR_ID, meta_id=31),
+            ],
+            _CUR_ID,
+            [],
+        ),
+        (
+            'mixed_old_and_current',
+            lambda: [
+                _make_lock(lock_id=_OLD_ID, meta_id=40),
+                _released_entry(_OLD_ID, meta_id=41),
+                _make_lock(lock_id=_CUR_ID, meta_id=42),
+                _released_entry(_CUR_ID, meta_id=43),
+            ],
+            _CUR_ID,
+            ['40', '41'],
+        ),
+        (
+            'main_deletion_error_skips_released',
+            lambda: [
+                _make_lock(lock_id=_OLD_ID, meta_id=50),
+                _released_entry(_OLD_ID, meta_id=51),
+            ],
+            _CUR_ID,
+            'error_on_main',
+        ),
+    ],
+)
+def test_cleanup_old_locks(mocker, scenario, entries, current_lock_id, expected_delete_calls):
+    lock = _make_project_lock()
+    mocker.patch.object(lock, '_read_metadata', side_effect=entries)
+
+    if expected_delete_calls == 'error_on_main':
+        delete_mock = mocker.patch.object(lock, '_delete_metadata_by_id', side_effect=RuntimeError('fail'))
+        # Should not raise; the error is swallowed
+        lock._cleanup_old_locks(current_lock_id)
+        # Only one call attempted (the main entry); .released is skipped
+        delete_mock.assert_called_once_with('50')
+    else:
+        delete_mock = mocker.patch.object(lock, '_delete_metadata_by_id')
+        lock._cleanup_old_locks(current_lock_id)
+        if not expected_delete_calls:
+            delete_mock.assert_not_called()
+        else:
+            assert delete_mock.call_count == len(expected_delete_calls)
+            # Verify the calls were made in the correct order
+            assert delete_mock.call_args_list == [call(mid) for mid in expected_delete_calls]
