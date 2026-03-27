@@ -98,6 +98,7 @@ class ProjectLock:
         self,
         storage_api_url: str,
         storage_api_token: str,
+        workspace_schema: str | None = None,
         ttl_minutes: int = DEFAULT_TTL_MINUTES,
         poll_interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS,
         max_wait_minutes: int = DEFAULT_MAX_WAIT_MINUTES,
@@ -105,6 +106,7 @@ class ProjectLock:
     ) -> None:
         self._base_url = storage_api_url.rstrip('/')
         self._token = storage_api_token
+        self._workspace_schema = workspace_schema
         self._ttl_minutes = ttl_minutes
         self._poll_interval_seconds = poll_interval_seconds
         self._max_wait_minutes = max_wait_minutes
@@ -171,6 +173,7 @@ class ProjectLock:
         if winner is not None and winner.lock_id == lock_id:
             LOG.info(f'[project_lock] Acquired lock {lock_id}')
             self._cleanup_old_locks(lock_id)
+            self.clean_project()
             return LockInfo(
                 lock_id=lock_id,
                 acquired_at=acquired_at,
@@ -188,7 +191,6 @@ class ProjectLock:
             for stale in active:
                 if self._is_stale(stale):
                     self._release_lock_entry(stale.lock_id)
-            self._clean_project()
             # Release our pending entry and write a fresh candidate
             self._release_lock_entry(lock_id)
             time.sleep(2)
@@ -352,9 +354,42 @@ class ProjectLock:
                 except Exception as exc:
                     LOG.warning(f'[project_lock] Failed to delete orphaned .released entry {lock_id}: {exc}')
 
-    def _clean_project(self) -> None:
+    def _find_sandboxes_config_id_by_workspace_schema(self, workspace_schema: str) -> str | None:
+        """
+        Returns the configurationId of the keboola.sandboxes config whose workspace
+        has the given schema name, or None if not found.
+        """
+        try:
+            workspaces = self._get('/v2/storage/branch/default/workspaces')
+            for workspace in workspaces:
+                schema = workspace.get('connection', {}).get('schema')
+                if schema == workspace_schema:
+                    config_id = workspace.get('configurationId')
+                    if config_id is not None:
+                        return str(config_id)
+        except Exception as exc:
+            LOG.warning(f'[project_lock] Failed to look up workspace schema {workspace_schema!r}: {exc}')
+        return None
+
+    def clean_project(self) -> None:
         """Delete all buckets and component configurations from the project."""
         LOG.info('[project_lock] Cleaning project (deleting all buckets and configs)')
+
+        # Find the keboola.sandboxes configuration to keep — the one whose workspace matches
+        # the integration test workspace schema.
+        sandboxes_config_to_keep: str | None = None
+        if self._workspace_schema:
+            sandboxes_config_to_keep = self._find_sandboxes_config_id_by_workspace_schema(self._workspace_schema)
+            if sandboxes_config_to_keep:
+                LOG.info(
+                    f'[project_lock] Will keep keboola.sandboxes config {sandboxes_config_to_keep} '
+                    f'(workspace schema: {self._workspace_schema})'
+                )
+            else:
+                LOG.warning(
+                    f'[project_lock] No workspace found for schema {self._workspace_schema!r}; '
+                    'all keboola.sandboxes configs will be deleted'
+                )
 
         # Delete all buckets (force=True also removes tables inside them)
         buckets = self._get('/v2/storage/buckets')
@@ -364,11 +399,16 @@ class ProjectLock:
             self._delete(f'/v2/storage/buckets/{bucket_id}', force='true')
 
         # Delete all component configurations
-        components = self._get('/v2/storage/branch/default/components', include='configurations')
+        components = self._get('/v2/storage/branch/default/components', include='configuration')
         for component in components:
             comp_id = component['id']
             for cfg in component.get('configurations', []):
                 cfg_id = cfg['id']
+
+                if comp_id == 'keboola.sandboxes' and cfg_id == sandboxes_config_to_keep:
+                    LOG.info(f'[project_lock] Keeping keboola.sandboxes config {cfg_id} (integration test workspace)')
+                    continue
+
                 LOG.info(f'[project_lock] Deleting config {comp_id}/{cfg_id}')
                 # First delete moves to trash; second delete removes from trash
                 self._delete(f'/v2/storage/components/{comp_id}/configs/{cfg_id}')
@@ -489,6 +529,7 @@ class ProjectPool:
         return ProjectLock(
             storage_api_url=endpoint.storage_api_url,
             storage_api_token=endpoint.storage_api_token,
+            workspace_schema=endpoint.workspace_schema,
             ttl_minutes=self._ttl_minutes,
             poll_interval_seconds=self._poll_interval_seconds,
             max_wait_minutes=self._max_wait_minutes,
