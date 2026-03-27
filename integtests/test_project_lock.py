@@ -336,9 +336,7 @@ def test_clean_project_deletes_configs(mocker):
 # ---------------------------------------------------------------------------
 
 
-def _get_side_effect_with_workspaces(
-    workspaces: list[dict], components: list[dict]
-) -> Any:
+def _get_side_effect_with_workspaces(workspaces: list[dict], components: list[dict]) -> Any:
     """Returns a _get side_effect that routes by path suffix."""
 
     def _get(path: str, **params: Any) -> list[dict]:
@@ -352,7 +350,7 @@ def _get_side_effect_with_workspaces(
 
 
 @pytest.mark.parametrize(
-    'workspace_schema, workspaces, expected_kept_config_id',
+    ('workspace_schema', 'workspaces', 'expected_kept_config_id'),
     [
         # Workspace found — matching config is kept
         (

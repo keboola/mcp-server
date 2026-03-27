@@ -379,9 +379,7 @@ class ProjectLock:
         # the integration test workspace schema.
         sandboxes_config_to_keep: str | None = None
         if self._workspace_schema:
-            sandboxes_config_to_keep = self._find_sandboxes_config_id_by_workspace_schema(
-                self._workspace_schema
-            )
+            sandboxes_config_to_keep = self._find_sandboxes_config_id_by_workspace_schema(self._workspace_schema)
             if sandboxes_config_to_keep:
                 LOG.info(
                     f'[project_lock] Will keep keboola.sandboxes config {sandboxes_config_to_keep} '
