@@ -15,7 +15,7 @@
 - Activate the virtual environment first (e.g., `source <venv>/bin/activate`)
 - Run specific tests: `tox -e py310 -- tests/test_file.py -v`
 - Run all checks: `tox`
-- **Write parameterized tests** (`@pytest.mark.parametrize`) to reduce boilerplate
+- **Write parameterized tests** (`@pytest.mark.parametrize`) to reduce boilerplate; declare parameter names as a tuple of strings, not a single comma-separated string (e.g. `('a', 'b')` not `'a, b'`)
 - **Be careful with mocking** - don't mock too much or tests will just test the mocks, not the real code
 - **Extend existing tests instead of adding new ones** - when adding new scenarios (e.g. OAuth bearer token cases), add parameters to an existing parametrized test rather than writing a separate test function; this avoids test bloat and keeps related cases together
 - **Only test what's necessary** - add test cases that cover genuinely new behavior, not duplicates of cases already covered by existing parametrize entries
