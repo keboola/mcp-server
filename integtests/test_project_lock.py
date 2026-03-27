@@ -9,6 +9,7 @@ import json
 import os
 import socket
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -328,6 +329,89 @@ def test_clean_project_deletes_configs(mocker):
     # Each config deleted twice
     assert config_delete_paths.count('/v2/storage/components/ex-generic-v2/configs/123') == 2
     assert config_delete_paths.count('/v2/storage/components/ex-generic-v2/configs/456') == 2
+
+
+# ---------------------------------------------------------------------------
+# test_clean_project_keeps_sandboxes_config_matching_workspace_schema
+# ---------------------------------------------------------------------------
+
+
+def _get_side_effect_with_workspaces(
+    workspaces: list[dict], components: list[dict]
+) -> Any:
+    """Returns a _get side_effect that routes by path suffix."""
+
+    def _get(path: str, **params: Any) -> list[dict]:
+        if path.endswith('/buckets'):
+            return []
+        if path.endswith('/workspaces'):
+            return workspaces
+        return components
+
+    return _get
+
+
+@pytest.mark.parametrize(
+    'workspace_schema, workspaces, expected_kept_config_id',
+    [
+        # Workspace found — matching config is kept
+        (
+            'WORKSPACE_999',
+            [
+                {'configurationId': '777', 'connection': {'schema': 'WORKSPACE_999', 'backend': 'snowflake'}},
+                {'configurationId': '888', 'connection': {'schema': 'WORKSPACE_OTHER', 'backend': 'snowflake'}},
+            ],
+            '777',
+        ),
+        # No workspace with matching schema — all sandboxes configs deleted
+        (
+            'WORKSPACE_MISSING',
+            [
+                {'configurationId': '777', 'connection': {'schema': 'WORKSPACE_999', 'backend': 'snowflake'}},
+            ],
+            None,
+        ),
+        # No workspace_schema on the lock — all configs deleted
+        (
+            None,
+            [],
+            None,
+        ),
+    ],
+)
+def test_clean_project_keeps_sandboxes_config_matching_workspace_schema(
+    mocker,
+    workspace_schema: str | None,
+    workspaces: list[dict],
+    expected_kept_config_id: str | None,
+) -> None:
+    """clean_project skips the keboola.sandboxes config whose workspace matches workspace_schema."""
+    lock = _make_project_lock(workspace_schema=workspace_schema)
+
+    sandboxes_config_id_to_keep = '777'
+    components = [
+        {
+            'id': 'keboola.sandboxes',
+            'configurations': [{'id': sandboxes_config_id_to_keep}, {'id': '888'}],
+        }
+    ]
+
+    mocker.patch.object(
+        lock,
+        '_get',
+        side_effect=_get_side_effect_with_workspaces(workspaces, components),
+    )
+    delete_mock = mocker.patch.object(lock, '_delete')
+
+    lock.clean_project()
+
+    config_delete_paths = [c.args[0] for c in delete_mock.call_args_list if 'configs' in c.args[0]]
+    kept_path = f'/v2/storage/components/keboola.sandboxes/configs/{sandboxes_config_id_to_keep}'
+
+    if expected_kept_config_id == sandboxes_config_id_to_keep:
+        assert kept_path not in config_delete_paths, 'Integration test workspace config must not be deleted'
+    else:
+        assert config_delete_paths.count(kept_path) == 2, 'Config must be deleted twice when not matching'
 
 
 # ---------------------------------------------------------------------------
