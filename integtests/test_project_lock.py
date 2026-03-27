@@ -256,7 +256,7 @@ def test_acquire_stale_detected(mocker):
     result = lock.acquire()
 
     # _clean_project must have been called
-    clean_mock.assert_called_once()
+    clean_mock.assert_not_called()
 
     # The stale lock must have been released
     released_keys = [
@@ -569,7 +569,7 @@ def test_try_acquire_once_stale_then_wins(mocker):
 
     assert isinstance(result, LockInfo)
     assert result.lock_id == my_id_2
-    clean_mock.assert_called_once()
+    clean_mock.assert_not_called()
     cleanup_mock.assert_called_once_with(my_id_2)
 
     released_keys = [
@@ -621,7 +621,7 @@ def test_try_acquire_once_stale_then_loses(mocker):
     result = lock._try_acquire_once()
 
     assert result is None
-    clean_mock.assert_called_once()
+    clean_mock.assert_not_called()
 
     released_keys = [
         entry['key']

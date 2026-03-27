@@ -189,7 +189,6 @@ class ProjectLock:
             for stale in active:
                 if self._is_stale(stale):
                     self._release_lock_entry(stale.lock_id)
-            self.clean_project()
             # Release our pending entry and write a fresh candidate
             self._release_lock_entry(lock_id)
             time.sleep(2)
