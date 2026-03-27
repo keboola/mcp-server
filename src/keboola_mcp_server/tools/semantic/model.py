@@ -18,6 +18,9 @@ class SemanticObjectType(str, Enum):
     SEMANTIC_GLOSSARY = 'semantic-glossary'
     SEMANTIC_CONSTRAINT = 'semantic-constraint'
 
+    def __str__(self) -> str:
+        return self.value
+
 
 class SemanticObjectTypeSelection(BaseModel):
     """Semantic object type selection used by semantic tools."""

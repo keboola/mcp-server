@@ -663,6 +663,7 @@ async def get_semantic_schema(
 
 @tool_errors()
 async def validate_semantic_query(
+    ctx: Context,
     sql_query: Annotated[
         str,
         Field(
@@ -692,8 +693,7 @@ async def validate_semantic_query(
                 'Use `ids` when you want to assert that specific semantic objects should be present.'
             )
         ),
-    ],
-    ctx: Context,
+    ] = tuple(),
 ) -> ValidateSemanticQueryOutput:
     """
     Performs best-effort semantic validation of an SQL query against one semantic model and compares it with the
