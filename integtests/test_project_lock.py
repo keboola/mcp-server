@@ -9,6 +9,7 @@ import json
 import os
 import socket
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -85,6 +86,7 @@ def test_acquire_happy_path(mocker):
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
+    mocker.patch.object(lock, 'clean_project')
 
     # _read_metadata returns only our own entry after the anti-collision sleep
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
@@ -118,6 +120,7 @@ def test_acquire_anti_collision_waits(mocker):
 
     mocker.patch.object(lock, '_post', return_value=[])
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
+    mocker.patch.object(lock, 'clean_project')
 
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
     mocker.patch.object(lock, '_read_metadata', return_value=[my_entry])
@@ -142,6 +145,7 @@ def test_acquire_win_oldest_timestamp(mocker):
 
     mocker.patch.object(lock, '_post', return_value=[])
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
+    mocker.patch.object(lock, 'clean_project')
 
     # Our entry is 5 minutes older than the other
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=5)
@@ -173,6 +177,7 @@ def test_acquire_lose_to_older(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
+    mocker.patch.object(lock, 'clean_project')
 
     other_entry = _make_lock(lock_id=other_lock_id, minutes_ago=10)
 
@@ -228,7 +233,7 @@ def test_acquire_stale_detected(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     # Build a stale entry (acquired 120 minutes ago, TTL=60)
     stale_entry = _make_lock(lock_id=stale_lock_id, minutes_ago=120)
@@ -252,7 +257,7 @@ def test_acquire_stale_detected(mocker):
     result = lock.acquire()
 
     # _clean_project must have been called
-    clean_mock.assert_called_once()
+    clean_mock.assert_not_called()
 
     # The stale lock must have been released
     released_keys = [
@@ -284,7 +289,7 @@ def test_clean_project_deletes_buckets(mocker):
     )
     delete_mock = mocker.patch.object(lock, '_delete')
 
-    lock._clean_project()
+    lock.clean_project()
 
     delete_calls = [c for c in delete_mock.call_args_list if 'buckets' in c.args[0]]
     deleted_bucket_paths = {c.args[0] for c in delete_calls}
@@ -318,12 +323,93 @@ def test_clean_project_deletes_configs(mocker):
     )
     delete_mock = mocker.patch.object(lock, '_delete')
 
-    lock._clean_project()
+    lock.clean_project()
 
     config_delete_paths = [c.args[0] for c in delete_mock.call_args_list if 'configs' in c.args[0]]
     # Each config deleted twice
     assert config_delete_paths.count('/v2/storage/components/ex-generic-v2/configs/123') == 2
     assert config_delete_paths.count('/v2/storage/components/ex-generic-v2/configs/456') == 2
+
+
+# ---------------------------------------------------------------------------
+# test_clean_project_keeps_sandboxes_config_matching_workspace_schema
+# ---------------------------------------------------------------------------
+
+
+def _get_side_effect_with_workspaces(workspaces: list[dict], components: list[dict]) -> Any:
+    """Returns a _get side_effect that routes by path suffix."""
+
+    def _get(path: str, **params: Any) -> list[dict]:
+        if path.endswith('/buckets'):
+            return []
+        if path.endswith('/workspaces'):
+            return workspaces
+        return components
+
+    return _get
+
+
+@pytest.mark.parametrize(
+    ('workspace_schema', 'workspaces', 'expected_kept_config_id'),
+    [
+        # Workspace found — matching config is kept
+        (
+            'WORKSPACE_999',
+            [
+                {'configurationId': '777', 'connection': {'schema': 'WORKSPACE_999', 'backend': 'snowflake'}},
+                {'configurationId': '888', 'connection': {'schema': 'WORKSPACE_OTHER', 'backend': 'snowflake'}},
+            ],
+            '777',
+        ),
+        # No workspace with matching schema — all sandboxes configs deleted
+        (
+            'WORKSPACE_MISSING',
+            [
+                {'configurationId': '777', 'connection': {'schema': 'WORKSPACE_999', 'backend': 'snowflake'}},
+            ],
+            None,
+        ),
+        # No workspace_schema on the lock — all configs deleted
+        (
+            None,
+            [],
+            None,
+        ),
+    ],
+)
+def test_clean_project_keeps_sandboxes_config_matching_workspace_schema(
+    mocker,
+    workspace_schema: str | None,
+    workspaces: list[dict],
+    expected_kept_config_id: str | None,
+) -> None:
+    """clean_project skips the keboola.sandboxes config whose workspace matches workspace_schema."""
+    lock = _make_project_lock(workspace_schema=workspace_schema)
+
+    sandboxes_config_id_to_keep = '777'
+    components = [
+        {
+            'id': 'keboola.sandboxes',
+            'configurations': [{'id': sandboxes_config_id_to_keep}, {'id': '888'}],
+        }
+    ]
+
+    mocker.patch.object(
+        lock,
+        '_get',
+        side_effect=_get_side_effect_with_workspaces(workspaces, components),
+    )
+    delete_mock = mocker.patch.object(lock, '_delete')
+
+    lock.clean_project()
+
+    config_delete_paths = [c.args[0] for c in delete_mock.call_args_list if 'configs' in c.args[0]]
+    kept_path = f'/v2/storage/components/keboola.sandboxes/configs/{sandboxes_config_id_to_keep}'
+
+    if expected_kept_config_id == sandboxes_config_id_to_keep:
+        assert kept_path not in config_delete_paths, 'Integration test workspace config must not be deleted'
+    else:
+        assert config_delete_paths.count(kept_path) == 2, 'Config must be deleted twice when not matching'
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +567,7 @@ def test_try_acquire_once_happy_path(mocker):
     mocker.patch.object(lock, '_read_metadata', return_value=[my_entry])
     sleep_mock = mocker.patch('time.sleep')
     cleanup_mock = mocker.patch.object(lock, '_cleanup_old_locks')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     result = lock._try_acquire_once()
 
@@ -489,6 +576,7 @@ def test_try_acquire_once_happy_path(mocker):
     assert result.metadata_key == LOCK_KEY_PREFIX + my_lock_id
     assert any(c == call(0) for c in sleep_mock.call_args_list)  # anti_collision=0
     cleanup_mock.assert_called_once_with(my_lock_id)
+    clean_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -504,7 +592,7 @@ def test_try_acquire_once_loses_to_active_runner(mocker):
 
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     other_entry = _make_lock(lock_id=other_lock_id, minutes_ago=5)  # older
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
@@ -542,7 +630,7 @@ def test_try_acquire_once_stale_then_wins(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
     cleanup_mock = mocker.patch.object(lock, '_cleanup_old_locks')
 
     stale_entry = _make_lock(lock_id=stale_id, minutes_ago=120)
@@ -563,7 +651,7 @@ def test_try_acquire_once_stale_then_wins(mocker):
 
     assert isinstance(result, LockInfo)
     assert result.lock_id == my_id_2
-    clean_mock.assert_called_once()
+    clean_mock.assert_not_called()
     cleanup_mock.assert_called_once_with(my_id_2)
 
     released_keys = [
@@ -594,7 +682,7 @@ def test_try_acquire_once_stale_then_loses(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     stale_entry = _make_lock(lock_id=stale_id, minutes_ago=120)
 
@@ -615,7 +703,7 @@ def test_try_acquire_once_stale_then_loses(mocker):
     result = lock._try_acquire_once()
 
     assert result is None
-    clean_mock.assert_called_once()
+    clean_mock.assert_not_called()
 
     released_keys = [
         entry['key']
