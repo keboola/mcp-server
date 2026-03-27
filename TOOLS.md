@@ -3284,6 +3284,7 @@ EXAMPLES:
       "type": "string"
     },
     "expected_semantic_objects": {
+      "default": [],
       "description": "Optional semantic object selections that define the expected semantic scope of the query. These expectations are compared with the objects actually detected in the SQL. Use `ids` when you want to assert that specific semantic objects should be present.",
       "items": {
         "$ref": "#/$defs/SemanticObjectTypeSelection"
@@ -3293,8 +3294,7 @@ EXAMPLES:
   },
   "required": [
     "sql_query",
-    "semantic_model_id",
-    "expected_semantic_objects"
+    "semantic_model_id"
   ],
   "type": "object"
 }
