@@ -143,7 +143,7 @@ class ServerRuntimeInfo:
     """Server runtime Information."""
 
     transport: Transport
-    """Transport used by the MCP server (e.g., 'stdio', 'sse', 'streamable-http')."""
+    """Transport used by the MCP server (e.g., 'stdio', 'streamable-http')."""
     server_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     """The ID of the MCP server."""
     app_env: str = field(default_factory=lambda: os.getenv('APP_ENV') or 'local')

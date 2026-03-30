@@ -21,7 +21,7 @@ from keboola_mcp_server.tools.components.model import GetConfigsDetailOutput
 from keboola_mcp_server.tools.project import ProjectInfo
 
 LOG = logging.getLogger(__name__)
-HttpTransportStr = Literal['streamable-http']
+HttpTransportStr = Literal['streamable-http', 'http-compat']
 
 
 @pytest.mark.asyncio
