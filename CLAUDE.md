@@ -44,16 +44,9 @@ tox
 ```
 All four tox environments (pytest, black, flake8, check-tools-docs) should exit 0.
 
-## Integration Tests — Adding a New Client
+## Integration Tests
 
-- **Derive service URLs from existing stack env vars** — do NOT introduce new `INTEGTEST_<SERVICE>_URL`
-  env vars. All services on a stack share the same base domain; derive the URL by replacing the
-  `connection.` prefix in `INTEGTEST_POOL_STORAGE_API_URL`.
-  Example: `storage_api_url.replace('connection.', 'metastore.', 1)`
-- **Reuse the storage API token** — services on the same stack accept the same token. Only add a
-  separate token env var if the service uses a different auth scheme that cannot accept the storage token.
-- This keeps CI configuration minimal (no new secrets per service) and avoids drift between
-  integration test fixtures and the actual stack topology.
+See `integtests/README.md` for setup and conventions.
 
 ## Versioning
 

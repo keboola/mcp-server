@@ -1,12 +1,10 @@
 """Keboola Metastore API client."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
 
-from keboola_mcp_server.clients.base import JsonStruct, KeboolaServiceClient, RawKeboolaClient
+from keboola_mcp_server.clients.base import JsonDict, JsonStruct, KeboolaServiceClient, RawKeboolaClient
 
 
 class MetaObjectMeta(BaseModel):
@@ -70,7 +68,7 @@ class MetastoreClient(KeboolaServiceClient):
 
     def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
         super().__init__(raw_client=raw_client)
-        self._branch_id: str = branch_id or 'main'
+        self._branch_id: str | None = branch_id
 
     @classmethod
     def create(
@@ -93,7 +91,7 @@ class MetastoreClient(KeboolaServiceClient):
         )
         return client
 
-    async def get_schema(self, object_type: str, version: str | None = None) -> dict[str, Any]:
+    async def get_schema(self, object_type: str, version: str | None = None) -> JsonDict:
         endpoint = f'api/v1/schema/{object_type}/{version}' if version else f'api/v1/schema/{object_type}'
         response = await self.get(endpoint=endpoint)
         if not isinstance(response, dict):
@@ -154,7 +152,8 @@ class MetastoreClient(KeboolaServiceClient):
             payload['schemaVersion'] = schema_version
         if scope is not None:
             payload['scope'] = scope
-        payload['branch'] = self._branch_id
+        if self._branch_id is not None:
+            payload['branch'] = self._branch_id
 
         response = await self.post(endpoint=f'api/v1/repository/{object_type}', data=payload)
         return self._parse_object(response)
