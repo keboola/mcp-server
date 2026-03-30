@@ -168,8 +168,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                 mount_paths['/mcp'] = http_app
                 transports.append('Streamable-HTTP')
 
-
-@asynccontextmanager
+            @asynccontextmanager
             async def lifespan(_app: Starlette):
                 async with contextlib.AsyncExitStack() as stack:
                     for _inner_app in mount_paths.values():
