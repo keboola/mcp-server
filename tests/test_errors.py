@@ -1,8 +1,10 @@
+import json
 import logging
 import uuid
 from importlib.metadata import distribution
 from unittest.mock import ANY
 
+import httpx
 import jsonschema
 import pytest
 import yaml
@@ -14,7 +16,7 @@ from mcp.types import ClientCapabilities, Implementation, InitializeRequestParam
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.errors import _MAX_ARG_VALUE_LEN, tool_errors
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
@@ -356,3 +358,61 @@ class TestPydanticValidationErrors:
             assert len(lines) > 0, 'Empty error message'
             assert lines[0] == 'MCP tool "foo" call failed. ToolError: Found 1 validation error(s) for TableColumnInfo'
             assert expected_error_details == yaml.safe_load('\n'.join(lines[1:]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'event_error',
+    [
+        httpx.HTTPStatusError(
+            '400 Request too large',
+            request=httpx.Request('POST', 'https://example.com/events'),
+            response=httpx.Response(400),
+        ),
+        httpx.HTTPStatusError(
+            '403 Forbidden',
+            request=httpx.Request('POST', 'https://example.com/events'),
+            response=httpx.Response(403),
+        ),
+        ConnectionError('Network failure'),
+    ],
+)
+async def test_event_logging_failure_does_not_fail_tool(caplog, event_error, mcp_context_client: Context):
+    """Event logging errors must never propagate as tool failures — the tool result is already determined."""
+
+    @tool_errors()
+    async def successful_tool(_ctx: Context) -> str:
+        return 'ok'
+
+    client = KeboolaClient.from_state(mcp_context_client.session.state)
+    client.storage_client.trigger_event.side_effect = event_error
+
+    # Tool must succeed despite event logging failure
+    result = await successful_tool(mcp_context_client)
+    assert result == 'ok'
+
+    # Event failure must be logged as a warning, not re-raised
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any('Failed to trigger tool event' in r.message for r in warning_records)
+
+
+@pytest.mark.asyncio
+async def test_large_argument_value_is_truncated_in_event(mcp_context_client: Context):
+    """Argument values exceeding _MAX_ARG_VALUE_LEN must be replaced with a truncation notice."""
+
+    large_value = 'x' * (_MAX_ARG_VALUE_LEN + 1)
+
+    @tool_errors()
+    async def tool_with_large_arg(_ctx: Context, big_param: str) -> str:
+        return 'done'
+
+    client = KeboolaClient.from_state(mcp_context_client.session.state)
+    await tool_with_large_arg(mcp_context_client, big_param=large_value)
+
+    client.storage_client.trigger_event.assert_called_once()
+    _, kwargs = client.storage_client.trigger_event.call_args
+    arguments = kwargs['params']['tool']['arguments']
+    big_param_entry = next(a for a in arguments if a['key'] == 'big_param')
+    decoded = json.loads(big_param_entry['value'])
+    assert 'truncated' in decoded
+    assert str(len(json.dumps(large_value))) in decoded
