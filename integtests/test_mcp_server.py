@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator, Iterable, Literal, cast
 
 import pytest
 from fastmcp import Client
-from fastmcp.client import SSETransport, StdioTransport, StreamableHttpTransport
+from fastmcp.client import StdioTransport, StreamableHttpTransport
 from mcp.types import TextContent
 
 from integtests.conftest import (
@@ -21,7 +21,7 @@ from keboola_mcp_server.tools.components.model import GetConfigsDetailOutput
 from keboola_mcp_server.tools.project import ProjectInfo
 
 LOG = logging.getLogger(__name__)
-HttpTransportStr = Literal['sse', 'streamable-http']
+HttpTransportStr = Literal['streamable-http']
 
 
 @pytest.mark.asyncio
@@ -56,7 +56,7 @@ async def test_stdio_setup(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('transport', ['sse', 'streamable-http', 'http-compat'])
+@pytest.mark.parametrize('transport', ['streamable-http', 'http-compat'])
 async def test_remote_setup(
     transport: HttpTransportStr,
     configs: list[ConfigDef],
@@ -265,8 +265,6 @@ def _run_server_remote(storage_api_url: str, transport: HttpTransportStr) -> Ite
     )
     try:
         urls: list[str] = []
-        if transport in ['sse', 'http-compat']:
-            urls.append(f'http://127.0.0.1:{port}/sse')
         if transport in ['streamable-http', 'http-compat']:
             urls.append(f'http://127.0.0.1:{port}/mcp')
         if not urls:
@@ -293,9 +291,7 @@ async def _run_client(url: str, headers: dict[str, str] | None = None) -> AsyncG
     :param headers: The headers to use for the client.
     :return: The Client connected to the remote server.
     """
-    if url.endswith('/sse'):
-        transport = SSETransport(url=url, headers=headers)
-    elif url.endswith('/mcp'):
+    if url.endswith('/mcp'):
         transport = StreamableHttpTransport(url=url, headers=headers)
     else:
         raise ValueError(f'Unknown transport: {url}')

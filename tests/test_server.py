@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 import pytest
 from fastmcp import Client, Context, FastMCP
-from fastmcp.client import SSETransport
+from fastmcp.client import StreamableHttpTransport
 from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
@@ -428,7 +428,7 @@ async def test_json_logging():
                 '-m',
                 'keboola_mcp_server',
                 '--transport',
-                'sse',
+                'streamable-http',
                 '--api-url',
                 'http://connection.nowhere',
                 '--storage-token',
@@ -463,7 +463,7 @@ async def test_json_logging():
 
             # connect to the server and list prompts to force 'fastmcp' looger to get used
             # the listing of the prompts does not require SAPI connection
-            async with Client(SSETransport('http://localhost:8000/sse', sse_read_timeout=5)) as client:
+            async with Client(StreamableHttpTransport('http://localhost:8000/mcp')) as client:
                 prompts = await client.list_prompts()
                 assert len(prompts) > 1
 
