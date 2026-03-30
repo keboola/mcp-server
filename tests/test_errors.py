@@ -16,7 +16,7 @@ from mcp.types import ClientCapabilities, Implementation, InitializeRequestParam
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.errors import _MAX_ARG_VALUE_LEN, tool_errors
+from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, tool_errors
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
@@ -398,9 +398,9 @@ async def test_event_logging_failure_does_not_fail_tool(caplog, event_error, mcp
 
 @pytest.mark.asyncio
 async def test_large_argument_value_is_truncated_in_event(mcp_context_client: Context):
-    """Argument values exceeding _MAX_ARG_VALUE_LEN must be replaced with a truncation notice."""
+    """Argument values exceeding MAX_ARG_VALUE_LEN must be replaced with a truncation notice."""
 
-    large_value = 'x' * (_MAX_ARG_VALUE_LEN + 1)
+    large_value = 'x' * (MAX_ARG_VALUE_LEN + 1)
 
     @tool_errors()
     async def tool_with_large_arg(_ctx: Context, big_param: str) -> str:

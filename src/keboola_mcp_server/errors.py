@@ -29,8 +29,7 @@ _USER_AGENT_TO_COMPONENT_ID: Mapping[str, str] = {
 }
 
 
-_MAX_ARG_VALUE_LEN = 10_000
-"""Maximum length (chars) of a single tool argument value in the Storage Events payload."""
+MAX_ARG_VALUE_LEN = 10_000  # Maximum length (bytes) of a single tool argument value in the Storage Events payload.
 
 
 class _JsonWrapper(BaseModel):
@@ -49,11 +48,12 @@ class _JsonWrapper(BaseModel):
 
     @classmethod
     def encode_truncated(cls, obj: Any) -> str:
-        """Encode obj to JSON, replacing the value with a truncation notice if it exceeds _MAX_ARG_VALUE_LEN."""
+        """Encode obj to JSON, replacing the value with a truncation notice if it exceeds MAX_ARG_VALUE_LEN."""
         encoded = cls.encode(obj)
-        if len(encoded) <= _MAX_ARG_VALUE_LEN:
+        encoded_bytes = len(encoded.encode('utf-8'))
+        if encoded_bytes <= MAX_ARG_VALUE_LEN:
             return encoded
-        return json.dumps(f'[value truncated, original length: {len(encoded)} chars]')
+        return json.dumps(f'[value truncated, original length: {encoded_bytes} bytes]')
 
 
 async def _trigger_event(
@@ -187,7 +187,7 @@ def tool_errors(
                 except Exception as e:
                     # Event logging is best-effort telemetry — never fail the tool because of it.
                     # The tool result (success or failure) is already determined before this point.
-                    LOG.warning(f'Failed to trigger tool event for "{func.__name__}" tool: {e}')
+                    LOG.warning(f'Failed to trigger tool event for "{func.__name__}" tool: {e}', exc_info=True)
 
         return cast(F, wrapped)
 
