@@ -50,7 +50,10 @@ class _JsonWrapper(BaseModel):
     def encode_truncated(cls, obj: Any) -> str:
         """Encode obj to JSON, replacing the value with a truncation notice if it exceeds MAX_ARG_VALUE_LEN."""
         encoded = cls.encode(obj)
-        encoded_bytes = len(encoded.encode('utf-8'))
+        # Measure the size of the value as it will appear in the final JSON payload,
+        # i.e. once it is JSON-encoded again as a string value.
+        payload_encoded = json.dumps(encoded, ensure_ascii=False)
+        encoded_bytes = len(payload_encoded.encode('utf-8'))
         if encoded_bytes <= MAX_ARG_VALUE_LEN:
             return encoded
         return json.dumps(f'[value truncated, original length: {encoded_bytes} bytes]')

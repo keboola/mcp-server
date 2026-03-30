@@ -415,4 +415,5 @@ async def test_large_argument_value_is_truncated_in_event(mcp_context_client: Co
     big_param_entry = next(a for a in arguments if a['key'] == 'big_param')
     decoded = json.loads(big_param_entry['value'])
     assert 'truncated' in decoded
-    assert str(len(json.dumps(large_value))) in decoded
+    expected_length = len(json.dumps(json.dumps(large_value, ensure_ascii=False), ensure_ascii=False).encode('utf-8'))
+    assert str(expected_length) in decoded
