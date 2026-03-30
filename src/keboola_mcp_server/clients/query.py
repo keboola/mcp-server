@@ -55,7 +55,12 @@ class QueryServiceClient(KeboolaServiceClient):
         )
 
     async def submit_job(
-        self, statements: list[str], workspace_id: str, actor_type: str | None = None, transactional: bool | None = None
+        self,
+        statements: list[str],
+        workspace_id: str,
+        actor_type: str | None = None,
+        transactional: bool | None = None,
+        refresh_metadata_on_success: bool | None = None,
     ) -> str:
         """
         Creates a new query job with SQL statements in the specified branch and workspace.
@@ -64,6 +69,7 @@ class QueryServiceClient(KeboolaServiceClient):
         :param workspace_id: The id of the Keboola project workspace to work on.
         :param actor_type: The type of actor to use -- 'user' or 'system'.
         :param transactional: Whether the job should be executed in a transaction.
+        :param refresh_metadata_on_success: Whether to refresh workspace metadata after successful execution.
         :return: The unique identifier of the submitted job.
         """
         payload: JsonDict = {'statements': statements}
@@ -71,6 +77,8 @@ class QueryServiceClient(KeboolaServiceClient):
             payload['actorType'] = actor_type
         if transactional is not None:
             payload['transactional'] = transactional
+        if refresh_metadata_on_success is not None:
+            payload['refreshMetadataOnSuccess'] = refresh_metadata_on_success
         resp = cast(
             JsonDict,
             await self.post(endpoint=f'branches/{self._branch_id}/workspaces/{workspace_id}/queries', data=payload),
