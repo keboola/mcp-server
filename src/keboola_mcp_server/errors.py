@@ -5,7 +5,6 @@ import time
 from functools import wraps
 from typing import Any, Callable, Mapping, Optional, Type, TypeVar, cast
 
-import httpx
 import jsonschema
 import yaml
 from fastmcp import Context
@@ -30,6 +29,9 @@ _USER_AGENT_TO_COMPONENT_ID: Mapping[str, str] = {
 }
 
 
+MAX_ARG_VALUE_LEN = 10_000  # Maximum length (bytes) of a single tool argument value in the Storage Events payload.
+
+
 class _JsonWrapper(BaseModel):
     """
     Utility class for safely encoding arbitrary Python objects to JSON strings.
@@ -43,6 +45,18 @@ class _JsonWrapper(BaseModel):
     @classmethod
     def encode(cls, obj: Any) -> str:
         return json.dumps(cls(data=obj).model_dump()['data'], ensure_ascii=False)
+
+    @classmethod
+    def encode_truncated(cls, obj: Any) -> str:
+        """Encode obj to JSON, replacing the value with a truncation notice if it exceeds MAX_ARG_VALUE_LEN."""
+        encoded = cls.encode(obj)
+        # Measure the size of the value as it will appear in the final JSON payload,
+        # i.e. once it is JSON-encoded again as a string value.
+        payload_encoded = json.dumps(encoded, ensure_ascii=False)
+        encoded_bytes = len(payload_encoded.encode('utf-8'))
+        if encoded_bytes <= MAX_ARG_VALUE_LEN:
+            return encoded
+        return json.dumps(f'[value truncated, original length: {encoded_bytes} bytes]')
 
 
 async def _trigger_event(
@@ -93,7 +107,7 @@ async def _trigger_event(
         'tool': {
             'name': tool_name,
             'arguments': [
-                {'key': param_name, 'value': _JsonWrapper.encode(param_value)}
+                {'key': param_name, 'value': _JsonWrapper.encode_truncated(param_value)}
                 for param_name, param_value in bound_args.arguments.items()
                 if param_name not in [ctx_param_name, 'self', 'cls']
             ],
@@ -174,15 +188,9 @@ def tool_errors(
                 try:
                     await _trigger_event(func, args, kwargs, exception, time.perf_counter() - start)
                 except Exception as e:
-                    LOG.exception(f'Failed to trigger tool event for "{func.__name__}" tool: {e}')
-                    # Only swallow 403 Forbidden errors (expected for guest/read-only roles)
-                    # Re-raise other errors as they indicate genuine problems
-                    if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 403:
-                        # Expected for restricted roles (guest, read-only) - don't fail the tool call
-                        pass
-                    else:
-                        # Unexpected error - re-raise to alert about the problem
-                        raise
+                    # Event logging is best-effort telemetry — never fail the tool because of it.
+                    # The tool result (success or failure) is already determined before this point.
+                    LOG.warning(f'Failed to trigger tool event for "{func.__name__}" tool: {e}', exc_info=True)
 
         return cast(F, wrapped)
 
