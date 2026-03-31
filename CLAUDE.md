@@ -44,6 +44,21 @@ tox
 ```
 All four tox environments (pytest, black, flake8, check-tools-docs) should exit 0.
 
+## Integration Tests
+
+See `integtests/README.md` for setup and conventions.
+
+## Versioning
+
+- **Every PR must bump `pyproject.toml` version** before merging.
+- Use semantic versioning:
+  - **Patch** (`1.x.y` → `1.x.y+1`): bug fixes, refactoring, docs, tests, chores
+  - **Minor** (`1.x.y` → `1.x+1.0`): new features, new tools, new capabilities
+  - **Major**: breaking API/protocol changes (rare)
+- After bumping, always sync the lock file: `uv lock`
+- Commit the version bump and `uv.lock` change together (can be a separate commit or bundled with
+  the main feature commit).
+
 ## Security Considerations
 - When whitelisting domains in OAuth, prefer **explicit domain lists over regex patterns**
 - Regex could unintentionally allow future domains that weren't reviewed (principle of least privilege)
