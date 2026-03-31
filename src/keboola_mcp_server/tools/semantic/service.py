@@ -927,18 +927,10 @@ def _filter_used_objects_by_model(
     return filtered
 
 
-async def validate_semantic_query(
+async def _load_validation_contexts(
     client: KeboolaClient,
-    sql_query: str,
     semantic_model_ids: Sequence[str],
-) -> SemanticValidationServiceOutput:
-    """Validate SQL against one or more semantic models without executing it.
-
-    Contexts from all requested models are merged into a single universe for object detection.
-    Constraint evaluation is performed per model to avoid cross-model rule contamination.
-    """
-    if not sql_query.strip():
-        raise ValueError('sql_query must not be empty.')
+) -> list[dict[SemanticObjectType, SemanticServiceDataTypeGroup]]:
     if not semantic_model_ids:
         raise ValueError('At least one semantic_model_id must be provided.')
 
@@ -947,17 +939,31 @@ async def validate_semantic_query(
         lambda model_id: load_semantic_context_for_semantic_model(client, model_id),
         max_concurrency=len(semantic_model_ids),
     )
-    contexts_per_model: list[dict[SemanticObjectType, SemanticServiceDataTypeGroup]] = unwrap_results(
-        results, 'Failed to fetch semantic context.'
-    )
+    return unwrap_results(results, 'Failed to fetch semantic context.')
 
-    merged_context = _merge_contexts(contexts_per_model)
-    used_object_groups_by_type = detect_used_objects_from_context(sql_query, merged_context)
 
+def _merge_used_object_groups(
+    used_object_groups: Sequence[SemanticServiceDataTypeGroup],
+) -> dict[SemanticObjectType, SemanticServiceDataTypeGroup]:
+    merged: dict[SemanticObjectType, list[SemanticServiceData]] = {}
+    for group in used_object_groups:
+        merged.setdefault(group.object_type, []).extend(group.objects)
+
+    return {
+        object_type: SemanticServiceDataTypeGroup(object_type=object_type, objects=objects)
+        for object_type, objects in merged.items()
+    }
+
+
+def _evaluate_used_objects_for_contexts(
+    semantic_model_ids: Sequence[str],
+    contexts_per_model: Sequence[dict[SemanticObjectType, SemanticServiceDataTypeGroup]],
+    used_object_groups_by_type: dict[SemanticObjectType, SemanticServiceDataTypeGroup],
+) -> SemanticValidationServiceOutput:
     all_violations: list[ConstraintValidationFinding] = []
     all_post_checks: list[ConstraintValidationFinding] = []
     has_error = False
-    for model_id, context_by_type in zip(semantic_model_ids, contexts_per_model):
+    for model_id, context_by_type in zip(semantic_model_ids, contexts_per_model, strict=True):
         model_used_objects = _filter_used_objects_by_model(used_object_groups_by_type, model_id)
         per_model_result = evaluate_constraints_from_context(context_by_type, model_used_objects)
         all_violations.extend(per_model_result.violations)
@@ -978,6 +984,37 @@ async def validate_semantic_query(
         violations=all_violations,
         post_execution_checks=all_post_checks,
     )
+
+
+async def validate_semantic_used_objects(
+    client: KeboolaClient,
+    semantic_model_ids: Sequence[str],
+    used_object_groups: Sequence[SemanticServiceDataTypeGroup],
+) -> SemanticValidationServiceOutput:
+    """Validate already identified semantic objects against one or more semantic models."""
+    contexts_per_model = await _load_validation_contexts(client, semantic_model_ids)
+    used_object_groups_by_type = _merge_used_object_groups(used_object_groups)
+    return _evaluate_used_objects_for_contexts(semantic_model_ids, contexts_per_model, used_object_groups_by_type)
+
+
+async def validate_semantic_query(
+    client: KeboolaClient,
+    sql_query: str,
+    semantic_model_ids: Sequence[str],
+) -> SemanticValidationServiceOutput:
+    """Validate SQL against one or more semantic models without executing it.
+
+    Contexts from all requested models are merged into a single universe for object detection.
+    Constraint evaluation is performed per model to avoid cross-model rule contamination.
+    """
+    if not sql_query.strip():
+        raise ValueError('sql_query must not be empty.')
+
+    contexts_per_model = await _load_validation_contexts(client, semantic_model_ids)
+
+    merged_context = _merge_contexts(contexts_per_model)
+    used_object_groups_by_type = detect_used_objects_from_context(sql_query, merged_context)
+    return _evaluate_used_objects_for_contexts(semantic_model_ids, contexts_per_model, used_object_groups_by_type)
 
 
 async def get_object_by_id(
