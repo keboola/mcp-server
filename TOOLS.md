@@ -38,15 +38,17 @@ name or description.
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
+- [create_branch](#create_branch): Creates a new development branch in the current project.
 - [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
 and the configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
+- [list_branches](#list_branches): Lists all branches (main and development) in the current project.
 - [modify_data_app](#modify_data_app): Creates or updates a Streamlit data app.
 
 ### Project Tools
-- [get_project_info](#get_project_info): Retrieves structured information about the current project,
-including essential context and base instructions for working with it
+- [get_project_info](#get_project_info): Retrieves structured information about the current project(s),
+including essential context and base instructions for working with them
 (e.
 
 ### SQL Tools
@@ -62,6 +64,253 @@ lineage references (created/updated by), and links.
 - [get_tables](#get_tables): Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
 column definitions, lineage references (created/updated by) and links.
 - [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
+
+---
+
+# Other Tools
+<a name="create_branch"></a>
+## create_branch
+**Annotations**: 
+
+**Tags**: `branches`
+
+**Description**:
+
+Creates a new development branch in the current project.
+
+Development branches allow you to make changes without affecting the main/production branch.
+After creating a branch, use its ID as the branch_id parameter in other tool calls.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "The name for the new development branch.",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "description": "Optional description for the branch.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="deploy_data_app"></a>
+## deploy_data_app
+**Annotations**: 
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
+and the configuration ID.
+
+Considerations:
+- Redeploying a data app takes some time, and the app temporarily may have status "stopped" during this process
+because it needs to restart.
+- After deployment, the deployment info includes the app URL and the latest logs to diagnose in-app errors.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "action": {
+      "description": "The action to perform.",
+      "enum": [
+        "deploy",
+        "stop"
+      ],
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the data app configuration.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "action",
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_data_apps"></a>
+## get_data_apps
+**Annotations**: `read-only`
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
+providing their configuration IDs.
+
+WHEN NOT TO USE:
+- Do NOT list all data apps just to find one by name. Use `search` with
+  item_types=["data-app"] instead.
+- Only list all data apps when you need a complete inventory.
+
+Considerations:
+- If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
+- If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
+- Data App detail contains configuration, metadata, source code, links, and deployment info along with the latest
+data app logs to investigate in-app errors. The logs may be updated after opening the data app URL.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "configuration_ids": {
+      "default": [],
+      "description": "The IDs of the data app configurations.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "limit": {
+      "default": 100,
+      "description": "The limit of the data apps to fetch.",
+      "type": "integer"
+    },
+    "offset": {
+      "default": 0,
+      "description": "The offset of the data apps to fetch.",
+      "type": "integer"
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="list_branches"></a>
+## list_branches
+**Annotations**: `read-only`
+
+**Tags**: `branches`
+
+**Description**:
+
+Lists all branches (main and development) in the current project.
+
+Use this tool to discover available branches before specifying a branch_id
+in other tool calls.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {},
+  "type": "object"
+}
+```
+
+---
+<a name="modify_data_app"></a>
+## modify_data_app
+**Annotations**: `destructive`
+
+**Tags**: `config-diff-preview, data-apps`
+
+**Description**:
+
+Creates or updates a Streamlit data app.
+
+Considerations:
+- The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
+`{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function queries the workspace to get
+data, it accepts a string of SQL query following current sql dialect and returns a pandas DataFrame with the results
+from the workspace.
+- Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
+`query_data` tool to inspect the data in the workspace before using it in the data app.
+- If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
+parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
+appropriately based on the parameter type.
+- If the data app is updated while running, it must be redeployed for the changes to take effect.
+- New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
+updating, set `authentication_type` to `default` to keep the existing authentication type configuration
+(including OIDC setups) unless explicitly specified otherwise.
+
+SQL & DATA TYPE RULES:
+- SNOWFLAKE COLUMN ALIASES are auto-uppercased unless quoted. Quote aliases to preserve case:
+`CAST("downloads" AS INTEGER) as "downloads"`. Match exact case in Python code.
+- `query_data` RETURNS ALL COLUMNS AS STRINGS regardless of SQL CAST. Always convert types in Python after loading:
+`df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and
+`df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
+- Pattern:
+`df = query_data('SELECT "model_id", "downloads", "created_at" FROM "DB"."SCHEMA"."TABLE"')`
+`df["downloads"] = pd.to_numeric(df["downloads"], errors="coerce").fillna(0)`
+`df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")`
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "Name of the data app (max ~50 chars to fit DNS label limit).",
+      "type": "string"
+    },
+    "description": {
+      "description": "Description of the data app.",
+      "type": "string"
+    },
+    "source_code": {
+      "description": "Complete Python/Streamlit source code for the data app.",
+      "type": "string"
+    },
+    "packages": {
+      "description": "Python packages used in the source code that will be installed by `pip install` into the environment before the code runs. For example: [\"pandas\", \"requests~=2.32\"].",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "authentication_type": {
+      "description": "Authentication type, \"no-auth\" removes authentication completely, \"basic-auth\" sets the data app to be secured using the HTTP basic authentication, and \"default\" keeps the existing authentication type when updating.",
+      "enum": [
+        "no-auth",
+        "basic-auth",
+        "default"
+      ],
+      "type": "string"
+    },
+    "configuration_id": {
+      "default": "",
+      "description": "The ID of existing data app configuration when updating, otherwise empty string.",
+      "type": "string"
+    },
+    "change_description": {
+      "default": "",
+      "description": "The description of the change when updating (e.g. \"Update Code\"), otherwise empty string.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "source_code",
+    "packages",
+    "authentication_type"
+  ],
+  "type": "object"
+}
+```
 
 ---
 
@@ -1628,194 +1877,6 @@ Example 4 - Update storage mappings:
 
 ---
 
-# Other Tools
-<a name="deploy_data_app"></a>
-## deploy_data_app
-**Annotations**: 
-
-**Tags**: `data-apps`
-
-**Description**:
-
-Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
-and the configuration ID.
-
-Considerations:
-- Redeploying a data app takes some time, and the app temporarily may have status "stopped" during this process
-because it needs to restart.
-- After deployment, the deployment info includes the app URL and the latest logs to diagnose in-app errors.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "action": {
-      "description": "The action to perform.",
-      "enum": [
-        "deploy",
-        "stop"
-      ],
-      "type": "string"
-    },
-    "configuration_id": {
-      "description": "The ID of the data app configuration.",
-      "type": "string"
-    }
-  },
-  "required": [
-    "action",
-    "configuration_id"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="get_data_apps"></a>
-## get_data_apps
-**Annotations**: `read-only`
-
-**Tags**: `data-apps`
-
-**Description**:
-
-Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
-providing their configuration IDs.
-
-WHEN NOT TO USE:
-- Do NOT list all data apps just to find one by name. Use `search` with
-  item_types=["data-app"] instead.
-- Only list all data apps when you need a complete inventory.
-
-Considerations:
-- If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
-- If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
-- Data App detail contains configuration, metadata, source code, links, and deployment info along with the latest
-data app logs to investigate in-app errors. The logs may be updated after opening the data app URL.
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "configuration_ids": {
-      "default": [],
-      "description": "The IDs of the data app configurations.",
-      "items": {
-        "type": "string"
-      },
-      "type": "array"
-    },
-    "limit": {
-      "default": 100,
-      "description": "The limit of the data apps to fetch.",
-      "type": "integer"
-    },
-    "offset": {
-      "default": 0,
-      "description": "The offset of the data apps to fetch.",
-      "type": "integer"
-    }
-  },
-  "type": "object"
-}
-```
-
----
-<a name="modify_data_app"></a>
-## modify_data_app
-**Annotations**: `destructive`
-
-**Tags**: `config-diff-preview, data-apps`
-
-**Description**:
-
-Creates or updates a Streamlit data app.
-
-Considerations:
-- The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
-`{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function queries the workspace to get
-data, it accepts a string of SQL query following current sql dialect and returns a pandas DataFrame with the results
-from the workspace.
-- Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
-`query_data` tool to inspect the data in the workspace before using it in the data app.
-- If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
-parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
-appropriately based on the parameter type.
-- If the data app is updated while running, it must be redeployed for the changes to take effect.
-- New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
-updating, set `authentication_type` to `default` to keep the existing authentication type configuration
-(including OIDC setups) unless explicitly specified otherwise.
-
-SQL & DATA TYPE RULES:
-- SNOWFLAKE COLUMN ALIASES are auto-uppercased unless quoted. Quote aliases to preserve case:
-`CAST("downloads" AS INTEGER) as "downloads"`. Match exact case in Python code.
-- `query_data` RETURNS ALL COLUMNS AS STRINGS regardless of SQL CAST. Always convert types in Python after loading:
-`df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and
-`df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
-- Pattern:
-`df = query_data('SELECT "model_id", "downloads", "created_at" FROM "DB"."SCHEMA"."TABLE"')`
-`df["downloads"] = pd.to_numeric(df["downloads"], errors="coerce").fillna(0)`
-`df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")`
-
-
-**Input JSON Schema**:
-```json
-{
-  "properties": {
-    "name": {
-      "description": "Name of the data app (max ~50 chars to fit DNS label limit).",
-      "type": "string"
-    },
-    "description": {
-      "description": "Description of the data app.",
-      "type": "string"
-    },
-    "source_code": {
-      "description": "Complete Python/Streamlit source code for the data app.",
-      "type": "string"
-    },
-    "packages": {
-      "description": "Python packages used in the source code that will be installed by `pip install` into the environment before the code runs. For example: [\"pandas\", \"requests~=2.32\"].",
-      "items": {
-        "type": "string"
-      },
-      "type": "array"
-    },
-    "authentication_type": {
-      "description": "Authentication type, \"no-auth\" removes authentication completely, \"basic-auth\" sets the data app to be secured using the HTTP basic authentication, and \"default\" keeps the existing authentication type when updating.",
-      "enum": [
-        "no-auth",
-        "basic-auth",
-        "default"
-      ],
-      "type": "string"
-    },
-    "configuration_id": {
-      "default": "",
-      "description": "The ID of existing data app configuration when updating, otherwise empty string.",
-      "type": "string"
-    },
-    "change_description": {
-      "default": "",
-      "description": "The description of the change when updating (e.g. \"Update Code\"), otherwise empty string.",
-      "type": "string"
-    }
-  },
-  "required": [
-    "name",
-    "description",
-    "source_code",
-    "packages",
-    "authentication_type"
-  ],
-  "type": "object"
-}
-```
-
----
-
 # Documentation Tools
 <a name="docs_query"></a>
 ## docs_query
@@ -2658,12 +2719,14 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 
 **Description**:
 
-Retrieves structured information about the current project,
-including essential context and base instructions for working with it
+Retrieves structured information about the current project(s),
+including essential context and base instructions for working with them
 (e.g., transformations, components, workflows, and dependencies).
 
 Always call this tool at least once at the start of a conversation
 to establish the project context before using other tools.
+
+In multi-project mode, returns information about all available projects.
 
 
 **Input JSON Schema**:

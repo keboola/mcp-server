@@ -23,6 +23,7 @@ With the AI Agent and MCP Server, you can:
 - **Data Apps**: Create, deploy and manage Keboola Streamlit Data Apps displaying your queries over storage data.
 - **Metadata**: Search, read, and update project documentation and object metadata using natural language
 - **Dev Branches**: Work safely in development branches outside of production, where all operations are scoped to the selected branch.
+- **Multi-Project**: Access multiple Keboola projects within a single MCP session, with per-call project and branch selection.
 
 ---
 
@@ -375,6 +376,109 @@ docker run \
 
 > **Note**: The server will use the Streamable HTTP transport and listen on `localhost:8000` for incoming connections at `/mcp`.
 > You can change `-p` to map the container's port somewhere else.
+
+### Option E: Multi-Project Mode (MPA)
+
+Work with multiple Keboola projects in a single MCP session. The AI agent can switch between projects and branches per tool call.
+
+#### Configuration
+
+Use numbered environment variables to configure multiple projects. All projects share a single `KBC_STORAGE_API_URL`:
+
+```json
+{
+  "mcpServers": {
+    "keboola": {
+      "command": "uvx",
+      "args": ["keboola_mcp_server"],
+      "env": {
+        "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
+        "KBC_STORAGE_TOKEN_1": "token_for_first_project",
+        "KBC_STORAGE_TOKEN_2": "token_for_second_project"
+      }
+    }
+  }
+}
+```
+
+The server automatically detects numbered tokens (`KBC_STORAGE_TOKEN_1`, `KBC_STORAGE_TOKEN_2`, ...) and enters multi-project mode. Project IDs and names are derived from the tokens at startup — you don't need to specify them.
+
+#### Per-Project Branch Locking
+
+You can optionally lock a specific branch for each project using numbered `KBC_BRANCH_ID_N` variables:
+
+```json
+{
+  "env": {
+    "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
+    "KBC_STORAGE_TOKEN_1": "token_for_project_A",
+    "KBC_BRANCH_ID_1": "12345",
+    "KBC_STORAGE_TOKEN_2": "token_for_project_B"
+  }
+}
+```
+
+In this example, project A is locked to branch `12345`, while project B uses the main branch by default (but the agent can switch branches per tool call using `branch_id`).
+
+#### Main Branch Write Protection
+
+To prevent accidental writes to the production branch, set:
+
+```json
+{
+  "env": {
+    "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
+    "KBC_STORAGE_TOKEN_1": "token1",
+    "KBC_STORAGE_TOKEN_2": "token2",
+    "KBC_FORBID_MAIN_BRANCH_WRITES": "true"
+  }
+}
+```
+
+When enabled, write operations on the main branch are rejected. The agent must first create a development branch using `create_branch`, then pass the `branch_id` to subsequent tool calls.
+
+#### How It Works
+
+- **`get_project_info`** returns information for all configured projects in a single call
+- **`project_id`** parameter is injected into all tools when 2+ projects are configured — the agent specifies which project to operate on
+- **`branch_id`** parameter is injected into tools when any project has no fixed branch — the agent can target a specific branch per call
+- **`list_branches`** and **`create_branch`** tools allow the agent to discover and create development branches
+- The first project in the configuration is used as the default when `project_id` is not specified
+
+#### Generating Config with `init` Command
+
+If you have a Keboola Manage API token (Personal Access Token), you can generate the `.mcp.json` automatically:
+
+```bash
+# Generate config for specific projects
+python -m keboola_mcp_server init \
+    --manage-token "YOUR_MANAGE_TOKEN" \
+    --api-url "https://connection.YOUR_REGION.keboola.com" \
+    --project-ids "12345,67890"
+
+# Or for all projects in your organization
+python -m keboola_mcp_server init \
+    --manage-token "YOUR_MANAGE_TOKEN" \
+    --api-url "https://connection.YOUR_REGION.keboola.com" \
+    --all
+
+# Interactive mode (prompts you to select projects)
+python -m keboola_mcp_server init \
+    --manage-token "YOUR_MANAGE_TOKEN" \
+    --api-url "https://connection.YOUR_REGION.keboola.com"
+```
+
+The `init` command creates Storage API tokens for each selected project and writes a `.mcp.json` file with the standard `mcpServers` format. The manage token is **not** stored in the output file.
+
+#### Backward Compatibility
+
+Multi-project mode is fully backward compatible:
+
+| Configuration | Mode | Behavior |
+|---|---|---|
+| `KBC_STORAGE_TOKEN` (no number) | Single project | Identical to existing behavior, no extra parameters |
+| `KBC_STORAGE_TOKEN_1` only | Single MPA project | `branch_id` param available if no fixed branch |
+| `KBC_STORAGE_TOKEN_1` + `KBC_STORAGE_TOKEN_2` + ... | Multi-project | `project_id` and `branch_id` params available |
 
 ### Do I Need to Start the Server Myself?
 
