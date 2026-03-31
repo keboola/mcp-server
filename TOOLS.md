@@ -61,8 +61,8 @@ including essential context and base instructions for working with it
 - [get_semantic_schema](#get_semantic_schema): Returns JSON schemas for the requested semantic object types.
 - [search_semantic_context](#search_semantic_context): Searches semantic models and semantic objects using regex patterns matched against their names, descriptions and
 stringified JSON attributes.
-- [validate_semantic_query](#validate_semantic_query): Performs best-effort semantic validation of an SQL query against one semantic model and compares it with the
-expected semantic objects provided.
+- [validate_semantic_query](#validate_semantic_query): Performs best-effort semantic validation of an SQL query against one or more semantic models and compares it with
+the expected semantic objects provided.
 
 ### Storage Tools
 - [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including descriptions,
@@ -2940,11 +2940,11 @@ Loads semantic objects grouped by semantic object type.
 CONSIDERATIONS:
 - If a selection has empty `ids`, the tool returns all objects of that type in compact form.
 - If a selection has non-empty `ids`, the tool returns only those specific objects with full attributes.
-- `semantic_model_id` optionally narrows the lookup to a single semantic model.
+- `semantic_model_ids` optionally narrows the lookup to specific semantic models.
 
 WHEN TO USE:
 - When you already know IDs of the semantic objects you want to load and want to inspect them in detail.
-- When you want to list all semantic objects of a certain types or semantic model.
+- When you want to list all semantic objects of certain types or specific semantic models.
 - When you want to list semantic models.
 
 WHEN NOT TO USE:
@@ -2953,14 +2953,14 @@ WHEN NOT TO USE:
 EXAMPLES:
 - List all semantic models:
   `semantic_objects=[{"object_type": "semantic-model"}]`
-- List semantic datasets and metrics for one semantic model:
+- List semantic datasets and metrics for specific semantic models:
   `semantic_objects=[{"object_type": "semantic-dataset"}, {"object_type": "semantic-metric"}],`
-  `semantic_model_id="123"`
+  `semantic_model_ids=["model-uuid-1", "model-uuid-2"]`
 - Get detailed context for specific semantic objects by their id:
   `semantic_objects=[{"object_type": "semantic-dataset", "ids": ["dataset-uuid-1"]},`
   `{"object_type": "semantic-metric", "ids": ["metric-uuid-1", "metric-uuid-2"]}]`
-- List all constraints for one semantic model:
-  `semantic_objects=[{"object_type": "semantic-constraint"}], semantic_model_id="123"`
+- List all constraints for specific semantic models:
+  `semantic_objects=[{"object_type": "semantic-constraint"}], semantic_model_ids=["model-uuid-1"]`
 
 
 **Input JSON Schema**:
@@ -3008,17 +3008,13 @@ EXAMPLES:
       },
       "type": "array"
     },
-    "semantic_model_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Optional semantic model ID that restricts loading to a single semantic model. Use this when object types should be resolved only within one model."
+    "semantic_model_ids": {
+      "default": [],
+      "description": "Optional list of semantic model IDs to restrict loading to specific models. Empty list [] means load across all semantic models.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
   "required": [
@@ -3094,7 +3090,7 @@ CONSIDERATIONS:
 - The search is case-insensitive by default. Use `case_sensitive=True` when exact casing matters.
 - The search is performed against semantic object names and data attributes which are stringified JSON objects
 following their corresponding JSON schema.
-- The search can be scoped to a specific semantic model or semantic object types but prefer broader search without
+- The search can be scoped to specific semantic models or semantic object types but prefer broader search without
 scoping unless required by the context.
 
 WHEN TO USE:
@@ -3120,8 +3116,8 @@ EXAMPLES:
 - Search semantic constraints using e.g. certain semantic metrics and certain semantic datasets:
   `patterns=["metric-name-1", "metric-name-2", "table-id-from-the-dataset"],`
   `semantic_types=["semantic-metric", "semantic-relationship"]`
-- Search something within one semantic model only:
-  `patterns=["something"], semantic_model_id="<semantic-model-uuid>"`
+- Search something within specific semantic models only:
+  `patterns=["something"], semantic_model_ids=["<semantic-model-uuid-1>", "<semantic-model-uuid-2>"]`
 
 
 **Input JSON Schema**:
@@ -3156,17 +3152,13 @@ EXAMPLES:
       },
       "type": "array"
     },
-    "semantic_model_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Optional semantic model ID that restricts the search to a single semantic model. Leave empty to search across all semantic models."
+    "semantic_model_ids": {
+      "default": [],
+      "description": "Optional list of semantic model IDs to restrict the search to specific models. Empty list [] means search across all semantic models.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     },
     "case_sensitive": {
       "default": false,
@@ -3195,20 +3187,19 @@ EXAMPLES:
 
 **Description**:
 
-Performs best-effort semantic validation of an SQL query against one semantic model and compares it with the
-expected semantic objects provided.
+Performs best-effort semantic validation of an SQL query against one or more semantic models and compares it with
+the expected semantic objects provided.
 
 RETURNS:
-- detected semantic datasets and metrics used by the SQL
-- expected semantic objects that were matched or missing
-- unexpected detected objects outside the expected scope
-- pre-execution violations
-- post-execution checks with optional validation SQL
+- `validation_auto_detected`: semantic validation built from objects heuristically detected in the SQL
+- `validation_detected_from_expected`: semantic validation built only from explicitly provided expected object IDs
+- expected semantic objects that were matched or missing in the auto-detected result
+- unexpected auto-detected objects outside the expected semantic scope
 
 LIMITATIONS:
 - Detection is heuristic and based on string matching over SQL and semantic metadata.
 - The tool does not parse SQL semantically and does not execute the query.
-- Detected objects, missing objects, and relationship matches may therefore be imperfect.
+- Auto-detected objects, missing objects, and relationship matches may therefore be imperfect.
 - Use the result as a best-effort semantic check, not as a formal proof that the query is correct.
 
 CONSIDERATIONS:
@@ -3226,14 +3217,14 @@ issues.
 - When you need to surface semantic business-rule violations or follow-up checks.
 
 EXAMPLES:
-- Validate a SQL query against semantic model:
-  `sql_query="SELECT SUM(\"REVENUE\") FROM ...", semantic_model_id="semantic-model-uuid",`
+- Validate a SQL query against one semantic model:
+  `sql_query="SELECT SUM(\"REVENUE\") FROM ...", semantic_model_ids=["semantic-model-uuid"],`
   `expected_semantic_objects=[{"object_type": "semantic-dataset"}]`
-- Validate a query and assert that a specific dataset is expected:
-  `sql_query="SELECT * FROM ...", semantic_model_id="semantic-model-uuid",`
+- Validate a cross-model query against two semantic models:
+  `sql_query="SELECT * FROM ...", semantic_model_ids=["model-uuid-1", "model-uuid-2"],`
   `expected_semantic_objects=[{"object_type": "semantic-dataset", "ids": ["dataset-uuid-1"]}]`
 - Validate a query and compare it against expected objects:
-  `sql_query="SELECT SUM(\"REVENUE\") FROM ...", semantic_model_id="semantic-model-uuid",`
+  `sql_query="SELECT SUM(\"REVENUE\") FROM ...", semantic_model_ids=["semantic-model-uuid"],`
   `expected_semantic_objects=[{"object_type": "semantic-metric", "ids": ["metric-uuid-1"]}]`
 
 
@@ -3279,9 +3270,12 @@ EXAMPLES:
       "description": "SQL query that should be checked against the semantic layer. The query is not executed; the tool performs best-effort semantic detection and rule validation using heuristic string matching, so the detected objects may be incomplete or imperfect.",
       "type": "string"
     },
-    "semantic_model_id": {
-      "description": "Semantic model ID against which the SQL should be validated. This defines the semantic universe used for detecting datasets, metrics, relationships, and constraints.",
-      "type": "string"
+    "semantic_model_ids": {
+      "description": "One or more semantic model IDs against which the SQL should be validated. Contexts from all models are merged into a single universe for object detection. Constraint evaluation is performed per model to avoid cross-model rule contamination.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     },
     "expected_semantic_objects": {
       "default": [],
@@ -3294,7 +3288,7 @@ EXAMPLES:
   },
   "required": [
     "sql_query",
-    "semantic_model_id"
+    "semantic_model_ids"
   ],
   "type": "object"
 }
