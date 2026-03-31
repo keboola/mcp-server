@@ -30,8 +30,9 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeInfo
+from keboola_mcp_server.config import Config, ProjectConfig, ServerRuntimeInfo
 from keboola_mcp_server.oauth import ProxyAccessToken
+from keboola_mcp_server.project_registry import ProjectContext, ProjectRegistry
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -230,12 +231,19 @@ class SessionStateMiddleware(fmw.Middleware):
         """
         Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state.
 
+        In MPA mode, creates a ProjectRegistry with per-project clients and workspace managers.
+        The default project's client/workspace are also stored under legacy keys for middleware
+        that runs before project resolution (e.g. ToolsFilteringMiddleware).
+
         :param config: The MCP server configuration.
         :param runtime_info: The MCP server runtime information.
         :param readonly: If True, the `KeboolaClient` will only use HTTP GET, HEAD operations.
         :return: The session state dictionary containing the created client and workspace manager instances.
         """
         LOG.info(f'Creating SessionState from config: {config}.')
+
+        if config.is_mpa_mode:
+            return await cls._create_mpa_session_state(config, runtime_info, readonly)
 
         state: dict[str, Any] = {}
         try:
@@ -267,6 +275,86 @@ class SessionStateMiddleware(fmw.Middleware):
             raise
 
         state[CONVERSATION_ID] = config.conversation_id
+        return state
+
+    @classmethod
+    async def _create_mpa_session_state(
+        cls,
+        config: Config,
+        runtime_info: ServerRuntimeInfo,
+        readonly: bool | None = None,
+    ) -> dict[str, Any]:
+        """Creates session state for MPA mode with multiple projects.
+
+        Project IDs and names are derived from verify_token() at init time,
+        not from the config file. The shared storage_api_url comes from config.
+        """
+        if not config.storage_api_url:
+            raise ValueError('KBC_STORAGE_API_URL is required for MPA mode.')
+
+        headers = cls._get_headers(runtime_info)
+
+        async def init_project(pc: ProjectConfig) -> ProjectContext:
+            client = await KeboolaClient(
+                storage_api_url=config.storage_api_url,
+                storage_api_token=pc.storage_token,
+                headers=headers,
+                readonly=readonly,
+            ).with_branch_id(pc.branch_id)
+
+            # Derive project_id and project_name from the token
+            token_info = await client.storage_client.verify_token()
+            owner = token_info.get('owner', {})
+            project_id = str(owner.get('id', ''))
+            project_name = str(owner.get('name', ''))
+
+            if not project_id:
+                raise ValueError(f'Failed to derive project_id from token: {token_info}')
+
+            workspace_manager = await WorkspaceManager.create(client, pc.workspace_schema)
+
+            return ProjectContext(
+                project_id=project_id,
+                client=client,
+                workspace_manager=workspace_manager,
+                alias=project_name or None,
+                forbid_main_branch_writes=config.forbid_main_branch_writes,
+            )
+
+        # Initialize all projects concurrently
+        results = await process_concurrently(
+            config.projects,
+            init_project,
+            max_concurrency=len(config.projects),
+        )
+
+        exceptions = [r for r in results if isinstance(r, BaseException)]
+        if exceptions:
+            raise AggregateError('Failed to initialize one or more projects', exceptions)
+
+        project_contexts: dict[str, ProjectContext] = {}
+        for result in results:
+            assert isinstance(result, ProjectContext)
+            project_contexts[result.project_id] = result
+
+        # First project is the default
+        first_project_id = next(iter(project_contexts))
+        registry = ProjectRegistry(
+            projects=project_contexts,
+            default_project_id=first_project_id,
+        )
+
+        state: dict[str, Any] = {
+            ProjectRegistry.STATE_KEY: registry,
+            CONVERSATION_ID: config.conversation_id,
+        }
+
+        # Inject default project under legacy keys for middleware compatibility
+        default_project = registry.get_project()
+        state[KeboolaClient.STATE_KEY] = default_project.client
+        state[WorkspaceManager.STATE_KEY] = default_project.workspace_manager
+
+        LOG.info(f'MPA session initialized with {len(project_contexts)} projects.')
         return state
 
 
@@ -415,6 +503,134 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         if tool.name in ('modify_data_app', 'get_data_apps', 'deploy_data_app'):
             if not self.is_client_using_main_branch(context.fastmcp_context):
                 raise ToolError('Data apps are supported only in the main production branch.')
+
+        return await call_next(context)
+
+
+# Tools that don't operate on a specific project and should not get project_id/branch_id params
+PROJECT_AGNOSTIC_TOOLS = frozenset({'docs_query'})
+
+
+class ProjectResolutionMiddleware(fmw.Middleware):
+    """
+    Middleware that handles multi-project and per-call branch resolution.
+
+    In MPA mode (config file with projects):
+    - on_list_tools: injects optional project_id and/or branch_id parameters into tool schemas
+    - on_call_tool: extracts project_id/branch_id from arguments, resolves the correct
+      KeboolaClient, and injects it into session state under legacy keys
+
+    In legacy mode (single project via env vars/CLI args): no-op.
+
+    Param visibility rules:
+    - project_id: only injected when 2+ projects are configured
+    - branch_id: only injected when at least one project has no fixed branch_id in config
+    """
+
+    def __init__(self, config: Config | None = None) -> None:
+        super().__init__()
+        self._config = config
+
+    def _get_config(self, ctx: Context) -> Config:
+        if self._config is not None:
+            return self._config
+        return ServerState.from_context(ctx).config
+
+    async def on_list_tools(
+        self,
+        context: MiddlewareContext[mt.ListToolsRequest],
+        call_next: CallNext[mt.ListToolsRequest, list[Tool]],
+    ) -> list[Tool]:
+        tools = await call_next(context)
+        config = self._get_config(context.fastmcp_context)
+
+        if not config.is_mpa_mode:
+            return tools
+
+        show_project_id = config.show_project_id_param
+        show_branch_id = config.show_branch_id_param
+
+        if not show_project_id and not show_branch_id:
+            return tools
+
+        modified_tools = []
+        for tool in tools:
+            if tool.name in PROJECT_AGNOSTIC_TOOLS:
+                modified_tools.append(tool)
+                continue
+
+            new_params = dict(tool.parameters)
+            properties = dict(new_params.get('properties', {}))
+
+            if show_project_id:
+                registry = ProjectRegistry.from_state(context.fastmcp_context.session.state)
+                available = registry._format_available_projects()
+                properties['project_id'] = {
+                    'type': 'string',
+                    'description': f'Project ID or alias to operate on. Available: {available}',
+                }
+
+            if show_branch_id:
+                properties['branch_id'] = {
+                    'type': 'string',
+                    'description': (
+                        'Branch ID to operate on. If not specified, uses the branch configured '
+                        'for the project (or main/production branch if none configured). '
+                        'Use list_branches to see available branches.'
+                    ),
+                }
+
+            new_params['properties'] = properties
+            modified_tools.append(tool.model_copy(update={'parameters': new_params}))
+
+        return modified_tools
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
+    ) -> mt.CallToolResult:
+        config = self._get_config(context.fastmcp_context)
+
+        if not config.is_mpa_mode:
+            return await call_next(context)
+
+        if context.message.name in PROJECT_AGNOSTIC_TOOLS:
+            return await call_next(context)
+
+        args = context.message.arguments or {}
+
+        # Extract and pop middleware-managed params
+        project_id = args.pop('project_id', None)
+        branch_id = args.pop('branch_id', None)
+
+        ctx = context.fastmcp_context
+        registry = ProjectRegistry.from_state(ctx.session.state)
+
+        # Resolve project and inject into session state
+        project_ctx = registry.inject_into_state(ctx.session.state, project_id)
+
+        # Resolve effective branch
+        # Priority: explicit branch_id arg > project's config branch_id > main (None)
+        effective_branch_id = branch_id  # may be None
+
+        if effective_branch_id is not None:
+            # User explicitly specified a branch — switch client to it
+            client = KeboolaClient.from_state(ctx.session.state)
+            switched_client = await client.with_branch_id(effective_branch_id)
+            ctx.session.state[KeboolaClient.STATE_KEY] = switched_client
+        # else: client already configured with project's default branch from config
+
+        # Check forbid_main_branch_writes
+        tool = await ctx.fastmcp.get_tool(context.message.name)
+        if tool and not is_read_only_tool(tool) and project_ctx.forbid_main_branch_writes:
+            current_client = KeboolaClient.from_state(ctx.session.state)
+            if current_client.branch_id is None:
+                raise ToolError(
+                    'Write operations on the main branch are forbidden for this project. '
+                    'Create a development branch first using `create_branch`, '
+                    'then specify branch_id when calling tools.'
+                )
 
         return await call_next(context)
 
