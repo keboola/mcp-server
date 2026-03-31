@@ -19,6 +19,7 @@ from keboola_mcp_server.tools.semantic.service import (
     evaluate_constraints_from_context,
     search_semantic_context,
     validate_semantic_query,
+    validate_semantic_used_objects,
 )
 
 
@@ -365,6 +366,38 @@ async def test_validate_semantic_query_detects_used_objects_and_relevant_validat
     post_query_finding = findings_by_id['constraint-post-query']
     assert post_query_finding.status == 'post_query_check'
     assert post_query_finding.validation_query == 'SELECT * FROM revenue_threshold_check'
+
+
+@pytest.mark.asyncio
+async def test_validate_semantic_used_objects_uses_only_provided_scope(
+    keboola_client: KeboolaClient,
+    mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
+) -> None:
+    result = await validate_semantic_used_objects(
+        keboola_client,
+        ['model-1'],
+        [
+            _service_group(
+                SemanticObjectType.SEMANTIC_DATASET, [mock_semantic_api[SemanticObjectType.SEMANTIC_DATASET][0]]
+            ),
+            _service_group(
+                SemanticObjectType.SEMANTIC_METRIC, [mock_semantic_api[SemanticObjectType.SEMANTIC_METRIC][0]]
+            ),
+        ],
+    )
+
+    assert result.valid is True
+    assert result.matched_relationships == []
+
+    groups = _group_objects(result)
+    assert [dataset.id for dataset in groups[SemanticObjectType.SEMANTIC_DATASET].objects] == ['dataset-orders']
+    assert [metric.id for metric in groups[SemanticObjectType.SEMANTIC_METRIC].objects] == ['metric-revenue']
+    assert SemanticObjectType.SEMANTIC_RELATIONSHIP not in groups
+
+    findings_by_id = {finding.constraint_id: finding for finding in result.violations + result.post_execution_checks}
+    assert findings_by_id['constraint-pre-query'].status == 'pre_query_check'
+    assert findings_by_id['constraint-post-query'].status == 'post_query_check'
+    assert 'constraint-exclusion' not in findings_by_id
 
 
 @pytest.mark.parametrize(
