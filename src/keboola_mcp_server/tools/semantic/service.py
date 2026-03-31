@@ -407,20 +407,21 @@ def _find_matches(
 async def _list_semantic_type_objects(
     client: KeboolaClient,
     object_type: SemanticObjectType,
-    semantic_model_id: str | None = None,
+    semantic_model_ids: Sequence[str] | None = None,
 ) -> list[SemanticServiceData]:
-    """List all semantic objects of a given type, optionally filtered by a semantic model ID."""
+    """List all semantic objects of a given type, optionally filtered by a set of semantic model IDs."""
     metastore = client.metastore_client
     limit = DEFAULT_PAGE_LIMITS.get(object_type, DEFAULT_PAGE_LIMIT)
     offset = 0
     data: list[SemanticServiceData] = []
+    model_id_set = set(semantic_model_ids) if semantic_model_ids else None
 
     while True:
         page = await metastore.list_objects(object_type, limit=limit, offset=offset)
         data.extend(
             _to_semantic_service_data(object_type, obj)
             for obj in page
-            if semantic_model_id is None or _get_semantic_model_id(obj) == semantic_model_id
+            if model_id_set is None or _get_semantic_model_id(obj) in model_id_set
         )
         if len(page) < limit:
             return data
@@ -602,7 +603,7 @@ async def search_semantic_context(
     patterns: Sequence[str],
     *,
     semantic_types: Sequence[SemanticObjectType] = tuple(),
-    semantic_model_id: str | None = None,
+    semantic_model_ids: Sequence[str] | None = None,
     case_sensitive: bool = False,
     max_results: int = 50,
 ) -> list[SemanticSearchHit]:
@@ -621,7 +622,7 @@ async def search_semantic_context(
         if len(matches) >= max_results:
             break
 
-        objects = await _list_semantic_type_objects(client, object_type, semantic_model_id)
+        objects = await _list_semantic_type_objects(client, object_type, semantic_model_ids)
         for semantic_object in objects:
             if len(matches) >= max_results:
                 break
@@ -647,9 +648,9 @@ async def load_semantic_context_for_semantic_type(
     object_type: SemanticObjectType,
     *,
     ids: Sequence[str] = tuple(),
-    semantic_model_id: str | None = None,
+    semantic_model_ids: Sequence[str] | None = None,
 ) -> SemanticServiceDataTypeGroup:
-    """Get semantic context for a semantic object type, optionally filtered by a semantic model ID or object IDs."""
+    """Get semantic context for a semantic object type, optionally filtered by semantic model IDs or object IDs."""
     if ids:
         results = await process_concurrently(
             ids,
@@ -661,10 +662,11 @@ async def load_semantic_context_for_semantic_type(
             f'Failed to fetch semantic objects for type "{object_type.value}".',
         )
         objects = [_to_semantic_service_data(object_type, obj) for obj in raw_objects]
-        if semantic_model_id is not None:
-            objects = [obj for obj in objects if _get_semantic_model_id(obj) == semantic_model_id]
+        if semantic_model_ids is not None:
+            model_id_set = set(semantic_model_ids)
+            objects = [obj for obj in objects if _get_semantic_model_id(obj) in model_id_set]
     else:
-        objects = await _list_semantic_type_objects(client, object_type, semantic_model_id)
+        objects = await _list_semantic_type_objects(client, object_type, semantic_model_ids)
 
     return SemanticServiceDataTypeGroup(object_type=object_type, objects=objects)
 
@@ -683,7 +685,7 @@ async def load_semantic_context_for_semantic_model(
         lambda object_type: load_semantic_context_for_semantic_type(
             client,
             object_type,
-            semantic_model_id=semantic_model_id,
+            semantic_model_ids=[semantic_model_id],
         ),
         max_concurrency=len(required_types),
     )
@@ -898,20 +900,84 @@ def evaluate_constraints_from_context(
     )
 
 
+def _merge_contexts(
+    contexts: list[dict[SemanticObjectType, SemanticServiceDataTypeGroup]],
+) -> dict[SemanticObjectType, SemanticServiceDataTypeGroup]:
+    """Merge semantic contexts from multiple models into a single combined context."""
+    merged: dict[SemanticObjectType, list[SemanticServiceData]] = {}
+    for context in contexts:
+        for object_type, group in context.items():
+            merged.setdefault(object_type, []).extend(group.objects)
+    return {
+        object_type: SemanticServiceDataTypeGroup(object_type=object_type, objects=objects)
+        for object_type, objects in merged.items()
+    }
+
+
+def _filter_used_objects_by_model(
+    used_object_groups_by_type: dict[SemanticObjectType, SemanticServiceDataTypeGroup],
+    model_id: str,
+) -> dict[SemanticObjectType, SemanticServiceDataTypeGroup]:
+    """Filter used object groups to only objects belonging to the given model."""
+    filtered: dict[SemanticObjectType, SemanticServiceDataTypeGroup] = {}
+    for object_type, group in used_object_groups_by_type.items():
+        model_objects = [obj for obj in group.objects if _get_semantic_model_id(obj) == model_id]
+        if model_objects:
+            filtered[object_type] = SemanticServiceDataTypeGroup(object_type=object_type, objects=model_objects)
+    return filtered
+
+
 async def validate_semantic_query(
     client: KeboolaClient,
     sql_query: str,
-    semantic_model_id: str,
+    semantic_model_ids: Sequence[str],
 ) -> SemanticValidationServiceOutput:
-    """Validate SQL against a semantic model without executing it."""
+    """Validate SQL against one or more semantic models without executing it.
+
+    Contexts from all requested models are merged into a single universe for object detection.
+    Constraint evaluation is performed per model to avoid cross-model rule contamination.
+    """
     if not sql_query.strip():
         raise ValueError('sql_query must not be empty.')
-    if not semantic_model_id.strip():
-        raise ValueError('semantic_model_id must not be empty.')
+    if not semantic_model_ids:
+        raise ValueError('At least one semantic_model_id must be provided.')
 
-    context_by_type = await load_semantic_context_for_semantic_model(client, semantic_model_id)
-    used_object_groups_by_type = detect_used_objects_from_context(sql_query, context_by_type)
-    return evaluate_constraints_from_context(context_by_type, used_object_groups_by_type)
+    results = await process_concurrently(
+        semantic_model_ids,
+        lambda model_id: load_semantic_context_for_semantic_model(client, model_id),
+        max_concurrency=len(semantic_model_ids),
+    )
+    contexts_per_model: list[dict[SemanticObjectType, SemanticServiceDataTypeGroup]] = unwrap_results(
+        results, 'Failed to fetch semantic context.'
+    )
+
+    merged_context = _merge_contexts(contexts_per_model)
+    used_object_groups_by_type = detect_used_objects_from_context(sql_query, merged_context)
+
+    all_violations: list[ConstraintValidationFinding] = []
+    all_post_checks: list[ConstraintValidationFinding] = []
+    has_error = False
+    for model_id, context_by_type in zip(semantic_model_ids, contexts_per_model):
+        model_used_objects = _filter_used_objects_by_model(used_object_groups_by_type, model_id)
+        per_model_result = evaluate_constraints_from_context(context_by_type, model_used_objects)
+        all_violations.extend(per_model_result.violations)
+        all_post_checks.extend(per_model_result.post_execution_checks)
+        if not per_model_result.valid:
+            has_error = True
+
+    used_relationships = used_object_groups_by_type.get(
+        SemanticObjectType.SEMANTIC_RELATIONSHIP,
+        SemanticServiceDataTypeGroup(object_type=SemanticObjectType.SEMANTIC_RELATIONSHIP),
+    )
+    matched_relationships = sorted(item.name or item.data.meta.name or item.id for item in used_relationships.objects)
+
+    return SemanticValidationServiceOutput(
+        valid=not has_error,
+        used_object_groups=list(used_object_groups_by_type.values()),
+        matched_relationships=matched_relationships,
+        violations=all_violations,
+        post_execution_checks=all_post_checks,
+    )
 
 
 async def get_object_by_id(
