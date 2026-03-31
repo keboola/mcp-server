@@ -53,9 +53,16 @@ class ManageClient:
         """
         return await self._request('GET', f'/manage/projects/{project_id}')
 
-    async def list_organization_projects(self, org_id: int) -> list[dict[str, Any]]:
-        """List all projects in an organization."""
-        return await self._request('GET', f'/manage/organizations/{org_id}/projects')
+    async def list_organizations(self) -> list[dict[str, Any]]:
+        """List all organizations accessible to the authenticated user."""
+        return await self._request('GET', '/manage/organizations')
+
+    async def get_organization(self, org_id: int) -> dict[str, Any]:
+        """Get organization details including its projects.
+
+        Returns org dict with 'projects' list containing all projects the user can access.
+        """
+        return await self._request('GET', f'/manage/organizations/{org_id}')
 
     async def create_project_token(
         self,
