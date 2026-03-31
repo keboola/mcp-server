@@ -510,6 +510,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 # Tools that don't operate on a specific project and should not get project_id/branch_id params
 PROJECT_AGNOSTIC_TOOLS = frozenset({'docs_query'})
 
+# Tools exempt from forbid_main_branch_writes — branch management must work on main to avoid deadlock
+WRITE_PROTECTION_EXEMPT_TOOLS = frozenset({'create_branch'})
+
 
 class ProjectResolutionMiddleware(fmw.Middleware):
     """
@@ -621,9 +624,14 @@ class ProjectResolutionMiddleware(fmw.Middleware):
             ctx.session.state[KeboolaClient.STATE_KEY] = switched_client
         # else: client already configured with project's default branch from config
 
-        # Check forbid_main_branch_writes
+        # Check forbid_main_branch_writes (exempt branch management tools to avoid deadlock)
         tool = await ctx.fastmcp.get_tool(context.message.name)
-        if tool and not is_read_only_tool(tool) and project_ctx.forbid_main_branch_writes:
+        if (
+            tool
+            and not is_read_only_tool(tool)
+            and context.message.name not in WRITE_PROTECTION_EXEMPT_TOOLS
+            and project_ctx.forbid_main_branch_writes
+        ):
             current_client = KeboolaClient.from_state(ctx.session.state)
             if current_client.branch_id is None:
                 raise ToolError(
