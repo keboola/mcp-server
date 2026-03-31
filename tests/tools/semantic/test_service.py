@@ -330,7 +330,7 @@ async def test_validate_semantic_query_detects_used_objects_and_relevant_validat
             'FROM analytics.orders orders '
             'JOIN analytics.customers customers ON orders.customer_id = customers.id'
         ),
-        'model-1',
+        ['model-1'],
     )
 
     assert result.valid is False
@@ -970,21 +970,21 @@ def test_evaluate_constraints_from_context_edge_cases(
 
 
 @pytest.mark.parametrize(
-    ('sql_query', 'semantic_model_id', 'message'),
+    ('sql_query', 'semantic_model_ids', 'message'),
     [
-        ('   ', 'model-1', 'sql_query must not be empty.'),
-        ('SELECT 1', '   ', 'semantic_model_id must not be empty.'),
+        ('   ', ['model-1'], 'sql_query must not be empty.'),
+        ('SELECT 1', [], 'At least one semantic_model_id must be provided.'),
     ],
 )
 @pytest.mark.asyncio
 async def test_validate_semantic_query_requires_non_empty_inputs(
     keboola_client: KeboolaClient,
     sql_query: str,
-    semantic_model_id: str,
+    semantic_model_ids: list[str],
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        await validate_semantic_query(keboola_client, sql_query, semantic_model_id)
+        await validate_semantic_query(keboola_client, sql_query, semantic_model_ids)
 
 
 @pytest.mark.parametrize(
