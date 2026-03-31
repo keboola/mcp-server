@@ -321,18 +321,22 @@ async def test_validate_semantic_query(
     )
     validation = ValidateSemanticQueryOutput.model_validate(validate_result.structured_content)
 
-    assert validation.valid is True
-    assert len(validation.semantic_models) == 1
-    assert validation.semantic_models[0].id == semantic_test_setup.model_id
-    assert validation.semantic_models[0].name == semantic_test_setup.model_name
+    assert validation.validation_auto_detected.valid is True
+    assert len(validation.validation_auto_detected.semantic_models) == 1
+    assert validation.validation_auto_detected.semantic_models[0].id == semantic_test_setup.model_id
+    assert validation.validation_auto_detected.semantic_models[0].name == semantic_test_setup.model_name
+    assert validation.validation_detected_from_expected is not None
+    assert validation.validation_detected_from_expected.valid is True
     assert {(item.object_type, item.id) for item in validation.matched_expected_objects} == {
         (SemanticObjectType.SEMANTIC_DATASET, semantic_test_setup.primary_dataset_id),
         (SemanticObjectType.SEMANTIC_METRIC, semantic_test_setup.metric_id),
     }
     assert validation.missing_expected_objects == []
     assert validation.unexpected_detected_objects == []
-    assert [dataset.id for dataset in validation.used_datasets] == [semantic_test_setup.primary_dataset_id]
-    assert [metric.id for metric in validation.used_metrics] == [semantic_test_setup.metric_id]
-    assert validation.matched_relationships == []
-    assert validation.violations == []
-    assert validation.post_execution_checks == []
+    assert [dataset.id for dataset in validation.validation_auto_detected.used_datasets] == [
+        semantic_test_setup.primary_dataset_id
+    ]
+    assert [metric.id for metric in validation.validation_auto_detected.used_metrics] == [semantic_test_setup.metric_id]
+    assert validation.validation_auto_detected.matched_relationships == []
+    assert validation.validation_auto_detected.violations == []
+    assert validation.validation_auto_detected.post_execution_checks == []
