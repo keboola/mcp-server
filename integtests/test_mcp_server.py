@@ -154,6 +154,7 @@ async def _assert_basic_setup(client: Client):
     exclude = {'create_conditional_flow', 'create_flow', 'search', 'update_flow', 'modify_flow'}
     expected_tools = {
         'add_config_row',
+        'create_branch',
         'create_conditional_flow',
         'create_config',
         'create_flow',
@@ -173,6 +174,7 @@ async def _assert_basic_setup(client: Client):
         'get_jobs',
         'get_project_info',
         'get_tables',
+        'list_branches',
         'modify_data_app',
         'modify_flow',
         'query_data',
