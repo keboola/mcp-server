@@ -254,7 +254,7 @@ async def test_get_semantic_context(
                     'ids': [semantic_test_setup.constraint_id],
                 },
             ],
-            'semantic_model_id': semantic_test_setup.model_id,
+            'semantic_model_ids': [semantic_test_setup.model_id],
         },
     )
     context_payload = cast(dict[str, Any], context_result.structured_content)['result']
@@ -306,7 +306,7 @@ async def test_validate_semantic_query(
         'validate_semantic_query',
         {
             'sql_query': f'SELECT SUM(item_count) AS total_items FROM {semantic_test_setup.primary_fqn}',
-            'semantic_model_id': semantic_test_setup.model_id,
+            'semantic_model_ids': [semantic_test_setup.model_id],
             'expected_semantic_objects': [
                 {
                     'object_type': SemanticObjectType.SEMANTIC_DATASET.value,
@@ -322,8 +322,9 @@ async def test_validate_semantic_query(
     validation = ValidateSemanticQueryOutput.model_validate(validate_result.structured_content)
 
     assert validation.valid is True
-    assert validation.semantic_model_id == semantic_test_setup.model_id
-    assert validation.semantic_model_name == semantic_test_setup.model_name
+    assert len(validation.semantic_models) == 1
+    assert validation.semantic_models[0].id == semantic_test_setup.model_id
+    assert validation.semantic_models[0].name == semantic_test_setup.model_name
     assert {(item.object_type, item.id) for item in validation.matched_expected_objects} == {
         (SemanticObjectType.SEMANTIC_DATASET, semantic_test_setup.primary_dataset_id),
         (SemanticObjectType.SEMANTIC_METRIC, semantic_test_setup.metric_id),
