@@ -406,13 +406,13 @@ async def set_cfg_update_metadata(
         logging.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}')
 
 
-async def get_transformation_folders(client: KeboolaClient, component_id: str) -> tuple[int, list[str]]:
+async def get_config_folders(client: KeboolaClient, component_id: str) -> tuple[int, list[str]]:
     """
-    Returns the total number of existing transformation configurations and the distinct folder names
+    Returns the total number of existing configurations and the distinct folder names
     already in use, fetched via the component-configurations search endpoint.
 
     :param client: KeboolaClient instance
-    :param component_id: ID of the transformation component (e.g. keboola.snowflake-transformation)
+    :param component_id: ID of the component (e.g. keboola.snowflake-transformation, keboola.orchestrator)
     :return: Tuple of (total_config_count, list_of_distinct_folder_names)
     """
     raw_configs = await client.storage_client.configuration_list(component_id=component_id)
@@ -458,6 +458,28 @@ async def set_transformation_folder_metadata(
         )
     except Exception as e:
         logging.warning(f'Failed to set folder metadata for configuration {configuration_id}: {e}')
+
+
+def build_folder_hint(total: int, existing_folders: list[str], config_label: str, update_tool: str) -> str | None:
+    """Returns a folder-organization hint for the LLM when a project has ≥20 configurations of the given type.
+
+    :param total: Total number of existing configurations for this component type
+    :param existing_folders: List of folder names already in use
+    :param config_label: Human-readable label for the config type (e.g. "SQL transformations", "flows")
+    :param update_tool: Name of the tool to call to assign a folder (e.g. "update_sql_transformation")
+    :return: Hint string, or None if not enough configurations to warrant organizing
+    """
+    if total < 20:
+        return None
+    hint = f'Note: This project already has {total} {config_label}. Consider organizing them with folders. '
+    if existing_folders:
+        hint += (
+            f'Existing folders: {existing_folders}. '
+            f'Call {update_tool} with a folder= parameter to assign this to one.'
+        )
+    else:
+        hint += f'No folders have been created yet. Call {update_tool} with a folder= parameter to start organizing.'
+    return hint
 
 
 # ============================================================================

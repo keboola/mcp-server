@@ -30,7 +30,7 @@ from keboola_mcp_server.tools.components.utils import (
     clean_bucket_name,
     create_transformation_configuration,
     expand_component_types,
-    get_transformation_folders,
+    get_config_folders,
     set_nested_value,
     set_transformation_folder_metadata,
     structure_summary,
@@ -1402,13 +1402,13 @@ def _make_client(
     ids=['no_configs', 'few_configs'],
 )
 @pytest.mark.asyncio
-async def test_get_transformation_folders_short_circuit(
+async def test_get_config_folders_short_circuit(
     all_configs: list[dict[str, Any]],
     expected_count: int,
 ) -> None:
     """Test that the search endpoint is skipped when count < 20."""
     client = _make_client(all_configs, [])
-    count, folders = await get_transformation_folders(client, 'keboola.snowflake-transformation')
+    count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
     assert count == expected_count
     assert folders == []
     client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
@@ -1459,13 +1459,13 @@ _MANY_CONFIGS = [{'id': str(i)} for i in range(25)]
     ids=['no_folders', 'distinct_folders', 'deduplicated_folders'],
 )
 @pytest.mark.asyncio
-async def test_get_transformation_folders(
+async def test_get_config_folders(
     folder_configs: list[dict[str, Any]],
     expected_folders: list[str],
 ) -> None:
-    """Test get_transformation_folders when count >= 20 (search endpoint is called)."""
+    """Test get_config_folders when count >= 20 (search endpoint is called)."""
     client = _make_client(_MANY_CONFIGS, folder_configs)
-    count, folders = await get_transformation_folders(client, 'keboola.snowflake-transformation')
+    count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
     assert count == len(_MANY_CONFIGS)
     assert folders == expected_folders
     client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')

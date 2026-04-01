@@ -8,6 +8,7 @@ from fastmcp import Context
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import DataAppResponse
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
     _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
@@ -16,6 +17,7 @@ from keboola_mcp_server.tools.data_apps import (
     DataApp,
     DataAppSlugTooLongError,
     DataAppSummary,
+    ModifiedDataAppOutput,
     _build_data_app_config,
     _fetch_data_app,
     _get_authorization,
@@ -27,6 +29,7 @@ from keboola_mcp_server.tools.data_apps import (
     _uses_basic_authentication,
     deploy_data_app,
     get_data_apps,
+    modify_data_app,
 )
 
 
@@ -619,3 +622,128 @@ class TestFetchDataAppValidation:
         """When neither data_app_id nor configuration_id is provided, raises ValueError."""
         with pytest.raises(ValueError, match='Either data_app_id or configuration_id must be provided'):
             await _fetch_data_app(keboola_client, data_app_id=None, configuration_id=None)
+
+
+# =============================================================================
+# FOLDER METADATA TESTS
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    ('configuration_id', 'folder', 'app_count', 'app_folders', 'expect_folder_metadata', 'expect_hint'),
+    [
+        # Create path (no configuration_id)
+        ('', 'Analytics', 0, [], True, False),
+        ('', '  Analytics  ', 0, [], True, False),  # whitespace stripped
+        ('', '', 5, [], False, False),
+        ('', '', 25, ['Analytics'], False, True),
+        # Update path (with configuration_id)
+        ('cfg-1', 'Analytics', 0, [], True, False),
+        ('cfg-1', '', 5, [], False, False),
+        ('cfg-1', '', 25, ['Analytics'], False, True),
+    ],
+    ids=[
+        'create_folder_provided',
+        'create_folder_whitespace_stripped',
+        'create_no_folder_few',
+        'create_no_folder_many_with_hint',
+        'update_folder_provided',
+        'update_no_folder_few',
+        'update_no_folder_many_with_hint',
+    ],
+)
+@pytest.mark.asyncio
+async def test_modify_data_app_folder(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+    configuration_id: str,
+    folder: str,
+    app_count: int,
+    app_folders: list[str],
+    expect_folder_metadata: bool,
+    expect_hint: bool,
+) -> None:
+    """Test folder metadata and change_summary hint for modify_data_app (create and update paths)."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=1)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='snowflake')
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='default')
+
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+
+    # Dummy encrypted config
+    encrypted_config = {
+        'parameters': {'script': ['SELECT 1']},
+        'storage': {},
+        'authorization': {'app_proxy': {'auth_providers': [], 'auth_rules': []}},
+    }
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = mocker.AsyncMock(return_value=encrypted_config)
+
+    data_app_response = _make_data_app_response(config_id=configuration_id or 'new-cfg-1')
+
+    if configuration_id:
+        # Update path
+        existing_data_app = DataApp(
+            name='My App',
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            data_app_id='app-1',
+            project_id='proj-1',
+            branch_id='default',
+            config_version='2',
+            type='streamlit',
+            auto_suspend_after_seconds=900,
+            configuration=encrypted_config,
+            state='stopped',
+        )
+        mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', return_value=existing_data_app)
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps.modify_data_app_internal',
+            mocker.AsyncMock(return_value=(existing_data_app, encrypted_config)),
+        )
+        keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    else:
+        # Create path
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps.DataAppConfig.model_validate',
+            return_value=mocker.MagicMock(authorization={'app_proxy': {'auth_providers': [], 'auth_rules': []}}),
+        )
+        keboola_client.data_science_client = mocker.AsyncMock()
+        keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=data_app_response)
+
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps.get_config_folders',
+        mocker.AsyncMock(return_value=(app_count, app_folders)),
+    )
+
+    result = await modify_data_app(
+        ctx=mcp_context_client,
+        name='My App',
+        description='desc',
+        source_code='import streamlit as st\n{QUERY_DATA_FUNCTION}\nst.write("hello")',
+        packages=[],
+        authentication_type='no-auth',
+        configuration_id=configuration_id,
+        change_description='test',
+        folder=folder,
+    )
+
+    assert isinstance(result, ModifiedDataAppOutput)
+    metadata_calls = [
+        call
+        for call in keboola_client.storage_client.configuration_metadata_update.call_args_list
+        if call.kwargs.get('metadata', {}).get(MetadataField.CONFIGURATION_FOLDER_NAME)
+    ]
+    if expect_folder_metadata:
+        assert len(metadata_calls) == 1
+        assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: folder.strip()}
+    else:
+        assert len(metadata_calls) == 0
+    if expect_hint:
+        assert result.change_summary is not None
+        assert str(app_count) in result.change_summary
+    else:
+        assert result.change_summary is None

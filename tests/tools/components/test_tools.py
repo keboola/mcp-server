@@ -680,7 +680,7 @@ async def test_create_sql_transformation_folder(
     keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
     mocker.patch(
-        'keboola_mcp_server.tools.components.tools.get_transformation_folders',
+        'keboola_mcp_server.tools.components.tools.get_config_folders',
         mocker.AsyncMock(return_value=(tf_count, tf_folders)),
     )
 
@@ -759,7 +759,7 @@ async def test_update_sql_transformation_folder(
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
     mocker.patch(
-        'keboola_mcp_server.tools.components.tools.get_transformation_folders',
+        'keboola_mcp_server.tools.components.tools.get_config_folders',
         mocker.AsyncMock(return_value=(tf_count, tf_folders)),
     )
 

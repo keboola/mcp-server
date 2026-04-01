@@ -24,7 +24,13 @@ from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact, unwrap_results
-from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
+from keboola_mcp_server.tools.components.utils import (
+    build_folder_hint,
+    get_config_folders,
+    set_cfg_creation_metadata,
+    set_cfg_update_metadata,
+    set_transformation_folder_metadata,
+)
 from keboola_mcp_server.tools.constants import (
     CONFIG_DIFF_PREVIEW_TAG,
     FLOW_TOOLS_TAG,
@@ -148,6 +154,18 @@ async def create_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions.')],
+    folder: Annotated[
+        str,
+        Field(
+            description=(
+                'Folder name to organize this flow in the Keboola UI. '
+                'Existing folder names are returned in the response change_summary when no folder is provided '
+                'and there are 20 or more flows in the project. '
+                'If there are 20 or more flows, you should assign one of the existing folders or '
+                'create a new one that clearly reflects the flow purpose.'
+            )
+        ),
+    ] = '',
 ) -> FlowToolOutput:
     """
     Creates a new legacy (non-conditional) flow using `keboola.orchestrator`.
@@ -190,6 +208,21 @@ async def create_flow(
         configuration_id=str(new_raw_configuration['id']),
     )
 
+    folder = folder.strip()
+    change_summary = None
+    if folder:
+        await set_transformation_folder_metadata(client, flow_type, api_config.id, folder)
+    else:
+        try:
+            total, existing_folders = await get_config_folders(client, flow_type)
+            change_summary = build_folder_hint(total, existing_folders, 'legacy flows', 'modify_flow')
+        except Exception:
+            LOG.warning(
+                'Unable to fetch flow folders for component "%s" when creating flow "%s".',
+                flow_type,
+                api_config.id,
+            )
+
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
     tool_response = FlowToolOutput(
         configuration_id=api_config.id,
@@ -199,6 +232,7 @@ async def create_flow(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,
+        change_summary=change_summary,
     )
 
     LOG.info(f'Created legacy flow "{name}" with configuration ID "{api_config.id}" (type: {flow_type})')
@@ -212,12 +246,24 @@ async def create_conditional_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions for conditional flows.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions for conditional flows.')],
+    folder: Annotated[
+        str,
+        Field(
+            description=(
+                'Folder name to organize this flow in the Keboola UI. '
+                'Existing folder names are returned in the response change_summary when no folder is provided '
+                'and there are 20 or more flows in the project. '
+                'If there are 20 or more flows, you should assign one of the existing folders or '
+                'create a new one that clearly reflects the flow purpose.'
+            )
+        ),
+    ] = '',
 ) -> FlowToolOutput:
     """
     Creates a new conditional flow configuration using `keboola.flow`.
 
     PRE-REQUISITES:
-    - Always use `get_flow_schema` with flow_type="keboola.flow" and review `get_flow_examples` if unknown
+    - Always use `get_flow_schema` with flow_type=”keboola.flow” and review `get_flow_examples` if unknown
     - Gather component configuration IDs for all tasks you include
 
     RULES:
@@ -256,6 +302,21 @@ async def create_conditional_flow(
         configuration_id=str(new_raw_configuration['id']),
     )
 
+    folder = folder.strip()
+    change_summary = None
+    if folder:
+        await set_transformation_folder_metadata(client, flow_type, api_config.id, folder)
+    else:
+        try:
+            total, existing_folders = await get_config_folders(client, flow_type)
+            change_summary = build_folder_hint(total, existing_folders, 'conditional flows', 'modify_flow')
+        except Exception:
+            LOG.warning(
+                'Unable to fetch flow folders for component “%s” when creating flow “%s”.',
+                flow_type,
+                api_config.id,
+            )
+
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
     tool_response = FlowToolOutput(
         configuration_id=api_config.id,
@@ -265,9 +326,10 @@ async def create_conditional_flow(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,
+        change_summary=change_summary,
     )
 
-    LOG.info(f'Created conditional flow "{name}" with configuration ID "{api_config.id}" (type: {flow_type})')
+    LOG.info(f'Created conditional flow “{name}” with configuration ID “{api_config.id}” (type: {flow_type})')
     return tool_response
 
 
@@ -299,6 +361,18 @@ async def update_flow(
             ),
         ),
     ] = None,
+    folder: Annotated[
+        str,
+        Field(
+            description=(
+                'Folder name to organize this flow in the Keboola UI. '
+                'Existing folder names are returned in the response change_summary when no folder is provided '
+                'and there are 20 or more flows in the project. '
+                'If there are 20 or more flows, you should assign one of the existing folders or '
+                'create a new one that clearly reflects the flow purpose.'
+            )
+        ),
+    ] = '',
 ) -> FlowToolOutput:
     """
     Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`).
@@ -337,6 +411,7 @@ async def update_flow(
         description=description,
         schedules=tuple(),
         is_disabled=is_disabled,
+        folder=folder,
     )
 
 
@@ -380,6 +455,18 @@ async def modify_flow(
             ),
         ),
     ] = None,
+    folder: Annotated[
+        str,
+        Field(
+            description=(
+                'Folder name to organize this flow in the Keboola UI. '
+                'Existing folder names are returned in the response change_summary when no folder is provided '
+                'and there are 20 or more flows in the project. '
+                'If there are 20 or more flows, you should assign one of the existing folders or '
+                'create a new one that clearly reflects the flow purpose.'
+            )
+        ),
+    ] = '',
 ) -> FlowToolOutput:
     """
     Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`) or
@@ -464,6 +551,21 @@ async def modify_flow(
         )
         api_config = CreateConfigurationAPIResponse.model_validate(current_config)
 
+    folder = folder.strip()
+    folder_hint = None
+    if folder:
+        await set_transformation_folder_metadata(client, flow_type, configuration_id, folder)
+    else:
+        try:
+            total, existing_folders = await get_config_folders(client, flow_type)
+            folder_hint = build_folder_hint(total, existing_folders, f'{flow_type} flows', 'modify_flow')
+        except Exception:
+            LOG.warning(
+                'Unable to fetch flow folders for component "%s" when updating flow "%s".',
+                flow_type,
+                configuration_id,
+            )
+
     links_manager = await ProjectLinksManager.from_client(client)
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
     # Process schedule requests if provided
@@ -485,6 +587,7 @@ async def modify_flow(
         version=api_config.version,
         timestamp=datetime.now(timezone.utc),
         response=response_message,
+        change_summary=folder_hint,
         success=True,
         links=flow_links,
     )

@@ -17,7 +17,13 @@ from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact
-from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
+from keboola_mcp_server.tools.components.utils import (
+    build_folder_hint,
+    get_config_folders,
+    set_cfg_creation_metadata,
+    set_cfg_update_metadata,
+    set_transformation_folder_metadata,
+)
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -224,6 +230,7 @@ class ModifiedDataAppOutput(BaseModel):
     interface."""
 
     response: str = Field(description='The response of the action performed with potential additional information.')
+    change_summary: Optional[str] = Field(default=None, description='Additional notes or hints about the operation.')
     data_app: DataAppSummary = Field(description='The data app.')
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
@@ -274,6 +281,18 @@ async def modify_data_app(
     change_description: Annotated[
         str,
         Field(description='The description of the change when updating (e.g. "Update Code"), otherwise empty string.'),
+    ] = '',
+    folder: Annotated[
+        str,
+        Field(
+            description=(
+                'Folder name to organize this data app in the Keboola UI. '
+                'Existing folder names are returned in the response change_summary when no folder is provided '
+                'and there are 20 or more data apps in the project. '
+                'If there are 20 or more data apps, you should assign one of the existing folders or '
+                'create a new one that clearly reflects the data app purpose.'
+            )
+        ),
     ] = '',
 ) -> ModifiedDataAppOutput:
     """Creates or updates a Streamlit data app.
@@ -346,6 +365,7 @@ async def modify_data_app(
             configuration_id=configuration_id,
             configuration_version=int(data_app.config_version),
         )
+        folder_hint = await _apply_folder(client, DATA_APP_COMPONENT_ID, configuration_id, folder)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=name,
@@ -358,7 +378,10 @@ async def modify_data_app(
             else 'updated'
         )
         return ModifiedDataAppOutput(
-            response=response, data_app=DataAppSummary.model_validate(data_app.model_dump()), links=links
+            response=response,
+            change_summary=folder_hint,
+            data_app=DataAppSummary.model_validate(data_app.model_dump()),
+            links=links,
         )
     else:
         # Create new data app
@@ -375,6 +398,7 @@ async def modify_data_app(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=data_app_resp.config_id,
         )
+        folder_hint = await _apply_folder(client, DATA_APP_COMPONENT_ID, data_app_resp.config_id, folder)
         links = links_manager.get_data_app_links(
             configuration_id=data_app_resp.config_id,
             configuration_name=name,
@@ -382,8 +406,33 @@ async def modify_data_app(
             uses_basic_authentication=_uses_basic_authentication(validated_config.authorization),
         )
         return ModifiedDataAppOutput(
-            response='created', data_app=DataAppSummary.from_api_response(data_app_resp), links=links
+            response='created',
+            change_summary=folder_hint,
+            data_app=DataAppSummary.from_api_response(data_app_resp),
+            links=links,
         )
+
+
+async def _apply_folder(client: KeboolaClient, component_id: str, configuration_id: str, folder: str) -> str | None:
+    """
+    Sets the folder metadata for a data app configuration if provided, or returns a hint when 20+ data apps exist.
+
+    :return: Folder hint string if applicable, else None.
+    """
+    normalized = folder.strip()
+    if normalized:
+        await set_transformation_folder_metadata(client, component_id, configuration_id, normalized)
+        return None
+    try:
+        total, existing_folders = await get_config_folders(client, component_id)
+        return build_folder_hint(total, existing_folders, 'data apps', 'modify_data_app')
+    except Exception:
+        LOG.warning(
+            'Unable to fetch data app folders for component "%s" when processing configuration "%s".',
+            component_id,
+            configuration_id,
+        )
+        return None
 
 
 async def modify_data_app_internal(
