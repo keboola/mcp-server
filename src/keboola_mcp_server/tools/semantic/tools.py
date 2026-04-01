@@ -46,7 +46,7 @@ class SemanticModelCompact(CompactSemanticObject):
 
     @classmethod
     def from_semantic_service_data(cls, obj: semantic_service.SemanticServiceData) -> 'SemanticModelCompact':
-        attributes = obj.data.attributes
+        attributes = obj.data.attributes or {}
         return cls(
             id=obj.id,
             name=obj.display_name,
@@ -65,7 +65,7 @@ class SemanticDatasetCompact(CompactSemanticObject):
 
     @classmethod
     def from_semantic_service_data(cls, obj: semantic_service.SemanticServiceData) -> 'SemanticDatasetCompact':
-        attributes = obj.data.attributes
+        attributes = obj.data.attributes or {}
         return cls(
             id=obj.id,
             name=obj.display_name,
@@ -83,7 +83,7 @@ class SemanticMetricCompact(CompactSemanticObject):
 
     @classmethod
     def from_semantic_service_data(cls, obj: semantic_service.SemanticServiceData) -> 'SemanticMetricCompact':
-        attributes = obj.data.attributes
+        attributes = obj.data.attributes or {}
         return cls(
             id=obj.id,
             name=obj.display_name,
@@ -102,7 +102,7 @@ class SemanticRelationshipCompact(CompactSemanticObject):
 
     @classmethod
     def from_semantic_service_data(cls, obj: semantic_service.SemanticServiceData) -> 'SemanticRelationshipCompact':
-        attributes = obj.data.attributes
+        attributes = obj.data.attributes or {}
         return cls(
             id=obj.id,
             name=obj.display_name,
@@ -121,7 +121,7 @@ class SemanticGlossaryCompact(CompactSemanticObject):
 
     @classmethod
     def from_semantic_service_data(cls, obj: semantic_service.SemanticServiceData) -> 'SemanticGlossaryCompact':
-        attributes = obj.data.attributes
+        attributes = obj.data.attributes or {}
         return cls(
             id=obj.id,
             name=obj.display_name,
@@ -140,7 +140,7 @@ class SemanticConstraintCompact(CompactSemanticObject):
 
     @classmethod
     def from_semantic_service_data(cls, obj: semantic_service.SemanticServiceData) -> 'SemanticConstraintCompact':
-        attributes = obj.data.attributes
+        attributes = obj.data.attributes or {}
         return cls(
             id=obj.id,
             name=obj.display_name,
@@ -160,7 +160,7 @@ class SemanticObject(CompactSemanticObject):
         return cls(
             id=obj.id,
             name=obj.display_name,
-            attributes=obj.data.attributes,
+            attributes=obj.data.attributes or {},
         )
 
 
