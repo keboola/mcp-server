@@ -508,7 +508,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
 
 # Tools that don't operate on a specific project and should not get project_id/branch_id params
-PROJECT_AGNOSTIC_TOOLS = frozenset({'docs_query'})
+PROJECT_AGNOSTIC_TOOLS = frozenset({'docs_query', 'get_project_info'})
 
 # Tools exempt from forbid_main_branch_writes — branch management must work on main to avoid deadlock
 WRITE_PROTECTION_EXEMPT_TOOLS = frozenset({'create_branch'})
