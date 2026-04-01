@@ -385,8 +385,9 @@ def _find_matches(
                 matched_paths.add('meta.name')
                 matched_patterns.add(pattern)
 
-    if any(compiled.search(_stringify_value(semantic_object.data.attributes)) for compiled in compiled_patterns):
-        for jpath_match in ALL_ATTRIBUTE_NODES_EXPR.find(semantic_object.data.attributes):
+    attrs = semantic_object.data.attributes or {}
+    if any(compiled.search(_stringify_value(attrs)) for compiled in compiled_patterns):
+        for jpath_match in ALL_ATTRIBUTE_NODES_EXPR.find(attrs):
             value = jpath_match.value
             if isinstance(value, (dict, list)):
                 continue

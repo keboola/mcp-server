@@ -331,9 +331,10 @@ def _compare_expected_and_detected_objects(
 ) -> tuple[list[SemanticObjectRef], list[SemanticObjectRef], list[SemanticObjectTypeContext]]:
     if not expected_semantic_objects:
         return [], [], []
-    expected_ids_by_type = {
-        selection.object_type: set(selection.ids) for selection in expected_semantic_objects if selection.ids
-    }
+    expected_ids_by_type: dict[SemanticObjectType, set[str]] = {}
+    for selection in expected_semantic_objects:
+        if selection.ids:
+            expected_ids_by_type.setdefault(selection.object_type, set()).update(selection.ids)
     expected_types = {selection.object_type for selection in expected_semantic_objects}
 
     matched_expected_objects: list[SemanticObjectRef] = []
@@ -863,7 +864,7 @@ async def validate_semantic_query(
     """
     if not sql_query.strip():
         raise ValueError('sql_query must not be empty.')
-    cleaned_model_ids = [mid.strip() for mid in semantic_model_ids if mid and mid.strip()]
+    cleaned_model_ids = list(dict.fromkeys(mid.strip() for mid in semantic_model_ids if mid and mid.strip()))
     if not cleaned_model_ids:
         raise ValueError('At least one semantic_model_id must be provided.')
 
