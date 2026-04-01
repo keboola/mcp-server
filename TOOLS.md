@@ -2596,6 +2596,21 @@ Starts a new job for a given component or transformation.
     "configuration_id": {
       "description": "The ID of the configuration for which to start a job.",
       "type": "string"
+    },
+    "config_row_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional list of configuration row IDs to run. If not provided, all rows are executed."
     }
   },
   "required": [

@@ -221,15 +221,20 @@ async def test_get_jobs_listing_with_component_id_without_config_id(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'config_row_ids',
+    [
+        None,
+        ['row-1', 'row-2'],
+    ],
+)
 async def test_run_job(
     mocker: MockerFixture,
     mcp_context_client: Context,
     mock_job: dict[str, Any],
+    config_row_ids: list[str] | None,
 ):
-    """Tests run_job tool.
-    :param mock_job: The newly created job details - expecting api response.
-    :param mcp_context_client: The MCP context client.
-    """
+    """Tests run_job tool with and without config_row_ids."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     mock_job['result'] = []  # simulate empty list as returned by create job endpoint
@@ -238,7 +243,9 @@ async def test_run_job(
 
     component_id = mock_job['component']
     configuration_id = mock_job['config']
-    job_detail = await run_job(ctx=context, component_id=component_id, configuration_id=configuration_id)
+    job_detail = await run_job(
+        ctx=context, component_id=component_id, configuration_id=configuration_id, config_row_ids=config_row_ids
+    )
 
     assert isinstance(job_detail, JobDetail)
     assert job_detail.result == {}
@@ -246,7 +253,6 @@ async def test_run_job(
     assert job_detail.status == mock_job['status']
     assert job_detail.component_id == component_id
     assert job_detail.config_id == configuration_id
-    assert job_detail.result == {}
     assert set(job_detail.links) == {
         Link(
             type='ui-detail', title='Job: 123', url='https://connection.test.keboola.com/admin/projects/69420/queue/123'
@@ -261,37 +267,7 @@ async def test_run_job(
     keboola_client.jobs_queue_client.create_job.assert_called_once_with(
         component_id=component_id,
         configuration_id=configuration_id,
-        config_row_ids=None,
-    )
-
-
-@pytest.mark.asyncio
-async def test_run_job_with_config_row_ids(
-    mocker: MockerFixture,
-    mcp_context_client: Context,
-    mock_job: dict[str, Any],
-):
-    """Tests run_job tool with specific config row IDs."""
-    context = mcp_context_client
-    keboola_client = KeboolaClient.from_state(context.session.state)
-    mock_job['result'] = []
-    mock_job['status'] = 'created'
-    keboola_client.jobs_queue_client.create_job = mocker.AsyncMock(return_value=mock_job)
-
-    component_id = mock_job['component']
-    configuration_id = mock_job['config']
-    row_ids = ['row-1', 'row-2']
-    job_detail = await run_job(
-        ctx=context, component_id=component_id, configuration_id=configuration_id, config_row_ids=row_ids
-    )
-
-    assert isinstance(job_detail, JobDetail)
-    assert job_detail.id == mock_job['id']
-
-    keboola_client.jobs_queue_client.create_job.assert_called_once_with(
-        component_id=component_id,
-        configuration_id=configuration_id,
-        config_row_ids=row_ids,
+        config_row_ids=config_row_ids,
     )
 
 
