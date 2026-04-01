@@ -914,17 +914,21 @@ def test_pool_release_delegates_to_lock(mocker):
 
 
 def test_project_endpoint_stores_all_fields():
-    """ProjectEndpoint stores all five fields correctly."""
+    """ProjectEndpoint stores all fields correctly."""
     ep = ProjectEndpoint(
         storage_api_url='https://connection.keboola.com',
         storage_api_token='my-token',
         workspace_schema='WORKSPACE_12345',
         project_id='99',
         project_name='My Project',
+        token_id='5',
+        token_description='My test token',
     )
     assert ep.workspace_schema == 'WORKSPACE_12345'
     assert ep.project_id == '99'
     assert ep.project_name == 'My Project'
+    assert ep.token_id == '5'
+    assert ep.token_description == 'My test token'
 
 
 # ---------------------------------------------------------------------------
@@ -1020,6 +1024,8 @@ def test_pool_acquire_randomizes_start_per_pass(mocker):
 def test_verify_project_endpoint_happy_path(mocker):
     """verify_project_endpoint returns a fully populated ProjectEndpoint on success."""
     token_info = {
+        'id': 7,
+        'description': 'CI integration test token',
         'owner': {'id': 42, 'name': 'My CI Project'},
     }
     mock_resp = mocker.MagicMock()
@@ -1040,6 +1046,8 @@ def test_verify_project_endpoint_happy_path(mocker):
     assert ep.project_name == 'My CI Project'
     assert ep.workspace_schema == 'WORKSPACE_99999'
     assert ep.storage_api_token == 'my-secret-token'
+    assert ep.token_id == '7'
+    assert ep.token_description == 'CI integration test token'
     mock_client.get.assert_called_once_with('https://connection.keboola.com/v2/storage/tokens/verify')
     mock_resp.raise_for_status.assert_called_once()
 

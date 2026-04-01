@@ -147,7 +147,7 @@ async def test_create_object_default_branch() -> None:
     await client.create_object('semantic-model', data={'name': 'obj'})
 
     call_args = client.raw_client.post.call_args  # type: ignore[attr-defined]
-    assert call_args.kwargs['data']['branch'] == 'main'
+    assert 'branch' not in call_args.kwargs['data']
 
 
 @pytest.mark.asyncio
