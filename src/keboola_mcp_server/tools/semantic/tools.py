@@ -247,24 +247,20 @@ class SemanticUsedMetric(BaseModel):
         )
 
 
-class ValidateSemanticQueryOutput(BaseModel):
-    """Output for semantic SQL validation."""
+class SemanticQueryValidationResult(BaseModel):
+    """One semantic validation result view."""
 
     valid: bool = Field(description='False when an error-severity pre-execution finding was detected.')
-    semantic_model_id: str = Field(description='Semantic model UUID.')
-    semantic_model_name: str | None = Field(default=None, description='Semantic model name.')
-    sql_dialect: str | None = Field(default=None, description='SQL dialect of the semantic model.')
-    matched_expected_objects: list[SemanticObjectRef] = Field(
+    semantic_models: list[SemanticModelCompact] = Field(
         default_factory=list,
-        description='Expected semantic objects that were also detected in the SQL.',
+        description='Semantic models against which the SQL was validated.',
     )
-    missing_expected_objects: list[SemanticObjectRef] = Field(
+    sql_dialects: list[str] = Field(
         default_factory=list,
-        description='Expected semantic objects that were not detected in the SQL.',
-    )
-    unexpected_detected_objects: list[SemanticObjectTypeContext] = Field(
-        default_factory=list,
-        description='Detected semantic objects that fall outside the expected semantic scope.',
+        description=(
+            'SQL dialects of the semantic models. '
+            'Contains more than one entry when models use different dialects, which is a sign of incompatibility.'
+        ),
     )
     used_datasets: list[SemanticUsedDataset] = Field(
         default_factory=list,
@@ -287,6 +283,30 @@ class ValidateSemanticQueryOutput(BaseModel):
         description='Checks that should be verified against query results.',
     )
     summary: str = Field(description='Short validation summary.')
+
+
+class ValidateSemanticQueryOutput(BaseModel):
+    """Output for semantic SQL validation."""
+
+    validation_auto_detected: SemanticQueryValidationResult = Field(
+        description='Validation result built from semantic objects auto-detected from the SQL query.',
+    )
+    validation_detected_from_expected: SemanticQueryValidationResult | None = Field(
+        default=None,
+        description='Validation result built only from explicitly provided expected semantic object IDs.',
+    )
+    matched_expected_objects: list[SemanticObjectRef] = Field(
+        default_factory=list,
+        description='Expected semantic objects that were also detected in the SQL.',
+    )
+    missing_expected_objects: list[SemanticObjectRef] = Field(
+        default_factory=list,
+        description='Expected semantic objects that were not detected in the SQL.',
+    )
+    unexpected_detected_objects: list[SemanticObjectTypeContext] = Field(
+        default_factory=list,
+        description='Detected semantic objects that fall outside the expected semantic scope.',
+    )
 
 
 def _compact_semantic_object(obj: semantic_service.SemanticServiceData) -> CompactSemanticObject:
@@ -363,6 +383,109 @@ def _to_tool_finding(finding: semantic_service.ConstraintValidationFinding) -> C
     )
 
 
+def _format_validation_result(
+    raw_result: semantic_service.SemanticValidationServiceOutput,
+    *,
+    models: Sequence[semantic_service.SemanticModelData] = tuple(),
+    summary_notes: Sequence[str] = tuple(),
+) -> SemanticQueryValidationResult:
+    used_dataset_objects = []
+    used_metric_objects = []
+    for group in raw_result.used_object_groups:
+        if group.object_type == SemanticObjectType.SEMANTIC_DATASET:
+            used_dataset_objects = [item for item in group.objects]
+        elif group.object_type == SemanticObjectType.SEMANTIC_METRIC:
+            used_metric_objects = [item for item in group.objects]
+
+    used_datasets = [SemanticUsedDataset.from_semantic_service_data(item) for item in used_dataset_objects]
+    used_metrics = [SemanticUsedMetric.from_semantic_service_data(item) for item in used_metric_objects]
+
+    semantic_model_outputs = [SemanticModelCompact.from_semantic_service_data(m) for m in models]
+    sql_dialects = sorted({m.sql_dialect for m in models if m.sql_dialect})
+
+    summary_parts: list[str] = []
+    if len(sql_dialects) > 1:
+        summary_parts.append(
+            f'Warning: semantic models use different SQL dialects ({", ".join(sql_dialects)}). '
+            'The query may not be portable across all models.'
+        )
+    if raw_result.violations:
+        summary_parts.append('Semantic validation found pre-execution issues that should be fixed before running.')
+    if raw_result.post_execution_checks:
+        summary_parts.append('Some checks should be verified after execution.')
+    summary_parts.extend(summary_notes)
+
+    if summary_parts:
+        summary = '\n'.join(summary_parts)
+    else:
+        summary = 'Semantic validation finished without relevant findings.'
+
+    return SemanticQueryValidationResult(
+        valid=raw_result.valid,
+        semantic_models=semantic_model_outputs,
+        sql_dialects=sql_dialects,
+        used_datasets=used_datasets,
+        used_metrics=used_metrics,
+        matched_relationships=raw_result.matched_relationships,
+        violations=[_to_tool_finding(finding) for finding in raw_result.violations],
+        post_execution_checks=[_to_tool_finding(finding) for finding in raw_result.post_execution_checks],
+        summary=summary,
+    )
+
+
+async def _load_expected_object_groups(
+    client: KeboolaClient,
+    expected_semantic_objects: Sequence[SemanticObjectTypeSelection],
+    semantic_model_ids: Sequence[str],
+) -> list[semantic_service.SemanticServiceDataTypeGroup]:
+    expected_requests = [
+        (selection.object_type, object_id.strip())
+        for selection in expected_semantic_objects
+        for object_id in selection.ids
+        if object_id.strip()
+    ]
+    if not expected_requests:
+        return []
+
+    results = await process_concurrently(
+        expected_requests,
+        lambda item: semantic_service.get_object_by_id(client, item[0], item[1]),
+        max_concurrency=len(expected_requests),
+    )
+    objects = unwrap_results(results, 'Failed to fetch expected semantic objects.')
+
+    grouped_objects: dict[SemanticObjectType, list[semantic_service.SemanticServiceData]] = {}
+    seen_ids_by_type: dict[SemanticObjectType, set[str]] = {}
+    allowed_model_ids = set(semantic_model_ids)
+
+    for (expected_type, object_id), obj in zip(expected_requests, objects, strict=True):
+        if obj.semantic_type != expected_type:
+            raise ValueError(
+                f'Expected semantic object "{object_id}" to be of type "{expected_type.value}", '
+                f'got "{obj.semantic_type.value}".'
+            )
+
+        object_model_id = (
+            obj.id if obj.semantic_type == SemanticObjectType.SEMANTIC_MODEL else getattr(obj, 'model_uuid', None)
+        )
+        if object_model_id not in allowed_model_ids:
+            raise ValueError(
+                f'Expected semantic object "{object_id}" does not belong to the provided semantic_model_ids.'
+            )
+
+        seen_ids = seen_ids_by_type.setdefault(obj.semantic_type, set())
+        if obj.id in seen_ids:
+            continue
+
+        seen_ids.add(obj.id)
+        grouped_objects.setdefault(obj.semantic_type, []).append(obj)
+
+    return [
+        semantic_service.SemanticServiceDataTypeGroup(object_type=object_type, objects=objects)
+        for object_type, objects in grouped_objects.items()
+    ]
+
+
 def add_semantic_tools(mcp: FastMCP) -> None:
     """Register semantic read tools."""
     mcp.add_tool(
@@ -423,15 +546,15 @@ async def search_semantic_context(
             )
         ),
     ] = tuple(),
-    semantic_model_id: Annotated[
-        str | None,
+    semantic_model_ids: Annotated[
+        Sequence[str],
         Field(
             description=(
-                'Optional semantic model ID that restricts the search to a single semantic model. '
-                'Leave empty to search across all semantic models.'
+                'Optional list of semantic model IDs to restrict the search to specific models. '
+                'Empty list [] means search across all semantic models.'
             )
         ),
-    ] = None,
+    ] = tuple(),
     case_sensitive: Annotated[
         bool,
         Field(
@@ -462,7 +585,7 @@ async def search_semantic_context(
     - The search is case-insensitive by default. Use `case_sensitive=True` when exact casing matters.
     - The search is performed against semantic object names and data attributes which are stringified JSON objects
     following their corresponding JSON schema.
-    - The search can be scoped to a specific semantic model or semantic object types but prefer broader search without
+    - The search can be scoped to specific semantic models or semantic object types but prefer broader search without
     scoping unless required by the context.
 
     WHEN TO USE:
@@ -488,8 +611,8 @@ async def search_semantic_context(
     - Search semantic constraints using e.g. certain semantic metrics and certain semantic datasets:
       `patterns=["metric-name-1", "metric-name-2", "table-id-from-the-dataset"],`
       `semantic_types=["semantic-metric", "semantic-relationship"]`
-    - Search something within one semantic model only:
-      `patterns=["something"], semantic_model_id="<semantic-model-uuid>"`
+    - Search something within specific semantic models only:
+      `patterns=["something"], semantic_model_ids=["<semantic-model-uuid-1>", "<semantic-model-uuid-2>"]`
     """
     cleaned_patterns = [pattern.strip() for pattern in patterns if pattern and pattern.strip()]
     if not cleaned_patterns:
@@ -502,7 +625,7 @@ async def search_semantic_context(
         client,
         cleaned_patterns,
         semantic_types=semantic_types,
-        semantic_model_id=semantic_model_id,
+        semantic_model_ids=semantic_model_ids or None,
         case_sensitive=case_sensitive,
         max_results=max_results,
     )
@@ -544,15 +667,15 @@ async def get_semantic_context(
             )
         ),
     ],
-    semantic_model_id: Annotated[
-        str | None,
+    semantic_model_ids: Annotated[
+        Sequence[str],
         Field(
             description=(
-                'Optional semantic model ID that restricts loading to a single semantic model. '
-                'Use this when object types should be resolved only within one model.'
+                'Optional list of semantic model IDs to restrict loading to specific models. '
+                'Empty list [] means load across all semantic models.'
             )
         ),
-    ] = None,
+    ] = tuple(),
 ) -> list[SemanticObjectTypeContext]:
     """
     Loads semantic objects grouped by semantic object type.
@@ -560,11 +683,11 @@ async def get_semantic_context(
     CONSIDERATIONS:
     - If a selection has empty `ids`, the tool returns all objects of that type in compact form.
     - If a selection has non-empty `ids`, the tool returns only those specific objects with full attributes.
-    - `semantic_model_id` optionally narrows the lookup to a single semantic model.
+    - `semantic_model_ids` optionally narrows the lookup to specific semantic models.
 
     WHEN TO USE:
     - When you already know IDs of the semantic objects you want to load and want to inspect them in detail.
-    - When you want to list all semantic objects of a certain types or semantic model.
+    - When you want to list all semantic objects of certain types or specific semantic models.
     - When you want to list semantic models.
 
     WHEN NOT TO USE:
@@ -573,14 +696,14 @@ async def get_semantic_context(
     EXAMPLES:
     - List all semantic models:
       `semantic_objects=[{"object_type": "semantic-model"}]`
-    - List semantic datasets and metrics for one semantic model:
+    - List semantic datasets and metrics for specific semantic models:
       `semantic_objects=[{"object_type": "semantic-dataset"}, {"object_type": "semantic-metric"}],`
-      `semantic_model_id="123"`
+      `semantic_model_ids=["model-uuid-1", "model-uuid-2"]`
     - Get detailed context for specific semantic objects by their id:
       `semantic_objects=[{"object_type": "semantic-dataset", "ids": ["dataset-uuid-1"]},`
       `{"object_type": "semantic-metric", "ids": ["metric-uuid-1", "metric-uuid-2"]}]`
-    - List all constraints for one semantic model:
-      `semantic_objects=[{"object_type": "semantic-constraint"}], semantic_model_id="123"`
+    - List all constraints for specific semantic models:
+      `semantic_objects=[{"object_type": "semantic-constraint"}], semantic_model_ids=["model-uuid-1"]`
     """
     if not semantic_objects:
         raise ValueError('At least one semantic object type must be provided.')
@@ -590,7 +713,7 @@ async def get_semantic_context(
     results = await process_concurrently(
         semantic_objects,
         lambda selection: semantic_service.load_semantic_context_for_semantic_type(
-            client, selection.object_type, semantic_model_id=semantic_model_id, ids=selection.ids
+            client, selection.object_type, semantic_model_ids=semantic_model_ids or None, ids=selection.ids
         ),
         max_concurrency=len(semantic_objects),
     )
@@ -674,13 +797,13 @@ async def validate_semantic_query(
             )
         ),
     ],
-    semantic_model_id: Annotated[
-        str,
+    semantic_model_ids: Annotated[
+        Sequence[str],
         Field(
             description=(
-                'Semantic model ID against which the SQL should be validated. '
-                'This defines the semantic universe used for detecting datasets, metrics, '
-                'relationships, and constraints.'
+                'One or more semantic model IDs against which the SQL should be validated. '
+                'Contexts from all models are merged into a single universe for object detection. '
+                'Constraint evaluation is performed per model to avoid cross-model rule contamination.'
             )
         ),
     ],
@@ -696,20 +819,19 @@ async def validate_semantic_query(
     ] = tuple(),
 ) -> ValidateSemanticQueryOutput:
     """
-    Performs best-effort semantic validation of an SQL query against one semantic model and compares it with the
-    expected semantic objects provided.
+    Performs best-effort semantic validation of an SQL query against one or more semantic models and compares it with
+    the expected semantic objects provided.
 
     RETURNS:
-    - detected semantic datasets and metrics used by the SQL
-    - expected semantic objects that were matched or missing
-    - unexpected detected objects outside the expected scope
-    - pre-execution violations
-    - post-execution checks with optional validation SQL
+    - `validation_auto_detected`: semantic validation built from objects heuristically detected in the SQL
+    - `validation_detected_from_expected`: semantic validation built only from explicitly provided expected object IDs
+    - expected semantic objects that were matched or missing in the auto-detected result
+    - unexpected auto-detected objects outside the expected semantic scope
 
     LIMITATIONS:
     - Detection is heuristic and based on string matching over SQL and semantic metadata.
     - The tool does not parse SQL semantically and does not execute the query.
-    - Detected objects, missing objects, and relationship matches may therefore be imperfect.
+    - Auto-detected objects, missing objects, and relationship matches may therefore be imperfect.
     - Use the result as a best-effort semantic check, not as a formal proof that the query is correct.
 
     CONSIDERATIONS:
@@ -727,95 +849,60 @@ async def validate_semantic_query(
     - When you need to surface semantic business-rule violations or follow-up checks.
 
     EXAMPLES:
-    - Validate a SQL query against semantic model:
-      `sql_query="SELECT SUM(\\"REVENUE\\") FROM ...", semantic_model_id="semantic-model-uuid",`
+    - Validate a SQL query against one semantic model:
+      `sql_query="SELECT SUM(\\"REVENUE\\") FROM ...", semantic_model_ids=["semantic-model-uuid"],`
       `expected_semantic_objects=[{"object_type": "semantic-dataset"}]`
-    - Validate a query and assert that a specific dataset is expected:
-      `sql_query="SELECT * FROM ...", semantic_model_id="semantic-model-uuid",`
+    - Validate a cross-model query against two semantic models:
+      `sql_query="SELECT * FROM ...", semantic_model_ids=["model-uuid-1", "model-uuid-2"],`
       `expected_semantic_objects=[{"object_type": "semantic-dataset", "ids": ["dataset-uuid-1"]}]`
     - Validate a query and compare it against expected objects:
-      `sql_query="SELECT SUM(\\"REVENUE\\") FROM ...", semantic_model_id="semantic-model-uuid",`
+      `sql_query="SELECT SUM(\\"REVENUE\\") FROM ...", semantic_model_ids=["semantic-model-uuid"],`
       `expected_semantic_objects=[{"object_type": "semantic-metric", "ids": ["metric-uuid-1"]}]`
 
     """
     if not sql_query.strip():
         raise ValueError('sql_query must not be empty.')
-    if not semantic_model_id.strip():
-        raise ValueError('semantic_model_id must not be empty.')
+    cleaned_model_ids = [mid.strip() for mid in semantic_model_ids if mid and mid.strip()]
+    if not cleaned_model_ids:
+        raise ValueError('At least one semantic_model_id must be provided.')
+
     client = KeboolaClient.from_state(ctx.session.state)
-    model = await semantic_service.get_object_by_id(client, SemanticObjectType.SEMANTIC_MODEL, semantic_model_id)
-    assert isinstance(model, semantic_service.SemanticModelData)
 
-    raw_result = await semantic_service.validate_semantic_query(client, sql_query, semantic_model_id)
+    model_results = await process_concurrently(
+        cleaned_model_ids,
+        lambda model_id: semantic_service.get_object_by_id(client, SemanticObjectType.SEMANTIC_MODEL, model_id),
+        max_concurrency=len(cleaned_model_ids),
+    )
+    models = unwrap_results(model_results, 'Failed to fetch semantic models.')
+    assert all(isinstance(m, semantic_service.SemanticModelData) for m in models)
+
+    raw_auto_detected = await semantic_service.validate_semantic_query(client, sql_query, cleaned_model_ids)
+    expected_object_groups = await _load_expected_object_groups(client, expected_semantic_objects, cleaned_model_ids)
+    raw_from_expected = None
+    if expected_object_groups:
+        raw_from_expected = await semantic_service.validate_semantic_used_objects(
+            client, cleaned_model_ids, expected_object_groups
+        )
+
     matched_expected_objects, missing_expected_objects, unexpected_detected_objects = (
-        _compare_expected_and_detected_objects(expected_semantic_objects, raw_result.used_object_groups)
+        _compare_expected_and_detected_objects(expected_semantic_objects, raw_auto_detected.used_object_groups)
     )
-    return _format_validation_output(
-        raw_result,
-        semantic_model_id,
-        expected_semantic_objects,
-        matched_expected_objects=matched_expected_objects,
-        missing_expected_objects=missing_expected_objects,
-        unexpected_detected_objects=unexpected_detected_objects,
-        sql_dialect=model.sql_dialect,
-        semantic_model_name=model.name,
-    )
-
-
-def _format_validation_output(
-    raw_result: semantic_service.SemanticValidationServiceOutput,
-    semantic_model_id: str,
-    expected_objects: Sequence[SemanticObjectTypeSelection],
-    *,
-    matched_expected_objects: Sequence[SemanticObjectRef] = tuple(),
-    missing_expected_objects: Sequence[SemanticObjectRef] = tuple(),
-    unexpected_detected_objects: Sequence[SemanticObjectTypeContext] = tuple(),
-    sql_dialect: str | None = None,
-    semantic_model_name: str | None = None,
-) -> ValidateSemanticQueryOutput:
-    used_dataset_objects = []
-    used_metric_objects = []
-    for group in raw_result.used_object_groups:
-        if group.object_type == SemanticObjectType.SEMANTIC_DATASET:
-            used_dataset_objects = [item for item in group.objects]
-        elif group.object_type == SemanticObjectType.SEMANTIC_METRIC:
-            used_metric_objects = [item for item in group.objects]
-
-    used_datasets = [SemanticUsedDataset.from_semantic_service_data(item) for item in used_dataset_objects]
-    used_metrics = [SemanticUsedMetric.from_semantic_service_data(item) for item in used_metric_objects]
-    expected_objects = [
-        SemanticObjectRef(object_type=selection.object_type, id=object_id)
-        for selection in expected_objects
-        for object_id in selection.ids
-    ]
-
-    summary_parts: list[str] = []
-    if raw_result.violations:
-        summary_parts.append('Semantic validation found pre-execution issues that should be fixed before running.')
+    auto_detected_summary_notes: list[str] = []
     if missing_expected_objects:
-        summary_parts.append('Some expected semantic objects were not detected in the SQL query.')
+        auto_detected_summary_notes.append('Some expected semantic objects were not detected in the SQL query.')
     if unexpected_detected_objects:
-        summary_parts.append('Some detected semantic objects fall outside the expected semantic scope.')
-    if raw_result.post_execution_checks:
-        summary_parts.append('Some checks should be verified after execution.')
-
-    if summary_parts:
-        summary = '\n'.join(summary_parts)
-    else:
-        summary = 'Semantic validation finished without relevant findings.'
+        auto_detected_summary_notes.append('Some detected semantic objects fall outside the expected semantic scope.')
 
     return ValidateSemanticQueryOutput(
-        valid=raw_result.valid,
-        semantic_model_id=semantic_model_id,
-        semantic_model_name=semantic_model_name,
-        sql_dialect=sql_dialect,
+        validation_auto_detected=_format_validation_result(
+            raw_auto_detected,
+            models=models,
+            summary_notes=auto_detected_summary_notes,
+        ),
+        validation_detected_from_expected=(
+            _format_validation_result(raw_from_expected, models=models) if raw_from_expected is not None else None
+        ),
         matched_expected_objects=matched_expected_objects,
         missing_expected_objects=missing_expected_objects,
         unexpected_detected_objects=unexpected_detected_objects,
-        used_datasets=used_datasets,
-        used_metrics=used_metrics,
-        matched_relationships=raw_result.matched_relationships,
-        violations=[_to_tool_finding(finding) for finding in raw_result.violations],
-        post_execution_checks=[_to_tool_finding(finding) for finding in raw_result.post_execution_checks],
-        summary=summary,
     )

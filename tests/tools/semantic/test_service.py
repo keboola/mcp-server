@@ -19,6 +19,7 @@ from keboola_mcp_server.tools.semantic.service import (
     evaluate_constraints_from_context,
     search_semantic_context,
     validate_semantic_query,
+    validate_semantic_used_objects,
 )
 
 
@@ -330,7 +331,7 @@ async def test_validate_semantic_query_detects_used_objects_and_relevant_validat
             'FROM analytics.orders orders '
             'JOIN analytics.customers customers ON orders.customer_id = customers.id'
         ),
-        'model-1',
+        ['model-1'],
     )
 
     assert result.valid is False
@@ -365,6 +366,38 @@ async def test_validate_semantic_query_detects_used_objects_and_relevant_validat
     post_query_finding = findings_by_id['constraint-post-query']
     assert post_query_finding.status == 'post_query_check'
     assert post_query_finding.validation_query == 'SELECT * FROM revenue_threshold_check'
+
+
+@pytest.mark.asyncio
+async def test_validate_semantic_used_objects_uses_only_provided_scope(
+    keboola_client: KeboolaClient,
+    mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
+) -> None:
+    result = await validate_semantic_used_objects(
+        keboola_client,
+        ['model-1'],
+        [
+            _service_group(
+                SemanticObjectType.SEMANTIC_DATASET, [mock_semantic_api[SemanticObjectType.SEMANTIC_DATASET][0]]
+            ),
+            _service_group(
+                SemanticObjectType.SEMANTIC_METRIC, [mock_semantic_api[SemanticObjectType.SEMANTIC_METRIC][0]]
+            ),
+        ],
+    )
+
+    assert result.valid is True
+    assert result.matched_relationships == []
+
+    groups = _group_objects(result)
+    assert [dataset.id for dataset in groups[SemanticObjectType.SEMANTIC_DATASET].objects] == ['dataset-orders']
+    assert [metric.id for metric in groups[SemanticObjectType.SEMANTIC_METRIC].objects] == ['metric-revenue']
+    assert SemanticObjectType.SEMANTIC_RELATIONSHIP not in groups
+
+    findings_by_id = {finding.constraint_id: finding for finding in result.violations + result.post_execution_checks}
+    assert findings_by_id['constraint-pre-query'].status == 'pre_query_check'
+    assert findings_by_id['constraint-post-query'].status == 'post_query_check'
+    assert 'constraint-exclusion' not in findings_by_id
 
 
 @pytest.mark.parametrize(
@@ -970,21 +1003,21 @@ def test_evaluate_constraints_from_context_edge_cases(
 
 
 @pytest.mark.parametrize(
-    ('sql_query', 'semantic_model_id', 'message'),
+    ('sql_query', 'semantic_model_ids', 'message'),
     [
-        ('   ', 'model-1', 'sql_query must not be empty.'),
-        ('SELECT 1', '   ', 'semantic_model_id must not be empty.'),
+        ('   ', ['model-1'], 'sql_query must not be empty.'),
+        ('SELECT 1', [], 'At least one semantic_model_id must be provided.'),
     ],
 )
 @pytest.mark.asyncio
 async def test_validate_semantic_query_requires_non_empty_inputs(
     keboola_client: KeboolaClient,
     sql_query: str,
-    semantic_model_id: str,
+    semantic_model_ids: list[str],
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        await validate_semantic_query(keboola_client, sql_query, semantic_model_id)
+        await validate_semantic_query(keboola_client, sql_query, semantic_model_ids)
 
 
 @pytest.mark.parametrize(
