@@ -117,7 +117,7 @@ class SemanticModelData(SemanticTypeData):
 
     @classmethod
     def from_metastore(cls, obj: MetastoreObject) -> 'SemanticModelData':
-        attributes = obj.attributes
+        attributes = obj.attributes or {}
         return cls(
             semantic_type=SemanticObjectType.SEMANTIC_MODEL,
             id=obj.id,
@@ -137,7 +137,7 @@ class SemanticDatasetData(SemanticTypeData):
 
     @classmethod
     def from_metastore(cls, obj: MetastoreObject) -> 'SemanticDatasetData':
-        attributes = obj.attributes
+        attributes = obj.attributes or {}
         return cls(
             semantic_type=SemanticObjectType.SEMANTIC_DATASET,
             id=obj.id,
@@ -159,7 +159,7 @@ class SemanticMetricData(SemanticTypeData):
 
     @classmethod
     def from_metastore(cls, obj: MetastoreObject) -> 'SemanticMetricData':
-        attributes = obj.attributes
+        attributes = obj.attributes or {}
         return cls(
             semantic_type=SemanticObjectType.SEMANTIC_METRIC,
             id=obj.id,
@@ -182,7 +182,7 @@ class SemanticRelationshipData(SemanticTypeData):
 
     @classmethod
     def from_metastore(cls, obj: MetastoreObject) -> 'SemanticRelationshipData':
-        attributes = obj.attributes
+        attributes = obj.attributes or {}
         return cls(
             semantic_type=SemanticObjectType.SEMANTIC_RELATIONSHIP,
             id=obj.id,
@@ -203,7 +203,7 @@ class SemanticGlossaryData(SemanticTypeData):
 
     @classmethod
     def from_metastore(cls, obj: MetastoreObject) -> 'SemanticGlossaryData':
-        attributes = obj.attributes
+        attributes = obj.attributes or {}
         return cls(
             semantic_type=SemanticObjectType.SEMANTIC_GLOSSARY,
             id=obj.id,
@@ -234,7 +234,7 @@ class SemanticConstraintData(SemanticTypeData):
 
     @classmethod
     def from_metastore(cls, obj: MetastoreObject) -> 'SemanticConstraintData':
-        attributes = obj.attributes
+        attributes = obj.attributes or {}
         ai = attributes.get('ai')
         validation_query = attributes.get('validationQuery')
         return cls(
@@ -350,7 +350,7 @@ def _get_semantic_model_id(obj: SemanticTypeData | MetastoreObject) -> str:
         if obj.type == SemanticObjectType.SEMANTIC_MODEL.value:
             return obj.id
         else:
-            model_id = obj.attributes.get('modelUUID')
+            model_id = (obj.attributes or {}).get('modelUUID')
             return str(model_id) if model_id else ''
     raise ValueError(f'Unsupported object type "{type(obj)}".')
 
@@ -996,9 +996,12 @@ async def validate_semantic_used_objects(
     client: KeboolaClient,
     semantic_model_ids: Sequence[str],
     used_object_groups: Sequence[SemanticServiceDataTypeGroup],
+    *,
+    contexts_per_model: list[dict[SemanticObjectType, SemanticServiceDataTypeGroup]] | None = None,
 ) -> SemanticValidationServiceOutput:
     """Validate already identified semantic objects against one or more semantic models."""
-    contexts_per_model = await _load_validation_contexts(client, semantic_model_ids)
+    if contexts_per_model is None:
+        contexts_per_model = await _load_validation_contexts(client, semantic_model_ids)
     used_object_groups_by_type = _merge_used_object_groups(used_object_groups)
     return _evaluate_used_objects_for_contexts(semantic_model_ids, contexts_per_model, used_object_groups_by_type)
 
@@ -1007,6 +1010,8 @@ async def validate_semantic_query(
     client: KeboolaClient,
     sql_query: str,
     semantic_model_ids: Sequence[str],
+    *,
+    contexts_per_model: list[dict[SemanticObjectType, SemanticServiceDataTypeGroup]] | None = None,
 ) -> SemanticValidationServiceOutput:
     """Validate SQL against one or more semantic models without executing it.
 
@@ -1016,7 +1021,8 @@ async def validate_semantic_query(
     if not sql_query.strip():
         raise ValueError('sql_query must not be empty.')
 
-    contexts_per_model = await _load_validation_contexts(client, semantic_model_ids)
+    if contexts_per_model is None:
+        contexts_per_model = await _load_validation_contexts(client, semantic_model_ids)
 
     merged_context = _merge_contexts(contexts_per_model)
     used_object_groups_by_type = detect_used_objects_from_context(sql_query, merged_context)

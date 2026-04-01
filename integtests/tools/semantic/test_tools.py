@@ -70,6 +70,8 @@ def _require_metastore_available(
         pytest.skip(f'Metastore endpoint is not reachable in this environment: {exc}')
     except httpx.TimeoutException as exc:
         pytest.skip(f'Metastore endpoint timed out in this environment: {exc}')
+    except httpx.HTTPStatusError as exc:
+        pytest.skip(f'Metastore endpoint returned HTTP {exc.response.status_code}: {exc}')
 
 
 @pytest_asyncio.fixture(autouse=True)

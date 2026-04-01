@@ -837,7 +837,7 @@ async def validate_semantic_query(
     - Use the result as a best-effort semantic check, not as a formal proof that the query is correct.
 
     CONSIDERATIONS:
-    -  Prefer calling this tool before executing any SQL that touches a semantic objects.
+    -  Prefer calling this tool before executing any SQL that touches semantic objects.
     - This tool confirms the SQL dialect, surfaces semantic constraint violations, and provides post-execution checks.
     - Only proceed to query_data once this tool returns valid=True and violations is empty. If violations are found,
     fix the query first or consider the limitations of this tool.
@@ -877,12 +877,19 @@ async def validate_semantic_query(
     models = unwrap_results(model_results, 'Failed to fetch semantic models.')
     assert all(isinstance(m, semantic_service.SemanticModelData) for m in models)
 
-    raw_auto_detected = await semantic_service.validate_semantic_query(client, sql_query, cleaned_model_ids)
+    # Pre-load contexts once when both validation paths will run, avoiding a double round-trip.
+    pre_loaded_contexts = None
+    if expected_semantic_objects:
+        pre_loaded_contexts = await semantic_service._load_validation_contexts(client, cleaned_model_ids)
+
+    raw_auto_detected = await semantic_service.validate_semantic_query(
+        client, sql_query, cleaned_model_ids, contexts_per_model=pre_loaded_contexts
+    )
     expected_object_groups = await _load_expected_object_groups(client, expected_semantic_objects, cleaned_model_ids)
     raw_from_expected = None
     if expected_object_groups:
         raw_from_expected = await semantic_service.validate_semantic_used_objects(
-            client, cleaned_model_ids, expected_object_groups
+            client, cleaned_model_ids, expected_object_groups, contexts_per_model=pre_loaded_contexts
         )
 
     matched_expected_objects, missing_expected_objects, unexpected_detected_objects = (

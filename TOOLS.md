@@ -3203,7 +3203,7 @@ LIMITATIONS:
 - Use the result as a best-effort semantic check, not as a formal proof that the query is correct.
 
 CONSIDERATIONS:
--  Prefer calling this tool before executing any SQL that touches a semantic objects.
+-  Prefer calling this tool before executing any SQL that touches semantic objects.
 - This tool confirms the SQL dialect, surfaces semantic constraint violations, and provides post-execution checks.
 - Only proceed to query_data once this tool returns valid=True and violations is empty. If violations are found,
 fix the query first or consider the limitations of this tool.
