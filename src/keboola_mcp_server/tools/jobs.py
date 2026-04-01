@@ -424,7 +424,7 @@ async def run_job(
         Field(description='The ID of the component or transformation for which to start a job.'),
     ],
     configuration_id: Annotated[str, Field(description='The ID of the configuration for which to start a job.')],
-    config_row_ids: Annotated[
+    configuration_row_ids: Annotated[
         list[str] | None,
         Field(
             default=None,
@@ -441,7 +441,7 @@ async def run_job(
         raw_job = await client.jobs_queue_client.create_job(
             component_id=component_id,
             configuration_id=configuration_id,
-            config_row_ids=config_row_ids,
+            configuration_row_ids=configuration_row_ids,
         )
         links_manager = await ProjectLinksManager.from_client(client)
         links = links_manager.get_job_links(str(raw_job['id']))

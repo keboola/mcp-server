@@ -2597,7 +2597,7 @@ Starts a new job for a given component or transformation.
       "description": "The ID of the configuration for which to start a job.",
       "type": "string"
     },
-    "config_row_ids": {
+    "configuration_row_ids": {
       "anyOf": [
         {
           "items": {

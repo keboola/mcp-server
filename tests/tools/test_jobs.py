@@ -222,7 +222,7 @@ async def test_get_jobs_listing_with_component_id_without_config_id(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    'config_row_ids',
+    'configuration_row_ids',
     [
         None,
         ['row-1', 'row-2'],
@@ -232,9 +232,9 @@ async def test_run_job(
     mocker: MockerFixture,
     mcp_context_client: Context,
     mock_job: dict[str, Any],
-    config_row_ids: list[str] | None,
+    configuration_row_ids: list[str] | None,
 ):
-    """Tests run_job tool with and without config_row_ids."""
+    """Tests run_job tool with and without configuration_row_ids."""
     context = mcp_context_client
     keboola_client = KeboolaClient.from_state(context.session.state)
     mock_job['result'] = []  # simulate empty list as returned by create job endpoint
@@ -244,7 +244,10 @@ async def test_run_job(
     component_id = mock_job['component']
     configuration_id = mock_job['config']
     job_detail = await run_job(
-        ctx=context, component_id=component_id, configuration_id=configuration_id, config_row_ids=config_row_ids
+        ctx=context,
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_row_ids=configuration_row_ids,
     )
 
     assert isinstance(job_detail, JobDetail)
@@ -267,7 +270,7 @@ async def test_run_job(
     keboola_client.jobs_queue_client.create_job.assert_called_once_with(
         component_id=component_id,
         configuration_id=configuration_id,
-        config_row_ids=config_row_ids,
+        configuration_row_ids=configuration_row_ids,
     )
 
 
@@ -287,7 +290,7 @@ async def test_run_job_fail(mocker: MockerFixture, mcp_context_client: Context, 
     keboola_client.jobs_queue_client.create_job.assert_called_once_with(
         component_id=component_id,
         configuration_id=configuration_id,
-        config_row_ids=None,
+        configuration_row_ids=None,
     )
 
 
