@@ -1502,16 +1502,3 @@ async def test_set_transformation_folder_metadata(
         )
     else:
         client.storage_client.configuration_metadata_update.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_set_transformation_folder_metadata_swallows_error() -> None:
-    """Test that set_transformation_folder_metadata swallows HTTPStatusError without raising."""
-    from httpx import HTTPStatusError, Request, Response
-
-    client = _make_client([], [])
-    client.storage_client.configuration_metadata_update = AsyncMock(
-        side_effect=HTTPStatusError('err', request=Request('POST', 'http://x'), response=Response(500))
-    )
-    # Should not raise
-    await set_transformation_folder_metadata(client, 'comp', 'cfg', 'Folder')

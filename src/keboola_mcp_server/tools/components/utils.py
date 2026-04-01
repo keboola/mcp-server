@@ -450,14 +450,11 @@ async def set_transformation_folder_metadata(
     normalized = folder.strip()
     if not normalized:
         return
-    try:
-        await client.storage_client.configuration_metadata_update(
-            component_id=component_id,
-            configuration_id=configuration_id,
-            metadata={MetadataField.CONFIGURATION_FOLDER_NAME: normalized},
-        )
-    except Exception as e:
-        logging.warning(f'Failed to set folder metadata for configuration {configuration_id}: {e}')
+    await client.storage_client.configuration_metadata_update(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        metadata={MetadataField.CONFIGURATION_FOLDER_NAME: normalized},
+    )
 
 
 def build_folder_hint(total: int, existing_folders: list[str], config_label: str, update_tool: str) -> str | None:
