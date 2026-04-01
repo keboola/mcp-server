@@ -1841,6 +1841,11 @@ SQL & DATA TYPE RULES:
       "default": "",
       "description": "The description of the change when updating (e.g. \"Update Code\"), otherwise empty string.",
       "type": "string"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this data app in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose.",
+      "type": "string"
     }
   },
   "required": [
@@ -1898,7 +1903,7 @@ Answers a question using the Keboola documentation as a source.
 Creates a new conditional flow configuration using `keboola.flow`.
 
 PRE-REQUISITES:
-- Always use `get_flow_schema` with flow_type="keboola.flow" and review `get_flow_examples` if unknown
+- Always use `get_flow_schema` with flow_type=”keboola.flow” and review `get_flow_examples` if unknown
 - Gather component configuration IDs for all tasks you include
 
 RULES:
@@ -1940,6 +1945,11 @@ WHEN TO USE:
         "type": "object"
       },
       "type": "array"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
+      "type": "string"
     }
   },
   "required": [
@@ -2005,6 +2015,11 @@ WHEN TO USE:
         "type": "object"
       },
       "type": "array"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
+      "type": "string"
     }
   },
   "required": [
@@ -2311,6 +2326,11 @@ adjusting dependencies, or enabling/disabling flow execution
       ],
       "default": null,
       "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
+      "type": "string"
     }
   },
   "required": [
@@ -2416,6 +2436,11 @@ or enabling/disabling flow execution
       ],
       "default": null,
       "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
+      "type": "string"
     }
   },
   "required": [

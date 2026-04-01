@@ -67,12 +67,13 @@ from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     SNOWFLAKE_TRANSFORMATION_ID,
     add_ids,
+    build_folder_hint,
     check_suitable,
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
+    get_config_folders,
     get_sql_transformation_id_from_sql_dialect,
-    get_transformation_folders,
     list_configs_by_ids,
     list_configs_by_types,
     set_cfg_creation_metadata,
@@ -373,24 +374,6 @@ async def get_components(
 # ============================================================================
 
 
-def _build_folder_hint(total: int, existing_folders: list[str]) -> str | None:
-    """Returns a folder-organization hint for the LLM when a project has ≥20 transformations."""
-    if total < 20:
-        return None
-    hint = f'Note: This project already has {total} SQL transformations. ' 'Consider organizing them with folders. '
-    if existing_folders:
-        hint += (
-            f'Existing folders: {existing_folders}. '
-            'Call update_sql_transformation with a folder= parameter to assign this transformation to one.'
-        )
-    else:
-        hint += (
-            'No folders have been created yet. '
-            'Call update_sql_transformation with a folder= parameter to start organizing.'
-        )
-    return hint
-
-
 @tool_errors()
 async def create_sql_transformation(
     ctx: Context,
@@ -510,8 +493,10 @@ async def create_sql_transformation(
         change_summary = None
     else:
         try:
-            total, existing_folders = await get_transformation_folders(client, component_id)
-            change_summary = _build_folder_hint(total, existing_folders)
+            total, existing_folders = await get_config_folders(client, component_id)
+            change_summary = build_folder_hint(
+                total, existing_folders, 'SQL transformations', 'update_sql_transformation'
+            )
         except Exception:
             LOG.warning(
                 'Unable to fetch transformation folders for component "%s" when creating configuration "%s".',
@@ -871,8 +856,8 @@ async def update_sql_transformation(
         folder_hint = None
     else:
         try:
-            total, existing_folders = await get_transformation_folders(client, sql_transformation_id)
-            folder_hint = _build_folder_hint(total, existing_folders)
+            total, existing_folders = await get_config_folders(client, sql_transformation_id)
+            folder_hint = build_folder_hint(total, existing_folders, 'SQL transformations', 'update_sql_transformation')
         except Exception:
             LOG.warning(
                 'Unable to fetch transformation folders for component "%s" when updating configuration "%s".',
