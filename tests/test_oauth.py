@@ -1,12 +1,18 @@
 import time
 from typing import Any, Mapping
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from mcp.server.auth.provider import AccessToken, RefreshToken
+from mcp.server.auth.provider import AccessToken, AuthorizationParams, RefreshToken
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull
 from pydantic import AnyHttpUrl, AnyUrl
 
-from keboola_mcp_server.oauth import SimpleOAuthProvider, _ExtendedAuthorizationCode, _OAuthClientInformationFull
+from keboola_mcp_server.oauth import (
+    ClientValidationResult,
+    SimpleOAuthProvider,
+    _ExtendedAuthorizationCode,
+    _OAuthClientInformationFull,
+)
 
 JWT_KEY = 'secret'
 
@@ -107,100 +113,21 @@ class TestSimpleOAuthProvider:
     @pytest.mark.parametrize(
         ('uri', 'valid'),
         [
-            # === HTTP scheme - localhost only ===
-            (AnyUrl('http://localhost:8080/foo'), True),
-            (AnyUrl('http://localhost:20388/oauth/callback'), True),
-            (AnyUrl('http://localhost/callback'), True),
-            (AnyUrl('http://127.0.0.1:1234/bar'), True),
-            (AnyUrl('http://127.0.0.1:54750/auth/callback'), True),
-            (AnyUrl('http://127.0.0.1/callback'), True),
-            # IPv6 localhost
-            (AnyUrl('http://[::1]:8080/callback'), True),
-            (AnyUrl('http://[::1]/callback'), True),
-            # HTTP to non-localhost should be rejected
-            (AnyUrl('http://example.com/callback'), False),
-            (AnyUrl('http://keboola.com/callback'), False),
-            (AnyUrl('http://192.168.1.1/callback'), False),
-            # === HTTPS scheme - whitelisted domains ===
-            # Keboola domains (requires subdomain)
-            (AnyUrl('https://foo.keboola.com/bar/baz'), True),
-            (AnyUrl('https://bar.keboola.dev/baz'), True),
-            (AnyUrl('https://connection.keboola.com/oauth/callback'), True),
-            (AnyUrl('https://keboola.com/callback'), False),  # requires subdomain
-            (AnyUrl('https://keboola.dev/callback'), False),  # requires subdomain
-            # ChatGPT (subdomain optional)
-            (AnyUrl('https://chatgpt.com'), True),
-            (AnyUrl('https://foo.chatgpt.com/bar'), True),
-            (AnyUrl('https://chatgpt.com/connector_platform_oauth_redirect'), True),
-            # Claude (subdomain optional)
-            (AnyUrl('https://claude.ai'), True),
-            (AnyUrl('https://foo.claude.ai/bar'), True),
+            # Any http/https/custom scheme is accepted — per-client redirect URI validation
+            # against Connection-registered URIs happens in SimpleOAuthProvider.authorize().
+            (AnyUrl('http://localhost:8080/callback'), True),
+            (AnyUrl('http://example.com/callback'), True),  # domain check moved to Connection
             (AnyUrl('https://claude.ai/api/mcp/auth_callback'), True),
-            # LibreChat (no subdomains allowed)
-            (AnyUrl('https://librechat.glami-ml.com'), True),
-            (AnyUrl('https://librechat.glami-ml.com/api/mcp/keboola/oauth/callback'), True),
-            (AnyUrl('https://foo.librechat.glami-ml.com/bar'), False),  # no subdomains allowed
-            # Make.com (subdomain optional)
-            (AnyUrl('https://make.com'), True),
-            (AnyUrl('https://foo.make.com/bar'), True),
-            (AnyUrl('https://www.make.com/oauth/cb/mcp'), True),
-            # Devin (exact domain only)
-            (AnyUrl('https://api.devin.ai/callback'), True),
-            (AnyUrl('https://api.devin.ai'), True),
-            (AnyUrl('https://devin.ai/callback'), False),  # must be api.devin.ai
-            (AnyUrl('https://foo.api.devin.ai/callback'), False),  # no subdomains
-            # Onyx (no subdomains allowed)
-            (AnyUrl('https://cloud.onyx.app'), True),
-            (AnyUrl('https://cloud.onyx.app/mcp/oauth/callback'), True),
-            (AnyUrl('https://foo.cloud.onyx.app/bar'), False),  # no subdomains allowed
-            (AnyUrl('https://onyx.app/callback'), False),  # must be cloud.onyx.app
-            # Azure APIM (no subdomains allowed)
-            (AnyUrl('https://global.consent.azure-apim.net'), True),
-            (AnyUrl('https://global.consent.azure-apim.net/oauth/callback'), True),
-            (AnyUrl('https://foo.global.consent.azure-apim.net/bar'), False),  # no subdomains allowed
-            # n8n at Groupon (no subdomains allowed)
-            (AnyUrl('https://n8n.groupondev.com'), True),
-            (AnyUrl('https://n8n.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-business.groupondev.com'), True),
-            (AnyUrl('https://n8n-business.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-merchant.groupondev.com'), True),
-            (AnyUrl('https://n8n-merchant.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-llm-traffic.groupondev.com'), True),
-            (AnyUrl('https://n8n-llm-traffic.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-finance.groupondev.com'), True),
-            (AnyUrl('https://n8n-finance.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-playground.groupondev.com'), True),
-            (AnyUrl('https://n8n-playground.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-staging.groupondev.com'), True),
-            (AnyUrl('https://n8n-staging.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://foo.n8n-playground.groupondev.com/bar'), False),  # no subdomains allowed
-            (AnyUrl('https://n8n-unknown.groupondev.com'), False),  # not whitelisted
-            # Unknown HTTPS domains should be rejected
-            (AnyUrl('https://foo.bar.com/callback'), False),
-            (AnyUrl('https://evil.com/callback'), False),
-            (AnyUrl('https://fakechatgpt.com/callback'), False),
-            (AnyUrl('https://evilclaude.ai/callback'), False),
-            # === Cursor scheme - specific hosts only ===
-            (AnyUrl('cursor://anysphere.cursor-retrieval/oauth/user-keboola-Data_warehouse/callback'), True),
+            (AnyUrl('https://foo.bar.com/callback'), True),  # domain check moved to Connection
             (AnyUrl('cursor://anysphere.cursor-mcp/oauth/callback'), True),
-            (AnyUrl('cursor://anysphere.cursor-mcp/some/path'), True),
-            # Cursor with unknown hosts should be rejected
-            (AnyUrl('cursor://evil.com/callback'), False),
-            (AnyUrl('cursor://localhost/callback'), False),
-            (AnyUrl('cursor://anysphere.cursor-other/callback'), False),
-            # === Unknown/forbidden schemes should be rejected ===
-            (AnyUrl('ftp://foo.bar.com'), False),
-            (AnyUrl('file:///etc/passwd'), False),
+            (AnyUrl('vscode://callback'), True),  # custom IDE schemes now allowed
+            (AnyUrl('ftp://foo.bar.com'), True),  # non-dangerous scheme allowed
+            # Dangerous scripting schemes are still rejected.
             (AnyUrl('javascript://alert(1)'), False),
             (AnyUrl('data://text/html,<script>alert(1)</script>'), False),
-            # Custom schemes that are NOT whitelisted should be rejected
-            (AnyUrl('vscode://localhost/callback'), False),
-            (AnyUrl('jetbrains://localhost/callback'), False),
-            (AnyUrl('zed://localhost/callback'), False),
-            (AnyUrl('myapp://localhost/callback'), False),
-            (AnyUrl('evil://localhost/callback'), False),
-            # === Edge cases ===
-            (None, False),  # no redirect_uri
+            (AnyUrl('vbscript://foo'), False),
+            # Missing redirect_uri is rejected.
+            (None, False),
         ],
     )
     def test_validate_redirect_uri(self, uri: AnyUrl | None, valid: bool):
@@ -211,3 +138,139 @@ class TestSimpleOAuthProvider:
         else:
             with pytest.raises(InvalidRedirectUriError):
                 info.validate_redirect_uri(uri)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('status_code', 'response_body', 'expected_status', 'expected_redirect_uris'),
+        [
+            # Connection returns approved with registered URIs
+            (
+                200,
+                {'status': 'approved', 'redirect_uris': ['https://claude.ai/cb']},
+                'approved',
+                ['https://claude.ai/cb'],
+            ),
+            # Connection returns pending (unknown client)
+            (200, {'status': 'pending'}, 'pending', []),
+            # Connection rejects the client (401)
+            (401, {}, 'rejected', []),
+            # Connection rejects the client (403)
+            (403, {}, 'rejected', []),
+            # Unexpected status code — fail open
+            (500, {}, 'approved', []),
+        ],
+    )
+    async def test__validate_client(
+        self,
+        status_code: int,
+        response_body: dict,
+        expected_status: str,
+        expected_redirect_uris: list[str],
+        oauth_provider: SimpleOAuthProvider,
+    ):
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_response.json.return_value = response_body
+        mock_response.text = str(response_body)
+
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(return_value=mock_response)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        original_create = oauth_provider._create_http_client
+        oauth_provider._create_http_client = lambda: mock_http  # type: ignore[method-assign]
+        try:
+            result = await oauth_provider._validate_client(
+                client_id='test-client',
+                redirect_uri='https://example.com/cb',
+            )
+        finally:
+            oauth_provider._create_http_client = original_create  # type: ignore[method-assign]
+
+        assert result.status == expected_status
+        assert result.redirect_uris == expected_redirect_uris
+
+    @pytest.mark.asyncio
+    async def test__validate_client_connection_error(self, oauth_provider: SimpleOAuthProvider):
+        """Connection unreachable → fail open (approved)."""
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(side_effect=Exception('connection refused'))
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        oauth_provider._create_http_client = lambda: mock_http  # type: ignore[method-assign]
+        result = await oauth_provider._validate_client(client_id='x', redirect_uri='https://x.com/cb')
+
+        assert result.status == 'approved'
+
+    def _make_auth_params(self, redirect_uri: str = 'https://claude.ai/cb') -> AuthorizationParams:
+        return AuthorizationParams(
+            state='state-xyz',
+            scopes=['email'],
+            redirect_uri=AnyUrl(redirect_uri),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            code_challenge_method='S256',
+            resource=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_authorize_approved_client(self, oauth_provider: SimpleOAuthProvider, mocker):
+        """Flow A: pre-registered client — redirect_uri validated against Connection's list."""
+        mocker.patch.object(
+            oauth_provider,
+            '_validate_client',
+            return_value=ClientValidationResult(status='approved', redirect_uris=['https://claude.ai/cb']),
+        )
+        client = OAuthClientInformationFull(client_id='claude.ai', redirect_uris=[AnyHttpUrl('http://foo')])
+        url = await oauth_provider.authorize(client, self._make_auth_params())
+
+        assert 'pending_client_id' not in url
+        assert 'state=' in url
+
+    @pytest.mark.asyncio
+    async def test_authorize_approved_client_wrong_redirect_uri(self, oauth_provider: SimpleOAuthProvider, mocker):
+        """Flow A: redirect_uri not in Connection's registered list → InvalidRedirectUriError."""
+        mocker.patch.object(
+            oauth_provider,
+            '_validate_client',
+            return_value=ClientValidationResult(status='approved', redirect_uris=['https://other.example.com/cb']),
+        )
+        client = OAuthClientInformationFull(client_id='claude.ai', redirect_uris=[AnyHttpUrl('http://foo')])
+        with pytest.raises(InvalidRedirectUriError):
+            await oauth_provider.authorize(client, self._make_auth_params('https://claude.ai/cb'))
+
+    @pytest.mark.asyncio
+    async def test_authorize_pending_client(self, oauth_provider: SimpleOAuthProvider, mocker):
+        """Flow B: unknown client — pending_client_* params appended to Connection auth URL."""
+        mocker.patch.object(
+            oauth_provider,
+            '_validate_client',
+            return_value=ClientValidationResult(status='pending'),
+        )
+        client = OAuthClientInformationFull(
+            client_id='my-new-app',
+            redirect_uris=[AnyHttpUrl('http://foo')],
+            client_name='My New App',
+        )
+        url = await oauth_provider.authorize(client, self._make_auth_params('https://my-app.example.com/cb'))
+
+        assert 'pending_client_id=my-new-app' in url
+        assert 'pending_redirect_uri=' in url
+        assert 'pending_client_name=My+New+App' in url
+
+    @pytest.mark.asyncio
+    async def test_authorize_rejected_client(self, oauth_provider: SimpleOAuthProvider, mocker):
+        """Rejected client → HTTPException 403."""
+        from http.client import HTTPException as StdHTTPException
+
+        mocker.patch.object(
+            oauth_provider,
+            '_validate_client',
+            return_value=ClientValidationResult(status='rejected'),
+        )
+        client = OAuthClientInformationFull(client_id='evil-app', redirect_uris=[AnyHttpUrl('http://foo')])
+        with pytest.raises(StdHTTPException) as exc_info:
+            await oauth_provider.authorize(client, self._make_auth_params())
+        assert exc_info.value.args[0] == 403
