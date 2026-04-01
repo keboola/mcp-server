@@ -615,7 +615,13 @@ async def search_semantic_context(
         raise ValueError('max_results must be a positive integer.')
 
     target_types = tuple(semantic_types) if semantic_types else SEMANTIC_OBJECT_TYPES
-    compiled_patterns = [re.compile(pattern, 0 if case_sensitive else re.IGNORECASE) for pattern in cleaned_patterns]
+    flags = 0 if case_sensitive else re.IGNORECASE
+    compiled_patterns: list[re.Pattern[str]] = []
+    for pattern in cleaned_patterns:
+        try:
+            compiled_patterns.append(re.compile(pattern, flags))
+        except re.error as e:
+            raise ValueError(f'Invalid regex pattern "{pattern}": {e}') from e
 
     matches: list[SemanticSearchHit] = []
     for object_type in target_types:
@@ -655,7 +661,7 @@ async def load_semantic_context_for_semantic_type(
         results = await process_concurrently(
             ids,
             lambda object_id: client.metastore_client.get_object(object_type.value, object_id),
-            max_concurrency=len(ids),
+            max_concurrency=min(len(ids), 10),
         )
         raw_objects = unwrap_results(
             results,
@@ -687,7 +693,7 @@ async def load_semantic_context_for_semantic_model(
             object_type,
             semantic_model_ids=[semantic_model_id],
         ),
-        max_concurrency=len(required_types),
+        max_concurrency=min(len(required_types), 10),
     )
     groups = unwrap_results(results, 'Failed to fetch semantic context.')
     return {group.object_type: group for group in groups}
@@ -937,7 +943,7 @@ async def _load_validation_contexts(
     results = await process_concurrently(
         semantic_model_ids,
         lambda model_id: load_semantic_context_for_semantic_model(client, model_id),
-        max_concurrency=len(semantic_model_ids),
+        max_concurrency=min(len(semantic_model_ids), 10),
     )
     return unwrap_results(results, 'Failed to fetch semantic context.')
 

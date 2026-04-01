@@ -55,16 +55,10 @@ for it first.
 
 ### Optional — Metastore tests
 
-A subset of tests exercises the Metastore API. They read two additional variables:
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `INTEGTEST_METASTORE_URL` | `https://metastore.canary-orion.keboola.dev` | Base URL of the Metastore service |
-| `INTEGTEST_METASTORE_TOKEN` | value of `INTEGTEST_STORAGE_TOKENS` (first token) | Keboola Storage API token for Metastore authentication |
-
-Both variables are optional. If omitted, the defaults shown above are used. Set them
-explicitly only when targeting a non-default Metastore instance or when you need a
-different token than the main pool token.
+A subset of tests exercises the Metastore API. The Metastore URL is derived automatically
+from `INTEGTEST_POOL_STORAGE_API_URL` by replacing the `connection.` prefix with `metastore.`
+(e.g. `https://connection.north-europe.azure.keboola.com` → `https://metastore.north-europe.azure.keboola.com`).
+Authentication reuses the storage API token — no additional environment variables are needed.
 
 ### Optional — lock tuning
 

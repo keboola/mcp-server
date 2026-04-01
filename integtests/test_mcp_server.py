@@ -150,8 +150,19 @@ async def test_http_multiple_clients_with_different_headers(
 
 async def _assert_basic_setup(client: Client):
     tools = await client.list_tools()
-    # the create_conditional_flow, create_flow and search tools may not be present based on the testing project
-    exclude = {'create_conditional_flow', 'create_flow', 'search', 'update_flow', 'modify_flow'}
+    # the create_conditional_flow, create_flow, search, and semantic tools may not be present
+    # based on the testing project features
+    exclude = {
+        'create_conditional_flow',
+        'create_flow',
+        'search',
+        'update_flow',
+        'modify_flow',
+        'get_semantic_context',
+        'get_semantic_schema',
+        'search_semantic_context',
+        'validate_semantic_query',
+    }
     expected_tools = {
         'add_config_row',
         'create_conditional_flow',
@@ -172,8 +183,6 @@ async def _assert_basic_setup(client: Client):
         'get_flows',
         'get_jobs',
         'get_project_info',
-        'get_semantic_context',
-        'get_semantic_schema',
         'get_tables',
         'modify_data_app',
         'modify_flow',
@@ -181,13 +190,11 @@ async def _assert_basic_setup(client: Client):
         'run_job',
         'run_sync_action',
         'search',
-        'search_semantic_context',
         'update_config',
         'update_config_row',
         'update_descriptions',
         'update_flow',
         'update_sql_transformation',
-        'validate_semantic_query',
     }
     expected_tools = expected_tools - exclude
 

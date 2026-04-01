@@ -3211,8 +3211,7 @@ fix the query first or consider the limitations of this tool.
 WHEN TO USE:
 - Before generating or approving a query that should follow a semantic model.
 - When you want to validate a SQL query against the semantic objects before executing it using "query_data" tool
-or creating a new SQL transformation out of it.
-issues.
+or creating a new SQL transformation out of it, especially when investigating data quality issues.
 - When you want to verify that a query uses the intended semantic objects.
 - When you need to surface semantic business-rule violations or follow-up checks.
 

@@ -329,6 +329,8 @@ def _compare_expected_and_detected_objects(
     expected_semantic_objects: Sequence[SemanticObjectTypeSelection],
     used_object_groups: Sequence[semantic_service.SemanticServiceDataTypeGroup],
 ) -> tuple[list[SemanticObjectRef], list[SemanticObjectRef], list[SemanticObjectTypeContext]]:
+    if not expected_semantic_objects:
+        return [], [], []
     expected_ids_by_type = {
         selection.object_type: set(selection.ids) for selection in expected_semantic_objects if selection.ids
     }
@@ -450,7 +452,7 @@ async def _load_expected_object_groups(
     results = await process_concurrently(
         expected_requests,
         lambda item: semantic_service.get_object_by_id(client, item[0], item[1]),
-        max_concurrency=len(expected_requests),
+        max_concurrency=min(len(expected_requests), 10),
     )
     objects = unwrap_results(results, 'Failed to fetch expected semantic objects.')
 
@@ -715,7 +717,7 @@ async def get_semantic_context(
         lambda selection: semantic_service.load_semantic_context_for_semantic_type(
             client, selection.object_type, semantic_model_ids=semantic_model_ids or None, ids=selection.ids
         ),
-        max_concurrency=len(semantic_objects),
+        max_concurrency=min(len(semantic_objects), 10),
     )
     groups = unwrap_results(results, 'Failed to fetch semantic context.')
 
@@ -774,7 +776,7 @@ async def get_semantic_schema(
     results = await process_concurrently(
         semantic_types,
         lambda semantic_type: client.metastore_client.get_schema(semantic_type.value),
-        max_concurrency=len(semantic_types),
+        max_concurrency=min(len(semantic_types), 10),
     )
     schemas = unwrap_results(results, 'Failed to fetch one or more semantic schemas.')
 
@@ -843,8 +845,7 @@ async def validate_semantic_query(
     WHEN TO USE:
     - Before generating or approving a query that should follow a semantic model.
     - When you want to validate a SQL query against the semantic objects before executing it using "query_data" tool
-    or creating a new SQL transformation out of it.
-    issues.
+    or creating a new SQL transformation out of it, especially when investigating data quality issues.
     - When you want to verify that a query uses the intended semantic objects.
     - When you need to surface semantic business-rule violations or follow-up checks.
 
@@ -871,7 +872,7 @@ async def validate_semantic_query(
     model_results = await process_concurrently(
         cleaned_model_ids,
         lambda model_id: semantic_service.get_object_by_id(client, SemanticObjectType.SEMANTIC_MODEL, model_id),
-        max_concurrency=len(cleaned_model_ids),
+        max_concurrency=min(len(cleaned_model_ids), 10),
     )
     models = unwrap_results(model_results, 'Failed to fetch semantic models.')
     assert all(isinstance(m, semantic_service.SemanticModelData) for m in models)
