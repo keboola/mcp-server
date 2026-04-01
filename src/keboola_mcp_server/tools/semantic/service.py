@@ -345,7 +345,7 @@ def _get_semantic_model_id(obj: SemanticTypeData | MetastoreObject) -> str:
         if isinstance(obj, SemanticModelData):
             return obj.id
         else:
-            return obj.model_uuid
+            return obj.model_uuid or ''
     elif isinstance(obj, MetastoreObject):
         if obj.type == SemanticObjectType.SEMANTIC_MODEL.value:
             return obj.id

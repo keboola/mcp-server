@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.51.0"
+version = "1.52.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -178,7 +178,7 @@ commands = [["black", "src/", "tests/", "integtests/"]]
 description = "Sort imports using isort"
 package = "skip"
 deps = [
-    "isort ~= 7.0",
+    "isort ~= 8.0",
 ]
 commands = [["isort", "src/", "tests/", "integtests/"]]
 
@@ -190,7 +190,7 @@ deps = [
     "Flake8-pyproject ~= 1.2",
     "flake8-bugbear ~= 24.12",
     "flake8-colors ~= 0.1",
-    "flake8-isort ~= 6.1",
+    "flake8-isort ~= 7.0",
     "flake8-pytest-style ~= 2.1",
     "flake8-quotes ~= 3.4",
     "flake8-typing-imports ~= 1.16",
