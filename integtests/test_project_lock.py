@@ -9,6 +9,7 @@ import json
 import os
 import socket
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -33,6 +34,7 @@ def _make_lock(
     lock_id: str = 'test-uuid',
     minutes_ago: float = 0,
     runner_info: str = 'host/1',
+    meta_id: int | None = None,
 ) -> dict:
     """Build a raw branch-metadata dict as returned by the Storage API."""
     acquired_at = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
@@ -43,14 +45,20 @@ def _make_lock(
             'runner_info': runner_info,
         }
     )
-    return {'key': LOCK_KEY_PREFIX + lock_id, 'value': payload}
+    result = {'key': LOCK_KEY_PREFIX + lock_id, 'value': payload}
+    if meta_id is not None:
+        result['id'] = meta_id
+    return result
 
 
-def _released_entry(lock_id: str) -> dict:
-    return {
+def _released_entry(lock_id: str, meta_id: int | None = None) -> dict:
+    result = {
         'key': LOCK_KEY_PREFIX + lock_id + '.released',
         'value': datetime.now(timezone.utc).isoformat(),
     }
+    if meta_id is not None:
+        result['id'] = meta_id
+    return result
 
 
 def _make_project_lock(**kwargs) -> ProjectLock:
@@ -78,6 +86,7 @@ def test_acquire_happy_path(mocker):
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
+    mocker.patch.object(lock, 'clean_project')
 
     # _read_metadata returns only our own entry after the anti-collision sleep
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
@@ -111,6 +120,7 @@ def test_acquire_anti_collision_waits(mocker):
 
     mocker.patch.object(lock, '_post', return_value=[])
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
+    mocker.patch.object(lock, 'clean_project')
 
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
     mocker.patch.object(lock, '_read_metadata', return_value=[my_entry])
@@ -135,6 +145,7 @@ def test_acquire_win_oldest_timestamp(mocker):
 
     mocker.patch.object(lock, '_post', return_value=[])
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
+    mocker.patch.object(lock, 'clean_project')
 
     # Our entry is 5 minutes older than the other
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=5)
@@ -166,6 +177,7 @@ def test_acquire_lose_to_older(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
+    mocker.patch.object(lock, 'clean_project')
 
     other_entry = _make_lock(lock_id=other_lock_id, minutes_ago=10)
 
@@ -221,7 +233,7 @@ def test_acquire_stale_detected(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     # Build a stale entry (acquired 120 minutes ago, TTL=60)
     stale_entry = _make_lock(lock_id=stale_lock_id, minutes_ago=120)
@@ -245,7 +257,7 @@ def test_acquire_stale_detected(mocker):
     result = lock.acquire()
 
     # _clean_project must have been called
-    clean_mock.assert_called_once()
+    clean_mock.assert_not_called()
 
     # The stale lock must have been released
     released_keys = [
@@ -277,7 +289,7 @@ def test_clean_project_deletes_buckets(mocker):
     )
     delete_mock = mocker.patch.object(lock, '_delete')
 
-    lock._clean_project()
+    lock.clean_project()
 
     delete_calls = [c for c in delete_mock.call_args_list if 'buckets' in c.args[0]]
     deleted_bucket_paths = {c.args[0] for c in delete_calls}
@@ -311,12 +323,93 @@ def test_clean_project_deletes_configs(mocker):
     )
     delete_mock = mocker.patch.object(lock, '_delete')
 
-    lock._clean_project()
+    lock.clean_project()
 
     config_delete_paths = [c.args[0] for c in delete_mock.call_args_list if 'configs' in c.args[0]]
     # Each config deleted twice
     assert config_delete_paths.count('/v2/storage/components/ex-generic-v2/configs/123') == 2
     assert config_delete_paths.count('/v2/storage/components/ex-generic-v2/configs/456') == 2
+
+
+# ---------------------------------------------------------------------------
+# test_clean_project_keeps_sandboxes_config_matching_workspace_schema
+# ---------------------------------------------------------------------------
+
+
+def _get_side_effect_with_workspaces(workspaces: list[dict], components: list[dict]) -> Any:
+    """Returns a _get side_effect that routes by path suffix."""
+
+    def _get(path: str, **params: Any) -> list[dict]:
+        if path.endswith('/buckets'):
+            return []
+        if path.endswith('/workspaces'):
+            return workspaces
+        return components
+
+    return _get
+
+
+@pytest.mark.parametrize(
+    ('workspace_schema', 'workspaces', 'expected_kept_config_id'),
+    [
+        # Workspace found — matching config is kept
+        (
+            'WORKSPACE_999',
+            [
+                {'configurationId': '777', 'connection': {'schema': 'WORKSPACE_999', 'backend': 'snowflake'}},
+                {'configurationId': '888', 'connection': {'schema': 'WORKSPACE_OTHER', 'backend': 'snowflake'}},
+            ],
+            '777',
+        ),
+        # No workspace with matching schema — all sandboxes configs deleted
+        (
+            'WORKSPACE_MISSING',
+            [
+                {'configurationId': '777', 'connection': {'schema': 'WORKSPACE_999', 'backend': 'snowflake'}},
+            ],
+            None,
+        ),
+        # No workspace_schema on the lock — all configs deleted
+        (
+            None,
+            [],
+            None,
+        ),
+    ],
+)
+def test_clean_project_keeps_sandboxes_config_matching_workspace_schema(
+    mocker,
+    workspace_schema: str | None,
+    workspaces: list[dict],
+    expected_kept_config_id: str | None,
+) -> None:
+    """clean_project skips the keboola.sandboxes config whose workspace matches workspace_schema."""
+    lock = _make_project_lock(workspace_schema=workspace_schema)
+
+    sandboxes_config_id_to_keep = '777'
+    components = [
+        {
+            'id': 'keboola.sandboxes',
+            'configurations': [{'id': sandboxes_config_id_to_keep}, {'id': '888'}],
+        }
+    ]
+
+    mocker.patch.object(
+        lock,
+        '_get',
+        side_effect=_get_side_effect_with_workspaces(workspaces, components),
+    )
+    delete_mock = mocker.patch.object(lock, '_delete')
+
+    lock.clean_project()
+
+    config_delete_paths = [c.args[0] for c in delete_mock.call_args_list if 'configs' in c.args[0]]
+    kept_path = f'/v2/storage/components/keboola.sandboxes/configs/{sandboxes_config_id_to_keep}'
+
+    if expected_kept_config_id == sandboxes_config_id_to_keep:
+        assert kept_path not in config_delete_paths, 'Integration test workspace config must not be deleted'
+    else:
+        assert config_delete_paths.count(kept_path) == 2, 'Config must be deleted twice when not matching'
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +566,8 @@ def test_try_acquire_once_happy_path(mocker):
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
     mocker.patch.object(lock, '_read_metadata', return_value=[my_entry])
     sleep_mock = mocker.patch('time.sleep')
+    cleanup_mock = mocker.patch.object(lock, '_cleanup_old_locks')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     result = lock._try_acquire_once()
 
@@ -480,6 +575,8 @@ def test_try_acquire_once_happy_path(mocker):
     assert result.lock_id == my_lock_id
     assert result.metadata_key == LOCK_KEY_PREFIX + my_lock_id
     assert any(c == call(0) for c in sleep_mock.call_args_list)  # anti_collision=0
+    cleanup_mock.assert_called_once_with(my_lock_id)
+    clean_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +592,7 @@ def test_try_acquire_once_loses_to_active_runner(mocker):
 
     mocker.patch('uuid.uuid4', return_value=MagicMock(__str__=lambda _: my_lock_id))
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     other_entry = _make_lock(lock_id=other_lock_id, minutes_ago=5)  # older
     my_entry = _make_lock(lock_id=my_lock_id, minutes_ago=0)
@@ -533,7 +630,8 @@ def test_try_acquire_once_stale_then_wins(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
+    cleanup_mock = mocker.patch.object(lock, '_cleanup_old_locks')
 
     stale_entry = _make_lock(lock_id=stale_id, minutes_ago=120)
 
@@ -553,7 +651,8 @@ def test_try_acquire_once_stale_then_wins(mocker):
 
     assert isinstance(result, LockInfo)
     assert result.lock_id == my_id_2
-    clean_mock.assert_called_once()
+    clean_mock.assert_not_called()
+    cleanup_mock.assert_called_once_with(my_id_2)
 
     released_keys = [
         entry['key']
@@ -583,7 +682,7 @@ def test_try_acquire_once_stale_then_loses(mocker):
     mocker.patch('uuid.uuid4', side_effect=lambda: MagicMock(__str__=lambda _: next(uuid_iter)))
 
     post_mock = mocker.patch.object(lock, '_post', return_value=[])
-    clean_mock = mocker.patch.object(lock, '_clean_project')
+    clean_mock = mocker.patch.object(lock, 'clean_project')
 
     stale_entry = _make_lock(lock_id=stale_id, minutes_ago=120)
 
@@ -604,7 +703,7 @@ def test_try_acquire_once_stale_then_loses(mocker):
     result = lock._try_acquire_once()
 
     assert result is None
-    clean_mock.assert_called_once()
+    clean_mock.assert_not_called()
 
     released_keys = [
         entry['key']
@@ -815,17 +914,21 @@ def test_pool_release_delegates_to_lock(mocker):
 
 
 def test_project_endpoint_stores_all_fields():
-    """ProjectEndpoint stores all five fields correctly."""
+    """ProjectEndpoint stores all fields correctly."""
     ep = ProjectEndpoint(
         storage_api_url='https://connection.keboola.com',
         storage_api_token='my-token',
         workspace_schema='WORKSPACE_12345',
         project_id='99',
         project_name='My Project',
+        token_id='5',
+        token_description='My test token',
     )
     assert ep.workspace_schema == 'WORKSPACE_12345'
     assert ep.project_id == '99'
     assert ep.project_name == 'My Project'
+    assert ep.token_id == '5'
+    assert ep.token_description == 'My test token'
 
 
 # ---------------------------------------------------------------------------
@@ -921,6 +1024,8 @@ def test_pool_acquire_randomizes_start_per_pass(mocker):
 def test_verify_project_endpoint_happy_path(mocker):
     """verify_project_endpoint returns a fully populated ProjectEndpoint on success."""
     token_info = {
+        'id': 7,
+        'description': 'CI integration test token',
         'owner': {'id': 42, 'name': 'My CI Project'},
     }
     mock_resp = mocker.MagicMock()
@@ -941,6 +1046,8 @@ def test_verify_project_endpoint_happy_path(mocker):
     assert ep.project_name == 'My CI Project'
     assert ep.workspace_schema == 'WORKSPACE_99999'
     assert ep.storage_api_token == 'my-secret-token'
+    assert ep.token_id == '7'
+    assert ep.token_description == 'CI integration test token'
     mock_client.get.assert_called_once_with('https://connection.keboola.com/v2/storage/tokens/verify')
     mock_resp.raise_for_status.assert_called_once()
 
@@ -970,3 +1077,105 @@ def test_verify_project_endpoint_bad_token_raises(mocker):
             storage_api_token='bad-token',
             workspace_schema='WORKSPACE_00000',
         )
+
+
+# ===========================================================================
+# _delete_metadata_by_id / _cleanup_old_locks tests
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# test_delete_metadata_by_id
+# ---------------------------------------------------------------------------
+
+
+def test_delete_metadata_by_id(mocker):
+    """_delete_metadata_by_id calls DELETE on the correct metadata path."""
+    lock = _make_project_lock()
+    delete_mock = mocker.patch.object(lock, '_delete')
+    lock._delete_metadata_by_id('9876')
+    delete_mock.assert_called_once_with('/v2/storage/branch/default/metadata/9876')
+
+
+# ---------------------------------------------------------------------------
+# test_cleanup_old_locks
+# ---------------------------------------------------------------------------
+
+_OLD_ID = 'old-lock-id-0001'
+_CUR_ID = 'cur-lock-id-0001'
+
+
+@pytest.mark.parametrize(
+    ('scenario', 'entries', 'current_lock_id', 'expected_delete_calls'),
+    [
+        (
+            'no_released_entries',
+            lambda: [_make_lock(lock_id=_OLD_ID, meta_id=1)],
+            _CUR_ID,
+            [],
+        ),
+        (
+            'full_released_pair',
+            lambda: [
+                _make_lock(lock_id=_OLD_ID, meta_id=10),
+                _released_entry(_OLD_ID, meta_id=11),
+            ],
+            _CUR_ID,
+            ['10', '11'],
+        ),
+        (
+            'orphaned_released_only',
+            lambda: [_released_entry(_OLD_ID, meta_id=20)],
+            _CUR_ID,
+            ['20'],
+        ),
+        (
+            'skip_current_lock',
+            lambda: [
+                _make_lock(lock_id=_CUR_ID, meta_id=30),
+                _released_entry(_CUR_ID, meta_id=31),
+            ],
+            _CUR_ID,
+            [],
+        ),
+        (
+            'mixed_old_and_current',
+            lambda: [
+                _make_lock(lock_id=_OLD_ID, meta_id=40),
+                _released_entry(_OLD_ID, meta_id=41),
+                _make_lock(lock_id=_CUR_ID, meta_id=42),
+                _released_entry(_CUR_ID, meta_id=43),
+            ],
+            _CUR_ID,
+            ['40', '41'],
+        ),
+        (
+            'main_deletion_error_skips_released',
+            lambda: [
+                _make_lock(lock_id=_OLD_ID, meta_id=50),
+                _released_entry(_OLD_ID, meta_id=51),
+            ],
+            _CUR_ID,
+            'error_on_main',
+        ),
+    ],
+)
+def test_cleanup_old_locks(mocker, scenario, entries, current_lock_id, expected_delete_calls):
+    lock = _make_project_lock()
+    mocker.patch.object(lock, '_read_metadata', side_effect=entries)
+
+    if expected_delete_calls == 'error_on_main':
+        delete_mock = mocker.patch.object(lock, '_delete_metadata_by_id', side_effect=RuntimeError('fail'))
+        # Should not raise; the error is swallowed
+        lock._cleanup_old_locks(current_lock_id)
+        # Only one call attempted (the main entry); .released is skipped
+        delete_mock.assert_called_once_with('50')
+    else:
+        delete_mock = mocker.patch.object(lock, '_delete_metadata_by_id')
+        lock._cleanup_old_locks(current_lock_id)
+        if not expected_delete_calls:
+            delete_mock.assert_not_called()
+        else:
+            assert delete_mock.call_count == len(expected_delete_calls)
+            # Verify the calls were made in the correct order
+            assert delete_mock.call_args_list == [call(mid) for mid in expected_delete_calls]

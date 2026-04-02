@@ -35,6 +35,11 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
+_project_pool: ProjectPool | None = None
+_acquired_project: AcquiredProject | None = None
+_project_info: str | None = None
+_project_info_printed: bool = False
+
 POOL_STORAGE_API_URL_ENV_VAR = 'INTEGTEST_POOL_STORAGE_API_URL'
 STORAGE_API_TOKENS_ENV_VAR = 'INTEGTEST_STORAGE_TOKENS'  # space-separated pool of tokens
 WORKSPACE_SCHEMAS_ENV_VAR = 'INTEGTEST_WORKSPACE_SCHEMAS'  # space-separated, same order as tokens
@@ -320,6 +325,85 @@ def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str
         storage_client.configurations.delete(config.component_id, config.configuration_id)
 
 
+def _setup_pool(storage_api_url: str) -> tuple[ProjectPool, AcquiredProject]:
+    tokens_raw = os.getenv(STORAGE_API_TOKENS_ENV_VAR, '').strip()
+    if not tokens_raw:
+        raise RuntimeError(
+            f'{STORAGE_API_TOKENS_ENV_VAR} must be set to a non-empty space-separated list of project tokens'
+        )
+    tokens = tokens_raw.split()
+
+    schemas_raw = os.getenv(WORKSPACE_SCHEMAS_ENV_VAR, '').strip()
+    if not schemas_raw:
+        raise RuntimeError(
+            f'{WORKSPACE_SCHEMAS_ENV_VAR} must be set to a non-empty space-separated list of workspace schemas'
+        )
+    schemas = schemas_raw.split()
+
+    if len(tokens) != len(schemas):
+        raise RuntimeError(
+            f'{STORAGE_API_TOKENS_ENV_VAR} has {len(tokens)} token(s) but '
+            f'{WORKSPACE_SCHEMAS_ENV_VAR} has {len(schemas)} schema(s) — '
+            f'they must have the same number of entries'
+        )
+
+    endpoints = []
+    for t, s in zip(tokens, schemas):
+        endpoints.append(verify_project_endpoint(storage_api_url, t, s))
+
+    pool = ProjectPool(
+        endpoints=endpoints,
+        ttl_minutes=int(os.getenv('INTEGTEST_LOCK_TTL_MINUTES', str(DEFAULT_TTL_MINUTES))),
+        poll_interval_seconds=int(
+            os.getenv('INTEGTEST_LOCK_POLL_INTERVAL_SECONDS', str(DEFAULT_POLL_INTERVAL_SECONDS))
+        ),
+        max_wait_minutes=int(os.getenv('INTEGTEST_LOCK_MAX_WAIT_MINUTES', str(DEFAULT_MAX_WAIT_MINUTES))),
+    )
+    return pool, pool.acquire()
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Pytest hook called after collection is finished, before any tests run.
+
+    Eagerly acquires the project lock and prints project/token info to the terminal
+    so it appears before test progress output — avoiding the ANSI overwrite issue that
+    occurs when writing during fixture setup (which runs mid-progress-line in compact mode).
+
+    If acquisition fails (e.g. missing env vars), the hook logs a warning and returns
+    without raising; the ``project_lock`` fixture will then acquire lazily and call
+    ``pytest.fail()`` with a proper error message.
+
+    See also:
+        https://docs.pytest.org/en/stable/reference/reference.html#pytest.hookspec.pytest_collection_finish
+    """
+    global _project_pool, _acquired_project, _project_info, _project_info_printed
+    needs_lock = any('project_lock' in getattr(item, 'fixturenames', []) for item in session.items)
+    if not needs_lock:
+        return
+    load_dotenv()
+    storage_api_url = os.getenv(POOL_STORAGE_API_URL_ENV_VAR)
+    if not storage_api_url:
+        return
+    try:
+        _project_pool, _acquired_project = _setup_pool(storage_api_url)
+    except Exception as exc:
+        LOG.warning(f'[integtest] Eager project lock acquisition failed: {exc}')
+        return
+    ep = _acquired_project.endpoint
+    _project_info = ep.describe()
+    reporter = session.config.pluginmanager.get_plugin('terminalreporter')
+    if reporter is not None:
+        reporter.write_sep('-', 'integtest project')
+        reporter.write_line(_project_info)
+        _project_info_printed = True
+
+
+def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pytest.Config) -> None:
+    if _project_info is not None and not _project_info_printed:
+        terminalreporter.write_sep('-', 'integtest project')
+        terminalreporter.write_line(_project_info)
+
+
 @pytest.fixture(scope='session')
 def project_lock(env_file_loaded: bool, storage_api_url: str) -> Generator[AcquiredProject, Any, None]:
     """
@@ -333,43 +417,25 @@ def project_lock(env_file_loaded: bool, storage_api_url: str) -> Generator[Acqui
     Yields AcquiredProject(endpoint, lock_info) so callers know which project was
     selected. storage_api_token and workspace_schema fixtures read their values from
     the acquired endpoint.
+
+    The project lock is normally acquired eagerly in pytest_collection_finish before
+    tests start. This fixture falls back to acquiring it lazily if that hook did not run.
     """
-    tokens_raw = os.getenv(STORAGE_API_TOKENS_ENV_VAR, '').strip()
-    if not tokens_raw:
-        pytest.fail(f'{STORAGE_API_TOKENS_ENV_VAR} must be set to a non-empty space-separated list of project tokens')
-    tokens = tokens_raw.split()
-
-    schemas_raw = os.getenv(WORKSPACE_SCHEMAS_ENV_VAR, '').strip()
-    if not schemas_raw:
-        pytest.fail(f'{WORKSPACE_SCHEMAS_ENV_VAR} must be set to a non-empty space-separated list of workspace schemas')
-    schemas = schemas_raw.split()
-
-    if len(tokens) != len(schemas):
-        pytest.fail(
-            f'{STORAGE_API_TOKENS_ENV_VAR} has {len(tokens)} token(s) but '
-            f'{WORKSPACE_SCHEMAS_ENV_VAR} has {len(schemas)} schema(s) — '
-            f'they must have the same number of entries'
-        )
-
-    endpoints = []
-    for t, s in zip(tokens, schemas):
+    global _project_pool, _acquired_project, _project_info
+    if _acquired_project is None:
         try:
-            endpoints.append(verify_project_endpoint(storage_api_url, t, s))
-        except Exception as exc:
-            pytest.fail(f'Failed to verify Storage API token ...{t[-4:]}: {exc}')
-    pool = ProjectPool(
-        endpoints=endpoints,
-        ttl_minutes=int(os.getenv('INTEGTEST_LOCK_TTL_MINUTES', str(DEFAULT_TTL_MINUTES))),
-        poll_interval_seconds=int(
-            os.getenv('INTEGTEST_LOCK_POLL_INTERVAL_SECONDS', str(DEFAULT_POLL_INTERVAL_SECONDS))
-        ),
-        max_wait_minutes=int(os.getenv('INTEGTEST_LOCK_MAX_WAIT_MINUTES', str(DEFAULT_MAX_WAIT_MINUTES))),
-    )
-    acquired = pool.acquire()
+            _project_pool, _acquired_project = _setup_pool(storage_api_url)
+        except RuntimeError as exc:
+            pytest.fail(str(exc))
+        ep = _acquired_project.endpoint
+        _project_info = ep.describe()
     try:
-        yield acquired
+        yield _acquired_project
     finally:
-        pool.release(acquired)
+        if _project_pool is not None and _acquired_project is not None:
+            _project_pool.release(_acquired_project)
+        _acquired_project = None
+        _project_pool = None
 
 
 @pytest.fixture(scope='session')

@@ -15,7 +15,7 @@
 - Activate the virtual environment first (e.g., `source <venv>/bin/activate`)
 - Run specific tests: `tox -e py310 -- tests/test_file.py -v`
 - Run all checks: `tox`
-- **Write parameterized tests** (`@pytest.mark.parametrize`) to reduce boilerplate
+- **Write parameterized tests** (`@pytest.mark.parametrize`) to reduce boilerplate; declare parameter names as a tuple of strings, not a single comma-separated string (e.g. `('a', 'b')` not `'a, b'`)
 - **Be careful with mocking** - don't mock too much or tests will just test the mocks, not the real code
 - **Extend existing tests instead of adding new ones** - when adding new scenarios (e.g. OAuth bearer token cases), add parameters to an existing parametrized test rather than writing a separate test function; this avoids test bloat and keeps related cases together
 - **Only test what's necessary** - add test cases that cover genuinely new behavior, not duplicates of cases already covered by existing parametrize entries
@@ -43,6 +43,21 @@ uv sync --active --extra dev --extra tests
 tox
 ```
 All four tox environments (pytest, black, flake8, check-tools-docs) should exit 0.
+
+## Integration Tests
+
+See `integtests/README.md` for setup and conventions.
+
+## Versioning
+
+- **Every PR must bump `pyproject.toml` version** before merging.
+- Use semantic versioning:
+  - **Patch** (`1.x.y` → `1.x.y+1`): bug fixes, refactoring, docs, tests, chores
+  - **Minor** (`1.x.y` → `1.x+1.0`): new features, new tools, new capabilities
+  - **Major**: breaking API/protocol changes (rare)
+- After bumping, always sync the lock file: `uv lock`
+- Commit the version bump and `uv.lock` change together (can be a separate commit or bundled with
+  the main feature commit).
 
 ## Security Considerations
 - When whitelisting domains in OAuth, prefer **explicit domain lists over regex patterns**
