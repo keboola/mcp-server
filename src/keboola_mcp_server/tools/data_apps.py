@@ -14,6 +14,7 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppResponse
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact
@@ -332,7 +333,7 @@ async def modify_data_app(
 
     if configuration_id:
         # Update existing data app
-        data_app, updated_config = await modify_data_app_internal(
+        data_app, updated_config, _ = await modify_data_app_internal(
             client=client,
             workspace_manager=workspace_manager,
             name=name,
@@ -440,7 +441,7 @@ async def modify_data_app_internal(
     configuration_id: str,
     change_description: str = '',
     folder: str = '',
-) -> tuple[DataApp, JsonDict]:
+) -> tuple[DataApp, JsonDict, dict | None]:
     secrets = _get_secrets(
         workspace_id=str(await workspace_manager.get_workspace_id()),
         branch_id=str(await workspace_manager.get_branch_id()),
@@ -462,7 +463,34 @@ async def modify_data_app_internal(
             updated_config, component_id=DATA_APP_COMPONENT_ID, project_id=await client.storage_client.project_id()
         ),
     )
-    return data_app, updated_config
+
+    folder_preview: dict | None = None
+    normalized_folder = folder.strip()
+    if normalized_folder:
+        try:
+            current_metadata = await client.storage_client.configuration_metadata_get(
+                component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
+            )
+            current_folder = next(
+                (
+                    m.get('value', '')
+                    for m in current_metadata
+                    if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
+                ),
+                '',
+            )
+            if normalized_folder != current_folder:
+                folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
+        except Exception as e:
+            LOG.warning(
+                'Failed to fetch configuration metadata for folder preview '
+                '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
+                DATA_APP_COMPONENT_ID,
+                configuration_id,
+                e,
+            )
+
+    return data_app, updated_config, folder_preview
 
 
 @tool_errors()

@@ -21,6 +21,7 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
 )
 from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact, unwrap_results
@@ -605,7 +606,34 @@ async def update_flow_internal(
             schedules=schedules,
         )
 
-    return current_config, flow_configuration, mutator_preview
+    folder_preview: dict[str, Any] | None = None
+    normalized_folder = folder.strip()
+    if normalized_folder:
+        try:
+            current_metadata = await client.storage_client.configuration_metadata_get(
+                component_id=flow_type, configuration_id=configuration_id
+            )
+            current_folder = next(
+                (
+                    m.get('value', '')
+                    for m in current_metadata
+                    if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
+                ),
+                '',
+            )
+            if normalized_folder != current_folder:
+                folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
+        except Exception as e:
+            LOG.warning(
+                'Failed to fetch configuration metadata for folder preview '
+                '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
+                flow_type,
+                configuration_id,
+                e,
+            )
+
+    combined_preview: dict[str, Any] | None = {**(mutator_preview or {}), **(folder_preview or {})} or None
+    return current_config, flow_configuration, combined_preview
 
 
 @tool_errors()
