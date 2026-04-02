@@ -72,6 +72,7 @@ from keboola_mcp_server.tools.components.utils import (
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
+    folder_field_description,
     get_config_folders,
     get_sql_transformation_id_from_sql_dialect,
     list_configs_by_ids,
@@ -412,15 +413,7 @@ async def create_sql_transformation(
     ] = tuple(),
     folder: Annotated[
         str,
-        Field(
-            description=(
-                'Folder name to organize this transformation in the Keboola UI. '
-                'Existing folder names are returned in the response change_summary when no folder is provided '
-                'and there are 20 or more transformations in the project. '
-                'If there are 20 or more transformations, you should assign one of the existing folders or '
-                'create a new one that clearly reflects the transformation purpose.'
-            ),
-        ),
+        Field(description=folder_field_description('transformation', 'transformations')),
     ] = '',
 ) -> ConfigToolOutput:
     """
@@ -440,8 +433,8 @@ async def create_sql_transformation(
       fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
     - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
       and user intent.
-    - If there are 20 or more SQL transformations in the project, always assign a folder: existing folder names
-      are surfaced in the response's change_summary — use those to pick the most fitting one.
+    - If there are 20 or more SQL transformations in the project, consider organizing them with a folder: existing
+      folder names are surfaced in the response's change_summary — use one of them or create a new one.
 
     USAGE:
     - Use when you want to create a new SQL transformation.
@@ -615,15 +608,7 @@ async def update_sql_transformation(
     ] = None,
     folder: Annotated[
         str,
-        Field(
-            description=(
-                'Folder name to organize this transformation in the Keboola UI. '
-                'Existing folder names are returned in the response change_summary when no folder is provided '
-                'and there are 20 or more transformations in the project. '
-                'If there are 20 or more transformations, you should assign one of the existing folders or '
-                'create a new one that clearly reflects the transformation purpose.'
-            ),
-        ),
+        Field(description=folder_field_description('transformation', 'transformations')),
     ] = '',
 ) -> ConfigToolOutput:
     """
