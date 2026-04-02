@@ -702,7 +702,7 @@ async def test_modify_data_app_folder(
         mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', return_value=existing_data_app)
         mocker.patch(
             'keboola_mcp_server.tools.data_apps.modify_data_app_internal',
-            mocker.AsyncMock(return_value=(existing_data_app, encrypted_config)),
+            mocker.AsyncMock(return_value=(existing_data_app, encrypted_config, None)),
         )
         keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
     else:
