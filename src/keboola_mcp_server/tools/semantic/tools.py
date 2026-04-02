@@ -461,17 +461,11 @@ async def _load_expected_object_groups(
     seen_ids_by_type: dict[SemanticObjectType, set[str]] = {}
     allowed_model_ids = set(semantic_model_ids)
 
-    for (expected_type, object_id), obj in zip(expected_requests, objects, strict=True):
-        if obj.semantic_type != expected_type:
-            raise ValueError(
-                f'Expected semantic object "{object_id}" to be of type "{expected_type.value}", '
-                f'got "{obj.semantic_type.value}".'
-            )
-
+    for (_expected_type, object_id), obj in zip(expected_requests, objects, strict=True):
         object_model_id = (
             obj.id if obj.semantic_type == SemanticObjectType.SEMANTIC_MODEL else getattr(obj, 'model_uuid', None)
         )
-        if object_model_id not in allowed_model_ids:
+        if object_model_id is not None and object_model_id not in allowed_model_ids:
             raise ValueError(
                 f'Expected semantic object "{object_id}" does not belong to the provided semantic_model_ids.'
             )

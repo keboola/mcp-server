@@ -107,7 +107,7 @@ class SemanticTypeData(BaseModel):
         name = getattr(self, 'name', None)
         if isinstance(name, str) and name:
             return name
-        return self.data.meta.name or None
+        return getattr(self.data.meta, 'name', None) or None
 
 
 class SemanticModelData(SemanticTypeData):
@@ -122,7 +122,7 @@ class SemanticModelData(SemanticTypeData):
             semantic_type=SemanticObjectType.SEMANTIC_MODEL,
             id=obj.id,
             data=obj,
-            name=attributes.get('name') or obj.meta.name,
+            name=attributes.get('name') or getattr(obj.meta, 'name', None),
             description=attributes.get('description'),
             sql_dialect=attributes.get('sql_dialect'),
         )
@@ -142,7 +142,7 @@ class SemanticDatasetData(SemanticTypeData):
             semantic_type=SemanticObjectType.SEMANTIC_DATASET,
             id=obj.id,
             data=obj,
-            name=attributes.get('name') or obj.meta.name,
+            name=attributes.get('name') or getattr(obj.meta, 'name', None),
             table_id=attributes.get('tableId'),
             fqn=attributes.get('fqn'),
             description=attributes.get('description'),
@@ -164,7 +164,7 @@ class SemanticMetricData(SemanticTypeData):
             semantic_type=SemanticObjectType.SEMANTIC_METRIC,
             id=obj.id,
             data=obj,
-            name=attributes.get('name') or obj.meta.name,
+            name=attributes.get('name') or getattr(obj.meta, 'name', None),
             sql=attributes.get('sql'),
             dataset=attributes.get('dataset'),
             description=attributes.get('description'),
@@ -187,7 +187,7 @@ class SemanticRelationshipData(SemanticTypeData):
             semantic_type=SemanticObjectType.SEMANTIC_RELATIONSHIP,
             id=obj.id,
             data=obj,
-            name=attributes.get('name') or obj.meta.name,
+            name=attributes.get('name') or getattr(obj.meta, 'name', None),
             from_dataset=attributes.get('from'),
             to_dataset=attributes.get('to'),
             relationship_type=attributes.get('type'),
@@ -241,7 +241,7 @@ class SemanticConstraintData(SemanticTypeData):
             semantic_type=SemanticObjectType.SEMANTIC_CONSTRAINT,
             id=obj.id,
             data=obj,
-            name=attributes.get('name') or obj.meta.name,
+            name=attributes.get('name') or getattr(obj.meta, 'name', None),
             description=attributes.get('description'),
             constraint_type=attributes.get('constraintType'),
             severity=attributes.get('severity'),
@@ -669,9 +669,6 @@ async def load_semantic_context_for_semantic_type(
             f'Failed to fetch semantic objects for type "{object_type.value}".',
         )
         objects = [_to_semantic_service_data(object_type, obj) for obj in raw_objects]
-        if semantic_model_ids is not None:
-            model_id_set = set(semantic_model_ids)
-            objects = [obj for obj in objects if _get_semantic_model_id(obj) in model_id_set]
     else:
         objects = await _list_semantic_type_objects(client, object_type, semantic_model_ids)
 
@@ -784,7 +781,9 @@ def evaluate_constraints_from_context(
         item.table_id.strip() for item in used_dataset_objects if item.table_id and item.table_id.strip()
     }
     used_metric_names = {item.name.strip() for item in used_metric_objects if item.name and item.name.strip()}
-    matched_relationships = sorted(item.name or item.data.meta.name or item.id for item in used_relationship_objects)
+    matched_relationships = sorted(
+        item.name or getattr(item.data.meta, 'name', None) or item.id for item in used_relationship_objects
+    )
 
     sql_dialect_str = model.sql_dialect if model is not None else None
     violations: list[ConstraintValidationFinding] = []
@@ -796,12 +795,12 @@ def evaluate_constraints_from_context(
         if not _constraint_is_relevant(constraint, used_metric_names, used_dataset_ids):
             continue
 
-        constraint_name = constraint.name or constraint.data.meta.name or constraint.id
+        constraint_name = constraint.name or getattr(constraint.data.meta, 'name', None) or constraint.id
         severity = constraint.severity or 'error'
         constraint_type = constraint.constraint_type or 'unknown'
         validation_query = _pick_validation_query(constraint, sql_dialect_str)
-        constraint_metrics = [metric for metric in constraint.metrics if metric.strip()]
-        constraint_datasets = [dataset for dataset in constraint.datasets if dataset.strip()]
+        constraint_metrics = [metric.strip() for metric in constraint.metrics if metric.strip()]
+        constraint_datasets = [dataset.strip() for dataset in constraint.datasets if dataset.strip()]
         pre_query_check = constraint.pre_query_check
 
         if constraint_type == 'composition':
@@ -982,7 +981,9 @@ def _evaluate_used_objects_for_contexts(
         SemanticObjectType.SEMANTIC_RELATIONSHIP,
         SemanticServiceDataTypeGroup(object_type=SemanticObjectType.SEMANTIC_RELATIONSHIP),
     )
-    matched_relationships = sorted(item.name or item.data.meta.name or item.id for item in used_relationships.objects)
+    matched_relationships = sorted(
+        item.name or getattr(item.data.meta, 'name', None) or item.id for item in used_relationships.objects
+    )
 
     return SemanticValidationServiceOutput(
         valid=not has_error,
@@ -1035,6 +1036,10 @@ async def get_object_by_id(
     object_type: SemanticObjectType,
     object_id: str,
 ) -> SemanticServiceData:
-    return _to_semantic_service_data(
-        object_type, await client.metastore_client.get_object(object_type.value, object_id)
-    )
+    raw_obj = await client.metastore_client.get_object(object_type.value, object_id)
+    if raw_obj.type != object_type.value:
+        raise ValueError(
+            f'Expected object "{object_id}" to be of type "{object_type.value}", '
+            f'got "{raw_obj.type}" from the Metastore API.'
+        )
+    return _to_semantic_service_data(object_type, raw_obj)
