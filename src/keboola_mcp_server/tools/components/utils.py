@@ -486,7 +486,7 @@ def build_folder_hint(total: int, existing_folders: list[str], config_label: str
     hint = f'Note: This project already has {total} {config_label}. Consider organizing them with folders. '
     if existing_folders:
         hint += (
-            f'Existing folders: {existing_folders}. '
+            f'Existing folders: {", ".join(existing_folders)}. '
             f'Call {update_tool} with a folder= parameter to assign this to one.'
         )
     else:

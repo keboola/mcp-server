@@ -205,7 +205,14 @@ async def create_flow(
     folder = folder.strip()
     change_summary = None
     if folder:
-        await set_transformation_folder_metadata(client, flow_type, api_config.id, folder)
+        try:
+            await set_transformation_folder_metadata(client, flow_type, api_config.id, folder)
+        except Exception:
+            LOG.warning(
+                'Unable to set folder metadata for component "%s", configuration "%s".',
+                flow_type,
+                api_config.id,
+            )
     else:
         try:
             total, existing_folders = await get_config_folders(client, flow_type)
@@ -291,7 +298,14 @@ async def create_conditional_flow(
     folder = folder.strip()
     change_summary = None
     if folder:
-        await set_transformation_folder_metadata(client, flow_type, api_config.id, folder)
+        try:
+            await set_transformation_folder_metadata(client, flow_type, api_config.id, folder)
+        except Exception:
+            LOG.warning(
+                'Unable to set folder metadata for component "%s", configuration "%s".',
+                flow_type,
+                api_config.id,
+            )
     else:
         try:
             total, existing_folders = await get_config_folders(client, flow_type)

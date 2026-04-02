@@ -1491,7 +1491,7 @@ async def test_set_transformation_folder_metadata(
     expected_saved: str | None,
     expect_call: bool,
 ) -> None:
-    """Test set_transformation_folder_metadata: strips whitespace, skips empty, swallows errors."""
+    """Test set_transformation_folder_metadata: strips whitespace, skips empty, propagates errors."""
     client = _make_client([], [])
     await set_transformation_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1', folder)
     if expect_call:

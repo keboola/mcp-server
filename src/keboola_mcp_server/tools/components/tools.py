@@ -482,7 +482,14 @@ async def create_sql_transformation(
 
     folder = folder.strip()
     if folder:
-        await set_transformation_folder_metadata(client, component_id, configuration_id, folder)
+        try:
+            await set_transformation_folder_metadata(client, component_id, configuration_id, folder)
+        except Exception:
+            LOG.warning(
+                'Unable to set folder metadata for component "%s", configuration "%s".',
+                component_id,
+                configuration_id,
+            )
         change_summary = None
     else:
         try:
@@ -817,7 +824,6 @@ async def update_sql_transformation(
         description=description,
         parameter_updates=parameter_updates,
         storage=storage,
-        folder=folder,
     )
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=sql_transformation_id,
