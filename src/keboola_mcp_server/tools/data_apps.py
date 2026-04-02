@@ -415,7 +415,14 @@ async def _apply_folder(client: KeboolaClient, component_id: str, configuration_
     """
     normalized = folder.strip()
     if normalized:
-        await set_transformation_folder_metadata(client, component_id, configuration_id, normalized)
+        try:
+            await set_transformation_folder_metadata(client, component_id, configuration_id, normalized)
+        except Exception:
+            LOG.warning(
+                'Unable to set folder metadata for component "%s", configuration "%s".',
+                component_id,
+                configuration_id,
+            )
         return None
     try:
         total, existing_folders = await get_config_folders(client, component_id)
