@@ -18,6 +18,7 @@ venv
 
 # Environment variables
 .env
+.env.local
 
 # Test related files
 .coverage
