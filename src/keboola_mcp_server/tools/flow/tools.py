@@ -26,6 +26,7 @@ from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact, unwrap_results
 from keboola_mcp_server.tools.components.utils import (
     build_folder_hint,
+    folder_field_description,
     get_config_folders,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
@@ -156,15 +157,7 @@ async def create_flow(
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions.')],
     folder: Annotated[
         str,
-        Field(
-            description=(
-                'Folder name to organize this flow in the Keboola UI. '
-                'Existing folder names are returned in the response change_summary when no folder is provided '
-                'and there are 20 or more flows in the project. '
-                'If there are 20 or more flows, you should assign one of the existing folders or '
-                'create a new one that clearly reflects the flow purpose.'
-            )
-        ),
+        Field(description=folder_field_description('flow', 'flows')),
     ] = '',
 ) -> FlowToolOutput:
     """
@@ -248,22 +241,14 @@ async def create_conditional_flow(
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions for conditional flows.')],
     folder: Annotated[
         str,
-        Field(
-            description=(
-                'Folder name to organize this flow in the Keboola UI. '
-                'Existing folder names are returned in the response change_summary when no folder is provided '
-                'and there are 20 or more flows in the project. '
-                'If there are 20 or more flows, you should assign one of the existing folders or '
-                'create a new one that clearly reflects the flow purpose.'
-            )
-        ),
+        Field(description=folder_field_description('flow', 'flows')),
     ] = '',
 ) -> FlowToolOutput:
     """
     Creates a new conditional flow configuration using `keboola.flow`.
 
     PRE-REQUISITES:
-    - Always use `get_flow_schema` with flow_type=”keboola.flow” and review `get_flow_examples` if unknown
+    - Always use `get_flow_schema` with flow_type="keboola.flow" and review `get_flow_examples` if unknown
     - Gather component configuration IDs for all tasks you include
 
     RULES:
@@ -275,7 +260,7 @@ async def create_conditional_flow(
 
     WHEN TO USE:
     - Flows needing branching, conditions, retries, or notifications
-    - Default choice when user simply says “create a flow,” unless they explicitly want legacy orchestrator behavior
+    - Default choice when user simply says "create a flow," unless they explicitly want legacy orchestrator behavior
     """
     flow_type = CONDITIONAL_FLOW_COMPONENT_ID
     flow_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
@@ -312,7 +297,7 @@ async def create_conditional_flow(
             change_summary = build_folder_hint(total, existing_folders, 'conditional flows', 'modify_flow')
         except Exception:
             LOG.warning(
-                'Unable to fetch flow folders for component “%s” when creating flow “%s”.',
+                'Unable to fetch flow folders for component "%s" when creating flow "%s".',
                 flow_type,
                 api_config.id,
             )
@@ -329,7 +314,7 @@ async def create_conditional_flow(
         change_summary=change_summary,
     )
 
-    LOG.info(f'Created conditional flow “{name}” with configuration ID “{api_config.id}” (type: {flow_type})')
+    LOG.info(f'Created conditional flow "{name}" with configuration ID "{api_config.id}" (type: {flow_type})')
     return tool_response
 
 
@@ -363,15 +348,7 @@ async def update_flow(
     ] = None,
     folder: Annotated[
         str,
-        Field(
-            description=(
-                'Folder name to organize this flow in the Keboola UI. '
-                'Existing folder names are returned in the response change_summary when no folder is provided '
-                'and there are 20 or more flows in the project. '
-                'If there are 20 or more flows, you should assign one of the existing folders or '
-                'create a new one that clearly reflects the flow purpose.'
-            )
-        ),
+        Field(description=folder_field_description('flow', 'flows')),
     ] = '',
 ) -> FlowToolOutput:
     """
@@ -457,15 +434,7 @@ async def modify_flow(
     ] = None,
     folder: Annotated[
         str,
-        Field(
-            description=(
-                'Folder name to organize this flow in the Keboola UI. '
-                'Existing folder names are returned in the response change_summary when no folder is provided '
-                'and there are 20 or more flows in the project. '
-                'If there are 20 or more flows, you should assign one of the existing folders or '
-                'create a new one that clearly reflects the flow purpose.'
-            )
-        ),
+        Field(description=folder_field_description('flow', 'flows')),
     ] = '',
 ) -> FlowToolOutput:
     """
@@ -558,7 +527,8 @@ async def modify_flow(
     else:
         try:
             total, existing_folders = await get_config_folders(client, flow_type)
-            folder_hint = build_folder_hint(total, existing_folders, f'{flow_type} flows', 'modify_flow')
+            config_label = 'legacy flows' if flow_type == ORCHESTRATOR_COMPONENT_ID else 'conditional flows'
+            folder_hint = build_folder_hint(total, existing_folders, config_label, 'modify_flow')
         except Exception:
             LOG.warning(
                 'Unable to fetch flow folders for component "%s" when updating flow "%s".',
@@ -607,6 +577,7 @@ async def update_flow_internal(
     description: str = '',
     schedules: Sequence[ScheduleRequest] | None = tuple(),
     is_disabled: bool | None = None,
+    folder: str = '',
 ) -> tuple[JsonDict, JsonDict, dict[str, Any] | None]:
     current_config = await client.storage_client.configuration_detail(
         component_id=flow_type, configuration_id=configuration_id

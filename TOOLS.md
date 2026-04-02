@@ -260,8 +260,8 @@ CONSIDERATIONS:
   fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
 - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
   and user intent.
-- If there are 20 or more SQL transformations in the project, always assign a folder: existing folder names
-  are surfaced in the response's change_summary — use those to pick the most fitting one.
+- If there are 20 or more SQL transformations in the project, consider organizing them with a folder: existing
+  folder names are surfaced in the response's change_summary — use one of them or create a new one.
 
 USAGE:
 - Use when you want to create a new SQL transformation.
@@ -1875,7 +1875,7 @@ Answers a question using the Keboola documentation as a source.
 Creates a new conditional flow configuration using `keboola.flow`.
 
 PRE-REQUISITES:
-- Always use `get_flow_schema` with flow_type=”keboola.flow” and review `get_flow_examples` if unknown
+- Always use `get_flow_schema` with flow_type="keboola.flow" and review `get_flow_examples` if unknown
 - Gather component configuration IDs for all tasks you include
 
 RULES:
@@ -1887,7 +1887,7 @@ RULES:
 
 WHEN TO USE:
 - Flows needing branching, conditions, retries, or notifications
-- Default choice when user simply says “create a flow,” unless they explicitly want legacy orchestrator behavior
+- Default choice when user simply says "create a flow," unless they explicitly want legacy orchestrator behavior
 
 
 **Input JSON Schema**:

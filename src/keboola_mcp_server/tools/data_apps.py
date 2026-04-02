@@ -19,6 +19,7 @@ from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact
 from keboola_mcp_server.tools.components.utils import (
     build_folder_hint,
+    folder_field_description,
     get_config_folders,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
@@ -284,15 +285,7 @@ async def modify_data_app(
     ] = '',
     folder: Annotated[
         str,
-        Field(
-            description=(
-                'Folder name to organize this data app in the Keboola UI. '
-                'Existing folder names are returned in the response change_summary when no folder is provided '
-                'and there are 20 or more data apps in the project. '
-                'If there are 20 or more data apps, you should assign one of the existing folders or '
-                'create a new one that clearly reflects the data app purpose.'
-            )
-        ),
+        Field(description=folder_field_description('data app', 'data apps')),
     ] = '',
 ) -> ModifiedDataAppOutput:
     """Creates or updates a Streamlit data app.
@@ -446,6 +439,7 @@ async def modify_data_app_internal(
     authentication_type: AuthenticationType,
     configuration_id: str,
     change_description: str = '',
+    folder: str = '',
 ) -> tuple[DataApp, JsonDict]:
     secrets = _get_secrets(
         workspace_id=str(await workspace_manager.get_workspace_id()),

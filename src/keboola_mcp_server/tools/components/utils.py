@@ -457,6 +457,21 @@ async def set_transformation_folder_metadata(
     )
 
 
+def folder_field_description(singular: str, plural: str) -> str:
+    """Returns the standard Field description for a `folder` parameter.
+
+    :param singular: Singular resource name, e.g. "transformation", "flow", "data app"
+    :param plural: Plural resource name, e.g. "transformations", "flows", "data apps"
+    """
+    return (
+        f'Folder name to organize this {singular} in the Keboola UI. '
+        f'Existing folder names are returned in the response change_summary when no folder is provided '
+        f'and there are 20 or more {plural} in the project. '
+        f'If there are 20 or more {plural}, you should assign one of the existing folders or '
+        f'create a new one that clearly reflects the {singular} purpose.'
+    )
+
+
 def build_folder_hint(total: int, existing_folders: list[str], config_label: str, update_tool: str) -> str | None:
     """Returns a folder-organization hint for the LLM when a project has ≥20 configurations of the given type.
 
