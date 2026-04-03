@@ -30,7 +30,7 @@ async def starlette_app() -> Starlette:
 
     app = Starlette(exception_handlers=cli._exception_handlers)
     app.state.server_state = server_state
-    app.state.mcp_tools_input_schema = {tool.name: tool.parameters for tool in (await mcp_server.get_tools()).values()}
+    app.state.mcp_tools_input_schema = {tool.name: tool.parameters for tool in await mcp_server._list_tools()}
 
     app.add_route('/preview/configuration', preview_config_diff, methods=['POST'])
 
