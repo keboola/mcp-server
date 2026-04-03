@@ -95,6 +95,7 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "name": {
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
@@ -182,6 +183,7 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "name": {
       "description": "A short, descriptive name summarizing the purpose of the component configuration.",
@@ -296,6 +298,7 @@ EXAMPLES:
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "name": {
       "description": "A short, descriptive name summarizing the purpose of the SQL transformation.",
@@ -365,6 +368,7 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "component_ids": {
       "description": "IDs of the components",
@@ -404,6 +408,7 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "component_id": {
       "description": "The ID of the component to get configuration examples for.",
@@ -481,6 +486,7 @@ EXAMPLES:
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "component_types": {
       "default": [],
@@ -537,6 +543,7 @@ WHEN TO USE:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "action_name": {
       "description": "The sync action to execute (e.g., \"testConnection\", \"getTables\").",
@@ -710,6 +717,7 @@ WORKFLOW:
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "change_description": {
       "description": "A clear, human-readable summary of what changed in this update. Be specific: e.g., \"Updated API key\", \"Added customers table to input mapping\".",
@@ -937,6 +945,7 @@ WORKFLOW:
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "change_description": {
       "description": "A clear, human-readable summary of what changed in this row update. Be specific.",
@@ -1542,6 +1551,7 @@ Example 4 - Update storage mappings:
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "change_description": {
       "description": "A clear, human-readable summary of what changed in this transformation update. Be specific: e.g., \"Added JOIN with customers table\", \"Updated WHERE clause to filter active records\".",
@@ -1649,6 +1659,7 @@ because it needs to restart.
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "action": {
       "description": "The action to perform.",
@@ -1698,6 +1709,7 @@ data app logs to investigate in-app errors. The logs may be updated after openin
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "configuration_ids": {
       "default": [],
@@ -1763,6 +1775,7 @@ SQL & DATA TYPE RULES:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "name": {
       "description": "Name of the data app (max ~50 chars to fit DNS label limit).",
@@ -1831,6 +1844,7 @@ Answers a question using the Keboola documentation as a source.
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "query": {
       "description": "Natural language query to search for in the documentation.",
@@ -1876,6 +1890,7 @@ WHEN TO USE:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "name": {
       "description": "A short, descriptive name for the flow.",
@@ -1941,6 +1956,7 @@ WHEN TO USE:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "name": {
       "description": "A short, descriptive name for the flow.",
@@ -2000,6 +2016,7 @@ RULES:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "flow_type": {
       "description": "The type of the flow to retrieve examples for.",
@@ -2040,6 +2057,7 @@ RULES:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "flow_type": {
       "description": "The type of flow for which to fetch schema.",
@@ -2081,6 +2099,7 @@ OPTIONS:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "flow_ids": {
       "default": [],
@@ -2207,6 +2226,7 @@ adjusting dependencies, or enabling/disabling flow execution
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "configuration_id": {
       "description": "ID of the flow configuration.",
@@ -2320,6 +2340,7 @@ or enabling/disabling flow execution
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "configuration_id": {
       "description": "ID of the flow configuration.",
@@ -2466,6 +2487,7 @@ EXAMPLES WITH LOGS:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "job_ids": {
       "default": [],
@@ -2588,6 +2610,7 @@ Starts a new job for a given component or transformation.
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "component_id": {
       "description": "The ID of the component or transformation for which to start a job.",
@@ -2644,6 +2667,7 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "component_id": {
       "description": "The component ID to grant access to (e.g., \"keboola.ex-google-analytics-v4\").",
@@ -2684,6 +2708,7 @@ to establish the project context before using other tools.
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {},
   "type": "object"
 }
@@ -2713,6 +2738,7 @@ USAGE EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "query": {
       "description": "Natural language query to find the requested component.",
@@ -2857,6 +2883,7 @@ scopes=["storage"]
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "patterns": {
       "description": "One or more search patterns to match against item ID, name, display name, description, or configuration JSON objects. Case-insensitive by default. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"my_bucket\"]. Do not use empty strings or empty lists.",
@@ -2994,6 +3021,7 @@ DATA VALIDATION:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "sql_query": {
       "description": "SQL SELECT query to run.",
@@ -3039,6 +3067,7 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "bucket_ids": {
       "default": [],
@@ -3102,6 +3131,7 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "bucket_ids": {
       "default": [],
@@ -3178,6 +3208,7 @@ Usage examples (payload uses a list of DescriptionUpdate objects):
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "updates": {
       "description": "List of DescriptionUpdate objects with storage item_id and new description. Examples: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",

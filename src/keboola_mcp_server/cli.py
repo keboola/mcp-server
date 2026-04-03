@@ -212,9 +212,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             custom_routes.add_to_starlette(app)
 
             assert isinstance(mcp_server, FastMCP)
-            app.state.mcp_tools_input_schema = {
-                tool.name: tool.parameters for tool in (await mcp_server.get_tools()).values()
-            }
+            app.state.mcp_tools_input_schema = {tool.name: tool.parameters for tool in await mcp_server._list_tools()}
 
             config = uvicorn.Config(
                 app,
