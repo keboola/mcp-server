@@ -30,6 +30,23 @@ KAI_PORT=3001
 # and can make the machine unresponsive. Single-threaded is slower but safe.
 PARALLEL_WORKERS=1
 
+# ─── SINGLE-INSTANCE GUARD ───────────────────────────────────────────────────
+# Prevents two KaiBench runs from overlapping and saturating the machine.
+# Call this before every `kaibench run` invocation.
+assert_kaibench_not_running() {
+    local pid
+    pid="$(pgrep -f "kaibench run" | head -1 || true)"
+    if [ -n "$pid" ]; then
+        echo "ERROR: KaiBench is already running (PID $pid)."
+        echo "       Wait for it to finish, or kill it first:"
+        echo "         kill $pid"
+        local log
+        log="$(ls -t /tmp/kaibench-run*.log 2>/dev/null | head -1 || true)"
+        [ -n "$log" ] && echo "       Live log: tail -f $log"
+        exit 1
+    fi
+}
+
 # ─── CHANGED-TOOL DETECTION ──────────────────────────────────────────────────
 # Maps changed source files → MCP tools → relevant KaiBench phases.
 # Run with --diff to print only the phases relevant to this branch's changes.
@@ -48,8 +65,7 @@ detect_relevant_phases() {
             src/keboola_mcp_server/clients/jobs_queue.py)
                 phase_set["MCP-01b"]=1   # TEST-15,16 → get_jobs
                 phase_set["MCP-06"]=1    # TEST-38    → get_jobs
-                # NOTE: run_job itself has NO KaiBench test yet — see ADD-NEW-TEST below
-                echo "# ⚠  run_job changed but has no dedicated KaiBench test (see ADD-NEW-TEST section)"
+                phase_set["MCP-07"]=1    # TEST-39    → run_job with configuration_row_ids
                 ;;
             # get_buckets
             src/keboola_mcp_server/tools/storage_buckets.py|\
@@ -124,6 +140,14 @@ if [[ "${1:-}" == "--diff" ]]; then
     echo "Changed MCP files vs main:"
     git diff "main..HEAD" --name-only 2>/dev/null | grep "src/keboola_mcp_server" || echo "  (none)"
     echo ""
+    # Single-instance check: warn if kaibench is already running
+    if pgrep -f "kaibench run" > /dev/null 2>&1; then
+        echo "⚠  KaiBench is already running (PID $(pgrep -f 'kaibench run' | head -1))"
+        LIVE_LOG="$(ls -t /tmp/kaibench-run*.log 2>/dev/null | head -1 || true)"
+        [ -n "$LIVE_LOG" ] && echo "   Live log: tail -f $LIVE_LOG"
+        echo "   Kill it first: kill \$(pgrep -f 'kaibench run')"
+        echo ""
+    fi
     echo "Suggested KaiBench commands (activate KaiBench venv first):"
     detect_relevant_phases "main"
     echo ""
@@ -239,6 +263,15 @@ export KAIBENCH_EVAL_PARALLEL_WORKERS=${PARALLEL_WORKERS}   # keep at 1 — prev
 
 EOF
 
+echo "# ⚠  Always check for a running instance first (prevents CPU overload):"
+cat <<'GUARD'
+if pgrep -f "kaibench run" > /dev/null; then
+    echo "KaiBench already running — wait or: kill $(pgrep -f 'kaibench run')"
+    ls -t /tmp/kaibench-run*.log 2>/dev/null | head -1 | xargs -I{} echo "Live log: tail -f {}"
+    exit 1
+fi
+GUARD
+echo ""
 echo "# Run only the phases relevant to THIS branch's changes:"
 detect_relevant_phases "main"
 echo ""

@@ -59,6 +59,16 @@ See `integtests/README.md` for setup and conventions.
 - Commit the version bump and `uv.lock` change together (can be a separate commit or bundled with
   the main feature commit).
 
+## KaiBench Testing
+
+Use the `kaibench-test` skill when the user asks to run KaiBench, test the MCP branch, or validate MCP tools. The skill covers:
+- Detecting which KaiBench phases are relevant to the current branch's changes
+- Starting the 3-layer local stack (MCP server + Kai backend + KaiBench)
+- Running with `KAIBENCH_EVAL_PARALLEL_WORKERS=1` to avoid CPU overload
+- Preventing duplicate runs (single-instance guard)
+
+Quick check: `bash scripts/test-with-kaibench.sh --diff`
+
 ## Security Considerations
 - When whitelisting domains in OAuth, prefer **explicit domain lists over regex patterns**
 - Regex could unintentionally allow future domains that weren't reviewed (principle of least privilege)
