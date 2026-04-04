@@ -266,7 +266,7 @@ The existing `create_data_app` tool generates Streamlit apps for the Keboola pla
 | Build tool | Vite | `vite` | `^6.0.0` |
 | UI framework | React | `react` | `^18.3.1` |
 | Language | TypeScript | `typescript` | `^5.6.3` |
-| Analytics engine | DuckDB-WASM | `@duckdb/duckdb-wasm` | `^1.29.0` |
+| Analytics engine | DuckDB-WASM | `@duckdb/duckdb-wasm` | `>=1.30.0` |
 | Arrow IPC | Apache Arrow | `apache-arrow` | `^17.0.0` |
 | Charting | Apache ECharts | `echarts` + `echarts-for-react` | `^5.6.0` / `^3.0.2` |
 | Container | Docker + nginx | `nginx:stable-alpine` | latest |
@@ -385,7 +385,7 @@ CORS is a non-issue: the app and CSVs are served from the same origin.
 
 ### Security note
 
-DuckDB npm packages versions 1.3.3 and 1.29.2 were briefly compromised in September 2025 (malware). Safe versions were immediately re-published. Pin to `@duckdb/duckdb-wasm@^1.29.0` (resolves to 1.29.0+, skipping 1.29.2) or `>=1.30.0`.
+DuckDB npm packages versions 1.3.3 and 1.29.2 were briefly compromised in September 2025 (malware). Safe versions were immediately re-published. Use `@duckdb/duckdb-wasm@>=1.30.0` — `^1.29.0` is **not** safe because it resolves to `>=1.29.0 <2.0.0` in npm semver, which includes the compromised 1.29.2.
 
 ---
 
@@ -425,13 +425,27 @@ class LocalBackend:
         con = duckdb.connect()
         tables_dir = self.data_dir / "tables"
         for csv_file in tables_dir.glob("*.csv"):
+            # Sanitize table name: strip double-quote characters to prevent
+            # identifier injection, then use CREATE OR REPLACE so stale tables
+            # are always refreshed when the underlying CSV changes.
+            table_name = csv_file.stem.replace('"', '')
             con.execute(
-                f'CREATE TABLE IF NOT EXISTS "{csv_file.stem}" AS '
-                f"SELECT * FROM read_csv_auto('{csv_file}')"
+                f'CREATE OR REPLACE TABLE "{table_name}" AS '
+                "SELECT * FROM read_csv_auto(?)",
+                [str(csv_file)],
             )
-        result = con.execute(sql_query).fetchdf()
+        # Use cursor-based result formatting (no pandas dependency).
+        cursor = con.execute(sql_query)
+        columns = [col[0] for col in cursor.description]
+        rows = cursor.fetchall()
         con.close()
-        return result.to_markdown(index=False)
+        header = "| " + " | ".join(columns) + " |"
+        separator = "| " + " | ".join(["---"] * len(columns)) + " |"
+        body = [
+            "| " + " | ".join("" if v is None else str(v) for v in row) + " |"
+            for row in rows
+        ]
+        return "\n".join([header, separator, *body])
 
     def run_docker_component(
         self,
@@ -514,7 +528,7 @@ class LocalBackend:
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `@duckdb/duckdb-wasm` | `^1.29.0` | In-browser SQL engine |
+| `@duckdb/duckdb-wasm` | `>=1.30.0` | In-browser SQL engine |
 | `apache-arrow` | `^17.0.0` | DuckDB-WASM peer dependency |
 | `echarts` | `^5.6.0` | Chart rendering |
 | `echarts-for-react` | `^3.0.2` | React wrapper for ECharts |
