@@ -419,16 +419,19 @@ class LocalBackend:
     def __init__(self, data_dir: str = "./keboola_data"):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        # Create tables/ eagerly so glob() never raises OSError on Python 3.13+.
+        (self.data_dir / "tables").mkdir(parents=True, exist_ok=True)
 
     def query_local(self, sql_query: str) -> str:
         """Execute SQL against local CSV files using native DuckDB."""
         con = duckdb.connect()
         tables_dir = self.data_dir / "tables"
         for csv_file in tables_dir.glob("*.csv"):
-            # Sanitize table name: strip double-quote characters to prevent
-            # identifier injection, then use CREATE OR REPLACE so stale tables
-            # are always refreshed when the underlying CSV changes.
-            table_name = csv_file.stem.replace('"', '')
+            # Sanitize table name: substitute double-quote characters with '_'
+            # (not deletion) to prevent identifier injection while preserving
+            # name uniqueness and avoiding empty-identifier crashes.
+            # CREATE OR REPLACE ensures stale tables are refreshed on each call.
+            table_name = csv_file.stem.replace('"', '_')
             con.execute(
                 f'CREATE OR REPLACE TABLE "{table_name}" AS '
                 "SELECT * FROM read_csv_auto(?)",
@@ -436,6 +439,11 @@ class LocalBackend:
             )
         # Use cursor-based result formatting (no pandas dependency).
         cursor = con.execute(sql_query)
+        # DB-API 2.0 (PEP 249): cursor.description is None for non-SELECT
+        # statements (DDL, DML). Guard before iterating to avoid TypeError.
+        if cursor.description is None:
+            con.close()
+            return "Query executed successfully (no rows returned)."
         columns = [col[0] for col in cursor.description]
         rows = cursor.fetchall()
         con.close()
