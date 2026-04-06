@@ -6,6 +6,9 @@ on:
       - 'v*'
       - 'agent-v*'
 
+permissions:
+  contents: read
+
 env:
   SERVICE_IMAGE_NAME: "keboola/mcp-server"
 
