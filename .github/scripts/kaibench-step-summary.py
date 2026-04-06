@@ -144,9 +144,11 @@ if stream_errors or early_terminations or orphaned_questions:
             orphaned = trace.get('orphaned_tool_calls', [])
             print(f'- Q{qid}: {len(orphaned)} orphaned call(s)')
         print()
-    if early_terminations and not stream_errors and not orphaned_questions:
-        print(f':warning: **{len(early_terminations)} question(s) had early stream termination**')
-        print()
+    if early_terminations:
+        for r in early_terminations:
+            if r not in stream_errors and r not in orphaned_questions:
+                print(f':warning: **1 question had early stream termination** (Q{r.get("question_id","?")})')
+                print()
 
 # Regression comparison
 if prev_by_qid or prev_summary is not None:

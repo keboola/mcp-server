@@ -37,6 +37,7 @@ jobs:
       total: ${{ steps.parse.outputs.total }}
       pass_rate: ${{ steps.parse.outputs.pass_rate }}
       duration: ${{ steps.parse.outputs.duration }}
+      regressions: ${{ steps.parse.outputs.regressions }}
 
     services:
       postgres:
@@ -104,8 +105,9 @@ jobs:
             --transport streamable-http --host 0.0.0.0 --port 8000
           echo "Waiting for MCP server..."
           for i in $(seq 1 30); do
-            if curl -so /dev/null http://localhost:8000/mcp 2>&1; then
-              echo "MCP server is ready"
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/mcp 2>/dev/null || true)
+            if [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" != "000" ]; then
+              echo "MCP server is ready (HTTP $HTTP_CODE)"
               break
             fi
             if [ $i -eq 30 ]; then
@@ -182,13 +184,31 @@ jobs:
           KAIBENCH_ORGANIZATION_ID: '58'
           KAIBENCH_EVAL_PARALLEL_WORKERS: '4'
           KAIBENCH_EVAL_KAI_BACKEND_URL: http://localhost:3000
-        run: >
-          uv run kaibench run
-          -t "Data Analysis Query"
-          -t "Configuration Reasoning"
-          -t "Storage Object Reasoning"
-          -t "MCP Tool Validation"
+        run: |
+          ARGS=""
+          QTYPES="${{ inputs.question_types }}"
+          if [ -n "$QTYPES" ]; then
+            IFS=',' read -ra TYPES <<< "$QTYPES"
+            for t in "${TYPES[@]}"; do
+              trimmed=$(echo "$t" | xargs)
+              ARGS="$ARGS -t \"$trimmed\""
+            done
+          else
+            ARGS='-t "Data Analysis Query" -t "Configuration Reasoning" -t "Storage Object Reasoning" -t "MCP Tool Validation"'
+          fi
+          if [ "${{ inputs.regression_only }}" = "true" ]; then
+            ARGS="$ARGS --regression-only"
+          fi
+          eval uv run kaibench run $ARGS
         continue-on-error: true
+
+      - name: Download previous run artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: kaibench-results-*
+          path: kaibench/prev-results/
+          merge-multiple: true
 
       - name: Verbose results
         if: always()
