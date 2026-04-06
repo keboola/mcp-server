@@ -87,9 +87,11 @@ jobs:
 
       - name: Resolve kai-assistant image tag
         id: resolve-kai
+        env:
+          KAI_IMAGE_TAG_INPUT: ${{ inputs.kai_assistant_image_tag }}
         run: |
-          if [ -n "${{ inputs.kai_assistant_image_tag }}" ]; then
-            echo "tag=${{ inputs.kai_assistant_image_tag }}" >> $GITHUB_OUTPUT
+          if [ -n "$KAI_IMAGE_TAG_INPUT" ]; then
+            echo "tag=$KAI_IMAGE_TAG_INPUT" >> $GITHUB_OUTPUT
           else
             # Use latest production image
             echo "tag=latest" >> $GITHUB_OUTPUT
@@ -184,31 +186,42 @@ jobs:
           KAIBENCH_ORGANIZATION_ID: '58'
           KAIBENCH_EVAL_PARALLEL_WORKERS: '4'
           KAIBENCH_EVAL_KAI_BACKEND_URL: http://localhost:3000
+          QUESTION_TYPES: ${{ inputs.question_types }}
         run: |
-          ARGS=""
-          QTYPES="${{ inputs.question_types }}"
-          if [ -n "$QTYPES" ]; then
-            IFS=',' read -ra TYPES <<< "$QTYPES"
+          CMD_ARGS=()
+          if [ -n "$QUESTION_TYPES" ]; then
+            IFS=',' read -ra TYPES <<< "$QUESTION_TYPES"
             for t in "${TYPES[@]}"; do
               trimmed=$(echo "$t" | xargs)
-              ARGS="$ARGS -t \"$trimmed\""
+              CMD_ARGS+=(-t "$trimmed")
             done
           else
-            ARGS='-t "Data Analysis Query" -t "Configuration Reasoning" -t "Storage Object Reasoning" -t "MCP Tool Validation"'
+            CMD_ARGS=(-t "Data Analysis Query" -t "Configuration Reasoning" -t "Storage Object Reasoning" -t "MCP Tool Validation")
           fi
           if [ "${{ inputs.regression_only }}" = "true" ]; then
-            ARGS="$ARGS --regression-only"
+            CMD_ARGS+=(--regression-only)
           fi
-          eval uv run kaibench run $ARGS
+          uv run kaibench run "${CMD_ARGS[@]}"
         continue-on-error: true
 
+      - name: Find previous successful run
+        id: find-prev-run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PREV_RUN_ID=$(gh run list --workflow kaibench.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          echo "run_id=${PREV_RUN_ID}" >> $GITHUB_OUTPUT
+
       - name: Download previous run artifacts
+        if: steps.find-prev-run.outputs.run_id != ''
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           pattern: kaibench-results-*
           path: kaibench/prev-results/
           merge-multiple: true
+          run-id: ${{ steps.find-prev-run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verbose results
         if: always()
