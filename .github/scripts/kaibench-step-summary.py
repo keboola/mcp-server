@@ -144,42 +144,47 @@ if stream_errors or early_terminations or orphaned_questions:
             orphaned = trace.get('orphaned_tool_calls', [])
             print(f'- Q{qid}: {len(orphaned)} orphaned call(s)')
         print()
-    if early_terminations:
-        for r in early_terminations:
-            if r not in stream_errors and r not in orphaned_questions:
-                print(f':warning: **1 question had early stream termination** (Q{r.get("question_id","?")})')
-                print()
+    early_only = [r for r in early_terminations if r not in stream_errors and r not in orphaned_questions]
+    if early_only:
+        print(f':warning: **{len(early_only)} question(s) had early stream termination**')
+        for r in early_only:
+            print(f'- Q{r.get("question_id", "?")}')
+        print()
 
 # Regression comparison
 if prev_by_qid or prev_summary is not None:
-    pm = prev_summary['metrics'] if prev_summary is not None else {}
-    prev_rate = pm.get('overall_pass_rate', 0)
-    curr_rate = m['overall_pass_rate']
-    delta = curr_rate - prev_rate
-    arrow = ':arrow_up:' if delta > 0 else ':arrow_down:' if delta < 0 else ':left_right_arrow:'
     print()
     print('### Regression Comparison')
     print()
     print(f'Previous run: `{prev_runs[-1].name}`')
     print()
-    print('| Metric | Previous | Current | Delta |')
-    print('|--------|----------|---------|-------|')
-    print(f'| Overall Pass Rate | {prev_rate:.1%} | {curr_rate:.1%} | {arrow} {delta:+.1%} |')
-    prev_passed = pm.get('passed', 0)
-    curr_passed = m['passed']
-    print(f'| Passed | {prev_passed} | {curr_passed} | {curr_passed - prev_passed:+d} |')
+    if prev_summary is not None:
+        pm = prev_summary['metrics']
+        prev_rate = pm.get('overall_pass_rate', 0)
+        curr_rate = m['overall_pass_rate']
+        delta = curr_rate - prev_rate
+        arrow = ':arrow_up:' if delta > 0 else ':arrow_down:' if delta < 0 else ':left_right_arrow:'
+        print('| Metric | Previous | Current | Delta |')
+        print('|--------|----------|---------|-------|')
+        print(f'| Overall Pass Rate | {prev_rate:.1%} | {curr_rate:.1%} | {arrow} {delta:+.1%} |')
+        prev_passed = pm.get('passed', 0)
+        curr_passed = m['passed']
+        print(f'| Passed | {prev_passed} | {curr_passed} | {curr_passed - prev_passed:+d} |')
 
-    # Per-type comparison
-    prev_by_type = {t['question_type']: t for t in (prev_summary or {}).get('by_question_type', [])}
-    for t in s.get('by_question_type', []):
-        qt = t['question_type']
-        if qt in prev_by_type:
-            pt = prev_by_type[qt]
-            pr = pt.get('pass_rate', 0)
-            cr = t.get('pass_rate', 0)
-            td = cr - pr
-            ta = ':arrow_up:' if td > 0 else ':arrow_down:' if td < 0 else ':left_right_arrow:'
-            print(f'| {qt} | {pr:.1%} | {cr:.1%} | {ta} {td:+.1%} |')
+        # Per-type comparison
+        prev_by_type = {t['question_type']: t for t in prev_summary.get('by_question_type', [])}
+        for t in s.get('by_question_type', []):
+            qt = t['question_type']
+            if qt in prev_by_type:
+                pt = prev_by_type[qt]
+                pr = pt.get('pass_rate', 0)
+                cr = t.get('pass_rate', 0)
+                td = cr - pr
+                ta = ':arrow_up:' if td > 0 else ':arrow_down:' if td < 0 else ':left_right_arrow:'
+                print(f'| {qt} | {pr:.1%} | {cr:.1%} | {ta} {td:+.1%} |')
+    else:
+        print('_Previous run artifacts are incomplete (no `summary.json`) — aggregate comparison unavailable._')
+        print()
 
     # Per-question regressions and improvements
     regressions = []

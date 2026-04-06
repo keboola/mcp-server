@@ -6,6 +6,7 @@ name: KaiBench Evaluation
 
 permissions:
   contents: read
+  actions: read
 
 on:
   workflow_dispatch:
@@ -98,7 +99,9 @@ jobs:
           fi
 
       - name: Pull kai-assistant image
-        run: docker pull keboola/kai-assistant:${{ steps.resolve-kai.outputs.tag }}
+        env:
+          KAI_IMAGE_TAG: ${{ steps.resolve-kai.outputs.tag }}
+        run: docker pull keboola/kai-assistant:$KAI_IMAGE_TAG
 
       - name: Start MCP server
         run: |
