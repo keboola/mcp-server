@@ -129,7 +129,7 @@ jobs:
       - name: Start kai-assistant
         env:
           KAI_IMAGE_TAG: ${{ steps.resolve-kai.outputs.tag }}
-          KAIBENCH_API_URL: ${{ secrets.KAIBENCH_API_URL }}
+          KAIBENCH_API_URL: ${{ vars.KAIBENCH_API_URL }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.KAI_GOOGLE_VERTEX_CREDENTIALS }}
           GOOGLE_VERTEX_PROJECT: ${{ secrets.KAI_GOOGLE_VERTEX_PROJECT }}
           GOOGLE_VERTEX_LOCATION: ${{ secrets.KAI_GOOGLE_VERTEX_LOCATION }}
@@ -178,7 +178,7 @@ jobs:
           KAIBENCH_STATIC_HOST: connection.canary-orion.keboola.dev
           KAIBENCH_STATIC_PROJECT_ID: '293'
           KAIBENCH_MANAGEMENT_TOKEN: ${{ secrets.KAIBENCH_MANAGEMENT_TOKEN }}
-          KAIBENCH_API_URL: ${{ secrets.KAIBENCH_API_URL }}
+          KAIBENCH_API_URL: ${{ vars.KAIBENCH_API_URL }}
           KAIBENCH_ORGANIZATION_ID: '58'
           KAIBENCH_EVAL_PARALLEL_WORKERS: '4'
           KAIBENCH_EVAL_KAI_BACKEND_URL: http://localhost:3000
@@ -190,152 +190,26 @@ jobs:
           -t "MCP Tool Validation"
         continue-on-error: true
 
+      - name: Verbose results
+        if: always()
+        working-directory: kaibench
+        run: python3 ../.github/scripts/kaibench-verbose-results.py
+
       - name: Parse results
         id: parse
         if: always()
         working-directory: kaibench
-        run: |
-          LATEST=$(ls -td results/run_* 2>/dev/null | head -1)
-          if [ -z "$LATEST" ]; then
-            echo "status=error" >> $GITHUB_OUTPUT
-            echo "passed=0" >> $GITHUB_OUTPUT
-            echo "failed=0" >> $GITHUB_OUTPUT
-            echo "total=0" >> $GITHUB_OUTPUT
-            echo "pass_rate=0" >> $GITHUB_OUTPUT
-            echo "duration=0" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          python3 << 'PYEOF' >> $GITHUB_OUTPUT
-          import json
-          from pathlib import Path
-
-          latest = sorted(Path('results').glob('run_*'))[-1]
-          s = json.loads((latest / 'summary.json').read_text())
-          m = s['metrics']
-
-          print(f"passed={m['passed']}")
-          print(f"failed={m['failed']}")
-          print(f"total={m['total_questions']}")
-          print(f"pass_rate={m['overall_pass_rate']:.2f}")
-          print(f"duration={m['duration_seconds']:.0f}")
-          status = 'passed' if m['failed'] == 0 and m['errors'] == 0 else 'failed'
-          print(f"status={status}")
-          PYEOF
+        run: python3 ../.github/scripts/kaibench-parse-results.py >> $GITHUB_OUTPUT
 
       - name: Step summary
         if: always()
         working-directory: kaibench
-        run: |
-          LATEST=$(ls -td results/run_* 2>/dev/null | head -1)
-          [ -z "$LATEST" ] && exit 0
-          python3 << 'PYEOF' >> $GITHUB_STEP_SUMMARY
-          import json, os
-          from pathlib import Path
-          from collections import Counter
+        run: python3 ../.github/scripts/kaibench-step-summary.py >> $GITHUB_STEP_SUMMARY
 
-          latest = sorted(Path('results').glob('run_*'))[-1]
-          s = json.loads((latest / 'summary.json').read_text())
-          m = s['metrics']
-          mcp_sha = os.environ.get('GITHUB_SHA', 'N/A')[:12]
-
-          # Load per-question results
-          results = []
-          results_file = latest / 'results.jsonl'
-          if results_file.exists():
-              for line in results_file.read_text().splitlines():
-                  if line.strip():
-                      results.append(json.loads(line))
-
-          evaluated = [r for r in results if r.get('status') != 'skipped']
-
-          # Aggregate tool stats
-          all_tool_calls = []
-          for r in evaluated:
-              all_tool_calls.extend(r.get('trace', {}).get('tool_calls', []))
-          total_tools = len(all_tool_calls)
-          avg_tools = total_tools / len(evaluated) if evaluated else 0
-          avg_duration = sum(r.get('duration_ms', 0) for r in evaluated) / len(evaluated) / 1000 if evaluated else 0
-          total_tokens = sum(r.get('trace', {}).get('total_tokens', 0) or 0 for r in evaluated)
-          avg_tokens = total_tokens / len(evaluated) if evaluated else 0
-
-          # Tool call metrics
-          tool_errors = [tc for tc in all_tool_calls if tc.get('is_error')]
-          tool_success_rate = (total_tools - len(tool_errors)) / total_tools if total_tools else 0
-
-          print('## KaiBench Evaluation Results')
-          print()
-          print(f'MCP server commit: `{mcp_sha}`')
-          print()
-          print('| Metric | Value |')
-          print('|--------|-------|')
-          print(f'| Run ID | `{s["run_id"]}` |')
-          print(f'| Duration | {m["duration_seconds"]:.0f}s |')
-          print(f'| **Total** | **{m["total_questions"]}** |')
-          print(f'| Passed | {m["passed"]} |')
-          print(f'| Failed | {m["failed"]} |')
-          print(f'| Skipped | {m["skipped"]} |')
-          print(f'| Errors | {m["errors"]} |')
-          print(f'| **Pass Rate** | **{m["overall_pass_rate"]:.1%}** |')
-          print(f'| Total Tool Calls | {total_tools} |')
-          print(f'| Avg Tool Calls/Question | {avg_tools:.1f} |')
-          print(f'| Avg Duration/Question | {avg_duration:.0f}s |')
-          print(f'| Total Tokens | {total_tokens:,} |')
-          print(f'| Avg Tokens/Question | {avg_tokens:,.0f} |')
-
-          if all_tool_calls:
-              print()
-              print('### Tool Call Metrics')
-              print()
-              print('| Metric | Value |')
-              print('|--------|-------|')
-              print(f'| Tool Success Rate | {tool_success_rate:.1%} ({total_tools - len(tool_errors)}/{total_tools}) |')
-              if tool_errors:
-                  print(f'| Tool Errors | {len(tool_errors)} |')
-              print()
-              print('<details><summary>Tool usage breakdown</summary>')
-              print()
-              print('| Tool | Calls | Errors |')
-              print('|------|-------|--------|')
-              tool_freq = Counter(tc.get('tool_name', 'unknown') for tc in all_tool_calls)
-              error_by_tool = Counter(tc.get('tool_name', 'unknown') for tc in tool_errors)
-              for tool_name, count in tool_freq.most_common(20):
-                  errs = error_by_tool.get(tool_name, 0)
-                  err_str = str(errs) if errs else '-'
-                  print(f'| `{tool_name}` | {count} | {err_str} |')
-              print()
-              print('</details>')
-
-          # Per-type breakdown
-          for t in s.get('by_question_type', []):
-              print()
-              print(f'### {t["question_type"]}')
-              print(f'{t["passed_count"]}/{t["total_count"]} passed ({t["pass_rate"]:.1%})')
-
-          # Per-question table
-          if evaluated:
-              print()
-              print('### Per-Question Results')
-              print()
-              print('| Q | Type | Status | Tools | Tokens | Duration | Notes |')
-              print('|---|------|--------|-------|--------|----------|-------|')
-              def sort_key(x):
-                  qid = str(x.get('question_id', '0'))
-                  try:
-                      return (0, int(qid), '')
-                  except ValueError:
-                      return (1, 0, qid)
-              for r in sorted(evaluated, key=sort_key):
-                  qid = r.get('question_id', '?')
-                  qtype = (r.get('question_type') or '')[:12]
-                  status = r.get('status', '?')
-                  emoji = {'passed': ':white_check_mark:', 'failed': ':x:', 'error': ':warning:'}.get(status, status)
-                  tools = len(r.get('trace', {}).get('tool_calls', []))
-                  tokens = r.get('trace', {}).get('total_tokens', 0) or 0
-                  tokens_str = f'{tokens:,}' if tokens else '-'
-                  dur = f'{r.get("duration_ms", 0)/1000:.0f}s'
-                  notes = (r.get('verification', {}).get('notes') or '')[:40]
-                  print(f'| {qid} | {qtype} | {emoji} | {tools} | {tokens_str} | {dur} | {notes} |')
-          PYEOF
+      - name: Cost guardrails
+        if: always()
+        working-directory: kaibench
+        run: python3 ../.github/scripts/kaibench-cost-guardrails.py
 
       - name: Dump container logs
         if: always()
