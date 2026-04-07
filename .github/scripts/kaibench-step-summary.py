@@ -332,7 +332,7 @@ if mcp_results:
             print()
             print('| Test | Tool | Status | Trace | Description |')
             print('|------|------|--------|-------|-------------|')
-            for tid in sorted(extracted.keys(), key=lambda x: int(x.split('-')[1]) if '-' in x and x.split('-')[1].isdigit() else 0):
+            for tid in sorted(extracted.keys(), key=lambda x: (0, int(x.split('-')[1])) if '-' in x and x.split('-')[1].isdigit() else (1, x)):
                 t = extracted[tid]
                 st = t.get('status', '?')
                 st_emoji = {'PASS': ':white_check_mark:', 'FAIL': ':x:', 'WARN': ':warning:', 'SKIP': ':fast_forward:'}.get(st, st)

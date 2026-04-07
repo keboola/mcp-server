@@ -77,8 +77,11 @@ print(f'  [{bar}] {passed}/{total} passed ({m["overall_pass_rate"]:.1%})')
 legend_parts = [f'\u2588 passed={passed}']
 if partial: legend_parts.append(f'\u2593 partial={partial}')
 if failed: legend_parts.append(f'\u2591 failed={failed}')
-if errors: legend_parts.append(f'\u00b7 errors={errors}')
-if skipped: legend_parts.append(f'skipped={skipped}')
+if errors or skipped:
+    dot_parts = []
+    if errors: dot_parts.append(f'errors={errors}')
+    if skipped: dot_parts.append(f'skipped={skipped}')
+    legend_parts.append('\u00b7 ' + ', '.join(dot_parts))
 print(f'  {" | ".join(legend_parts)}')
 print(f'  Avg Score: {avg_score:.2f} | Duration: {dur:.0f}s')
 print()
@@ -315,7 +318,7 @@ for r in sorted(evaluated, key=sort_key):
             sub_skip = sum(1 for t in extracted.values() if t.get('status') == 'SKIP')
             print(f'    sub-tests: {sub_pass} pass, {sub_fail} fail, '
                   f'{sub_warn} warn, {sub_skip} skip / {len(extracted)} total')
-            for tid in sorted(extracted.keys(), key=lambda x: int(x.split('-')[1]) if '-' in x and x.split('-')[1].isdigit() else 0):
+            for tid in sorted(extracted.keys(), key=lambda x: (0, int(x.split('-')[1])) if '-' in x and x.split('-')[1].isdigit() else (1, x)):
                 t = extracted[tid]
                 st = t.get('status', '?')
                 if st != 'PASS':
