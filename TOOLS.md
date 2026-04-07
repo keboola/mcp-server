@@ -86,6 +86,12 @@ CONSIDERATIONS:
 USAGE:
 - Use when you want to create a new row configuration for a specific component configuration.
 
+WHEN NOT TO USE:
+- Do NOT use for `keboola.orchestrator` or `keboola.flow` components. Use the flows tools instead.
+- Do NOT use for `keboola.data-apps`. Use the data applications tools instead.
+- Do NOT use for `keboola.snowflake-transformation` or `keboola.google-bigquery-transformation`.
+  Use the SQL transformation tools instead.
+
 EXAMPLES:
 - user_input: `Create a new configuration row for component X with these settings`
     - set the component_id, configuration_id and configuration parameters accordingly
@@ -172,6 +178,13 @@ CONSIDERATIONS:
 
 USAGE:
 - Use when you want to create a new root configuration for a specific component.
+
+WHEN NOT TO USE:
+- Do NOT use for `keboola.orchestrator` or `keboola.flow` components. Use `create_flow` or
+  `create_conditional_flow` instead.
+- Do NOT use for `keboola.data-apps`. Use the data applications tools instead.
+- Do NOT use for `keboola.snowflake-transformation` or `keboola.google-bigquery-transformation`.
+  Use `create_sql_transformation` instead.
 
 EXAMPLES:
 - user_input: `Create a new configuration for component X with these settings`
@@ -593,6 +606,12 @@ WHEN TO USE:
 - Changing configuration name or description
 - Any combination of the above
 
+WHEN NOT TO USE:
+- Do NOT use for `keboola.orchestrator` or `keboola.flow` components. Use `update_flow` instead.
+- Do NOT use for `keboola.data-apps`. Use `update_data_app` instead.
+- Do NOT use for `keboola.snowflake-transformation` or `keboola.google-bigquery-transformation`.
+  Use `update_sql_transformation` instead.
+
 PREREQUISITES:
 - Configuration must already exist (use create_config for new configurations)
 - You must know both component_id and configuration_id
@@ -818,6 +837,12 @@ WHEN TO USE:
 - Updating storage mappings for a specific row (input/output tables or files)
 - Changing row name or description
 - Any combination of the above
+
+WHEN NOT TO USE:
+- Do NOT use for `keboola.orchestrator` or `keboola.flow` components. Use the flows tools instead.
+- Do NOT use for `keboola.data-apps`. Use the data applications tools instead.
+- Do NOT use for `keboola.snowflake-transformation` or `keboola.google-bigquery-transformation`.
+  Use the SQL transformation tools instead.
 
 PREREQUISITES:
 - The configuration row must already exist (use add_config_row for new rows)
