@@ -933,6 +933,13 @@ async def create_config(
     USAGE:
     - Use when you want to create a new root configuration for a specific component.
 
+    WHEN NOT TO USE:
+    - Do NOT use for orchestrations or flows (keboola.orchestrator, keboola.flow). Use `create_flow` or
+      `create_conditional_flow` from the flows tools instead.
+    - Do NOT use for SQL transformations (keboola.snowflake-transformation, keboola.google-bigquery-transformation).
+      Use `create_sql_transformation` instead.
+    - Do NOT use for data applications (keboola.data-apps). Use the data applications tools instead.
+
     EXAMPLES:
     - user_input: `Create a new configuration for component X with these settings`
         - set the component_id and configuration parameters accordingly
@@ -1066,6 +1073,12 @@ async def add_config_row(
 
     USAGE:
     - Use when you want to create a new row configuration for a specific component configuration.
+
+    WHEN NOT TO USE:
+    - Do NOT use for orchestrations or flows (keboola.orchestrator, keboola.flow). Use the flows tools instead.
+    - Do NOT use for SQL transformations (keboola.snowflake-transformation, keboola.google-bigquery-transformation).
+      Use the SQL transformation tools instead.
+    - Do NOT use for data applications (keboola.data-apps). Use the data applications tools instead.
 
     EXAMPLES:
     - user_input: `Create a new configuration row for component X with these settings`
@@ -1245,6 +1258,13 @@ async def update_config(
     - Updating storage mappings (input/output tables or files)
     - Changing configuration name or description
     - Any combination of the above
+
+    WHEN NOT TO USE:
+    - Do NOT use for orchestrations or flows (keboola.orchestrator, keboola.flow). Use `update_flow` or
+      `modify_flow` from the flows tools instead.
+    - Do NOT use for SQL transformations (keboola.snowflake-transformation, keboola.google-bigquery-transformation).
+      Use `update_sql_transformation` instead.
+    - Do NOT use for data applications (keboola.data-apps). Use the data applications tools instead.
 
     PREREQUISITES:
     - Configuration must already exist (use create_config for new configurations)
@@ -1482,6 +1502,13 @@ async def update_config_row(
     - Updating storage mappings for a specific row (input/output tables or files)
     - Changing row name or description
     - Any combination of the above
+
+    WHEN NOT TO USE:
+    - Do NOT use for orchestrations or flows (keboola.orchestrator, keboola.flow). Use `update_flow` or
+      `modify_flow` from the flows tools instead.
+    - Do NOT use for SQL transformations (keboola.snowflake-transformation, keboola.google-bigquery-transformation).
+      Use `update_sql_transformation` instead.
+    - Do NOT use for data applications (keboola.data-apps). Use the data applications tools instead.
 
     PREREQUISITES:
     - The configuration row must already exist (use add_config_row for new rows)
