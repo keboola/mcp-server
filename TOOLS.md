@@ -87,10 +87,9 @@ USAGE:
 - Use when you want to create a new row configuration for a specific component configuration.
 
 WHEN NOT TO USE:
-- Do NOT use for `keboola.orchestrator` or `keboola.flow` components. Use the flows tools instead.
-- Do NOT use for `keboola.data-apps`. Use the data applications tools instead.
-- Do NOT use for `keboola.snowflake-transformation` or `keboola.google-bigquery-transformation`.
-  Use the SQL transformation tools instead.
+- `keboola.orchestrator` / `keboola.flow` → use flows tools
+- `keboola.data-apps` → use data applications tools
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
 
 EXAMPLES:
 - user_input: `Create a new configuration row for component X with these settings`
@@ -180,11 +179,9 @@ USAGE:
 - Use when you want to create a new root configuration for a specific component.
 
 WHEN NOT TO USE:
-- Do NOT use for `keboola.orchestrator` or `keboola.flow` components. Use `create_flow` or
-  `create_conditional_flow` instead.
-- Do NOT use for `keboola.data-apps`. Use the data applications tools instead.
-- Do NOT use for `keboola.snowflake-transformation` or `keboola.google-bigquery-transformation`.
-  Use `create_sql_transformation` instead.
+- `keboola.orchestrator` / `keboola.flow` → use flows tools
+- `keboola.data-apps` → use data applications tools
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
 
 EXAMPLES:
 - user_input: `Create a new configuration for component X with these settings`
@@ -607,10 +604,9 @@ WHEN TO USE:
 - Any combination of the above
 
 WHEN NOT TO USE:
-- Do NOT use for `keboola.orchestrator` or `keboola.flow` components. Use `update_flow` instead.
-- Do NOT use for `keboola.data-apps`. Use `update_data_app` instead.
-- Do NOT use for `keboola.snowflake-transformation` or `keboola.google-bigquery-transformation`.
-  Use `update_sql_transformation` instead.
+- `keboola.orchestrator` / `keboola.flow` → use flows tools
+- `keboola.data-apps` → use data applications tools
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
 
 PREREQUISITES:
 - Configuration must already exist (use create_config for new configurations)
@@ -839,10 +835,9 @@ WHEN TO USE:
 - Any combination of the above
 
 WHEN NOT TO USE:
-- Do NOT use for `keboola.orchestrator` or `keboola.flow` components. Use the flows tools instead.
-- Do NOT use for `keboola.data-apps`. Use the data applications tools instead.
-- Do NOT use for `keboola.snowflake-transformation` or `keboola.google-bigquery-transformation`.
-  Use the SQL transformation tools instead.
+- `keboola.orchestrator` / `keboola.flow` → use flows tools
+- `keboola.data-apps` → use data applications tools
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
 
 PREREQUISITES:
 - The configuration row must already exist (use add_config_row for new rows)
