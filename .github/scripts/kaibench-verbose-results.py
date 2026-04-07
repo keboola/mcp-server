@@ -236,6 +236,9 @@ def sort_key(x):
     try:
         return (0, int(qid), '')
     except ValueError:
+        last = qid.split('-')[-1]
+        if last.isdigit():
+            return (0, int(last), '')
         return (1, 0, qid)
 
 for r in sorted(evaluated, key=sort_key):

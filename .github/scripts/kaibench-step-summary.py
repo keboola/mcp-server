@@ -277,6 +277,9 @@ if evaluated:
         try:
             return (0, int(qid), '')
         except ValueError:
+            last = qid.split('-')[-1]
+            if last.isdigit():
+                return (0, int(last), '')
             return (1, 0, qid)
     def _cell(s: str) -> str:
         return s.replace('|', r'\|').replace('\n', ' ').replace('\r', ' ')
@@ -284,7 +287,7 @@ if evaluated:
         qid = r.get('question_id', '?')
         qtype = (r.get('question_type') or '')[:12]
         status = r.get('status', '?')
-        emoji = {'passed': ':white_check_mark:', 'failed': ':x:', 'error': ':warning:'}.get(status, status)
+        emoji = {'passed': ':white_check_mark:', 'failed': ':x:', 'error': ':warning:', 'partial': ':large_orange_diamond:'}.get(status, status)
         tools = len(r.get('trace', {}).get('tool_calls', []))
         tokens = r.get('trace', {}).get('total_tokens', 0) or 0
         tokens_str = f'{tokens:,}' if tokens else '-'
@@ -307,9 +310,9 @@ if mcp_results:
     print('### MCP Tool Validation Detail')
     print()
     for r in sorted(mcp_results, key=lambda x: (
-        int(str(x.get('question_id', '')).split('-')[-1])
+        (0, int(str(x.get('question_id', '')).split('-')[-1]))
         if str(x.get('question_id', '')).split('-')[-1].isdigit()
-        else str(x.get('question_id', ''))
+        else (1, str(x.get('question_id', '')))
     )):
         phase = r.get('question_id', '?')
         phase_status = r.get('status', '?')
