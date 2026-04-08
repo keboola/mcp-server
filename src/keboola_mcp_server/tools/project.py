@@ -35,7 +35,7 @@ def add_project_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_project_description,
-            annotations=ToolAnnotations(destructiveHint=False),
+            annotations=ToolAnnotations(destructiveHint=True),
             tags={PROJECT_TOOLS_TAG},
         )
     )
