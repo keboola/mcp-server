@@ -6,7 +6,13 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
-from keboola_mcp_server.tools.project import ProjectInfo, _get_toolset_restrictions, get_project_info
+from keboola_mcp_server.tools.project import (
+    ProjectInfo,
+    UpdateProjectDescriptionOutput,
+    _get_toolset_restrictions,
+    get_project_info,
+    update_project_description,
+)
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -107,3 +113,41 @@ async def test_get_project_info(
         assert result.toolset_restrictions is not None
         for substring in expected_restriction_substrings:
             assert substring in result.toolset_restrictions
+
+
+@pytest.mark.asyncio
+async def test_update_project_description(
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.branch_metadata_update = mocker.AsyncMock(
+        return_value=[{'key': 'KBC.projectDescription', 'value': 'New description'}]
+    )
+
+    result = await update_project_description(mcp_context_client, description='New description')
+
+    assert isinstance(result, UpdateProjectDescriptionOutput)
+    assert result.project_description == 'New description'
+    keboola_client.storage_client.branch_metadata_update.assert_called_once_with(
+        {MetadataField.PROJECT_DESCRIPTION: 'New description'}
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_project_description_empty(
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.branch_metadata_update = mocker.AsyncMock(
+        return_value=[{'key': 'KBC.projectDescription', 'value': ''}]
+    )
+
+    result = await update_project_description(mcp_context_client, description='')
+
+    assert isinstance(result, UpdateProjectDescriptionOutput)
+    assert result.project_description == ''
+    keboola_client.storage_client.branch_metadata_update.assert_called_once_with(
+        {MetadataField.PROJECT_DESCRIPTION: ''}
+    )
