@@ -54,6 +54,16 @@ class ProjectEndpoint:
     workspace_schema: str
     project_id: str
     project_name: str
+    token_id: str = ''
+    token_description: str = ''
+
+    def describe(self) -> str:
+        """Return a human-readable summary of the project and token."""
+        return (
+            f'Authorized as "{self.token_description}" ({self.token_id}, ...{self.storage_api_token[-4:]}) '
+            f'to project "{self.project_name}" ({self.project_id}) '
+            f'at "{self.storage_api_url}" stack.'
+        )
 
 
 @dataclass(frozen=True)
@@ -81,6 +91,8 @@ def verify_project_endpoint(
         resp = client.get(f'{base_url}/v2/storage/tokens/verify')
         resp.raise_for_status()
         token_info = resp.json()
+    token_id = str(token_info['id'])
+    token_description = str(token_info['description'])
     project_id = str(token_info['owner']['id'])
     project_name = token_info['owner']['name']
     LOG.info(f'[project_lock] Verified token ...{storage_api_token[-4:]} — project "{project_name}" ({project_id})')
@@ -90,6 +102,8 @@ def verify_project_endpoint(
         workspace_schema=workspace_schema,
         project_id=project_id,
         project_name=project_name,
+        token_id=token_id,
+        token_description=token_description,
     )
 
 

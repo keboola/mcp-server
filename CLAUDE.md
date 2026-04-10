@@ -6,6 +6,7 @@
 - Commit messages must **start** with the Linear issue ID (e.g., `AI-2480: description`)
 - When working on a Linear task, **check the current branch first** (`git branch`). If not already on the correct task branch, create one before making any changes: `git checkout -b AI-XXXX-short-description`
 - When creating PRs, use the template at `.github/pull_request_template.md`
+- **Every PR must include a `pyproject.toml` version bump** — bump before merging; see [Versioning](#versioning) for the rules
 - **Never use `git push --force`** or rebase commits that have already been pushed - use merge commits instead to avoid rewriting history for others
 
 ## Testing
@@ -43,6 +44,21 @@ uv sync --active --extra dev --extra tests
 tox
 ```
 All four tox environments (pytest, black, flake8, check-tools-docs) should exit 0.
+
+## Integration Tests
+
+See `integtests/README.md` for setup and conventions.
+
+## Versioning
+
+- **Every PR must bump `pyproject.toml` version** before merging.
+- Use semantic versioning:
+  - **Patch** (`1.x.y` → `1.x.y+1`): bug fixes, refactoring, docs, tests, chores
+  - **Minor** (`1.x.y` → `1.x+1.0`): new features, new tools, new capabilities
+  - **Major**: breaking API/protocol changes (rare)
+- After bumping, always sync the lock file: `uv lock`
+- Commit the version bump and `uv.lock` change together (can be a separate commit or bundled with
+  the main feature commit).
 
 ## Security Considerations
 - When whitelisting domains in OAuth, prefer **explicit domain lists over regex patterns**
