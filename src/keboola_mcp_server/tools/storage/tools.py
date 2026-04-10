@@ -513,7 +513,7 @@ async def _combine_buckets(
         bucket = prod_bucket.model_copy(update={'links': links})
     elif dev_bucket:
         links = _links(dev_bucket.id, dev_bucket.name or dev_bucket.id)
-        bucket = dev_bucket.model_copy(update={'id': dev_bucket.prod_id, 'branch_id': None, 'links': links})
+        bucket = dev_bucket.model_copy(update={'branch_id': None, 'links': links})
     else:
         raise ValueError('No buckets specified.')
 
@@ -811,7 +811,7 @@ async def _get_table(
             'links': links,
         }
     ).with_lineage_metadata(raw_table)
-    return table.model_copy(update={'id': table.prod_id, 'branch_id': None})
+    return table.model_copy(update={'branch_id': None})
 
 
 async def _list_tables(
@@ -847,7 +847,6 @@ async def _list_tables(
                 table = TableDetail.model_validate(raw)
                 tables_by_prod_id[table.prod_id] = table.model_copy(
                     update={
-                        'id': table.prod_id,
                         'branch_id': None,
                         'links': [links_manager.get_table_detail_link(dev_bucket.id, table.name)],
                     }

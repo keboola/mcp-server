@@ -544,7 +544,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
             '1246948',
             'in.c-baz',
             BucketDetail(
-                id='in.c-baz',
+                id='in.c-1246948-baz',
                 name='c-1246948-baz',
                 display_name='1246948-baz',
                 description='The dev branch baz bucket.',
@@ -560,7 +560,7 @@ def mock_update_column_description_response() -> Mapping[str, Any]:
                         '/storage/in.c-1246948-baz',
                     ),
                 ],
-            ),
+            ).model_copy(update={'prod_id': 'in.c-baz'}),
         ),
         (None, 'in.c-not-existing', None),
     ],
@@ -659,7 +659,7 @@ async def test_get_bucket(
                     source_project='A demo project (ID: 1234)',
                 ),
                 BucketDetail(
-                    id='in.c-baz',
+                    id='in.c-1246948-baz',
                     name='c-1246948-baz',
                     display_name='1246948-baz',
                     description='The dev branch baz bucket.',
@@ -667,7 +667,7 @@ async def test_get_bucket(
                     created='2025-01-02T03:04:05+0600',
                     updated='2025-01-02T03:04:55+0600',
                     data_size_bytes=987654321,
-                ),
+                ).model_copy(update={'prod_id': 'in.c-baz'}),
             ],
         ),
     ],
@@ -831,7 +831,7 @@ async def test_get_buckets(
             '1246948',
             'in.c-foo.emails',
             TableDetail(
-                id='in.c-foo.emails',
+                id='in.c-1246948-foo.emails',
                 name='emails',
                 display_name='All user emails.',
                 primary_key=['email_id'],
@@ -863,14 +863,14 @@ async def test_get_buckets(
                         '/storage/in.c-1246948-foo/table/emails',
                     ),
                 ],
-            ),
+            ).model_copy(update={'prod_id': 'in.c-foo.emails'}),
         ),
         (None, 'in.c-1246948-foo.assets', None),
         (
             '1246948',
             'in.c-1246948-foo.emails',
             TableDetail(
-                id='in.c-foo.emails',
+                id='in.c-1246948-foo.emails',
                 name='emails',
                 display_name='All user emails.',
                 primary_key=['email_id'],
@@ -902,13 +902,13 @@ async def test_get_buckets(
                         '/storage/in.c-1246948-foo/table/emails',
                     ),
                 ],
-            ),
+            ).model_copy(update={'prod_id': 'in.c-foo.emails'}),
         ),
         (
             '1246948',
             'in.c-foo.assets',
             TableDetail(
-                id='in.c-foo.assets',
+                id='in.c-1246948-foo.assets',
                 name='assets',
                 display_name='Company assets.',
                 primary_key=['asset_id'],
@@ -933,7 +933,7 @@ async def test_get_buckets(
                     ),
                 ],
                 source_project='Source Project (ID: 1234)',
-            ),
+            ).model_copy(update={'prod_id': 'in.c-foo.assets'}),
         ),
     ],
 )
@@ -1080,7 +1080,7 @@ async def test_get_table(
                 ),
                 # in.c-foo.emails comes from in.c-1246948-foo bucket
                 TableDetail(
-                    id='in.c-foo.emails',
+                    id='in.c-1246948-foo.emails',
                     name='emails',
                     display_name='All user emails.',
                     primary_key=['email_id'],
@@ -1096,9 +1096,9 @@ async def test_get_table(
                             '/storage/in.c-1246948-foo/table/emails',
                         )
                     ],
-                ),
+                ).model_copy(update={'prod_id': 'in.c-foo.emails'}),
                 TableDetail(
-                    id='in.c-foo.assets',
+                    id='in.c-1246948-foo.assets',
                     name='assets',
                     display_name='Company assets.',
                     primary_key=['asset_id'],
@@ -1115,7 +1115,7 @@ async def test_get_table(
                             '/storage/in.c-1246948-foo/table/assets',
                         )
                     ],
-                ),
+                ).model_copy(update={'prod_id': 'in.c-foo.assets'}),
             ],
         ),
     ],
