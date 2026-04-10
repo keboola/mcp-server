@@ -91,12 +91,6 @@ class ProjectInfo(BaseModel):
     )
 
 
-class UpdateProjectDescriptionOutput(BaseModel):
-    project_description: str = Field(
-        description='The updated project description.',
-    )
-
-
 @tool_errors()
 async def update_project_description(
     ctx: Context,
@@ -106,27 +100,14 @@ async def update_project_description(
             description='The new project description text.'
         ),
     ],
-) -> UpdateProjectDescriptionOutput:
-    """Updates the description of the current Keboola project.
-
-    USAGE:
-    - Use when the user wants to set or change the project description.
-
-    EXAMPLES:
-    - user_input: `Set the project description to "Sales data pipeline project"`
-        - set the description parameter to "Sales data pipeline project"
-        - returns the updated project description.
-    - user_input: `Clear the project description`
-        - set the description parameter to ""
-        - returns the updated (empty) project description.
-    """
+) -> None:
+    """Updates the description of the current Keboola project."""
     client = KeboolaClient.from_state(ctx.session.state)
     storage = client.storage_client
 
     await storage.branch_metadata_update({MetadataField.PROJECT_DESCRIPTION: description})
 
     LOG.info('Project description updated successfully.')
-    return UpdateProjectDescriptionOutput(project_description=description)
 
 
 @tool_errors()

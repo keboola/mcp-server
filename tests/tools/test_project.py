@@ -8,7 +8,6 @@ from keboola_mcp_server.links import Link
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.tools.project import (
     ProjectInfo,
-    UpdateProjectDescriptionOutput,
     _get_toolset_restrictions,
     get_project_info,
     update_project_description,
@@ -127,8 +126,7 @@ async def test_update_project_description(
 
     result = await update_project_description(mcp_context_client, description='New description')
 
-    assert isinstance(result, UpdateProjectDescriptionOutput)
-    assert result.project_description == 'New description'
+    assert result is None
     keboola_client.storage_client.branch_metadata_update.assert_called_once_with(
         {MetadataField.PROJECT_DESCRIPTION: 'New description'}
     )
@@ -146,8 +144,7 @@ async def test_update_project_description_empty(
 
     result = await update_project_description(mcp_context_client, description='')
 
-    assert isinstance(result, UpdateProjectDescriptionOutput)
-    assert result.project_description == ''
+    assert result is None
     keboola_client.storage_client.branch_metadata_update.assert_called_once_with(
         {MetadataField.PROJECT_DESCRIPTION: ''}
     )
