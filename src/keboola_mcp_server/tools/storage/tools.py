@@ -721,28 +721,32 @@ async def get_tables(
 async def _get_table(
     table_id: str, client: KeboolaClient, workspace_manager: WorkspaceManager, links_manager: ProjectLinksManager
 ) -> TableDetail | None:
-    prod_table: JsonDict | None = await _get_table_detail(client.storage_client, table_id)
-    if prod_table:
-        branch_id = get_metadata_property(prod_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
-        if branch_id:
-            # The table should be from the prod branch; pretend that the table does not exist.
-            prod_table = None
+    first_result: JsonDict | None = await _get_table_detail(client.storage_client, table_id)
 
+    prod_table: JsonDict | None = None
     dev_table: JsonDict | None = None
-    if client.branch_id:
+
+    if first_result:
+        branch_id = get_metadata_property(first_result.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+        if branch_id:
+            if branch_id == client.branch_id:
+                # Branched storage or direct dev ID query: table belongs to our branch
+                dev_table = first_result
+            # else: table belongs to a different branch, discard
+        else:
+            prod_table = first_result
+
+    if client.branch_id and not dev_table:
         if f'c-{client.branch_id}-' in table_id:
-            # we already deal with the dev table ID
             dev_id = table_id
         else:
-            # convert the prod table ID to the dev table ID
             dev_id = table_id.replace('c-', f'c-{client.branch_id}-')
 
-        dev_table = await _get_table_detail(client.storage_client, dev_id)
-        if dev_table:
-            branch_id = get_metadata_property(dev_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
-            if branch_id != client.branch_id:
-                # The table's branch ID does not match; pretend that the table does not exist.
-                dev_table = None
+        raw = await _get_table_detail(client.storage_client, dev_id)
+        if raw:
+            branch_id = get_metadata_property(raw.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+            if branch_id == client.branch_id:
+                dev_table = raw
 
     raw_table = dev_table or prod_table
     if not raw_table:

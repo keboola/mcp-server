@@ -978,12 +978,13 @@ async def test_get_table(
     assert isinstance(result, GetTablesOutput)
 
     if branch_id:
-        keboola_client.storage_client.table_detail.assert_has_calls(
-            [
-                call(table_id),
-                call(table_id.replace('c-', f'c-{branch_id}-') if f'c-{branch_id}-' not in table_id else table_id),
-            ]
-        )
+        if f'c-{branch_id}-' in table_id:
+            # Querying with dev table ID: first call finds dev table directly, no prefixed lookup needed
+            keboola_client.storage_client.table_detail.assert_called_once_with(table_id)
+        else:
+            keboola_client.storage_client.table_detail.assert_has_calls(
+                [call(table_id), call(table_id.replace('c-', f'c-{branch_id}-'))]
+            )
         dashboard_url = f'https://connection.test.keboola.com/admin/projects/69420/branch/{branch_id}/storage'
     else:
         keboola_client.storage_client.table_detail.assert_called_once_with(table_id)
@@ -1758,3 +1759,490 @@ async def test_update_descriptions_empty_updates(mcp_context_client) -> None:
                 # no fields with None values, no indentation, no whitespace
                 text=json.dumps(expected.model_dump(exclude_none=True), ensure_ascii=False, separators=(',', ':')),
             )
+
+
+# =====================================================================================
+# Branched Storage Tests
+#
+# In the branched storage model (newer Keboola projects), dev branch buckets and tables
+# have the SAME IDs as production — no prefix like "c-{branch_id}-". They are
+# distinguished only by KBC.createdBy.branch.id metadata.
+# =====================================================================================
+
+BRANCHED_STORAGE_BRANCH_ID = '9999999'
+
+
+def _get_sapi_buckets_branched_storage() -> list[dict[str, Any]]:
+    """Mock SAPI buckets for the branched storage model (no prefix-based IDs)."""
+    return [
+        # Production bucket (not modified on branch, no branch metadata)
+        {
+            'uri': 'https://connection.keboola.com/v2/storage/buckets/in.c-data',
+            'id': 'in.c-data',
+            'name': 'c-data',
+            'displayName': 'data',
+            'idBranch': 792027,
+            'stage': 'in',
+            'description': 'Production data bucket.',
+            'tables': 'https://connection.keboola.com/v2/storage/buckets/in.c-data',
+            'created': '2025-06-01T10:00:00+0200',
+            'lastChangeDate': '2025-06-15T12:00:00+0200',
+            'updated': None,
+            'isReadOnly': False,
+            'dataSizeBytes': 5000,
+            'rowsCount': 50,
+            'isMaintenance': False,
+            'backend': 'snowflake',
+            'sharing': None,
+            'hasExternalSchema': False,
+            'databaseName': '',
+            'path': 'in.c-data',
+            'isSnowflakeSharedDatabase': False,
+            'color': None,
+            'owner': None,
+            'metadata': [],
+        },
+        # Dev-only bucket (created on branch, same ID format, HAS branch metadata)
+        {
+            'uri': 'https://connection.keboola.com/v2/storage/buckets/out.c-results',
+            'id': 'out.c-results',
+            'name': 'c-results',
+            'displayName': 'results',
+            'idBranch': 792027,
+            'stage': 'out',
+            'description': 'Results from branch experiment.',
+            'tables': 'https://connection.keboola.com/v2/storage/buckets/out.c-results',
+            'created': '2025-07-01T14:00:00+0200',
+            'lastChangeDate': '2025-07-02T09:00:00+0200',
+            'updated': None,
+            'isReadOnly': False,
+            'dataSizeBytes': 12345,
+            'rowsCount': 100,
+            'isMaintenance': False,
+            'backend': 'snowflake',
+            'sharing': None,
+            'hasExternalSchema': False,
+            'databaseName': '',
+            'path': 'out.c-results',
+            'isSnowflakeSharedDatabase': False,
+            'color': None,
+            'owner': None,
+            'metadata': [
+                {'id': '9990001', 'key': 'KBC.createdBy.branch.id', 'value': BRANCHED_STORAGE_BRANCH_ID},
+            ],
+        },
+    ]
+
+
+def _get_sapi_tables_branched_storage(details: bool | None = None) -> list[dict[str, Any]]:
+    """Mock SAPI tables for the branched storage model (no prefix-based IDs)."""
+    tables = [
+        # Table in prod bucket (no branch metadata)
+        {
+            'uri': 'https://connection.keboola.com/v2/storage/tables/in.c-data.customers',
+            'id': 'in.c-data.customers',
+            'name': 'customers',
+            'displayName': 'Customer records.',
+            'transactional': False,
+            'primaryKey': ['customer_id'],
+            'indexType': None,
+            'indexKey': [],
+            'distributionType': None,
+            'distributionKey': [],
+            'syntheticPrimaryKeyEnabled': False,
+            'created': '2025-06-01T10:30:00+0200',
+            'lastImportDate': '2025-06-15T12:00:00+0200',
+            'lastChangeDate': '2025-06-15T12:00:00+0200',
+            'rowsCount': 50,
+            'dataSizeBytes': 5000,
+            'isAlias': False,
+            'isAliasable': True,
+            'isTyped': False,
+            'tableType': 'table',
+            'path': '/customers',
+            'attributes': [],
+            'metadata': [],
+            'columns': ['customer_id', 'name', 'email'],
+            'columnMetadata': {
+                'customer_id': [{'id': '1234', 'key': 'KBC.datatype.type', 'value': 'INT'}],
+                'name': [{'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'}],
+                'email': [{'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'}],
+            },
+            'bucket': {'id': 'in.c-data', 'name': 'c-data'},
+        },
+        # Table in dev-only bucket (no prefix, HAS branch metadata)
+        {
+            'uri': 'https://connection.keboola.com/v2/storage/tables/out.c-results.output',
+            'id': 'out.c-results.output',
+            'name': 'output',
+            'displayName': 'Experiment output.',
+            'transactional': False,
+            'primaryKey': ['id'],
+            'indexType': None,
+            'indexKey': [],
+            'distributionType': None,
+            'distributionKey': [],
+            'syntheticPrimaryKeyEnabled': False,
+            'created': '2025-07-01T14:30:00+0200',
+            'lastImportDate': '2025-07-02T09:00:00+0200',
+            'lastChangeDate': '2025-07-02T09:00:00+0200',
+            'rowsCount': 100,
+            'dataSizeBytes': 12345,
+            'isAlias': False,
+            'isAliasable': True,
+            'isTyped': False,
+            'tableType': 'table',
+            'path': '/output',
+            'attributes': [],
+            'metadata': [
+                {'id': '9990002', 'key': 'KBC.createdBy.branch.id', 'value': BRANCHED_STORAGE_BRANCH_ID},
+            ],
+            'columns': ['id', 'result', 'score'],
+            'columnMetadata': {
+                'id': [{'id': '1234', 'key': 'KBC.datatype.type', 'value': 'INT'}],
+                'result': [{'id': '1234', 'key': 'KBC.datatype.type', 'value': 'VARCHAR'}],
+                'score': [{'id': '1234', 'key': 'KBC.datatype.type', 'value': 'FLOAT'}],
+            },
+            'bucket': {'id': 'out.c-results', 'name': 'c-results'},
+        },
+    ]
+    if not details:
+        for t in tables:
+            t.pop('columns')
+            t.pop('columnMetadata')
+            t.pop('bucket')
+    return tables
+
+
+def _bucket_detail_branched_storage_side_effect(bid: str) -> JsonDict:
+    for bucket in _get_sapi_buckets_branched_storage():
+        if bucket['id'] == bid:
+            return bucket
+    raise httpx.HTTPStatusError(
+        message=f'Bucket not found: {bid}', request=AsyncMock(), response=httpx.Response(status_code=404)
+    )
+
+
+def _table_detail_branched_storage_side_effect(tid: str) -> JsonDict:
+    for table in _get_sapi_tables_branched_storage(details=True):
+        if table['id'] == tid:
+            return table
+    raise httpx.HTTPStatusError(
+        message=f'Table not found: {tid}', request=AsyncMock(), response=httpx.Response(status_code=404)
+    )
+
+
+def _bucket_table_list_branched_storage_side_effect(bid: str, *, include: list[str]) -> list[dict[str, Any]]:
+    prefix = f'{bid}.'
+    return [table for table in _get_sapi_tables_branched_storage() if table['id'].startswith(prefix)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('bucket_id', 'expected_bucket'),
+    [
+        # Dev-only bucket: same ID format, has branch metadata, found on first call
+        (
+            'out.c-results',
+            BucketDetail(
+                id='out.c-results',
+                name='c-results',
+                display_name='results',
+                description='Results from branch experiment.',
+                stage='out',
+                created='2025-07-01T14:00:00+0200',
+                updated='2025-07-02T09:00:00+0200',
+                data_size_bytes=12345,
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: c-results',
+                        url=f'https://connection.test.keboola.com/admin/projects/69420'
+                        f'/branch/{BRANCHED_STORAGE_BRANCH_ID}/storage/out.c-results',
+                    ),
+                ],
+            ),
+        ),
+        # Production bucket (not modified on branch)
+        (
+            'in.c-data',
+            BucketDetail(
+                id='in.c-data',
+                name='c-data',
+                display_name='data',
+                description='Production data bucket.',
+                stage='in',
+                created='2025-06-01T10:00:00+0200',
+                updated='2025-06-15T12:00:00+0200',
+                data_size_bytes=5000,
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Bucket: c-data',
+                        url=f'https://connection.test.keboola.com/admin/projects/69420'
+                        f'/branch/{BRANCHED_STORAGE_BRANCH_ID}/storage/in.c-data',
+                    ),
+                ],
+            ),
+        ),
+    ],
+)
+async def test_get_bucket_branched_storage(
+    bucket_id: str,
+    expected_bucket: BucketDetail,
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+) -> None:
+    """Test get_bucket for branched storage (no prefix-based IDs)."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = BRANCHED_STORAGE_BRANCH_ID
+    keboola_client.storage_client.bucket_detail = mocker.AsyncMock(
+        side_effect=_bucket_detail_branched_storage_side_effect
+    )
+
+    result = await get_buckets(mcp_context_client, [bucket_id])
+    assert isinstance(result, GetBucketsOutput)
+
+    dashboard_url = (
+        f'https://connection.test.keboola.com/admin/projects/69420/branch/{BRANCHED_STORAGE_BRANCH_ID}/storage'
+    )
+    expected_result = GetBucketsOutput(
+        buckets=[expected_bucket],
+        links=[Link(type='ui-dashboard', title='Buckets in the project', url=dashboard_url)],
+    ).pack_links()
+    assert result == expected_result
+
+
+@pytest.mark.asyncio
+async def test_get_buckets_branched_storage(mocker: MockerFixture, mcp_context_client: Context) -> None:
+    """Test listing all buckets for branched storage (no prefix-based IDs)."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = BRANCHED_STORAGE_BRANCH_ID
+    keboola_client.storage_client.bucket_list = mocker.AsyncMock(
+        return_value=_get_sapi_buckets_branched_storage()
+    )
+
+    result = await get_buckets(mcp_context_client)
+    assert isinstance(result, GetBucketsOutput)
+
+    expected_buckets = [
+        BucketDetail(
+            id='in.c-data',
+            name='c-data',
+            display_name='data',
+            description='Production data bucket.',
+            stage='in',
+            created='2025-06-01T10:00:00+0200',
+            updated='2025-06-15T12:00:00+0200',
+            data_size_bytes=5000,
+        ),
+        BucketDetail(
+            id='out.c-results',
+            name='c-results',
+            display_name='results',
+            description='Results from branch experiment.',
+            stage='out',
+            created='2025-07-01T14:00:00+0200',
+            updated='2025-07-02T09:00:00+0200',
+            data_size_bytes=12345,
+        ),
+    ]
+    assert result.buckets == expected_buckets
+    assert result.bucket_counts.total_buckets == 2
+    assert result.bucket_counts.input_buckets == 1
+    assert result.bucket_counts.output_buckets == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('table_id', 'expected_table'),
+    [
+        # Dev-only table with branch metadata: found directly on first call (branched storage fix)
+        # This test FAILS on main because _get_table discards tables with branch metadata.
+        (
+            'out.c-results.output',
+            TableDetail(
+                id='out.c-results.output',
+                name='output',
+                display_name='Experiment output.',
+                primary_key=['id'],
+                created='2025-07-01T14:30:00+0200',
+                updated='2025-07-02T09:00:00+0200',
+                rows_count=100,
+                data_size_bytes=12345,
+                columns=[
+                    TableColumnInfo(
+                        name='id', quoted_name='#id#', database_native_type='INT', nullable=False
+                    ),
+                    TableColumnInfo(
+                        name='result', quoted_name='#result#', database_native_type='VARCHAR', nullable=False
+                    ),
+                    TableColumnInfo(
+                        name='score', quoted_name='#score#', database_native_type='FLOAT', nullable=False
+                    ),
+                ],
+                fully_qualified_name='#SAPI_TEST#.#out.c-results#.#output#',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Table: output',
+                        url=f'https://connection.test.keboola.com/admin/projects/69420'
+                        f'/branch/{BRANCHED_STORAGE_BRANCH_ID}/storage/out.c-results/table/output',
+                    ),
+                ],
+            ),
+        ),
+        # Production table (no branch metadata): found as prod, no dev version exists
+        (
+            'in.c-data.customers',
+            TableDetail(
+                id='in.c-data.customers',
+                name='customers',
+                display_name='Customer records.',
+                primary_key=['customer_id'],
+                created='2025-06-01T10:30:00+0200',
+                updated='2025-06-15T12:00:00+0200',
+                rows_count=50,
+                data_size_bytes=5000,
+                columns=[
+                    TableColumnInfo(
+                        name='customer_id', quoted_name='#customer_id#', database_native_type='INT', nullable=False
+                    ),
+                    TableColumnInfo(
+                        name='name', quoted_name='#name#', database_native_type='VARCHAR', nullable=False
+                    ),
+                    TableColumnInfo(
+                        name='email', quoted_name='#email#', database_native_type='VARCHAR', nullable=False
+                    ),
+                ],
+                fully_qualified_name='#SAPI_TEST#.#in.c-data#.#customers#',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Table: customers',
+                        url=f'https://connection.test.keboola.com/admin/projects/69420'
+                        f'/branch/{BRANCHED_STORAGE_BRANCH_ID}/storage/in.c-data/table/customers',
+                    ),
+                ],
+            ),
+        ),
+    ],
+)
+async def test_get_table_branched_storage(
+    table_id: str,
+    expected_table: TableDetail,
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+) -> None:
+    """Test get_table for branched storage (no prefix-based IDs).
+
+    The key scenario is a table with branch metadata but no prefix in its ID.
+    Before the fix, _get_table would discard such tables and fail to find them.
+    """
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = BRANCHED_STORAGE_BRANCH_ID
+    keboola_client.storage_client.bucket_detail = mocker.AsyncMock(
+        side_effect=_bucket_detail_branched_storage_side_effect
+    )
+    keboola_client.storage_client.table_detail = mocker.AsyncMock(
+        side_effect=_table_detail_branched_storage_side_effect
+    )
+
+    workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
+    workspace_manager.get_table_info = mocker.AsyncMock(
+        side_effect=lambda sapi_table: DbTableInfo(
+            id=sapi_table['id'],
+            fqn=TableFqn(
+                db_name='SAPI_TEST',
+                schema_name=sapi_table['bucket']['id'],
+                table_name=sapi_table['id'].rsplit('.')[-1],
+                quote_char='#',
+            ),
+            columns={
+                col_name: DbColumnInfo(
+                    name=col_name,
+                    quoted_name=f'#{col_name}#',
+                    native_type=get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE),
+                    nullable=get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) == '1',
+                )
+                for col_name, col_meta in sapi_table['columnMetadata'].items()
+            },
+        )
+    )
+    workspace_manager.get_quoted_name = mocker.AsyncMock(side_effect=lambda name: f'#{name}#')
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='test-sql-dialect')
+
+    result = await get_tables(mcp_context_client, table_ids=[table_id])
+    assert isinstance(result, GetTablesOutput)
+
+    dashboard_url = (
+        f'https://connection.test.keboola.com/admin/projects/69420/branch/{BRANCHED_STORAGE_BRANCH_ID}/storage'
+    )
+    expected_result = GetTablesOutput(
+        tables=[expected_table],
+        links=[Link(type='ui-dashboard', title='Buckets in the project', url=dashboard_url)],
+    ).pack_links()
+    assert result == expected_result
+
+    # Branched storage: first call finds the table directly (with or without branch metadata).
+    # For tables with branch metadata matching our branch, no prefixed lookup is needed.
+    # For prod tables, a prefixed lookup is attempted but returns 404.
+    has_branch_metadata = any(
+        m.get('key') == 'KBC.createdBy.branch.id' and m.get('value') == BRANCHED_STORAGE_BRANCH_ID
+        for t in _get_sapi_tables_branched_storage(details=True) if t['id'] == table_id
+        for m in t.get('metadata', [])
+    )
+    if has_branch_metadata:
+        # Dev table found on first call, no second call needed
+        keboola_client.storage_client.table_detail.assert_called_once_with(table_id)
+    else:
+        # Prod table found, prefixed lookup attempted (404)
+        keboola_client.storage_client.table_detail.assert_has_calls(
+            [call(table_id), call(table_id.replace('c-', f'c-{BRANCHED_STORAGE_BRANCH_ID}-'))]
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_tables_branched_storage(mocker: MockerFixture, mcp_context_client: Context) -> None:
+    """Test listing tables in a dev-only bucket for branched storage."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = BRANCHED_STORAGE_BRANCH_ID
+    keboola_client.storage_client.bucket_detail = mocker.AsyncMock(
+        side_effect=_bucket_detail_branched_storage_side_effect
+    )
+    keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(
+        side_effect=_bucket_table_list_branched_storage_side_effect
+    )
+    links_manager = await ProjectLinksManager.from_client(keboola_client)
+
+    result = await get_tables(mcp_context_client, ['out.c-results'])
+    assert isinstance(result, GetTablesOutput)
+
+    expected_tables = [
+        TableDetail(
+            id='out.c-results.output',
+            name='output',
+            display_name='Experiment output.',
+            primary_key=['id'],
+            created='2025-07-01T14:30:00+0200',
+            updated='2025-07-02T09:00:00+0200',
+            rows_count=100,
+            data_size_bytes=12345,
+            links=[
+                Link(
+                    type='ui-detail',
+                    title='Table: output',
+                    url=f'https://connection.test.keboola.com/admin/projects/69420'
+                    f'/branch/{BRANCHED_STORAGE_BRANCH_ID}/storage/out.c-results/table/output',
+                ),
+            ],
+        ),
+    ]
+    expected_result = GetTablesOutput(
+        tables=expected_tables, links=[links_manager.get_bucket_dashboard_link()]
+    ).pack_links()
+    assert result == expected_result
+
+    # Dev-only bucket: found on first call (has branch metadata), no prefixed lookup
+    keboola_client.storage_client.bucket_detail.assert_called_once_with('out.c-results')
+    keboola_client.storage_client.bucket_table_list.assert_called_once()
