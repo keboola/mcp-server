@@ -933,6 +933,11 @@ async def create_config(
     USAGE:
     - Use when you want to create a new root configuration for a specific component.
 
+    WHEN NOT TO USE:
+    - `keboola.orchestrator` / `keboola.flow` → use flows tools
+    - `keboola.data-apps` → use data applications tools
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+
     EXAMPLES:
     - user_input: `Create a new configuration for component X with these settings`
         - set the component_id and configuration parameters accordingly
@@ -1066,6 +1071,11 @@ async def add_config_row(
 
     USAGE:
     - Use when you want to create a new row configuration for a specific component configuration.
+
+    WHEN NOT TO USE:
+    - `keboola.orchestrator` / `keboola.flow` → use flows tools
+    - `keboola.data-apps` → use data applications tools
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
 
     EXAMPLES:
     - user_input: `Create a new configuration row for component X with these settings`
@@ -1245,6 +1255,11 @@ async def update_config(
     - Updating storage mappings (input/output tables or files)
     - Changing configuration name or description
     - Any combination of the above
+
+    WHEN NOT TO USE:
+    - `keboola.orchestrator` / `keboola.flow` → use flows tools
+    - `keboola.data-apps` → use data applications tools
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
 
     PREREQUISITES:
     - Configuration must already exist (use create_config for new configurations)
@@ -1482,6 +1497,11 @@ async def update_config_row(
     - Updating storage mappings for a specific row (input/output tables or files)
     - Changing row name or description
     - Any combination of the above
+
+    WHEN NOT TO USE:
+    - `keboola.orchestrator` / `keboola.flow` → use flows tools
+    - `keboola.data-apps` → use data applications tools
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
 
     PREREQUISITES:
     - The configuration row must already exist (use add_config_row for new rows)

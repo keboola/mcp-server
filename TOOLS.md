@@ -94,6 +94,11 @@ CONSIDERATIONS:
 USAGE:
 - Use when you want to create a new row configuration for a specific component configuration.
 
+WHEN NOT TO USE:
+- `keboola.orchestrator` / `keboola.flow` → use flows tools
+- `keboola.data-apps` → use data applications tools
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+
 EXAMPLES:
 - user_input: `Create a new configuration row for component X with these settings`
     - set the component_id, configuration_id and configuration parameters accordingly
@@ -180,6 +185,11 @@ CONSIDERATIONS:
 
 USAGE:
 - Use when you want to create a new root configuration for a specific component.
+
+WHEN NOT TO USE:
+- `keboola.orchestrator` / `keboola.flow` → use flows tools
+- `keboola.data-apps` → use data applications tools
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
 
 EXAMPLES:
 - user_input: `Create a new configuration for component X with these settings`
@@ -601,6 +611,11 @@ WHEN TO USE:
 - Changing configuration name or description
 - Any combination of the above
 
+WHEN NOT TO USE:
+- `keboola.orchestrator` / `keboola.flow` → use flows tools
+- `keboola.data-apps` → use data applications tools
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+
 PREREQUISITES:
 - Configuration must already exist (use create_config for new configurations)
 - You must know both component_id and configuration_id
@@ -826,6 +841,11 @@ WHEN TO USE:
 - Updating storage mappings for a specific row (input/output tables or files)
 - Changing row name or description
 - Any combination of the above
+
+WHEN NOT TO USE:
+- `keboola.orchestrator` / `keboola.flow` → use flows tools
+- `keboola.data-apps` → use data applications tools
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
 
 PREREQUISITES:
 - The configuration row must already exist (use add_config_row for new rows)
@@ -2604,6 +2624,21 @@ Starts a new job for a given component or transformation.
     "configuration_id": {
       "description": "The ID of the configuration for which to start a job.",
       "type": "string"
+    },
+    "configuration_row_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional list of configuration row IDs to run. If not provided, all rows are executed."
     }
   },
   "required": [

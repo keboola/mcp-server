@@ -6,6 +6,7 @@
 - Commit messages must **start** with the Linear issue ID (e.g., `AI-2480: description`)
 - When working on a Linear task, **check the current branch first** (`git branch`). If not already on the correct task branch, create one before making any changes: `git checkout -b AI-XXXX-short-description`
 - When creating PRs, use the template at `.github/pull_request_template.md`
+- **Every PR must include a `pyproject.toml` version bump** — bump before merging; see [Versioning](#versioning) for the rules
 - **Never use `git push --force`** or rebase commits that have already been pushed - use merge commits instead to avoid rewriting history for others
 
 ## Testing
