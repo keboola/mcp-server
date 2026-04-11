@@ -19,6 +19,7 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport
 from keboola_mcp_server.errors import ValidationErrorMiddleware
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
+    ProjectResolutionMiddleware,
     ServerState,
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
@@ -26,6 +27,7 @@ from keboola_mcp_server.mcp import (
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
+from keboola_mcp_server.tools.branches import add_branch_tools
 from keboola_mcp_server.tools.components.tools import add_component_tools
 from keboola_mcp_server.tools.data_apps import add_data_app_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
@@ -226,6 +228,7 @@ def create_server(
         auth=oauth_provider,
         middleware=[
             SessionStateMiddleware(),
+            ProjectResolutionMiddleware(config=config),
             ToolAuthorizationMiddleware(),
             ToolsFilteringMiddleware(),
             ValidationErrorMiddleware(),
@@ -237,6 +240,7 @@ def create_server(
         if custom_routes_handling == 'add':
             custom_routes.add_to_mcp(mcp)
 
+    add_branch_tools(mcp)
     add_component_tools(mcp)
     add_data_app_tools(mcp)
     add_doc_tools(mcp)

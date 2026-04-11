@@ -28,3 +28,4 @@ htmlcov/
 integtest-results.xml
 test-results.xml
 .tox/
+mpa_test

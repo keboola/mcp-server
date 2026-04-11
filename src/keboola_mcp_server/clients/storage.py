@@ -336,6 +336,49 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonDict, await self.get(endpoint=f'dev-branches/{branch_id}'))
 
+    async def dev_branch_create(
+        self,
+        name: str,
+        description: str = '',
+        poll_interval: float = 1.0,
+        max_wait: float = 60.0,
+    ) -> JsonDict:
+        """
+        Creates a new development branch. The API returns an async job;
+        this method polls until the job completes and returns the branch data from job results.
+
+        :param name: The name of the new branch.
+        :param description: Optional description for the branch.
+        :param poll_interval: Seconds between job status polls.
+        :param max_wait: Maximum seconds to wait for job completion.
+        :return: The created branch data (from job results).
+        :raises TimeoutError: If the job doesn't complete within max_wait.
+        :raises RuntimeError: If the job fails.
+        """
+        import asyncio
+        import time
+
+        data = {'name': name, 'description': description}
+        job = cast(JsonDict, await self.post(endpoint='dev-branches', data=data))
+
+        job_id = job.get('id')
+        if job.get('status') == 'success':
+            return cast(JsonDict, job.get('results', {}))
+
+        deadline = time.monotonic() + max_wait
+        while time.monotonic() < deadline:
+            await asyncio.sleep(poll_interval)
+            job = await self.job_detail(job_id)
+            status = job.get('status')
+            if status == 'success':
+                return cast(JsonDict, job.get('results', {}))
+            if status == 'error':
+                error = job.get('error', {})
+                msg = error.get('message', 'Branch creation job failed') if isinstance(error, dict) else str(error)
+                raise RuntimeError(f'Branch creation failed: {msg}')
+
+        raise TimeoutError(f'Branch creation job {job_id} did not complete within {max_wait}s')
+
     async def branch_metadata_get(self) -> list[JsonDict]:
         """
         Retrieves metadata for the current branch.

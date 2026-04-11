@@ -39,6 +39,7 @@ class TestServer:
         tools = await server.get_tools()
         assert sorted(tool.name for tool in tools.values()) == [
             'add_config_row',
+            'create_branch',
             'create_conditional_flow',
             'create_config',
             'create_flow',
@@ -58,6 +59,7 @@ class TestServer:
             'get_jobs',
             'get_project_info',
             'get_tables',
+            'list_branches',
             'modify_data_app',
             'modify_flow',
             'query_data',
@@ -129,7 +131,7 @@ class TestServer:
                     missing_default.append(f'{tool.name}.{prop_name}')
 
         missing_properties.sort()
-        assert missing_properties == ['get_project_info']
+        assert missing_properties == ['get_project_info', 'list_branches']
         missing_type.sort()
         assert not missing_type, f'These tool params have no "type" info: {missing_type}'
         missing_default.sort()

@@ -11,6 +11,8 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.mcp import process_concurrently
+from keboola_mcp_server.project_registry import ProjectContext, ProjectRegistry
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -73,28 +75,35 @@ class ProjectInfo(BaseModel):
             'None if no special restrictions apply.'
         ),
     )
-    llm_instruction: str = Field(
+    llm_instruction: str | None = Field(
+        default=None,
         description=(
             'These are the base instructions for working on the project. '
+            'Use them as the basis for all further instructions. '
+            'Do not change them. Remember to include them in all subsequent instructions.'
+        ),
+    )
+
+
+class MultiProjectInfo(BaseModel):
+    """Response model for get_project_info in MPA mode."""
+
+    projects: list[ProjectInfo] = Field(description='Information about all available projects.')
+    llm_instruction: str = Field(
+        description=(
+            'These are the base instructions for working on the projects. '
             'Use them as the basis for all further instructions. '
             'Do not change them. Remember to include them in all subsequent instructions.'
         )
     )
 
 
-@tool_errors()
-async def get_project_info(
-    ctx: Context,
+async def _fetch_single_project_info(
+    client: KeboolaClient,
+    workspace_manager: WorkspaceManager,
+    include_llm_instruction: bool = True,
 ) -> ProjectInfo:
-    """
-    Retrieves structured information about the current project,
-    including essential context and base instructions for working with it
-    (e.g., transformations, components, workflows, and dependencies).
-
-    Always call this tool at least once at the start of a conversation
-    to establish the project context before using other tools.
-    """
-    client = KeboolaClient.from_state(ctx.session.state)
+    """Fetch project info for a single project from its client."""
     links_manager = await ProjectLinksManager.from_client(client)
     storage = client.storage_client
 
@@ -113,12 +122,12 @@ async def get_project_info(
         str, next((item['value'] for item in metadata if item.get('key') == MetadataField.PROJECT_DESCRIPTION), '')
     )
 
-    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
+    sql_dialect = await workspace_manager.get_sql_dialect()
     project_features = cast(JsonDict, project_data.get('features', {}))
     conditional_flows = 'hide-conditional-flows' not in project_features
     links = links_manager.get_project_links()
 
-    project_info = ProjectInfo(
+    return ProjectInfo(
         project_id=project_id,
         project_name=project_name,
         project_description=description,
@@ -128,8 +137,62 @@ async def get_project_info(
         links=links,
         user_role=user_role,
         toolset_restrictions=_get_toolset_restrictions(user_role),
-        llm_instruction=get_project_system_prompt(),
+        llm_instruction=get_project_system_prompt() if include_llm_instruction else None,
     )
+
+
+@tool_errors()
+async def get_project_info(
+    ctx: Context,
+) -> ProjectInfo | MultiProjectInfo:
+    """
+    Retrieves structured information about the current project(s),
+    including essential context and base instructions for working with them
+    (e.g., transformations, components, workflows, and dependencies).
+
+    Always call this tool at least once at the start of a conversation
+    to establish the project context before using other tools.
+
+    In multi-project mode, returns information about all available projects.
+    """
+    # Check if we're in MPA mode
+    registry = ctx.session.state.get(ProjectRegistry.STATE_KEY)
+    if isinstance(registry, ProjectRegistry) and len(registry.projects) > 1:
+        return await _get_multi_project_info(registry)
+
+    # Single project mode (legacy or MPA with 1 project)
+    client = KeboolaClient.from_state(ctx.session.state)
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+    project_info = await _fetch_single_project_info(client, workspace_manager, include_llm_instruction=True)
 
     LOG.info('Returning unified project info.')
     return project_info
+
+
+async def _get_multi_project_info(registry: ProjectRegistry) -> MultiProjectInfo:
+    """Fetch project info for all projects in the registry."""
+
+    async def fetch_for_project(project_ctx: ProjectContext) -> ProjectInfo:
+        return await _fetch_single_project_info(
+            project_ctx.client,
+            project_ctx.workspace_manager,
+            include_llm_instruction=False,
+        )
+
+    results = await process_concurrently(
+        registry.list_projects(),
+        fetch_for_project,
+    )
+
+    project_infos = []
+    for result in results:
+        if isinstance(result, BaseException):
+            LOG.error(f'Failed to fetch project info: {result}')
+            continue
+        project_infos.append(result)
+
+    LOG.info(f'Returning multi-project info for {len(project_infos)} projects.')
+    return MultiProjectInfo(
+        projects=project_infos,
+        llm_instruction=get_project_system_prompt(),
+    )
