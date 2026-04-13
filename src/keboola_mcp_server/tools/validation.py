@@ -61,7 +61,7 @@ class RecoverableValidationError(jsonschema.ValidationError):
     An instance was invalid under a provided schema using a recoverable message for the Agent.
     """
 
-    def __init__(
+    def __init__(  # noqa: B042
         self,
         *args,
         initial_message: Optional[str] = None,
