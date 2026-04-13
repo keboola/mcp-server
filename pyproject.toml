@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.52.0"
+version = "1.54.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,9 +47,13 @@ tests = [
     "pytest-mock ~= 3.15",
     "python-dateutil ~= 2.9",
     "python-dotenv ~= 1.2",
+    # pydocket 0.18.2 (transitive via fastmcp) imports FakeConnection from fakeredis.aioredis,
+    # which was removed in fakeredis 2.35+. Pin to a known-compatible version.
+    "fakeredis == 2.34.1",
 ]
 integtests = [
     "kbcstorage ~= 0.9",
+    "requests ~= 2.32",
 ]
 dev = [
     "tox ~= 4.35",

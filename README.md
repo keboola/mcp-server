@@ -28,10 +28,6 @@ With the AI Agent and MCP Server, you can:
 
 ## 🚀 Quick Start: Remote MCP Server (Easiest Way)
 
-<div class="alert alert-warning" role="alert">
-<strong>⚠️ SSE Transport Decommissioning:</strong> The SSE transport is deprecated and will be removed from the Keboola MCP Server on 2026-Mar-31. Please migrate to the Streamable HTTP transport and use the <code>/mcp</code> endpoints instead of <code>/sse</code>.
-</div>
-
 The easiest way to use Keboola MCP Server is through our **Remote MCP Server**. This hosted solution eliminates the need for local setup, configuration, or installation.
 
 ### What is the Remote MCP Server?
@@ -133,8 +129,7 @@ Run the MCP server on your own machine for full control and easy development. Ch
 The server supports multiple **transport** options, which can be selected by providing the `--transport <transport>` argument when starting the server:
 - `stdio` - Default when `--transport` is not specified. Standard input/output, typically used for local deployment with a single client.
 - `streamable-http` - Runs the server remotely over HTTP with a bidirectional streaming channel, allowing the client and server to continuously exchange messages. Connect via <url>/mcp (e.g., http://localhost:8000/mcp).
-- `sse` - **Deprecated (will be removed on 2026-Mar-31)**, use `streamable-http` instead. Runs the server remotely using Server-Sent Events (SSE) for one-way event streaming from server to client. Connect via <url>/sse (e.g., http://localhost:8000/sse).
-- `http-compat` - A custom transport supporting both `SSE` and `streamable-http`. It is currently used on Keboola remote servers but will be replaced by `streamable-http` only when SSE is removed.
+- `http-compat` - An alias for `streamable-http`, kept for backwards compatibility.
 
 For client–server communication, Keboola credentials must be provided to enable working with your project in your Keboola Region. The following are required: `KBC_STORAGE_TOKEN`, `KBC_STORAGE_API_URL`, `KBC_WORKSPACE_SCHEMA` and optionally `KBC_BRANCH_ID`. You can provide these in two ways:
 - For personal use (mainly with stdio transport): set the environment variables before starting the server. All requests will reuse these predefined credentials.
@@ -423,8 +418,8 @@ What buckets and tables are in my Keboola project?
 | Claude (Desktop & Web) | ✅ supported | stdio |
 | Cursor | ✅ supported | stdio |
 | Windsurf, Zed, Replit | ✅ Supported | stdio |
-| Codeium, Sourcegraph | ✅ Supported | HTTP+SSE |
-| Custom MCP Clients | ✅ Supported | HTTP+SSE or stdio |
+| Codeium, Sourcegraph | ✅ Supported | Streamable HTTP |
+| Custom MCP Clients | ✅ Supported | Streamable HTTP or stdio |
 
 ## Supported Tools
 

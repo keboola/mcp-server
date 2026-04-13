@@ -43,7 +43,7 @@ Explain why this release is necessary:
 This section is to be filled by the release testers. Leave it as it is and just remove this instruction text.
 
 - [ ] Tested with Cursor AI desktop (all transports)
-- [ ] Tested with claude.ai web and canary-orion MCP (SSE and Streamable-HTTP)
+- [ ] Tested with claude.ai web and canary-orion MCP (Streamable-HTTP)
 - [ ] Tested with In Platform Agent on canary-orion
 - [ ] Tested with RO chat on canary-orion
 
