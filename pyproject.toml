@@ -12,7 +12,7 @@ license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
     "fastmcp == 3.2.0",
-    "mcp == 1.26.0",
+    "mcp == 1.27.0",
     "httpx ~= 0.28",
     "httpx-retries~=0.4",
     "jsonpath-ng ~= 1.8",
@@ -47,9 +47,6 @@ tests = [
     "pytest-mock ~= 3.15",
     "python-dateutil ~= 2.9",
     "python-dotenv ~= 1.2",
-    # pydocket 0.18.2 (transitive via fastmcp) imports FakeConnection from fakeredis.aioredis,
-    # which was removed in fakeredis 2.35+. Pin to a known-compatible version.
-    "fakeredis == 2.34.1",
 ]
 integtests = [
     "kbcstorage ~= 0.9",
@@ -173,7 +170,7 @@ commands = [
 description = "Fix code formatting using black"
 package = "skip"
 deps = [
-    "black ~= 25.1",
+    "black ~= 26.3",
 ]
 commands = [["black", "src/", "tests/", "integtests/"]]
 
@@ -181,15 +178,15 @@ commands = [["black", "src/", "tests/", "integtests/"]]
 description = "Run code style check using flake8"
 package = "skip"
 deps = [
-    "flake8 ~= 7.2",
+    "flake8 ~= 7.3",
     "Flake8-pyproject ~= 1.2",
-    "flake8-bugbear ~= 24.12",
+    "flake8-bugbear ~= 25.11",
     "flake8-colors ~= 0.1",
-    "flake8-isort ~= 6.1",
-    "flake8-pytest-style ~= 2.1",
+    "flake8-isort ~= 7.0",
+    "flake8-pytest-style ~= 2.2",
     "flake8-quotes ~= 3.4",
-    "flake8-typing-imports ~= 1.16",
-    "pep8-naming ~= 0.14",
+    "flake8-typing-imports ~= 1.17",
+    "pep8-naming ~= 0.15",
 ]
 commands = [["flake8", "src/", "tests/", "integtests/"]]
 
