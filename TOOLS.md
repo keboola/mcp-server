@@ -750,7 +750,7 @@ WORKFLOW:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove, list_append) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Prefer simple JSONPaths (e.g., \"array_param[1]\", \"object_param.key\") and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path.",
+      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove, list_append) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Paths are relative to the `parameters` object, not the configuration root (e.g. use `tables`, not `parameters.tables`). Prefer simple JSONPaths (e.g., \"array_param[1]\", \"object_param.key\") and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path.",
       "items": {
         "discriminator": {
           "mapping": {
@@ -986,7 +986,7 @@ WORKFLOW:
     },
     "parameter_updates": {
       "default": null,
-      "description": "List of granular parameter update operations to apply to this row. Each operation (set, str_replace, remove, list_append) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
+      "description": "List of granular parameter update operations to apply to this row. Each operation (set, str_replace, remove, list_append) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Paths are relative to the row's `parameters` object, not the row root (e.g. use `tables`, not `parameters.tables`). Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
       "items": {
         "discriminator": {
           "mapping": {
