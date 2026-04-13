@@ -442,6 +442,15 @@ class TestKeboolaClient:
             assert scheduler_headers['X-StorageAPI-Token'] == expected_scheduler_token
             assert 'Authorization' not in scheduler_headers
 
+    def test_metastore_client_url_derivation(self) -> None:
+        client = KeboolaClient(
+            storage_api_url='https://connection.canary-orion.keboola.dev',
+            storage_api_token='sapi_token_456',
+        )
+
+        assert client.metastore_client.raw_client.base_api_url == 'https://metastore.canary-orion.keboola.dev'
+        assert client.metastore_client.raw_client.headers['X-StorageAPI-Token'] == 'sapi_token_456'
+
 
 @pytest.mark.parametrize(
     ('metadata', 'key', 'provider', 'preferred_providers', 'default', 'expected'),

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.53.1"
+version = "1.54.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -123,8 +123,8 @@ extend-ignore = ["E203", "W503", "I101"]
 
 [tool.tox]
 requires = ["tox>=4.23"]
-env_list = ["python", "black", "flake8", "check-tools-docs"]
-labels = { cs-fix = ["black"], cs = ["flake8"] }
+env_list = ["python", "black", "isort", "flake8", "check-tools-docs"]
+labels = { cs-fix = ["black", "isort"], cs = ["isort", "flake8"] }
 
 [tool.tox.env_run_base]
 description = "Run tests"
@@ -178,6 +178,14 @@ deps = [
 ]
 commands = [["black", "src/", "tests/", "integtests/"]]
 
+[tool.tox.env.isort]
+description = "Sort imports using isort"
+package = "skip"
+deps = [
+    "isort ~= 8.0",
+]
+commands = [["isort", "src/", "tests/", "integtests/"]]
+
 [tool.tox.env.flake8]
 description = "Run code style check using flake8"
 package = "skip"
@@ -186,7 +194,7 @@ deps = [
     "Flake8-pyproject ~= 1.2",
     "flake8-bugbear ~= 24.12",
     "flake8-colors ~= 0.1",
-    "flake8-isort ~= 6.1",
+    "flake8-isort ~= 7.0",
     "flake8-pytest-style ~= 2.1",
     "flake8-quotes ~= 3.4",
     "flake8-typing-imports ~= 1.16",

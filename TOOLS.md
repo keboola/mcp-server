@@ -56,6 +56,14 @@ including essential context and base instructions for working with it
 - [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
 - [search](#search): Searches for Keboola items (tables, buckets, components, configurations, transformations, flows, data-apps, etc.
 
+### Semantic Tools
+- [get_semantic_context](#get_semantic_context): Loads semantic objects grouped by semantic object type.
+- [get_semantic_schema](#get_semantic_schema): Returns JSON schemas for the requested semantic object types.
+- [search_semantic_context](#search_semantic_context): Searches semantic models and semantic objects using regex patterns matched against their names, descriptions and
+stringified JSON attributes.
+- [validate_semantic_query](#validate_semantic_query): Performs best-effort semantic validation of an SQL query against one or more semantic models and compares it with
+the expected semantic objects provided.
+
 ### Storage Tools
 - [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including descriptions,
 lineage references (created/updated by), and links.
@@ -2946,6 +2954,375 @@ scopes=["storage"]
   },
   "required": [
     "patterns"
+  ],
+  "type": "object"
+}
+```
+
+---
+
+# Semantic Tools
+<a name="get_semantic_context"></a>
+## get_semantic_context
+**Annotations**: `read-only`
+
+**Tags**: `semantic`
+
+**Description**:
+
+Loads semantic objects grouped by semantic object type.
+
+CONSIDERATIONS:
+- If a selection has empty `ids`, the tool returns all objects of that type in compact form.
+- If a selection has non-empty `ids`, the tool returns only those specific objects with full attributes.
+- `semantic_model_ids` optionally narrows the lookup to specific semantic models.
+
+WHEN TO USE:
+- When you already know IDs of the semantic objects you want to load and want to inspect them in detail.
+- When you want to list all semantic objects of certain types or specific semantic models.
+- When you want to list semantic models.
+
+WHEN NOT TO USE:
+- When you need to discover semantic objects.
+
+EXAMPLES:
+- List all semantic models:
+  `semantic_objects=[{"object_type": "semantic-model"}]`
+- List semantic datasets and metrics for specific semantic models:
+  `semantic_objects=[{"object_type": "semantic-dataset"}, {"object_type": "semantic-metric"}],`
+  `semantic_model_ids=["model-uuid-1", "model-uuid-2"]`
+- Get detailed context for specific semantic objects by their id:
+  `semantic_objects=[{"object_type": "semantic-dataset", "ids": ["dataset-uuid-1"]},`
+  `{"object_type": "semantic-metric", "ids": ["metric-uuid-1", "metric-uuid-2"]}]`
+- List all constraints for specific semantic models:
+  `semantic_objects=[{"object_type": "semantic-constraint"}], semantic_model_ids=["model-uuid-1"]`
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "SemanticObjectType": {
+      "enum": [
+        "semantic-model",
+        "semantic-dataset",
+        "semantic-metric",
+        "semantic-relationship",
+        "semantic-glossary",
+        "semantic-constraint"
+      ],
+      "type": "string"
+    },
+    "SemanticObjectTypeSelection": {
+      "description": "Semantic object type selection used by semantic tools.",
+      "properties": {
+        "object_type": {
+          "$ref": "#/$defs/SemanticObjectType",
+          "description": "Semantic object type to load."
+        },
+        "ids": {
+          "default": [],
+          "description": "Specific object UUIDs to include. Empty list [] means include all objects of this type.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "object_type"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "semantic_objects": {
+      "description": "List of semantic object selections to load. Each item contains \"object_type\" and optional \"ids\". If \"ids\" is empty, all objects of that type are returned in compact form. If \"ids\" is non-empty, only those objects are returned with full attributes.",
+      "items": {
+        "$ref": "#/$defs/SemanticObjectTypeSelection"
+      },
+      "type": "array"
+    },
+    "semantic_model_ids": {
+      "default": [],
+      "description": "Optional list of semantic model IDs to restrict loading to specific models. Empty list [] means load across all semantic models.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "semantic_objects"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_semantic_schema"></a>
+## get_semantic_schema
+**Annotations**: `read-only`
+
+**Tags**: `semantic`
+
+**Description**:
+
+Returns JSON schemas for the requested semantic object types.
+
+WHEN TO USE:
+- When you want to know the JSON schema of a semantic object type, e.g. before searching something specific.
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "SemanticObjectType": {
+      "enum": [
+        "semantic-model",
+        "semantic-dataset",
+        "semantic-metric",
+        "semantic-relationship",
+        "semantic-glossary",
+        "semantic-constraint"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "semantic_types": {
+      "description": "List of semantic object types for which JSON schemas should be returned. Each returned item contains the requested semantic type and its metastore schema.",
+      "items": {
+        "$ref": "#/$defs/SemanticObjectType"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "semantic_types"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="search_semantic_context"></a>
+## search_semantic_context
+**Annotations**: `read-only`
+
+**Tags**: `semantic`
+
+**Description**:
+
+Searches semantic models and semantic objects using regex patterns matched against their names, descriptions and
+stringified JSON attributes.
+
+Returns compact matches grouped by semantic model. Each match includes the semantic object type,
+the paths where the patterns matched, and compact object view.
+
+CONSIDERATIONS:
+- The search is case-insensitive by default. Use `case_sensitive=True` when exact casing matters.
+- The search is performed against semantic object names and data attributes which are stringified JSON objects
+following their corresponding JSON schema.
+- The search can be scoped to specific semantic models or semantic object types but prefer broader search without
+scoping unless required by the context.
+
+WHEN TO USE:
+- When you need to discover which semantic objects are relevant to a user request.
+- When you know business terms, column names, metric fragments, or rule names, but not exact object UUIDs.
+- When you need to find semantic objects by keyword or values used in their attributes.
+
+WHEN NOT TO USE:
+- When you know the exact IDs.
+
+EXAMPLES:
+- Find semantic objects by business concepts for revenue or sales:
+  `patterns=["revenue", "sales"]`
+- Find semantic objects using a Keboola table ID:
+  `patterns=["out.c-sales-main.fact_orders"]`
+- Find semantic dataset for a certain table:
+  `patterns=["in.c-sales-main.fact_orders"], semantic_types=["semantic-dataset"]`
+- Find semantic datasets that mention a column name:
+  `patterns=["column_name"], semantic_types=["semantic-dataset"]`
+- Search semantic objects e.g. semantic metrics, relationships, and constraints using a certain semantic dataset:
+  `patterns=["table-id-of-the-dataset"], semantic_types=["semantic-metric",`
+  `"semantic-relationship", "semantic-constraint"]`
+- Search semantic constraints using e.g. certain semantic metrics and certain semantic datasets:
+  `patterns=["metric-name-1", "metric-name-2", "table-id-from-the-dataset"],`
+  `semantic_types=["semantic-metric", "semantic-relationship"]`
+- Search something within specific semantic models only:
+  `patterns=["something"], semantic_model_ids=["<semantic-model-uuid-1>", "<semantic-model-uuid-2>"]`
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "SemanticObjectType": {
+      "enum": [
+        "semantic-model",
+        "semantic-dataset",
+        "semantic-metric",
+        "semantic-relationship",
+        "semantic-glossary",
+        "semantic-constraint"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "patterns": {
+      "description": "One or more regex patterns used to search semantic metadata. The search checks semantic model names plus semantic object names and nested attribute values. Use multiple patterns when you need to find objects related to several business terms at once.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "semantic_types": {
+      "default": [],
+      "description": "Optional semantic object types to search. Empty list [] means ALL semantic object types are searched. Use this to narrow the search when you already know whether you want datasets, metrics, relationships, glossary terms, constraints, or models.",
+      "items": {
+        "$ref": "#/$defs/SemanticObjectType"
+      },
+      "type": "array"
+    },
+    "semantic_model_ids": {
+      "default": [],
+      "description": "Optional list of semantic model IDs to restrict the search to specific models. Empty list [] means search across all semantic models.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "case_sensitive": {
+      "default": false,
+      "description": "Whether regex matching should be case-sensitive. Leave false for normal discovery; set true only when exact casing matters.",
+      "type": "boolean"
+    },
+    "max_results": {
+      "default": 100,
+      "description": "Maximum number of matched semantic objects to return. Use a smaller value for quick discovery and a larger value only when you need a broader result set.",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "patterns"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="validate_semantic_query"></a>
+## validate_semantic_query
+**Annotations**: `read-only`
+
+**Tags**: `semantic`
+
+**Description**:
+
+Performs best-effort semantic validation of an SQL query against one or more semantic models and compares it with
+the expected semantic objects provided.
+
+RETURNS:
+- `validation_auto_detected`: semantic validation built from objects heuristically detected in the SQL
+- `validation_detected_from_expected`: semantic validation built only from explicitly provided expected object IDs
+- expected semantic objects that were matched or missing in the auto-detected result
+- unexpected auto-detected objects outside the expected semantic scope
+
+LIMITATIONS:
+- Detection is heuristic and based on string matching over SQL and semantic metadata.
+- The tool does not parse SQL semantically and does not execute the query.
+- Auto-detected objects, missing objects, and relationship matches may therefore be imperfect.
+- Use the result as a best-effort semantic check, not as a formal proof that the query is correct.
+
+CONSIDERATIONS:
+-  Prefer calling this tool before executing any SQL that touches semantic objects.
+- This tool confirms the SQL dialect, surfaces semantic constraint violations, and provides post-execution checks.
+- Only proceed to query_data once this tool returns valid=True and violations is empty. If violations are found,
+fix the query first or consider the limitations of this tool.
+
+WHEN TO USE:
+- Before generating or approving a query that should follow a semantic model.
+- When you want to validate a SQL query against the semantic objects before executing it using "query_data" tool
+or creating a new SQL transformation out of it, especially when investigating data quality issues.
+- When you want to verify that a query uses the intended semantic objects.
+- When you need to surface semantic business-rule violations or follow-up checks.
+
+EXAMPLES:
+- Validate a SQL query against one semantic model:
+  `sql_query="SELECT SUM(\"REVENUE\") FROM ...", semantic_model_ids=["semantic-model-uuid"],`
+  `expected_semantic_objects=[{"object_type": "semantic-dataset"}]`
+- Validate a cross-model query against two semantic models:
+  `sql_query="SELECT * FROM ...", semantic_model_ids=["model-uuid-1", "model-uuid-2"],`
+  `expected_semantic_objects=[{"object_type": "semantic-dataset", "ids": ["dataset-uuid-1"]}]`
+- Validate a query and compare it against expected objects:
+  `sql_query="SELECT SUM(\"REVENUE\") FROM ...", semantic_model_ids=["semantic-model-uuid"],`
+  `expected_semantic_objects=[{"object_type": "semantic-metric", "ids": ["metric-uuid-1"]}]`
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "SemanticObjectType": {
+      "enum": [
+        "semantic-model",
+        "semantic-dataset",
+        "semantic-metric",
+        "semantic-relationship",
+        "semantic-glossary",
+        "semantic-constraint"
+      ],
+      "type": "string"
+    },
+    "SemanticObjectTypeSelection": {
+      "description": "Semantic object type selection used by semantic tools.",
+      "properties": {
+        "object_type": {
+          "$ref": "#/$defs/SemanticObjectType",
+          "description": "Semantic object type to load."
+        },
+        "ids": {
+          "default": [],
+          "description": "Specific object UUIDs to include. Empty list [] means include all objects of this type.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "object_type"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "sql_query": {
+      "description": "SQL query that should be checked against the semantic layer. The query is not executed; the tool performs best-effort semantic detection and rule validation using heuristic string matching, so the detected objects may be incomplete or imperfect.",
+      "type": "string"
+    },
+    "semantic_model_ids": {
+      "description": "One or more semantic model IDs against which the SQL should be validated. Contexts from all models are merged into a single universe for object detection. Constraint evaluation is performed per model to avoid cross-model rule contamination.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "expected_semantic_objects": {
+      "default": [],
+      "description": "Optional semantic object selections that define the expected semantic scope of the query. These expectations are compared with the objects actually detected in the SQL. Use `ids` when you want to assert that specific semantic objects should be present.",
+      "items": {
+        "$ref": "#/$defs/SemanticObjectTypeSelection"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "sql_query",
+    "semantic_model_ids"
   ],
   "type": "object"
 }
