@@ -23,7 +23,6 @@ from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
 from keboola_mcp_server.tools.validation import RecoverableValidationError, ValidationContext
 
-
 PYDANTIC_DOCS_VERSION = '.'.join(pydantic.__version__.split('.')[:2])
 
 
@@ -295,8 +294,7 @@ class TestPydanticValidationErrors:
                             'type': 'unexpected_keyword_argument',
                             'input': 'bar',
                             'url': (
-                                f'https://errors.pydantic.dev/{PYDANTIC_DOCS_VERSION}'
-                                '/v/unexpected_keyword_argument'
+                                f'https://errors.pydantic.dev/{PYDANTIC_DOCS_VERSION}/v/unexpected_keyword_argument'
                             ),
                         },
                     },
