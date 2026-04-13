@@ -180,7 +180,7 @@ async def generate_docs() -> None:
     try:
         mcp = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(mcp, FastMCP)
-        tools = await mcp._list_tools()
+        tools = await mcp.list_tools(run_middleware=False)
         categories = [
             ToolCategory('Storage Tools', STORAGE_TOOLS_TAG),
             ToolCategory('SQL Tools', SQL_TOOLS_TAG),

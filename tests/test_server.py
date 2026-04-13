@@ -37,7 +37,7 @@ class TestServer:
     async def test_list_tools(self):
         server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
-        tools = await server._list_tools()
+        tools = await server.list_tools(run_middleware=False)
         assert sorted(tool.name for tool in tools) == [
             'add_config_row',
             'create_conditional_flow',
@@ -81,7 +81,7 @@ class TestServer:
     async def test_tools_have_descriptions(self):
         server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
-        tools = await server._list_tools()
+        tools = await server.list_tools(run_middleware=False)
 
         missing_descriptions: list[str] = []
         for tool in tools:
@@ -95,7 +95,7 @@ class TestServer:
     async def test_tools_have_serializer(self):
         server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
-        tools = await server._list_tools()
+        tools = await server.list_tools(run_middleware=False)
 
         missing_serializer: list[str] = []
         for tool in tools:
@@ -111,7 +111,7 @@ class TestServer:
     async def test_tools_input_schema(self):
         server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
-        tools = await server._list_tools()
+        tools = await server.list_tools(run_middleware=False)
 
         missing_properties: list[str] = []
         missing_type: list[str] = []
@@ -205,7 +205,7 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     # create MCP server with the initial Config
     mcp = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(mcp, FastMCP)
-    tools_count = len(await mcp._list_tools())
+    tools_count = len(await mcp.list_tools(run_middleware=False))
     mcp.add_tool(FunctionTool.from_function(assessed_function, name='assessed-function'))
 
     # running the server as stdio transport through client
@@ -328,7 +328,7 @@ async def test_tool_annotations_and_tags():
     """
     server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(server, FastMCP)
-    tools = await server._list_tools()
+    tools = await server.list_tools(run_middleware=False)
     for tool in tools:
         assert tool.tags is not None, f'{tool.name} has no tags'
         if tool.annotations is not None:
@@ -405,7 +405,7 @@ async def test_tool_annotations_tags_values(
     """
     server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(server, FastMCP)
-    tools = {t.name: t for t in await server._list_tools()}
+    tools = {t.name: t for t in await server.list_tools(run_middleware=False)}
 
     # check tool registration
     assert tool_name in tools, f'Missing tool registered: {tool_name}'
