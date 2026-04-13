@@ -272,7 +272,7 @@ class TestPydanticValidationErrors:
                         'extra': {
                             'type': 'missing_argument',
                             'input': "{'foo': 'bar'}",
-                            'url': 'https://errors.pydantic.dev/2.12/v/missing_argument',
+                            'url': 'https://errors.pydantic.dev/2.13/v/missing_argument',
                         },
                     },
                     {
@@ -281,7 +281,7 @@ class TestPydanticValidationErrors:
                         'extra': {
                             'type': 'missing_argument',
                             'input': "{'foo': 'bar'}",
-                            'url': 'https://errors.pydantic.dev/2.12/v/missing_argument',
+                            'url': 'https://errors.pydantic.dev/2.13/v/missing_argument',
                         },
                     },
                     {
@@ -290,7 +290,7 @@ class TestPydanticValidationErrors:
                         'extra': {
                             'type': 'unexpected_keyword_argument',
                             'input': 'bar',
-                            'url': 'https://errors.pydantic.dev/2.12/v/unexpected_keyword_argument',
+                            'url': 'https://errors.pydantic.dev/2.13/v/unexpected_keyword_argument',
                         },
                     },
                 ]
@@ -330,7 +330,7 @@ class TestPydanticValidationErrors:
                         'extra': {
                             'type': 'missing',
                             'input': "{'name': 'bar', 'database_native_type': 'text', 'nullable': False}",
-                            'url': 'https://errors.pydantic.dev/2.12/v/missing',
+                            'url': 'https://errors.pydantic.dev/2.13/v/missing',
                         },
                     },
                 ]

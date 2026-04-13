@@ -744,7 +744,7 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
                 'extra': {
                     'type': 'string_type',
                     'input': '123',
-                    'url': 'https://errors.pydantic.dev/2.12/v/string_type',
+                    'url': 'https://errors.pydantic.dev/2.13/v/string_type',
                 },
             },
             {
@@ -754,7 +754,7 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
                     'type': 'string_too_short',
                     'input': '',
                     'ctx': "{'min_length': 1}",
-                    'url': 'https://errors.pydantic.dev/2.12/v/string_too_short',
+                    'url': 'https://errors.pydantic.dev/2.13/v/string_too_short',
                 },
             },
         ]
