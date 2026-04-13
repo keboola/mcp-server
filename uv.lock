@@ -1252,7 +1252,7 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
-version = "1.52.1"
+version = "1.53.1"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -1289,6 +1289,7 @@ dev = [
 ]
 integtests = [
     { name = "kbcstorage" },
+    { name = "requests" },
 ]
 tests = [
     { name = "pytest" },
@@ -1332,6 +1333,7 @@ requires-dist = [
     { name = "python-dateutil", marker = "extra == 'tests'", specifier = "~=2.9" },
     { name = "python-dotenv", marker = "extra == 'tests'", specifier = "~=1.2" },
     { name = "pyyaml", specifier = "~=6.0" },
+    { name = "requests", marker = "extra == 'integtests'", specifier = "~=2.32" },
     { name = "sqlglot", specifier = "~=30.0" },
     { name = "toon-format", specifier = "~=0.9.0b1" },
     { name = "tox", marker = "extra == 'dev'", specifier = "~=4.35" },
