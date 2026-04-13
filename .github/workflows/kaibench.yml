@@ -1,0 +1,266 @@
+name: KaiBench Evaluation
+
+# Runs KaiBench evaluations against the MCP server built from the current branch.
+# Spins up the MCP server (from this repo), kai-assistant (pre-built image),
+# Postgres, and Redis, then runs the KaiBench evaluation suite.
+
+permissions:
+  contents: read
+  actions: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      question_types:
+        description: 'Question types (comma-separated, or "all")'
+        default: 'Data Analysis Query,Configuration Reasoning,Storage Object Reasoning,MCP Tool Validation'
+        type: string
+      regression_only:
+        description: 'Only regression-flagged questions'
+        type: boolean
+        default: false
+      kai_assistant_image_tag:
+        description: 'kai-assistant image tag (default: latest production)'
+        required: false
+        type: string
+        default: ''
+  workflow_call:
+
+jobs:
+  evaluate:
+    name: Run KaiBench evaluation
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      status: ${{ steps.parse.outputs.status }}
+      passed: ${{ steps.parse.outputs.passed }}
+      failed: ${{ steps.parse.outputs.failed }}
+      total: ${{ steps.parse.outputs.total }}
+      pass_rate: ${{ steps.parse.outputs.pass_rate }}
+      duration: ${{ steps.parse.outputs.duration }}
+      regressions: ${{ steps.parse.outputs.regressions }}
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: kai_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=5
+
+    steps:
+      - name: Checkout MCP server
+        uses: actions/checkout@v4
+
+      - name: Checkout KaiBench
+        uses: actions/checkout@v4
+        with:
+          repository: keboola-rnd/KaiBench
+          token: ${{ secrets.KAIBENCH_REPO_TOKEN }}
+          path: kaibench
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Hub login
+        uses: docker/login-action@v3
+        with:
+          username: keboolabot
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build MCP server from branch
+        uses: docker/build-push-action@v6
+        with:
+          load: true
+          tags: keboola/mcp-server:kaibench-test
+          context: .
+          file: ./Dockerfile
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Resolve kai-assistant image tag
+        id: resolve-kai
+        env:
+          KAI_IMAGE_TAG_INPUT: ${{ inputs.kai_assistant_image_tag }}
+        run: |
+          if [ -n "$KAI_IMAGE_TAG_INPUT" ]; then
+            echo "tag=$KAI_IMAGE_TAG_INPUT" >> $GITHUB_OUTPUT
+          else
+            # Use latest production image
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pull kai-assistant image
+        env:
+          KAI_IMAGE_TAG: ${{ steps.resolve-kai.outputs.tag }}
+        run: docker pull keboola/kai-assistant:$KAI_IMAGE_TAG
+
+      - name: Start MCP server
+        run: |
+          docker run -d --name mcp-server --network host \
+            keboola/mcp-server:kaibench-test \
+            --transport streamable-http --host 0.0.0.0 --port 8000
+          echo "Waiting for MCP server..."
+          for i in $(seq 1 30); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/mcp 2>/dev/null || true)
+            if [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" != "000" ]; then
+              echo "MCP server is ready (HTTP $HTTP_CODE)"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "::error::MCP server failed to start"
+              docker logs mcp-server
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Run database migrations
+        env:
+          KAI_IMAGE_TAG: ${{ steps.resolve-kai.outputs.tag }}
+        run: |
+          docker run --rm --network host \
+            -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
+            --workdir /app/apps/kai-assistant-backend \
+            keboola/kai-assistant:$KAI_IMAGE_TAG \
+            node dist/lib/db/migrate.js
+
+      - name: Start kai-assistant
+        env:
+          KAI_IMAGE_TAG: ${{ steps.resolve-kai.outputs.tag }}
+          KAIBENCH_API_URL: ${{ vars.KAIBENCH_API_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.KAI_GOOGLE_VERTEX_CREDENTIALS }}
+          GOOGLE_VERTEX_PROJECT: ${{ secrets.KAI_GOOGLE_VERTEX_PROJECT }}
+          GOOGLE_VERTEX_LOCATION: ${{ secrets.KAI_GOOGLE_VERTEX_LOCATION }}
+        run: |
+          AUTH_SECRET=$(openssl rand -base64 32)
+          docker run -d --name kai-assistant --network host \
+            -e AUTH_SECRET="$AUTH_SECRET" \
+            -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
+            -e REDIS_URL="redis://localhost:6379" \
+            -e MCP_SERVER_URL="http://localhost:8000/mcp" \
+            -e KEBOOLA_STORAGE_API_URL="$KAIBENCH_API_URL" \
+            -e KEBOOLA_STACK="dev-keboola-canary-orion" \
+            -e CLOUD_LLM_PROVIDER="google-vertex" \
+            -e GOOGLE_SERVICE_ACCOUNT_JSON="$GOOGLE_SERVICE_ACCOUNT_JSON" \
+            -e GOOGLE_VERTEX_PROJECT="$GOOGLE_VERTEX_PROJECT" \
+            -e GOOGLE_VERTEX_LOCATION="$GOOGLE_VERTEX_LOCATION" \
+            keboola/kai-assistant:$KAI_IMAGE_TAG
+          echo "Waiting for kai-assistant..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/ping > /dev/null 2>&1; then
+              echo "kai-assistant is ready"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "::error::kai-assistant failed to start"
+              docker logs kai-assistant
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        run: uv python install 3.11
+
+      - name: Install KaiBench dependencies
+        working-directory: kaibench
+        run: uv sync
+
+      - name: Run evaluation
+        working-directory: kaibench
+        env:
+          KAIBENCH_STATIC_TOKEN: ${{ secrets.KAIBENCH_STATIC_TOKEN }}
+          KAIBENCH_STATIC_HOST: connection.canary-orion.keboola.dev
+          KAIBENCH_STATIC_PROJECT_ID: '293'
+          KAIBENCH_MANAGEMENT_TOKEN: ${{ secrets.KAIBENCH_MANAGEMENT_TOKEN }}
+          KAIBENCH_API_URL: ${{ vars.KAIBENCH_API_URL }}
+          KAIBENCH_ORGANIZATION_ID: '58'
+          KAIBENCH_EVAL_PARALLEL_WORKERS: '4'
+          KAIBENCH_EVAL_KAI_BACKEND_URL: http://localhost:3000
+          QUESTION_TYPES: ${{ inputs.question_types }}
+        run: |
+          CMD_ARGS=()
+          if [ -n "$QUESTION_TYPES" ]; then
+            IFS=',' read -ra TYPES <<< "$QUESTION_TYPES"
+            for t in "${TYPES[@]}"; do
+              trimmed=$(echo "$t" | xargs)
+              CMD_ARGS+=(-t "$trimmed")
+            done
+          else
+            CMD_ARGS=(-t "Data Analysis Query" -t "Configuration Reasoning" -t "Storage Object Reasoning" -t "MCP Tool Validation")
+          fi
+          if [ "${{ inputs.regression_only }}" = "true" ]; then
+            CMD_ARGS+=(--regression-only)
+          fi
+          uv run kaibench run "${CMD_ARGS[@]}"
+        continue-on-error: true
+
+      - name: Find previous successful run
+        id: find-prev-run
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PREV_RUN_ID=$(gh run list --workflow kaibench.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          echo "run_id=${PREV_RUN_ID}" >> $GITHUB_OUTPUT
+
+      - name: Download previous run artifacts
+        if: steps.find-prev-run.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: kaibench-results-*
+          path: kaibench/prev-results/
+          merge-multiple: true
+          run-id: ${{ steps.find-prev-run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verbose results
+        if: always()
+        working-directory: kaibench
+        run: python3 ../.github/scripts/kaibench-verbose-results.py
+
+      - name: Parse results
+        id: parse
+        if: always()
+        working-directory: kaibench
+        run: python3 ../.github/scripts/kaibench-parse-results.py >> $GITHUB_OUTPUT
+
+      - name: Step summary
+        if: always()
+        working-directory: kaibench
+        run: python3 ../.github/scripts/kaibench-step-summary.py >> $GITHUB_STEP_SUMMARY
+
+      - name: Cost guardrails
+        if: always()
+        working-directory: kaibench
+        run: python3 ../.github/scripts/kaibench-cost-guardrails.py
+
+      - name: Dump container logs
+        if: always()
+        run: |
+          echo "=== kai-assistant logs ==="
+          docker logs kai-assistant 2>&1 || true
+          echo ""
+          echo "=== mcp-server logs ==="
+          docker logs mcp-server 2>&1 || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaibench-results-${{ github.run_id }}
+          path: kaibench/results/
+          retention-days: 90
