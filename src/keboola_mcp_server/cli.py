@@ -17,7 +17,6 @@ from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.routing import Route
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ForwardSlashMiddleware
@@ -35,7 +34,7 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         '--transport',
-        choices=['stdio', 'sse', 'streamable-http', 'http-compat'],
+        choices=['stdio', 'streamable-http', 'http-compat'],
         default='stdio',
         help='Transport to use for MCP communication',
     )
@@ -142,11 +141,8 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                 raise RuntimeError('OAuth authorization can only be used with HTTP-based transports.')
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
         else:
-            # 'http-compat' is a compatibility mode to support both Streamable-HTTP and SSE transports.
-            # SSE transport is deprecated and will be removed in the future.
-            # Supporting both transports is implemented by creating a parent app and mounting
-            # two apps (SSE and Streamable-HTTP) to it. The custom routes (like health check)
-            # are added to the parent app. We use local imports here due to temporary nature of this code.
+            # 'http-compat' is an alias for 'streamable-http' kept for backwards compatibility.
+            # We use local imports here due to the temporary nature of this code.
 
             from contextlib import asynccontextmanager
 
@@ -171,28 +167,6 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                 )
                 mount_paths['/mcp'] = http_app
                 transports.append('Streamable-HTTP')
-
-            if parsed_args.transport in ['http-compat', 'sse']:
-                sse_runtime_config = ServerRuntimeInfo('http-compat/sse')
-                mcp_server, custom_routes = create_server(
-                    config, runtime_info=sse_runtime_config, custom_routes_handling='return'
-                )
-                sse_app: StarletteWithLifespan = mcp_server.http_app(
-                    path='/',
-                    transport='sse',
-                )
-
-                log_messages: list[str] = []
-                for route in sse_app.routes:
-                    # make sure that the root path is available for GET requests only
-                    # (i.e. POST requests are not allowed)
-                    if isinstance(route, Route) and route.path == '/' and not route.methods:
-                        route.methods = ['GET', 'HEAD']
-                    log_messages.append(str(route))
-                LOG.info('SSE Routes:\n{}\n'.format('\n'.join(log_messages)))
-
-                mount_paths['/sse'] = sse_app  # serves /sse/ and /messages
-                transports.append('SSE')
 
             @asynccontextmanager
             async def lifespan(_app: Starlette):

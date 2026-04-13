@@ -1247,7 +1247,7 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
-version = "1.51.1"
+version = "1.52.1"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -1286,6 +1286,7 @@ integtests = [
     { name = "kbcstorage" },
 ]
 tests = [
+    { name = "fakeredis" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -1299,6 +1300,7 @@ tests = [
 requires-dist = [
     { name = "black", marker = "extra == 'codestyle'", specifier = "~=26.3" },
     { name = "cryptography", specifier = "~=46.0" },
+    { name = "fakeredis", marker = "extra == 'tests'", specifier = "==2.34.1" },
     { name = "fastmcp", specifier = "==3.2.0" },
     { name = "flake8", marker = "extra == 'codestyle'", specifier = "~=7.3" },
     { name = "flake8-bugbear", marker = "extra == 'codestyle'", specifier = "~=25.11" },

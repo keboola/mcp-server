@@ -80,7 +80,7 @@ class ForwardSlashMiddleware:
 
         if scope['type'] == 'http':
             path = scope['path']
-            if path in ['/sse', '/messages', '/mcp']:
+            if path in ['/mcp']:
                 scope = dict(scope)
                 scope['path'] = f'{path}/'
 
