@@ -700,8 +700,12 @@ async def load_semantic_context_for_semantic_model(
 def detect_used_objects_from_context(
     sql_query: str,
     context_by_type: dict[SemanticObjectType, SemanticServiceDataTypeGroup],
+    *,
+    used_objects_by_type: dict[SemanticObjectType, SemanticServiceDataTypeGroup] | None = None,
 ) -> dict[SemanticObjectType, SemanticServiceDataTypeGroup]:
-    """Detect semantic objects used by the SQL query from raw semantic context."""
+    """Detect semantic objects used by the SQL query from raw semantic context. If used objects are provided,
+    they will be combined with the detected objects if not detected by the heuristics"""
+    used_objects_by_type = used_objects_by_type or {}
     datasets = context_by_type.get(
         SemanticObjectType.SEMANTIC_DATASET,
         SemanticServiceDataTypeGroup(object_type=SemanticObjectType.SEMANTIC_DATASET),
@@ -714,18 +718,32 @@ def detect_used_objects_from_context(
         SemanticObjectType.SEMANTIC_RELATIONSHIP,
         SemanticServiceDataTypeGroup(object_type=SemanticObjectType.SEMANTIC_RELATIONSHIP),
     )
-
-    used_dataset_objects = _detect_used_datasets(sql_query, datasets.objects)
-    used_dataset_ids = {
-        item.table_id.strip() for item in used_dataset_objects if item.table_id and item.table_id.strip()
-    }
     # Detection is intentionally layered:
     # 1. detect datasets first
     # 2. detect metrics only within those datasets
     # 3. detect relationships only between those detected datasets
     # This keeps later detections narrower and reduces false positives.
+
+    used_dataset_objects = _detect_used_datasets(sql_query, datasets.objects)
+    if expected := used_objects_by_type.get(SemanticObjectType.SEMANTIC_DATASET):
+        expected_objects = expected.objects
+        ids = {obj.id for obj in used_dataset_objects}
+        used_dataset_objects = used_dataset_objects + [obj for obj in expected_objects if obj.id not in ids]
+    used_dataset_ids = {
+        item.table_id.strip() for item in used_dataset_objects if item.table_id and item.table_id.strip()
+    }
+
     used_metric_objects = _detect_used_metrics_for_datasets(sql_query, metrics.objects, used_dataset_ids)
+    if expected := used_objects_by_type.get(SemanticObjectType.SEMANTIC_METRIC):
+        expected_objects = expected.objects
+        ids = {obj.id for obj in used_metric_objects}
+        used_metric_objects = used_metric_objects + [obj for obj in expected_objects if obj.id not in ids]
+
     used_relationship_objects = _detect_used_relationships(sql_query, relationships.objects, used_dataset_ids)
+    if expected := used_objects_by_type.get(SemanticObjectType.SEMANTIC_RELATIONSHIP):
+        expected_objects = expected.objects
+        ids = {obj.id for obj in used_relationship_objects}
+        used_relationship_objects = used_relationship_objects + [obj for obj in expected_objects if obj.id not in ids]
 
     used_groups: dict[SemanticObjectType, SemanticServiceDataTypeGroup] = {}
     if used_dataset_objects:
@@ -994,41 +1012,37 @@ def _evaluate_used_objects_for_contexts(
     )
 
 
-async def validate_semantic_used_objects(
-    client: KeboolaClient,
-    semantic_model_ids: Sequence[str],
-    used_object_groups: Sequence[SemanticServiceDataTypeGroup],
-    *,
-    contexts_per_model: list[dict[SemanticObjectType, SemanticServiceDataTypeGroup]] | None = None,
-) -> SemanticValidationServiceOutput:
-    """Validate already identified semantic objects against one or more semantic models."""
-    if contexts_per_model is None:
-        contexts_per_model = await _load_validation_contexts(client, semantic_model_ids)
-    used_object_groups_by_type = _merge_used_object_groups(used_object_groups)
-    return _evaluate_used_objects_for_contexts(semantic_model_ids, contexts_per_model, used_object_groups_by_type)
-
-
-async def validate_semantic_query(
+async def validate_semantic_query_with_used_objects(
     client: KeboolaClient,
     sql_query: str,
     semantic_model_ids: Sequence[str],
     *,
+    used_object_groups: Sequence[SemanticServiceDataTypeGroup] | None = None,
     contexts_per_model: list[dict[SemanticObjectType, SemanticServiceDataTypeGroup]] | None = None,
 ) -> SemanticValidationServiceOutput:
     """Validate SQL against one or more semantic models without executing it.
-
+    If used objects are provided, they will be combined with the detected objects if not detected from sql query
+    by the heuristics.
     Contexts from all requested models are merged into a single universe for object detection.
     Constraint evaluation is performed per model to avoid cross-model rule contamination.
     """
     if not sql_query.strip():
         raise ValueError('sql_query must not be empty.')
 
+    cleaned_model_ids = list(dict.fromkeys(mid.strip() for mid in semantic_model_ids if mid and mid.strip()))
+    if not cleaned_model_ids:
+        raise ValueError('At least one semantic_model_id must be provided.')
+
     if contexts_per_model is None:
-        contexts_per_model = await _load_validation_contexts(client, semantic_model_ids)
+        contexts_per_model = await _load_validation_contexts(client, cleaned_model_ids)
+    used_object_groups = used_object_groups or []
 
     merged_context = _merge_contexts(contexts_per_model)
-    used_object_groups_by_type = detect_used_objects_from_context(sql_query, merged_context)
-    return _evaluate_used_objects_for_contexts(semantic_model_ids, contexts_per_model, used_object_groups_by_type)
+    used_object_groups_by_type = _merge_used_object_groups(used_object_groups)
+    used_object_groups_by_type = detect_used_objects_from_context(
+        sql_query, merged_context, used_objects_by_type=used_object_groups_by_type
+    )
+    return _evaluate_used_objects_for_contexts(cleaned_model_ids, contexts_per_model, used_object_groups_by_type)
 
 
 async def get_object_by_id(

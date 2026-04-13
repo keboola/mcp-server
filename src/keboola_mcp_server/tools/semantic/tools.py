@@ -436,53 +436,6 @@ def _format_validation_result(
     )
 
 
-async def _load_expected_object_groups(
-    client: KeboolaClient,
-    expected_semantic_objects: Sequence[SemanticObjectTypeSelection],
-    semantic_model_ids: Sequence[str],
-) -> list[semantic_service.SemanticServiceDataTypeGroup]:
-    expected_requests = [
-        (selection.object_type, object_id.strip())
-        for selection in expected_semantic_objects
-        for object_id in selection.ids
-        if object_id.strip()
-    ]
-    if not expected_requests:
-        return []
-
-    results = await process_concurrently(
-        expected_requests,
-        lambda item: semantic_service.get_object_by_id(client, item[0], item[1]),
-        max_concurrency=min(len(expected_requests), 10),
-    )
-    objects = unwrap_results(results, 'Failed to fetch expected semantic objects.')
-
-    grouped_objects: dict[SemanticObjectType, list[semantic_service.SemanticServiceData]] = {}
-    seen_ids_by_type: dict[SemanticObjectType, set[str]] = {}
-    allowed_model_ids = set(semantic_model_ids)
-
-    for (_expected_type, object_id), obj in zip(expected_requests, objects, strict=True):
-        object_model_id = (
-            obj.id if obj.semantic_type == SemanticObjectType.SEMANTIC_MODEL else getattr(obj, 'model_uuid', None)
-        )
-        if object_model_id is not None and object_model_id not in allowed_model_ids:
-            raise ValueError(
-                f'Expected semantic object "{object_id}" does not belong to the provided semantic_model_ids.'
-            )
-
-        seen_ids = seen_ids_by_type.setdefault(obj.semantic_type, set())
-        if obj.id in seen_ids:
-            continue
-
-        seen_ids.add(obj.id)
-        grouped_objects.setdefault(obj.semantic_type, []).append(obj)
-
-    return [
-        semantic_service.SemanticServiceDataTypeGroup(object_type=object_type, objects=objects)
-        for object_type, objects in grouped_objects.items()
-    ]
-
-
 def add_semantic_tools(mcp: FastMCP) -> None:
     """Register semantic read tools."""
     mcp.add_tool(
@@ -877,19 +830,34 @@ async def validate_semantic_query(
     if expected_semantic_objects:
         pre_loaded_contexts = await semantic_service._load_validation_contexts(client, cleaned_model_ids)
 
-    raw_auto_detected = await semantic_service.validate_semantic_query(
+    raw_auto_detected = await semantic_service.validate_semantic_query_with_used_objects(
         client, sql_query, cleaned_model_ids, contexts_per_model=pre_loaded_contexts
     )
-    expected_object_groups = await _load_expected_object_groups(client, expected_semantic_objects, cleaned_model_ids)
+    matched_expected_objects = []
+    missing_expected_objects = []
+    unexpected_detected_objects = []
     raw_from_expected = None
-    if expected_object_groups:
-        raw_from_expected = await semantic_service.validate_semantic_used_objects(
-            client, cleaned_model_ids, expected_object_groups, contexts_per_model=pre_loaded_contexts
+    if expected_semantic_objects:
+        matched_expected_objects, missing_expected_objects, unexpected_detected_objects = (
+            _compare_expected_and_detected_objects(expected_semantic_objects, raw_auto_detected.used_object_groups)
         )
+        results = await process_concurrently(
+            expected_semantic_objects,
+            lambda selection: semantic_service.load_semantic_context_for_semantic_type(
+                client, selection.object_type, semantic_model_ids=semantic_model_ids or None, ids=selection.ids
+            ),
+            max_concurrency=min(len(expected_semantic_objects), 10),
+        )
+        expected_object_groups = unwrap_results(results, 'Failed to fetch semantic context.')
+        if expected_object_groups:
+            raw_from_expected = await semantic_service.validate_semantic_query_with_used_objects(
+                client,
+                sql_query,
+                cleaned_model_ids,
+                used_object_groups=expected_object_groups,
+                contexts_per_model=pre_loaded_contexts,
+            )
 
-    matched_expected_objects, missing_expected_objects, unexpected_detected_objects = (
-        _compare_expected_and_detected_objects(expected_semantic_objects, raw_auto_detected.used_object_groups)
-    )
     auto_detected_summary_notes: list[str] = []
     if missing_expected_objects:
         auto_detected_summary_notes.append('Some expected semantic objects were not detected in the SQL query.')

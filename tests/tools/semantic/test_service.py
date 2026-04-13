@@ -18,8 +18,7 @@ from keboola_mcp_server.tools.semantic.service import (
     detect_used_objects_from_context,
     evaluate_constraints_from_context,
     search_semantic_context,
-    validate_semantic_query,
-    validate_semantic_used_objects,
+    validate_semantic_query_with_used_objects,
 )
 
 
@@ -324,7 +323,7 @@ async def test_validate_semantic_query_detects_used_objects_and_relevant_validat
     keboola_client: KeboolaClient,
     mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
 ) -> None:
-    result = await validate_semantic_query(
+    result = await validate_semantic_query_with_used_objects(
         keboola_client,
         (
             'SELECT SUM(order_amount) AS revenue '
@@ -369,14 +368,15 @@ async def test_validate_semantic_query_detects_used_objects_and_relevant_validat
 
 
 @pytest.mark.asyncio
-async def test_validate_semantic_used_objects_uses_only_provided_scope(
+async def test_validate_semantic_query_with_used_objects_uses_only_provided_scope(
     keboola_client: KeboolaClient,
     mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
 ) -> None:
-    result = await validate_semantic_used_objects(
+    result = await validate_semantic_query_with_used_objects(
         keboola_client,
+        'SELECT * FROM analytics.orders',
         ['model-1'],
-        [
+        used_object_groups=[
             _service_group(
                 SemanticObjectType.SEMANTIC_DATASET, [mock_semantic_api[SemanticObjectType.SEMANTIC_DATASET][0]]
             ),
@@ -1017,7 +1017,7 @@ async def test_validate_semantic_query_requires_non_empty_inputs(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        await validate_semantic_query(keboola_client, sql_query, semantic_model_ids)
+        await validate_semantic_query_with_used_objects(keboola_client, sql_query, semantic_model_ids)
 
 
 @pytest.mark.parametrize(
