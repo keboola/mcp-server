@@ -6,6 +6,7 @@ from unittest.mock import ANY
 
 import httpx
 import jsonschema
+import pydantic
 import pytest
 import yaml
 from fastmcp import Client, Context, FastMCP
@@ -21,6 +22,9 @@ from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
 from keboola_mcp_server.tools.validation import RecoverableValidationError, ValidationContext
+
+
+PYDANTIC_DOCS_VERSION = '.'.join(pydantic.__version__.split('.')[:2])
 
 
 @pytest.fixture
@@ -272,7 +276,7 @@ class TestPydanticValidationErrors:
                         'extra': {
                             'type': 'missing_argument',
                             'input': "{'foo': 'bar'}",
-                            'url': 'https://errors.pydantic.dev/2.12/v/missing_argument',
+                            'url': f'https://errors.pydantic.dev/{PYDANTIC_DOCS_VERSION}/v/missing_argument',
                         },
                     },
                     {
@@ -281,7 +285,7 @@ class TestPydanticValidationErrors:
                         'extra': {
                             'type': 'missing_argument',
                             'input': "{'foo': 'bar'}",
-                            'url': 'https://errors.pydantic.dev/2.12/v/missing_argument',
+                            'url': f'https://errors.pydantic.dev/{PYDANTIC_DOCS_VERSION}/v/missing_argument',
                         },
                     },
                     {
@@ -290,7 +294,10 @@ class TestPydanticValidationErrors:
                         'extra': {
                             'type': 'unexpected_keyword_argument',
                             'input': 'bar',
-                            'url': 'https://errors.pydantic.dev/2.12/v/unexpected_keyword_argument',
+                            'url': (
+                                f'https://errors.pydantic.dev/{PYDANTIC_DOCS_VERSION}'
+                                '/v/unexpected_keyword_argument'
+                            ),
                         },
                     },
                 ]
@@ -330,7 +337,7 @@ class TestPydanticValidationErrors:
                         'extra': {
                             'type': 'missing',
                             'input': "{'name': 'bar', 'database_native_type': 'text', 'nullable': False}",
-                            'url': 'https://errors.pydantic.dev/2.12/v/missing',
+                            'url': f'https://errors.pydantic.dev/{PYDANTIC_DOCS_VERSION}/v/missing',
                         },
                     },
                 ]
