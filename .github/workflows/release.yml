@@ -110,5 +110,8 @@ jobs:
     name: KaiBench Evaluation
     needs: build-and-push
     if: needs.build-and-push.result == 'success' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/kaibench.yml
     secrets: inherit
