@@ -7,6 +7,7 @@ name: KaiBench Evaluation
 permissions:
   contents: read
   actions: read
+  packages: read
 
 on:
   workflow_dispatch:
@@ -77,6 +78,13 @@ jobs:
           username: keboolabot
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: GHCR login
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build MCP server from branch
         uses: docker/build-push-action@v6
         with:
@@ -102,7 +110,7 @@ jobs:
       - name: Pull kai-assistant image
         env:
           KAI_IMAGE_TAG: ${{ steps.resolve-kai.outputs.tag }}
-        run: docker pull keboola/kai-assistant:$KAI_IMAGE_TAG
+        run: docker pull ghcr.io/keboola/ui/kai-assistant:$KAI_IMAGE_TAG
 
       - name: Start MCP server
         run: |
@@ -131,7 +139,7 @@ jobs:
           docker run --rm --network host \
             -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
             --workdir /app/apps/kai-assistant-backend \
-            keboola/kai-assistant:$KAI_IMAGE_TAG \
+            ghcr.io/keboola/ui/kai-assistant:$KAI_IMAGE_TAG \
             node dist/lib/db/migrate.js
 
       - name: Start kai-assistant
@@ -154,7 +162,7 @@ jobs:
             -e GOOGLE_SERVICE_ACCOUNT_JSON="$GOOGLE_SERVICE_ACCOUNT_JSON" \
             -e GOOGLE_VERTEX_PROJECT="$GOOGLE_VERTEX_PROJECT" \
             -e GOOGLE_VERTEX_LOCATION="$GOOGLE_VERTEX_LOCATION" \
-            keboola/kai-assistant:$KAI_IMAGE_TAG
+            ghcr.io/keboola/ui/kai-assistant:$KAI_IMAGE_TAG
           echo "Waiting for kai-assistant..."
           for i in $(seq 1 60); do
             if curl -sf http://localhost:3000/ping > /dev/null 2>&1; then
