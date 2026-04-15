@@ -1,6 +1,7 @@
 ---
 name: release-notes
 description: Prepares release notes and a draft PR for a new Keboola MCP Server version. Use when the user asks to prepare a release, create release notes, or tag a new version.
+disable-model-invocation: true
 ---
 
 **Before doing anything**, ask the user two questions in a single prompt:
