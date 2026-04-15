@@ -167,3 +167,52 @@ env_file_loaded
 
 The lock is released in `project_lock`'s teardown, after every session-scoped fixture that
 depends on it has been torn down and the project has been cleaned up by `keboola_project`.
+
+---
+
+## 4. GitHub CI Setup
+
+### Pool projects
+
+The CI pool consists of four Keboola projects, all on
+`https://connection.europe-west3.gcp.keboola.com`:
+
+| Project ID | Dashboard URL |
+|---|---|
+| 2728 | https://connection.europe-west3.gcp.keboola.com/admin/projects/2728/dashboard |
+| 2729 | https://connection.europe-west3.gcp.keboola.com/admin/projects/2729/dashboard |
+| 2731 | https://connection.europe-west3.gcp.keboola.com/admin/projects/2731/dashboard |
+| 2732 | https://connection.europe-west3.gcp.keboola.com/admin/projects/2732/dashboard |
+
+Having four slots means up to four CI jobs can run concurrently — each acquires a
+different project from the pool and they do not block each other.
+
+### Secrets and variables
+
+The `integration_tests` job in `.github/workflows/ci.yml` reads the following from the
+repository's GitHub Secrets/Variables:
+
+| Name | Kind | Purpose |
+|---|---|---|
+| `INTEGTEST_STORAGE_TOKENS` | Secret | Space-separated master tokens for all four pool projects (order must match `INTEGTEST_WORKSPACE_SCHEMAS`) |
+| `INTEGTEST_POOL_STORAGE_API_URL` | Variable | `https://connection.europe-west3.gcp.keboola.com` |
+| `INTEGTEST_WORKSPACE_SCHEMAS` | Variable | Space-separated Snowflake workspace schemas, one per project in the same order as the tokens |
+
+### Concurrency
+
+- **Within a single CI run** — the matrix covers Python 3.10, 3.11, and 3.12 with
+  `max-parallel: 1`, so the three versions run sequentially. This is intentional: a
+  single run only needs one project slot, not three.
+- **Across concurrent CI runs** — the project-pool locking protocol (described in
+  section 3) handles collisions. Each run acquires a different project, so up to four
+  runs can proceed in parallel without interfering.
+- **Duplicate-run prevention** — a workflow-level concurrency key
+  (`ci-${{ github.ref }}`) cancels any in-progress run on the same branch when a new
+  push arrives.
+
+### Fork behaviour
+
+Integration tests are skipped for pull requests from forks
+(`github.repository != github.event.repository.full_name`) because forks do not have
+access to the repository secrets. The dependencies are still installed so the
+environment setup can be validated.
