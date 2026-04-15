@@ -1981,21 +1981,11 @@ async def test_get_table_storage_branches(mocker: MockerFixture, mcp_context_cli
     }
 
     def _table_detail_sb(tid: str, branch_id: str | None = None) -> JsonDict:
-        if branch_id == branch_id and tid == 'out.c-model.customers':
+        if tid == 'out.c-model.customers' and branch_id == '35403':
             return branch_table
         raise httpx.HTTPStatusError(message='Not found', request=AsyncMock(), response=httpx.Response(status_code=404))
 
-    keboola_client.storage_client.table_detail = mocker.AsyncMock(
-        side_effect=lambda tid, branch_id=None: (
-            branch_table
-            if tid == 'out.c-model.customers'
-            else (_ for _ in ()).throw(
-                httpx.HTTPStatusError(
-                    message='Not found', request=AsyncMock(), response=httpx.Response(status_code=404)
-                )
-            )
-        )
-    )
+    keboola_client.storage_client.table_detail = mocker.AsyncMock(side_effect=_table_detail_sb)
 
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_table_info = mocker.AsyncMock(
@@ -2020,5 +2010,7 @@ async def test_get_table_storage_branches(mocker: MockerFixture, mcp_context_cli
     assert table.id == 'out.c-model.customers'
     assert table.branch_id is None
 
-    # table_detail called twice (default and branch)
-    assert keboola_client.storage_client.table_detail.call_count == 2
+    # table_detail called with both default and branch endpoints
+    keboola_client.storage_client.table_detail.assert_has_calls(
+        [call('out.c-model.customers', branch_id='default'), call('out.c-model.customers', branch_id=branch_id)]
+    )
