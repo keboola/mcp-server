@@ -361,25 +361,27 @@ class AsyncStorageClient(KeboolaServiceClient):
         Retrieves information about a given bucket.
 
         :param bucket_id: The id of the bucket
-        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
+        :param branch_id: When specified, uses branch-scoped endpoint ``branch/{id}/buckets/{bucket_id}``.
+            When not specified, uses the legacy endpoint ``buckets/{bucket_id}``.
         :return: Bucket details as dictionary
         """
-        bid = branch_id or self._branch_id
-        return cast(JsonDict, await self.get(endpoint=f'branch/{bid}/buckets/{bucket_id}'))
+        endpoint = f'branch/{branch_id}/buckets/{bucket_id}' if branch_id else f'buckets/{bucket_id}'
+        return cast(JsonDict, await self.get(endpoint=endpoint))
 
     async def bucket_list(self, include: list[str] | None = None, branch_id: str | None = None) -> list[JsonDict]:
         """
         Lists all buckets.
 
         :param include: List of fields to include in the response ('metadata' or 'linkedBuckets')
-        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
+        :param branch_id: When specified, uses branch-scoped endpoint ``branch/{id}/buckets``.
+            When not specified, uses the legacy endpoint ``buckets``.
         :return: List of buckets as dictionary
         """
-        bid = branch_id or self._branch_id
+        endpoint = f'branch/{branch_id}/buckets' if branch_id else 'buckets'
         params = {}
         if include is not None and isinstance(include, list):
             params['include'] = ','.join(include)
-        return cast(list[JsonDict], await self.get(endpoint=f'branch/{bid}/buckets', params=params))
+        return cast(list[JsonDict], await self.get(endpoint=endpoint, params=params))
 
     async def bucket_metadata_delete(self, bucket_id: str, metadata_id: str) -> None:
         """
@@ -427,14 +429,15 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         :param bucket_id: The id of the bucket
         :param include: List of fields to include in the response
-        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
+        :param branch_id: When specified, uses branch-scoped endpoint ``branch/{id}/buckets/{bucket_id}/tables``.
+            When not specified, uses the legacy endpoint ``buckets/{bucket_id}/tables``.
         :return: List of tables as dictionary
         """
-        bid = branch_id or self._branch_id
+        endpoint = f'branch/{branch_id}/buckets/{bucket_id}/tables' if branch_id else f'buckets/{bucket_id}/tables'
         params = {}
         if include is not None and isinstance(include, list):
             params['include'] = ','.join(include)
-        return cast(list[JsonDict], await self.get(endpoint=f'branch/{bid}/buckets/{bucket_id}/tables', params=params))
+        return cast(list[JsonDict], await self.get(endpoint=endpoint, params=params))
 
     async def column_metadata_delete(self, column_id: str, metadata_id: str) -> None:
         """
@@ -812,11 +815,12 @@ class AsyncStorageClient(KeboolaServiceClient):
         Retrieves information about a given table.
 
         :param table_id: The id of the table
-        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
+        :param branch_id: When specified, uses branch-scoped endpoint ``branch/{id}/tables/{table_id}``.
+            When not specified, uses the legacy endpoint ``tables/{table_id}``.
         :return: Table details as dictionary
         """
-        bid = branch_id or self._branch_id
-        return cast(JsonDict, await self.get(endpoint=f'branch/{bid}/tables/{table_id}'))
+        endpoint = f'branch/{branch_id}/tables/{table_id}' if branch_id else f'tables/{table_id}'
+        return cast(JsonDict, await self.get(endpoint=endpoint))
 
     async def table_metadata_delete(self, table_id: str, metadata_id: str) -> None:
         """
