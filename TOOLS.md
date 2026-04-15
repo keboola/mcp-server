@@ -3128,6 +3128,7 @@ EXAMPLES:
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "semantic_objects": {
       "description": "List of semantic object selections to load. Each item contains \"object_type\" and optional \"ids\". If \"ids\" is empty, all objects of that type are returned in compact form. If \"ids\" is non-empty, only those objects are returned with full attributes.",
@@ -3183,6 +3184,7 @@ WHEN TO USE:
       "type": "string"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "semantic_types": {
       "description": "List of semantic object types for which JSON schemas should be returned. Each returned item contains the requested semantic type and its metastore schema.",
@@ -3264,6 +3266,7 @@ EXAMPLES:
       "type": "string"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "patterns": {
       "description": "One or more regex patterns used to search semantic metadata. The search checks semantic model names plus semantic object names and nested attribute values. Use multiple patterns when you need to find objects related to several business terms at once.",
@@ -3392,6 +3395,7 @@ EXAMPLES:
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "properties": {
     "sql_query": {
       "description": "SQL query that should be checked against the semantic layer. The query is not executed; the tool performs best-effort semantic detection and rule validation using heuristic string matching, so the detected objects may be incomplete or imperfect.",
