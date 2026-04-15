@@ -1,5 +1,6 @@
 """Storage-related tools for the MCP server (buckets, tables, etc.)."""
 
+import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime
@@ -135,7 +136,13 @@ class BucketDetail(BaseModel):
     prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
     # TODO: add prod_name too to strip the '{branch_id}-' prefix from the name'
 
-    def shade_by(self, other: 'BucketDetail', branch_id: str | None, links: list[Link] | None = None) -> 'BucketDetail':
+    def shade_by(
+        self,
+        other: 'BucketDetail',
+        branch_id: str | None,
+        links: list[Link] | None = None,
+        storage_branches: bool = False,
+    ) -> 'BucketDetail':
         if self.branch_id:
             raise ValueError(
                 f'Dev branch buckets cannot be shaded: ' f'bucket.id={self.id}, bucket.branch_id={self.branch_id}'
@@ -151,16 +158,18 @@ class BucketDetail(BaseModel):
             )
         if other.prod_id != self.id:
             raise ValueError(f'Prod and dev buckets mismatch: prod_bucket.id={self.id}, dev_bucket.id={other.id}')
-        changes: dict[str, int | None | list[Link] | str] = {
-            # TODO: The name and display_name of a branch bucket typically contains the branch ID
-            #  and we may not wont to show that.
-            # 'name': other.name,
-            # 'display_name': other.display_name,
-            # 'description': other.description,
-            # TODO: These bytes and counts are approximated by summing the values of the two buckets.
-            'data_size_bytes': _sum(self.data_size_bytes, other.data_size_bytes),
-            'tables_count': _sum(self.tables_count, other.tables_count),
-        }
+        if storage_branches:
+            # With storage-branches the branched bucket is independent; use its values directly
+            changes: dict[str, int | None | list[Link] | str] = {
+                'data_size_bytes': other.data_size_bytes,
+                'tables_count': _sum(self.tables_count, other.tables_count),
+            }
+        else:
+            changes = {
+                # TODO: These bytes and counts are approximated by summing the values of the two buckets.
+                'data_size_bytes': _sum(self.data_size_bytes, other.data_size_bytes),
+                'tables_count': _sum(self.tables_count, other.tables_count),
+            }
         if links is not None:
             changes['links'] = links if links else None
         return self.model_copy(update=changes)
@@ -212,7 +221,10 @@ class BucketDetail(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_branch_id(cls, values: dict[str, Any]) -> dict[str, Any]:
+        forced_branch_id = values.pop('_forced_branch_id', None)
         branch_id = get_metadata_property(values.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+        if not branch_id and forced_branch_id:
+            branch_id = forced_branch_id
         if branch_id:
             values['branch_id'] = branch_id
             values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-')
@@ -365,7 +377,10 @@ class TableDetail(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_branch_id(cls, values: dict[str, Any]) -> dict[str, Any]:
+        forced_branch_id = values.pop('_forced_branch_id', None)
         branch_id = get_metadata_property(values.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+        if not branch_id and forced_branch_id:
+            branch_id = forced_branch_id
         if branch_id:
             values['branch_id'] = branch_id
             values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-')
@@ -445,18 +460,30 @@ class DescriptionUpdateGroups(BaseModel):
     column_updates_by_table: dict[str, dict[str, str]] = Field(description='Column updates by table ID.')
 
 
-async def _get_bucket_detail(client: AsyncStorageClient, bucket_id: str) -> JsonDict | None:
+STORAGE_BRANCHES_FEATURE = 'storage-branches'
+
+
+async def _has_storage_branches(client: KeboolaClient) -> bool:
+    """Checks if the project has the storage-branches feature enabled."""
+    return client.branch_id is not None and await client.has_feature(STORAGE_BRANCHES_FEATURE)
+
+
+async def _get_bucket_detail(
+    client: AsyncStorageClient, bucket_id: str, branch_id: str | None = None
+) -> JsonDict | None:
     try:
-        return await client.bucket_detail(bucket_id)
+        kwargs = {'branch_id': branch_id} if branch_id else {}
+        return await client.bucket_detail(bucket_id, **kwargs)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             return None
         raise
 
 
-async def _get_table_detail(client: AsyncStorageClient, table_id: str) -> JsonDict | None:
+async def _get_table_detail(client: AsyncStorageClient, table_id: str, branch_id: str | None = None) -> JsonDict | None:
     try:
-        return await client.table_detail(table_id)
+        kwargs = {'branch_id': branch_id} if branch_id else {}
+        return await client.table_detail(table_id, **kwargs)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             return None
@@ -467,27 +494,42 @@ async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDe
     prod_bucket: BucketDetail | None = None
     dev_bucket: BucketDetail | None = None
 
-    if raw := await _get_bucket_detail(client.storage_client, bucket_id):
-        bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
-        if not bucket.branch_id:
-            prod_bucket = bucket
-        elif bucket.branch_id == client.branch_id:
-            dev_bucket = bucket
+    has_sb = await _has_storage_branches(client)
 
-    if client.branch_id:
-        if not dev_bucket:
-            dev_id = bucket_id.replace('c-', f'c-{client.branch_id}-')
-            if raw := await _get_bucket_detail(client.storage_client, dev_id):
-                bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
-                if bucket.branch_id == client.branch_id:
-                    dev_bucket = bucket
+    if has_sb:
+        # storage-branches: fetch from both production and branch endpoints in parallel
+        prod_raw, dev_raw = await asyncio.gather(
+            _get_bucket_detail(client.storage_client, bucket_id, branch_id='default'),
+            _get_bucket_detail(client.storage_client, bucket_id, branch_id=client.branch_id),
+        )
+        if prod_raw:
+            prod_bucket = BucketDetail.model_validate(prod_raw).with_lineage_metadata(prod_raw)
+        if dev_raw:
+            dev_raw['_forced_branch_id'] = client.branch_id
+            dev_bucket = BucketDetail.model_validate(dev_raw).with_lineage_metadata(dev_raw)
+    else:
+        if raw := await _get_bucket_detail(client.storage_client, bucket_id, branch_id='default'):
+            bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
+            if not bucket.branch_id:
+                prod_bucket = bucket
+            elif bucket.branch_id == client.branch_id:
+                dev_bucket = bucket
 
-        if not prod_bucket and f'.c-{client.branch_id}-' in bucket_id:
-            prod_id = bucket_id.replace(f'c-{client.branch_id}-', 'c-')
-            if raw := await _get_bucket_detail(client.storage_client, prod_id):
-                bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
-                if not bucket.branch_id:
-                    prod_bucket = bucket
+        if client.branch_id:
+            if not dev_bucket:
+
+                dev_id = bucket_id.replace('c-', f'c-{client.branch_id}-')
+                if raw := await _get_bucket_detail(client.storage_client, dev_id, branch_id='default'):
+                    bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
+                    if bucket.branch_id == client.branch_id:
+                        dev_bucket = bucket
+
+            if not prod_bucket and f'.c-{client.branch_id}-' in bucket_id:
+                prod_id = bucket_id.replace(f'c-{client.branch_id}-', 'c-')
+                if raw := await _get_bucket_detail(client.storage_client, prod_id, branch_id='default'):
+                    bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
+                    if not bucket.branch_id:
+                        prod_bucket = bucket
 
     return prod_bucket, dev_bucket
 
@@ -497,6 +539,7 @@ async def _combine_buckets(
     links_manager: ProjectLinksManager | None,
     prod_bucket: BucketDetail | None,
     dev_bucket: BucketDetail | None,
+    storage_branches: bool = False,
 ) -> BucketDetail:
     def _links(_id: str, name: str) -> list[Link] | None:
         if links_manager:
@@ -507,7 +550,7 @@ async def _combine_buckets(
     if prod_bucket and dev_bucket:
         # generate a URL link to the dev bucket but with the prod bucket's name
         links = _links(dev_bucket.id, prod_bucket.name or prod_bucket.id)
-        bucket = prod_bucket.shade_by(dev_bucket, client.branch_id, links or [])
+        bucket = prod_bucket.shade_by(dev_bucket, client.branch_id, links or [], storage_branches=storage_branches)
     elif prod_bucket:
         links = _links(prod_bucket.id, prod_bucket.name or prod_bucket.id)
         bucket = prod_bucket.model_copy(update={'links': links})
@@ -541,11 +584,12 @@ async def get_buckets(
     links_manager = await ProjectLinksManager.from_client(client)
 
     if bucket_ids:
+        has_sb = await _has_storage_branches(client)
 
         async def _fetch_bucket_detail(bucket_id: str) -> BucketDetail | str:
             prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
             if prod_bucket or dev_bucket:
-                return await _combine_buckets(client, links_manager, prod_bucket, dev_bucket)
+                return await _combine_buckets(client, links_manager, prod_bucket, dev_bucket, storage_branches=has_sb)
             else:
                 return bucket_id
 
@@ -573,7 +617,20 @@ async def get_buckets(
 
 async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManager) -> GetBucketsOutput:
     """Retrieves information about all buckets in the project."""
-    raw_bucket_data = await client.storage_client.bucket_list(include=['metadata', 'linkedBuckets'])
+    has_sb = await _has_storage_branches(client)
+    include = ['metadata', 'linkedBuckets']
+
+    if has_sb:
+        # storage-branches: fetch from both production and branch endpoints in parallel
+        prod_data, branch_data = await asyncio.gather(
+            client.storage_client.bucket_list(include=include, branch_id='default'),
+            client.storage_client.bucket_list(include=include, branch_id=client.branch_id),
+        )
+        for raw in branch_data:
+            raw['_forced_branch_id'] = client.branch_id
+        raw_bucket_data = prod_data + branch_data
+    else:
+        raw_bucket_data = await client.storage_client.bucket_list(include=include, branch_id='default')
 
     # group buckets by their ID as it would appear on the production branch
     buckets_by_prod_id: dict[str, list[BucketDetail]] = defaultdict(list)
@@ -599,7 +656,9 @@ async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManage
             raise Exception(f'No buckets in the group: prod_id={prod_id}')
 
         else:
-            bucket = await _combine_buckets(client, links_manager, prod_bucket, next(iter(dev_buckets), None))
+            bucket = await _combine_buckets(
+                client, links_manager, prod_bucket, next(iter(dev_buckets), None), storage_branches=has_sb
+            )
             buckets.append(bucket)
 
     # Count buckets by stage (only count input, derive output)
@@ -721,28 +780,39 @@ async def get_tables(
 async def _get_table(
     table_id: str, client: KeboolaClient, workspace_manager: WorkspaceManager, links_manager: ProjectLinksManager
 ) -> TableDetail | None:
-    prod_table: JsonDict | None = await _get_table_detail(client.storage_client, table_id)
-    if prod_table:
-        branch_id = get_metadata_property(prod_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
-        if branch_id:
-            # The table should be from the prod branch; pretend that the table does not exist.
-            prod_table = None
+    has_sb = await _has_storage_branches(client)
 
-    dev_table: JsonDict | None = None
-    if client.branch_id:
-        if f'c-{client.branch_id}-' in table_id:
-            # we already deal with the dev table ID
-            dev_id = table_id
-        else:
-            # convert the prod table ID to the dev table ID
-            dev_id = table_id.replace('c-', f'c-{client.branch_id}-')
-
-        dev_table = await _get_table_detail(client.storage_client, dev_id)
+    if has_sb:
+        # storage-branches: fetch from both production and branch endpoints in parallel
+        prod_table, dev_table = await asyncio.gather(
+            _get_table_detail(client.storage_client, table_id, branch_id='default'),
+            _get_table_detail(client.storage_client, table_id, branch_id=client.branch_id),
+        )
         if dev_table:
-            branch_id = get_metadata_property(dev_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
-            if branch_id != client.branch_id:
-                # The table's branch ID does not match; pretend that the table does not exist.
-                dev_table = None
+            dev_table['_forced_branch_id'] = client.branch_id
+    else:
+        prod_table = await _get_table_detail(client.storage_client, table_id, branch_id='default')
+        if prod_table:
+            branch_id = get_metadata_property(prod_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+            if branch_id:
+                # The table should be from the prod branch; pretend that the table does not exist.
+                prod_table = None
+
+        dev_table: JsonDict | None = None
+        if client.branch_id:
+            if f'c-{client.branch_id}-' in table_id:
+                # we already deal with the dev table ID
+                dev_id = table_id
+            else:
+                # convert the prod table ID to the dev table ID
+                dev_id = table_id.replace('c-', f'c-{client.branch_id}-')
+
+            dev_table = await _get_table_detail(client.storage_client, dev_id, branch_id='default')
+            if dev_table:
+                branch_id = get_metadata_property(dev_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+                if branch_id != client.branch_id:
+                    # The table's branch ID does not match; pretend that the table does not exist.
+                    dev_table = None
 
     raw_table = dev_table or prod_table
     if not raw_table:
@@ -820,19 +890,17 @@ async def _list_tables(
     links_manager: ProjectLinksManager,
 ) -> Iterable[TableDetail]:
     """Retrieves all tables in a specific bucket with their basic information."""
+    has_sb = await _has_storage_branches(client)
     tables_by_prod_id: dict[str, TableDetail] = {}
     sapi_includes = ['metadata', 'columnMetadata', 'sourceMetadata', 'sourceColumnMetadata']
 
     for bucket_id in bucket_ids:
         prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
 
-        # TODO: requesting "metadata" to get the table description;
-        #  We could also request "columns" and use WorkspaceManager to prepare the table's FQN
-        #  and columns' quoted names.
-        #  This could take time for larger buckets, but could save calls to get_table_metadata() later.
-
         if prod_bucket:
-            raw_table_data = await client.storage_client.bucket_table_list(prod_bucket.id, include=sapi_includes)
+            raw_table_data = await client.storage_client.bucket_table_list(
+                prod_bucket.id, include=sapi_includes, branch_id='default'
+            )
             for raw in raw_table_data:
                 table_name = cast(str, raw.get('name', ''))
                 table = TableDetail.model_validate(
@@ -842,8 +910,13 @@ async def _list_tables(
                 tables_by_prod_id[table.id] = table
 
         if dev_bucket:
-            raw_table_data = await client.storage_client.bucket_table_list(dev_bucket.id, include=sapi_includes)
+            dev_branch_id = client.branch_id if has_sb else 'default'
+            raw_table_data = await client.storage_client.bucket_table_list(
+                dev_bucket.id, include=sapi_includes, branch_id=dev_branch_id
+            )
             for raw in raw_table_data:
+                if has_sb:
+                    raw['_forced_branch_id'] = client.branch_id
                 table = TableDetail.model_validate(raw)
                 tables_by_prod_id[table.prod_id] = table.model_copy(
                     update={
