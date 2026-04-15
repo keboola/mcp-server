@@ -28,3 +28,5 @@ htmlcov/
 integtest-results.xml
 test-results.xml
 .tox/
+local_testing
+.mcp.json
