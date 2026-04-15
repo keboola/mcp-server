@@ -1,4 +1,4 @@
-Some time ago we added a support for dev branches (storage objects) and implemented following defference mechanism:
+Some time ago we added a support for dev branches (storage objects) and implemented the following deference mechanism:
 ```
 In short: List buckets / List Tables will provide only prod versions of objects, even for those that do not have a prod version yet. Only fully qualified names for query_data are built to always reference the branched version if present.
 
@@ -55,7 +55,7 @@ The UI deals with it using the following logic defined in the @UI_LEVEL_DEFERENC
 The project feature name is `storage-branches`
 
 We need to implement support for this new feature while keeping the old behaviour working for projects without that feature.
-I want the old deference mechanism to stay working even when the new feature is enabled. After all it is quite similar to how the UI deals with it when the feature is enabled.
+I want the old deference mechanism to stay working even when the new feature is enabled. After all, it is quite similar to how the UI deals with it when the feature is enabled.
 
 The core change should be updating the storage api calls related to buckets/tables so that it calls both main and branched versions 
 e.g. we need pull in all what's in branch + all that's in main (excluding intersection with branch, e.g. if it exists in branch, the ids come in from a branch)
