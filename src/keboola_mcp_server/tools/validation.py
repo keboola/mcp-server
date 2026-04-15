@@ -142,7 +142,20 @@ class KeboolaParametersValidator:
 
     @staticmethod
     def sanitize_schema(schema: JsonDict) -> JsonDict:
-        """Normalize schema by converting required fields to lists and ensuring properties is a dict"""
+        """
+        Normalize a JSON schema in place and return the same schema object.
+
+        The normalization currently:
+        - removes empty ``enum`` arrays, because ``"enum": []`` would otherwise make the
+          schema reject every value;
+        - converts non-list ``required`` values into the standard list form and, for
+          boolean-like required flags, propagates the requirement to the parent schema;
+        - normalizes ``properties`` from an empty list to an empty dict when needed.
+
+        These rules are applied recursively to nested schema nodes, including structures
+        reachable through ``properties`` and other schema-composition/container keywords
+        handled by this sanitizer.
+        """
 
         def _sanitize_node(
             schema: JsonStruct | JsonPrimitive,
