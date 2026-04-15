@@ -113,5 +113,6 @@ jobs:
     permissions:
       contents: read
       actions: read
+      packages: read
     uses: ./.github/workflows/kaibench.yml
     secrets: inherit
