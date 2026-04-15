@@ -2,6 +2,7 @@ import json
 import logging
 from typing import Any, cast
 
+import pydantic
 import pytest
 import toon_format
 import yaml
@@ -31,6 +32,9 @@ from keboola_mcp_server.tools.flow.tools import (
 from keboola_mcp_server.tools.project import get_project_info
 
 LOG = logging.getLogger(__name__)
+
+
+PYDANTIC_DOCS_VERSION = '.'.join(pydantic.__version__.split('.')[:2])
 
 
 @pytest.mark.asyncio
@@ -744,7 +748,7 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
                 'extra': {
                     'type': 'string_type',
                     'input': '123',
-                    'url': 'https://errors.pydantic.dev/2.12/v/string_type',
+                    'url': f'https://errors.pydantic.dev/{PYDANTIC_DOCS_VERSION}/v/string_type',
                 },
             },
             {
@@ -754,7 +758,7 @@ async def test_create_conditional_flow_invalid_structure(mcp_context: Context, c
                     'type': 'string_too_short',
                     'input': '',
                     'ctx': "{'min_length': 1}",
-                    'url': 'https://errors.pydantic.dev/2.12/v/string_too_short',
+                    'url': f'https://errors.pydantic.dev/{PYDANTIC_DOCS_VERSION}/v/string_too_short',
                 },
             },
         ]

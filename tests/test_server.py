@@ -26,6 +26,7 @@ from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
 from keboola_mcp_server.tools.oauth import OAUTH_TOOLS_TAG
 from keboola_mcp_server.tools.project import PROJECT_TOOLS_TAG
 from keboola_mcp_server.tools.search import SEARCH_TOOLS_TAG
+from keboola_mcp_server.tools.semantic import SEMANTIC_TOOLS_TAG
 from keboola_mcp_server.tools.sql import SQL_TOOLS_TAG
 from keboola_mcp_server.tools.storage.tools import STORAGE_TOOLS_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -57,6 +58,8 @@ class TestServer:
             'get_flows',
             'get_jobs',
             'get_project_info',
+            'get_semantic_context',
+            'get_semantic_schema',
             'get_tables',
             'modify_data_app',
             'modify_flow',
@@ -64,11 +67,13 @@ class TestServer:
             'run_job',
             'run_sync_action',
             'search',
+            'search_semantic_context',
             'update_config',
             'update_config_row',
             'update_descriptions',
             'update_flow',
             'update_sql_transformation',
+            'validate_semantic_query',
         ]
 
     @pytest.mark.asyncio
@@ -206,8 +211,8 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     async with Client(mcp) as client:
         tools = await client.list_tools()
         # plus the one we've added in this test minus two filtered tools
-        # create_flow() and update_flow()
-        assert len(tools) == tools_count + 1 - 2
+        # create_flow() and update_flow(), and four semantic tools (feature not enabled in mock)
+        assert len(tools) == tools_count + 1 - 2 - 4
         assert tools[-1].name == 'assessed-function'
         assert tools[-1].description == 'custom text'
         # check if the inputSchema contains the expected param description
@@ -373,6 +378,11 @@ async def test_tool_annotations_and_tags():
         ('get_project_info', True, None, None, {PROJECT_TOOLS_TAG}),
         ('docs_query', True, None, None, {DOC_TOOLS_TAG}),
         ('find_component_id', True, None, None, {SEARCH_TOOLS_TAG}),
+        # semantic
+        ('search_semantic_context', True, None, None, {SEMANTIC_TOOLS_TAG}),
+        ('get_semantic_context', True, None, None, {SEMANTIC_TOOLS_TAG}),
+        ('get_semantic_schema', True, None, None, {SEMANTIC_TOOLS_TAG}),
+        ('validate_semantic_query', True, None, None, {SEMANTIC_TOOLS_TAG}),
         # oauth
         ('create_oauth_url', None, True, None, {OAUTH_TOOLS_TAG}),
         # data apps

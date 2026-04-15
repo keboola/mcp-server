@@ -34,9 +34,10 @@ class NestedModel(BaseModel):
     field2: list[str] | None = None
 
 
-def _tool(name: str, read_only: bool = False) -> MagicMock:
+def _tool(name: str, read_only: bool = False, tags: set[str] | None = None) -> MagicMock:
     tool = MagicMock()
     tool.name = name
+    tool.tags = tags or set()
     if read_only:
         tool.annotations.readOnlyHint = True
     else:
@@ -544,6 +545,108 @@ class TestToolsFilteringMiddleware:
         middleware = ToolsFilteringMiddleware()
         if expect_error:
             with pytest.raises(ToolError, match='Data apps are supported only in the main production branch'):
+                await middleware.on_call_tool(context, call_next)
+        else:
+            result = await middleware.on_call_tool(context, call_next)
+            assert result is expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('features', 'tool_name', 'expect_filtered'),
+        [
+            ([], 'search_semantic_context', True),
+            ([], 'get_semantic_schema', True),
+            (['mcp-semantic-tooling'], 'search_semantic_context', False),
+            (['mcp-semantic-tooling'], 'get_semantic_schema', False),
+            (['other-feature'], 'search_semantic_context', True),
+            (['other-feature'], 'get_semantic_schema', True),
+        ],
+        ids=[
+            'no_feature_search',
+            'no_feature_schema',
+            'with_feature_search',
+            'with_feature_schema',
+            'unrelated_feature_search',
+            'unrelated_feature_schema',
+        ],
+    )
+    async def test_list_tools_filters_semantic_tools_by_feature(
+        self,
+        mcp_context_client,
+        features: list[str],
+        tool_name: str,
+        expect_filtered: bool,
+    ) -> None:
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={'owner': {'features': features}, 'admin': {}}
+        )
+
+        tools = [
+            _tool('search_semantic_context', tags={'semantic'}),
+            _tool('get_semantic_context', tags={'semantic'}),
+            _tool('get_semantic_schema', tags={'semantic'}),
+            _tool('validate_semantic_query', tags={'semantic'}),
+            _tool('other_tool'),
+        ]
+
+        async def call_next(_):
+            return tools
+
+        middleware = ToolsFilteringMiddleware()
+        context = SimpleNamespace(fastmcp_context=mcp_context_client)
+        result = await middleware.on_list_tools(context, call_next)
+
+        result_names = {t.name for t in result}
+        if expect_filtered:
+            assert tool_name not in result_names
+        else:
+            assert tool_name in result_names
+        assert 'other_tool' in result_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('features', 'tool_name', 'tool_tags', 'expect_error'),
+        [
+            ([], 'search_semantic_context', {'semantic'}, True),
+            ([], 'get_semantic_schema', {'semantic'}, True),
+            (['mcp-semantic-tooling'], 'search_semantic_context', {'semantic'}, False),
+            (['mcp-semantic-tooling'], 'get_semantic_schema', {'semantic'}, False),
+            ([], 'other_tool', set(), False),
+        ],
+        ids=[
+            'no_feature_search_tool',
+            'no_feature_schema_tool',
+            'with_feature_search_tool',
+            'with_feature_schema_tool',
+            'no_feature_non_semantic_tool',
+        ],
+    )
+    async def test_call_tool_blocks_semantic_tools_by_feature(
+        self,
+        mcp_context_client,
+        features: list[str],
+        tool_name: str,
+        tool_tags: set[str],
+        expect_error: bool,
+    ) -> None:
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={'owner': {'features': features}, 'admin': {}}
+        )
+
+        tool = _tool(tool_name, tags=tool_tags)
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool_name))
+
+        expected = MagicMock()
+
+        async def call_next(_):
+            return expected
+
+        middleware = ToolsFilteringMiddleware()
+        if expect_error:
+            with pytest.raises(ToolError, match='Semantic Layer Tooling'):
                 await middleware.on_call_tool(context, call_next)
         else:
             result = await middleware.on_call_tool(context, call_next)

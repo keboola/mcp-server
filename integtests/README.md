@@ -53,6 +53,13 @@ it calls `list_tools`, `list_resources`, and `get_project_info`, and never creat
 modifies, or deletes any object. Any future test that writes to PRJ2 must acquire a lock
 for it first.
 
+### Optional — Metastore tests
+
+A subset of tests exercises the Metastore API. The Metastore URL is derived automatically
+from `INTEGTEST_POOL_STORAGE_API_URL` by replacing the `connection.` prefix with `metastore.`
+(e.g. `https://connection.north-europe.azure.keboola.com` → `https://metastore.north-europe.azure.keboola.com`).
+Authentication reuses the storage API token — no additional environment variables are needed.
+
 ### Optional — lock tuning
 
 The defaults work for both local and CI use. Override only if you have a reason to.

@@ -20,6 +20,7 @@ from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
 from keboola_mcp_server.tools.oauth import OAUTH_TOOLS_TAG
 from keboola_mcp_server.tools.project import PROJECT_TOOLS_TAG
 from keboola_mcp_server.tools.search import SEARCH_TOOLS_TAG
+from keboola_mcp_server.tools.semantic import SEMANTIC_TOOLS_TAG
 from keboola_mcp_server.tools.sql import SQL_TOOLS_TAG
 from keboola_mcp_server.tools.storage import STORAGE_TOOLS_TAG
 
@@ -188,6 +189,7 @@ async def generate_docs() -> None:
             ToolCategory('Jobs Tools', JOB_TOOLS_TAG),
             ToolCategory('Documentation Tools', DOC_TOOLS_TAG),
             ToolCategory('Search Tools', SEARCH_TOOLS_TAG),
+            ToolCategory('Semantic Tools', SEMANTIC_TOOLS_TAG),
             ToolCategory('OAuth Tools', OAUTH_TOOLS_TAG),
             ToolCategory('Project Tools', PROJECT_TOOLS_TAG),
             # OTHER_CATEGORY
