@@ -11,6 +11,7 @@ from keboola_mcp_server.clients.client import (
     ORCHESTRATOR_COMPONENT_ID,
     KeboolaClient,
 )
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.model import (
     Component,
@@ -637,6 +638,154 @@ async def test_create_sql_transformation_fail(
             description='test_description',
             sql_code_blocks=[SimplifiedTfBlocks.Block.Code(name='Code 0', script='SELECT * FROM test')],
         )
+
+
+@pytest.mark.parametrize(
+    ('folder', 'tf_count', 'tf_folders', 'expect_folder_metadata', 'expect_hint'),
+    [
+        ('Analytics', 0, [], True, False),
+        ('  Analytics  ', 0, [], True, False),  # whitespace stripped
+        ('', 5, [], False, False),
+        ('', 25, ['Analytics'], False, True),
+        ('', 25, [], False, True),
+    ],
+    ids=[
+        'folder_provided',
+        'folder_whitespace_stripped',
+        'no_folder_few',
+        'no_folder_many_with_folders',
+        'no_folder_many_no_folders',
+    ],
+)
+@pytest.mark.asyncio
+async def test_create_sql_transformation_folder(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+    folder: str,
+    tf_count: int,
+    tf_folders: list[str],
+    expect_folder_metadata: bool,
+    expect_hint: bool,
+) -> None:
+    """Test folder metadata and change_summary hint for create_sql_transformation."""
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    mock_component['id'] = 'keboola.snowflake-transformation'
+    mock_configuration['id'] = '9999'
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
+    mocker.patch(
+        'keboola_mcp_server.tools.components.tools.get_config_folders',
+        mocker.AsyncMock(return_value=(tf_count, tf_folders)),
+    )
+
+    result = await create_sql_transformation(
+        ctx=context,
+        name='Test',
+        description='desc',
+        sql_code_blocks=[SimplifiedTfBlocks.Block.Code(name='c', script='SELECT 1;')],
+        folder=folder,
+    )
+
+    assert isinstance(result, ConfigToolOutput)
+    metadata_calls = [
+        call
+        for call in keboola_client.storage_client.configuration_metadata_update.call_args_list
+        if call.kwargs.get('metadata', {}).get(MetadataField.CONFIGURATION_FOLDER_NAME)
+    ]
+    if expect_folder_metadata:
+        assert len(metadata_calls) == 1
+        assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: folder.strip()}
+    else:
+        assert len(metadata_calls) == 0
+    if expect_hint:
+        assert result.change_summary is not None
+        assert str(tf_count) in result.change_summary
+    else:
+        assert result.change_summary is None
+
+
+@pytest.mark.parametrize(
+    ('folder', 'tf_count', 'tf_folders', 'expect_folder_metadata', 'expect_hint'),
+    [
+        ('Sales', 0, [], True, False),
+        ('  Sales  ', 0, [], True, False),  # whitespace stripped
+        ('', 5, [], False, False),
+        ('', 25, ['Analytics'], False, True),
+        ('', 25, [], False, True),
+    ],
+    ids=[
+        'folder_provided',
+        'folder_whitespace_stripped',
+        'no_folder_few',
+        'no_folder_many_with_folders',
+        'no_folder_many_no_folders',
+    ],
+)
+@pytest.mark.asyncio
+async def test_update_sql_transformation_folder(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+    folder: str,
+    tf_count: int,
+    tf_folders: list[str],
+    expect_folder_metadata: bool,
+    expect_hint: bool,
+) -> None:
+    """Test folder metadata and change_summary hint for update_sql_transformation."""
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    mock_component['id'] = 'keboola.snowflake-transformation'
+    configuration_id = 'cfg-folder-test'
+    existing = {
+        'id': configuration_id,
+        'name': 'T',
+        'description': 'D',
+        'configuration': {'parameters': {'blocks': []}, 'storage': {}},
+        'version': 1,
+    }
+    updated = {**existing, 'version': 2}
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated)
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    mocker.patch(
+        'keboola_mcp_server.tools.components.tools.get_config_folders',
+        mocker.AsyncMock(return_value=(tf_count, tf_folders)),
+    )
+
+    result = await update_sql_transformation(
+        context,
+        change_description='test',
+        configuration_id=configuration_id,
+        folder=folder,
+    )
+
+    assert isinstance(result, ConfigToolOutput)
+    metadata_calls = [
+        call
+        for call in keboola_client.storage_client.configuration_metadata_update.call_args_list
+        if call.kwargs.get('metadata', {}).get(MetadataField.CONFIGURATION_FOLDER_NAME)
+    ]
+    if expect_folder_metadata:
+        assert len(metadata_calls) == 1
+        assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: folder.strip()}
+    else:
+        assert len(metadata_calls) == 0
+    if expect_hint:
+        assert result.change_summary is not None
+        assert str(tf_count) in result.change_summary
+    else:
+        assert result.change_summary is None
 
 
 @pytest.mark.parametrize(

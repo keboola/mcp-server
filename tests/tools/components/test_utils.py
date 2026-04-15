@@ -1,8 +1,10 @@
 import re
 from typing import Any, Sequence
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
     ComponentType,
@@ -28,7 +30,9 @@ from keboola_mcp_server.tools.components.utils import (
     clean_bucket_name,
     create_transformation_configuration,
     expand_component_types,
+    get_config_folders,
     set_nested_value,
+    set_transformation_folder_metadata,
     structure_summary,
     update_params,
     update_transformation_parameters,
@@ -1370,3 +1374,131 @@ def test_update_transformation_parameters(
     else:
         # For simple patterns, check exact match
         assert result_msg == expected_msg
+
+
+# ============================================================================
+# get_transformation_folders / set_transformation_folder_metadata TESTS
+# ============================================================================
+
+
+def _make_client(
+    configs: list[dict[str, Any]],
+    folder_configs: list[dict[str, Any]],
+) -> MagicMock:
+    """Create a minimal mock KeboolaClient for folder tests."""
+    client = MagicMock()
+    client.storage_client.configuration_list = AsyncMock(return_value=configs)
+    client.storage_client.component_configurations_search = AsyncMock(return_value=folder_configs)
+    client.storage_client.configuration_metadata_update = AsyncMock(return_value=[])
+    return client
+
+
+@pytest.mark.parametrize(
+    ('all_configs', 'expected_count'),
+    [
+        ([], 0),
+        ([{'id': str(i)} for i in range(5)], 5),
+    ],
+    ids=['no_configs', 'few_configs'],
+)
+@pytest.mark.asyncio
+async def test_get_config_folders_short_circuit(
+    all_configs: list[dict[str, Any]],
+    expected_count: int,
+) -> None:
+    """Test that the search endpoint is skipped when count < 20."""
+    client = _make_client(all_configs, [])
+    count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
+    assert count == expected_count
+    assert folders == []
+    client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
+    client.storage_client.component_configurations_search.assert_not_called()
+
+
+_MANY_CONFIGS = [{'id': str(i)} for i in range(25)]
+
+
+@pytest.mark.parametrize(
+    ('folder_configs', 'expected_folders'),
+    [
+        # No folder metadata on any config
+        ([], []),
+        # Two configs with distinct folders
+        (
+            [
+                {
+                    'id': '1',
+                    'componentId': 'keboola.snowflake-transformation',
+                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
+                },
+                {
+                    'id': '2',
+                    'componentId': 'keboola.snowflake-transformation',
+                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Sales'}],
+                },
+            ],
+            ['Analytics', 'Sales'],
+        ),
+        # Duplicate folder names are deduplicated
+        (
+            [
+                {
+                    'id': '1',
+                    'componentId': 'keboola.snowflake-transformation',
+                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
+                },
+                {
+                    'id': '2',
+                    'componentId': 'keboola.snowflake-transformation',
+                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
+                },
+            ],
+            ['Analytics'],
+        ),
+    ],
+    ids=['no_folders', 'distinct_folders', 'deduplicated_folders'],
+)
+@pytest.mark.asyncio
+async def test_get_config_folders(
+    folder_configs: list[dict[str, Any]],
+    expected_folders: list[str],
+) -> None:
+    """Test get_config_folders when count >= 20 (search endpoint is called)."""
+    client = _make_client(_MANY_CONFIGS, folder_configs)
+    count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
+    assert count == len(_MANY_CONFIGS)
+    assert folders == expected_folders
+    client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
+    client.storage_client.component_configurations_search.assert_called_once_with(
+        component_id='keboola.snowflake-transformation',
+        metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
+    )
+
+
+@pytest.mark.parametrize(
+    ('folder', 'expected_saved', 'expect_call'),
+    [
+        ('Analytics', 'Analytics', True),
+        ('  Analytics  ', 'Analytics', True),  # whitespace stripped
+        ('', None, False),
+        ('   ', None, False),  # whitespace-only skipped
+    ],
+    ids=['normal', 'whitespace_stripped', 'empty', 'whitespace_only'],
+)
+@pytest.mark.asyncio
+async def test_set_transformation_folder_metadata(
+    folder: str,
+    expected_saved: str | None,
+    expect_call: bool,
+) -> None:
+    """Test set_transformation_folder_metadata: strips whitespace, skips empty, propagates errors."""
+    client = _make_client([], [])
+    await set_transformation_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1', folder)
+    if expect_call:
+        client.storage_client.configuration_metadata_update.assert_called_once_with(
+            component_id='keboola.snowflake-transformation',
+            configuration_id='cfg-1',
+            metadata={MetadataField.CONFIGURATION_FOLDER_NAME: expected_saved},
+        )
+    else:
+        client.storage_client.configuration_metadata_update.assert_not_called()

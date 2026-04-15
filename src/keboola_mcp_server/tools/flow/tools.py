@@ -21,10 +21,18 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
 )
 from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact, unwrap_results
-from keboola_mcp_server.tools.components.utils import set_cfg_creation_metadata, set_cfg_update_metadata
+from keboola_mcp_server.tools.components.utils import (
+    build_folder_hint,
+    folder_field_description,
+    get_config_folders,
+    set_cfg_creation_metadata,
+    set_cfg_update_metadata,
+    set_transformation_folder_metadata,
+)
 from keboola_mcp_server.tools.constants import (
     CONFIG_DIFF_PREVIEW_TAG,
     FLOW_TOOLS_TAG,
@@ -148,6 +156,10 @@ async def create_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions.')],
+    folder: Annotated[
+        str,
+        Field(description=folder_field_description('flow', 'flows')),
+    ] = '',
 ) -> FlowToolOutput:
     """
     Creates a new legacy (non-conditional) flow using `keboola.orchestrator`.
@@ -190,6 +202,28 @@ async def create_flow(
         configuration_id=str(new_raw_configuration['id']),
     )
 
+    folder = folder.strip()
+    change_summary = None
+    if folder:
+        try:
+            await set_transformation_folder_metadata(client, flow_type, api_config.id, folder)
+        except Exception:
+            LOG.warning(
+                'Unable to set folder metadata for component "%s", configuration "%s".',
+                flow_type,
+                api_config.id,
+            )
+    else:
+        try:
+            total, existing_folders = await get_config_folders(client, flow_type)
+            change_summary = build_folder_hint(total, existing_folders, 'legacy flows', 'modify_flow')
+        except Exception:
+            LOG.warning(
+                'Unable to fetch flow folders for component "%s" when creating flow "%s".',
+                flow_type,
+                api_config.id,
+            )
+
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
     tool_response = FlowToolOutput(
         configuration_id=api_config.id,
@@ -199,6 +233,7 @@ async def create_flow(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,
+        change_summary=change_summary,
     )
 
     LOG.info(f'Created legacy flow "{name}" with configuration ID "{api_config.id}" (type: {flow_type})')
@@ -212,6 +247,10 @@ async def create_conditional_flow(
     description: Annotated[str, Field(description='Detailed description of the flow purpose.')],
     phases: Annotated[list[dict[str, Any]], Field(description='List of phase definitions for conditional flows.')],
     tasks: Annotated[list[dict[str, Any]], Field(description='List of task definitions for conditional flows.')],
+    folder: Annotated[
+        str,
+        Field(description=folder_field_description('flow', 'flows')),
+    ] = '',
 ) -> FlowToolOutput:
     """
     Creates a new conditional flow configuration using `keboola.flow`.
@@ -229,7 +268,7 @@ async def create_conditional_flow(
 
     WHEN TO USE:
     - Flows needing branching, conditions, retries, or notifications
-    - Default choice when user simply says “create a flow,” unless they explicitly want legacy orchestrator behavior
+    - Default choice when user simply says "create a flow," unless they explicitly want legacy orchestrator behavior
     """
     flow_type = CONDITIONAL_FLOW_COMPONENT_ID
     flow_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
@@ -256,6 +295,28 @@ async def create_conditional_flow(
         configuration_id=str(new_raw_configuration['id']),
     )
 
+    folder = folder.strip()
+    change_summary = None
+    if folder:
+        try:
+            await set_transformation_folder_metadata(client, flow_type, api_config.id, folder)
+        except Exception:
+            LOG.warning(
+                'Unable to set folder metadata for component "%s", configuration "%s".',
+                flow_type,
+                api_config.id,
+            )
+    else:
+        try:
+            total, existing_folders = await get_config_folders(client, flow_type)
+            change_summary = build_folder_hint(total, existing_folders, 'conditional flows', 'modify_flow')
+        except Exception:
+            LOG.warning(
+                'Unable to fetch flow folders for component "%s" when creating flow "%s".',
+                flow_type,
+                api_config.id,
+            )
+
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
     tool_response = FlowToolOutput(
         configuration_id=api_config.id,
@@ -265,6 +326,7 @@ async def create_conditional_flow(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=flow_links,
+        change_summary=change_summary,
     )
 
     LOG.info(f'Created conditional flow "{name}" with configuration ID "{api_config.id}" (type: {flow_type})')
@@ -299,6 +361,10 @@ async def update_flow(
             ),
         ),
     ] = None,
+    folder: Annotated[
+        str,
+        Field(description=folder_field_description('flow', 'flows')),
+    ] = '',
 ) -> FlowToolOutput:
     """
     Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`).
@@ -337,6 +403,7 @@ async def update_flow(
         description=description,
         schedules=tuple(),
         is_disabled=is_disabled,
+        folder=folder,
     )
 
 
@@ -380,6 +447,10 @@ async def modify_flow(
             ),
         ),
     ] = None,
+    folder: Annotated[
+        str,
+        Field(description=folder_field_description('flow', 'flows')),
+    ] = '',
 ) -> FlowToolOutput:
     """
     Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`) or
@@ -464,6 +535,22 @@ async def modify_flow(
         )
         api_config = CreateConfigurationAPIResponse.model_validate(current_config)
 
+    folder = folder.strip()
+    folder_hint = None
+    if folder:
+        await set_transformation_folder_metadata(client, flow_type, configuration_id, folder)
+    else:
+        try:
+            total, existing_folders = await get_config_folders(client, flow_type)
+            config_label = 'legacy flows' if flow_type == ORCHESTRATOR_COMPONENT_ID else 'conditional flows'
+            folder_hint = build_folder_hint(total, existing_folders, config_label, 'modify_flow')
+        except Exception:
+            LOG.warning(
+                'Unable to fetch flow folders for component "%s" when updating flow "%s".',
+                flow_type,
+                configuration_id,
+            )
+
     links_manager = await ProjectLinksManager.from_client(client)
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
     # Process schedule requests if provided
@@ -485,6 +572,7 @@ async def modify_flow(
         version=api_config.version,
         timestamp=datetime.now(timezone.utc),
         response=response_message,
+        change_summary=folder_hint,
         success=True,
         links=flow_links,
     )
@@ -504,6 +592,7 @@ async def update_flow_internal(
     description: str = '',
     schedules: Sequence[ScheduleRequest] | None = tuple(),
     is_disabled: bool | None = None,
+    folder: str = '',
 ) -> tuple[JsonDict, JsonDict, dict[str, Any] | None]:
     current_config = await client.storage_client.configuration_detail(
         component_id=flow_type, configuration_id=configuration_id
@@ -531,7 +620,34 @@ async def update_flow_internal(
             schedules=schedules,
         )
 
-    return current_config, flow_configuration, mutator_preview
+    folder_preview: dict[str, Any] | None = None
+    normalized_folder = folder.strip()
+    if normalized_folder:
+        try:
+            current_metadata = await client.storage_client.configuration_metadata_get(
+                component_id=flow_type, configuration_id=configuration_id
+            )
+            current_folder = next(
+                (
+                    m.get('value', '')
+                    for m in current_metadata
+                    if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
+                ),
+                '',
+            )
+            if normalized_folder != current_folder:
+                folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
+        except Exception as e:
+            LOG.warning(
+                'Failed to fetch configuration metadata for folder preview '
+                '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
+                flow_type,
+                configuration_id,
+                e,
+            )
+
+    combined_preview: dict[str, Any] | None = {**(mutator_preview or {}), **(folder_preview or {})} or None
+    return current_config, flow_configuration, combined_preview
 
 
 @tool_errors()

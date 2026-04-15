@@ -395,6 +395,9 @@ class TestPreviewConfigDiff:
             return copy.deepcopy(original_config_data)
 
         mock_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_config_detail)
+        mock_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
+            return_value=[{'key': 'KBC.configuration.folderName', 'value': 'Old Folder'}]
+        )
 
         mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
 
@@ -413,6 +416,7 @@ class TestPreviewConfigDiff:
             'toolParams': {
                 'configuration_id': 'config-123',
                 'change_description': 'Update transformation',
+                'folder': 'My Folder',
                 'parameter_updates': [
                     {
                         'op': 'add_block',
@@ -437,6 +441,10 @@ class TestPreviewConfigDiff:
 
         # Check that configuration was updated
         assert result['updatedConfig']['configuration']['parameters']['blocks'][-1]['name'] == 'Updated Block'
+
+        # Check that folder diff is injected into originalConfig/updatedConfig
+        assert result['originalConfig']['folder'] == 'Old Folder'
+        assert result['updatedConfig']['folder'] == 'My Folder'
 
     def test_preview_update_flow_success(self, test_client: TestClient, mocker):
         """Test successful preview of update_flow tool."""

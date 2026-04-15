@@ -278,6 +278,8 @@ CONSIDERATIONS:
   fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
 - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
   and user intent.
+- If there are 20 or more SQL transformations in the project, consider organizing them with a folder: existing
+  folder names are surfaced in the response's change_summary — use one of them or create a new one.
 
 USAGE:
 - Use when you want to create a new SQL transformation.
@@ -337,6 +339,11 @@ EXAMPLES:
         "type": "string"
       },
       "type": "array"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this transformation in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose.",
+      "type": "string"
     }
   },
   "required": [
@@ -1644,6 +1651,11 @@ Example 4 - Update storage mappings:
       "default": null,
       "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
       "type": "object"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this transformation in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose.",
+      "type": "string"
     }
   },
   "required": [
@@ -1829,6 +1841,11 @@ SQL & DATA TYPE RULES:
       "default": "",
       "description": "The description of the change when updating (e.g. \"Update Code\"), otherwise empty string.",
       "type": "string"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this data app in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose.",
+      "type": "string"
     }
   },
   "required": [
@@ -1898,7 +1915,7 @@ RULES:
 
 WHEN TO USE:
 - Flows needing branching, conditions, retries, or notifications
-- Default choice when user simply says “create a flow,” unless they explicitly want legacy orchestrator behavior
+- Default choice when user simply says "create a flow," unless they explicitly want legacy orchestrator behavior
 
 
 **Input JSON Schema**:
@@ -1928,6 +1945,11 @@ WHEN TO USE:
         "type": "object"
       },
       "type": "array"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
+      "type": "string"
     }
   },
   "required": [
@@ -1993,6 +2015,11 @@ WHEN TO USE:
         "type": "object"
       },
       "type": "array"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
+      "type": "string"
     }
   },
   "required": [
@@ -2299,6 +2326,11 @@ adjusting dependencies, or enabling/disabling flow execution
       ],
       "default": null,
       "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
+      "type": "string"
     }
   },
   "required": [
@@ -2404,6 +2436,11 @@ or enabling/disabling flow execution
       ],
       "default": null,
       "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
+      "type": "string"
     }
   },
   "required": [

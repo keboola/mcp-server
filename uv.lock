@@ -1231,7 +1231,7 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
-version = "1.54.0"
+version = "1.55.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -1304,7 +1304,7 @@ requires-dist = [
     { name = "kbcstorage", marker = "extra == 'integtests'", specifier = "~=0.9" },
     { name = "mcp", specifier = "==1.26.0" },
     { name = "pep8-naming", marker = "extra == 'codestyle'", specifier = "~=0.15" },
-    { name = "pydantic", specifier = "~=2.13" },
+    { name = "pydantic", specifier = "~=2.13.0" },
     { name = "pyjwt", specifier = "~=2.12" },
     { name = "pytest", marker = "extra == 'tests'", specifier = "~=9.0" },
     { name = "pytest-asyncio", marker = "extra == 'tests'", specifier = "~=1.3" },

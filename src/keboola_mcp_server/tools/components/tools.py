@@ -38,6 +38,7 @@ from pydantic import Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse, JsonDict
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import (
@@ -66,16 +67,20 @@ from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     SNOWFLAKE_TRANSFORMATION_ID,
     add_ids,
+    build_folder_hint,
     check_suitable,
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
+    folder_field_description,
+    get_config_folders,
     get_sql_transformation_id_from_sql_dialect,
     list_configs_by_ids,
     list_configs_by_types,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
     set_nested_value,
+    set_transformation_folder_metadata,
     update_params,
     update_transformation_parameters,
 )
@@ -406,6 +411,10 @@ async def create_sql_transformation(
             ),
         ),
     ] = tuple(),
+    folder: Annotated[
+        str,
+        Field(description=folder_field_description('transformation', 'transformations')),
+    ] = '',
 ) -> ConfigToolOutput:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
@@ -424,6 +433,8 @@ async def create_sql_transformation(
       fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
     - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
       and user intent.
+    - If there are 20 or more SQL transformations in the project, consider organizing them with a folder: existing
+      folder names are surfaced in the response's change_summary — use one of them or create a new one.
 
     USAGE:
     - Use when you want to create a new SQL transformation.
@@ -469,6 +480,31 @@ async def create_sql_transformation(
         configuration_id=configuration_id,
     )
 
+    folder = folder.strip()
+    if folder:
+        try:
+            await set_transformation_folder_metadata(client, component_id, configuration_id, folder)
+        except Exception:
+            LOG.warning(
+                'Unable to set folder metadata for component "%s", configuration "%s".',
+                component_id,
+                configuration_id,
+            )
+        change_summary = None
+    else:
+        try:
+            total, existing_folders = await get_config_folders(client, component_id)
+            change_summary = build_folder_hint(
+                total, existing_folders, 'SQL transformations', 'update_sql_transformation'
+            )
+        except Exception:
+            LOG.warning(
+                'Unable to fetch transformation folders for component "%s" when creating configuration "%s".',
+                component_id,
+                configuration_id,
+            )
+            change_summary = None
+
     LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
 
     links = links_manager.get_transformation_links(
@@ -485,6 +521,7 @@ async def create_sql_transformation(
         success=True,
         links=links,
         version=new_raw_transformation_configuration['version'],
+        change_summary=change_summary,
     )
 
 
@@ -576,6 +613,10 @@ async def update_sql_transformation(
             )
         ),
     ] = None,
+    folder: Annotated[
+        str,
+        Field(description=folder_field_description('transformation', 'transformations')),
+    ] = '',
 ) -> ConfigToolOutput:
     """
     Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
@@ -774,7 +815,7 @@ async def update_sql_transformation(
         f'SQL dialect: {sql_dialect}'
     )
 
-    _, updated_configuration, msg = await update_sql_transformation_internal(
+    _, updated_configuration, msg, *_ = await update_sql_transformation_internal(
         client=client,
         workspace_manager=workspace_manager,
         change_description=change_description,
@@ -800,6 +841,24 @@ async def update_sql_transformation(
         configuration_version=updated_raw_configuration.get('version'),
     )
 
+    folder = folder.strip()
+    if folder:
+        await set_transformation_folder_metadata(client, sql_transformation_id, configuration_id, folder)
+        folder_hint = None
+    else:
+        try:
+            total, existing_folders = await get_config_folders(client, sql_transformation_id)
+            folder_hint = build_folder_hint(total, existing_folders, 'SQL transformations', 'update_sql_transformation')
+        except Exception:
+            LOG.warning(
+                'Unable to fetch transformation folders for component "%s" when updating configuration "%s".',
+                sql_transformation_id,
+                configuration_id,
+            )
+            folder_hint = None
+
+    change_summary = ' '.join(filter(None, [msg, folder_hint])) or None
+
     links = links_manager.get_transformation_links(
         transformation_type=sql_transformation_id,
         transformation_id=configuration_id,
@@ -819,7 +878,7 @@ async def update_sql_transformation(
         success=True,
         links=links,
         version=updated_raw_configuration['version'],
-        change_summary=msg,
+        change_summary=change_summary,
     )
 
 
@@ -835,7 +894,8 @@ async def update_sql_transformation_internal(
     description: str = '',
     parameter_updates: list[TfParamUpdate] | None = None,
     storage: dict[str, Any] | None = None,
-) -> tuple[JsonDict, JsonDict, str]:
+    folder: str = '',
+) -> tuple[JsonDict, JsonDict, str, dict | None]:
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     config_details = await client.storage_client.configuration_detail(
@@ -878,7 +938,33 @@ async def update_sql_transformation_internal(
         )
         updated_configuration['storage'] = storage_cfg
 
-    return config_details, updated_configuration, msg
+    folder_preview: dict | None = None
+    normalized_folder = folder.strip()
+    if normalized_folder:
+        try:
+            current_metadata = await client.storage_client.configuration_metadata_get(
+                component_id=sql_transformation_id, configuration_id=configuration_id
+            )
+            current_folder = next(
+                (
+                    m.get('value', '')
+                    for m in current_metadata
+                    if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
+                ),
+                '',
+            )
+            if normalized_folder != current_folder:
+                folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
+        except Exception as e:
+            LOG.warning(
+                'Failed to fetch configuration metadata for folder preview '
+                '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
+                sql_transformation_id,
+                configuration_id,
+                e,
+            )
+
+    return config_details, updated_configuration, msg, folder_preview
 
 
 @tool_errors()
