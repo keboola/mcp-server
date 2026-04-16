@@ -3,6 +3,7 @@
 ## Git Workflow
 - **Always create a branch first** before committing changes
 - Branch names must start with the Linear issue ID and be short (e.g., `AI-2480-whitelist-n8n-domains`)
+  - **Exception:** release branches use `release/vX.Y.Z` (e.g., `release/v1.55.0`) — these have no Linear issue
 - Commit messages must **start** with the Linear issue ID (e.g., `AI-2480: description`)
 - When working on a Linear task, **check the current branch first** (`git branch`). If not already on the correct task branch, create one before making any changes: `git checkout -b AI-XXXX-short-description`
 - When creating PRs, use the template at `.github/pull_request_template.md`
