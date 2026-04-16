@@ -92,6 +92,40 @@ pytest integtests/ -v --log-cli-level=INFO
 `--log-cli-level=INFO` shows lock acquisition and release messages in real time, which is
 useful when diagnosing a stall.
 
+### Avoiding token leaks in test output
+
+**Important for anyone writing new integration tests or fixtures.**
+
+Pytest prints fixture parameter values in error tracebacks. If a fixture takes
+`storage_api_token: str` as a parameter and the test fails, the raw token appears in
+the CI log in plain text. This is a security risk.
+
+**Bad** — token leaks on failure:
+```python
+@pytest.fixture
+def my_fixture(storage_api_token: str, storage_api_url: str):
+    # If this fixture or any test using it fails, pytest prints:
+    #   storage_api_token = '2728-6118086-cHM8a1s6c1AR...'
+    ...
+```
+
+**Good** — read tokens from env vars inside the function body:
+```python
+@pytest.fixture
+def my_fixture(keboola_project, storage_api_url: str):
+    # keboola_project dependency ensures env_init has run and set KBC_STORAGE_TOKEN
+    token = os.environ['KBC_STORAGE_TOKEN']
+    # On failure, pytest only shows: keboola_project=ProjectDef(...), storage_api_url='https://...'
+    ...
+```
+
+The `env_init` fixture (triggered via `keboola_project`) copies the pool token into
+`KBC_STORAGE_TOKEN` and the URL into `STORAGE_API_URL`. Reading from these env vars
+inside the function body keeps the token out of pytest's traceback display.
+
+For tokens not in the pool (e.g. `INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES`), use
+`os.getenv(...)` / `os.environ[...]` directly — never accept them as fixture parameters.
+
 ---
 
 ## 2. How the Pool and Locking Work

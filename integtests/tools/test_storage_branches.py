@@ -322,7 +322,6 @@ def _teardown_branch_test_project(project: BranchTestProject) -> None:
 @pytest.fixture(scope='session')
 def branch_test_projects(
     keboola_project,
-    storage_api_token: str,
     storage_api_url: str,
     env_file_loaded: bool,
 ) -> Generator[list[BranchTestProject], Any, None]:
@@ -330,6 +329,10 @@ def branch_test_projects(
     Sets up branch tests on two projects: the pool project and a dedicated old-branches project.
     Fails if the old-branches token is not configured.
     """
+    # Read tokens from env vars (set by env_init via keboola_project dependency) to avoid
+    # leaking raw token values in pytest tracebacks on fixture failure.
+    pool_token = os.environ['KBC_STORAGE_TOKEN']
+
     old_branches_token = os.getenv(OLD_BRANCHES_TOKEN_ENV_VAR, '').strip()
     if not old_branches_token:
         pytest.fail(
@@ -340,7 +343,7 @@ def branch_test_projects(
     projects: list[BranchTestProject] = []
     try:
         # Pool project: base data (in.c-test_bucket_01) already created by keboola_project fixture
-        pool_project = _setup_branch_test_project(storage_api_url, storage_api_token, 'pool', create_prod_data=False)
+        pool_project = _setup_branch_test_project(storage_api_url, pool_token, 'pool', create_prod_data=False)
         projects.append(pool_project)
 
         # Dedicated old-branches project: needs its own production data
