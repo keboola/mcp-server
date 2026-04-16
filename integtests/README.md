@@ -5,90 +5,82 @@ Keboola project. The `project_lock` fixture ensures that only one session owns a
 project at a time, so concurrent CI jobs or overlapping local runs do not corrupt each
 other's data.
 
+> **Important**: The integration tests are **not** tied to specific projects. Any clean
+> Keboola project with a workspace can be used. For local development you only need **two**
+> projects in the pool (one Snowflake, one BigQuery) plus one old-branches project. The CI
+> pool uses four projects for concurrency, but this is not a requirement for local runs.
+
 ---
 
-## 1. Local `.env` Setup
+## 1. Setting Up Your Own Test Environment
 
-Create a `.env` file in the project root with the variables below.
+### Do NOT reuse the CI projects
 
-### Required
+The CI pool projects are shared across all CI runners. If you point your local `.env` at
+them, you will interfere with CI runs: the pool lock mechanism will block or — worse — your
+local run may acquire a CI project, crash mid-way, and leave it in a dirty state that
+causes random CI failures.
+
+**Always create your own dedicated test projects for local development.**
+
+### Creating test projects
+
+You need:
+
+1. **Two pool projects** — one on Snowflake backend, one on BigQuery (or two of the same
+   backend if you only need one). These must be **completely empty** (no buckets, no tables,
+   no configurations) when a test session starts. The lock mechanism cleans up after each
+   session, but if a session crashes, leftovers may remain and cause the next run to fail.
+
+2. **A workspace in each pool project** — each project needs a read-only Snowflake or
+   BigQuery workspace. This is required for `query_data` and FQN resolution tests.
+
+3. **One old-branches project** — a project **without** the `storage-branches` feature,
+   used by `test_storage_branches.py`. Does not need a workspace.
+
+### Creating a workspace and finding the schema
+
+Each pool project must have a workspace with read-only storage access. To create one:
+
+1. Open the project in the Keboola UI
+2. Go to **Transformations** and create a new workspace (Snowflake or BigQuery)
+3. Enable **Read-only Storage Access** on the workspace
+
+To find the workspace schema name (`WORKSPACE_XXXXXXXX`):
+
+- **From the UI**: Click **Connect** on the workspace — the schema is shown in the
+  connection details
+- **From SQL**: Open the SQL editor in the workspace and run `SHOW SCHEMAS;` — look for the
+  schema starting with `WORKSPACE_`
+- **From the API**:
+  ```bash
+  curl -s -H "X-StorageApi-Token: YOUR_TOKEN" \
+    "https://connection.YOUR-STACK.keboola.com/v2/storage/branch/default/workspaces" \
+    | python3 -c "import json,sys; [print(f'{w[\"id\"]}: {w[\"connection\"][\"schema\"]}') for w in json.load(sys.stdin)]"
+  ```
+
+### `.env` file
+
+Create a `.env` file in the project root:
 
 ```dotenv
+# Required — pool projects
 INTEGTEST_POOL_STORAGE_API_URL=https://connection.europe-west3.gcp.keboola.com
-INTEGTEST_STORAGE_TOKENS=<master-token-of-your-test-project>
-INTEGTEST_WORKSPACE_SCHEMAS=<snowflake-workspace-schema>
+INTEGTEST_STORAGE_TOKENS=<token-project-A> <token-project-B>
+INTEGTEST_WORKSPACE_SCHEMAS=<WORKSPACE_for_A> <WORKSPACE_for_B>
+
+# Required — old-branches project for branch storage tests
+INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES=<token-for-project-WITHOUT-storage-branches>
+
+# Optional — second project for multi-client tests
+INTEGTEST_STORAGE_TOKEN_PRJ2=<token>
+INTEGTEST_WORKSPACE_SCHEMA_PRJ2=<WORKSPACE_XXX>
 ```
 
-`INTEGTEST_POOL_STORAGE_API_URL` is the Keboola stack where the pool projects live. All
-test fixtures (`mcp_config`, `keboola_project`, etc.) use this same URL.
-
-`INTEGTEST_STORAGE_TOKENS` and `INTEGTEST_WORKSPACE_SCHEMAS` are space-separated lists of
-**equal length** — one entry per project in the pool. For a pool of one (the common local
-case) provide a single value with no spaces.
-
-Pool of two example:
-
-```dotenv
-INTEGTEST_STORAGE_TOKENS=token-for-project-A token-for-project-B
-INTEGTEST_WORKSPACE_SCHEMAS=WORKSPACE_1111111 WORKSPACE_2222222
-```
-
-The order must match: the first token is paired with the first schema, the second token
-with the second schema. The session fails immediately with a clear error if the lists have
-different lengths or if any token cannot be verified against the Storage API.
-
-### Optional — second project (two-project tests)
-
-A small number of tests exercise simultaneous access to two separate projects. They need:
-
-```dotenv
-INTEGTEST_STORAGE_TOKEN_PRJ2=<master-token-of-second-test-project>
-INTEGTEST_WORKSPACE_SCHEMA_PRJ2=<workspace-schema-of-second-project>
-```
-
-These are read directly without locking and can be omitted if you are not running those
-tests. No lock is needed because the only test that uses PRJ2
-(`test_http_multiple_clients_with_different_headers`) is strictly read-only against it —
-it calls `list_tools`, `list_resources`, and `get_project_info`, and never creates,
-modifies, or deletes any object. Any future test that writes to PRJ2 must acquire a lock
-for it first.
-
-### Optional — old-branches project (branch storage tests)
-
-The branch storage tests (`test_storage_branches.py`) validate the deference mechanism on
-both `storage-branches` and old-style branch projects. They run automatically on whatever
-pool project is acquired, and additionally on a dedicated old-branches project:
-
-```dotenv
-INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES=<master-token-of-a-project-WITHOUT-storage-branches-feature>
-```
-
-The test fails if this variable is not set. The project must **not** have the
-`storage-branches` feature enabled (the pool projects are expected to have it).
-
-Production data (`in.c-test_bucket_01` with `test_table_01`) is created idempotently
-in this project and left in place between runs. Only branches are created and cleaned up
-per session, so multiple concurrent sessions can safely share the project.
-
-No workspace schema is needed — these tests only exercise bucket/table listing, not
-`query_data`.
-
-### Optional — Metastore tests
-
-A subset of tests exercises the Metastore API. The Metastore URL is derived automatically
-from `INTEGTEST_POOL_STORAGE_API_URL` by replacing the `connection.` prefix with `metastore.`
-(e.g. `https://connection.north-europe.azure.keboola.com` → `https://metastore.north-europe.azure.keboola.com`).
-Authentication reuses the storage API token — no additional environment variables are needed.
-
-### Optional — lock tuning
-
-The defaults work for both local and CI use. Override only if you have a reason to.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `INTEGTEST_LOCK_TTL_MINUTES` | `60` | A lock older than this is considered abandoned and cleaned up by the next runner that detects it |
-| `INTEGTEST_LOCK_POLL_INTERVAL_SECONDS` | `30` | How long to wait between retries when all projects in the pool are busy |
-| `INTEGTEST_LOCK_MAX_WAIT_MINUTES` | `90` | Raise `TimeoutError` after this many minutes of waiting |
+**Critical**: The order of `INTEGTEST_STORAGE_TOKENS` and `INTEGTEST_WORKSPACE_SCHEMAS`
+must match — the first token is paired with the first schema, the second with the second,
+etc. A mismatch causes the lock cleanup to delete the workspace (see
+[Workspace deletion pitfall](#workspace-deletion-pitfall) below).
 
 ### Running the tests
 
@@ -102,23 +94,21 @@ useful when diagnosing a stall.
 
 ---
 
-## 2. Migrating from the Old Setup
+## 2. How the Pool and Locking Work
 
-The old system used two single-value variables. Rename them in your `.env`:
+### Overview
 
-| Old variable | New variable | Value |
-|---|---|---|
-| `INTEGTEST_STORAGE_TOKEN` | `INTEGTEST_STORAGE_TOKENS` | same token, no change |
-| `INTEGTEST_WORKSPACE_SCHEMA` | `INTEGTEST_WORKSPACE_SCHEMAS` | same schema, no change |
+The pool manages a set of test projects. Each test session acquires **one** project from the
+pool, runs all tests against it, then releases it. The lock ensures no two sessions use the
+same project simultaneously.
 
-The old names are no longer read. The session fails immediately at startup if either new
-variable is missing or empty.
-
-`INTEGTEST_STORAGE_TOKEN_PRJ2` and `INTEGTEST_WORKSPACE_SCHEMA_PRJ2` are unchanged.
-
----
-
-## 3. Design
+**Key behavior**:
+- A session acquires one project and holds it for the entire run
+- The project must be **completely clean** (no buckets, configs, tables) at the start — the
+  `keboola_project` fixture explicitly checks this and fails if anything exists
+- After all tests complete, `keboola_project` deletes everything it created
+- If a session crashes without cleaning up, the next session that acquires the same project
+  will detect the stale lock and run `clean_project` to wipe everything before proceeding
 
 ### Lock storage: Keboola branch metadata
 
@@ -150,20 +140,55 @@ If the winning entry is older than `INTEGTEST_LOCK_TTL_MINUTES` it is considered
 (the previous runner crashed without releasing). The detecting runner:
 
 1. Writes `.released` keys for all stale entries.
-2. Calls `_clean_project`: deletes all buckets (with their tables) and all component
+2. Calls `clean_project`: deletes all buckets (with their tables) and all component
    configurations from the project, restoring the clean state the tests require.
 3. Re-enters the acquisition protocol from step 1.
 
 If the integration tests ever take close to
-60 minutes to complete, raise `INTEGTEST_LOCK_TTL_MINUTES` to roughly 2× the expected
+60 minutes to complete, raise `INTEGTEST_LOCK_TTL_MINUTES` to roughly 2x the expected
 duration — otherwise a slow-but-healthy runner may have its lock stolen mid-run.
+
+### Workspace deletion pitfall
+
+During `clean_project`, the lock mechanism tries to **preserve** the workspace by matching
+the configured `WORKSPACE_SCHEMA` against the project's `keboola.sandboxes` configurations.
+If the schema matches, that sandbox config is kept; everything else is deleted.
+
+**If the schema does NOT match** (because the workspace was recreated, the `.env` is stale,
+or the token/schema order is wrong), `clean_project` **deletes ALL sandbox configs including
+the workspace itself**. This silently destroys the workspace, and subsequent tests that need
+it will fail with:
+
+```
+ValueError: No Keboola workspace found or the workspace has no read-only storage access
+```
+
+**Prevention**: Always verify your token/schema mapping is correct before running tests:
+
+```bash
+# Quick check — all should show ✓
+python -c "
+import os, httpx
+from dotenv import load_dotenv
+load_dotenv()
+tokens = os.getenv('INTEGTEST_STORAGE_TOKENS', '').split()
+schemas = os.getenv('INTEGTEST_WORKSPACE_SCHEMAS', '').split()
+url = os.getenv('INTEGTEST_POOL_STORAGE_API_URL', '')
+for t, s in zip(tokens, schemas):
+    info = httpx.get(f'{url}/v2/storage/tokens/verify', headers={'X-StorageApi-Token': t}).json()
+    name = f'{info[\"owner\"][\"name\"]} ({info[\"owner\"][\"id\"]})'
+    ws = httpx.get(f'{url}/v2/storage/branch/default/workspaces', headers={'X-StorageApi-Token': t}).json()
+    ok = '✓' if any(w['connection'].get('schema') == s for w in ws) else '✗ MISMATCH'
+    print(f'...{t[-4:]} | {name:>40} | {s:>22} | {ok}')
+"
+```
 
 ### Pool of projects
 
 `ProjectPool` holds a list of `ProjectEndpoint` objects. During each acquisition pass it
-tries them in order and returns the first one it can lock. If all are busy it sleeps for
-`INTEGTEST_LOCK_POLL_INTERVAL_SECONDS` and retries the full list. Raising the pool size
-allows multiple CI jobs to run concurrently, each against a different project.
+tries them in randomized order and returns the first one it can lock. If all are busy it
+sleeps for `INTEGTEST_LOCK_POLL_INTERVAL_SECONDS` and retries the full list. Raising the
+pool size allows multiple CI jobs to run concurrently, each against a different project.
 
 Before the pool is created, `verify_project_endpoint` calls `GET /v2/storage/tokens/verify`
 for every configured token. A revoked or misspelled token therefore causes an immediate
@@ -177,8 +202,8 @@ is automatically blocked until the lock is held:
 
 ```
 env_file_loaded
-  └── storage_api_url             ← reads INTEGTEST_POOL_STORAGE_API_URL
-        └── project_lock         ← lock acquired at session start
+  └── storage_api_url             <-- reads INTEGTEST_POOL_STORAGE_API_URL
+        └── project_lock         <-- lock acquired at session start
               ├── storage_api_token
               └── workspace_schema
                     └── env_init
@@ -188,9 +213,82 @@ env_file_loaded
 The lock is released in `project_lock`'s teardown, after every session-scoped fixture that
 depends on it has been torn down and the project has been cleaned up by `keboola_project`.
 
+### Lock tuning
+
+The defaults work for both local and CI use. Override only if you have a reason to.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `INTEGTEST_LOCK_TTL_MINUTES` | `60` | A lock older than this is considered abandoned and cleaned up by the next runner that detects it |
+| `INTEGTEST_LOCK_POLL_INTERVAL_SECONDS` | `30` | How long to wait between retries when all projects in the pool are busy |
+| `INTEGTEST_LOCK_MAX_WAIT_MINUTES` | `90` | Raise `TimeoutError` after this many minutes of waiting |
+
 ---
 
-## 4. GitHub CI Setup
+## 3. Test-Specific Projects
+
+### Old-branches project (branch storage tests)
+
+The branch storage tests (`test_storage_branches.py`) validate the deference mechanism on
+both `storage-branches` and old-style branch projects. They run automatically on whatever
+pool project is acquired, and additionally on a dedicated old-branches project:
+
+```dotenv
+INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES=<master-token-of-a-project-WITHOUT-storage-branches-feature>
+```
+
+The test fails if this variable is not set. The project must **not** have the
+`storage-branches` feature enabled (the pool projects are expected to have it).
+
+Production data (`in.c-test_bucket_01` with `test_table_01`) is created idempotently
+in this project and left in place between runs. Only branches are created and cleaned up
+per session, so multiple concurrent sessions can safely share the project.
+
+No workspace schema is needed — these tests only exercise bucket/table listing, not
+`query_data`.
+
+### Second project (two-project tests)
+
+A small number of tests exercise simultaneous access to two separate projects. They need:
+
+```dotenv
+INTEGTEST_STORAGE_TOKEN_PRJ2=<master-token-of-second-test-project>
+INTEGTEST_WORKSPACE_SCHEMA_PRJ2=<workspace-schema-of-second-project>
+```
+
+These are read directly without locking and can be omitted if you are not running those
+tests. No lock is needed because the only test that uses PRJ2
+(`test_http_multiple_clients_with_different_headers`) is strictly read-only against it —
+it calls `list_tools`, `list_resources`, and `get_project_info`, and never creates,
+modifies, or deletes any object. Any future test that writes to PRJ2 must acquire a lock
+for it first.
+
+### Metastore tests
+
+A subset of tests exercises the Metastore API. The Metastore URL is derived automatically
+from `INTEGTEST_POOL_STORAGE_API_URL` by replacing the `connection.` prefix with `metastore.`
+(e.g. `https://connection.north-europe.azure.keboola.com` -> `https://metastore.north-europe.azure.keboola.com`).
+Authentication reuses the storage API token — no additional environment variables are needed.
+
+---
+
+## 4. Migrating from the Old Setup
+
+The old system used two single-value variables. Rename them in your `.env`:
+
+| Old variable | New variable | Value |
+|---|---|---|
+| `INTEGTEST_STORAGE_TOKEN` | `INTEGTEST_STORAGE_TOKENS` | same token, no change |
+| `INTEGTEST_WORKSPACE_SCHEMA` | `INTEGTEST_WORKSPACE_SCHEMAS` | same schema, no change |
+
+The old names are no longer read. The session fails immediately at startup if either new
+variable is missing or empty.
+
+`INTEGTEST_STORAGE_TOKEN_PRJ2` and `INTEGTEST_WORKSPACE_SCHEMA_PRJ2` are unchanged.
+
+---
+
+## 5. GitHub CI Setup
 
 ### Pool projects
 
@@ -235,7 +333,7 @@ repository's GitHub Secrets/Variables:
   `max-parallel: 1`, so the three versions run sequentially. This is intentional: a
   single run only needs one project slot, not three.
 - **Across concurrent CI runs** — the project-pool locking protocol (described in
-  section 3) handles collisions. Each run acquires a different project, so up to four
+  section 2) handles collisions. Each run acquires a different project, so up to four
   runs can proceed in parallel without interfering.
 - **Duplicate-run prevention** — a workflow-level concurrency key
   (`ci-${{ github.ref }}`) cancels any in-progress run on the same branch when a new
