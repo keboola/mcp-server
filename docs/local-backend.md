@@ -115,7 +115,8 @@ parser.add_argument(
 
 | Tool | Description |
 |------|-------------|
-| `run_component` | Runs a Keboola component Docker image locally via `docker run` |
+| `setup_component` | Clones a component git repo and builds its Docker image — one-time setup before `run_component` |
+| `run_component` | Runs a Keboola component locally (source-based via `docker compose` or registry image via `docker run`) |
 | `migrate_to_keboola` | _(Phase 4)_ Uploads local data and configs to Keboola platform |
 
 ### Platform-only tools (not registered in local mode)
@@ -190,7 +191,43 @@ Every Keboola component is a Docker image that reads configuration and input dat
 
 Only `parameters` is strictly required for local execution — the component reads it to drive its behaviour. `storage` sections are informational; files are mounted directly.
 
-### Docker execution
+### Source-based execution (typical — most components)
+
+Most Keboola components are open source and designed to be built and run locally from source using the same `docker-compose.yml` the component authors use for development. This is the recommended path.
+
+```bash
+# 1. Clone the component repository
+git clone https://github.com/keboola/<component-name>.git
+cd <component-name>
+
+# 2. Build the local Docker image
+docker compose build
+
+# 3. Install component dependencies (language-specific)
+docker compose run --rm dev composer install        # PHP / Composer
+# docker compose run --rm dev npm ci                # Node.js
+# docker compose run --rm dev pip install -r requirements.txt  # Python
+
+# 4. Prepare the data directory and write config.json
+mkdir -p data
+# place your config.json at ./data/config.json (see §config.json above)
+
+# 5. Run the component
+docker compose run --rm dev php run.php
+# docker compose run --rm dev python main.py       # Python entry point
+# (check the component's README for the correct entry point)
+```
+
+The component's `docker-compose.yml` typically defines a `dev` service that:
+- Mounts the project root to `/code` inside the container (source hot-reload)
+- Mounts `./data` → `/data` (satisfying the Common Interface contract)
+- Sets `KBC_DATADIR=/data/`
+
+No custom wiring is required — this is exactly how the component's own CI and developer docs use it.
+
+### Registry image execution (pre-built / CI images)
+
+When a pre-built image is available (e.g. a released component image on Quay, ECR, or Docker Hub) and you do not need the source, you can skip the clone+build steps and run via plain `docker run`:
 
 ```bash
 docker run \
@@ -223,26 +260,74 @@ The `run_component` tool surfaces these distinctly so the LLM client can give th
 ```python
 @mcp.tool()
 def run_component(
-    component_image: str,
-    parameters: dict,
+    component_image: str | None = None,
+    component_git_url: str | None = None,
+    parameters: dict = {},
     input_tables: list[str] | None = None,
     memory_limit: str = "4g",
 ) -> str:
     """
     Run a Keboola component locally via Docker.
 
-    Uses the Keboola Common Interface: mounts a /data directory with config.json
-    and input CSVs, runs the container, and collects output CSVs back into the
-    local data catalog.
+    Exactly one of `component_git_url` or `component_image` must be provided.
+
+    Source-based mode (recommended — most components):
+        Provide `component_git_url`. The tool clones the repo into
+        <data-dir>/components/<repo-name>/ (or reuses an existing clone),
+        runs `docker compose build`, installs dependencies, then executes the
+        component via `docker compose run --rm dev`.
+
+    Registry image mode (pre-built images):
+        Provide `component_image`. The tool runs the image directly via
+        `docker run` without any clone or build step.
+
+    In both modes the tool:
+    - Writes config.json with the supplied `parameters` into the /data directory
+    - Mounts input CSVs from the local catalog
+    - Collects output CSVs back into the local catalog after the run
 
     Args:
-        component_image: Docker image to run (e.g. quay.io/keboola/python-transformation:latest)
+        component_image: Docker image to run directly
+                         (e.g. quay.io/keboola/python-transformation:latest)
+        component_git_url: Git repository URL of the component
+                           (e.g. https://github.com/keboola/generic-extractor.git)
         parameters: Component-specific parameters written to config.json
         input_tables: Table names from the local catalog to mount as input
         memory_limit: Docker memory limit (default: 4g)
 
     Returns:
         JSON with status, output_tables list, and truncated stdout/stderr.
+    """
+```
+
+Clones are cached under `<data-dir>/components/<repo-name>/` so subsequent `run_component` calls on the same component skip the clone and only re-run `docker compose build` if needed.
+
+### `setup_component` tool signature
+
+```python
+@mcp.tool()
+def setup_component(
+    component_git_url: str,
+    force_rebuild: bool = False,
+) -> str:
+    """
+    Clone a Keboola component repository and build its Docker image.
+
+    This is a one-time setup step. After setup, use run_component to execute
+    the component. setup_component is called automatically by run_component
+    when a component_git_url is provided and the component is not yet built,
+    but can also be called explicitly for pre-warming or to force a rebuild.
+
+    The clone is stored at <data-dir>/components/<repo-name>/. Subsequent calls
+    are no-ops unless force_rebuild=True.
+
+    Args:
+        component_git_url: Git repository URL
+                           (e.g. https://github.com/keboola/generic-extractor.git)
+        force_rebuild: Re-run docker compose build even if the image exists
+
+    Returns:
+        JSON with status and the local path of the cloned component.
     """
 ```
 
@@ -402,6 +487,14 @@ keboola_data/           # --data-dir root
 │   └── orders.csv.manifest
 ├── configs/
 │   └── ex-salesforce-001.json   # component configuration
+├── components/                  # cloned component repos (source-based execution)
+│   └── generic-extractor/       # git clone of the component
+│       ├── docker-compose.yml   # used to build and run the component
+│       ├── data/                # /data dir mounted into the container
+│       │   ├── config.json
+│       │   ├── in/tables/
+│       │   └── out/tables/
+│       └── ...
 ├── apps/
 │   └── sales-dashboard/         # generated TS/JS app
 │       ├── package.json
@@ -494,12 +587,19 @@ class LocalBackend:
 
 **Goal**: `run_component` executes Docker containers locally using the Common Interface.
 
-- Implement `run_docker_component()` — creates `/data` temp dir, writes `config.json`, runs `docker run`, collects outputs
-- Handle exit codes (0 / 1 / >1) distinctly
-- Auto-catalog output tables (copy from `/data/out/tables/` to local catalog)
+- Implement `setup_component()` — git clone into `<data-dir>/components/<repo-name>/`, `docker compose build`, detect and install dependencies
+  - PHP: `docker compose run --rm dev composer install` (presence of `composer.json` without `vendor/`)
+  - Node.js: `docker compose run --rm dev npm ci` (presence of `package.json` without `node_modules/`)
+  - Python: `docker compose run --rm dev pip install -r requirements.txt` (presence of `requirements.txt` without `.venv/`)
+  - Skip reinstall on subsequent calls when the dependency directory already exists
+- Implement `run_docker_component()` — two paths:
+  - **Source-based** (`component_git_url`): call `setup_component`, write `config.json` into `<component-dir>/data/`, mount via component's own `docker-compose.yml`, run `docker compose run --rm dev <entrypoint>` (entry point read from the `dev` service command in the component's `docker-compose.yml`, fallback to component's README or user-supplied override)
+  - **Registry image** (`component_image`): create a temp `/data` dir, write `config.json`, run plain `docker run --rm --volume=...:/data` as before
+- Handle exit codes (0 / 1 / >1) distinctly in both paths
+- Auto-catalog output tables (copy from `<data-dir>/out/tables/` or `<component-dir>/data/out/tables/` to local catalog)
 - Manifest file support (read input manifests, write output manifests)
-- Test with real component images: `keboola/python-transformation`, `keboola/ex-http`
-- **Requirement**: Docker daemon accessible from the Python process
+- Test with real component repos: `keboola/generic-extractor`, `keboola/python-transformation`
+- **Requirement**: Docker daemon accessible from the Python process; `git` available on PATH
 
 ### Phase 3 — TypeScript/JavaScript App Generation (weeks 5–7)
 
