@@ -110,10 +110,5 @@ jobs:
     name: KaiBench Evaluation
     needs: build-and-push
     if: needs.build-and-push.result == 'success' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev.')
-    continue-on-error: true
-    permissions:
-      contents: read
-      actions: read
-      packages: read
     uses: ./.github/workflows/kaibench.yml
     secrets: inherit
