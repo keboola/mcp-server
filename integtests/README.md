@@ -53,6 +53,26 @@ it calls `list_tools`, `list_resources`, and `get_project_info`, and never creat
 modifies, or deletes any object. Any future test that writes to PRJ2 must acquire a lock
 for it first.
 
+### Optional — old-branches project (branch storage tests)
+
+The branch storage tests (`test_storage_branches.py`) validate the deference mechanism on
+both `storage-branches` and old-style branch projects. They run automatically on whatever
+pool project is acquired, and additionally on a dedicated old-branches project:
+
+```dotenv
+INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES=<master-token-of-a-project-WITHOUT-storage-branches-feature>
+```
+
+The test fails if this variable is not set. The project must **not** have the
+`storage-branches` feature enabled (the pool projects are expected to have it).
+
+Production data (`in.c-test_bucket_01` with `test_table_01`) is created idempotently
+in this project and left in place between runs. Only branches are created and cleaned up
+per session, so multiple concurrent sessions can safely share the project.
+
+No workspace schema is needed — these tests only exercise bucket/table listing, not
+`query_data`.
+
 ### Optional — Metastore tests
 
 A subset of tests exercises the Metastore API. The Metastore URL is derived automatically
@@ -177,15 +197,25 @@ depends on it has been torn down and the project has been cleaned up by `keboola
 The CI pool consists of four Keboola projects, all on
 `https://connection.europe-west3.gcp.keboola.com`:
 
-| Project ID | Dashboard URL |
-|---|---|
-| 2728 | https://connection.europe-west3.gcp.keboola.com/admin/projects/2728/dashboard |
-| 2729 | https://connection.europe-west3.gcp.keboola.com/admin/projects/2729/dashboard |
-| 2731 | https://connection.europe-west3.gcp.keboola.com/admin/projects/2731/dashboard |
-| 2732 | https://connection.europe-west3.gcp.keboola.com/admin/projects/2732/dashboard |
+| Project ID | Dashboard URL                                                                 | Backend   | Notes        |
+|------------|-------------------------------------------------------------------------------|-----------|--------------|
+| 2728       | https://connection.europe-west3.gcp.keboola.com/admin/projects/2728/dashboard | Snowflake |              |
+| 2729       | https://connection.europe-west3.gcp.keboola.com/admin/projects/2729/dashboard | Snowflake |              |
+| 2731       | https://connection.europe-west3.gcp.keboola.com/admin/projects/2731/dashboard | BigQuery  |              |
+| 2732       | https://connection.europe-west3.gcp.keboola.com/admin/projects/2732/dashboard | BigQuery  |              |
 
 Having four slots means up to four CI jobs can run concurrently — each acquires a
 different project from the pool and they do not block each other.
+
+### Old-branches project (not in pool)
+
+| Project ID | Dashboard URL                                                                 | Backend   | Notes                              |
+|------------|-------------------------------------------------------------------------------|-----------|------------------------------------|
+| 2906       | https://connection.europe-west3.gcp.keboola.com/admin/projects/2906/dashboard | Snowflake | No `storage-branches` feature      |
+
+This project is used by `test_storage_branches.py` via `INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES`.
+It is **not** part of the pool and has no lock mechanism — concurrent access is safe because
+production data is created idempotently and each session only manages its own branches.
 
 ### Secrets and variables
 
@@ -197,6 +227,7 @@ repository's GitHub Secrets/Variables:
 | `INTEGTEST_STORAGE_TOKENS` | Secret | Space-separated master tokens for all four pool projects (order must match `INTEGTEST_WORKSPACE_SCHEMAS`) |
 | `INTEGTEST_POOL_STORAGE_API_URL` | Variable | `https://connection.europe-west3.gcp.keboola.com` |
 | `INTEGTEST_WORKSPACE_SCHEMAS` | Variable | Space-separated Snowflake workspace schemas, one per project in the same order as the tokens |
+| `INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES` | Secret | Master token for a project **without** the `storage-branches` feature (used by `test_storage_branches.py`) |
 
 ### Concurrency
 
