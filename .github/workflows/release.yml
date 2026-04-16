@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  packages: read
 
 env:
   SERVICE_IMAGE_NAME: "keboola/mcp-server"
