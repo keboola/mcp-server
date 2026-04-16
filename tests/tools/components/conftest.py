@@ -55,6 +55,7 @@ def mock_configurations() -> list[dict[str, Any]]:
             'isDeleted': False,
             'version': 1,
             'configuration': {},
+            'creatorToken': {'id': 100, 'description': 'john.doe@example.com'},
         },
         {
             'id': '456',
@@ -65,6 +66,7 @@ def mock_configurations() -> list[dict[str, Any]]:
             'isDeleted': True,
             'version': 2,
             'configuration': {},
+            'creatorToken': {'id': 200, 'description': 'jane.smith@example.com'},
         },
     ]
 
@@ -132,6 +134,7 @@ def mock_configuration() -> dict[str, Any]:
         'version': 1,
         'configuration': {},
         'rows': [{'id': '1', 'name': 'Row 1', 'version': 1}, {'id': '2', 'name': 'Row 2', 'version': 1}],
+        'creatorToken': {'id': 100, 'description': 'john.doe@example.com'},
     }
 
 
@@ -146,6 +149,7 @@ def mock_tf_configuration() -> dict[str, Any]:
         'isDisabled': False,
         'isDeleted': False,
         'version': 1,
+        'creatorToken': {'id': 100, 'description': 'john.doe@example.com'},
         'configuration': {
             'parameters': {
                 'blocks': [

@@ -248,6 +248,11 @@ class ConfigurationAPIResponse(BaseModel):
         description='Configuration metadata',
         validation_alias=AliasChoices('metadata', 'configuration_metadata', 'configurationMetadata'),
     )
+    creator_token: Optional[dict[str, Any]] = Field(
+        default=None,
+        description='Metadata about the token that created the configuration',
+        validation_alias=AliasChoices('creatorToken', 'creator_token', 'creator-token'),
+    )
 
 
 class CreateConfigurationAPIResponse(BaseModel):

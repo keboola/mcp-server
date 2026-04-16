@@ -234,6 +234,9 @@ class ConfigurationRoot(BaseModel):
     configuration_metadata: list[dict[str, Any]] = Field(
         default_factory=list, description='Configuration metadata including MCP tracking'
     )
+    created_by: Optional[str] = Field(
+        default=None, description='Description of the token that created this configuration'
+    )
 
     @classmethod
     def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationRoot':
@@ -246,6 +249,7 @@ class ConfigurationRoot(BaseModel):
         :param api_config: Validated API configuration response
         :return: Complete configuration root domain model
         """
+        created_by = (api_config.creator_token or {}).get('description') if api_config.creator_token else None
         return cls.model_construct(
             component_id=api_config.component_id,
             configuration_id=api_config.configuration_id,
@@ -258,6 +262,7 @@ class ConfigurationRoot(BaseModel):
             storage=api_config.configuration.get('storage'),
             processors=api_config.configuration.get('processors'),
             configuration_metadata=api_config.metadata,
+            created_by=created_by,
         )
 
 
@@ -332,10 +337,14 @@ class ConfigurationRootSummary(BaseModel):
     description: Optional[str] = Field(default=None, description='The description of the configuration')
     is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
+    created_by: Optional[str] = Field(
+        default=None, description='Description of the token that created this configuration'
+    )
 
     @classmethod
     def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationRootSummary':
         """Create lightweight configuration root summary from API response."""
+        created_by = (api_config.creator_token or {}).get('description') if api_config.creator_token else None
         return cls.model_construct(
             component_id=api_config.component_id,
             configuration_id=api_config.configuration_id,
@@ -343,6 +352,7 @@ class ConfigurationRootSummary(BaseModel):
             description=api_config.description,
             is_disabled=api_config.is_disabled,
             is_deleted=api_config.is_deleted,
+            created_by=created_by,
         )
 
 
