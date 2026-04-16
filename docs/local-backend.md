@@ -109,7 +109,7 @@ parser.add_argument(
 | `query_data` | Executes SQL on Snowflake/BQ workspace | Executes SQL via native `duckdb` on CSV files |
 | `search` | Semantic search via AI service | Searches filenames and CSV headers |
 | `get_project_info` | Returns Keboola project metadata | Returns local project metadata |
-| `create_data_app` | Generates and deploys Streamlit app | Generates Vite+React+DuckDB-WASM app |
+| `modify_data_app` | Creates/updates a Streamlit app on the platform | Creates/updates a Vite+React+DuckDB-WASM app locally |
 
 ### Local-only tools (new, not registered in platform mode)
 
@@ -125,24 +125,50 @@ parser.add_argument(
 
 These tools are simply not registered at startup. The LLM client never sees them in the tool list.
 
-### Conditional registration pattern
+### Prompt / instruction filtering by mode
+
+The two modes also serve different system prompt sets. `create_local_server` registers local-specific prompts instead of the platform prompts.
+
+| Prompt category | Platform mode | Local mode |
+|----------------|:---:|:---:|
+| Storage & bucket management | ✓ | ✗ |
+| Jobs & flows | ✓ | ✗ |
+| SQL workspace (Snowflake/BQ) | ✓ | ✗ |
+| DuckDB / local SQL | ✗ | ✓ |
+| Component configuration & schemas | ✓ | ✓ (schema source differs — see §Component schema discovery) |
+| Local data management | ✗ | ✓ |
+
+### Server factory pattern
+
+Rather than a single `create_server` that branches on `--local-backend`, the implementation uses two separate factory functions. This keeps the platform path completely untouched and lets the local path implement its own middleware, session handling, and prompt registration independently.
+
+There is **no new `PlatformBackend` wrapper class** — `create_platform_server` simply encapsulates the existing server code as-is.
+
+Even though shared tools (`get_tables`, `query_data`, etc.) expose the same MCP name and I/O signature in both modes, they are **registered separately** inside each factory with different implementations. This avoids a shared-registration abstraction that would couple the two paths.
 
 ```python
 # src/keboola_mcp_server/server.py
-def create_server(args) -> FastMCP:
+
+def create_platform_server(config: Config) -> FastMCP:
+    """Standard platform-backed server — unchanged from today."""
     mcp = FastMCP("Keboola MCP Server")
+    # existing middleware: token auth, WorkspaceManager, ProjectLinksManager, …
+    register_platform_tools(mcp, config)      # includes platform versions of shared tools
+    register_platform_prompts(mcp)
+    return mcp
 
-    register_common_tools(mcp)          # shared tools
-
-    if args.local_backend:
-        local_backend = LocalBackend(data_dir=args.data_dir)
-        register_local_tools(mcp, local_backend)
-    else:
-        platform_backend = PlatformBackend(...)
-        register_platform_tools(mcp, platform_backend)
-
+def create_local_server(data_dir: str) -> FastMCP:
+    """Local-backend server. No token required. Persistent single-instance state."""
+    mcp = FastMCP("Keboola MCP Server (local)")
+    local_backend = LocalBackend(data_dir=data_dir)
+    # no auth middleware, no WorkspaceManager, no ProjectLinksManager
+    # persistent in-memory session state (single instance — no multi-tenancy concern)
+    register_local_tools(mcp, local_backend)  # includes local versions of shared tools
+    register_local_prompts(mcp)
     return mcp
 ```
+
+`cli.py` selects which factory to call at startup based on `--local-backend`.
 
 ---
 
@@ -333,11 +359,46 @@ def setup_component(
 
 ---
 
+## Component Schema Discovery in Local Mode
+
+In platform mode, the agent fetches component config schemas and examples from the AI Service API (`get_config_examples`, `find_component_id`). That API is not available in local mode. The following three-tier fallback covers it:
+
+### Tier 1 — Cloned repo introspection (best)
+
+When `setup_component` clones a repo, it scans for schema files in well-known locations:
+- `component.json` — Keboola Developer Portal manifest (includes `configSchema`)
+- `src/component.py` / metadata annotations if present
+- `README.md` — contains parameter documentation for most components
+
+The `setup_component` tool surfaces the schema content so the agent can use it when composing `config.json`.
+
+### Tier 2 — Keboola Developer Portal API (public, no auth)
+
+```
+GET https://components.keboola.com/components/{component_id}
+```
+
+Returns the component manifest including `configSchema` and `configRowSchema`. A new local-only tool `get_component_schema` wraps this endpoint:
+
+```python
+@mcp.tool()
+def get_component_schema(component_id: str) -> str:
+    """Fetch the config schema for a Keboola component from the public Developer Portal."""
+```
+
+`find_component_id` is also reimplemented in local mode to query this public API instead of the AI Service, so the agent can still map human-readable names to component IDs and Docker image paths.
+
+### Tier 3 — Fallback
+
+If neither the cloned repo nor the Developer Portal has a schema, the agent uses any `config.json` examples found in the repo (typically under `tests/` or `examples/`) and notes to the user that the component's README should be consulted for parameter details.
+
+---
+
 ## Pillar 2 — TypeScript/JavaScript App Generation
 
 ### Why TS/JS instead of Streamlit
 
-The existing `create_data_app` tool generates Streamlit apps for the Keboola platform. In local mode the tool generates **native TypeScript/JavaScript single-page applications** that:
+The existing `modify_data_app` tool generates Streamlit apps for the Keboola platform. In local mode the tool generates **native TypeScript/JavaScript single-page applications** that:
 
 - Run anywhere via Docker Compose (no platform dependency)
 - Query CSV files in the browser using DuckDB-WASM (no server-side database)
@@ -603,7 +664,7 @@ class LocalBackend:
 
 ### Phase 3 — TypeScript/JavaScript App Generation (weeks 5–7)
 
-**Goal**: `create_data_app` generates a working Vite + React + DuckDB-WASM + ECharts app.
+**Goal**: `modify_data_app` generates a working Vite + React + DuckDB-WASM + ECharts app.
 
 - App template directory with all boilerplate (package.json, vite.config.ts, Dockerfile, nginx.conf, docker-compose.yml, duckdb.ts)
 - Template engine generates `App.tsx` with SQL queries and ECharts options specific to the user's data and intent
@@ -648,11 +709,15 @@ class LocalBackend:
 
 ## Migration Path (Future)
 
-A `migrate_to_keboola` tool helps users move local workflows to the Keboola platform:
+Rather than managing token acquisition inside `migrate_to_keboola`, the tool delegates all platform operations to **`keboola-cli`**, which already handles authentication (`kbc auth login`), Storage uploads, and config creation. This avoids reinventing auth flows and keeps the MCP server stateless with respect to tokens.
 
-1. Upload CSVs to Keboola Storage via Storage API (token required at this point)
-2. Convert `configs/*.json` to Keboola component configurations via Components API
-3. Map local table references in component parameters to Storage table IDs
-4. Re-deploy data apps as Streamlit on the platform (or keep TS/JS via custom hosting)
+**Requirement:** `keboola-cli` installed and authenticated on the user's machine before calling this tool.
 
-The tool should be interactive and confirm before uploading. Flows and orchestration are platform-native concepts set up after migration.
+`migrate_to_keboola` orchestrates these `kbc` commands:
+
+1. `kbc remote create table` / `kbc remote file upload` — uploads local CSVs to Keboola Storage
+2. `kbc remote create config` — converts `configs/*.json` into Keboola component configurations
+3. Maps local table names in component parameters to the Storage table IDs assigned in step 1
+4. Optionally redeploys data apps as Streamlit on the platform (or keeps TS/JS via custom hosting)
+
+The tool confirms each step with the user before executing. Flows and orchestration are platform-native concepts set up after migration.
