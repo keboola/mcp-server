@@ -7,7 +7,9 @@ wheels/
 *.egg-info
 
 # IDE related files
-.claude/
+.claude/settings.json
+.claude/settings.local.json
+.claude/worktrees/
 .cursor/
 .idea/
 .vscode/
