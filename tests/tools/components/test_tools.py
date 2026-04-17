@@ -736,13 +736,14 @@ async def test_create_sql_transformation_folder(
 
 
 @pytest.mark.parametrize(
-    ('folder', 'tf_count', 'tf_folders', 'expect_folder_metadata', 'expect_hint'),
+    ('folder', 'tf_count', 'tf_folders', 'expect_folder_metadata', 'expect_folder_delete', 'expect_hint'),
     [
-        ('Sales', 0, [], True, False),
-        ('  Sales  ', 0, [], True, False),  # whitespace stripped
-        ('', 5, [], False, False),
-        ('', 25, ['Analytics'], False, True),
-        ('', 25, [], False, True),
+        ('Sales', 0, [], True, False, False),
+        ('  Sales  ', 0, [], True, False, False),  # whitespace stripped
+        (None, 5, [], False, False, False),
+        (None, 25, ['Analytics'], False, False, True),
+        (None, 25, [], False, False, True),
+        ('', 5, [], False, True, False),  # empty string → delete
     ],
     ids=[
         'folder_provided',
@@ -750,6 +751,7 @@ async def test_create_sql_transformation_folder(
         'no_folder_few',
         'no_folder_many_with_folders',
         'no_folder_many_no_folders',
+        'folder_empty_deletes',
     ],
 )
 @pytest.mark.asyncio
@@ -758,10 +760,11 @@ async def test_update_sql_transformation_folder(
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     mock_configuration: dict[str, Any],
-    folder: str,
+    folder: Any,
     tf_count: int,
     tf_folders: list[str],
     expect_folder_metadata: bool,
+    expect_folder_delete: bool,
     expect_hint: bool,
 ) -> None:
     """Test folder metadata and change_summary hint for update_sql_transformation."""
@@ -783,6 +786,10 @@ async def test_update_sql_transformation_folder(
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated)
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
+        return_value=[{'id': 'meta-1', 'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'OldFolder'}]
+    )
+    keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
     mocker.patch(
         'keboola_mcp_server.tools.components.tools.get_config_folders',
         mocker.AsyncMock(return_value=(tf_count, tf_folders)),
@@ -806,6 +813,14 @@ async def test_update_sql_transformation_folder(
         assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: folder.strip()}
     else:
         assert len(metadata_calls) == 0
+    if expect_folder_delete:
+        keboola_client.storage_client.configuration_metadata_delete.assert_called_once_with(
+            component_id='keboola.snowflake-transformation',
+            configuration_id=configuration_id,
+            metadata_id='meta-1',
+        )
+    else:
+        keboola_client.storage_client.configuration_metadata_delete.assert_not_called()
     if expect_hint:
         assert result.change_summary is not None
         assert str(tf_count) in result.change_summary
@@ -1275,23 +1290,25 @@ async def test_update_config(
 
 
 @pytest.mark.parametrize(
-    ('folder', 'expect_folder_metadata'),
+    ('folder', 'expect_folder_metadata', 'expect_folder_delete'),
     [
-        ('Analytics', True),
-        ('  Analytics  ', True),
-        ('', False),
+        ('Analytics', True, False),
+        ('  Analytics  ', True, False),
+        (None, False, False),
+        ('', False, True),
     ],
-    ids=['folder_provided', 'folder_whitespace_stripped', 'no_folder'],
+    ids=['folder_provided', 'folder_whitespace_stripped', 'no_folder', 'folder_empty_deletes'],
 )
 @pytest.mark.asyncio
 async def test_update_config_folder(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
-    folder: str,
+    folder: Any,
     expect_folder_metadata: bool,
+    expect_folder_delete: bool,
 ) -> None:
-    """Test folder metadata is set when folder param is provided to update_config."""
+    """Test folder metadata is set/cleared when folder param is provided to update_config."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
     component_id = 'keboola.python-transformation-v2'
@@ -1310,6 +1327,10 @@ async def test_update_config_folder(
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing)
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+    keboola_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
+        return_value=[{'id': 'meta-1', 'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'OldFolder'}]
+    )
+    keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
 
     result = await update_config(
         ctx=context,
@@ -1330,6 +1351,12 @@ async def test_update_config_folder(
         assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: folder.strip()}
     else:
         assert len(metadata_calls) == 0
+    if expect_folder_delete:
+        keboola_client.storage_client.configuration_metadata_delete.assert_called_once_with(
+            component_id=component_id, configuration_id=configuration_id, metadata_id='meta-1'
+        )
+    else:
+        keboola_client.storage_client.configuration_metadata_delete.assert_not_called()
 
 
 @pytest.mark.parametrize(

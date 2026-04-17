@@ -457,6 +457,28 @@ async def set_transformation_folder_metadata(
     )
 
 
+async def clear_transformation_folder_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
+    """Removes the KBC.configuration.folderName metadata entry if present."""
+    try:
+        metadata = await client.storage_client.configuration_metadata_get(
+            component_id=component_id, configuration_id=configuration_id
+        )
+        for entry in metadata:
+            if entry.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME:
+                await client.storage_client.configuration_metadata_delete(
+                    component_id=component_id,
+                    configuration_id=configuration_id,
+                    metadata_id=entry['id'],
+                )
+                break
+    except Exception:
+        LOG.warning(
+            'Unable to clear folder metadata for component "%s", configuration "%s".',
+            component_id,
+            configuration_id,
+        )
+
+
 def folder_field_description(singular: str, plural: str) -> str:
     """Returns the standard Field description for a `folder` parameter.
 
@@ -465,6 +487,7 @@ def folder_field_description(singular: str, plural: str) -> str:
     """
     return (
         f'Folder name to organize this {singular} in the Keboola UI. '
+        f'Pass an empty string to remove an existing folder assignment. '
         f'Existing folder names are returned in the response change_summary when no folder is provided '
         f'and there are 20 or more {plural} in the project. '
         f'If there are 20 or more {plural}, you should assign one of the existing folders or '

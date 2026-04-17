@@ -342,7 +342,7 @@ EXAMPLES:
     },
     "folder": {
       "default": "",
-      "description": "Folder name to organize this transformation in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose.",
+      "description": "Folder name to organize this transformation in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose.",
       "type": "string"
     }
   },
@@ -818,9 +818,16 @@ WORKFLOW:
       "type": "array"
     },
     "folder": {
-      "default": "",
-      "description": "Folder name to organize this configuration in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more configurations in the project. If there are 20 or more configurations, you should assign one of the existing folders or create a new one that clearly reflects the configuration purpose.",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Folder name to organize this configuration in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more configurations in the project. If there are 20 or more configurations, you should assign one of the existing folders or create a new one that clearly reflects the configuration purpose."
     }
   },
   "required": [
@@ -1658,9 +1665,16 @@ Example 4 - Update storage mappings:
       "type": "object"
     },
     "folder": {
-      "default": "",
-      "description": "Folder name to organize this transformation in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose.",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Folder name to organize this transformation in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose."
     }
   },
   "required": [
@@ -1848,9 +1862,16 @@ SQL & DATA TYPE RULES:
       "type": "string"
     },
     "folder": {
-      "default": "",
-      "description": "Folder name to organize this data app in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose.",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Folder name to organize this data app in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose."
     }
   },
   "required": [
@@ -1953,7 +1974,7 @@ WHEN TO USE:
     },
     "folder": {
       "default": "",
-      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
+      "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
       "type": "string"
     }
   },
@@ -2023,7 +2044,7 @@ WHEN TO USE:
     },
     "folder": {
       "default": "",
-      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
+      "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
       "type": "string"
     }
   },
@@ -2333,9 +2354,16 @@ adjusting dependencies, or enabling/disabling flow execution
       "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
     },
     "folder": {
-      "default": "",
-      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose."
     }
   },
   "required": [
@@ -2444,7 +2472,7 @@ or enabling/disabling flow execution
     },
     "folder": {
       "default": "",
-      "description": "Folder name to organize this flow in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
+      "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
       "type": "string"
     }
   },
