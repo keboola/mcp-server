@@ -571,7 +571,7 @@ class AggregateError(Exception):
     def __init__(self, message: str, exceptions: Iterable[BaseException]):
         self.message = message
         self.exceptions = list(exceptions)
-        super().__init__(message)
+        super().__init__(message, self.exceptions)
 
     def __str__(self) -> str:
         error_details = '; '.join(f'{type(e).__name__}: {e}' for e in self.exceptions)

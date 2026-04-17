@@ -61,7 +61,7 @@ class RecoverableValidationError(jsonschema.ValidationError):
     An instance was invalid under a provided schema using a recoverable message for the Agent.
     """
 
-    def __init__(
+    def __init__(  # noqa: B042
         self,
         *args,
         initial_message: Optional[str] = None,
@@ -142,15 +142,33 @@ class KeboolaParametersValidator:
 
     @staticmethod
     def sanitize_schema(schema: JsonDict) -> JsonDict:
-        """Normalize schema by converting required fields to lists and ensuring properties is a dict"""
+        """
+        Normalize a JSON schema in place and return the same schema object.
 
-        def _sanitize_required_and_properties(
+        The normalization currently:
+        - removes empty ``enum`` arrays, because ``"enum": []`` would otherwise make the
+          schema reject every value;
+        - converts non-list ``required`` values into the standard list form and, for
+          boolean-like required flags, propagates the requirement to the parent schema;
+        - normalizes ``properties`` from an empty list to an empty dict when needed.
+
+        These rules are applied recursively to nested schema nodes, including structures
+        reachable through ``properties`` and other schema-composition/container keywords
+        handled by this sanitizer.
+        """
+
+        def _sanitize_node(
             schema: JsonStruct | JsonPrimitive,
         ) -> tuple[JsonStruct | JsonPrimitive, Optional[bool]]:
 
             # default returns the element of a schema if we are at the bottom of the tree (not a dict)
             if not isinstance(schema, dict):
                 return schema, False
+
+            # Strip empty enum arrays - "enum": [] means no value is valid, which is
+            # a side effect of dynamically populated UI schemas with no options available.
+            if 'enum' in schema and isinstance(schema['enum'], list) and len(schema['enum']) == 0:
+                del schema['enum']
 
             is_current_required = None
             required = schema.get('required', [])
@@ -170,7 +188,7 @@ class KeboolaParametersValidator:
 
                 for property_name, subschema in properties.items():
                     # we recursively sanitize the subschemas within the properties
-                    properties[property_name], is_child_required = _sanitize_required_and_properties(subschema)
+                    properties[property_name], is_child_required = _sanitize_node(subschema)
                     # if is_child_required is None, do not propagate - the child has required field correctly set
                     if is_child_required is True and property_name not in required:
                         required.append(property_name)
@@ -183,9 +201,48 @@ class KeboolaParametersValidator:
             else:
                 schema.pop('required', None)
 
+            # Recurse into 'items'
+            if 'items' in schema:
+                items = schema['items']
+                if isinstance(items, dict):
+                    schema['items'], _ = _sanitize_node(items)
+                elif isinstance(items, list):
+                    schema['items'] = [
+                        _sanitize_node(item)[0] if isinstance(item, dict) else item for item in items
+                    ]
+
+            # Recurse into schema-list keywords (allOf, anyOf, oneOf)
+            for keyword in ('allOf', 'anyOf', 'oneOf'):
+                if keyword in schema and isinstance(schema[keyword], list):
+                    schema[keyword] = [
+                        _sanitize_node(s)[0] if isinstance(s, dict) else s for s in schema[keyword]
+                    ]
+
+            # Recurse into single-schema keywords
+            for keyword in ('not', 'if', 'then', 'else'):
+                if keyword in schema and isinstance(schema[keyword], dict):
+                    schema[keyword], _ = _sanitize_node(schema[keyword])
+
+            # Recurse into additionalProperties (when it's a schema, not a boolean)
+            if 'additionalProperties' in schema and isinstance(schema['additionalProperties'], dict):
+                schema['additionalProperties'], _ = _sanitize_node(schema['additionalProperties'])
+
+            # Recurse into patternProperties
+            if 'patternProperties' in schema and isinstance(schema['patternProperties'], dict):
+                for pattern, subschema in schema['patternProperties'].items():
+                    if isinstance(subschema, dict):
+                        schema['patternProperties'][pattern], _ = _sanitize_node(subschema)
+
+            # Recurse into definitions / $defs
+            for keyword in ('definitions', '$defs'):
+                if keyword in schema and isinstance(schema[keyword], dict):
+                    for name, subschema in schema[keyword].items():
+                        if isinstance(subschema, dict):
+                            schema[keyword][name], _ = _sanitize_node(subschema)
+
             return schema, is_current_required
 
-        sanitized_schema = cast(JsonDict, _sanitize_required_and_properties(schema)[0])
+        sanitized_schema = cast(JsonDict, _sanitize_node(schema)[0])
         return sanitized_schema
 
 

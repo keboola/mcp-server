@@ -180,7 +180,7 @@ async def generate_docs() -> None:
     try:
         mcp = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(mcp, FastMCP)
-        tools = await mcp.get_tools()
+        tools = await mcp.list_tools(run_middleware=False)
         categories = [
             ToolCategory('Storage Tools', STORAGE_TOOLS_TAG),
             ToolCategory('SQL Tools', SQL_TOOLS_TAG),
@@ -194,7 +194,7 @@ async def generate_docs() -> None:
             ToolCategory('Project Tools', PROJECT_TOOLS_TAG),
             # OTHER_CATEGORY
         ]
-        doc_gen = ToolDocumentationGenerator(list(tools.values()), categories)
+        doc_gen = ToolDocumentationGenerator(tools, categories)
         doc_gen.generate()
     except Exception as e:
         LOG.exception(f'Failed to generate documentation: {e}')
