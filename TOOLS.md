@@ -1775,9 +1775,9 @@ data app logs to investigate in-app errors. The logs may be updated after openin
 Creates, updates, or finalizes a "python-js" data app that continuously pulls code from a git repo.
 
 The app runs a base image that auto-pulls application code from `watched_repo_url` on the given
-branch. Any commits pushed to that repo are picked up automatically — no separate deploy step is
-needed (do NOT call `deploy_data_app` for python-js apps). The response includes the app's
-`deployment_url` which can be used as a preview URL (e.g. embedded in an iframe).
+branch. Any commits pushed to that repo are picked up automatically. The tool handles deployment
+internally — do NOT call `deploy_data_app` separately for python-js apps. The response includes
+the app's `deployment_url` which can be used as a preview URL (e.g. embedded in an iframe).
 
 Workflow:
 1. Call with `watched_repo_url`/`watched_repo_branch` (no `configuration_id`) to CREATE the app.
