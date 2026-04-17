@@ -28,7 +28,7 @@ import copy
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, Any, Sequence, cast
+from typing import Annotated, Any, Optional, Sequence, cast
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
@@ -69,6 +69,7 @@ from keboola_mcp_server.tools.components.utils import (
     add_ids,
     build_folder_hint,
     check_suitable,
+    clear_transformation_folder_metadata,
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
@@ -614,9 +615,9 @@ async def update_sql_transformation(
         ),
     ] = None,
     folder: Annotated[
-        str,
+        Optional[str],
         Field(description=folder_field_description('transformation', 'transformations')),
-    ] = '',
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
@@ -841,11 +842,8 @@ async def update_sql_transformation(
         configuration_version=updated_raw_configuration.get('version'),
     )
 
-    folder = folder.strip()
-    if folder:
-        await set_transformation_folder_metadata(client, sql_transformation_id, configuration_id, folder)
-        folder_hint = None
-    else:
+    folder_hint = None
+    if folder is None:
         try:
             total, existing_folders = await get_config_folders(client, sql_transformation_id)
             folder_hint = build_folder_hint(total, existing_folders, 'SQL transformations', 'update_sql_transformation')
@@ -855,7 +853,12 @@ async def update_sql_transformation(
                 sql_transformation_id,
                 configuration_id,
             )
-            folder_hint = None
+    else:
+        folder_stripped = folder.strip()
+        if folder_stripped:
+            await set_transformation_folder_metadata(client, sql_transformation_id, configuration_id, folder_stripped)
+        else:
+            await clear_transformation_folder_metadata(client, sql_transformation_id, configuration_id)
 
     change_summary = ' '.join(filter(None, [msg, folder_hint])) or None
 
@@ -1333,9 +1336,9 @@ async def update_config(
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
     folder: Annotated[
-        str,
+        Optional[str],
         Field(description=folder_field_description('configuration', 'configurations')),
-    ] = '',
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
@@ -1409,16 +1412,19 @@ async def update_config(
         configuration_version=updated_raw_configuration['version'],
     )
 
-    folder = folder.strip()
-    if folder:
-        try:
-            await set_transformation_folder_metadata(client, component_id, configuration_id, folder)
-        except Exception:
-            LOG.warning(
-                'Unable to set folder metadata for component "%s", configuration "%s".',
-                component_id,
-                configuration_id,
-            )
+    if folder is not None:
+        folder_stripped = folder.strip()
+        if folder_stripped:
+            try:
+                await set_transformation_folder_metadata(client, component_id, configuration_id, folder_stripped)
+            except Exception:
+                LOG.warning(
+                    'Unable to set folder metadata for component "%s", configuration "%s".',
+                    component_id,
+                    configuration_id,
+                )
+        else:
+            await clear_transformation_folder_metadata(client, component_id, configuration_id)
 
     links = links_manager.get_configuration_links(
         component_id=component_id,

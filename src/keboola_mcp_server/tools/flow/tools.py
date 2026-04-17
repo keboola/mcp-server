@@ -5,7 +5,7 @@ import importlib.resources as pkg_resources
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, Any, Sequence, cast
+from typing import Annotated, Any, Optional, Sequence, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -27,6 +27,7 @@ from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact, unwrap_results
 from keboola_mcp_server.tools.components.utils import (
     build_folder_hint,
+    clear_transformation_folder_metadata,
     folder_field_description,
     get_config_folders,
     set_cfg_creation_metadata,
@@ -448,9 +449,9 @@ async def modify_flow(
         ),
     ] = None,
     folder: Annotated[
-        str,
+        Optional[str],
         Field(description=folder_field_description('flow', 'flows')),
-    ] = '',
+    ] = None,
 ) -> FlowToolOutput:
     """
     Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`) or
@@ -535,11 +536,8 @@ async def modify_flow(
         )
         api_config = CreateConfigurationAPIResponse.model_validate(current_config)
 
-    folder = folder.strip()
     folder_hint = None
-    if folder:
-        await set_transformation_folder_metadata(client, flow_type, configuration_id, folder)
-    else:
+    if folder is None:
         try:
             total, existing_folders = await get_config_folders(client, flow_type)
             config_label = 'legacy flows' if flow_type == ORCHESTRATOR_COMPONENT_ID else 'conditional flows'
@@ -550,6 +548,12 @@ async def modify_flow(
                 flow_type,
                 configuration_id,
             )
+    else:
+        folder_stripped = folder.strip()
+        if folder_stripped:
+            await set_transformation_folder_metadata(client, flow_type, configuration_id, folder_stripped)
+        else:
+            await clear_transformation_folder_metadata(client, flow_type, configuration_id)
 
     links_manager = await ProjectLinksManager.from_client(client)
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)

@@ -20,6 +20,7 @@ from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact
 from keboola_mcp_server.tools.components.utils import (
     build_folder_hint,
+    clear_transformation_folder_metadata,
     folder_field_description,
     get_config_folders,
     set_cfg_creation_metadata,
@@ -287,9 +288,9 @@ async def modify_data_app(
         Field(description='The description of the change when updating (e.g. "Update Code"), otherwise empty string.'),
     ] = '',
     folder: Annotated[
-        str,
+        Optional[str],
         Field(description=folder_field_description('data app', 'data apps')),
-    ] = '',
+    ] = None,
 ) -> ModifiedDataAppOutput:
     """Creates or updates a Streamlit data app.
 
@@ -394,7 +395,7 @@ async def modify_data_app(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=data_app_resp.config_id,
         )
-        folder_hint = await _apply_folder(client, DATA_APP_COMPONENT_ID, data_app_resp.config_id, folder)
+        folder_hint = await _apply_folder(client, DATA_APP_COMPONENT_ID, data_app_resp.config_id, folder, is_new=True)
         links = links_manager.get_data_app_links(
             configuration_id=data_app_resp.config_id,
             configuration_name=name,
@@ -409,12 +410,31 @@ async def modify_data_app(
         )
 
 
-async def _apply_folder(client: KeboolaClient, component_id: str, configuration_id: str, folder: str) -> str | None:
+async def _apply_folder(
+    client: KeboolaClient,
+    component_id: str,
+    configuration_id: str,
+    folder: Optional[str],
+    *,
+    is_new: bool = False,
+) -> str | None:
     """
-    Sets the folder metadata for a data app configuration if provided, or returns a hint when 20+ data apps exist.
+    Sets or clears the folder metadata for a data app configuration, or returns a hint when 20+ data apps exist.
 
+    :param is_new: When True, an empty folder string is treated as no-op (no folder to remove on a new app).
     :return: Folder hint string if applicable, else None.
     """
+    if folder is None:
+        try:
+            total, existing_folders = await get_config_folders(client, component_id)
+            return build_folder_hint(total, existing_folders, 'data apps', 'modify_data_app')
+        except Exception:
+            LOG.warning(
+                'Unable to fetch data app folders for component "%s" when processing configuration "%s".',
+                component_id,
+                configuration_id,
+            )
+            return None
     normalized = folder.strip()
     if normalized:
         try:
@@ -425,17 +445,9 @@ async def _apply_folder(client: KeboolaClient, component_id: str, configuration_
                 component_id,
                 configuration_id,
             )
-        return None
-    try:
-        total, existing_folders = await get_config_folders(client, component_id)
-        return build_folder_hint(total, existing_folders, 'data apps', 'modify_data_app')
-    except Exception:
-        LOG.warning(
-            'Unable to fetch data app folders for component "%s" when processing configuration "%s".',
-            component_id,
-            configuration_id,
-        )
-        return None
+    elif not is_new:
+        await clear_transformation_folder_metadata(client, component_id, configuration_id)
+    return None
 
 
 async def modify_data_app_internal(
