@@ -221,10 +221,7 @@ class BucketDetail(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_branch_id(cls, values: dict[str, Any]) -> dict[str, Any]:
-        forced_branch_id = values.pop('_forced_branch_id', None)
         branch_id = get_metadata_property(values.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
-        if not branch_id and forced_branch_id:
-            branch_id = forced_branch_id
         if branch_id:
             values['branch_id'] = branch_id
             values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-')
@@ -377,10 +374,7 @@ class TableDetail(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_branch_id(cls, values: dict[str, Any]) -> dict[str, Any]:
-        forced_branch_id = values.pop('_forced_branch_id', None)
         branch_id = get_metadata_property(values.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
-        if not branch_id and forced_branch_id:
-            branch_id = forced_branch_id
         if branch_id:
             values['branch_id'] = branch_id
             values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-')
@@ -505,7 +499,6 @@ async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDe
         if prod_raw:
             prod_bucket = BucketDetail.model_validate(prod_raw).with_lineage_metadata(prod_raw)
         if dev_raw:
-            dev_raw['_forced_branch_id'] = client.branch_id
             dev_bucket = BucketDetail.model_validate(dev_raw).with_lineage_metadata(dev_raw)
     else:
         if raw := await _get_bucket_detail(client.storage_client, bucket_id, branch_id='default'):
@@ -626,8 +619,6 @@ async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManage
             client.storage_client.bucket_list(include=include, branch_id='default'),
             client.storage_client.bucket_list(include=include, branch_id=client.branch_id),
         )
-        for raw in branch_data:
-            raw['_forced_branch_id'] = client.branch_id
         raw_bucket_data = prod_data + branch_data
     else:
         raw_bucket_data = await client.storage_client.bucket_list(include=include, branch_id='default')
@@ -788,8 +779,6 @@ async def _get_table(
             _get_table_detail(client.storage_client, table_id, branch_id='default'),
             _get_table_detail(client.storage_client, table_id, branch_id=client.branch_id),
         )
-        if dev_table:
-            dev_table['_forced_branch_id'] = client.branch_id
     else:
         prod_table = await _get_table_detail(client.storage_client, table_id, branch_id='default')
         if prod_table:
@@ -915,8 +904,6 @@ async def _list_tables(
                 dev_bucket.id, include=sapi_includes, branch_id=dev_branch_id
             )
             for raw in raw_table_data:
-                if has_sb:
-                    raw['_forced_branch_id'] = client.branch_id
                 table = TableDetail.model_validate(raw)
                 tables_by_prod_id[table.prod_id] = table.model_copy(
                     update={
