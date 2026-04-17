@@ -39,7 +39,9 @@ from typing import Annotated, Any, Literal, Optional, Sequence, Union, get_args
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
+from keboola_mcp_server.clients.client import get_metadata_property
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ComponentType, ConfigurationAPIResponse
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 
 # ============================================================================
@@ -222,6 +224,7 @@ class ConfigurationRoot(BaseModel):
     version: int = Field(description='The version of the configuration')
     is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
+    folder: str = Field(default='', description='The UI folder this configuration is organized into')
     parameters: dict[str, Any] = Field(
         description='The configuration parameters, adhering to the configuration root schema'
     )
@@ -254,6 +257,7 @@ class ConfigurationRoot(BaseModel):
             version=api_config.version,
             is_disabled=api_config.is_disabled,
             is_deleted=api_config.is_deleted,
+            folder=get_metadata_property(api_config.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
             parameters=api_config.configuration.get('parameters', {}),
             storage=api_config.configuration.get('storage'),
             processors=api_config.configuration.get('processors'),
@@ -332,6 +336,7 @@ class ConfigurationRootSummary(BaseModel):
     description: Optional[str] = Field(default=None, description='The description of the configuration')
     is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
+    folder: str = Field(default='', description='The UI folder this configuration is organized into')
 
     @classmethod
     def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationRootSummary':
@@ -343,6 +348,7 @@ class ConfigurationRootSummary(BaseModel):
             description=api_config.description,
             is_disabled=api_config.is_disabled,
             is_deleted=api_config.is_deleted,
+            folder=get_metadata_property(api_config.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
         )
 
 

@@ -8,6 +8,7 @@ from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.model import (
@@ -744,6 +745,34 @@ class TestGetFlowsTool:
         assert result == GetFlowsDetailOutput(flows=[expected_legacy_flow, expected_conditional_flow])
         # Since we look up for both types (conditional flows first) we expect the calls to be 2 and 1, respectfully
         assert keboola_client.storage_client.configuration_detail.call_count == 3
+
+
+@pytest.mark.parametrize(
+    ('metadata', 'expected_folder'),
+    [
+        ([{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'ETL', 'provider': 'user'}], 'ETL'),
+        ([], ''),
+    ],
+    ids=['folder_in_metadata', 'no_metadata'],
+)
+def test_get_flows_includes_folder(
+    metadata: list[dict],
+    expected_folder: str,
+    legacy_flow_phases: list[dict[str, Any]],
+    legacy_flow_tasks: list[dict[str, Any]],
+) -> None:
+    """FlowSummary.from_api_response extracts folder from metadata."""
+    api_config = APIFlowResponse.model_validate(
+        {
+            'id': 'flow_123',
+            'name': 'My Flow',
+            'version': 1,
+            'configuration': {'phases': legacy_flow_phases, 'tasks': legacy_flow_tasks},
+            'metadata': metadata,
+        }
+    )
+    summary = FlowSummary.from_api_response(api_config, ORCHESTRATOR_COMPONENT_ID)
+    assert summary.folder == expected_folder
 
 
 # =============================================================================

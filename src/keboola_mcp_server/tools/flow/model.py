@@ -7,8 +7,9 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import AliasChoices, BaseModel, Field
 
-from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType
+from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType, get_metadata_property
 from keboola_mcp_server.clients.storage import APIFlowResponse
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.scheduler_model import SchedulesOutput
 
@@ -361,6 +362,7 @@ class Flow(BaseModel):
     configuration_metadata: list[dict[str, Any]] = Field(
         default_factory=list, description='Flow configuration metadata including MCP tracking'
     )
+    folder: str = Field(default='', description='The UI folder this flow is organized into')
     created: Optional[str] = Field(None, description='Creation timestamp')
     updated: Optional[str] = Field(None, description='Last update timestamp')
     schedules: Optional[SchedulesOutput] = Field(default=None, description='List of schedules for this flow')
@@ -404,6 +406,7 @@ class Flow(BaseModel):
             configuration=config,
             change_description=api_config.change_description,
             configuration_metadata=api_config.metadata,
+            folder=get_metadata_property(api_config.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
             created=api_config.created,
             updated=api_config.updated,
             links=links or [],
@@ -424,6 +427,7 @@ class FlowSummary(BaseModel):
     phases_count: int = Field(description='Number of phases in the flow')
     tasks_count: int = Field(description='Number of tasks in the flow')
     schedules_count: int = Field(default=0, description='Number of configured schedules for this flow')
+    folder: str = Field(default='', description='The UI folder this flow is organized into')
     created: Optional[str] = Field(None, description='Creation timestamp')
     updated: Optional[str] = Field(None, description='Last update timestamp')
 
@@ -450,6 +454,7 @@ class FlowSummary(BaseModel):
             phases_count=len(config.get('phases', [])),
             tasks_count=len(config.get('tasks', [])),
             schedules_count=n_schedules,
+            folder=get_metadata_property(api_config.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
             created=api_config.created,
             updated=api_config.updated,
         )

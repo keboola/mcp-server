@@ -187,7 +187,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
             assert isinstance(mcp_server, FastMCP)
             app.state.mcp_tools_input_schema = {
-                tool.name: tool.parameters for tool in (await mcp_server.get_tools()).values()
+                tool.name: tool.parameters for tool in (await mcp_server.list_tools(run_middleware=False))
             }
 
             config = uvicorn.Config(
