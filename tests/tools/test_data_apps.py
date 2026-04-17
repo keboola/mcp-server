@@ -630,17 +630,18 @@ class TestFetchDataAppValidation:
 
 
 @pytest.mark.parametrize(
-    ('configuration_id', 'folder', 'app_count', 'app_folders', 'expect_folder_metadata', 'expect_hint'),
+    ('configuration_id', 'folder', 'app_count', 'app_folders', 'expect_folder_metadata', 'expect_folder_delete', 'expect_hint'),
     [
         # Create path (no configuration_id)
-        ('', 'Analytics', 0, [], True, False),
-        ('', '  Analytics  ', 0, [], True, False),  # whitespace stripped
-        ('', '', 5, [], False, False),
-        ('', '', 25, ['Analytics'], False, True),
+        ('', 'Analytics', 0, [], True, False, False),
+        ('', '  Analytics  ', 0, [], True, False, False),  # whitespace stripped
+        ('', None, 5, [], False, False, False),
+        ('', None, 25, ['Analytics'], False, False, True),
         # Update path (with configuration_id)
-        ('cfg-1', 'Analytics', 0, [], True, False),
-        ('cfg-1', '', 5, [], False, False),
-        ('cfg-1', '', 25, ['Analytics'], False, True),
+        ('cfg-1', 'Analytics', 0, [], True, False, False),
+        ('cfg-1', None, 5, [], False, False, False),
+        ('cfg-1', None, 25, ['Analytics'], False, False, True),
+        ('cfg-1', '', 5, [], False, True, False),  # empty string → delete
     ],
     ids=[
         'create_folder_provided',
@@ -650,6 +651,7 @@ class TestFetchDataAppValidation:
         'update_folder_provided',
         'update_no_folder_few',
         'update_no_folder_many_with_hint',
+        'update_folder_empty_deletes',
     ],
 )
 @pytest.mark.asyncio
@@ -658,10 +660,11 @@ async def test_modify_data_app_folder(
     mcp_context_client: Context,
     workspace_manager,
     configuration_id: str,
-    folder: str,
+    folder,
     app_count: int,
     app_folders: list[str],
     expect_folder_metadata: bool,
+    expect_folder_delete: bool,
     expect_hint: bool,
 ) -> None:
     """Test folder metadata and change_summary hint for modify_data_app (create and update paths)."""
@@ -718,6 +721,10 @@ async def test_modify_data_app_folder(
         'keboola_mcp_server.tools.data_apps.get_config_folders',
         mocker.AsyncMock(return_value=(app_count, app_folders)),
     )
+    keboola_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
+        return_value=[{'id': 'meta-1', 'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'OldFolder'}]
+    )
+    keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
 
     result = await modify_data_app(
         ctx=mcp_context_client,
@@ -742,6 +749,14 @@ async def test_modify_data_app_folder(
         assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: folder.strip()}
     else:
         assert len(metadata_calls) == 0
+    if expect_folder_delete:
+        keboola_client.storage_client.configuration_metadata_delete.assert_called_once_with(
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            metadata_id='meta-1',
+        )
+    else:
+        keboola_client.storage_client.configuration_metadata_delete.assert_not_called()
     if expect_hint:
         assert result.change_summary is not None
         assert str(app_count) in result.change_summary
