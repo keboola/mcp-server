@@ -13,8 +13,9 @@ class LocalBackend:
     def __init__(self, data_dir: str = './keboola_data'):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        # Create tables/ eagerly so glob() never raises OSError on Python 3.13+.
+        # Create sub-dirs eagerly so glob() never raises OSError on Python 3.13+.
         (self.data_dir / 'tables').mkdir(parents=True, exist_ok=True)
+        (self.data_dir / 'configs').mkdir(parents=True, exist_ok=True)
 
     def list_csv_tables(self) -> list[Path]:
         """Return sorted list of .csv files under <data_dir>/tables/."""
@@ -70,6 +71,67 @@ class LocalBackend:
         return '\n'.join([header, separator, *body])
 
     # ------------------------------------------------------------------
+    # Table write / delete
+    # ------------------------------------------------------------------
+
+    def write_csv_table(self, name: str, csv_content: str) -> Path:
+        """Write CSV content to <data_dir>/tables/<name>.csv.
+
+        Raises ValueError if the name is empty or contains path-separator characters.
+        """
+        name = name.strip()
+        if not name or '/' in name or '\\' in name or '..' in name:
+            raise ValueError(f'Invalid table name: {name!r}')
+        # Strip .csv extension if provided — stem is the canonical form.
+        if name.endswith('.csv'):
+            name = name[:-4]
+        path = self.data_dir / 'tables' / f'{name}.csv'
+        path.write_text(csv_content, encoding='utf-8')
+        return path
+
+    def delete_csv_table(self, name: str) -> bool:
+        """Delete <data_dir>/tables/<name>.csv. Returns True if deleted, False if not found."""
+        if name.endswith('.csv'):
+            name = name[:-4]
+        path = self.data_dir / 'tables' / f'{name}.csv'
+        if path.exists():
+            path.unlink()
+            return True
+        return False
+
+    # ------------------------------------------------------------------
+    # Component configuration persistence (delegates to config.py)
+    # ------------------------------------------------------------------
+
+    @property
+    def configs_dir(self) -> Path:
+        return self.data_dir / 'configs'
+
+    def save_config(self, config):
+        """Save a ComponentConfig to <data_dir>/configs/<config_id>.json."""
+        from keboola_mcp_server.tools.local.config import save_config
+
+        return save_config(self.configs_dir, config)
+
+    def list_configs(self):
+        """List all saved ComponentConfigs."""
+        from keboola_mcp_server.tools.local.config import list_configs
+
+        return list_configs(self.configs_dir)
+
+    def load_config(self, config_id: str):
+        """Load a saved ComponentConfig by ID."""
+        from keboola_mcp_server.tools.local.config import load_config
+
+        return load_config(self.configs_dir, config_id)
+
+    def delete_config(self, config_id: str) -> bool:
+        """Delete a saved ComponentConfig. Returns True if deleted."""
+        from keboola_mcp_server.tools.local.config import delete_config
+
+        return delete_config(self.configs_dir, config_id)
+
+    # ------------------------------------------------------------------
     # Docker component execution (delegates to tools/local/docker.py)
     # ------------------------------------------------------------------
 
@@ -115,3 +177,25 @@ class LocalBackend:
         from keboola_mcp_server.tools.local.docker import run_source_component
 
         return run_source_component(self.data_dir, git_url, parameters, input_tables, memory_limit)
+
+    # ------------------------------------------------------------------
+    # Platform migration (delegates to migrate.py)
+    # ------------------------------------------------------------------
+
+    async def migrate_to_keboola(
+        self,
+        storage_api_url: str,
+        storage_token: str,
+        table_names: list[str] | None = None,
+        config_ids: list[str] | None = None,
+        bucket_id: str = 'in.c-local',
+    ):
+        """Upload local tables and configs to Keboola Storage.
+
+        Returns a MigrateResult.
+        """
+        from keboola_mcp_server.tools.local.migrate import migrate_to_keboola
+
+        return await migrate_to_keboola(
+            self.data_dir, storage_api_url, storage_token, table_names, config_ids, bucket_id
+        )

@@ -12,7 +12,9 @@ from pydantic import BaseModel, Field
 
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.tools.local.backend import LocalBackend
+from keboola_mcp_server.tools.local.config import ComponentConfig, ConfigsOutput
 from keboola_mcp_server.tools.local.docker import ComponentRunResult, ComponentSetupResult
+from keboola_mcp_server.tools.local.migrate import MigrateResult
 from keboola_mcp_server.tools.local.schema import ComponentSchemaResult, ComponentSearchResult
 
 LOG = logging.getLogger(__name__)
@@ -212,6 +214,98 @@ async def find_component_id_local(query: str, limit: int = 10) -> LocalComponent
 
     results = await _search_components(query, limit)
     return LocalComponentSearchOutput(results=results, query=query)
+
+
+async def write_table_local(local_backend: LocalBackend, name: str, csv_content: str) -> LocalTableInfo:
+    """Implementation of write_table for local mode."""
+    path = local_backend.write_csv_table(name, csv_content)
+    columns = local_backend.read_csv_headers(path)
+    try:
+        size_bytes = path.stat().st_size
+    except OSError:
+        size_bytes = None
+    try:
+        rows_count = _count_csv_rows(path)
+    except Exception:
+        rows_count = None
+    return LocalTableInfo(name=path.stem, columns=columns, rows_count=rows_count, size_bytes=size_bytes)
+
+
+async def delete_table_local(local_backend: LocalBackend, name: str) -> dict:
+    """Implementation of delete_table for local mode."""
+    deleted = local_backend.delete_csv_table(name)
+    return {'deleted': deleted, 'name': name}
+
+
+async def save_config_local(
+    local_backend: LocalBackend,
+    config_id: str,
+    component_id: str,
+    name: str,
+    parameters: dict,
+    component_image: str | None = None,
+    git_url: str | None = None,
+) -> ComponentConfig:
+    """Implementation of save_config for local mode."""
+    config = ComponentConfig(
+        config_id=config_id,
+        component_id=component_id,
+        name=name,
+        parameters=parameters,
+        component_image=component_image,
+        git_url=git_url,
+    )
+    return local_backend.save_config(config)
+
+
+async def list_configs_local(local_backend: LocalBackend) -> ConfigsOutput:
+    """Implementation of list_configs for local mode."""
+    configs = local_backend.list_configs()
+    return ConfigsOutput(configs=configs, total=len(configs))
+
+
+async def delete_config_local(local_backend: LocalBackend, config_id: str) -> dict:
+    """Implementation of delete_config for local mode."""
+    deleted = local_backend.delete_config(config_id)
+    return {'deleted': deleted, 'config_id': config_id}
+
+
+async def run_saved_config_local(
+    local_backend: LocalBackend,
+    config_id: str,
+    input_tables: list[str] | None = None,
+    memory_limit: str = '4g',
+) -> ComponentRunResult:
+    """Implementation of run_saved_config for local mode."""
+    config = local_backend.load_config(config_id)
+    if not config.component_image and not config.git_url:
+        raise ValueError(f'Config {config_id!r} has neither component_image nor git_url — cannot run.')
+    return await run_component_local(
+        local_backend,
+        config.parameters,
+        component_image=config.component_image,
+        git_url=config.git_url,
+        input_tables=input_tables,
+        memory_limit=memory_limit,
+    )
+
+
+async def migrate_to_keboola_local(
+    local_backend: LocalBackend,
+    storage_api_url: str,
+    storage_token: str,
+    table_names: list[str] | None = None,
+    config_ids: list[str] | None = None,
+    bucket_id: str = 'in.c-local',
+) -> MigrateResult:
+    """Implementation of migrate_to_keboola for local mode."""
+    return await local_backend.migrate_to_keboola(
+        storage_api_url=storage_api_url,
+        storage_token=storage_token,
+        table_names=table_names,
+        config_ids=config_ids,
+        bucket_id=bucket_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +546,208 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
         FunctionTool.from_function(
             find_component_id,
             annotations=ToolAnnotations(readOnlyHint=True),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def write_table(
+        name: Annotated[
+            str, Field(description='Table name (CSV stem, no extension). Used in SQL as: SELECT * FROM <name>.')
+        ],
+        csv_content: Annotated[str, Field(description='Full CSV content including header row.')],
+    ) -> LocalTableInfo:
+        """
+        Writes a CSV file to the local data catalog.
+
+        Creates or overwrites <data-dir>/tables/<name>.csv. The table is immediately
+        available for queries via query_data. Use this to add new datasets, save
+        intermediate results, or create test data.
+        """
+        return await write_table_local(local_backend, name, csv_content)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            write_table,
+            annotations=ToolAnnotations(readOnlyHint=False),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def delete_table(
+        name: Annotated[str, Field(description='Table name (CSV stem) to delete from the local catalog.')],
+    ) -> dict:
+        """
+        Deletes a CSV table from the local data catalog.
+
+        Removes <data-dir>/tables/<name>.csv permanently. Returns {"deleted": true}
+        if the table existed, {"deleted": false} if it did not.
+        """
+        return await delete_table_local(local_backend, name)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            delete_table,
+            annotations=ToolAnnotations(readOnlyHint=False),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def save_config(
+        config_id: Annotated[
+            str,
+            Field(description='Unique identifier for this config (no spaces, e.g. "ex-http-001").'),
+        ],
+        component_id: Annotated[str, Field(description='Keboola component ID (e.g. "keboola.ex-http").')],
+        name: Annotated[str, Field(description='Human-readable name for this configuration.')],
+        parameters: Annotated[dict, Field(description='Component parameters object written to config.json.')],
+        component_image: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description='Docker image tag for registry-based execution. Provide this OR git_url.',
+            ),
+        ] = None,
+        git_url: Annotated[
+            str | None,
+            Field(default=None, description='Git URL for source-based execution. Provide this OR component_image.'),
+        ] = None,
+    ) -> ComponentConfig:
+        """
+        Saves a component configuration to disk for later reuse.
+
+        Stored at <data-dir>/configs/<config_id>.json. Use run_saved_config to
+        execute it without repeating the parameters. Use migrate_to_keboola to
+        push saved configs to the Keboola platform.
+        """
+        return await save_config_local(
+            local_backend, config_id, component_id, name, parameters, component_image, git_url
+        )
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            save_config,
+            annotations=ToolAnnotations(readOnlyHint=False),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def list_configs() -> ConfigsOutput:
+        """
+        Lists all saved component configurations.
+
+        Returns configs stored under <data-dir>/configs/. Use config_id with
+        run_saved_config to execute a saved config, or with migrate_to_keboola
+        to push it to the Keboola platform.
+        """
+        return await list_configs_local(local_backend)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            list_configs,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def delete_config(
+        config_id: Annotated[str, Field(description='Config ID to delete.')],
+    ) -> dict:
+        """
+        Deletes a saved component configuration.
+
+        Removes <data-dir>/configs/<config_id>.json. Returns {"deleted": true}
+        if it existed, {"deleted": false} if not.
+        """
+        return await delete_config_local(local_backend, config_id)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            delete_config,
+            annotations=ToolAnnotations(readOnlyHint=False),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def run_saved_config(
+        config_id: Annotated[str, Field(description='Config ID to run (from list_configs).')],
+        input_tables: Annotated[
+            list[str] | None,
+            Field(default=None, description='Override input table names from the catalog.'),
+        ] = None,
+        memory_limit: Annotated[
+            str,
+            Field(default='4g', description='Docker memory limit (e.g. "2g", "512m").'),
+        ] = '4g',
+    ) -> ComponentRunResult:
+        """
+        Runs a saved component configuration.
+
+        Loads the config saved by save_config and executes run_component with its
+        stored parameters, component_image or git_url. Equivalent to calling
+        run_component with the same arguments but without re-specifying them.
+        """
+        return await run_saved_config_local(local_backend, config_id, input_tables, memory_limit)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            run_saved_config,
+            annotations=ToolAnnotations(readOnlyHint=False),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def migrate_to_keboola(
+        storage_api_url: Annotated[
+            str,
+            Field(
+                description=(
+                    'Keboola Storage API URL for your stack '
+                    '(e.g. "https://connection.keboola.com" or '
+                    '"https://connection.europe-west3.gcp.keboola.com").'
+                )
+            ),
+        ],
+        storage_token: Annotated[
+            str,
+            Field(description='Keboola Storage API token with write access.'),
+        ],
+        table_names: Annotated[
+            list[str] | None,
+            Field(default=None, description='Table names to migrate. Omit to migrate all tables.'),
+        ] = None,
+        config_ids: Annotated[
+            list[str] | None,
+            Field(default=None, description='Config IDs to migrate. Omit to migrate all saved configs.'),
+        ] = None,
+        bucket_id: Annotated[
+            str,
+            Field(default='in.c-local', description='Target Keboola Storage bucket (created if it does not exist).'),
+        ] = 'in.c-local',
+    ) -> MigrateResult:
+        """
+        Uploads local CSV tables and saved component configs to the Keboola platform.
+
+        Creates the target bucket if it does not exist, then uploads each CSV table
+        and creates each component configuration via the Keboola Storage API.
+        Tables already present in Keboola are reported as "already_exists" (not overwritten).
+
+        Requires a valid Storage API token with write access to the target project.
+        """
+        return await migrate_to_keboola_local(
+            local_backend, storage_api_url, storage_token, table_names, config_ids, bucket_id
+        )
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            migrate_to_keboola,
+            annotations=ToolAnnotations(readOnlyHint=False),
             tags={LOCAL_TOOLS_TAG},
         )
     )

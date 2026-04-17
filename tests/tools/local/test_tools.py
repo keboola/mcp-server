@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from keboola_mcp_server.tools.local.backend import LocalBackend
+from keboola_mcp_server.tools.local.config import ComponentConfig
 from keboola_mcp_server.tools.local.docker import ComponentRunResult, ComponentSetupResult
 from keboola_mcp_server.tools.local.schema import ComponentSchemaResult
 from keboola_mcp_server.tools.local.tools import (
@@ -13,16 +14,23 @@ from keboola_mcp_server.tools.local.tools import (
     LocalComponentSearchOutput,
     LocalProjectInfo,
     LocalSearchOutput,
+    LocalTableInfo,
     LocalTablesOutput,
+    delete_config_local,
+    delete_table_local,
     find_component_id_local,
     get_buckets_local,
     get_component_schema_local,
     get_project_info_local,
     get_tables_local,
+    list_configs_local,
     query_data_local,
     run_component_local,
+    run_saved_config_local,
+    save_config_local,
     search_local,
     setup_component_local,
+    write_table_local,
 )
 
 # ---------------------------------------------------------------------------
@@ -387,3 +395,127 @@ async def test_find_component_id_local_empty() -> None:
 
     assert result.results == []
     assert result.query == 'zzznomatch'
+
+
+# ---------------------------------------------------------------------------
+# write_table_local / delete_table_local
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_table_local_creates_table(backend: LocalBackend) -> None:
+    result = await write_table_local(backend, 'events', 'id,ts\n1,2024-01-01\n2,2024-01-02\n')
+
+    assert isinstance(result, LocalTableInfo)
+    assert result.name == 'events'
+    assert result.columns == ['id', 'ts']
+    assert result.rows_count == 2
+
+
+@pytest.mark.asyncio
+async def test_write_table_local_queryable(backend: LocalBackend) -> None:
+    await write_table_local(backend, 'sales', 'amount\n10\n20\n30\n')
+    total = backend.query_local('SELECT SUM(amount) FROM sales')
+    assert '60' in total
+
+
+@pytest.mark.asyncio
+async def test_delete_table_local_existing(backend: LocalBackend) -> None:
+    await write_table_local(backend, 'temp', 'id\n1\n')
+    result = await delete_table_local(backend, 'temp')
+
+    assert result == {'deleted': True, 'name': 'temp'}
+    assert not (backend.data_dir / 'tables' / 'temp.csv').exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_table_local_not_found(backend: LocalBackend) -> None:
+    result = await delete_table_local(backend, 'ghost')
+    assert result == {'deleted': False, 'name': 'ghost'}
+
+
+# ---------------------------------------------------------------------------
+# save_config_local / list_configs_local / delete_config_local
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_config_local_creates_config(backend: LocalBackend) -> None:
+    result = await save_config_local(
+        backend,
+        config_id='http-001',
+        component_id='keboola.ex-http',
+        name='HTTP Extractor',
+        parameters={'url': 'https://api.example.com'},
+        component_image='keboola/ex-http:latest',
+    )
+
+    assert isinstance(result, ComponentConfig)
+    assert result.config_id == 'http-001'
+    assert result.created_at != ''
+
+
+@pytest.mark.asyncio
+async def test_list_configs_local_returns_saved(backend: LocalBackend) -> None:
+    await save_config_local(backend, 'c1', 'keboola.ex-http', 'C1', {}, component_image='img:1')
+    await save_config_local(backend, 'c2', 'keboola.ex-ftp', 'C2', {}, component_image='img:2')
+
+    output = await list_configs_local(backend)
+    assert output.total == 2
+    ids = {c.config_id for c in output.configs}
+    assert ids == {'c1', 'c2'}
+
+
+@pytest.mark.asyncio
+async def test_list_configs_local_empty(backend: LocalBackend) -> None:
+    output = await list_configs_local(backend)
+    assert output.total == 0
+    assert output.configs == []
+
+
+@pytest.mark.asyncio
+async def test_delete_config_local_existing(backend: LocalBackend) -> None:
+    await save_config_local(backend, 'to-del', 'keboola.ex-http', 'X', {}, component_image='img:1')
+    result = await delete_config_local(backend, 'to-del')
+    assert result == {'deleted': True, 'config_id': 'to-del'}
+
+
+@pytest.mark.asyncio
+async def test_delete_config_local_not_found(backend: LocalBackend) -> None:
+    result = await delete_config_local(backend, 'ghost')
+    assert result == {'deleted': False, 'config_id': 'ghost'}
+
+
+# ---------------------------------------------------------------------------
+# run_saved_config_local
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_saved_config_local_image_mode(backend: LocalBackend) -> None:
+    await save_config_local(
+        backend,
+        'run-test',
+        'keboola.ex-http',
+        'Run Test',
+        {'url': 'https://example.com'},
+        component_image='keboola/ex-http:latest',
+    )
+    expected = ComponentRunResult(status='success', exit_code=0)
+    with patch.object(backend, 'run_docker_component', return_value=expected):
+        result = await run_saved_config_local(backend, 'run-test')
+
+    assert result.status == 'success'
+
+
+@pytest.mark.asyncio
+async def test_run_saved_config_local_not_found_raises(backend: LocalBackend) -> None:
+    with pytest.raises(FileNotFoundError):
+        await run_saved_config_local(backend, 'no-such-config')
+
+
+@pytest.mark.asyncio
+async def test_run_saved_config_local_no_runner_raises(backend: LocalBackend) -> None:
+    await save_config_local(backend, 'bad-cfg', 'keboola.ex-http', 'Bad', {}, component_image=None, git_url=None)
+    with pytest.raises(ValueError, match='neither component_image nor git_url'):
+        await run_saved_config_local(backend, 'bad-cfg')

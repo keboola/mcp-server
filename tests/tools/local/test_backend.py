@@ -160,3 +160,103 @@ def test_query_local_missing_duckdb_raises_runtime_error(backend: LocalBackend, 
     with patch.dict(sys.modules, {'duckdb': None}):
         with pytest.raises(RuntimeError, match='duckdb is required'):
             backend.query_local('SELECT 1')
+
+
+# ---------------------------------------------------------------------------
+# write_csv_table / delete_csv_table
+# ---------------------------------------------------------------------------
+
+
+def test_write_csv_table_creates_file(backend: LocalBackend) -> None:
+    path = backend.write_csv_table('my_data', 'id,name\n1,Alice\n')
+    assert path.exists()
+    assert path.name == 'my_data.csv'
+    assert path.read_text(encoding='utf-8') == 'id,name\n1,Alice\n'
+
+
+def test_write_csv_table_strips_extension(backend: LocalBackend) -> None:
+    path = backend.write_csv_table('my_data.csv', 'id\n1\n')
+    assert path.name == 'my_data.csv'
+
+
+def test_write_csv_table_overwrites_existing(backend: LocalBackend) -> None:
+    backend.write_csv_table('t', 'a\n1\n')
+    path = backend.write_csv_table('t', 'a\n99\n')
+    assert path.read_text(encoding='utf-8') == 'a\n99\n'
+
+
+@pytest.mark.parametrize('bad_name', ['', 'a/b', '../secret', 'a\\b'])
+def test_write_csv_table_rejects_invalid_name(backend: LocalBackend, bad_name: str) -> None:
+    with pytest.raises(ValueError, match='Invalid table name'):
+        backend.write_csv_table(bad_name, 'id\n1\n')
+
+
+def test_write_csv_table_is_queryable(backend: LocalBackend) -> None:
+    backend.write_csv_table('nums', 'n\n5\n10\n')
+    result = backend.query_local('SELECT SUM(n) AS total FROM nums')
+    assert '15' in result
+
+
+def test_delete_csv_table_existing(backend: LocalBackend) -> None:
+    backend.write_csv_table('to_del', 'id\n1\n')
+    assert backend.delete_csv_table('to_del') is True
+    assert not (backend.data_dir / 'tables' / 'to_del.csv').exists()
+
+
+def test_delete_csv_table_not_found(backend: LocalBackend) -> None:
+    assert backend.delete_csv_table('nonexistent') is False
+
+
+def test_delete_csv_table_strips_extension(backend: LocalBackend) -> None:
+    backend.write_csv_table('t', 'id\n1\n')
+    assert backend.delete_csv_table('t.csv') is True
+
+
+# ---------------------------------------------------------------------------
+# configs dir created on init
+# ---------------------------------------------------------------------------
+
+
+def test_backend_creates_configs_dir(tmp_path: Path) -> None:
+    b = LocalBackend(data_dir=str(tmp_path / 'newdir'))
+    assert (b.data_dir / 'configs').is_dir()
+
+
+# ---------------------------------------------------------------------------
+# config delegation
+# ---------------------------------------------------------------------------
+
+
+def test_backend_save_and_load_config(backend: LocalBackend) -> None:
+    from keboola_mcp_server.tools.local.config import ComponentConfig
+
+    cfg = ComponentConfig(
+        config_id='test-cfg',
+        component_id='keboola.ex-http',
+        name='Test',
+        parameters={'k': 'v'},
+    )
+    saved = backend.save_config(cfg)
+    loaded = backend.load_config('test-cfg')
+
+    assert loaded.config_id == saved.config_id
+    assert loaded.parameters == {'k': 'v'}
+
+
+def test_backend_list_configs(backend: LocalBackend) -> None:
+    from keboola_mcp_server.tools.local.config import ComponentConfig
+
+    for i in range(3):
+        backend.save_config(
+            ComponentConfig(config_id=f'cfg-{i}', component_id='keboola.ex-http', name=f'C{i}', parameters={})
+        )
+    configs = backend.list_configs()
+    assert len(configs) == 3
+
+
+def test_backend_delete_config(backend: LocalBackend) -> None:
+    from keboola_mcp_server.tools.local.config import ComponentConfig
+
+    backend.save_config(ComponentConfig(config_id='to-del', component_id='keboola.ex-http', name='X', parameters={}))
+    assert backend.delete_config('to-del') is True
+    assert backend.delete_config('to-del') is False
