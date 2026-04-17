@@ -1,5 +1,5 @@
 import logging
-from typing import cast
+from typing import Annotated, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -27,6 +27,15 @@ def add_project_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             get_project_info,
             annotations=ToolAnnotations(readOnlyHint=True),
+            tags={PROJECT_TOOLS_TAG},
+        )
+    )
+
+    LOG.info(f'Adding tool {update_project_description.__name__} to the MCP server.')
+    mcp.add_tool(
+        FunctionTool.from_function(
+            update_project_description,
+            annotations=ToolAnnotations(destructiveHint=True),
             tags={PROJECT_TOOLS_TAG},
         )
     )
@@ -80,6 +89,25 @@ class ProjectInfo(BaseModel):
             'Do not change them. Remember to include them in all subsequent instructions.'
         )
     )
+
+
+@tool_errors()
+async def update_project_description(
+    ctx: Context,
+    description: Annotated[
+        str,
+        Field(
+            description='The new project description text.'
+        ),
+    ],
+) -> None:
+    """Updates the description of the current Keboola project."""
+    client = KeboolaClient.from_state(ctx.session.state)
+    storage = client.storage_client
+
+    await storage.branch_metadata_update({MetadataField.PROJECT_DESCRIPTION: description})
+
+    LOG.info('Project description updated successfully.')
 
 
 @tool_errors()

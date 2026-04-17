@@ -48,6 +48,7 @@ providing their configuration IDs.
 - [get_project_info](#get_project_info): Retrieves structured information about the current project,
 including essential context and base instructions for working with it
 (e.
+- [update_project_description](#update_project_description): Updates the description of the current Keboola project.
 
 ### SQL Tools
 - [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
@@ -2750,6 +2751,34 @@ to establish the project context before using other tools.
 ```json
 {
   "properties": {},
+  "type": "object"
+}
+```
+
+---
+<a name="update_project_description"></a>
+## update_project_description
+**Annotations**: `destructive`
+
+**Tags**: `project`
+
+**Description**:
+
+Updates the description of the current Keboola project.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "description": {
+      "description": "The new project description text.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "description"
+  ],
   "type": "object"
 }
 ```

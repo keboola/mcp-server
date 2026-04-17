@@ -72,6 +72,7 @@ class TestServer:
             'update_config_row',
             'update_descriptions',
             'update_flow',
+            'update_project_description',
             'update_sql_transformation',
             'validate_semantic_query',
         ]
@@ -376,6 +377,7 @@ async def test_tool_annotations_and_tags():
         ('run_job', None, True, None, {JOB_TOOLS_TAG}),
         # project/doc/search
         ('get_project_info', True, None, None, {PROJECT_TOOLS_TAG}),
+        ('update_project_description', None, True, None, {PROJECT_TOOLS_TAG}),
         ('docs_query', True, None, None, {DOC_TOOLS_TAG}),
         ('find_component_id', True, None, None, {SEARCH_TOOLS_TAG}),
         # semantic
