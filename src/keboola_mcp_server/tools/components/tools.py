@@ -1330,6 +1330,10 @@ async def update_config(
         list[dict[str, Any]],
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
+    folder: Annotated[
+        str,
+        Field(description=folder_field_description('configuration', 'configurations')),
+    ] = '',
 ) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
@@ -1403,6 +1407,17 @@ async def update_config(
         configuration_version=updated_raw_configuration['version'],
     )
 
+    folder = folder.strip()
+    if folder:
+        try:
+            await set_transformation_folder_metadata(client, component_id, configuration_id, folder)
+        except Exception:
+            LOG.warning(
+                'Unable to set folder metadata for component "%s", configuration "%s".',
+                component_id,
+                configuration_id,
+            )
+
     links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
@@ -1420,8 +1435,8 @@ async def update_config(
     )
 
 
-# This function must use exactly the same parameters as update_config() function.
-# Except for the `ctx` and `client` parameters.
+# This function must use exactly the same parameters as update_config() function,
+# except for `ctx`, `client`, and `folder` (folder is metadata-only, not a payload field).
 async def update_config_internal(
     *,
     client: KeboolaClient,

@@ -816,6 +816,11 @@ WORKFLOW:
         "type": "object"
       },
       "type": "array"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this configuration in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more configurations in the project. If there are 20 or more configurations, you should assign one of the existing folders or create a new one that clearly reflects the configuration purpose.",
+      "type": "string"
     }
   },
   "required": [
