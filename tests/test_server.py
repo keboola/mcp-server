@@ -37,8 +37,8 @@ class TestServer:
     async def test_list_tools(self):
         server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
-        tools = await server.get_tools()
-        assert sorted(tool.name for tool in tools.values()) == [
+        tools = await server.list_tools(run_middleware=False)
+        assert sorted(tool.name for tool in tools) == [
             'add_config_row',
             'create_conditional_flow',
             'create_config',
@@ -81,10 +81,10 @@ class TestServer:
     async def test_tools_have_descriptions(self):
         server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
-        tools = await server.get_tools()
+        tools = await server.list_tools(run_middleware=False)
 
         missing_descriptions: list[str] = []
-        for tool in tools.values():
+        for tool in tools:
             if not tool.description:
                 missing_descriptions.append(tool.name)
 
@@ -95,10 +95,10 @@ class TestServer:
     async def test_tools_have_serializer(self):
         server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
-        tools = await server.get_tools()
+        tools = await server.list_tools(run_middleware=False)
 
         missing_serializer: list[str] = []
-        for tool in tools.values():
+        for tool in tools:
             if not tool.serializer:
                 missing_serializer.append(tool.name)
             if tool.serializer not in (_exclude_none_serializer, toon_serializer, toon_serializer_compact):
@@ -111,12 +111,12 @@ class TestServer:
     async def test_tools_input_schema(self):
         server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
-        tools = await server.get_tools()
+        tools = await server.list_tools(run_middleware=False)
 
         missing_properties: list[str] = []
         missing_type: list[str] = []
         missing_default: list[str] = []
-        for tool in tools.values():
+        for tool in tools:
             properties = tool.parameters['properties']
             if not properties:
                 missing_properties.append(tool.name)
@@ -205,7 +205,7 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     # create MCP server with the initial Config
     mcp = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(mcp, FastMCP)
-    tools_count = len(await mcp.get_tools())
+    tools_count = len(await mcp.list_tools(run_middleware=False))
     mcp.add_tool(FunctionTool.from_function(assessed_function, name='assessed-function'))
 
     # running the server as stdio transport through client
@@ -328,8 +328,8 @@ async def test_tool_annotations_and_tags():
     """
     server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(server, FastMCP)
-    tools = await server.get_tools()
-    for tool in tools.values():
+    tools = await server.list_tools(run_middleware=False)
+    for tool in tools:
         assert tool.tags is not None, f'{tool.name} has no tags'
         if tool.annotations is not None:
             if tool.annotations.readOnlyHint:
@@ -405,7 +405,7 @@ async def test_tool_annotations_tags_values(
     """
     server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(server, FastMCP)
-    tools = await server.get_tools()
+    tools = {t.name: t for t in await server.list_tools(run_middleware=False)}
 
     # check tool registration
     assert tool_name in tools, f'Missing tool registered: {tool_name}'
@@ -491,8 +491,8 @@ async def test_json_logging():
             stdout = ''.join(stdout_lines)
             stderr = ''.join(stderr_lines)
 
-    # Filter out known websockets deprecation warnings (these bypass logging config)
-    # These warnings come from uvicorn's dependencies and are not actual logging errors
+    # Filter out known deprecation warnings (these bypass logging config)
+    # These warnings come from uvicorn's dependencies or fastmcp and are not actual logging errors
     stderr_lines = [
         line
         for line in stderr.splitlines()
@@ -505,6 +505,9 @@ async def test_json_logging():
                 'WebSocketServerProtocol is deprecated',
                 'warnings.warn',
                 'from websockets.server import WebSocketServerProtocol',
+                'FastMCPDeprecationWarning',
+                'serializer` parameter is deprecated',
+                'FunctionTool.from_function(',
             ]
         )
     ]
