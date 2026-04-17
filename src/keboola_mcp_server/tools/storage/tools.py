@@ -1,18 +1,15 @@
 """Storage-related tools for the MCP server (buckets, tables, etc.)."""
 
-import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime
 from typing import Annotated, Any, Iterable, Literal, Sequence, cast
 
-import httpx
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import AliasChoices, BaseModel, Field, field_serializer, model_validator
 
-from keboola_mcp_server.clients import AsyncStorageClient
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import MetadataField
@@ -24,6 +21,12 @@ from keboola_mcp_server.mcp import (
     toon_serializer,
     toon_serializer_compact,
     unwrap_results,
+)
+from keboola_mcp_server.tools.storage_helpers import (
+    has_storage_branches,
+    merged_bucket_detail,
+    merged_bucket_list,
+    merged_table_detail,
 )
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.storage.usage import (
@@ -454,75 +457,35 @@ class DescriptionUpdateGroups(BaseModel):
     column_updates_by_table: dict[str, dict[str, str]] = Field(description='Column updates by table ID.')
 
 
-STORAGE_BRANCHES_FEATURE = 'storage-branches'
-
-
-async def _has_storage_branches(client: KeboolaClient) -> bool:
-    """Checks if the project has the storage-branches feature enabled."""
-    return client.branch_id is not None and await client.has_feature(STORAGE_BRANCHES_FEATURE)
-
-
-async def _get_bucket_detail(
-    client: AsyncStorageClient, bucket_id: str, branch_id: str | None = None
-) -> JsonDict | None:
-    try:
-        kwargs = {'branch_id': branch_id} if branch_id else {}
-        return await client.bucket_detail(bucket_id, **kwargs)
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            return None
-        raise
-
-
-async def _get_table_detail(client: AsyncStorageClient, table_id: str, branch_id: str | None = None) -> JsonDict | None:
-    try:
-        kwargs = {'branch_id': branch_id} if branch_id else {}
-        return await client.table_detail(table_id, **kwargs)
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            return None
-        raise
-
-
 async def _find_buckets(client: KeboolaClient, bucket_id: str) -> tuple[BucketDetail | None, BucketDetail | None]:
+    prod_raw, dev_raw = await merged_bucket_detail(client, bucket_id)
+
     prod_bucket: BucketDetail | None = None
     dev_bucket: BucketDetail | None = None
 
-    has_sb = await _has_storage_branches(client)
+    if prod_raw:
+        bucket = BucketDetail.model_validate(prod_raw).with_lineage_metadata(prod_raw)
+        if not bucket.branch_id:
+            prod_bucket = bucket
+        elif bucket.branch_id == client.branch_id:
+            dev_bucket = bucket
 
-    if has_sb:
-        # storage-branches: fetch from both production and branch endpoints in parallel
-        prod_raw, dev_raw = await asyncio.gather(
-            _get_bucket_detail(client.storage_client, bucket_id, branch_id='default'),
-            _get_bucket_detail(client.storage_client, bucket_id, branch_id=client.branch_id),
-        )
-        if prod_raw:
-            prod_bucket = BucketDetail.model_validate(prod_raw).with_lineage_metadata(prod_raw)
-        if dev_raw:
-            dev_bucket = BucketDetail.model_validate(dev_raw).with_lineage_metadata(dev_raw)
-    else:
-        if raw := await _get_bucket_detail(client.storage_client, bucket_id, branch_id='default'):
+    if dev_raw:
+        bucket = BucketDetail.model_validate(dev_raw).with_lineage_metadata(dev_raw)
+        if bucket.branch_id == client.branch_id:
+            dev_bucket = bucket
+        elif not bucket.branch_id and not prod_bucket:
+            prod_bucket = bucket
+
+    # Legacy: if user passed a dev-style bucket_id, try to find the prod version
+    if not prod_bucket and client.branch_id and f'.c-{client.branch_id}-' in bucket_id:
+        from keboola_mcp_server.tools.storage_helpers import _safe_bucket_detail
+
+        prod_id = bucket_id.replace(f'c-{client.branch_id}-', 'c-')
+        if raw := await _safe_bucket_detail(client, prod_id, branch_id='default'):
             bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
             if not bucket.branch_id:
                 prod_bucket = bucket
-            elif bucket.branch_id == client.branch_id:
-                dev_bucket = bucket
-
-        if client.branch_id:
-            if not dev_bucket:
-
-                dev_id = bucket_id.replace('c-', f'c-{client.branch_id}-')
-                if raw := await _get_bucket_detail(client.storage_client, dev_id, branch_id='default'):
-                    bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
-                    if bucket.branch_id == client.branch_id:
-                        dev_bucket = bucket
-
-            if not prod_bucket and f'.c-{client.branch_id}-' in bucket_id:
-                prod_id = bucket_id.replace(f'c-{client.branch_id}-', 'c-')
-                if raw := await _get_bucket_detail(client.storage_client, prod_id, branch_id='default'):
-                    bucket = BucketDetail.model_validate(raw).with_lineage_metadata(raw)
-                    if not bucket.branch_id:
-                        prod_bucket = bucket
 
     return prod_bucket, dev_bucket
 
@@ -577,7 +540,7 @@ async def get_buckets(
     links_manager = await ProjectLinksManager.from_client(client)
 
     if bucket_ids:
-        has_sb = await _has_storage_branches(client)
+        has_sb = await has_storage_branches(client)
 
         async def _fetch_bucket_detail(bucket_id: str) -> BucketDetail | str:
             prod_bucket, dev_bucket = await _find_buckets(client, bucket_id)
@@ -610,18 +573,8 @@ async def get_buckets(
 
 async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManager) -> GetBucketsOutput:
     """Retrieves information about all buckets in the project."""
-    has_sb = await _has_storage_branches(client)
-    include = ['metadata', 'linkedBuckets']
-
-    if has_sb:
-        # storage-branches: fetch from both production and branch endpoints in parallel
-        prod_data, branch_data = await asyncio.gather(
-            client.storage_client.bucket_list(include=include, branch_id='default'),
-            client.storage_client.bucket_list(include=include, branch_id=client.branch_id),
-        )
-        raw_bucket_data = prod_data + branch_data
-    else:
-        raw_bucket_data = await client.storage_client.bucket_list(include=include, branch_id='default')
+    has_sb = await has_storage_branches(client)
+    raw_bucket_data = await merged_bucket_list(client, include=['metadata', 'linkedBuckets'])
 
     # group buckets by their ID as it would appear on the production branch
     buckets_by_prod_id: dict[str, list[BucketDetail]] = defaultdict(list)
@@ -771,37 +724,18 @@ async def get_tables(
 async def _get_table(
     table_id: str, client: KeboolaClient, workspace_manager: WorkspaceManager, links_manager: ProjectLinksManager
 ) -> TableDetail | None:
-    has_sb = await _has_storage_branches(client)
+    prod_table, dev_table = await merged_table_detail(client, table_id)
 
-    if has_sb:
-        # storage-branches: fetch from both production and branch endpoints in parallel
-        prod_table, dev_table = await asyncio.gather(
-            _get_table_detail(client.storage_client, table_id, branch_id='default'),
-            _get_table_detail(client.storage_client, table_id, branch_id=client.branch_id),
-        )
-    else:
-        prod_table = await _get_table_detail(client.storage_client, table_id, branch_id='default')
-        if prod_table:
-            branch_id = get_metadata_property(prod_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
-            if branch_id:
-                # The table should be from the prod branch; pretend that the table does not exist.
-                prod_table = None
+    # Validate metadata: prod should not have branch metadata, dev should match our branch
+    if prod_table:
+        branch_id = get_metadata_property(prod_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+        if branch_id:
+            prod_table = None
 
-        dev_table: JsonDict | None = None
-        if client.branch_id:
-            if f'c-{client.branch_id}-' in table_id:
-                # we already deal with the dev table ID
-                dev_id = table_id
-            else:
-                # convert the prod table ID to the dev table ID
-                dev_id = table_id.replace('c-', f'c-{client.branch_id}-')
-
-            dev_table = await _get_table_detail(client.storage_client, dev_id, branch_id='default')
-            if dev_table:
-                branch_id = get_metadata_property(dev_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
-                if branch_id != client.branch_id:
-                    # The table's branch ID does not match; pretend that the table does not exist.
-                    dev_table = None
+    if dev_table:
+        branch_id = get_metadata_property(dev_table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+        if branch_id != client.branch_id:
+            dev_table = None
 
     raw_table = dev_table or prod_table
     if not raw_table:
@@ -879,7 +813,7 @@ async def _list_tables(
     links_manager: ProjectLinksManager,
 ) -> Iterable[TableDetail]:
     """Retrieves all tables in a specific bucket with their basic information."""
-    has_sb = await _has_storage_branches(client)
+    has_sb = await has_storage_branches(client)
     tables_by_prod_id: dict[str, TableDetail] = {}
     sapi_includes = ['metadata', 'columnMetadata', 'sourceMetadata', 'sourceColumnMetadata']
 
