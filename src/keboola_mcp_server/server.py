@@ -173,7 +173,7 @@ class CustomRoutes:
                 app.add_route(route.path, route.endpoint, methods=route.methods)
 
 
-def create_server(
+def create_platform_server(
     config: Config,
     *,
     runtime_info: ServerRuntimeInfo,
@@ -257,3 +257,22 @@ def create_server(
         return mcp
     else:
         return mcp, custom_routes
+
+
+def create_local_server(data_dir: str) -> FastMCP:
+    """Create a local-backend MCP server. No Keboola token required.
+
+    Data is read from CSV files under *data_dir*. SQL is executed via DuckDB.
+    Components run via Docker (Phase 2). No auth middleware, no WorkspaceManager.
+    """
+    from keboola_mcp_server.tools.local import LocalBackend, register_local_tools
+
+    LOG.info(f'Creating local-backend server with data_dir={data_dir!r}')
+    mcp = FastMCP('Keboola MCP Server (local)')
+    local_backend = LocalBackend(data_dir=data_dir)
+    register_local_tools(mcp, local_backend)
+    return mcp
+
+
+# Backward-compatible alias — callers that imported create_server by name continue to work.
+create_server = create_platform_server
