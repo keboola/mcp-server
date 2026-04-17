@@ -1,5 +1,6 @@
 """Local-mode MCP tool implementations backed by the local filesystem and DuckDB."""
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Annotated, Literal
@@ -11,6 +12,8 @@ from pydantic import BaseModel, Field
 
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.tools.local.backend import LocalBackend
+from keboola_mcp_server.tools.local.docker import ComponentRunResult, ComponentSetupResult
+from keboola_mcp_server.tools.local.schema import ComponentSchemaResult, ComponentSearchResult
 
 LOG = logging.getLogger(__name__)
 
@@ -63,6 +66,11 @@ class LocalProjectInfo(BaseModel):
     table_count: int = Field(description='Number of CSV tables in the catalog.')
     sql_engine: Literal['DuckDB'] = Field(default='DuckDB', description='SQL engine used for local queries.')
     llm_instruction: str = Field(description='Base instructions for working in local mode.')
+
+
+class LocalComponentSearchOutput(BaseModel):
+    results: list[ComponentSearchResult] = Field(description='Matching components from the Developer Portal.')
+    query: str = Field(description='The search query used.')
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +168,50 @@ async def get_project_info_local(local_backend: LocalBackend) -> LocalProjectInf
         table_count=table_count,
         llm_instruction=_LOCAL_PROJECT_INSTRUCTION,
     )
+
+
+async def setup_component_local(
+    local_backend: LocalBackend,
+    git_url: str,
+    force_rebuild: bool = False,
+) -> ComponentSetupResult:
+    """Implementation of setup_component for local mode."""
+    return await asyncio.to_thread(local_backend.setup_component, git_url, force_rebuild)
+
+
+async def run_component_local(
+    local_backend: LocalBackend,
+    parameters: dict,
+    component_image: str | None = None,
+    git_url: str | None = None,
+    input_tables: list[str] | None = None,
+    memory_limit: str = '4g',
+) -> ComponentRunResult:
+    """Implementation of run_component for local mode."""
+    if component_image and git_url:
+        raise ValueError('Provide either component_image or git_url, not both.')
+    if not component_image and not git_url:
+        raise ValueError('Provide either component_image (Docker registry) or git_url (source).')
+    if component_image:
+        return await asyncio.to_thread(
+            local_backend.run_docker_component, component_image, parameters, input_tables, memory_limit
+        )
+    return await asyncio.to_thread(local_backend.run_source_component, git_url, parameters, input_tables, memory_limit)
+
+
+async def get_component_schema_local(component_id: str) -> ComponentSchemaResult:
+    """Implementation of get_component_schema for local mode."""
+    from keboola_mcp_server.tools.local.schema import get_component_schema as _fetch_schema
+
+    return await _fetch_schema(component_id)
+
+
+async def find_component_id_local(query: str, limit: int = 10) -> LocalComponentSearchOutput:
+    """Implementation of find_component_id for local mode."""
+    from keboola_mcp_server.tools.local.schema import find_component_id as _search_components
+
+    results = await _search_components(query, limit)
+    return LocalComponentSearchOutput(results=results, query=query)
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +329,128 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_project_info,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def setup_component(
+        git_url: Annotated[str, Field(description='Git URL of the Keboola component repository to clone and build.')],
+        force_rebuild: Annotated[
+            bool,
+            Field(default=False, description='Force Docker image rebuild even if the sentinel file already exists.'),
+        ] = False,
+    ) -> ComponentSetupResult:
+        """
+        Clones a Keboola component repository and builds its Docker image.
+
+        Run this before run_component to prepare a source-based component.
+        Skips clone/build if already done (use force_rebuild=True to rebuild).
+        Returns the clone path and any schema hints found in component.json / README.
+        """
+        return await setup_component_local(local_backend, git_url, force_rebuild)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            setup_component,
+            annotations=ToolAnnotations(readOnlyHint=False),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def run_component(
+        parameters: Annotated[dict, Field(description='Component configuration parameters (JSON object).')],
+        component_image: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    'Docker image tag to pull from a registry '
+                    '(e.g. "keboola/generic-extractor:latest"). '
+                    'Provide this OR git_url, not both.'
+                ),
+            ),
+        ] = None,
+        git_url: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    'Git URL of the component source repository. '
+                    'The component will be cloned, built, and run via docker compose. '
+                    'Provide this OR component_image, not both.'
+                ),
+            ),
+        ] = None,
+        input_tables: Annotated[
+            list[str] | None,
+            Field(default=None, description='Table name stems to mount into /data/in/tables/ before running.'),
+        ] = None,
+        memory_limit: Annotated[
+            str,
+            Field(default='4g', description='Docker memory limit (e.g. "2g", "512m").'),
+        ] = '4g',
+    ) -> ComponentRunResult:
+        """
+        Runs a Keboola component via Docker using the Common Interface.
+
+        Provide either component_image (pulled from a registry) or git_url (built from source).
+        Input tables are copied from the local catalog into /data/in/tables/.
+        Output tables written to /data/out/tables/ are collected back into the local catalog.
+        """
+        return await run_component_local(
+            local_backend, parameters, component_image, git_url, input_tables, memory_limit
+        )
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            run_component,
+            annotations=ToolAnnotations(readOnlyHint=False),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def get_component_schema(
+        component_id: Annotated[str, Field(description='Keboola component ID (e.g. "keboola.ex-http").')],
+    ) -> ComponentSchemaResult:
+        """
+        Fetches the configuration schema for a Keboola component from the Developer Portal.
+
+        Returns the JSON schema for the component's parameters. Use this to understand
+        what to pass in the parameters argument of run_component.
+        """
+        return await get_component_schema_local(component_id)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_component_schema,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def find_component_id(
+        query: Annotated[str, Field(description='Search term to match against component names and IDs.')],
+        limit: Annotated[
+            int,
+            Field(default=10, description='Maximum number of results to return.'),
+        ] = 10,
+    ) -> LocalComponentSearchOutput:
+        """
+        Searches the Keboola Developer Portal for components matching the query.
+
+        Returns component IDs, names, types, and Docker images. Use get_component_schema
+        with a returned component_id to fetch full parameter documentation.
+        """
+        return await find_component_id_local(query, limit)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            find_component_id,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={LOCAL_TOOLS_TAG},
         )

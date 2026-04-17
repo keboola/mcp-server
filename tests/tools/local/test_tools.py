@@ -1,20 +1,28 @@
 """Tests for local-mode tool implementation functions."""
 
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from keboola_mcp_server.tools.local.backend import LocalBackend
+from keboola_mcp_server.tools.local.docker import ComponentRunResult, ComponentSetupResult
+from keboola_mcp_server.tools.local.schema import ComponentSchemaResult
 from keboola_mcp_server.tools.local.tools import (
     LocalBucketsOutput,
+    LocalComponentSearchOutput,
     LocalProjectInfo,
     LocalSearchOutput,
     LocalTablesOutput,
+    find_component_id_local,
     get_buckets_local,
+    get_component_schema_local,
     get_project_info_local,
     get_tables_local,
     query_data_local,
+    run_component_local,
     search_local,
+    setup_component_local,
 )
 
 # ---------------------------------------------------------------------------
@@ -245,3 +253,137 @@ async def test_get_project_info_table_count(backend: LocalBackend, tables_dir: P
 async def test_get_project_info_llm_instruction_not_empty(backend: LocalBackend) -> None:
     result = await get_project_info_local(backend)
     assert result.llm_instruction
+
+
+# ---------------------------------------------------------------------------
+# setup_component_local
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_setup_component_local_delegates_to_backend(backend: LocalBackend) -> None:
+    expected = ComponentSetupResult(path='/tmp/repo', schema=None)
+    with patch.object(backend, 'setup_component', return_value=expected) as mock_setup:
+        result = await setup_component_local(backend, 'https://github.com/keboola/repo.git')
+
+    mock_setup.assert_called_once_with('https://github.com/keboola/repo.git', False)
+    assert result is expected
+
+
+@pytest.mark.asyncio
+async def test_setup_component_local_force_rebuild(backend: LocalBackend) -> None:
+    expected = ComponentSetupResult(path='/tmp/repo')
+    with patch.object(backend, 'setup_component', return_value=expected) as mock_setup:
+        await setup_component_local(backend, 'https://github.com/keboola/repo.git', force_rebuild=True)
+
+    mock_setup.assert_called_once_with('https://github.com/keboola/repo.git', True)
+
+
+# ---------------------------------------------------------------------------
+# run_component_local
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_component_local_image_mode(backend: LocalBackend) -> None:
+    expected = ComponentRunResult(status='success', exit_code=0)
+    with patch.object(backend, 'run_docker_component', return_value=expected) as mock_run:
+        result = await run_component_local(backend, {'key': 'val'}, component_image='keboola/ex-http:1.0')
+
+    mock_run.assert_called_once_with('keboola/ex-http:1.0', {'key': 'val'}, None, '4g')
+    assert result.status == 'success'
+
+
+@pytest.mark.asyncio
+async def test_run_component_local_source_mode(backend: LocalBackend) -> None:
+    expected = ComponentRunResult(status='success', exit_code=0)
+    with patch.object(backend, 'run_source_component', return_value=expected) as mock_run:
+        result = await run_component_local(
+            backend, {}, git_url='https://github.com/keboola/repo.git', input_tables=['t1']
+        )
+
+    mock_run.assert_called_once_with('https://github.com/keboola/repo.git', {}, ['t1'], '4g')
+    assert result.status == 'success'
+
+
+@pytest.mark.asyncio
+async def test_run_component_local_neither_raises(backend: LocalBackend) -> None:
+    with pytest.raises(ValueError, match='Provide either'):
+        await run_component_local(backend, {})
+
+
+@pytest.mark.asyncio
+async def test_run_component_local_both_raises(backend: LocalBackend) -> None:
+    with pytest.raises(ValueError, match='not both'):
+        await run_component_local(
+            backend, {}, component_image='img:latest', git_url='https://github.com/keboola/repo.git'
+        )
+
+
+# ---------------------------------------------------------------------------
+# get_component_schema_local
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_component_schema_local_calls_api() -> None:
+    schema = ComponentSchemaResult(component_id='keboola.ex-http', name='HTTP', raw={})
+
+    async def _fake_fetch(component_id):
+        return schema
+
+    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient') as mock_client_cls:
+        instance = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        resp = MagicMock()
+        resp.json.return_value = {'id': 'keboola.ex-http', 'name': 'HTTP'}
+        resp.raise_for_status = MagicMock()
+        instance.get = AsyncMock(return_value=resp)
+
+        result = await get_component_schema_local('keboola.ex-http')
+
+    assert result.component_id == 'keboola.ex-http'
+
+
+# ---------------------------------------------------------------------------
+# find_component_id_local
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_find_component_id_local_wraps_results() -> None:
+    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient') as mock_client_cls:
+        instance = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        resp = MagicMock()
+        resp.json.return_value = [
+            {'id': 'keboola.ex-http', 'name': 'HTTP Extractor'},
+            {'id': 'keboola.ex-ftp', 'name': 'FTP Extractor'},
+        ]
+        resp.raise_for_status = MagicMock()
+        instance.get = AsyncMock(return_value=resp)
+
+        result = await find_component_id_local('http')
+
+    assert isinstance(result, LocalComponentSearchOutput)
+    assert result.query == 'http'
+    assert len(result.results) == 2
+
+
+@pytest.mark.asyncio
+async def test_find_component_id_local_empty() -> None:
+    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient') as mock_client_cls:
+        instance = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        resp = MagicMock()
+        resp.json.return_value = []
+        resp.raise_for_status = MagicMock()
+        instance.get = AsyncMock(return_value=resp)
+
+        result = await find_component_id_local('zzznomatch')
+
+    assert result.results == []
+    assert result.query == 'zzznomatch'

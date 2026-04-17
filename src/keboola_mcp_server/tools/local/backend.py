@@ -68,3 +68,50 @@ class LocalBackend:
         separator = '| ' + ' | '.join(['---'] * len(columns)) + ' |'
         body = ['| ' + ' | '.join('' if v is None else str(v) for v in row) + ' |' for row in rows]
         return '\n'.join([header, separator, *body])
+
+    # ------------------------------------------------------------------
+    # Docker component execution (delegates to tools/local/docker.py)
+    # ------------------------------------------------------------------
+
+    def setup_component(self, git_url: str, force_rebuild: bool = False):
+        """Clone a component repo and build its Docker image.
+
+        Returns a ComponentSetupResult with the clone path and optional schema.
+        """
+        from keboola_mcp_server.tools.local.docker import setup_component
+
+        return setup_component(
+            self.data_dir / 'components',
+            git_url,
+            force_rebuild=force_rebuild,
+        )
+
+    def run_docker_component(
+        self,
+        component_image: str,
+        parameters: dict,
+        input_tables: list[str] | None = None,
+        memory_limit: str = '4g',
+    ):
+        """Run a Keboola component from a Docker registry image.
+
+        Returns a ComponentRunResult.
+        """
+        from keboola_mcp_server.tools.local.docker import run_image_component
+
+        return run_image_component(self.data_dir, component_image, parameters, input_tables, memory_limit)
+
+    def run_source_component(
+        self,
+        git_url: str,
+        parameters: dict,
+        input_tables: list[str] | None = None,
+        memory_limit: str = '4g',
+    ):
+        """Clone + build + run a component from source via docker compose.
+
+        Returns a ComponentRunResult.
+        """
+        from keboola_mcp_server.tools.local.docker import run_source_component
+
+        return run_source_component(self.data_dir, git_url, parameters, input_tables, memory_limit)
