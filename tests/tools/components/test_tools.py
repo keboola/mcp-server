@@ -1247,6 +1247,64 @@ async def test_update_config(
 
 
 @pytest.mark.parametrize(
+    ('folder', 'expect_folder_metadata'),
+    [
+        ('Analytics', True),
+        ('  Analytics  ', True),
+        ('', False),
+    ],
+    ids=['folder_provided', 'folder_whitespace_stripped', 'no_folder'],
+)
+@pytest.mark.asyncio
+async def test_update_config_folder(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    folder: str,
+    expect_folder_metadata: bool,
+) -> None:
+    """Test folder metadata is set when folder param is provided to update_config."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    component_id = 'keboola.python-transformation-v2'
+    mock_component['id'] = component_id
+    configuration_id = 'cfg-folder-test'
+    existing = {
+        'id': configuration_id,
+        'name': 'My Python Transformation',
+        'description': 'desc',
+        'configuration': {'parameters': {}, 'storage': {}},
+        'version': 1,
+    }
+    updated = {**existing, 'version': 2}
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated)
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    result = await update_config(
+        ctx=context,
+        change_description='test',
+        component_id=component_id,
+        configuration_id=configuration_id,
+        folder=folder,
+    )
+
+    assert isinstance(result, ConfigToolOutput)
+    metadata_calls = [
+        call
+        for call in keboola_client.storage_client.configuration_metadata_update.call_args_list
+        if call.kwargs.get('metadata', {}).get(MetadataField.CONFIGURATION_FOLDER_NAME)
+    ]
+    if expect_folder_metadata:
+        assert len(metadata_calls) == 1
+        assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: folder.strip()}
+    else:
+        assert len(metadata_calls) == 0
+
+
+@pytest.mark.parametrize(
     ('tool_fn', 'tool_args', 'component_id', 'message'),
     [
         (
