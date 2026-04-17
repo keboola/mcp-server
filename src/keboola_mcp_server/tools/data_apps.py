@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
-from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppResponse
+from keboola_mcp_server.clients.data_science import CodeDataAppConfig, DataAppConfig, DataAppResponse
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
@@ -46,6 +46,13 @@ def add_data_app_tools(mcp: FastMCP) -> None:
     )
     mcp.add_tool(
         FunctionTool.from_function(
+            modify_code_data_app,
+            tags={DATA_APP_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
             get_data_apps,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
@@ -68,10 +75,19 @@ State = Literal['created', 'running', 'stopped', 'starting', 'stopping', 'restar
 # LLM agent can still understand the state of the data app even if it is different from the known states
 SafeState = Union[State, str]
 # Type of the data app
-Type = Literal['streamlit']
+Type = Literal['streamlit', 'python-js']
 # Accepts known types or any string preventing from validation errors when receiving unknown types from the API
 # LLM agent can still understand the type of the data app even if it is different from the known types
 SafeType = Union[Type, str]
+
+# Base image repo used by python-js data apps during the continuous-pull (watching) phase.
+_CONTINUOUS_PULL_BASE_REPO = 'https://github.com/pepamartinec/data-app-continuous-pull'
+# Git pull interval (seconds) hardcoded for the POC.
+_DEFAULT_PULL_PERIOD_SECONDS = 1
+# Default backend size for python-js apps.
+_DEFAULT_CODE_APP_SIZE = 'tiny'
+# Default auto-suspend timeout (seconds) for python-js apps.
+_DEFAULT_CODE_APP_AUTO_SUSPEND_SECONDS = 900
 
 _DATA_APP_RESOURCES = resources.files('keboola_mcp_server.resources.data_app')
 _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE = _DATA_APP_RESOURCES.joinpath('qsapi_query_data_code.py').read_text(
@@ -109,11 +125,13 @@ class DataAppSummary(BaseModel):
     state: SafeState = Field(description='The state of the data app.')
     type: SafeType = Field(
         description=(
-            'The type of the data app. Currently, only "streamlit" is supported in the MCP. However, Keboola DSAPI '
-            'supports additional types, which can be retrieved from the API.'
+            'The type of the data app ("streamlit" for inline-code Streamlit apps, '
+            '"python-js" for git-backed continuous-pull apps).'
         )
     )
-    deployment_url: Optional[str] = Field(description='The URL of the running data app.', default=None)
+    deployment_url: Optional[str] = Field(
+        description='The URL of the running data app, usable as a preview/embed URL.', default=None
+    )
     auto_suspend_after_seconds: Optional[int] = Field(
         description='The number of seconds after which the running data app is automatically suspended.',
         default=None,
@@ -166,11 +184,13 @@ class DataApp(BaseModel):
     state: SafeState = Field(description='The state of the data app.')
     type: SafeType = Field(
         description=(
-            'The type of the data app. Currently, only "streamlit" is supported in the MCP. However, Keboola DSAPI '
-            'supports additional types, which can be retrieved from the API.'
+            'The type of the data app ("streamlit" for inline-code Streamlit apps, '
+            '"python-js" for git-backed continuous-pull apps).'
         )
     )
-    deployment_url: Optional[str] = Field(description='The URL of the running data app.', default=None)
+    deployment_url: Optional[str] = Field(
+        description='The URL of the running data app, usable as a preview/embed URL.', default=None
+    )
     auto_suspend_after_seconds: Optional[int] = Field(
         description='The number of seconds after which the running data app is automatically suspended.',
         default=None,
@@ -403,6 +423,158 @@ async def modify_data_app(
             response='created',
             change_summary=folder_hint,
             data_app=DataAppSummary.from_api_response(data_app_resp),
+            links=links,
+        )
+
+
+@tool_errors()
+async def modify_code_data_app(
+    ctx: Context,
+    name: Annotated[str, Field(description='Name of the data app (max ~50 chars to fit DNS label limit).')],
+    description: Annotated[str, Field(description='Description of the data app.')],
+    watched_repo_url: Annotated[
+        str,
+        Field(
+            description=(
+                'Public git URL of the repository whose contents the running app will continuously pull. '
+                'When `finalize` is true, this URL replaces the base image repo as the static source.'
+            )
+        ),
+    ],
+    watched_repo_branch: Annotated[
+        str,
+        Field(description='Branch of the watched repository to pull from.'),
+    ],
+    finalize: Annotated[
+        bool,
+        Field(
+            description=(
+                'When true, removes the watchedRepo block and sets the app source to `watched_repo_url` '
+                'directly. The app stops live-pulling and deploys statically from the repo. '
+                'Requires configuration_id of an existing app.'
+            )
+        ),
+    ] = False,
+    configuration_id: Annotated[
+        str, Field(description='The ID of existing data app configuration when updating, otherwise empty string.')
+    ] = '',
+    change_description: Annotated[
+        str,
+        Field(description='The description of the change when updating, otherwise empty string.'),
+    ] = '',
+    folder: Annotated[
+        str,
+        Field(description=folder_field_description('data app', 'data apps')),
+    ] = '',
+) -> ModifiedDataAppOutput:
+    """Creates, updates, or finalizes a "python-js" data app that continuously pulls code from a git repo.
+
+    The app runs a base image that auto-pulls application code from `watched_repo_url` on the given
+    branch. Any commits pushed to that repo are picked up automatically. The tool handles deployment
+    internally — do NOT call `deploy_data_app` separately for python-js apps. The response includes
+    the app's `deployment_url` which can be used as a preview URL (e.g. embedded in an iframe).
+
+    Workflow:
+    1. Call with `watched_repo_url`/`watched_repo_branch` (no `configuration_id`) to CREATE the app.
+       Push commits to the watched repo; the running container auto-pulls and restarts the app.
+    2. Call with same args + `configuration_id` to UPDATE the watched repo pointer (e.g. change branch).
+    3. Call with `finalize=True` + `configuration_id` to switch the app to deploy statically from
+       `watched_repo_url` (removes the continuous-pull mechanism).
+
+    Limitations: public git repos only (no credentials), pull period hardcoded to 1 second,
+    authentication is always no-auth.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
+
+    project_id = await client.storage_client.project_id()
+
+    if finalize and not configuration_id:
+        raise ValueError('`finalize=True` requires `configuration_id` of an existing data app.')
+
+    if configuration_id:
+        # Update existing python-js data app (watched-repo pointer change or finalize)
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        updated_config = _update_existing_code_data_app_config(
+            data_app.configuration,
+            name=name,
+            watched_repo_url=watched_repo_url,
+            watched_repo_branch=watched_repo_branch,
+            finalize=finalize,
+        )
+        updated_config = cast(
+            JsonDict,
+            await client.encryption_client.encrypt(
+                updated_config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
+            ),
+        )
+        await client.storage_client.configuration_update(
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            configuration=updated_config,
+            change_description=change_description or ('Finalize Data App' if finalize else 'Change Data App'),
+            updated_name=name or data_app.name,
+            updated_description=description or data_app.description,
+        )
+        # Deploy so the updated config takes effect and the URL is assigned.
+        config_version = await client.storage_client.configuration_version_latest(
+            DATA_APP_COMPONENT_ID, configuration_id
+        )
+        await client.data_science_client.deploy_data_app(data_app.data_app_id, str(config_version))
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        await set_cfg_update_metadata(
+            client=client,
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            configuration_version=int(data_app.config_version),
+        )
+        folder_hint = await _apply_folder(client, DATA_APP_COMPONENT_ID, configuration_id, folder)
+        links = links_manager.get_data_app_links(
+            configuration_id=data_app.configuration_id,
+            configuration_name=name or data_app.name,
+            deployment_link=data_app.deployment_url,
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
+        )
+        response = 'finalized' if finalize else 'updated'
+        return ModifiedDataAppOutput(
+            response=response,
+            change_summary=folder_hint,
+            data_app=DataAppSummary.model_validate(data_app.model_dump()),
+            links=links,
+        )
+    else:
+        # Create new python-js data app in watching mode
+        config = _build_code_data_app_config(name, watched_repo_url, watched_repo_branch)
+        config = await client.encryption_client.encrypt(
+            config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
+        )
+        validated_config = CodeDataAppConfig.model_validate(config)
+        data_app_resp = await client.data_science_client.create_data_app(
+            name, description, configuration=validated_config, type='python-js'
+        )
+        # Deploy the newly created app so the container starts and a URL is assigned.
+        config_version = await client.storage_client.configuration_version_latest(
+            DATA_APP_COMPONENT_ID, data_app_resp.config_id
+        )
+        await client.data_science_client.deploy_data_app(data_app_resp.id, str(config_version))
+        await set_cfg_creation_metadata(
+            client=client,
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=data_app_resp.config_id,
+        )
+        # Re-fetch to pick up the deployment URL.
+        data_app = await _fetch_data_app(client, configuration_id=data_app_resp.config_id, data_app_id=None)
+        folder_hint = await _apply_folder(client, DATA_APP_COMPONENT_ID, data_app_resp.config_id, folder)
+        links = links_manager.get_data_app_links(
+            configuration_id=data_app.configuration_id,
+            configuration_name=name,
+            deployment_link=data_app.deployment_url,
+            uses_basic_authentication=_uses_basic_authentication(validated_config.authorization),
+        )
+        return ModifiedDataAppOutput(
+            response='created',
+            change_summary=folder_hint,
+            data_app=DataAppSummary.model_validate(data_app.model_dump()),
             links=links,
         )
 
@@ -873,3 +1045,66 @@ def _get_secrets(workspace_id: str, branch_id: str) -> dict[str, Any]:
         SECRET_BRANCH_ID: branch_id,
     }
     return secrets
+
+
+def _build_code_data_app_config(
+    name: str,
+    watched_repo_url: str,
+    watched_repo_branch: str,
+) -> dict[str, Any]:
+    """
+    Builds a python-js data app config in watching mode. The running container pulls code continuously
+    from `watched_repo_url`; the base image comes from `_CONTINUOUS_PULL_BASE_REPO`. POC uses no-auth
+    and public git repos only.
+    """
+    slug = _get_data_app_slug(name) or 'Data-App'
+    return {
+        'parameters': {
+            'autoSuspendAfterSeconds': _DEFAULT_CODE_APP_AUTO_SUSPEND_SECONDS,
+            'dataApp': {
+                'slug': slug,
+                'type': 'python-js',
+                'git': {'repository': _CONTINUOUS_PULL_BASE_REPO},
+                'watchedRepo': {
+                    'pullPeriod': _DEFAULT_PULL_PERIOD_SECONDS,
+                    'url': watched_repo_url,
+                    'branch': watched_repo_branch,
+                    'autoReSetup': True,
+                },
+            },
+        },
+        'authorization': _get_authorization(auth_with_password=False),
+        'runtime': {'backend': {'size': _DEFAULT_CODE_APP_SIZE}},
+    }
+
+
+def _update_existing_code_data_app_config(
+    existing_config: Mapping[str, Any],
+    *,
+    name: str,
+    watched_repo_url: str,
+    watched_repo_branch: str,
+    finalize: bool,
+) -> dict[str, Any]:
+    """
+    Updates an existing python-js data app config.
+
+    - When `finalize` is False: refreshes the watchedRepo.url / branch pointers.
+    - When `finalize` is True: replaces parameters.dataApp.git.repository with `watched_repo_url` and
+      drops the watchedRepo block so the app deploys statically from the user's repo.
+    """
+    new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
+    data_app = new_config['parameters']['dataApp']
+    if name:
+        data_app['slug'] = _get_data_app_slug(name) or data_app.get('slug', 'Data-App')
+    if finalize:
+        data_app['git'] = {'repository': watched_repo_url}
+        data_app.pop('watchedRepo', None)
+    else:
+        data_app['watchedRepo'] = {
+            'pullPeriod': _DEFAULT_PULL_PERIOD_SECONDS,
+            'url': watched_repo_url,
+            'branch': watched_repo_branch,
+            'autoReSetup': True,
+        }
+    return new_config

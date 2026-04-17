@@ -42,6 +42,7 @@ name or description.
 and the configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
+- [modify_code_data_app](#modify_code_data_app): Creates, updates, or finalizes a "python-js" data app that continuously pulls code from a git repo.
 - [modify_data_app](#modify_data_app): Creates or updates a Streamlit data app.
 
 ### Project Tools
@@ -1758,6 +1759,84 @@ data app logs to investigate in-app errors. The logs may be updated after openin
       "type": "integer"
     }
   },
+  "type": "object"
+}
+```
+
+---
+<a name="modify_code_data_app"></a>
+## modify_code_data_app
+**Annotations**: `destructive`
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Creates, updates, or finalizes a "python-js" data app that continuously pulls code from a git repo.
+
+The app runs a base image that auto-pulls application code from `watched_repo_url` on the given
+branch. Any commits pushed to that repo are picked up automatically — no separate deploy step is
+needed (do NOT call `deploy_data_app` for python-js apps). The response includes the app's
+`deployment_url` which can be used as a preview URL (e.g. embedded in an iframe).
+
+Workflow:
+1. Call with `watched_repo_url`/`watched_repo_branch` (no `configuration_id`) to CREATE the app.
+   Push commits to the watched repo; the running container auto-pulls and restarts the app.
+2. Call with same args + `configuration_id` to UPDATE the watched repo pointer (e.g. change branch).
+3. Call with `finalize=True` + `configuration_id` to switch the app to deploy statically from
+   `watched_repo_url` (removes the continuous-pull mechanism).
+
+Limitations: public git repos only (no credentials), pull period hardcoded to 1 second,
+authentication is always no-auth.
+
+
+**Input JSON Schema**:
+```json
+{
+  "properties": {
+    "name": {
+      "description": "Name of the data app (max ~50 chars to fit DNS label limit).",
+      "type": "string"
+    },
+    "description": {
+      "description": "Description of the data app.",
+      "type": "string"
+    },
+    "watched_repo_url": {
+      "description": "Public git URL of the repository whose contents the running app will continuously pull. When `finalize` is true, this URL replaces the base image repo as the static source.",
+      "type": "string"
+    },
+    "watched_repo_branch": {
+      "description": "Branch of the watched repository to pull from.",
+      "type": "string"
+    },
+    "finalize": {
+      "default": false,
+      "description": "When true, removes the watchedRepo block and sets the app source to `watched_repo_url` directly. The app stops live-pulling and deploys statically from the repo. Requires configuration_id of an existing app.",
+      "type": "boolean"
+    },
+    "configuration_id": {
+      "default": "",
+      "description": "The ID of existing data app configuration when updating, otherwise empty string.",
+      "type": "string"
+    },
+    "change_description": {
+      "default": "",
+      "description": "The description of the change when updating, otherwise empty string.",
+      "type": "string"
+    },
+    "folder": {
+      "default": "",
+      "description": "Folder name to organize this data app in the Keboola UI. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "watched_repo_url",
+    "watched_repo_branch"
+  ],
   "type": "object"
 }
 ```

@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -93,6 +93,64 @@ class DataAppConfig(BaseModel):
     parameters: Parameters = Field(description='The parameters of the data app')
     authorization: Authorization = Field(description='The authorization of the data app')
     storage: dict[str, Any] = Field(description='The storage of the data app', default_factory=dict)
+
+
+class CodeDataAppConfig(BaseModel):
+    """
+    Simplified config model for "python-js" data apps that run a fixed base image and continuously
+    pull application code from a watched git repository.
+    """
+
+    class Parameters(BaseModel):
+        class DataApp(BaseModel):
+            class Git(BaseModel):
+                repository: str = Field(description='Git repository URL of the base image or final app source')
+
+            class WatchedRepo(BaseModel):
+                pull_period: int = Field(
+                    validation_alias=AliasChoices('pullPeriod', 'pull_period'),
+                    serialization_alias='pullPeriod',
+                    description='Git pull period in seconds',
+                )
+                url: str = Field(description='Git URL of the watched repository')
+                branch: str = Field(description='Branch of the watched repository to pull from')
+                auto_re_setup: bool = Field(
+                    validation_alias=AliasChoices('autoReSetup', 'auto_re_setup'),
+                    serialization_alias='autoReSetup',
+                    description='Automatically re-setup the app when watched repo changes',
+                )
+
+            slug: str = Field(description='The slug of the data app')
+            type: Literal['python-js'] = Field(description='The data app sub-type')
+            git: Git = Field(description='Git source of the base image or final app source')
+            watched_repo: WatchedRepo | None = Field(
+                default=None,
+                validation_alias=AliasChoices('watchedRepo', 'watched_repo'),
+                serialization_alias='watchedRepo',
+                description='The repository the running container continuously pulls from',
+            )
+
+        auto_suspend_after_seconds: int = Field(
+            validation_alias=AliasChoices('autoSuspendAfterSeconds', 'auto_suspend_after_seconds'),
+            serialization_alias='autoSuspendAfterSeconds',
+            description='The auto suspend after seconds',
+        )
+        data_app: DataApp = Field(
+            description='The data app sub config',
+            serialization_alias='dataApp',
+            validation_alias=AliasChoices('dataApp', 'data_app'),
+        )
+        id: str | None = Field(description='The id of the data app', default=None)
+
+    class Runtime(BaseModel):
+        class Backend(BaseModel):
+            size: str = Field(description='The size of the backend (e.g. "tiny")')
+
+        backend: Backend = Field(description='The backend configuration')
+
+    parameters: Parameters = Field(description='The parameters of the data app')
+    authorization: DataAppConfig.Authorization = Field(description='The authorization of the data app')
+    runtime: Runtime = Field(description='The runtime configuration of the data app')
 
 
 class DataScienceClient(KeboolaServiceClient):
@@ -195,19 +253,22 @@ class DataScienceClient(KeboolaServiceClient):
         self,
         name: str,
         description: str,
-        configuration: DataAppConfig,
+        configuration: DataAppConfig | CodeDataAppConfig,
+        *,
+        type: Literal['streamlit', 'python-js'] = 'streamlit',
     ) -> DataAppResponse:
         """
         Create a data app from a simplified config used in the MCP server.
         :param name: The name of the data app
         :param description: The description of the data app
         :param configuration: The simplified configuration of the data app
+        :param type: The DSAPI data app type (defaults to 'streamlit' for backwards compatibility)
         :return: The data app
         """
         data = {
             'branchId': self._branch_id,
             'name': name,
-            'type': 'streamlit',
+            'type': type,
             'description': description,
             'config': configuration.model_dump(exclude_none=True, by_alias=True),
         }

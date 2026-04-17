@@ -61,6 +61,7 @@ class TestServer:
             'get_semantic_context',
             'get_semantic_schema',
             'get_tables',
+            'modify_code_data_app',
             'modify_data_app',
             'modify_flow',
             'query_data',
@@ -387,6 +388,7 @@ async def test_tool_annotations_and_tags():
         ('create_oauth_url', None, True, None, {OAUTH_TOOLS_TAG}),
         # data apps
         ('modify_data_app', None, True, None, {DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
+        ('modify_code_data_app', None, True, None, {DATA_APP_TOOLS_TAG}),
         ('get_data_apps', True, None, None, {DATA_APP_TOOLS_TAG}),
         ('deploy_data_app', None, False, None, {DATA_APP_TOOLS_TAG}),
     ],

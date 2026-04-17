@@ -11,6 +11,10 @@ from keboola_mcp_server.clients.data_science import DataAppResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
+    _CONTINUOUS_PULL_BASE_REPO,
+    _DEFAULT_CODE_APP_AUTO_SUSPEND_SECONDS,
+    _DEFAULT_CODE_APP_SIZE,
+    _DEFAULT_PULL_PERIOD_SECONDS,
     _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
     _STORAGE_QUERY_DATA_FUNCTION_CODE,
     MAX_DNS_LABEL_LENGTH,
@@ -18,6 +22,7 @@ from keboola_mcp_server.tools.data_apps import (
     DataAppSlugTooLongError,
     DataAppSummary,
     ModifiedDataAppOutput,
+    _build_code_data_app_config,
     _build_data_app_config,
     _fetch_data_app,
     _get_authorization,
@@ -25,10 +30,12 @@ from keboola_mcp_server.tools.data_apps import (
     _get_query_function_code,
     _get_secrets,
     _inject_query_to_source_code,
+    _update_existing_code_data_app_config,
     _update_existing_data_app_config,
     _uses_basic_authentication,
     deploy_data_app,
     get_data_apps,
+    modify_code_data_app,
     modify_data_app,
 )
 
@@ -747,3 +754,306 @@ async def test_modify_data_app_folder(
         assert str(app_count) in result.change_summary
     else:
         assert result.change_summary is None
+
+
+# =============================================================================
+# PYTHON-JS (CODE DATA APP) TESTS
+# =============================================================================
+
+
+class TestBuildCodeDataAppConfig:
+    """Tests for _build_code_data_app_config helper."""
+
+    def test_builds_watching_mode_config(self):
+        config = _build_code_data_app_config(
+            name='My Code App',
+            watched_repo_url='https://github.com/user/repo.git',
+            watched_repo_branch='main',
+        )
+
+        params = config['parameters']
+        assert params['autoSuspendAfterSeconds'] == _DEFAULT_CODE_APP_AUTO_SUSPEND_SECONDS
+
+        data_app = params['dataApp']
+        assert data_app['slug'] == 'my-code-app'
+        assert data_app['type'] == 'python-js'
+        assert data_app['git'] == {'repository': _CONTINUOUS_PULL_BASE_REPO}
+        assert data_app['watchedRepo'] == {
+            'pullPeriod': _DEFAULT_PULL_PERIOD_SECONDS,
+            'url': 'https://github.com/user/repo.git',
+            'branch': 'main',
+            'autoReSetup': True,
+        }
+
+        # No script, no packages, no secrets (streamlit-only)
+        assert 'script' not in params
+        assert 'packages' not in params
+
+        # Authorization: no-auth
+        assert config['authorization'] == _get_authorization(False)
+
+        # Runtime backend size
+        assert config['runtime'] == {'backend': {'size': _DEFAULT_CODE_APP_SIZE}}
+
+    def test_uses_default_slug_when_name_produces_empty(self):
+        config = _build_code_data_app_config(
+            name='!!!',
+            watched_repo_url='https://github.com/user/repo.git',
+            watched_repo_branch='dev',
+        )
+        assert config['parameters']['dataApp']['slug'] == 'Data-App'
+
+
+class TestUpdateExistingCodeDataAppConfig:
+    """Tests for _update_existing_code_data_app_config helper."""
+
+    @pytest.fixture
+    def existing_code_config(self) -> dict:
+        return {
+            'parameters': {
+                'autoSuspendAfterSeconds': 900,
+                'dataApp': {
+                    'slug': 'old-slug',
+                    'type': 'python-js',
+                    'git': {'repository': _CONTINUOUS_PULL_BASE_REPO},
+                    'watchedRepo': {
+                        'pullPeriod': 1,
+                        'url': 'https://github.com/user/old-repo.git',
+                        'branch': 'old-branch',
+                        'autoReSetup': True,
+                    },
+                },
+            },
+            'authorization': _get_authorization(False),
+            'runtime': {'backend': {'size': 'tiny'}},
+        }
+
+    def test_update_watched_repo(self, existing_code_config):
+        updated = _update_existing_code_data_app_config(
+            existing_code_config,
+            name='New Name',
+            watched_repo_url='https://github.com/user/new-repo.git',
+            watched_repo_branch='feature',
+            finalize=False,
+        )
+
+        data_app = updated['parameters']['dataApp']
+        assert data_app['slug'] == 'new-name'
+        # git.repository unchanged — still points at base image
+        assert data_app['git'] == {'repository': _CONTINUOUS_PULL_BASE_REPO}
+        assert data_app['watchedRepo'] == {
+            'pullPeriod': _DEFAULT_PULL_PERIOD_SECONDS,
+            'url': 'https://github.com/user/new-repo.git',
+            'branch': 'feature',
+            'autoReSetup': True,
+        }
+        # rest of config untouched
+        assert updated['authorization'] == existing_code_config['authorization']
+        assert updated['runtime'] == existing_code_config['runtime']
+
+    def test_finalize_replaces_git_and_removes_watched_repo(self, existing_code_config):
+        updated = _update_existing_code_data_app_config(
+            existing_code_config,
+            name='',
+            watched_repo_url='https://github.com/user/final-repo.git',
+            watched_repo_branch='main',
+            finalize=True,
+        )
+
+        data_app = updated['parameters']['dataApp']
+        # git.repository now points to user's repo
+        assert data_app['git'] == {'repository': 'https://github.com/user/final-repo.git'}
+        # watchedRepo completely removed
+        assert 'watchedRepo' not in data_app
+        # slug preserved when name is empty
+        assert data_app['slug'] == 'old-slug'
+
+    def test_does_not_mutate_original(self, existing_code_config):
+        import copy
+
+        original = copy.deepcopy(existing_code_config)
+        _update_existing_code_data_app_config(
+            existing_code_config,
+            name='Changed',
+            watched_repo_url='https://github.com/user/x.git',
+            watched_repo_branch='y',
+            finalize=True,
+        )
+        assert existing_code_config == original
+
+
+class TestModifyCodeDataApp:
+    """Tests for the modify_code_data_app MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_create_python_js_data_app(self, mocker, mcp_context_client: Context) -> None:
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+        keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+        keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=1)
+        keboola_client.encryption_client = mocker.AsyncMock()
+        keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda config, **kw: config)
+
+        data_app_response = DataAppResponse(
+            id='app-new',
+            project_id='proj-1',
+            component_id=DATA_APP_COMPONENT_ID,
+            branch_id='default',
+            config_id='cfg-new',
+            config_version='1',
+            type='python-js',
+            state='created',
+            desired_state='created',
+        )
+        deployed_data_app = DataApp(
+            name='Test Code App',
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id='cfg-new',
+            data_app_id='app-new',
+            project_id='proj-1',
+            branch_id='default',
+            config_version='1',
+            type='python-js',
+            state='running',
+            deployment_url='https://test-code-app.app.keboola.com',
+            configuration={},
+        )
+        keboola_client.data_science_client = mocker.AsyncMock()
+        keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=data_app_response)
+        keboola_client.data_science_client.deploy_data_app = mocker.AsyncMock(return_value=data_app_response)
+
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps._fetch_data_app',
+            return_value=deployed_data_app,
+        )
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps.ProjectLinksManager.from_client',
+            return_value=mocker.AsyncMock(
+                get_data_app_links=mocker.MagicMock(return_value=[]),
+            ),
+        )
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps.get_config_folders',
+            mocker.AsyncMock(return_value=(0, [])),
+        )
+
+        result = await modify_code_data_app(
+            ctx=mcp_context_client,
+            name='Test Code App',
+            description='A test python-js app',
+            watched_repo_url='https://github.com/user/repo.git',
+            watched_repo_branch='main',
+        )
+
+        assert isinstance(result, ModifiedDataAppOutput)
+        assert result.response == 'created'
+        assert result.data_app.type == 'python-js'
+        assert result.data_app.deployment_url == 'https://test-code-app.app.keboola.com'
+
+        # Verify create_data_app was called with type='python-js'
+        create_call = keboola_client.data_science_client.create_data_app
+        create_call.assert_awaited_once()
+        call_kwargs = create_call.call_args
+        assert call_kwargs.kwargs.get('type') == 'python-js'
+
+        # Verify deploy was called after creation
+        keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-new', '1')
+
+    @pytest.mark.asyncio
+    async def test_finalize_requires_configuration_id(self, mcp_context_client: Context) -> None:
+        with pytest.raises(ValueError, match='finalize=True.*requires.*configuration_id'):
+            await modify_code_data_app(
+                ctx=mcp_context_client,
+                name='Test',
+                description='desc',
+                watched_repo_url='https://github.com/user/repo.git',
+                watched_repo_branch='main',
+                finalize=True,
+                configuration_id='',
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('finalize', 'app_state', 'expected_response'),
+        [
+            (False, 'stopped', 'updated'),
+            (False, 'running', 'updated'),
+            (True, 'stopped', 'finalized'),
+            (True, 'running', 'finalized'),
+        ],
+    )
+    async def test_update_and_finalize_responses(
+        self,
+        mocker,
+        mcp_context_client: Context,
+        finalize: bool,
+        app_state: str,
+        expected_response: str,
+    ) -> None:
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+        keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+        keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=3)
+        keboola_client.encryption_client = mocker.AsyncMock()
+        keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda config, **kw: config)
+        keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+        keboola_client.data_science_client = mocker.AsyncMock()
+        keboola_client.data_science_client.deploy_data_app = mocker.AsyncMock()
+
+        existing_data_app = DataApp(
+            name='Existing App',
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id='cfg-1',
+            data_app_id='app-1',
+            project_id='proj-1',
+            branch_id='default',
+            config_version='2',
+            type='python-js',
+            auto_suspend_after_seconds=900,
+            configuration={
+                'parameters': {
+                    'autoSuspendAfterSeconds': 900,
+                    'dataApp': {
+                        'slug': 'existing',
+                        'type': 'python-js',
+                        'git': {'repository': _CONTINUOUS_PULL_BASE_REPO},
+                        'watchedRepo': {
+                            'pullPeriod': 1,
+                            'url': 'https://github.com/user/repo.git',
+                            'branch': 'main',
+                            'autoReSetup': True,
+                        },
+                    },
+                },
+                'authorization': _get_authorization(False),
+                'runtime': {'backend': {'size': 'tiny'}},
+            },
+            state=app_state,
+        )
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps._fetch_data_app',
+            return_value=existing_data_app,
+        )
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps.ProjectLinksManager.from_client',
+            return_value=mocker.AsyncMock(
+                get_data_app_links=mocker.MagicMock(return_value=[]),
+            ),
+        )
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps.get_config_folders',
+            mocker.AsyncMock(return_value=(0, [])),
+        )
+
+        result = await modify_code_data_app(
+            ctx=mcp_context_client,
+            name='Existing App',
+            description='desc',
+            watched_repo_url='https://github.com/user/repo.git',
+            watched_repo_branch='main',
+            finalize=finalize,
+            configuration_id='cfg-1',
+        )
+
+        assert isinstance(result, ModifiedDataAppOutput)
+        assert result.response == expected_response
