@@ -66,10 +66,11 @@ main() {
                 if [ "$http_code" = "200" ] && [ -n "$body" ]; then
                     echo "✓ Tool call succeeded"
 
-                    project_id=$(echo "$body" | grep "^data: " | grep -oP "\"project_id\":\s*\d+" | cut -d: -f2)
+                    project_id=$(echo "$body" | grep "^data: " | head -1 | cut -c7- \
+                        | jq -r '.result.content[0].text | fromjson | .project_id' 2>/dev/null || true)
                     token_project_id=$(echo "$STORAGE_API_TOKEN" | cut -d- -f1)
 
-                    if [ "$project_id" = "$token_project_id" ]; then
+                    if [ -n "$project_id" ] && [ "$project_id" = "$token_project_id" ]; then
                         echo "✓ Project ID test passed"
                         exit 0
                     else
