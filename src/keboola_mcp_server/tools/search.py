@@ -24,8 +24,8 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import toon_serializer_compact
-from keboola_mcp_server.tools.storage_helpers import merged_bucket_list, merged_bucket_table_list
 from keboola_mcp_server.tools.components.utils import _normalize_jsonpath, get_nested
+from keboola_mcp_server.tools.storage_helpers import merged_bucket_list, merged_bucket_table_list
 
 LOG = logging.getLogger(__name__)
 

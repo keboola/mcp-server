@@ -22,18 +22,18 @@ from keboola_mcp_server.mcp import (
     toon_serializer_compact,
     unwrap_results,
 )
-from keboola_mcp_server.tools.storage_helpers import (
-    has_storage_branches,
-    merged_bucket_detail,
-    merged_bucket_list,
-    merged_table_detail,
-)
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.storage.usage import (
     ComponentUsageReference,
     find_id_usage,
     get_created_by,
     get_last_updated_by,
+)
+from keboola_mcp_server.tools.storage_helpers import (
+    has_storage_branches,
+    merged_bucket_detail,
+    merged_bucket_list,
+    merged_table_detail,
 )
 from keboola_mcp_server.utils import parse_iso_timestamp
 from keboola_mcp_server.workspace import WorkspaceManager

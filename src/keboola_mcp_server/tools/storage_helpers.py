@@ -16,7 +16,8 @@ import logging
 from typing import Any
 
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
+from keboola_mcp_server.config import MetadataField
 
 LOG = logging.getLogger(__name__)
 
@@ -42,7 +43,8 @@ async def merged_bucket_list(client: KeboolaClient, **kwargs: Any) -> list[JsonD
         )
         return _merge_by_id(prod_data, branch_data)
     else:
-        return await client.storage_client.bucket_list(branch_id='default', **kwargs)
+        raw = await client.storage_client.bucket_list(branch_id='default', **kwargs)
+        return _filter_current_branch(raw, client.branch_id)
 
 
 async def merged_bucket_table_list(client: KeboolaClient, bucket_id: str, **kwargs: Any) -> list[JsonDict]:
@@ -59,7 +61,8 @@ async def merged_bucket_table_list(client: KeboolaClient, bucket_id: str, **kwar
         )
         return _merge_by_id(prod_data, branch_data)
     else:
-        return await client.storage_client.bucket_table_list(bucket_id, branch_id='default', **kwargs)
+        raw = await client.storage_client.bucket_table_list(bucket_id, branch_id='default', **kwargs)
+        return _filter_current_branch(raw, client.branch_id)
 
 
 async def merged_bucket_detail(client: KeboolaClient, bucket_id: str) -> tuple[JsonDict | None, JsonDict | None]:
@@ -79,7 +82,10 @@ async def merged_bucket_detail(client: KeboolaClient, bucket_id: str) -> tuple[J
         prod_raw = await _safe_bucket_detail(client, bucket_id, branch_id='default')
         dev_raw = None
         if client.branch_id:
-            dev_id = bucket_id.replace('c-', f'c-{client.branch_id}-')
+            if f'c-{client.branch_id}-' in bucket_id:
+                dev_id = bucket_id
+            else:
+                dev_id = bucket_id.replace('c-', f'c-{client.branch_id}-')
             dev_raw = await _safe_bucket_detail(client, dev_id, branch_id='default')
         return prod_raw, dev_raw
 
@@ -106,6 +112,20 @@ async def merged_table_detail(client: KeboolaClient, table_id: str) -> tuple[Jso
                 dev_id = table_id.replace('c-', f'c-{client.branch_id}-')
             dev_raw = await _safe_table_detail(client, dev_id, branch_id='default')
         return prod_raw, dev_raw
+
+
+def _filter_current_branch(items: list[JsonDict], branch_id: str | None) -> list[JsonDict]:
+    """Filter out items belonging to other dev branches (legacy mode).
+
+    Keeps items that are either production (no branch metadata) or belong to the current branch.
+    When branch_id is None (production), returns all items without branch metadata.
+    """
+    result = []
+    for item in items:
+        item_branch = get_metadata_property(item.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+        if not item_branch or item_branch == branch_id:
+            result.append(item)
+    return result
 
 
 def _merge_by_id(prod_data: list[JsonDict], branch_data: list[JsonDict]) -> list[JsonDict]:
