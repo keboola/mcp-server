@@ -2795,6 +2795,7 @@ Updates the description of the current Keboola project.
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "description": {
       "description": "The new project description text.",
