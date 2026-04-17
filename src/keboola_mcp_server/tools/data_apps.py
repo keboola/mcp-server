@@ -11,7 +11,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient, get_metadata_property
 from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppResponse
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
@@ -178,6 +178,7 @@ class DataApp(BaseModel):
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters, storage and authorization'
     )
+    folder: str = Field(default='', description='The UI folder this data app is organized into')
     deployment_info: Optional[DeploymentInfo] = Field(
         description='Deployment info of the data app including a url of the app and logs to diagnose in-app errors.',
         default=None,
@@ -203,6 +204,7 @@ class DataApp(BaseModel):
             auto_suspend_after_seconds=api_response.auto_suspend_after_seconds,
             name=api_configuration.name,
             description=api_configuration.description,
+            folder=get_metadata_property(api_configuration.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
             configuration=api_configuration.configuration,
             deployment_info=None,
             links=[],

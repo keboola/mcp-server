@@ -13,6 +13,7 @@ from keboola_mcp_server.clients.client import (
 )
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
+from keboola_mcp_server.tools.components.api_models import ConfigurationAPIResponse
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentCapabilities,
@@ -429,6 +430,30 @@ async def test_get_configs_detail_ignores_other_params(
     keboola_client.storage_client.configuration_detail.assert_called_once_with(
         component_id=mock_component['id'], configuration_id=mock_configuration['id']
     )
+
+
+@pytest.mark.parametrize(
+    ('metadata', 'expected_folder'),
+    [
+        ([{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics', 'provider': 'user'}], 'Analytics'),
+        ([], ''),
+    ],
+    ids=['folder_in_metadata', 'no_metadata'],
+)
+def test_get_configs_includes_folder(metadata: list[dict], expected_folder: str) -> None:
+    """ConfigurationRootSummary.from_api_response extracts folder from metadata."""
+    api_config = ConfigurationAPIResponse.model_validate(
+        {
+            'componentId': 'keboola.ex-aws-s3',
+            'id': '123',
+            'name': 'My Config',
+            'version': 1,
+            'configuration': {},
+            'metadata': metadata,
+        }
+    )
+    summary = ConfigurationRootSummary.from_api_response(api_config)
+    assert summary.folder == expected_folder
 
 
 @pytest.mark.asyncio
