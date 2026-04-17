@@ -340,11 +340,118 @@ def test_recoverable_validation_error_compact_format(
         ({'type': 'object', 'required': 1}, {'type': 'object'}),
         # Case 11: empty schema should return an empty schema
         ({}, {}),
+        # Case 12: empty enum stripping at top level
+        ({'type': 'string', 'enum': []}, {'type': 'string'}),
+        # Case 13: empty enum stripping inside properties
+        (
+            {'type': 'object', 'properties': {'color': {'type': 'string', 'enum': []}}},
+            {'type': 'object', 'properties': {'color': {'type': 'string'}}},
+        ),
+        # Case 14: empty enum stripping inside items
+        (
+            {'type': 'array', 'items': {'type': 'string', 'enum': []}},
+            {'type': 'array', 'items': {'type': 'string'}},
+        ),
+        # Case 15: empty enum stripping inside anyOf
+        (
+            {'anyOf': [{'type': 'string', 'enum': []}, {'type': 'integer'}]},
+            {'anyOf': [{'type': 'string'}, {'type': 'integer'}]},
+        ),
+        # Case 16: empty enum stripping deeply nested (items -> properties)
+        (
+            {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {'status': {'type': 'string', 'enum': []}},
+                },
+            },
+            {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {'status': {'type': 'string'}},
+                },
+            },
+        ),
+        # Case 17: non-empty enum should NOT be stripped
+        (
+            {'type': 'string', 'enum': ['a', 'b']},
+            {'type': 'string', 'enum': ['a', 'b']},
+        ),
+        # Case 18: recursion into additionalProperties with empty enum and required normalization
+        (
+            {
+                'type': 'object',
+                'additionalProperties': {
+                    'type': 'object',
+                    'properties': {'x': {'type': 'string', 'enum': [], 'required': True}},
+                },
+            },
+            {
+                'type': 'object',
+                'additionalProperties': {
+                    'type': 'object',
+                    'required': ['x'],
+                    'properties': {'x': {'type': 'string'}},
+                },
+            },
+        ),
+        # Case 19: recursion into if/then/else and not
+        (
+            {
+                'if': {'properties': {'a': {'type': 'string', 'enum': []}}},
+                'then': {'properties': {'b': {'type': 'string', 'required': True}}},
+                'else': {'properties': {'c': {'type': 'number', 'enum': []}}},
+                'not': {'type': 'object', 'properties': {'d': {'type': 'string', 'enum': []}}},
+            },
+            {
+                'if': {'properties': {'a': {'type': 'string'}}},
+                'then': {'required': ['b'], 'properties': {'b': {'type': 'string'}}},
+                'else': {'properties': {'c': {'type': 'number'}}},
+                'not': {'type': 'object', 'properties': {'d': {'type': 'string'}}},
+            },
+        ),
+        # Case 20: recursion into definitions/$defs
+        (
+            {
+                'definitions': {'color': {'type': 'string', 'enum': []}},
+                '$defs': {'size': {'type': 'integer', 'enum': []}},
+            },
+            {
+                'definitions': {'color': {'type': 'string'}},
+                '$defs': {'size': {'type': 'integer'}},
+            },
+        ),
+        # Case 21: recursion into patternProperties
+        (
+            {
+                'type': 'object',
+                'patternProperties': {'^S_': {'type': 'string', 'enum': []}},
+            },
+            {
+                'type': 'object',
+                'patternProperties': {'^S_': {'type': 'string'}},
+            },
+        ),
     ],
 )
 def test_normalize_schema(input_schema: JsonDict, expected_schema: JsonDict):
     result = validation.KeboolaParametersValidator.sanitize_schema(input_schema)
     assert result == expected_schema
+
+
+def test_validate_with_empty_enum():
+    """Functional test: data validates against a schema containing 'enum': [] after sanitization."""
+    schema = {
+        'type': 'object',
+        'properties': {
+            'color': {'type': 'string', 'enum': []},
+        },
+    }
+    data = {'color': 'red'}
+    # Should NOT raise - empty enum is stripped during sanitization
+    validation.KeboolaParametersValidator.validate(data, schema)
 
 
 @pytest.mark.parametrize(
