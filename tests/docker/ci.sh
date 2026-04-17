@@ -11,6 +11,10 @@ cleanup() {
 trap cleanup EXIT
 
 main() {
+    : "${STORAGE_API_TOKEN:?STORAGE_API_TOKEN is required}"
+    : "${STORAGE_API_URL:?STORAGE_API_URL is required}"
+    : "${WORKSPACE_SCHEMA:?WORKSPACE_SCHEMA is required}"
+
     # Start container
     echo "Starting container..."
     docker run -d \
