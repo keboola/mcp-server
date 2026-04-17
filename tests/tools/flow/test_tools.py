@@ -1188,3 +1188,40 @@ async def test_modify_flow_folder(
         assert str(flow_count) in result.change_summary
     else:
         assert result.change_summary is None
+
+
+@pytest.mark.asyncio
+async def test_modify_flow_folder_only(
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+    mock_legacy_flow_create_update: dict[str, Any],
+) -> None:
+    """Test folder metadata is set when folder is the only change (no config fields updated)."""
+    mock_project_info = mocker.Mock()
+    mock_project_info.conditional_flows = True
+    mock_project_info.project_name = 'Test Project'
+    mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=lambda ctx: mock_project_info)
+
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
+
+    result = await modify_flow(
+        ctx=mcp_context_client,
+        configuration_id=mock_legacy_flow_create_update['id'],
+        flow_type=ORCHESTRATOR_COMPONENT_ID,
+        change_description='assign folder',
+        folder='ETL',
+    )
+
+    assert isinstance(result, FlowToolOutput)
+    assert result.success is True
+    # configuration_update must NOT be called — no config changes
+    keboola_client.storage_client.configuration_update.assert_not_called()
+    # folder metadata MUST be set
+    metadata_calls = [
+        call
+        for call in keboola_client.storage_client.configuration_metadata_update.call_args_list
+        if call.kwargs.get('metadata', {}).get(MetadataField.CONFIGURATION_FOLDER_NAME)
+    ]
+    assert len(metadata_calls) == 1
+    assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: 'ETL'}
