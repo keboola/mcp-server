@@ -987,7 +987,7 @@ async def create_config(
     component_id: Annotated[str, Field(description='The ID of the component for which to create the configuration.')],
     parameters: Annotated[
         dict[str, Any],
-        Field(description='The component configuration parameters, adhering to the root_configuration_schema'),
+        Field(description='The component configuration parameters, adhering to the configuration_schema'),
     ],
     storage: Annotated[
         dict[str, Any],
@@ -1126,7 +1126,7 @@ async def add_config_row(
     ],
     parameters: Annotated[
         dict[str, Any],
-        Field(description='The component row configuration parameters, adhering to the row_configuration_schema'),
+        Field(description='The component row configuration parameters, adhering to the configuration_row_schema'),
     ],
     storage: Annotated[
         dict[str, Any],

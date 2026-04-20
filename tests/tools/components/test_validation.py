@@ -189,12 +189,24 @@ ROOT_SCHEMA_PATH = 'tests/resources/parameters/root_parameters_schema.json'
 ROW_SCHEMA_PATH = 'tests/resources/parameters/row_parameters_schema.json'
 
 
+_MULTI_REQUIRED_SCHEMA: JsonDict = {
+    'type': 'object',
+    'required': ['api_key', 'endpoint', 'timeout'],
+    'properties': {
+        'api_key': {'type': 'string'},
+        'endpoint': {'type': 'string'},
+        'timeout': {'type': 'integer'},
+    },
+}
+
+
 @pytest.mark.parametrize(
-    ('schema_path', 'invalid_data', 'expected_in_str', 'not_expected_in_str'),
+    ('schema_or_path', 'invalid_data', 'expected_in_str', 'not_expected_in_str', 'validation_context'),
     [
         # Case 1: missing required property at root level
         # Only the violated 'required' list should appear, not the full schema object
         # The HINT must list ALL required fields so the agent can fix everything in one retry
+        # validation_context with scope='parameters' is required for the HINT to appear
         (
             ROOT_SCHEMA_PATH,
             {'qdrant_settings': {'url': 'http://localhost:6333', '#api_key': 'key'}},
@@ -207,6 +219,7 @@ ROW_SCHEMA_PATH = 'tests/resources/parameters/row_parameters_schema.json'
                 'get_components',  # hint directs agent to look up the schema
             ],
             ['azure_settings', 'huggingface_settings', 'google_vertex_settings'],  # full schema not dumped
+            validation.ValidationContext(component_id='keboola.ex-test', scope='parameters'),
         ),
         # Case 2: invalid enum value for provider_type
         # Only the 'enum' list should appear at the precise schema path, not the full provider_type subschema
@@ -222,6 +235,7 @@ ROW_SCHEMA_PATH = 'tests/resources/parameters/row_parameters_schema.json'
                 '"gpt-9000"',  # the bad value is shown
             ],
             ['azure_settings', 'huggingface_settings', '"title"'],  # full subschema properties not dumped
+            None,
         ),
         # Case 3: wrong type - batch_size must be integer, not string
         # Only the 'type' constraint should appear at the precise schema path
@@ -237,6 +251,7 @@ ROW_SCHEMA_PATH = 'tests/resources/parameters/row_parameters_schema.json'
                 '"not-a-number"',  # the bad value is shown
             ],
             ['enable_chunking', 'chunking_settings', '"title"'],  # full subschema not dumped
+            None,
         ),
         # Case 4: minimum constraint violation - batch_size below minimum of 1
         # Only the 'minimum' constraint value should appear; HINT must NOT appear for non-required errors
@@ -251,22 +266,53 @@ ROW_SCHEMA_PATH = 'tests/resources/parameters/row_parameters_schema.json'
                 '"minimum": 1',  # the minimum value is shown
             ],
             ['enable_chunking', 'chunking_settings', '"title"', 'HINT:'],  # full subschema not dumped; no hint
+            None,
+        ),
+        # Case 5: multiple required fields missing — HINT must list ALL of them
+        # Verifies the hint format when validator_value contains more than one field name
+        (
+            _MULTI_REQUIRED_SCHEMA,
+            {},  # all three required fields missing
+            [
+                'HINT: Ensure ALL of the following required fields are present in `parameters`',
+                '`api_key`',
+                '`endpoint`',
+                '`timeout`',
+                'get_components',
+            ],
+            [],
+            validation.ValidationContext(component_id='keboola.ex-test', scope='parameters'),
+        ),
+        # Case 6: required violation without parameters scope — HINT must NOT appear
+        # Verifies that hint is suppressed when scope != 'parameters' (e.g. storage or no context)
+        (
+            _MULTI_REQUIRED_SCHEMA,
+            {},
+            ['is a required property'],
+            ['HINT:'],
+            None,  # no validation_context → no scope → hint suppressed
         ),
     ],
 )
 def test_recoverable_validation_error_compact_format(
-    schema_path: str,
+    schema_or_path: str | JsonDict,
     invalid_data: JsonDict,
     expected_in_str: list,
     not_expected_in_str: list,
+    validation_context: validation.ValidationContext | None,
 ):
     """Verify that RecoverableValidationError.__str__ shows only the violated schema constraint,
-    not the entire schema object."""
-    with open(schema_path) as f:
-        schema = json.load(f)
+    not the entire schema object, and that the required-field HINT only appears for parameters scope."""
+    if isinstance(schema_or_path, str):
+        with open(schema_or_path) as f:
+            schema = json.load(f)
+    else:
+        schema = schema_or_path
 
     with pytest.raises(validation.RecoverableValidationError) as exc_info:
-        validation._validate_parameters_configuration_against_schema(invalid_data, schema)
+        validation._validate_parameters_configuration_against_schema(
+            invalid_data, schema, validation_context=validation_context
+        )
 
     err_str = str(exc_info.value)
     for fragment in expected_in_str:

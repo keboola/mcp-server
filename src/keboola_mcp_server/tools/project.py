@@ -96,9 +96,7 @@ async def update_project_description(
     ctx: Context,
     description: Annotated[
         str,
-        Field(
-            description='The new project description text.'
-        ),
+        Field(description='The new project description text.'),
     ],
 ) -> None:
     """Updates the description of the current Keboola project."""

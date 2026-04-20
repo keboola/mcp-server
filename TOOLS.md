@@ -130,7 +130,7 @@ EXAMPLES:
     },
     "parameters": {
       "additionalProperties": true,
-      "description": "The component row configuration parameters, adhering to the row_configuration_schema",
+      "description": "The component row configuration parameters, adhering to the configuration_row_schema",
       "type": "object"
     },
     "storage": {
@@ -220,7 +220,7 @@ EXAMPLES:
     },
     "parameters": {
       "additionalProperties": true,
-      "description": "The component configuration parameters, adhering to the root_configuration_schema",
+      "description": "The component configuration parameters, adhering to the configuration_schema",
       "type": "object"
     },
     "storage": {
