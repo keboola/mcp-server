@@ -66,6 +66,7 @@ class LocalProjectInfo(BaseModel):
     mode: Literal['local'] = Field(default='local', description='Server mode.')
     data_dir: str = Field(description='Absolute path to the local data directory.')
     table_count: int = Field(description='Number of CSV tables in the catalog.')
+    config_count: int = Field(description='Number of saved component configurations.')
     sql_engine: Literal['DuckDB'] = Field(default='DuckDB', description='SQL engine used for local queries.')
     llm_instruction: str = Field(description='Base instructions for working in local mode.')
 
@@ -84,6 +85,10 @@ _LOCAL_PROJECT_INSTRUCTION = (
     'Use get_tables to list available tables, query_data to run DuckDB SQL queries, '
     'and search to find tables or columns by name. '
     'Table names in SQL correspond to CSV file stems (e.g. customers.csv → SELECT * FROM customers). '
+    'Use write_table to add or overwrite a table and delete_table to remove one. '
+    'Use save_config / list_configs / delete_config to manage component configurations locally. '
+    'Use run_saved_config to execute a previously saved configuration via Docker. '
+    'Use migrate_to_keboola to upload local tables and configs to a Keboola platform project. '
     'There is no Keboola platform connection — jobs, flows, and transformations are not available.'
 )
 
@@ -165,9 +170,11 @@ async def search_local(
 async def get_project_info_local(local_backend: LocalBackend) -> LocalProjectInfo:
     """Implementation of get_project_info for local mode."""
     table_count = len(local_backend.list_csv_tables())
+    config_count = len(local_backend.list_configs())
     return LocalProjectInfo(
         data_dir=str(local_backend.data_dir.resolve()),
         table_count=table_count,
+        config_count=config_count,
         llm_instruction=_LOCAL_PROJECT_INSTRUCTION,
     )
 

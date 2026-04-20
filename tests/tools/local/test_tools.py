@@ -8,6 +8,7 @@ import pytest
 from keboola_mcp_server.tools.local.backend import LocalBackend
 from keboola_mcp_server.tools.local.config import ComponentConfig
 from keboola_mcp_server.tools.local.docker import ComponentRunResult, ComponentSetupResult
+from keboola_mcp_server.tools.local.migrate import MigrateResult
 from keboola_mcp_server.tools.local.schema import ComponentSchemaResult
 from keboola_mcp_server.tools.local.tools import (
     LocalBucketsOutput,
@@ -24,6 +25,7 @@ from keboola_mcp_server.tools.local.tools import (
     get_project_info_local,
     get_tables_local,
     list_configs_local,
+    migrate_to_keboola_local,
     query_data_local,
     run_component_local,
     run_saved_config_local,
@@ -255,6 +257,14 @@ async def test_get_project_info_table_count(backend: LocalBackend, tables_dir: P
     _csv(tables_dir, 'b.csv', 'id\n2\n')
     result = await get_project_info_local(backend)
     assert result.table_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_project_info_config_count(backend: LocalBackend) -> None:
+    await save_config_local(backend, 'cfg-1', 'keboola.ex-http', 'C1', {}, component_image='img:1')
+    await save_config_local(backend, 'cfg-2', 'keboola.ex-ftp', 'C2', {}, component_image='img:2')
+    result = await get_project_info_local(backend)
+    assert result.config_count == 2
 
 
 @pytest.mark.asyncio
@@ -519,3 +529,121 @@ async def test_run_saved_config_local_no_runner_raises(backend: LocalBackend) ->
     await save_config_local(backend, 'bad-cfg', 'keboola.ex-http', 'Bad', {}, component_image=None, git_url=None)
     with pytest.raises(ValueError, match='neither component_image nor git_url'):
         await run_saved_config_local(backend, 'bad-cfg')
+
+
+# ---------------------------------------------------------------------------
+# migrate_to_keboola_local
+# ---------------------------------------------------------------------------
+
+
+def _make_resp(status_code: int, json_data: dict | None = None) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = json_data or {}
+    resp.raise_for_status = MagicMock()
+    if status_code >= 400:
+        from httpx import HTTPStatusError
+
+        resp.raise_for_status.side_effect = HTTPStatusError(
+            f'HTTP {status_code}', request=MagicMock(), response=MagicMock()
+        )
+    return resp
+
+
+def _setup_http_mock(mock_cls: MagicMock, responses: list) -> AsyncMock:
+    instance = AsyncMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    instance.post = AsyncMock(side_effect=responses)
+    return instance
+
+
+@pytest.mark.asyncio
+async def test_migrate_to_keboola_local_uploads_table(backend: LocalBackend, tables_dir: Path) -> None:
+    _csv(tables_dir, 'events.csv', 'id,ts\n1,2024-01-01\n')
+
+    responses = [
+        _make_resp(201, {}),  # ensure_bucket
+        _make_resp(201, {'id': 'in.c-local.events'}),  # upload table
+    ]
+    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+        _setup_http_mock(mock_cls, responses)
+        result = await migrate_to_keboola_local(
+            backend,
+            storage_api_url='https://connection.keboola.com',
+            storage_token='test-token',
+        )
+
+    assert isinstance(result, MigrateResult)
+    assert result.tables_ok == 1
+    assert result.tables_error == 0
+
+
+@pytest.mark.asyncio
+async def test_migrate_to_keboola_local_uploads_config(backend: LocalBackend) -> None:
+    await save_config_local(backend, 'ex-001', 'keboola.ex-http', 'My Extractor', {'url': 'https://api.example.com'})
+
+    responses = [
+        _make_resp(201, {}),  # ensure_bucket (no tables)
+        _make_resp(201, {'id': '99'}),  # create config
+    ]
+    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+        _setup_http_mock(mock_cls, responses)
+        result = await migrate_to_keboola_local(
+            backend,
+            storage_api_url='https://connection.keboola.com',
+            storage_token='test-token',
+        )
+
+    assert result.configs_ok == 1
+    assert result.configs[0].config_id == 'ex-001'
+
+
+@pytest.mark.asyncio
+async def test_migrate_to_keboola_local_custom_bucket(backend: LocalBackend, tables_dir: Path) -> None:
+    _csv(tables_dir, 'data.csv', 'x\n1\n')
+
+    captured: list = []
+
+    async def record_post(url, **kwargs):
+        captured.append(url)
+        if 'buckets' in url and 'tables' not in url:
+            return _make_resp(201, {})
+        return _make_resp(201, {'id': 'in.c-custom.data'})
+
+    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+        instance = AsyncMock()
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        instance.post = AsyncMock(side_effect=record_post)
+        result = await migrate_to_keboola_local(
+            backend,
+            storage_api_url='https://connection.keboola.com',
+            storage_token='test-token',
+            bucket_id='in.c-custom',
+        )
+
+    assert result.bucket_id == 'in.c-custom'
+    assert any('in.c-custom/tables' in url for url in captured)
+
+
+@pytest.mark.asyncio
+async def test_migrate_to_keboola_local_filter_tables(backend: LocalBackend, tables_dir: Path) -> None:
+    _csv(tables_dir, 'keep.csv', 'id\n1\n')
+    _csv(tables_dir, 'skip.csv', 'id\n2\n')
+
+    responses = [
+        _make_resp(201, {}),
+        _make_resp(201, {'id': 'in.c-local.keep'}),
+    ]
+    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+        _setup_http_mock(mock_cls, responses)
+        result = await migrate_to_keboola_local(
+            backend,
+            storage_api_url='https://connection.keboola.com',
+            storage_token='test-token',
+            table_names=['keep'],
+        )
+
+    assert len(result.tables) == 1
+    assert result.tables[0].name == 'keep'
