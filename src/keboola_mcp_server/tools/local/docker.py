@@ -117,7 +117,7 @@ def collect_output_tables(out_tables_dir: Path, catalog_dir: Path) -> list[str]:
     return names
 
 
-def get_dep_install_commands(clone_dir: Path) -> list[list[str]]:
+def get_dep_install_commands(clone_dir: Path, network: str = 'bridge') -> list[list[str]]:
     """Return dependency install commands based on files present in the clone dir.
 
     Each command is suitable for `subprocess.run(cmd, cwd=clone_dir)`.
@@ -125,11 +125,13 @@ def get_dep_install_commands(clone_dir: Path) -> list[list[str]]:
     """
     cmds: list[list[str]] = []
     if (clone_dir / 'composer.json').exists() and not (clone_dir / 'vendor').exists():
-        cmds.append(['docker', 'compose', 'run', '--rm', 'dev', 'composer', 'install'])
+        cmds.append(['docker', 'compose', 'run', '--rm', f'--network={network}', 'dev', 'composer', 'install'])
     if (clone_dir / 'package.json').exists() and not (clone_dir / 'node_modules').exists():
-        cmds.append(['docker', 'compose', 'run', '--rm', 'dev', 'npm', 'ci'])
+        cmds.append(['docker', 'compose', 'run', '--rm', f'--network={network}', 'dev', 'npm', 'ci'])
     if (clone_dir / 'requirements.txt').exists() and not (clone_dir / '.venv').exists():
-        cmds.append(['docker', 'compose', 'run', '--rm', 'dev', 'pip', 'install', '-r', 'requirements.txt'])
+        cmds.append(
+            ['docker', 'compose', 'run', '--rm', f'--network={network}', 'dev', 'pip', 'install', '-r', 'requirements.txt']
+        )
     return cmds
 
 
@@ -180,6 +182,7 @@ def setup_component(
     components_dir: Path,
     git_url: str,
     force_rebuild: bool = False,
+    network: str = 'bridge',
 ) -> ComponentSetupResult:
     """Clone a component repo and build its Docker image.
 
@@ -206,7 +209,7 @@ def setup_component(
     if force_rebuild or not build_marker.exists():
         LOG.info(f'Building Docker image for {repo_name}')
         proc = subprocess.run(
-            ['docker', 'compose', 'build'],
+            ['docker', 'compose', 'build', f'--network={network}'],
             cwd=str(clone_dir),
             capture_output=True,
             text=True,
@@ -219,7 +222,7 @@ def setup_component(
             )
         build_marker.touch()
 
-    for cmd in get_dep_install_commands(clone_dir):
+    for cmd in get_dep_install_commands(clone_dir, network=network):
         LOG.info(f'Installing deps: {" ".join(cmd)}')
         proc = subprocess.run(
             cmd,
@@ -245,6 +248,7 @@ def run_image_component(
     input_tables: list[str] | None,
     memory_limit: str,
     timeout: int = SUBPROCESS_TIMEOUT,
+    network: str = 'bridge',
 ) -> ComponentRunResult:
     """Run a Keboola component from a pre-built Docker registry image."""
     run_id = f'run-{int(time.time())}'
@@ -270,7 +274,7 @@ def run_image_component(
             '--rm',
             f'--volume={run_dir}:/data',
             f'--memory={memory_limit}',
-            '--net=bridge',
+            f'--network={network}',
         ]
         + env_flags
         + [component_image]
@@ -304,9 +308,10 @@ def run_source_component(
     input_tables: list[str] | None,
     memory_limit: str,
     timeout: int = SUBPROCESS_TIMEOUT,
+    network: str = 'bridge',
 ) -> ComponentRunResult:
     """Run a Keboola component from source using docker compose."""
-    setup_result = setup_component(data_dir / 'components', git_url)
+    setup_result = setup_component(data_dir / 'components', git_url, network=network)
     clone_dir = Path(setup_result.path)
     catalog_tables = data_dir / 'tables'
 
@@ -314,7 +319,7 @@ def run_source_component(
     prepare_data_dir(component_data_dir, parameters, input_tables, catalog_tables)
 
     compose_cmd = read_compose_command(clone_dir)
-    cmd = ['docker', 'compose', 'run', '--rm', f'--memory={memory_limit}', 'dev']
+    cmd = ['docker', 'compose', 'run', '--rm', f'--memory={memory_limit}', f'--network={network}', 'dev']
     if compose_cmd:
         cmd.extend(compose_cmd)
 

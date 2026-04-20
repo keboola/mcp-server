@@ -69,6 +69,16 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
         metavar='PATH',
         help='Root directory for local data storage (default: ./keboola_data). Only used with --local-backend.',
     )
+    parser.add_argument(
+        '--docker-network',
+        default=os.environ.get('KBC_DOCKER_NETWORK', 'bridge'),
+        metavar='NETWORK',
+        help=(
+            'Docker network for component execution (default: bridge). '
+            'Use "host" if bridge DNS resolution fails. Only used with --local-backend. '
+            '(env: KBC_DOCKER_NETWORK)'
+        ),
+    )
 
     return parser.parse_args(args)
 
@@ -140,7 +150,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
     # Local-backend mode: no token required, data served from CSV files.
     if parsed_args.local_backend:
         try:
-            local_server: FastMCP = create_local_server(parsed_args.data_dir)
+            local_server: FastMCP = create_local_server(parsed_args.data_dir, docker_network=parsed_args.docker_network)
             await local_server.run_async(transport=parsed_args.transport)
         except Exception as e:
             LOG.exception(f'Local server failed: {e}')

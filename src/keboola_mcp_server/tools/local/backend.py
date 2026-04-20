@@ -10,8 +10,9 @@ LOG = logging.getLogger(__name__)
 class LocalBackend:
     """Filesystem-backed data catalog with DuckDB SQL support."""
 
-    def __init__(self, data_dir: str = './keboola_data'):
+    def __init__(self, data_dir: str = './keboola_data', docker_network: str = 'bridge'):
         self.data_dir = Path(data_dir)
+        self.docker_network = docker_network
         self.data_dir.mkdir(parents=True, exist_ok=True)
         # Create sub-dirs eagerly so glob() never raises OSError on Python 3.13+.
         (self.data_dir / 'tables').mkdir(parents=True, exist_ok=True)
@@ -146,6 +147,7 @@ class LocalBackend:
             self.data_dir / 'components',
             git_url,
             force_rebuild=force_rebuild,
+            network=self.docker_network,
         )
 
     def run_docker_component(
@@ -161,7 +163,7 @@ class LocalBackend:
         """
         from keboola_mcp_server.tools.local.docker import run_image_component
 
-        return run_image_component(self.data_dir, component_image, parameters, input_tables, memory_limit)
+        return run_image_component(self.data_dir, component_image, parameters, input_tables, memory_limit, network=self.docker_network)
 
     def run_source_component(
         self,
@@ -176,7 +178,7 @@ class LocalBackend:
         """
         from keboola_mcp_server.tools.local.docker import run_source_component
 
-        return run_source_component(self.data_dir, git_url, parameters, input_tables, memory_limit)
+        return run_source_component(self.data_dir, git_url, parameters, input_tables, memory_limit, network=self.docker_network)
 
     # ------------------------------------------------------------------
     # Platform migration (delegates to migrate.py)
