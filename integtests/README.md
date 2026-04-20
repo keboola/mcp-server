@@ -69,7 +69,8 @@ INTEGTEST_POOL_STORAGE_API_URL=https://connection.europe-west3.gcp.keboola.com
 INTEGTEST_STORAGE_TOKENS=<token-project-A> <token-project-B>
 INTEGTEST_WORKSPACE_SCHEMAS=<WORKSPACE_for_A> <WORKSPACE_for_B>
 
-# Required — old-branches project for branch storage tests
+# Required — branch storage tests (dedicated projects, not in pool)
+INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES=<token-for-project-WITH-storage-branches>
 INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES=<token-for-project-WITHOUT-storage-branches>
 
 # Optional — second project for multi-client tests
@@ -261,25 +262,36 @@ The defaults work for both local and CI use. Override only if you have a reason 
 
 ## 3. Test-Specific Projects
 
-### Old-branches project (branch storage tests)
+### Branch storage tests (two dedicated projects)
 
 The branch storage tests (`test_storage_branches.py`) validate the deference mechanism on
-both `storage-branches` and old-style branch projects. They run automatically on whatever
-pool project is acquired, and additionally on a dedicated old-branches project:
+both `storage-branches` and old-style branch projects. They use **two dedicated projects
+outside the pool** — one with the feature, one without:
 
 ```dotenv
-INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES=<master-token-of-a-project-WITHOUT-storage-branches-feature>
+INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES=<token-for-project-WITH-storage-branches>
+INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES=<token-for-project-WITHOUT-storage-branches>
 ```
 
-The test fails if this variable is not set. The project must **not** have the
-`storage-branches` feature enabled (the pool projects are expected to have it).
+Both variables are required. The tests fail if either is missing or points to a project
+with the wrong feature state.
 
-Production data (`in.c-test_bucket_01` with `test_table_01`) is created idempotently
-in this project and left in place between runs. Only branches are created and cleaned up
-per session, so multiple concurrent sessions can safely share the project.
+These projects are **not** in the pool and have no lock mechanism. Concurrent access is safe
+because production data (`in.c-test_bucket_01` with `test_table_01`) is created
+idempotently and each session only manages its own branches (with unique names).
 
-No workspace schema is needed — these tests only exercise bucket/table listing, not
+No workspace schemas are needed — these tests only exercise bucket/table listing, not
 `query_data`.
+
+**Concurrency rules for branch tests**: These projects have no lock mechanism, so any new
+tests added to `test_storage_branches.py` must be safe for concurrent execution:
+- **Use unique names** for branches (the current tests use a UUID suffix). Never use
+  hardcoded branch names.
+- **Production data must be idempotent** — use `_ensure_bucket` / `_ensure_table` which
+  create only if not already present. Never delete production data in teardown.
+- **Only clean up your own branches** — teardown must only delete the branches created by
+  the current session (tracked via the `BranchTestProject` dataclass).
+- **Do not modify or delete production buckets/tables** — they are shared across sessions.
 
 ### Second project (two-project tests)
 
@@ -339,10 +351,11 @@ The CI pool consists of four Keboola projects, all on
 Having four slots means up to four CI jobs can run concurrently — each acquires a
 different project from the pool and they do not block each other.
 
-### Old-branches project (not in pool)
+### Branch storage test projects (not in pool)
 
 | Project ID | Dashboard URL                                                                 | Backend   | Notes                              |
 |------------|-------------------------------------------------------------------------------|-----------|------------------------------------|
+| 2908       | https://connection.europe-west3.gcp.keboola.com/admin/projects/2908/dashboard | Snowflake | Has `storage-branches` feature     |
 | 2906       | https://connection.europe-west3.gcp.keboola.com/admin/projects/2906/dashboard | Snowflake | No `storage-branches` feature      |
 
 This project is used by `test_storage_branches.py` via `INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES`.
@@ -359,6 +372,7 @@ repository's GitHub Secrets/Variables:
 | `INTEGTEST_STORAGE_TOKENS` | Secret | Space-separated master tokens for all four pool projects (order must match `INTEGTEST_WORKSPACE_SCHEMAS`) |
 | `INTEGTEST_POOL_STORAGE_API_URL` | Variable | `https://connection.europe-west3.gcp.keboola.com` |
 | `INTEGTEST_WORKSPACE_SCHEMAS` | Variable | Space-separated Snowflake workspace schemas, one per project in the same order as the tokens |
+| `INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES` | Secret | Master token for a project **with** the `storage-branches` feature (used by `test_storage_branches.py`) |
 | `INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES` | Secret | Master token for a project **without** the `storage-branches` feature (used by `test_storage_branches.py`) |
 
 ### Concurrency

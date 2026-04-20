@@ -24,6 +24,7 @@ from keboola_mcp_server.workspace import WorkspaceManager
 LOG = logging.getLogger(__name__)
 
 PYTHON_TRANSFORMATION_COMPONENT = 'keboola.python-transformation-v2'
+STORAGE_BRANCHES_TOKEN_ENV_VAR = 'INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES'
 OLD_BRANCHES_TOKEN_ENV_VAR = 'INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES'
 
 
@@ -226,13 +227,12 @@ def _setup_branch_test_project(
     storage_api_url: str,
     token: str,
     label: str,
-    create_prod_data: bool = True,
 ) -> BranchTestProject:
     """
-    Set up branches and branched data in a project.
+    Set up production data, branches, and branched data in a project.
 
-    If create_prod_data is True, creates production bucket in.c-test_bucket_01 with test_table_01.
-    If False, assumes the bucket already exists (e.g. created by the keboola_project fixture).
+    Production data (bucket + table) is created idempotently so multiple
+    concurrent sessions can share the same project.
 
     Branch_A:
       - Updates in.c-test_bucket_01.test_table_01 (creates branched version)
@@ -247,15 +247,14 @@ def _setup_branch_test_project(
     has_sb = 'storage-branches' in features
     LOG.info(f'[{label}] Setting up project {project_name!r} (storage-branches={has_sb})')
 
-    if create_prod_data:
-        _ensure_bucket(storage_api_url, token, 'test_bucket_01')
-        _ensure_table(
-            storage_api_url,
-            token,
-            'in.c-test_bucket_01',
-            'test_table_01',
-            '"id","name","item_count"\n1,"item1",10\n2,"item2",20',
-        )
+    _ensure_bucket(storage_api_url, token, 'test_bucket_01')
+    _ensure_table(
+        storage_api_url,
+        token,
+        'in.c-test_bucket_01',
+        'test_table_01',
+        '"id","name","item_count"\n1,"item1",10\n2,"item2",20',
+    )
 
     # Create branches
     uid = str(uuid.uuid4())[:8]
@@ -321,20 +320,26 @@ def _teardown_branch_test_project(project: BranchTestProject) -> None:
 
 @pytest.fixture(scope='session')
 def branch_test_projects(
-    keboola_project,
     storage_api_url: str,
     env_file_loaded: bool,
 ) -> Generator[list[BranchTestProject], Any, None]:
     """
-    Sets up branch tests on two projects: the pool project and a dedicated old-branches project.
-    Fails if the old-branches token is not configured.
-    """
-    # Read tokens from env vars (set by env_init via keboola_project dependency) to avoid
-    # leaking raw token values in pytest tracebacks on fixture failure.
-    pool_token = os.environ['KBC_STORAGE_TOKEN']
+    Sets up branch tests on two dedicated projects (outside the pool):
+    - One with the storage-branches feature (INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES)
+    - One without it (INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES)
 
-    old_branches_token = os.getenv(OLD_BRANCHES_TOKEN_ENV_VAR, '').strip()
-    if not old_branches_token:
+    Both use idempotent production data setup and unique branch names,
+    so multiple concurrent sessions can safely share the same projects.
+    """
+    sb_token = os.getenv(STORAGE_BRANCHES_TOKEN_ENV_VAR, '').strip()
+    if not sb_token:
+        pytest.fail(
+            f'{STORAGE_BRANCHES_TOKEN_ENV_VAR} must be set to a storage token '
+            f'for a project WITH the storage-branches feature'
+        )
+
+    old_token = os.getenv(OLD_BRANCHES_TOKEN_ENV_VAR, '').strip()
+    if not old_token:
         pytest.fail(
             f'{OLD_BRANCHES_TOKEN_ENV_VAR} must be set to a storage token '
             f'for a project WITHOUT the storage-branches feature'
@@ -342,25 +347,20 @@ def branch_test_projects(
 
     projects: list[BranchTestProject] = []
     try:
-        # Pool project: base data (in.c-test_bucket_01) already created by keboola_project fixture
-        pool_project = _setup_branch_test_project(storage_api_url, pool_token, 'pool', create_prod_data=False)
-        projects.append(pool_project)
+        sb_project = _setup_branch_test_project(storage_api_url, sb_token, 'storage-branches')
+        projects.append(sb_project)
 
-        # Dedicated old-branches project: needs its own production data
-        old_project = _setup_branch_test_project(
-            storage_api_url, old_branches_token, 'old-branches', create_prod_data=True
-        )
+        old_project = _setup_branch_test_project(storage_api_url, old_token, 'old-branches')
         projects.append(old_project)
 
-        # Verify we have both types
-        has_sb = any(p.has_storage_branches for p in projects)
-        has_old = any(not p.has_storage_branches for p in projects)
-        if not has_sb:
-            pytest.fail('No project with storage-branches feature found. Pool project must have it enabled.')
-        if not has_old:
+        # Verify features match expectations
+        if not sb_project.has_storage_branches:
             pytest.fail(
-                f'No project without storage-branches feature found. '
-                f'{OLD_BRANCHES_TOKEN_ENV_VAR} must point to a project without the feature.'
+                f'{STORAGE_BRANCHES_TOKEN_ENV_VAR} must point to a project ' f'WITH the storage-branches feature'
+            )
+        if old_project.has_storage_branches:
+            pytest.fail(
+                f'{OLD_BRANCHES_TOKEN_ENV_VAR} must point to a project ' f'WITHOUT the storage-branches feature'
             )
 
         yield projects
@@ -384,7 +384,6 @@ def branch_project(request, branch_test_projects: list[BranchTestProject]) -> Br
 async def branch_a_context(
     mocker,
     branch_project: BranchTestProject,
-    mcp_config: Config,
 ) -> Context:
     """MCP context bound to Branch A of the current parametrized project."""
     keboola_client = KeboolaClient(
@@ -395,6 +394,10 @@ async def branch_a_context(
     keboola_client = await keboola_client.with_branch_id(branch_project.branch_a_id)
     workspace_manager = await WorkspaceManager.create(keboola_client)
 
+    mcp_config = Config(
+        storage_api_url=branch_project.storage_api_url,
+        storage_token=branch_project.storage_api_token,
+    )
     ctx = mocker.MagicMock(Context)
     ctx.session = mocker.MagicMock(ServerSession)
     ctx.session.state = {
@@ -425,9 +428,8 @@ async def test_list_buckets_includes_branch_a_bucket(
     result = await get_buckets(branch_a_context)
     bucket_ids = {b.id for b in result.buckets}
 
-    assert 'in.c-test_bucket_01' in bucket_ids, f'Production bucket missing. Got: {bucket_ids}'
-    assert 'in.c-test_branch' in bucket_ids, f'Branch A bucket missing. Got: {bucket_ids}'
-    assert 'in.c-test_branch_2' not in bucket_ids, f'Branch B bucket should not be visible. Got: {bucket_ids}'
+    expected_ids = {'in.c-test_bucket_01', 'in.c-test_branch'}
+    assert bucket_ids == expected_ids, f'Expected exactly {expected_ids}, got {bucket_ids}'
 
 
 @pytest.mark.asyncio
