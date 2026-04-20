@@ -118,45 +118,28 @@ def test_collect_output_tables_missing_dir(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ('files', 'existing_dirs', 'network', 'expected_cmds'),
+    ('files', 'existing_dirs', 'expected_cmds'),
     [
-        (
-            ['composer.json'],
-            [],
-            'bridge',
-            [['docker', 'compose', 'run', '--rm', '--network=bridge', 'dev', 'composer', 'install']],
-        ),
-        (['composer.json'], ['vendor'], 'bridge', []),
-        (
-            ['package.json'],
-            [],
-            'bridge',
-            [['docker', 'compose', 'run', '--rm', '--network=bridge', 'dev', 'npm', 'ci']],
-        ),
-        (['package.json'], ['node_modules'], 'bridge', []),
+        (['composer.json'], [], [['docker', 'compose', 'run', '--rm', 'dev', 'composer', 'install']]),
+        (['composer.json'], ['vendor'], []),
+        (['package.json'], [], [['docker', 'compose', 'run', '--rm', 'dev', 'npm', 'ci']]),
+        (['package.json'], ['node_modules'], []),
         (
             ['requirements.txt'],
             [],
-            'bridge',
-            [['docker', 'compose', 'run', '--rm', '--network=bridge', 'dev', 'pip', 'install', '-r', 'requirements.txt']],
+            [['docker', 'compose', 'run', '--rm', 'dev', 'pip', 'install', '-r', 'requirements.txt']],
         ),
-        (['requirements.txt'], ['.venv'], 'bridge', []),
-        ([], [], 'bridge', []),
-        (
-            ['composer.json'],
-            [],
-            'host',
-            [['docker', 'compose', 'run', '--rm', '--network=host', 'dev', 'composer', 'install']],
-        ),
+        (['requirements.txt'], ['.venv'], []),
+        ([], [], []),
     ],
 )
-def test_get_dep_install_commands(tmp_path, files, existing_dirs, network, expected_cmds):
+def test_get_dep_install_commands(tmp_path, files, existing_dirs, expected_cmds):
     for f in files:
         (tmp_path / f).write_text('')
     for d in existing_dirs:
         (tmp_path / d).mkdir()
 
-    assert get_dep_install_commands(tmp_path, network=network) == expected_cmds
+    assert get_dep_install_commands(tmp_path) == expected_cmds
 
 
 @pytest.mark.parametrize(

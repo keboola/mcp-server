@@ -117,21 +117,20 @@ def collect_output_tables(out_tables_dir: Path, catalog_dir: Path) -> list[str]:
     return names
 
 
-def get_dep_install_commands(clone_dir: Path, network: str = 'bridge') -> list[list[str]]:
+def get_dep_install_commands(clone_dir: Path) -> list[list[str]]:
     """Return dependency install commands based on files present in the clone dir.
 
     Each command is suitable for `subprocess.run(cmd, cwd=clone_dir)`.
     Commands are skipped if the dependency directory already exists (idempotent).
+    Network is controlled via docker-compose.override.yml by the caller when needed.
     """
     cmds: list[list[str]] = []
     if (clone_dir / 'composer.json').exists() and not (clone_dir / 'vendor').exists():
-        cmds.append(['docker', 'compose', 'run', '--rm', f'--network={network}', 'dev', 'composer', 'install'])
+        cmds.append(['docker', 'compose', 'run', '--rm', 'dev', 'composer', 'install'])
     if (clone_dir / 'package.json').exists() and not (clone_dir / 'node_modules').exists():
-        cmds.append(['docker', 'compose', 'run', '--rm', f'--network={network}', 'dev', 'npm', 'ci'])
+        cmds.append(['docker', 'compose', 'run', '--rm', 'dev', 'npm', 'ci'])
     if (clone_dir / 'requirements.txt').exists() and not (clone_dir / '.venv').exists():
-        cmds.append(
-            ['docker', 'compose', 'run', '--rm', f'--network={network}', 'dev', 'pip', 'install', '-r', 'requirements.txt']
-        )
+        cmds.append(['docker', 'compose', 'run', '--rm', 'dev', 'pip', 'install', '-r', 'requirements.txt'])
     return cmds
 
 
@@ -206,17 +205,17 @@ def setup_component(
         if proc.returncode != 0:
             raise RuntimeError(f'git clone failed (exit {proc.returncode}):\n{proc.stderr}')
 
-    if force_rebuild or not build_marker.exists():
-        LOG.info(f'Building Docker image for {repo_name}')
-        # docker compose build doesn't accept --network as a CLI flag; inject via
-        # an auto-discovered override file instead (only needed for non-bridge networks).
-        override_path = clone_dir / 'docker-compose.override.yml'
-        had_override = override_path.exists()
-        if not had_override and network != 'bridge':
-            override_path.write_text(
-                f'services:\n  dev:\n    build:\n      network: {network}\n'
-            )
-        try:
+    # docker compose build/run don't accept --network as a CLI flag; inject via
+    # an auto-discovered override file that covers both build and dep-install runs.
+    override_path = clone_dir / 'docker-compose.override.yml'
+    had_override = override_path.exists()
+    if not had_override and network != 'bridge':
+        override_path.write_text(
+            f'services:\n  dev:\n    build:\n      network: {network}\n    network_mode: {network}\n'
+        )
+    try:
+        if force_rebuild or not build_marker.exists():
+            LOG.info(f'Building Docker image for {repo_name}')
             proc = subprocess.run(
                 ['docker', 'compose', 'build'],
                 cwd=str(clone_dir),
@@ -224,30 +223,30 @@ def setup_component(
                 text=True,
                 timeout=SUBPROCESS_TIMEOUT,
             )
-        finally:
-            if not had_override:
-                override_path.unlink(missing_ok=True)
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f'docker compose build failed (exit {proc.returncode}):\n'
-                f'stdout: {proc.stdout[-2000:]}\nstderr: {proc.stderr[-2000:]}'
-            )
-        build_marker.touch()
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f'docker compose build failed (exit {proc.returncode}):\n'
+                    f'stdout: {proc.stdout[-2000:]}\nstderr: {proc.stderr[-2000:]}'
+                )
+            build_marker.touch()
 
-    for cmd in get_dep_install_commands(clone_dir, network=network):
-        LOG.info(f'Installing deps: {" ".join(cmd)}')
-        proc = subprocess.run(
-            cmd,
-            cwd=str(clone_dir),
-            capture_output=True,
-            text=True,
-            timeout=SUBPROCESS_TIMEOUT,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f'Dependency install failed (exit {proc.returncode}):\n'
-                f'stdout: {proc.stdout[-2000:]}\nstderr: {proc.stderr[-2000:]}'
+        for cmd in get_dep_install_commands(clone_dir):
+            LOG.info(f'Installing deps: {" ".join(cmd)}')
+            proc = subprocess.run(
+                cmd,
+                cwd=str(clone_dir),
+                capture_output=True,
+                text=True,
+                timeout=SUBPROCESS_TIMEOUT,
             )
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f'Dependency install failed (exit {proc.returncode}):\n'
+                    f'stdout: {proc.stdout[-2000:]}\nstderr: {proc.stderr[-2000:]}'
+                )
+    finally:
+        if not had_override:
+            override_path.unlink(missing_ok=True)
 
     component_schema = scan_component_schema(clone_dir)
     return ComponentSetupResult(path=str(clone_dir), component_schema=component_schema)
@@ -331,13 +330,19 @@ def run_source_component(
     prepare_data_dir(component_data_dir, parameters, input_tables, catalog_tables)
 
     compose_cmd = read_compose_command(clone_dir)
-    cmd = ['docker', 'compose', 'run', '--rm', f'--memory={memory_limit}', f'--network={network}', 'dev']
+    cmd = ['docker', 'compose', 'run', '--rm', f'--memory={memory_limit}', 'dev']
     if compose_cmd:
         cmd.extend(compose_cmd)
 
+    override_path = clone_dir / 'docker-compose.override.yml'
+    had_override = override_path.exists()
+    if not had_override and network != 'bridge':
+        override_path.write_text(f'services:\n  dev:\n    network_mode: {network}\n')
     try:
         proc = subprocess.run(cmd, cwd=str(clone_dir), capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
+        if not had_override:
+            override_path.unlink(missing_ok=True)
         return ComponentRunResult(
             status='application_error',
             exit_code=-1,
@@ -345,6 +350,9 @@ def run_source_component(
             stderr=f'Timed out after {timeout}s',
             message=f'Component timed out after {timeout} seconds',
         )
+
+    if not had_override:
+        override_path.unlink(missing_ok=True)
 
     output_tables = collect_output_tables(component_data_dir / 'out' / 'tables', catalog_tables)
     return ComponentRunResult(
