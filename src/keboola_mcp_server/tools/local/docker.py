@@ -330,14 +330,20 @@ def run_source_component(
     prepare_data_dir(component_data_dir, parameters, input_tables, catalog_tables)
 
     compose_cmd = read_compose_command(clone_dir)
-    cmd = ['docker', 'compose', 'run', '--rm', f'--memory={memory_limit}', 'dev']
+    cmd = ['docker', 'compose', 'run', '--rm', 'dev']
     if compose_cmd:
         cmd.extend(compose_cmd)
 
+    # docker compose run doesn't accept --memory or --network as CLI flags;
+    # inject both via the auto-discovered override file.
     override_path = clone_dir / 'docker-compose.override.yml'
     had_override = override_path.exists()
-    if not had_override and network != 'bridge':
-        override_path.write_text(f'services:\n  dev:\n    network_mode: {network}\n')
+    if not had_override:
+        override_lines = [f'services:\n  dev:']
+        if network != 'bridge':
+            override_lines.append(f'    network_mode: {network}')
+        override_lines.append(f'    mem_limit: {memory_limit}')
+        override_path.write_text('\n'.join(override_lines) + '\n')
     try:
         proc = subprocess.run(cmd, cwd=str(clone_dir), capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
