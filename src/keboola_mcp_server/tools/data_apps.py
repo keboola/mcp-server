@@ -461,7 +461,7 @@ async def modify_data_app_internal(
     authentication_type: AuthenticationType,
     configuration_id: str,
     change_description: str = '',
-    folder: str = '',
+    folder: Optional[str] = None,
 ) -> tuple[DataApp, JsonDict, dict | None]:
     secrets = _get_secrets(
         workspace_id=str(await workspace_manager.get_workspace_id()),
@@ -486,8 +486,8 @@ async def modify_data_app_internal(
     )
 
     folder_preview: dict | None = None
-    normalized_folder = folder.strip()
-    if normalized_folder:
+    if folder is not None:
+        normalized_folder = folder.strip()
         try:
             current_metadata = await client.storage_client.configuration_metadata_get(
                 component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
