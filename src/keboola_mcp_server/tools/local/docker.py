@@ -208,13 +208,25 @@ def setup_component(
 
     if force_rebuild or not build_marker.exists():
         LOG.info(f'Building Docker image for {repo_name}')
-        proc = subprocess.run(
-            ['docker', 'compose', 'build', f'--network={network}'],
-            cwd=str(clone_dir),
-            capture_output=True,
-            text=True,
-            timeout=SUBPROCESS_TIMEOUT,
-        )
+        # docker compose build doesn't accept --network as a CLI flag; inject via
+        # an auto-discovered override file instead (only needed for non-bridge networks).
+        override_path = clone_dir / 'docker-compose.override.yml'
+        had_override = override_path.exists()
+        if not had_override and network != 'bridge':
+            override_path.write_text(
+                f'services:\n  dev:\n    build:\n      network: {network}\n'
+            )
+        try:
+            proc = subprocess.run(
+                ['docker', 'compose', 'build'],
+                cwd=str(clone_dir),
+                capture_output=True,
+                text=True,
+                timeout=SUBPROCESS_TIMEOUT,
+            )
+        finally:
+            if not had_override:
+                override_path.unlink(missing_ok=True)
         if proc.returncode != 0:
             raise RuntimeError(
                 f'docker compose build failed (exit {proc.returncode}):\n'

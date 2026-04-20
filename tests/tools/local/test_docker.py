@@ -238,7 +238,41 @@ def test_setup_component_skip_clone_if_exists(tmp_path):
     # only build called (no clone)
     assert mock_run.call_count == 1
     first_cmd = mock_run.call_args_list[0][0][0]
-    assert 'build' in first_cmd
+    assert first_cmd == ['docker', 'compose', 'build']
+
+
+def test_setup_component_host_network_override_file(tmp_path):
+    components_dir = tmp_path / 'components'
+    clone_dir = components_dir / 'ex-http'
+    clone_dir.mkdir(parents=True)
+    git_url = 'https://github.com/keboola/ex-http.git'
+    override_path = clone_dir / 'docker-compose.override.yml'
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = _make_proc()
+        setup_component(components_dir, git_url, network='host')
+
+    # build was called without --network flag
+    assert mock_run.call_args_list[0][0][0] == ['docker', 'compose', 'build']
+    # override file was cleaned up after build
+    assert not override_path.exists()
+
+
+def test_setup_component_host_network_respects_existing_override(tmp_path):
+    components_dir = tmp_path / 'components'
+    clone_dir = components_dir / 'ex-http'
+    clone_dir.mkdir(parents=True)
+    override_path = clone_dir / 'docker-compose.override.yml'
+    override_path.write_text('# existing override\n')
+    git_url = 'https://github.com/keboola/ex-http.git'
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = _make_proc()
+        setup_component(components_dir, git_url, network='host')
+
+    # existing override file must not be deleted
+    assert override_path.exists()
+    assert override_path.read_text() == '# existing override\n'
 
 
 def test_setup_component_skip_build_if_sentinel(tmp_path):
