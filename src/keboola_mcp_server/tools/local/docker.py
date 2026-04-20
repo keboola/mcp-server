@@ -326,8 +326,11 @@ def run_source_component(
     clone_dir = Path(setup_result.path)
     catalog_tables = data_dir / 'tables'
 
-    component_data_dir = clone_dir / 'data'
-    prepare_data_dir(component_data_dir, parameters, input_tables, catalog_tables)
+    # Use a fresh user-owned temp directory for /data instead of clone_dir/data.
+    # Docker creates files as root inside bind-mounted directories; using a temp dir
+    # we create ourselves ensures we always have write access on the host side.
+    run_dir = data_dir / 'runs' / f'src-{int(time.time())}'
+    prepare_data_dir(run_dir, parameters, input_tables, catalog_tables)
 
     compose_cmd = read_compose_command(clone_dir)
     cmd = ['docker', 'compose', 'run', '--rm', 'dev']
@@ -335,14 +338,17 @@ def run_source_component(
         cmd.extend(compose_cmd)
 
     # docker compose run doesn't accept --memory or --network as CLI flags;
-    # inject both via the auto-discovered override file.
+    # inject both (plus the data volume override) via the auto-discovered override file.
     override_path = clone_dir / 'docker-compose.override.yml'
     had_override = override_path.exists()
     if not had_override:
-        override_lines = [f'services:\n  dev:']
+        override_lines = ['services:', '  dev:']
+        override_lines.append(f'    mem_limit: {memory_limit}')
         if network != 'bridge':
             override_lines.append(f'    network_mode: {network}')
-        override_lines.append(f'    mem_limit: {memory_limit}')
+        # Override the ./data:/data volume so Docker uses our user-owned run_dir.
+        override_lines.append('    volumes:')
+        override_lines.append(f'      - {run_dir.resolve()}:/data')
         override_path.write_text('\n'.join(override_lines) + '\n')
     try:
         proc = subprocess.run(cmd, cwd=str(clone_dir), capture_output=True, text=True, timeout=timeout)
@@ -360,7 +366,7 @@ def run_source_component(
     if not had_override:
         override_path.unlink(missing_ok=True)
 
-    output_tables = collect_output_tables(component_data_dir / 'out' / 'tables', catalog_tables)
+    output_tables = collect_output_tables(run_dir / 'out' / 'tables', catalog_tables)
     return ComponentRunResult(
         status=exit_code_to_status(proc.returncode),
         exit_code=proc.returncode,
