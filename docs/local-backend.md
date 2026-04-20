@@ -383,11 +383,13 @@ The `setup_component` tool surfaces the schema content so the agent can use it w
 
 ### Tier 2 — Keboola Developer Portal API (public, no auth)
 
+The public Developer Portal REST API lives at `apps-api.keboola.com`. Note: `components.keboola.com` is a React SPA — not an API.
+
 ```
-GET https://components.keboola.com/components/{component_id}
+GET https://apps-api.keboola.com/apps/{component_id}
 ```
 
-Returns the component manifest including `configSchema` and `configRowSchema`. A new local-only tool `get_component_schema` wraps this endpoint:
+Returns the component manifest including `configurationSchema`, `configurationRowSchema`, `imageTag`, `requiredMemory`, and more. A new local-only tool `get_component_schema` wraps this endpoint:
 
 ```python
 @mcp.tool()
@@ -395,7 +397,13 @@ def get_component_schema(component_id: str) -> str:
     """Fetch the config schema for a Keboola component from the public Developer Portal."""
 ```
 
-`find_component_id` is also reimplemented in local mode to query this public API instead of the AI Service, so the agent can still map human-readable names to component IDs and Docker image paths.
+`find_component_id` is also reimplemented in local mode to query this public API. The API does not support server-side text search; the implementation fetches all published apps (`GET /apps?limit=500` — ~366 apps) and filters client-side by matching the query against component ID, name, and description:
+
+```python
+@mcp.tool()
+def find_component_id(name: str, limit: int = 10) -> list[ComponentSearchResult]:
+    """Search for components by name/id/description in the public Developer Portal."""
+```
 
 ### Tier 3 — Fallback
 
@@ -683,6 +691,58 @@ Not done:
 
 ---
 
+## Running the Server
+
+```bash
+# Activate venv and run in stdio mode (Claude Desktop / MCP Inspector)
+source 3.12.venv/bin/activate
+keboola-mcp-server --local-backend --data-dir ./keboola_data --transport stdio
+
+# Or with explicit log level
+keboola-mcp-server --local-backend --data-dir ./keboola_data --transport stdio --log-level DEBUG
+```
+
+**Claude Desktop config** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "keboola-local": {
+      "command": "/path/to/3.12.venv/bin/keboola-mcp-server",
+      "args": ["--local-backend", "--data-dir", "/path/to/keboola_data"]
+    }
+  }
+}
+```
+
+## Automated Smoke Tests
+
+`scripts/test-local-backend.sh` exercises the local-backend Python API directly (no MCP protocol) and optionally the Developer Portal network API and Docker:
+
+```bash
+# Run all tests (requires Docker daemon + internet)
+./scripts/test-local-backend.sh
+
+# Skip Docker tests (fast — 13 tests, ~2 s)
+./scripts/test-local-backend.sh --no-docker
+
+# Skip Developer Portal network tests
+./scripts/test-local-backend.sh --no-portal
+
+# Skip both
+./scripts/test-local-backend.sh --no-docker --no-portal
+```
+
+The script auto-detects the virtual environment (checks `$VIRTUAL_ENV`, then `3.12.venv/`, then `.venv/`). Test sections:
+- Prerequisites (duckdb, httpx, pyyaml importable)
+- `LocalBackend` init and directory structure
+- CSV catalog: write / list / overwrite / delete / name validation
+- DuckDB SQL: SELECT, empty result, DDL, multi-table JOIN
+- Config persistence: save / load / list / delete
+- `get_project_info`: table_count, config_count
+- Tool registration: all 16 tools, no extras
+- Developer Portal API: `get_component_schema`, `find_component_id` (live network)
+- Docker registry image and output collection (requires Docker)
+
 ## End-to-End Smoke Tests
 
 Unit tests mock Docker/HTTP. These manual tests verify real execution:
@@ -807,3 +867,4 @@ Migration is atomic — there is no per-step confirmation. If a step fails, its 
 | No progress reporting for Docker runs | Long-running components block silently | stdout/stderr available in `ComponentRunResult` after completion |
 | No stub messages for platform-only tools | LLM never sees helpful "use migrate_to_keboola instead" hint | Could add a local-mode prompt instruction |
 | No CI matrix for local mode | Docker-dependent tests not run in CI | Docker daemon required — consider separate workflow |
+| `find_component_id` fetches entire catalog | ~366 apps on every search call (~300 KB payload) | One HTTP request, no pagination needed; acceptable for interactive use |
