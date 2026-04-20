@@ -630,7 +630,15 @@ class TestFetchDataAppValidation:
 
 
 @pytest.mark.parametrize(
-    ('configuration_id', 'folder', 'app_count', 'app_folders', 'expect_folder_metadata', 'expect_folder_delete', 'expect_hint'),
+    (
+        'configuration_id',
+        'folder',
+        'app_count',
+        'app_folders',
+        'expect_folder_metadata',
+        'expect_folder_delete',
+        'expect_hint',
+    ),
     [
         # Create path (no configuration_id)
         ('', 'Analytics', 0, [], True, False, False),

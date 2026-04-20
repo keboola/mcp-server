@@ -1413,7 +1413,18 @@ async def update_config(
         configuration_version=updated_raw_configuration['version'],
     )
 
-    if folder is not None:
+    folder_hint = None
+    if folder is None:
+        try:
+            total, existing_folders = await get_config_folders(client, component_id)
+            folder_hint = build_folder_hint(total, existing_folders, 'configurations', 'update_config')
+        except Exception:
+            LOG.warning(
+                'Unable to fetch configuration folders for component "%s" when updating configuration "%s".',
+                component_id,
+                configuration_id,
+            )
+    else:
         folder_stripped = folder.strip()
         if folder_stripped:
             try:
@@ -1441,6 +1452,7 @@ async def update_config(
         success=True,
         links=links,
         version=updated_raw_configuration['version'],
+        change_summary=folder_hint,
     )
 
 

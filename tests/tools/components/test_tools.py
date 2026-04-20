@@ -1287,14 +1287,23 @@ async def test_update_config(
 
 
 @pytest.mark.parametrize(
-    ('folder', 'expect_folder_metadata', 'expect_folder_delete'),
+    ('folder', 'cfg_count', 'cfg_folders', 'expect_folder_metadata', 'expect_folder_delete', 'expect_hint'),
     [
-        ('Analytics', True, False),
-        ('  Analytics  ', True, False),
-        (None, False, False),
-        ('', False, True),
+        ('Analytics', 0, [], True, False, False),
+        ('  Analytics  ', 0, [], True, False, False),
+        (None, 5, [], False, False, False),
+        (None, 25, ['Analytics'], False, False, True),
+        (None, 25, [], False, False, True),
+        ('', 5, [], False, True, False),
     ],
-    ids=['folder_provided', 'folder_whitespace_stripped', 'no_folder', 'folder_empty_deletes'],
+    ids=[
+        'folder_provided',
+        'folder_whitespace_stripped',
+        'no_folder_few',
+        'no_folder_many_with_folders',
+        'no_folder_many_no_folders',
+        'folder_empty_deletes',
+    ],
 )
 @pytest.mark.asyncio
 async def test_update_config_folder(
@@ -1302,10 +1311,13 @@ async def test_update_config_folder(
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
     folder: Any,
+    cfg_count: int,
+    cfg_folders: list[str],
     expect_folder_metadata: bool,
     expect_folder_delete: bool,
+    expect_hint: bool,
 ) -> None:
-    """Test folder metadata is set/cleared when folder param is provided to update_config."""
+    """Test folder metadata is set/cleared and folder hint is returned by update_config."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
     component_id = 'keboola.python-transformation-v2'
@@ -1328,6 +1340,10 @@ async def test_update_config_folder(
         return_value=[{'id': 'meta-1', 'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'OldFolder'}]
     )
     keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
+    mocker.patch(
+        'keboola_mcp_server.tools.components.tools.get_config_folders',
+        mocker.AsyncMock(return_value=(cfg_count, cfg_folders)),
+    )
 
     result = await update_config(
         ctx=context,
@@ -1354,6 +1370,11 @@ async def test_update_config_folder(
         )
     else:
         keboola_client.storage_client.configuration_metadata_delete.assert_not_called()
+    if expect_hint:
+        assert result.change_summary is not None
+        assert str(cfg_count) in result.change_summary
+    else:
+        assert result.change_summary is None
 
 
 @pytest.mark.parametrize(
