@@ -86,11 +86,12 @@ column definitions, lineage references (created/updated by) and links.
 Creates a component configuration row in the specified configuration_id, using the specified name,
 component ID, configuration JSON, and description.
 
-CONSIDERATIONS:
-- The configuration JSON object must follow the row_configuration_schema of the specified component.
-- Make sure the configuration parameters always adhere to the row_configuration_schema,
-  which is available via the get_components tool.
-- The configuration JSON object should adhere to the component's configuration examples if found.
+BEFORE CALLING - REQUIRED STEPS:
+1. Call `get_components([component_id])` to retrieve the component's `configuration_row_schema`.
+2. Read `configuration_row_schema.required` to find ALL mandatory top-level fields.
+3. Call `get_config_examples(component_id)` to see real-world row parameter examples.
+4. Populate `parameters` with every required field before calling this tool.
+Skipping these steps will cause a schema validation error.
 
 USAGE:
 - Use when you want to create a new row configuration for a specific component configuration.
@@ -179,11 +180,12 @@ EXAMPLES:
 
 Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 
-CONSIDERATIONS:
-- The configuration JSON object must follow the root_configuration_schema of the specified component.
-- Make sure the configuration parameters always adhere to the root_configuration_schema,
-  which is available via the get_components tool.
-- The configuration JSON object should adhere to the component's configuration examples if found.
+BEFORE CALLING - REQUIRED STEPS:
+1. Call `get_components([component_id])` to retrieve the component's `configuration_schema`.
+2. Read `configuration_schema.required` to find ALL mandatory top-level fields.
+3. Call `get_config_examples(component_id)` to see real-world parameter examples.
+4. Populate `parameters` with every required field before calling this tool.
+Skipping these steps will cause a schema validation error.
 
 USAGE:
 - Use when you want to create a new root configuration for a specific component.
@@ -423,6 +425,7 @@ EXAMPLES:
 Retrieves sample configuration examples for a specific component.
 
 USAGE:
+- Use before calling `create_config` or `add_config_row` to understand the expected parameters structure.
 - Use when you want to see example configurations for a specific component.
 
 EXAMPLES:

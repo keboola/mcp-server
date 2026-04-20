@@ -194,6 +194,7 @@ ROW_SCHEMA_PATH = 'tests/resources/parameters/row_parameters_schema.json'
     [
         # Case 1: missing required property at root level
         # Only the violated 'required' list should appear, not the full schema object
+        # The HINT must list ALL required fields so the agent can fix everything in one retry
         (
             ROOT_SCHEMA_PATH,
             {'qdrant_settings': {'url': 'http://localhost:6333', '#api_key': 'key'}},
@@ -201,6 +202,9 @@ ROW_SCHEMA_PATH = 'tests/resources/parameters/row_parameters_schema.json'
                 "'embedding_settings' is a required property",
                 "Failed validating 'required' in schema",
                 '"embedding_settings"',  # the required list value is shown
+                'HINT: Ensure ALL of the following required fields are present in `parameters`',
+                '`embedding_settings`',  # required field listed in the hint
+                'get_components',  # hint directs agent to look up the schema
             ],
             ['azure_settings', 'huggingface_settings', 'google_vertex_settings'],  # full schema not dumped
         ),
@@ -235,7 +239,7 @@ ROW_SCHEMA_PATH = 'tests/resources/parameters/row_parameters_schema.json'
             ['enable_chunking', 'chunking_settings', '"title"'],  # full subschema not dumped
         ),
         # Case 4: minimum constraint violation - batch_size below minimum of 1
-        # Only the 'minimum' constraint value should appear
+        # Only the 'minimum' constraint value should appear; HINT must NOT appear for non-required errors
         (
             ROW_SCHEMA_PATH,
             {'text_column': 'notes', 'advanced_options': {'batch_size': 0}},
@@ -246,7 +250,7 @@ ROW_SCHEMA_PATH = 'tests/resources/parameters/row_parameters_schema.json'
                 "On instance['advanced_options']['batch_size']",
                 '"minimum": 1',  # the minimum value is shown
             ],
-            ['enable_chunking', 'chunking_settings', '"title"'],  # full subschema not dumped
+            ['enable_chunking', 'chunking_settings', '"title"', 'HINT:'],  # full subschema not dumped; no hint
         ),
     ],
 )
