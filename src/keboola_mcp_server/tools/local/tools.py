@@ -299,16 +299,23 @@ async def run_saved_config_local(
 
 async def migrate_to_keboola_local(
     local_backend: LocalBackend,
-    storage_api_url: str,
-    storage_token: str,
+    storage_api_url: str | None,
+    storage_token: str | None,
     table_names: list[str] | None = None,
     config_ids: list[str] | None = None,
     bucket_id: str = 'in.c-local',
 ) -> MigrateResult:
     """Implementation of migrate_to_keboola for local mode."""
+    resolved_url = storage_api_url or local_backend.storage_api_url
+    resolved_token = storage_token or local_backend.storage_token
+    if not resolved_url or not resolved_token:
+        raise ValueError(
+            'Storage API URL and token are required. '
+            'Pass them as arguments or start the server with --api-url and --storage-token.'
+        )
     return await local_backend.migrate_to_keboola(
-        storage_api_url=storage_api_url,
-        storage_token=storage_token,
+        storage_api_url=resolved_url,
+        storage_token=resolved_token,
         table_names=table_names,
         config_ids=config_ids,
         bucket_id=bucket_id,
@@ -712,19 +719,27 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
     @tool_errors()
     async def migrate_to_keboola(
         storage_api_url: Annotated[
-            str,
+            str | None,
             Field(
+                default=None,
                 description=(
                     'Keboola Storage API URL for your stack '
                     '(e.g. "https://connection.keboola.com" or '
-                    '"https://connection.europe-west3.gcp.keboola.com").'
-                )
+                    '"https://connection.europe-west3.gcp.keboola.com"). '
+                    'Omit if the server was started with --api-url.'
+                ),
             ),
-        ],
+        ] = None,
         storage_token: Annotated[
-            str,
-            Field(description='Keboola Storage API token with write access.'),
-        ],
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    'Keboola Storage API token with write access. '
+                    'Omit if the server was started with --storage-token.'
+                ),
+            ),
+        ] = None,
         table_names: Annotated[
             list[str] | None,
             Field(default=None, description='Table names to migrate. Omit to migrate all tables.'),
@@ -745,7 +760,7 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
         and creates each component configuration via the Keboola Storage API.
         Tables already present in Keboola are reported as "already_exists" (not overwritten).
 
-        Requires a valid Storage API token with write access to the target project.
+        Credentials can be omitted if the server was started with --api-url and --storage-token.
         """
         return await migrate_to_keboola_local(
             local_backend, storage_api_url, storage_token, table_names, config_ids, bucket_id

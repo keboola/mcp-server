@@ -150,7 +150,12 @@ async def run_server(args: Optional[list[str]] = None) -> None:
     # Local-backend mode: no token required, data served from CSV files.
     if parsed_args.local_backend:
         try:
-            local_server: FastMCP = create_local_server(parsed_args.data_dir, docker_network=parsed_args.docker_network)
+            local_server: FastMCP = create_local_server(
+                parsed_args.data_dir,
+                docker_network=parsed_args.docker_network,
+                storage_api_url=parsed_args.api_url,
+                storage_token=parsed_args.storage_token,
+            )
             await local_server.run_async(transport=parsed_args.transport)
         except Exception as e:
             LOG.exception(f'Local server failed: {e}')

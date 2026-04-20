@@ -259,17 +259,29 @@ def create_platform_server(
         return mcp, custom_routes
 
 
-def create_local_server(data_dir: str, docker_network: str = 'bridge') -> FastMCP:
+def create_local_server(
+    data_dir: str,
+    docker_network: str = 'bridge',
+    storage_api_url: str | None = None,
+    storage_token: str | None = None,
+) -> FastMCP:
     """Create a local-backend MCP server. No Keboola token required.
 
     Data is read from CSV files under *data_dir*. SQL is executed via DuckDB.
     Components run via Docker (Phase 2). No auth middleware, no WorkspaceManager.
+    When storage_api_url and storage_token are provided, migrate_to_keboola can
+    be called without repeating them.
     """
     from keboola_mcp_server.tools.local import LocalBackend, register_local_tools
 
     LOG.info(f'Creating local-backend server with data_dir={data_dir!r}, docker_network={docker_network!r}')
     mcp = FastMCP('Keboola MCP Server (local)')
-    local_backend = LocalBackend(data_dir=data_dir, docker_network=docker_network)
+    local_backend = LocalBackend(
+        data_dir=data_dir,
+        docker_network=docker_network,
+        storage_api_url=storage_api_url,
+        storage_token=storage_token,
+    )
     register_local_tools(mcp, local_backend)
     return mcp
 
