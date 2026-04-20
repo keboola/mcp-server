@@ -13,6 +13,14 @@ from pydantic import BaseModel, Field
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.tools.local.backend import LocalBackend
 from keboola_mcp_server.tools.local.config import ComponentConfig, ConfigsOutput
+from keboola_mcp_server.tools.local.dataapp import (
+    DataAppChartConfig,
+    DataAppConfig,
+    DataAppInfo,
+    DataAppRunResult,
+    DataAppsOutput,
+    DataAppStopResult,
+)
 from keboola_mcp_server.tools.local.docker import ComponentRunResult, ComponentSetupResult
 from keboola_mcp_server.tools.local.migrate import MigrateResult
 from keboola_mcp_server.tools.local.schema import ComponentSchemaResult, ComponentSearchResult
@@ -320,6 +328,139 @@ async def migrate_to_keboola_local(
         config_ids=config_ids,
         bucket_id=bucket_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Data app implementations
+# ---------------------------------------------------------------------------
+
+
+def _validate_app_name(name: str) -> str:
+    name = name.strip().lower()
+    if not name or '/' in name or '\\' in name or '..' in name:
+        raise ValueError(f'Invalid app name: {name!r}. Use lowercase letters, digits, and hyphens.')
+    return name
+
+
+async def create_data_app_local(
+    local_backend: LocalBackend,
+    name: str,
+    title: str,
+    charts: list[DataAppChartConfig],
+    description: str = '',
+    tables: list[str] | None = None,
+) -> DataAppInfo:
+    """Create or update a local data app dashboard."""
+    from datetime import datetime, timezone
+
+    name = _validate_app_name(name)
+
+    # Auto-detect tables from chart SQL if not specified
+    if not tables:
+        available = {p.stem for p in local_backend.list_csv_tables()}
+        tables = sorted(available)
+
+    now = datetime.now(timezone.utc).isoformat()
+    existing_created_at = now
+    try:
+        existing = local_backend.load_data_app(name)
+        existing_created_at = existing.created_at or now
+    except FileNotFoundError:
+        pass
+
+    config = DataAppConfig(
+        name=name,
+        title=title,
+        description=description,
+        tables=tables,
+        charts=charts,
+        created_at=existing_created_at,
+        updated_at=now,
+    )
+
+    # Pre-compute chart data server-side using DuckDB
+    chart_data: dict = {}
+    for chart in charts:
+        chart_data[chart.id] = local_backend.query_local_structured(chart.sql)
+
+    local_backend.save_data_app(config, chart_data)
+
+    port = local_backend.get_running_port(name)
+    return DataAppInfo(
+        name=name,
+        title=title,
+        description=description,
+        chart_count=len(charts),
+        status='running' if port else 'stopped',
+        app_url=f'http://localhost:{port}/apps/{name}/' if port else None,
+        port=port,
+    )
+
+
+async def run_data_app_local(local_backend: LocalBackend, name: str) -> DataAppRunResult:
+    """Start the HTTP server for a data app."""
+    name = _validate_app_name(name)
+
+    port = local_backend.get_running_port(name)
+    if port is not None:
+        return DataAppRunResult(
+            name=name,
+            status='already_running',
+            app_url=f'http://localhost:{port}/apps/{name}/',
+            port=port,
+            message=f'Already running on port {port}.',
+        )
+
+    try:
+        _, port = local_backend.start_data_app(name)
+    except FileNotFoundError:
+        return DataAppRunResult(
+            name=name, status='error', message=f'App {name!r} not found. Call create_data_app first.'
+        )
+    except RuntimeError as exc:
+        return DataAppRunResult(name=name, status='error', message=str(exc))
+
+    url = f'http://localhost:{port}/apps/{name}/'
+    return DataAppRunResult(name=name, status='started', app_url=url, port=port, message=f'Open {url} in your browser.')
+
+
+async def list_data_apps_local(local_backend: LocalBackend) -> DataAppsOutput:
+    """List all local data apps with running status."""
+    configs = local_backend.list_data_apps()
+    apps = []
+    for config in configs:
+        port = local_backend.get_running_port(config.name)
+        apps.append(
+            DataAppInfo(
+                name=config.name,
+                title=config.title,
+                description=config.description,
+                chart_count=len(config.charts),
+                status='running' if port else 'stopped',
+                app_url=f'http://localhost:{port}/apps/{config.name}/' if port else None,
+                port=port,
+            )
+        )
+    return DataAppsOutput(apps=apps, total=len(apps))
+
+
+async def stop_data_app_local(local_backend: LocalBackend, name: str) -> DataAppStopResult:
+    """Stop the HTTP server for a data app."""
+    name = _validate_app_name(name)
+    stopped = local_backend.stop_data_app(name)
+    if stopped:
+        return DataAppStopResult(name=name, stopped=True, message=f'App {name!r} stopped.')
+    return DataAppStopResult(name=name, stopped=False, message=f'App {name!r} was not running.')
+
+
+async def delete_data_app_local(local_backend: LocalBackend, name: str) -> DataAppStopResult:
+    """Stop (if running) and delete a data app."""
+    name = _validate_app_name(name)
+    local_backend.stop_data_app(name)
+    deleted = local_backend.delete_data_app(name)
+    if deleted:
+        return DataAppStopResult(name=name, stopped=True, message=f'App {name!r} deleted.')
+    return DataAppStopResult(name=name, stopped=False, message=f'App {name!r} not found.')
 
 
 # ---------------------------------------------------------------------------
@@ -770,6 +911,129 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
         FunctionTool.from_function(
             migrate_to_keboola,
             annotations=ToolAnnotations(readOnlyHint=False),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    # ------------------------------------------------------------------
+    # Data app tools
+    # ------------------------------------------------------------------
+
+    @tool_errors()
+    async def create_data_app(
+        name: Annotated[
+            str,
+            Field(description='App identifier (lowercase, hyphens). Used as the directory name.'),
+        ],
+        title: Annotated[str, Field(description='Dashboard title shown in the browser.')],
+        charts: Annotated[
+            list[DataAppChartConfig],
+            Field(
+                description=(
+                    'List of chart definitions. Each chart needs: id (slug), title, sql (DuckDB query), '
+                    'type (bar/line/scatter/pie/table/heatmap), and optional x_column/y_column/color_column.'
+                )
+            ),
+        ],
+        description: Annotated[
+            str,
+            Field(default='', description='Short subtitle shown below the dashboard title.'),
+        ] = '',
+        tables: Annotated[
+            list[str] | None,
+            Field(default=None, description='Table names to load. Defaults to all available tables.'),
+        ] = None,
+    ) -> DataAppInfo:
+        """
+        Creates or updates a local HTML dashboard backed by DuckDB SQL queries.
+
+        Generates a self-contained index.html with Apache ECharts visualizations.
+        Chart data is pre-computed from your local CSV tables via DuckDB.
+        Call run_data_app to serve the dashboard on a local port.
+
+        Supported chart types: bar, line, scatter, pie, table, heatmap.
+        """
+        return await create_data_app_local(local_backend, name, title, charts, description, tables)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_data_app,
+            annotations=ToolAnnotations(readOnlyHint=False),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def run_data_app(
+        name: Annotated[str, Field(description='App name (as given to create_data_app).')],
+    ) -> DataAppRunResult:
+        """
+        Starts a local HTTP server for the named data app and returns its URL.
+
+        The server runs in the background (port 8101-8199). Open the returned URL
+        in a browser to view the dashboard. Call stop_data_app to shut it down.
+        """
+        return await run_data_app_local(local_backend, name)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            run_data_app,
+            annotations=ToolAnnotations(readOnlyHint=False),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def list_data_apps() -> DataAppsOutput:
+        """
+        Lists all local data apps and their running status.
+
+        Shows app name, title, chart count, and whether an HTTP server is active.
+        """
+        return await list_data_apps_local(local_backend)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            list_data_apps,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def stop_data_app(
+        name: Annotated[str, Field(description='App name to stop.')],
+    ) -> DataAppStopResult:
+        """
+        Stops the HTTP server for the named data app.
+
+        The app files are kept — call run_data_app to restart.
+        """
+        return await stop_data_app_local(local_backend, name)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            stop_data_app,
+            annotations=ToolAnnotations(readOnlyHint=False),
+            tags={LOCAL_TOOLS_TAG},
+        )
+    )
+
+    @tool_errors()
+    async def delete_data_app(
+        name: Annotated[str, Field(description='App name to permanently delete.')],
+    ) -> DataAppStopResult:
+        """
+        Stops (if running) and permanently deletes a local data app.
+
+        Removes the app directory including app.json and index.html.
+        """
+        return await delete_data_app_local(local_backend, name)
+
+    mcp.add_tool(
+        FunctionTool.from_function(
+            delete_data_app,
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True),
             tags={LOCAL_TOOLS_TAG},
         )
     )

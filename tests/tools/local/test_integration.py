@@ -58,6 +58,11 @@ EXPECTED_TOOLS = {
     'delete_config',
     'run_saved_config',
     'migrate_to_keboola',
+    'create_data_app',
+    'run_data_app',
+    'list_data_apps',
+    'stop_data_app',
+    'delete_data_app',
 }
 
 
