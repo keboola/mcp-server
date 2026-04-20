@@ -106,14 +106,17 @@ def prepare_data_dir(
 def collect_output_tables(out_tables_dir: Path, catalog_dir: Path) -> list[str]:
     """Copy output CSVs from the run dir back to the local catalog.
 
+    Collects from both out/tables/ (standard output) and out/files/ (file-based
+    extractors like keboola.ex-http that write CSVs to the files output).
     Returns the list of collected table name stems.
     """
     catalog_dir.mkdir(parents=True, exist_ok=True)
     names: list[str] = []
-    if out_tables_dir.exists():
-        for csv_file in sorted(out_tables_dir.glob('*.csv')):
-            shutil.copy2(csv_file, catalog_dir / csv_file.name)
-            names.append(csv_file.stem)
+    for search_dir in (out_tables_dir, out_tables_dir.with_name('files')):
+        if search_dir.exists():
+            for csv_file in sorted(search_dir.glob('*.csv')):
+                shutil.copy2(csv_file, catalog_dir / csv_file.name)
+                names.append(csv_file.stem)
     return names
 
 
