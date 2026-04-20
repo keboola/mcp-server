@@ -71,7 +71,8 @@ async def _trigger_event(
     bound_args.apply_defaults()
 
     ctx_param_name = find_kwarg_by_type(func, Context)
-    assert ctx_param_name, f'The tool function {tool_name} must have a "Context" parameter.'
+    if not ctx_param_name:
+        return  # local-mode tools have no Context — skip telemetry
 
     ctx = bound_args.arguments.get(ctx_param_name)
     assert isinstance(ctx, Context), (
