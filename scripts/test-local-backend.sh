@@ -307,6 +307,7 @@ EXPECTED = {
     'write_table', 'delete_table',
     'save_config', 'list_configs', 'delete_config', 'run_saved_config',
     'migrate_to_keboola',
+    'create_data_app', 'run_data_app', 'list_data_apps', 'stop_data_app', 'delete_data_app',
 }
 
 with tempfile.TemporaryDirectory() as d:
@@ -318,7 +319,7 @@ extra = registered - EXPECTED
 assert not missing, f"missing tools: {missing}"
 assert not extra, f"unexpected tools: {extra}"
 PY
-ok "all 16 tools registered, no extras"
+ok "all 21 tools registered, no extras"
 
 # ---------------------------------------------------------------------------
 # 7. Developer Portal API (network)

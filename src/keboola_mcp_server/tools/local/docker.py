@@ -38,9 +38,45 @@ class ComponentRunResult(BaseModel):
     output_tables: list[str] = Field(
         default_factory=list, description='Names (stems) of output CSV tables collected into the local catalog.'
     )
-    stdout: str = Field(default='', description='Last 5000 chars of container stdout.')
-    stderr: str = Field(default='', description='Last 5000 chars of container stderr.')
+    stdout: str = Field(default='', description='Last 5000 chars of combined container output (stdout + stderr).')
+    stderr: str = Field(
+        default='', description='Deprecated — output is now combined in stdout. Reserved for error messages.'
+    )
     message: str | None = Field(default=None, description='Human-readable status message (set on error/timeout).')
+    log_file: str | None = Field(
+        default=None,
+        description='Path to the live output log file. Run `tail -f <path>` to watch progress.',
+    )
+
+
+# ---------------------------------------------------------------------------
+# Subprocess helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_subprocess_logging(
+    cmd: list[str],
+    log_path: Path,
+    cwd: str | None = None,
+    timeout: int = SUBPROCESS_TIMEOUT,
+) -> tuple[int, str]:
+    """Run a subprocess, streaming stdout+stderr to log_path in real-time.
+
+    Returns (exit_code, log_content). exit_code=-1 signals a timeout (process killed).
+    The log file is written incrementally so callers can `tail -f` it while waiting.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, 'w', encoding='utf-8', errors='replace') as log_fh:
+        proc = subprocess.Popen(cmd, stdout=log_fh, stderr=subprocess.STDOUT, text=True, cwd=cwd)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            log_content = log_path.read_text(encoding='utf-8', errors='replace')
+            return -1, log_content
+    log_content = log_path.read_text(encoding='utf-8', errors='replace')
+    return proc.returncode, log_content
 
 
 # ---------------------------------------------------------------------------
@@ -294,24 +330,25 @@ def run_image_component(
         + [component_image]
     )
 
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
+    log_path = run_dir / 'run.log'
+    exit_code, log_content = _run_subprocess_logging(cmd, log_path, timeout=timeout)
+
+    if exit_code == -1:
         return ComponentRunResult(
             status='application_error',
             exit_code=-1,
-            stdout='',
-            stderr=f'Timed out after {timeout}s',
+            stdout=log_content[-5000:],
+            log_file=str(log_path),
             message=f'Component timed out after {timeout} seconds',
         )
 
     output_tables = collect_output_tables(run_dir / 'out' / 'tables', catalog_tables)
     return ComponentRunResult(
-        status=exit_code_to_status(proc.returncode),
-        exit_code=proc.returncode,
+        status=exit_code_to_status(exit_code),
+        exit_code=exit_code,
         output_tables=output_tables,
-        stdout=proc.stdout[-5000:],
-        stderr=proc.stderr[-5000:],
+        stdout=log_content[-5000:],
+        log_file=str(log_path),
     )
 
 
@@ -353,27 +390,27 @@ def run_source_component(
         override_lines.append('    volumes:')
         override_lines.append(f'      - {run_dir.resolve()}:/data')
         override_path.write_text('\n'.join(override_lines) + '\n')
-    try:
-        proc = subprocess.run(cmd, cwd=str(clone_dir), capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        if not had_override:
-            override_path.unlink(missing_ok=True)
-        return ComponentRunResult(
-            status='application_error',
-            exit_code=-1,
-            stdout='',
-            stderr=f'Timed out after {timeout}s',
-            message=f'Component timed out after {timeout} seconds',
-        )
+
+    log_path = run_dir / 'run.log'
+    exit_code, log_content = _run_subprocess_logging(cmd, log_path, cwd=str(clone_dir), timeout=timeout)
 
     if not had_override:
         override_path.unlink(missing_ok=True)
 
+    if exit_code == -1:
+        return ComponentRunResult(
+            status='application_error',
+            exit_code=-1,
+            stdout=log_content[-5000:],
+            log_file=str(log_path),
+            message=f'Component timed out after {timeout} seconds',
+        )
+
     output_tables = collect_output_tables(run_dir / 'out' / 'tables', catalog_tables)
     return ComponentRunResult(
-        status=exit_code_to_status(proc.returncode),
-        exit_code=proc.returncode,
+        status=exit_code_to_status(exit_code),
+        exit_code=exit_code,
         output_tables=output_tables,
-        stdout=proc.stdout[-5000:],
-        stderr=proc.stderr[-5000:],
+        stdout=log_content[-5000:],
+        log_file=str(log_path),
     )

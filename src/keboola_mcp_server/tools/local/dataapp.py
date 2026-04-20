@@ -184,7 +184,7 @@ header p { margin: 0; color: var(--pico-muted-color); }
       series: [{
         type: 'pie', radius: ['38%', '68%'], center: ['65%', '50%'],
         data: data.rows.map(function(r) { return { name: String(r[xc]), value: Number(r[yc]) }; }),
-        label: { formatter: '{b}\n{d}%' },
+        label: { formatter: '{b}\\n{d}%' },
         emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.3)' } }
       }]
     });

@@ -1,7 +1,6 @@
 """Tests for docker.py helper functions and main functions (subprocess mocked)."""
 
 import json
-import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -309,8 +308,11 @@ def test_setup_component_build_failure_raises(tmp_path):
             setup_component(components_dir, 'https://example.com/repo.git')
 
 
+_LOG_PATCH = 'keboola_mcp_server.tools.local.docker._run_subprocess_logging'
+
+
 # ---------------------------------------------------------------------------
-# run_image_component (subprocess mocked)
+# run_image_component (subprocess logging mocked)
 # ---------------------------------------------------------------------------
 
 
@@ -318,22 +320,21 @@ def test_run_image_component_success(tmp_path):
     catalog = tmp_path / 'tables'
     catalog.mkdir()
 
-    with patch('subprocess.run') as mock_run:
-        proc = _make_proc(stdout='done', stderr='')
-        mock_run.return_value = proc
+    with patch(_LOG_PATCH, return_value=(0, 'done')) as mock_log:
         result = run_image_component(tmp_path, 'keboola/ex-http:latest', {}, None, '2g')
 
     assert result.status == 'success'
     assert result.exit_code == 0
     assert result.stdout == 'done'
+    assert result.log_file is not None
+    mock_log.assert_called_once()
 
 
 def test_run_image_component_user_error(tmp_path):
     catalog = tmp_path / 'tables'
     catalog.mkdir()
 
-    with patch('subprocess.run') as mock_run:
-        mock_run.return_value = _make_proc(returncode=1, stderr='bad config')
+    with patch(_LOG_PATCH, return_value=(1, 'bad config')):
         result = run_image_component(tmp_path, 'keboola/ex-http:latest', {}, None, '2g')
 
     assert result.status == 'user_error'
@@ -344,36 +345,48 @@ def test_run_image_component_timeout(tmp_path):
     catalog = tmp_path / 'tables'
     catalog.mkdir()
 
-    with patch('subprocess.run', side_effect=subprocess.TimeoutExpired(cmd='docker', timeout=300)):
+    with patch(_LOG_PATCH, return_value=(-1, 'partial output')):
         result = run_image_component(tmp_path, 'keboola/ex-http:latest', {}, None, '2g', timeout=300)
 
     assert result.status == 'application_error'
     assert result.exit_code == -1
     assert '300' in (result.message or '')
+    assert result.stdout == 'partial output'
 
 
 def test_run_image_component_collects_output(tmp_path):
     catalog = tmp_path / 'tables'
     catalog.mkdir()
 
-    def fake_run(cmd, **kwargs):
+    def fake_log(cmd, log_path, **kwargs):
         # simulate component writing output
         run_dirs = list((tmp_path / 'runs').glob('run-*'))
         if run_dirs:
             out = run_dirs[0] / 'out/tables'
             out.mkdir(parents=True, exist_ok=True)
             (out / 'output.csv').write_text('col\nval\n')
-        return _make_proc()
+        return 0, ''
 
-    with patch('subprocess.run', side_effect=fake_run):
+    with patch(_LOG_PATCH, side_effect=fake_log):
         result = run_image_component(tmp_path, 'keboola/ex-http:latest', {}, None, '2g')
 
     assert result.output_tables == ['output']
     assert (catalog / 'output.csv').exists()
 
 
+def test_run_image_component_log_file_path(tmp_path):
+    catalog = tmp_path / 'tables'
+    catalog.mkdir()
+
+    with patch(_LOG_PATCH, return_value=(0, 'output')):
+        result = run_image_component(tmp_path, 'keboola/ex-http:latest', {}, None, '2g')
+
+    assert result.log_file is not None
+    assert 'run.log' in result.log_file
+
+
 # ---------------------------------------------------------------------------
-# run_source_component (subprocess mocked)
+# run_source_component (subprocess logging mocked)
 # ---------------------------------------------------------------------------
 
 
@@ -385,8 +398,7 @@ def test_run_source_component_success(tmp_path):
     repo_dir.mkdir(parents=True)
     (repo_dir / '.keboola_image_built').touch()
 
-    with patch('subprocess.run') as mock_run:
-        mock_run.return_value = _make_proc(stdout='ok')
+    with patch(_LOG_PATCH, return_value=(0, 'ok')):
         result = run_source_component(tmp_path, 'https://github.com/keboola/my-component.git', {}, None, '2g')
 
     assert result.status == 'success'
@@ -401,7 +413,7 @@ def test_run_source_component_timeout(tmp_path):
     # sentinel present so setup_component makes no subprocess calls
     (repo_dir / '.keboola_image_built').touch()
 
-    with patch('subprocess.run', side_effect=subprocess.TimeoutExpired(cmd='docker', timeout=300)):
+    with patch(_LOG_PATCH, return_value=(-1, '')):
         result = run_source_component(
             tmp_path, 'https://github.com/keboola/my-component.git', {}, None, '2g', timeout=300
         )
