@@ -383,10 +383,10 @@ async def test_find_component_id_local_wraps_results() -> None:
         resp.raise_for_status = MagicMock()
         instance.get = AsyncMock(return_value=resp)
 
-        result = await find_component_id_local('http')
+        result = await find_component_id_local('extractor')
 
     assert isinstance(result, LocalComponentSearchOutput)
-    assert result.query == 'http'
+    assert result.query == 'extractor'
     assert len(result.results) == 2
 
 

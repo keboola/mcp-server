@@ -25,8 +25,8 @@ async def test_get_component_schema_basic():
     payload = {
         'id': 'keboola.ex-http',
         'name': 'HTTP Extractor',
-        'configSchema': {'type': 'object', 'properties': {'url': {'type': 'string'}}},
-        'data': {'image_tag': 'keboola/ex-http:latest'},
+        'configurationSchema': {'type': 'object', 'properties': {'url': {'type': 'string'}}},
+        'imageTag': 'keboola/ex-http:latest',
     }
 
     mock_client = AsyncMock()
@@ -86,7 +86,8 @@ async def test_find_component_id_list_response():
             'id': 'keboola.ex-http',
             'name': 'HTTP Extractor',
             'type': 'extractor',
-            'data': {'image_tag': 'keboola/ex-http:1.0'},
+            'imageTag': 'keboola/ex-http:1.0',
+            'shortDescription': 'Download files via HTTP',
         },
         {'id': 'keboola.ex-ftp', 'name': 'FTP Extractor', 'type': 'extractor'},
     ]
@@ -97,19 +98,20 @@ async def test_find_component_id_list_response():
     mock_client.get = AsyncMock(return_value=_make_response(payload))
 
     with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient', return_value=mock_client):
-        results = await find_component_id('http', limit=5)
+        results = await find_component_id('extractor', limit=5)
 
     assert len(results) == 2
     assert all(isinstance(r, ComponentSearchResult) for r in results)
     assert results[0].component_id == 'keboola.ex-http'
     assert results[0].image == 'keboola/ex-http:1.0'
+    assert results[0].description == 'Download files via HTTP'
     assert results[1].image is None
 
 
 @pytest.mark.asyncio
-async def test_find_component_id_dict_response_with_components_key():
+async def test_find_component_id_dict_response_with_apps_key():
     payload = {
-        'components': [
+        'apps': [
             {'id': 'keboola.ex-aws-s3', 'name': 'AWS S3', 'type': 'extractor'},
         ]
     }
@@ -124,6 +126,7 @@ async def test_find_component_id_dict_response_with_components_key():
 
     assert len(results) == 1
     assert results[0].component_id == 'keboola.ex-aws-s3'
+    assert results[0].name == 'AWS S3'
 
 
 @pytest.mark.asyncio
@@ -139,7 +142,7 @@ async def test_find_component_id_skips_missing_id():
     mock_client.get = AsyncMock(return_value=_make_response(payload))
 
     with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient', return_value=mock_client):
-        results = await find_component_id('test')
+        results = await find_component_id('valid')
 
     assert len(results) == 1
     assert results[0].component_id == 'keboola.valid'

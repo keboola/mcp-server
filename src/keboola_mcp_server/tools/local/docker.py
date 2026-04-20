@@ -314,7 +314,7 @@ def run_source_component(
     prepare_data_dir(component_data_dir, parameters, input_tables, catalog_tables)
 
     compose_cmd = read_compose_command(clone_dir)
-    cmd = ['docker', 'compose', 'run', '--rm', 'dev']
+    cmd = ['docker', 'compose', 'run', '--rm', f'--memory={memory_limit}', 'dev']
     if compose_cmd:
         cmd.extend(compose_cmd)
 
