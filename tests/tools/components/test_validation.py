@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 from typing import Optional
@@ -307,7 +308,7 @@ def test_recoverable_validation_error_compact_format(
         with open(schema_or_path) as f:
             schema = json.load(f)
     else:
-        schema = schema_or_path
+        schema = copy.deepcopy(schema_or_path)
 
     with pytest.raises(validation.RecoverableValidationError) as exc_info:
         validation._validate_parameters_configuration_against_schema(
