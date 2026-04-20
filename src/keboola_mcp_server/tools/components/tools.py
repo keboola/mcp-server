@@ -897,7 +897,7 @@ async def update_sql_transformation_internal(
     description: str = '',
     parameter_updates: list[TfParamUpdate] | None = None,
     storage: dict[str, Any] | None = None,
-    folder: str = '',
+    folder: Optional[str] = None,
 ) -> tuple[JsonDict, JsonDict, str, dict | None]:
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
@@ -942,30 +942,31 @@ async def update_sql_transformation_internal(
         updated_configuration['storage'] = storage_cfg
 
     folder_preview: dict | None = None
-    normalized_folder = folder.strip()
-    if normalized_folder:
-        try:
-            current_metadata = await client.storage_client.configuration_metadata_get(
-                component_id=sql_transformation_id, configuration_id=configuration_id
-            )
-            current_folder = next(
-                (
-                    m.get('value', '')
-                    for m in current_metadata
-                    if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
-                ),
-                '',
-            )
-            if normalized_folder != current_folder:
-                folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
-        except Exception as e:
-            LOG.warning(
-                'Failed to fetch configuration metadata for folder preview '
-                '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
-                sql_transformation_id,
-                configuration_id,
-                e,
-            )
+    if folder is not None:
+        normalized_folder = folder.strip()
+        if normalized_folder:
+            try:
+                current_metadata = await client.storage_client.configuration_metadata_get(
+                    component_id=sql_transformation_id, configuration_id=configuration_id
+                )
+                current_folder = next(
+                    (
+                        m.get('value', '')
+                        for m in current_metadata
+                        if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
+                    ),
+                    '',
+                )
+                if normalized_folder != current_folder:
+                    folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
+            except Exception as e:
+                LOG.warning(
+                    'Failed to fetch configuration metadata for folder preview '
+                    '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
+                    sql_transformation_id,
+                    configuration_id,
+                    e,
+                )
 
     return config_details, updated_configuration, msg, folder_preview
 

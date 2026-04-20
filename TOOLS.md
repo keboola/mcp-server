@@ -2496,9 +2496,16 @@ or enabling/disabling flow execution
       "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
     },
     "folder": {
-      "default": "",
-      "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose."
     }
   },
   "required": [
