@@ -465,10 +465,19 @@ async def clear_transformation_folder_metadata(client: KeboolaClient, component_
         )
         for entry in metadata:
             if entry.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME:
+                metadata_id = entry.get('id')
+                if metadata_id is None:
+                    LOG.warning(
+                        'Unable to clear folder metadata for component "%s", configuration "%s": '
+                        'metadata entry is missing "id".',
+                        component_id,
+                        configuration_id,
+                    )
+                    break
                 await client.storage_client.configuration_metadata_delete(
                     component_id=component_id,
                     configuration_id=configuration_id,
-                    metadata_id=entry['id'],
+                    metadata_id=metadata_id,
                 )
                 break
     except Exception:
