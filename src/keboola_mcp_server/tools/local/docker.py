@@ -378,7 +378,10 @@ def run_source_component(
     prepare_data_dir(run_dir, parameters, input_tables, catalog_tables, authorization)
 
     compose_cmd = read_compose_command(clone_dir)
-    cmd = ['docker', 'compose', 'run', '--rm', 'dev']
+    # Force KBC_DATADIR=/data/ so components that hardcode a relative path in
+    # their docker-compose.yml (e.g. KBC_DATADIR=./data) still find config.json
+    # at the bind-mounted run_dir we control.
+    cmd = ['docker', 'compose', 'run', '--rm', '-e', 'KBC_DATADIR=/data/', 'dev']
     if compose_cmd:
         cmd.extend(compose_cmd)
 
