@@ -25,7 +25,7 @@ behavior and the legacy behavior for projects that haven't migrated.
 
 ### What the UI does (reference)
 
-See `UI_LEVEL_DEFERENCE_ANALYSIS.md` for the full analysis. In short: the UI makes two
+In short: the UI makes two
 parallel API calls (branch + production), merges them with "branch wins on ID collision",
 and presents a unified view.
 
