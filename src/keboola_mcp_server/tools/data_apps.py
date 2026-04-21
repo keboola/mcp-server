@@ -331,10 +331,12 @@ async def modify_data_app(
     PATTERN (Snowflake):
     `df = query_data('SELECT "model_id", "downloads", "created_at" FROM "DB"."SCHEMA"."TABLE"')`
     `df["downloads"] = pd.to_numeric(df["downloads"], errors="coerce").fillna(0)`
+    `df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")`
 
     PATTERN (BigQuery):
     `df = query_data('SELECT `model_id`, `downloads`, `created_at` FROM `project`.`dataset`.`table`')`
     `df["downloads"] = pd.to_numeric(df["downloads"], errors="coerce").fillna(0)`
+    `df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")`
     """
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
