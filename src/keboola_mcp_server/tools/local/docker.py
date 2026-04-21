@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import shutil
 import subprocess
 import time
@@ -14,6 +15,21 @@ from pydantic import BaseModel, Field
 LOG = logging.getLogger(__name__)
 
 SUBPROCESS_TIMEOUT = 300  # 5 minutes
+
+_MEMORY_RE = re.compile(r'^\d+[kmgKMG][bB]?$')
+_NETWORK_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
+
+
+def _validate_memory(val: str) -> str:
+    if not _MEMORY_RE.match(val):
+        raise ValueError(f'Invalid memory_limit {val!r}. Expected format: 512m, 4g, 2gb.')
+    return val
+
+
+def _validate_network(val: str) -> str:
+    if not _NETWORK_RE.match(val):
+        raise ValueError(f'Invalid network {val!r}. Must be alphanumeric with dashes/underscores only.')
+    return val
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +321,8 @@ def run_image_component(
     authorization: dict | None = None,
 ) -> ComponentRunResult:
     """Run a Keboola component from a pre-built Docker registry image."""
+    _validate_memory(memory_limit)
+    _validate_network(network)
     run_id = f'run-{int(time.time())}'
     run_dir = data_dir / 'runs' / run_id
     catalog_tables = data_dir / 'tables'
@@ -367,6 +385,8 @@ def run_source_component(
     authorization: dict | None = None,
 ) -> ComponentRunResult:
     """Run a Keboola component from source using docker compose."""
+    _validate_memory(memory_limit)
+    _validate_network(network)
     setup_result = setup_component(data_dir / 'components', git_url, network=network)
     clone_dir = Path(setup_result.path)
     catalog_tables = data_dir / 'tables'

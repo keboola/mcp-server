@@ -10,6 +10,12 @@ from pydantic import BaseModel, Field
 LOG = logging.getLogger(__name__)
 
 
+def _check_config_id(config_id: str) -> None:
+    """Reject config_ids that could escape the configs directory (CWE-22)."""
+    if not config_id or '/' in config_id or '\\' in config_id or config_id.startswith('.'):
+        raise ValueError(f'Invalid config_id {config_id!r}: must not contain path separators or start with "."')
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -70,6 +76,7 @@ def list_configs(configs_dir: Path) -> list[ComponentConfig]:
 
 def save_config(configs_dir: Path, config: ComponentConfig) -> ComponentConfig:
     """Write a config to disk. Sets created_at on first save; always updates updated_at."""
+    _check_config_id(config.config_id)
     configs_dir.mkdir(parents=True, exist_ok=True)
     now = _now_iso()
     updates: dict = {'updated_at': now}
@@ -83,6 +90,7 @@ def save_config(configs_dir: Path, config: ComponentConfig) -> ComponentConfig:
 
 def load_config(configs_dir: Path, config_id: str) -> ComponentConfig:
     """Load a saved config by ID. Raises FileNotFoundError if not found."""
+    _check_config_id(config_id)
     path = configs_dir / f'{config_id}.json'
     if not path.exists():
         raise FileNotFoundError(f'Config not found: {config_id!r}')
@@ -92,6 +100,7 @@ def load_config(configs_dir: Path, config_id: str) -> ComponentConfig:
 
 def delete_config(configs_dir: Path, config_id: str) -> bool:
     """Delete a config file. Returns True if deleted, False if it did not exist."""
+    _check_config_id(config_id)
     path = configs_dir / f'{config_id}.json'
     if path.exists():
         path.unlink()
