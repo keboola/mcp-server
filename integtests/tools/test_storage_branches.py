@@ -381,7 +381,7 @@ def branch_project(request, branch_test_projects: list[BranchTestProject]) -> Br
 
 
 @pytest_asyncio.fixture
-async def branch_a_context(
+async def branch_context(
     mocker,
     branch_project: BranchTestProject,
 ) -> Context:
@@ -421,11 +421,11 @@ async def branch_a_context(
 
 @pytest.mark.asyncio
 async def test_list_buckets_includes_branch_a_bucket(
-    branch_a_context: Context,
+    branch_context: Context,
     branch_project: BranchTestProject,
 ) -> None:
     """get_buckets from Branch A should include production buckets + Branch A's new bucket, but not Branch B's."""
-    result = await get_buckets(branch_a_context)
+    result = await get_buckets(branch_context)
     bucket_ids = {b.id for b in result.buckets}
 
     expected_ids = {'in.c-test_bucket_01', 'in.c-test_branch'}
@@ -434,11 +434,11 @@ async def test_list_buckets_includes_branch_a_bucket(
 
 @pytest.mark.asyncio
 async def test_list_tables_in_branched_bucket(
-    branch_a_context: Context,
+    branch_context: Context,
     branch_project: BranchTestProject,
 ) -> None:
     """get_tables for Branch A's new bucket should return the table with a production-like ID."""
-    result = await get_tables(branch_a_context, bucket_ids=['in.c-test_branch'])
+    result = await get_tables(branch_context, bucket_ids=['in.c-test_branch'])
 
     assert len(result.tables) == 1
     table = result.tables[0]
@@ -449,11 +449,11 @@ async def test_list_tables_in_branched_bucket(
 
 @pytest.mark.asyncio
 async def test_deference_branched_table(
-    branch_a_context: Context,
+    branch_context: Context,
     branch_project: BranchTestProject,
 ) -> None:
     """get_tables for the production bucket should include the branched version of test_table_01."""
-    result = await get_tables(branch_a_context, bucket_ids=['in.c-test_bucket_01'])
+    result = await get_tables(branch_context, bucket_ids=['in.c-test_bucket_01'])
     table_ids = {t.id for t in result.tables}
 
     assert 'in.c-test_bucket_01.test_table_01' in table_ids, f'Branched table missing. Got: {table_ids}'

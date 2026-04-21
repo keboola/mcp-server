@@ -7,8 +7,8 @@ other's data.
 
 > **Important**: The integration tests are **not** tied to specific projects. Any clean
 > Keboola project with a workspace can be used. For local development you only need **two**
-> projects in the pool (one Snowflake, one BigQuery) plus one old-branches project. The CI
-> pool uses four projects for concurrency, but this is not a requirement for local runs.
+> projects in the pool (one Snowflake, one BigQuery) plus two dedicated projects for branch
+> storage tests (one with `storage-branches` feature, one without).
 
 ---
 
