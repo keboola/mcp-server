@@ -322,7 +322,7 @@ def run_image_component(
             'docker',
             'run',
             '--rm',
-            f'--volume={run_dir}:/data',
+            f'--volume={run_dir.resolve()}:/data',
             f'--memory={memory_limit}',
             f'--network={network}',
         ]
