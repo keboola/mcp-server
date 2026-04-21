@@ -219,6 +219,7 @@ async def run_component_local(
     git_url: str | None = None,
     input_tables: list[str] | None = None,
     memory_limit: str = '4g',
+    authorization: dict | None = None,
 ) -> ComponentRunResult:
     """Implementation of run_component for local mode."""
     if component_image and git_url:
@@ -227,9 +228,11 @@ async def run_component_local(
         raise ValueError('Provide either component_image (Docker registry) or git_url (source).')
     if component_image:
         return await asyncio.to_thread(
-            local_backend.run_docker_component, component_image, parameters, input_tables, memory_limit
+            local_backend.run_docker_component, component_image, parameters, input_tables, memory_limit, authorization
         )
-    return await asyncio.to_thread(local_backend.run_source_component, git_url, parameters, input_tables, memory_limit)
+    return await asyncio.to_thread(
+        local_backend.run_source_component, git_url, parameters, input_tables, memory_limit, authorization
+    )
 
 
 async def get_component_schema_local(component_id: str) -> ComponentSchemaResult:
@@ -276,6 +279,7 @@ async def save_config_local(
     parameters: dict,
     component_image: str | None = None,
     git_url: str | None = None,
+    authorization: dict | None = None,
 ) -> ComponentConfig:
     """Implementation of save_config for local mode."""
     config = ComponentConfig(
@@ -285,6 +289,7 @@ async def save_config_local(
         parameters=parameters,
         component_image=component_image,
         git_url=git_url,
+        authorization=authorization,
     )
     return local_backend.save_config(config)
 
@@ -317,6 +322,7 @@ async def run_saved_config_local(
         component_image=config.component_image,
         git_url=config.git_url,
         input_tables=input_tables,
+        authorization=config.authorization,
         memory_limit=memory_limit,
     )
 
@@ -654,6 +660,19 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
             str,
             Field(default='4g', description='Docker memory limit (e.g. "2g", "512m").'),
         ] = '4g',
+        authorization: Annotated[
+            dict | None,
+            Field(
+                default=None,
+                description=(
+                    'OAuth credentials written to config.json under "authorization". '
+                    'Required for Google Analytics, Google Drive, Sheets, and other OAuth components. '
+                    'Format: {"oauth_api": {"credentials": {"appKey": "<client_id>", '
+                    '"#appSecret": "<client_secret>", '
+                    '"#data": "{\\"access_token\\":\\"…\\",\\"refresh_token\\":\\"…\\"}"}}}'
+                ),
+            ),
+        ] = None,
     ) -> ComponentRunResult:
         """
         Runs a Keboola component via Docker using the Common Interface.
@@ -662,9 +681,10 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
         components — ECR registry images require AWS credentials not available locally.
         Input tables are copied from the local catalog into /data/in/tables/.
         Output tables written to /data/out/tables/ are collected back into the local catalog.
+        For components that require Google/OAuth credentials, pass the authorization dict.
         """
         return await run_component_local(
-            local_backend, parameters, component_image, git_url, input_tables, memory_limit
+            local_backend, parameters, component_image, git_url, input_tables, memory_limit, authorization
         )
 
     mcp.add_tool(
@@ -794,6 +814,19 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
                 ),
             ),
         ] = None,
+        authorization: Annotated[
+            dict | None,
+            Field(
+                default=None,
+                description=(
+                    'OAuth credentials written to config.json under "authorization". '
+                    'Required for Google Analytics, Google Drive, Sheets, and other OAuth components. '
+                    'Format: {"oauth_api": {"credentials": {"appKey": "<client_id>", '
+                    '"#appSecret": "<client_secret>", '
+                    '"#data": "{\\"access_token\\":\\"…\\",\\"refresh_token\\":\\"…\\"}"}}}'
+                ),
+            ),
+        ] = None,
     ) -> ComponentConfig:
         """
         Saves a component configuration to disk for later reuse.
@@ -811,9 +844,10 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
              · Full / precise analytics → explicit start date, e.g. 2020-01-01
            The extractor default is usually "7 days ago" which silently omits older records.
         3. Set date_from in parameters based on the user's answer before saving.
+        4. If the component uses Google/OAuth credentials, pass them via the authorization parameter.
         """
         return await save_config_local(
-            local_backend, config_id, component_id, name, parameters, component_image, git_url
+            local_backend, config_id, component_id, name, parameters, component_image, git_url, authorization
         )
 
     mcp.add_tool(

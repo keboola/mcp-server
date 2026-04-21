@@ -113,12 +113,13 @@ def prepare_data_dir(
     parameters: dict,
     input_tables: list[str] | None,
     catalog_tables: Path,
+    authorization: dict | None = None,
 ) -> None:
     """Create the Common Interface /data directory and write config.json."""
     for subdir in ('in/tables', 'in/files', 'out/tables', 'out/files'):
         (run_dir / subdir).mkdir(parents=True, exist_ok=True)
 
-    config = {
+    config: dict = {
         'storage': {
             'input': {
                 'tables': [{'source': t, 'destination': t} for t in (input_tables or [])],
@@ -129,6 +130,8 @@ def prepare_data_dir(
         'parameters': parameters,
         'action': 'run',
     }
+    if authorization:
+        config['authorization'] = authorization
     (run_dir / 'config.json').write_text(json.dumps(config, indent=2), encoding='utf-8')
 
     for table_name in input_tables or []:
@@ -299,13 +302,14 @@ def run_image_component(
     memory_limit: str,
     timeout: int = SUBPROCESS_TIMEOUT,
     network: str = 'bridge',
+    authorization: dict | None = None,
 ) -> ComponentRunResult:
     """Run a Keboola component from a pre-built Docker registry image."""
     run_id = f'run-{int(time.time())}'
     run_dir = data_dir / 'runs' / run_id
     catalog_tables = data_dir / 'tables'
 
-    prepare_data_dir(run_dir, parameters, input_tables, catalog_tables)
+    prepare_data_dir(run_dir, parameters, input_tables, catalog_tables, authorization)
 
     env_flags: list[str] = []
     for key, val in (
@@ -360,6 +364,7 @@ def run_source_component(
     memory_limit: str,
     timeout: int = SUBPROCESS_TIMEOUT,
     network: str = 'bridge',
+    authorization: dict | None = None,
 ) -> ComponentRunResult:
     """Run a Keboola component from source using docker compose."""
     setup_result = setup_component(data_dir / 'components', git_url, network=network)
@@ -370,7 +375,7 @@ def run_source_component(
     # Docker creates files as root inside bind-mounted directories; using a temp dir
     # we create ourselves ensures we always have write access on the host side.
     run_dir = data_dir / 'runs' / f'src-{int(time.time())}'
-    prepare_data_dir(run_dir, parameters, input_tables, catalog_tables)
+    prepare_data_dir(run_dir, parameters, input_tables, catalog_tables, authorization)
 
     compose_cmd = read_compose_command(clone_dir)
     cmd = ['docker', 'compose', 'run', '--rm', 'dev']

@@ -308,7 +308,7 @@ async def test_run_component_local_image_mode(backend: LocalBackend) -> None:
     with patch.object(backend, 'run_docker_component', return_value=expected) as mock_run:
         result = await run_component_local(backend, {'key': 'val'}, component_image='keboola/ex-http:1.0')
 
-    mock_run.assert_called_once_with('keboola/ex-http:1.0', {'key': 'val'}, None, '4g')
+    mock_run.assert_called_once_with('keboola/ex-http:1.0', {'key': 'val'}, None, '4g', None)
     assert result.status == 'success'
 
 
@@ -320,7 +320,7 @@ async def test_run_component_local_source_mode(backend: LocalBackend) -> None:
             backend, {}, git_url='https://github.com/keboola/repo.git', input_tables=['t1']
         )
 
-    mock_run.assert_called_once_with('https://github.com/keboola/repo.git', {}, ['t1'], '4g')
+    mock_run.assert_called_once_with('https://github.com/keboola/repo.git', {}, ['t1'], '4g', None)
     assert result.status == 'success'
 
 

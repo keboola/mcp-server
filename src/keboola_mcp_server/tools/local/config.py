@@ -28,6 +28,15 @@ class ComponentConfig(BaseModel):
         default=None,
         description='Git URL of the public component repo (preferred for local execution, e.g. github.com/keboola).',
     )
+    authorization: dict | None = Field(
+        default=None,
+        description=(
+            'OAuth credentials written to config.json under "authorization". '
+            'Required for components that use Keboola OAuth (Google Analytics, Drive, Sheets, …). '
+            'Format: {"oauth_api": {"credentials": {"appKey": "<client_id>", '
+            '"#appSecret": "<client_secret>", "#data": "{\\"access_token\\":\\"…\\",\\"refresh_token\\":\\"…\\"}"}}}'
+        ),
+    )
     created_at: str = Field(default='', description='ISO 8601 creation timestamp.')
     updated_at: str = Field(default='', description='ISO 8601 last-update timestamp.')
 

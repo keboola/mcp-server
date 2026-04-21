@@ -208,6 +208,7 @@ class LocalBackend:
         parameters: dict,
         input_tables: list[str] | None = None,
         memory_limit: str = '4g',
+        authorization: dict | None = None,
     ):
         """Run a Keboola component from a Docker registry image.
 
@@ -216,7 +217,13 @@ class LocalBackend:
         from keboola_mcp_server.tools.local.docker import run_image_component
 
         return run_image_component(
-            self.data_dir, component_image, parameters, input_tables, memory_limit, network=self.docker_network
+            self.data_dir,
+            component_image,
+            parameters,
+            input_tables,
+            memory_limit,
+            network=self.docker_network,
+            authorization=authorization,
         )
 
     def run_source_component(
@@ -225,6 +232,7 @@ class LocalBackend:
         parameters: dict,
         input_tables: list[str] | None = None,
         memory_limit: str = '4g',
+        authorization: dict | None = None,
     ):
         """Clone + build + run a component from source via docker compose.
 
@@ -233,7 +241,13 @@ class LocalBackend:
         from keboola_mcp_server.tools.local.docker import run_source_component
 
         return run_source_component(
-            self.data_dir, git_url, parameters, input_tables, memory_limit, network=self.docker_network
+            self.data_dir,
+            git_url,
+            parameters,
+            input_tables,
+            memory_limit,
+            network=self.docker_network,
+            authorization=authorization,
         )
 
     # ------------------------------------------------------------------
