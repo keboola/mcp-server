@@ -24,6 +24,12 @@ from keboola_mcp_server.tools.search import (
 class TestSearch:
     """Test cases for the search tool function."""
 
+    @pytest.fixture(autouse=True)
+    def _mock_has_feature(self, mocker: MockerFixture, mcp_context_client: Context):
+        """Disable storage-branches feature for all search tests (no dual-fetch needed)."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.has_feature = mocker.AsyncMock(return_value=False)
+
     @pytest.mark.asyncio
     async def test_search_no_patterns(self, mcp_context_client: Context):
         with pytest.raises(ToolError, match='At least one search pattern must be provided.'):
@@ -405,7 +411,7 @@ class TestSearch:
             ]
         )
 
-        def _bucket_table_list_side_effect(bucket_id: str, include: Any = None) -> list[JsonDict]:
+        def _bucket_table_list_side_effect(bucket_id: str, include: Any = None, **kwargs: Any) -> list[JsonDict]:
             if bucket_id == 'in.c-test-bucket-a':
                 return [
                     {'id': 'in.c-test-bucket-a.test-table', 'name': 'test-table', 'created': '2024-01-01T00:00:00Z'}
@@ -577,12 +583,14 @@ class TestSearch:
             ),
         ]
 
-        keboola_client.storage_client.bucket_list.assert_has_calls([call(), call()])
+        keboola_client.storage_client.bucket_list.assert_has_calls(
+            [call(branch_id='default'), call(branch_id='default')]
+        )
         keboola_client.storage_client.bucket_table_list.assert_has_calls(
             [
-                call('in.c-test-bucket-a', include=['columns', 'columnMetadata']),
-                call('in.c-test-bucket-b', include=['columns', 'columnMetadata']),
-                call('in.c-test-bucket-c', include=['columns', 'columnMetadata']),
+                call('in.c-test-bucket-a', include=['columns', 'columnMetadata'], branch_id='default'),
+                call('in.c-test-bucket-b', include=['columns', 'columnMetadata'], branch_id='default'),
+                call('in.c-test-bucket-c', include=['columns', 'columnMetadata'], branch_id='default'),
             ]
         )
         keboola_client.storage_client.component_list.assert_called_once_with(None, include=['configuration', 'rows'])

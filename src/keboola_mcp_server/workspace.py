@@ -18,6 +18,16 @@ from keboola_mcp_server.clients.query import QueryServiceClient
 LOG = logging.getLogger(__name__)
 
 
+def _get_backend_path(table: Mapping[str, Any]) -> list[str] | None:
+    """Extracts the backendPath from a table's bucket info if available."""
+    bucket = table.get('bucket')
+    if isinstance(bucket, dict):
+        backend_path = bucket.get('backendPath')
+        if isinstance(backend_path, list):
+            return backend_path
+    return None
+
+
 @dataclass(frozen=True)
 class TableFqn:
     """The properly quoted parts of a fully qualified table name."""
@@ -230,13 +240,20 @@ class _SnowflakeWorkspace(_Workspace):
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
         else:
+            # Try to use backendPath from the bucket for the correct schema name
+            # (handles all branch patterns including storage-branches)
+            backend_path = _get_backend_path(table)
+
             sql = 'select CURRENT_DATABASE() as "current_database";'
             result = await self.execute_query(sql)
             if result.is_ok:
                 if result.data and result.data.rows:
                     row = result.data.rows[0]
                     db_name = row['current_database']
-                    if '.' in table_id:
+                    if backend_path and len(backend_path) >= 2:
+                        schema_name = backend_path[1]
+                        table_name = table['name']
+                    elif '.' in table_id:
                         # a table local in a project for which the snowflake connection/workspace is open
                         schema_name, table_name = table_id.rsplit(sep='.', maxsplit=1)
                     else:
@@ -477,7 +494,13 @@ class _BigQueryWorkspace(_Workspace):
     async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']
 
-        if '.' in table_id:
+        # Try to use backendPath from the bucket for the correct schema name
+        backend_path = _get_backend_path(table)
+        if backend_path and len(backend_path) >= 2:
+            # backendPath already contains the correctly formatted schema for BigQuery
+            schema_name = backend_path[1].replace('.', '_').replace('-', '_')
+            table_name = table['name']
+        elif '.' in table_id:
             # a table local in a project for which the workspace is open
             schema_name, table_name = table_id.rsplit(sep='.', maxsplit=1)
             schema_name = schema_name.replace('.', '_').replace('-', '_')

@@ -50,6 +50,38 @@ All four tox environments (pytest, black, flake8, check-tools-docs) should exit 
 
 See `integtests/README.md` for setup and conventions.
 
+## Local End-to-End Testing with MCP
+
+For manual end-to-end testing, you can set up a local MCP server in a `.mcp.json` file
+in the project root (it is already in `.gitignore`). Point it to the venv's Python
+interpreter which has the package installed in editable mode — this ensures the server
+runs your local source code. Placing the `.mcp.json` in the project root allows you to
+test from the same Claude Code (or other MCP client) session where you develop, with the
+server always reflecting your latest code changes:
+
+```json
+{
+  "mcpServers": {
+    "keboola-local": {
+      "command": "<absolute-path-to-project>/.venv/bin/python",
+      "args": ["-m", "keboola_mcp_server"],
+      "env": {
+        "KBC_STORAGE_API_URL": "https://connection.<stack>.keboola.com",
+        "KBC_STORAGE_TOKEN": "<your-token>",
+        "KBC_BRANCH_ID": "<optional-branch-id>"
+      }
+    }
+  }
+}
+```
+
+- Use the **absolute path** to the venv Python — relative paths or bare `python` may pick up
+  a different interpreter that doesn't have your local edits.
+- After making code changes, the MCP server must be **reloaded** to pick them up.
+- If the editable install is stale (e.g. after `git pull` with dependency changes), run
+  `uv sync --active --extra dev --extra tests` to update it.
+- Do not commit tokens.
+
 ## Versioning
 
 - **Every PR must bump `pyproject.toml` version** before merging.

@@ -14,7 +14,7 @@ ComponentResource = Literal['configuration', 'rows', 'state']
 StorageEventType = Literal['info', 'success', 'warn', 'error']
 
 # Project features that can be checked with the is_enabled method
-ProjectFeature = Literal['global-search']
+ProjectFeature = Literal['global-search', 'storage-branches']
 
 ItemType = Literal[
     'flow',
@@ -356,26 +356,30 @@ class AsyncStorageClient(KeboolaServiceClient):
         }
         return cast(list[JsonDict], await self.post(endpoint=f'branch/{self._branch_id}/metadata', data=payload))
 
-    async def bucket_detail(self, bucket_id: str) -> JsonDict:
+    async def bucket_detail(self, bucket_id: str, branch_id: str | None = None) -> JsonDict:
         """
         Retrieves information about a given bucket.
 
         :param bucket_id: The id of the bucket
+        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
         :return: Bucket details as dictionary
         """
-        return cast(JsonDict, await self.get(endpoint=f'buckets/{bucket_id}'))
+        bid = branch_id or self._branch_id
+        return cast(JsonDict, await self.get(endpoint=f'branch/{bid}/buckets/{bucket_id}'))
 
-    async def bucket_list(self, include: list[str] | None = None) -> list[JsonDict]:
+    async def bucket_list(self, include: list[str] | None = None, branch_id: str | None = None) -> list[JsonDict]:
         """
         Lists all buckets.
 
         :param include: List of fields to include in the response ('metadata' or 'linkedBuckets')
+        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
         :return: List of buckets as dictionary
         """
+        bid = branch_id or self._branch_id
         params = {}
         if include is not None and isinstance(include, list):
             params['include'] = ','.join(include)
-        return cast(list[JsonDict], await self.get(endpoint='buckets', params=params))
+        return cast(list[JsonDict], await self.get(endpoint=f'branch/{bid}/buckets', params=params))
 
     async def bucket_metadata_delete(self, bucket_id: str, metadata_id: str) -> None:
         """
@@ -415,18 +419,22 @@ class AsyncStorageClient(KeboolaServiceClient):
         }
         return cast(list[JsonDict], await self.post(endpoint=f'buckets/{bucket_id}/metadata', data=payload))
 
-    async def bucket_table_list(self, bucket_id: str, include: list[str] | None = None) -> list[JsonDict]:
+    async def bucket_table_list(
+        self, bucket_id: str, include: list[str] | None = None, branch_id: str | None = None
+    ) -> list[JsonDict]:
         """
         Lists all tables in a given bucket.
 
         :param bucket_id: The id of the bucket
         :param include: List of fields to include in the response
+        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
         :return: List of tables as dictionary
         """
+        bid = branch_id or self._branch_id
         params = {}
         if include is not None and isinstance(include, list):
             params['include'] = ','.join(include)
-        return cast(list[JsonDict], await self.get(endpoint=f'buckets/{bucket_id}/tables', params=params))
+        return cast(list[JsonDict], await self.get(endpoint=f'branch/{bid}/buckets/{bucket_id}/tables', params=params))
 
     async def column_metadata_delete(self, column_id: str, metadata_id: str) -> None:
         """
@@ -799,14 +807,16 @@ class AsyncStorageClient(KeboolaServiceClient):
         raw_resp = await self.get(endpoint='global-search', params=params)
         return GlobalSearchResponse.model_validate(raw_resp)
 
-    async def table_detail(self, table_id: str) -> JsonDict:
+    async def table_detail(self, table_id: str, branch_id: str | None = None) -> JsonDict:
         """
         Retrieves information about a given table.
 
         :param table_id: The id of the table
+        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
         :return: Table details as dictionary
         """
-        return cast(JsonDict, await self.get(endpoint=f'tables/{table_id}'))
+        bid = branch_id or self._branch_id
+        return cast(JsonDict, await self.get(endpoint=f'branch/{bid}/tables/{table_id}'))
 
     async def table_metadata_delete(self, table_id: str, metadata_id: str) -> None:
         """

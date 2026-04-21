@@ -142,6 +142,26 @@ class TestWorkspaceManagerSnowflake:
                 {'DATABASE_NAME': 'sapi_1234'},
                 TableFqn(db_name='sapi_1234', schema_name='out.c-baz', table_name='bam', quote_char='"'),
             ),
+            (
+                # storage-branches: table with bucket.backendPath containing branch prefix
+                {
+                    'id': 'out.c-model.customers',
+                    'name': 'customers',
+                    'bucket': {'id': 'out.c-model', 'backendPath': ['KBC_USE4_3047', '35403_out.c-model']},
+                },
+                {'current_database': 'db_xyz'},
+                TableFqn(db_name='db_xyz', schema_name='35403_out.c-model', table_name='customers', quote_char='"'),
+            ),
+            (
+                # backendPath without branch prefix (production bucket)
+                {
+                    'id': 'in.c-shopify.orders',
+                    'name': 'orders',
+                    'bucket': {'id': 'in.c-shopify', 'backendPath': ['KBC_USE4_3047', 'in.c-shopify']},
+                },
+                {'current_database': 'db_xyz'},
+                TableFqn(db_name='db_xyz', schema_name='in.c-shopify', table_name='orders', quote_char='"'),
+            ),
         ],
     )
     async def test_get_table_fqn(
@@ -538,6 +558,34 @@ class TestWorkspaceManagerBigQuery:
                     db_name='project_1234',
                     schema_name='workspace_1234',
                     table_name='bar',
+                    quote_char='`',
+                ),
+            ),
+            (
+                # storage-branches: table with bucket.backendPath containing branch prefix
+                {
+                    'id': 'out.c-model.customers',
+                    'name': 'customers',
+                    'bucket': {'id': 'out.c-model', 'backendPath': ['KBC_USE4_3047', '35403_out.c-model']},
+                },
+                TableFqn(
+                    db_name='project_1234',
+                    schema_name='35403_out_c_model',
+                    table_name='customers',
+                    quote_char='`',
+                ),
+            ),
+            (
+                # backendPath without branch prefix (production bucket)
+                {
+                    'id': 'in.c-shopify.orders',
+                    'name': 'orders',
+                    'bucket': {'id': 'in.c-shopify', 'backendPath': ['KBC_USE4_3047', 'in.c-shopify']},
+                },
+                TableFqn(
+                    db_name='project_1234',
+                    schema_name='in_c_shopify',
+                    table_name='orders',
                     quote_char='`',
                 ),
             ),

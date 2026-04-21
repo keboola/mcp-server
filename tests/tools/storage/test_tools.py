@@ -208,12 +208,12 @@ def _get_sapi_tables(details: bool | None = None) -> list[dict[str, Any]]:
     return tables
 
 
-def _bucket_table_list_side_effect(bid: str, *, include: list[str]) -> list[dict[str, Any]]:
+def _bucket_table_list_side_effect(bid: str, *, include: list[str], **kwargs: Any) -> list[dict[str, Any]]:
     prefix = f'{bid}.'
     return [table for table in _get_sapi_tables() if table['id'].startswith(prefix)]
 
 
-def _table_detail_side_effect(tid: str) -> JsonDict:
+def _table_detail_side_effect(tid: str, **kwargs: Any) -> JsonDict:
     for table in _get_sapi_tables(details=True):
         if table['id'] == tid:
             return table
@@ -370,7 +370,7 @@ def _get_sapi_buckets() -> list[dict[str, Any]]:
     ]
 
 
-def _bucket_detail_side_effect(bid: str) -> JsonDict:
+def _bucket_detail_side_effect(bid: str, **kwargs: Any) -> JsonDict:
     for bucket in _get_sapi_buckets():
         if bucket['id'] == bid:
             return bucket
@@ -575,17 +575,21 @@ async def test_get_bucket(
     """Test get_bucket tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.branch_id = branch_id
+    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
 
     result = await get_buckets(mcp_context_client, [bucket_id])
 
     if branch_id:
         keboola_client.storage_client.bucket_detail.assert_has_calls(
-            [call(bucket_id), call(bucket_id.replace('c-', f'c-{branch_id}-'))]
+            [
+                call(bucket_id, branch_id='default'),
+                call(bucket_id.replace('c-', f'c-{branch_id}-'), branch_id='default'),
+            ]
         )
         dashboard_url = f'https://connection.test.keboola.com/admin/projects/69420/branch/{branch_id}/storage'
     else:
-        keboola_client.storage_client.bucket_detail.assert_called_once_with(bucket_id)
+        keboola_client.storage_client.bucket_detail.assert_called_once_with(bucket_id, branch_id='default')
         dashboard_url = 'https://connection.test.keboola.com/admin/projects/69420/storage'
 
     assert isinstance(result, GetBucketsOutput)
@@ -678,6 +682,7 @@ async def test_get_buckets(
     """Test the get_buckets tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.branch_id = branch_id
+    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
     keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=_get_sapi_buckets())
 
     result = await get_buckets(mcp_context_client)
@@ -947,6 +952,7 @@ async def test_get_table(
     """Test get_table tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.branch_id = branch_id
+    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
     keboola_client.storage_client.table_detail = mocker.AsyncMock(side_effect=_table_detail_side_effect)
 
@@ -980,13 +986,16 @@ async def test_get_table(
     if branch_id:
         keboola_client.storage_client.table_detail.assert_has_calls(
             [
-                call(table_id),
-                call(table_id.replace('c-', f'c-{branch_id}-') if f'c-{branch_id}-' not in table_id else table_id),
+                call(table_id, branch_id='default'),
+                call(
+                    table_id.replace('c-', f'c-{branch_id}-') if f'c-{branch_id}-' not in table_id else table_id,
+                    branch_id='default',
+                ),
             ]
         )
         dashboard_url = f'https://connection.test.keboola.com/admin/projects/69420/branch/{branch_id}/storage'
     else:
-        keboola_client.storage_client.table_detail.assert_called_once_with(table_id)
+        keboola_client.storage_client.table_detail.assert_called_once_with(table_id, branch_id='default')
         dashboard_url = 'https://connection.test.keboola.com/admin/projects/69420/storage'
 
     if expected_table:
@@ -1130,6 +1139,7 @@ async def test_get_tables(
     """Test get_tables tool."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.branch_id = branch_id
+    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
     keboola_client.storage_client.bucket_detail = mocker.AsyncMock(side_effect=_bucket_detail_side_effect)
     keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(side_effect=_bucket_table_list_side_effect)
     links_manager = await ProjectLinksManager.from_client(keboola_client)
@@ -1145,17 +1155,22 @@ async def test_get_tables(
     sapi_includes = ['metadata', 'columnMetadata', 'sourceMetadata', 'sourceColumnMetadata']
     if branch_id:
         keboola_client.storage_client.bucket_detail.assert_has_calls(
-            [call(bucket_id), call(bucket_id.replace('c-', f'c-{branch_id}-'))]
+            [
+                call(bucket_id, branch_id='default'),
+                call(bucket_id.replace('c-', f'c-{branch_id}-'), branch_id='default'),
+            ]
         )
         keboola_client.storage_client.bucket_table_list.assert_has_calls(
             [
-                call(bucket_id, include=sapi_includes),
-                call(bucket_id.replace('c-', f'c-{branch_id}-'), include=sapi_includes),
+                call(bucket_id, include=sapi_includes, branch_id='default'),
+                call(bucket_id.replace('c-', f'c-{branch_id}-'), include=sapi_includes, branch_id='default'),
             ]
         )
     else:
-        keboola_client.storage_client.bucket_detail.assert_called_once_with(bucket_id)
-        keboola_client.storage_client.bucket_table_list.assert_called_once_with(bucket_id, include=sapi_includes)
+        keboola_client.storage_client.bucket_detail.assert_called_once_with(bucket_id, branch_id='default')
+        keboola_client.storage_client.bucket_table_list.assert_called_once_with(
+            bucket_id, include=sapi_includes, branch_id='default'
+        )
 
 
 @pytest.mark.parametrize(
@@ -1758,3 +1773,244 @@ async def test_update_descriptions_empty_updates(mcp_context_client) -> None:
                 # no fields with None values, no indentation, no whitespace
                 text=json.dumps(expected.model_dump(exclude_none=True), ensure_ascii=False, separators=(',', ':')),
             )
+
+
+# --- Storage-branches feature tests ---
+
+
+def _get_sb_prod_buckets() -> list[dict[str, Any]]:
+    """Production buckets returned from branch/default/buckets for a storage-branches project."""
+    return [
+        {
+            'id': 'in.c-shopify',
+            'name': 'c-shopify',
+            'displayName': 'shopify',
+            'idBranch': 8653,
+            'stage': 'in',
+            'description': 'Shopify data.',
+            'created': '2025-08-27T11:25:42+0200',
+            'lastChangeDate': '2025-09-01T10:00:00+0200',
+            'updated': None,
+            'isReadOnly': False,
+            'dataSizeBytes': 10000,
+            'rowsCount': 100,
+            'backend': 'snowflake',
+            'path': 'in.c-shopify',
+            'backendPath': ['KBC_USE4_3047', 'in.c-shopify'],
+            'metadata': [],
+        },
+        {
+            'id': 'out.c-model',
+            'name': 'c-model',
+            'displayName': 'model',
+            'idBranch': 8653,
+            'stage': 'out',
+            'description': 'Model output.',
+            'created': '2025-08-27T12:00:00+0200',
+            'lastChangeDate': '2025-09-01T10:00:00+0200',
+            'updated': None,
+            'isReadOnly': False,
+            'dataSizeBytes': 5000,
+            'rowsCount': 50,
+            'backend': 'snowflake',
+            'path': 'out.c-model',
+            'backendPath': ['KBC_USE4_3047', 'out.c-model'],
+            'metadata': [],
+        },
+    ]
+
+
+def _get_sb_branch_buckets(branch_id: str = '35403') -> list[dict[str, Any]]:
+    """Branched buckets returned from branch/{id}/buckets for a storage-branches project."""
+    return [
+        # Branched version of existing prod bucket (modified in branch)
+        {
+            'id': 'out.c-model',
+            'name': 'c-model',
+            'displayName': 'model',
+            'idBranch': int(branch_id),
+            'stage': 'out',
+            'description': 'Model output (branch).',
+            'created': '2025-08-27T12:00:00+0200',
+            'lastChangeDate': '2026-04-15T14:30:48+0200',
+            'updated': None,
+            'isReadOnly': False,
+            'dataSizeBytes': 7000,
+            'rowsCount': 70,
+            'backend': 'snowflake',
+            'path': f'{branch_id}_out.c-model',
+            'backendPath': ['KBC_USE4_3047', f'{branch_id}_out.c-model'],
+            'metadata': [
+                {'id': '100', 'key': 'KBC.createdBy.branch.id', 'value': branch_id},
+            ],
+        },
+        # New bucket created only in the branch
+        {
+            'id': 'out.c-new-data',
+            'name': 'c-new-data',
+            'displayName': 'new-data',
+            'idBranch': int(branch_id),
+            'stage': 'out',
+            'description': 'New data bucket.',
+            'created': '2026-04-15T14:33:02+0200',
+            'lastChangeDate': '2026-04-15T14:33:09+0200',
+            'updated': None,
+            'isReadOnly': False,
+            'dataSizeBytes': 3000,
+            'rowsCount': 10,
+            'backend': 'snowflake',
+            'path': f'{branch_id}_out.c-new-data',
+            'backendPath': ['KBC_USE4_3047', f'{branch_id}_out.c-new-data'],
+            'metadata': [
+                {'id': '200', 'key': 'KBC.createdBy.branch.id', 'value': branch_id},
+            ],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_buckets_storage_branches(mocker: MockerFixture, mcp_context_client: Context) -> None:
+    """Test that _list_buckets merges production and branch buckets with storage-branches feature."""
+    branch_id = '35403'
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = branch_id
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+
+    prod_buckets = _get_sb_prod_buckets()
+    branch_buckets = _get_sb_branch_buckets(branch_id)
+
+    keboola_client.storage_client.bucket_list = mocker.AsyncMock(
+        side_effect=lambda include=None, branch_id=None: prod_buckets if branch_id == 'default' else branch_buckets
+    )
+
+    result = await get_buckets(mcp_context_client)
+
+    assert isinstance(result, GetBucketsOutput)
+    # Should have 3 buckets: in.c-shopify (prod only), out.c-model (merged), out.c-new-data (branch only)
+    assert len(result.buckets) == 3
+    assert result.bucket_counts.total_buckets == 3
+
+    buckets_by_id = {b.id: b for b in result.buckets}
+
+    # Production-only bucket unchanged
+    assert 'in.c-shopify' in buckets_by_id
+    assert buckets_by_id['in.c-shopify'].data_size_bytes == 10000
+
+    # Merged bucket: branch version's data_size_bytes (not summed)
+    assert 'out.c-model' in buckets_by_id
+    assert buckets_by_id['out.c-model'].data_size_bytes == 7000
+
+    # Branch-only bucket presented with prod-like ID
+    assert 'out.c-new-data' in buckets_by_id
+    assert buckets_by_id['out.c-new-data'].data_size_bytes == 3000
+
+    # bucket_list called twice: once for default, once for branch
+    assert keboola_client.storage_client.bucket_list.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_find_buckets_storage_branches(mocker: MockerFixture, mcp_context_client: Context) -> None:
+    """Test that _find_buckets uses branch-scoped endpoints with storage-branches feature."""
+    branch_id = '35403'
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = branch_id
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+
+    prod_bucket = _get_sb_prod_buckets()[1]  # out.c-model
+    branch_bucket = _get_sb_branch_buckets(branch_id)[0]  # out.c-model (branch)
+
+    keboola_client.storage_client.bucket_detail = mocker.AsyncMock(
+        side_effect=lambda bid, branch_id=None: (
+            prod_bucket
+            if branch_id == 'default'
+            else (
+                branch_bucket
+                if branch_id == '35403'
+                else (_ for _ in ()).throw(
+                    httpx.HTTPStatusError(
+                        message='Not found', request=AsyncMock(), response=httpx.Response(status_code=404)
+                    )
+                )
+            )
+        )
+    )
+
+    result = await get_buckets(mcp_context_client, ['out.c-model'])
+
+    assert isinstance(result, GetBucketsOutput)
+    assert len(result.buckets) == 1
+    bucket = result.buckets[0]
+    assert bucket.id == 'out.c-model'
+    # With storage-branches, data_size_bytes should be the branch version
+    assert bucket.data_size_bytes == 7000
+
+    # bucket_detail called twice (default and branch)
+    assert keboola_client.storage_client.bucket_detail.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_table_storage_branches(mocker: MockerFixture, mcp_context_client: Context) -> None:
+    """Test that _get_table uses branch-scoped endpoints with storage-branches feature."""
+    branch_id = '35403'
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.branch_id = branch_id
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+
+    branch_table = {
+        'id': 'out.c-model.customers',
+        'name': 'customers',
+        'displayName': 'customers',
+        'primaryKey': ['id'],
+        'created': '2026-04-15T14:33:11+0200',
+        'lastImportDate': '2026-04-15T14:33:11+0200',
+        'lastChangeDate': '2026-04-15T14:33:11+0200',
+        'rowsCount': 10,
+        'dataSizeBytes': 3072,
+        'isAlias': False,
+        'columns': ['id', 'name'],
+        'columnMetadata': {},
+        'metadata': [
+            {'id': '300', 'key': 'KBC.createdBy.branch.id', 'value': branch_id},
+        ],
+        'bucket': {
+            'id': 'out.c-model',
+            'name': 'c-model',
+            'idBranch': int(branch_id),
+            'backendPath': ['KBC_USE4_3047', f'{branch_id}_out.c-model'],
+        },
+    }
+
+    def _table_detail_sb(tid: str, branch_id: str | None = None) -> JsonDict:
+        if tid == 'out.c-model.customers' and branch_id == '35403':
+            return branch_table
+        raise httpx.HTTPStatusError(message='Not found', request=AsyncMock(), response=httpx.Response(status_code=404))
+
+    keboola_client.storage_client.table_detail = mocker.AsyncMock(side_effect=_table_detail_sb)
+
+    workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
+    workspace_manager.get_table_info = mocker.AsyncMock(
+        side_effect=lambda sapi_table: DbTableInfo(
+            id=sapi_table['id'],
+            fqn=TableFqn(db_name='SAPI_TEST', schema_name=sapi_table['id'].rsplit('.', 1)[0], table_name='customers'),
+            columns={
+                'id': DbColumnInfo(name='id', quoted_name='#id#', native_type='INT', nullable=False),
+                'name': DbColumnInfo(name='name', quoted_name='#name#', native_type='VARCHAR', nullable=True),
+            },
+        )
+    )
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    workspace_manager.get_quoted_name = mocker.AsyncMock(side_effect=lambda name: f'#{name}#')
+
+    result = await get_tables(mcp_context_client, table_ids=['out.c-model.customers'])
+
+    assert isinstance(result, GetTablesOutput)
+    assert len(result.tables) == 1
+    table = result.tables[0]
+    # Table ID should be presented as production-like
+    assert table.id == 'out.c-model.customers'
+    assert table.branch_id is None
+
+    # table_detail called with both default and branch endpoints
+    keboola_client.storage_client.table_detail.assert_has_calls(
+        [call('out.c-model.customers', branch_id='default'), call('out.c-model.customers', branch_id=branch_id)]
+    )

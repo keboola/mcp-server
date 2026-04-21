@@ -25,6 +25,7 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import toon_serializer_compact
 from keboola_mcp_server.tools.components.utils import _normalize_jsonpath, get_nested
+from keboola_mcp_server.tools.storage_helpers import merged_bucket_list, merged_bucket_table_list
 
 LOG = logging.getLogger(__name__)
 
@@ -377,7 +378,7 @@ def _check_column_match(table: JsonDict, cfg: SearchSpec) -> list[PatternMatch]:
 async def _fetch_buckets(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
     """Fetches and filters buckets."""
     hits = []
-    for bucket in await client.storage_client.bucket_list():
+    for bucket in await merged_bucket_list(client):
         if not (bucket_id := bucket.get('id')):
             continue
 
@@ -402,11 +403,11 @@ async def _fetch_buckets(client: KeboolaClient, spec: SearchSpec) -> list[Search
 async def _fetch_tables(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
     """Fetches and filters tables from all buckets."""
     hits = []
-    for bucket in await client.storage_client.bucket_list():
+    for bucket in await merged_bucket_list(client):
         if not (bucket_id := bucket.get('id')):
             continue
 
-        tables = await client.storage_client.bucket_table_list(bucket_id, include=['columns', 'columnMetadata'])
+        tables = await merged_bucket_table_list(client, bucket_id, include=['columns', 'columnMetadata'])
         for table in tables:
             if not (table_id := table.get('id')):
                 continue

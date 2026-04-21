@@ -146,6 +146,7 @@ class KeboolaClient:
         self._bearer_token = bearer_token
         self._branch_id = branch_id
         self._headers = dict(headers) if headers else None
+        self._features_cache: set[str] | None = None
 
         sapi_url_parsed = urlparse(storage_api_url)
         if not sapi_url_parsed.hostname or not sapi_url_parsed.hostname.startswith('connection.'):
@@ -232,6 +233,14 @@ class KeboolaClient:
         to the main/production branch.
         """
         return self._branch_id
+
+    async def has_feature(self, feature: str) -> bool:
+        """Checks if the project has a specific feature enabled. Results are cached."""
+        if self._features_cache is None:
+            token_info = await self._storage_client.verify_token()
+            owner = token_info.get('owner', {})
+            self._features_cache = set(owner.get('features', []) if isinstance(owner, dict) else [])
+        return feature in self._features_cache
 
     @property
     def headers(self) -> dict[str, Any] | None:
