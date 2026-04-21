@@ -108,7 +108,7 @@ section "LocalBackend init"
 "$PYTHON" - "$DATA_DIR" <<'PY'
 import sys
 from pathlib import Path
-from keboola_mcp_server.tools.local.backend import LocalBackend
+from keboola_mcp_server.local_backend.backend import LocalBackend
 
 data_dir = sys.argv[1]
 b = LocalBackend(data_dir=data_dir)
@@ -125,7 +125,7 @@ section "CSV catalog"
 
 "$PYTHON" - "$DATA_DIR" <<'PY'
 import sys
-from keboola_mcp_server.tools.local.backend import LocalBackend
+from keboola_mcp_server.local_backend.backend import LocalBackend
 
 b = LocalBackend(data_dir=sys.argv[1])
 
@@ -159,7 +159,7 @@ ok "write / list / overwrite / delete CSV tables"
 
 # Invalid table names
 "$PYTHON" - <<'PY'
-from keboola_mcp_server.tools.local.backend import LocalBackend
+from keboola_mcp_server.local_backend.backend import LocalBackend
 import tempfile, os
 
 with tempfile.TemporaryDirectory() as d:
@@ -182,7 +182,7 @@ section "DuckDB SQL"
 
 "$PYTHON" - "$DATA_DIR" <<'PY'
 import sys
-from keboola_mcp_server.tools.local.backend import LocalBackend
+from keboola_mcp_server.local_backend.backend import LocalBackend
 
 b = LocalBackend(data_dir=sys.argv[1])
 b.write_csv_table('sales', 'region,amount\nEast,100\nWest,200\nEast,150\n')
@@ -203,7 +203,7 @@ ok "SELECT, empty result, DDL"
 
 "$PYTHON" - "$DATA_DIR" <<'PY'
 import sys
-from keboola_mcp_server.tools.local.backend import LocalBackend
+from keboola_mcp_server.local_backend.backend import LocalBackend
 
 b = LocalBackend(data_dir=sys.argv[1])
 b.write_csv_table('orders', 'id,customer_id,amount\n1,1,100\n2,2,50\n3,1,75\n')
@@ -226,8 +226,8 @@ section "Config persistence"
 
 "$PYTHON" - "$DATA_DIR" <<'PY'
 import sys
-from keboola_mcp_server.tools.local.backend import LocalBackend
-from keboola_mcp_server.tools.local.config import ComponentConfig
+from keboola_mcp_server.local_backend.backend import LocalBackend
+from keboola_mcp_server.local_backend.config import ComponentConfig
 
 b = LocalBackend(data_dir=sys.argv[1])
 
@@ -272,9 +272,9 @@ section "get_project_info"
 
 "$PYTHON" - <<'PY'
 import asyncio, tempfile
-from keboola_mcp_server.tools.local.backend import LocalBackend
-from keboola_mcp_server.tools.local.config import ComponentConfig
-from keboola_mcp_server.tools.local.tools import get_project_info_local
+from keboola_mcp_server.local_backend.backend import LocalBackend
+from keboola_mcp_server.local_backend.config import ComponentConfig
+from keboola_mcp_server.local_backend.tools import get_project_info_local
 
 with tempfile.TemporaryDirectory() as d:
     b = LocalBackend(data_dir=d)
@@ -312,7 +312,7 @@ EXPECTED = {
 
 with tempfile.TemporaryDirectory() as d:
     server = create_local_server(d)
-    registered = set(asyncio.run(server._tool_manager.get_tools()).keys())
+    registered = {tool.name for tool in asyncio.run(server.list_tools(run_middleware=False))}
 
 missing = EXPECTED - registered
 extra = registered - EXPECTED
@@ -333,7 +333,7 @@ if [[ $RUN_PORTAL -eq 0 ]]; then
 else
   if "$PYTHON" - <<'PY'
 import asyncio
-from keboola_mcp_server.tools.local.schema import get_component_schema, find_component_id
+from keboola_mcp_server.local_backend.schema import get_component_schema, find_component_id
 
 async def run():
     schema = await get_component_schema('keboola.ex-http')
@@ -372,7 +372,7 @@ else
 
   "$PYTHON" - "$DOCKER_DATA" <<'PY'
 import sys
-from keboola_mcp_server.tools.local.backend import LocalBackend
+from keboola_mcp_server.local_backend.backend import LocalBackend
 
 b = LocalBackend(data_dir=sys.argv[1])
 
@@ -455,7 +455,7 @@ if [[ $RUN_DOCKER -eq 1 ]] && docker info >/dev/null 2>&1; then
   "$PYTHON" - "$COL_DIR" <<'PY'
 import sys
 from pathlib import Path
-from keboola_mcp_server.tools.local.docker import run_image_component
+from keboola_mcp_server.local_backend.docker import run_image_component
 
 data_dir = Path(sys.argv[1])
 

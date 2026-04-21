@@ -278,7 +278,7 @@ class LocalBackend:
                 continue
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 try:
-                    s.bind(('', port))
+                    s.bind(('127.0.0.1', port))
                     return port
                 except OSError:
                     continue
