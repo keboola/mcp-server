@@ -54,7 +54,7 @@ EXPECTED_TOOLS = {
     'write_table',
     'delete_table',
     'save_config',
-    'list_configs',
+    'get_configs',
     'delete_config',
     'run_saved_config',
     'migrate_to_keboola',

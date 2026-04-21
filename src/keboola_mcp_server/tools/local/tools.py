@@ -95,7 +95,7 @@ _LOCAL_PROJECT_INSTRUCTION = (
     'Table names in SQL correspond to CSV file stems (e.g. customers.csv → SELECT * FROM customers). '
     'Use write_table to add or overwrite a table and delete_table to remove one. '
     '\n'
-    'Component configs: save_config / list_configs / delete_config / run_saved_config. '
+    'Component configs: save_config / get_configs / delete_config / run_saved_config. '
     'Components run via Docker: setup_component (clone and build) then run_component (execute). '
     'Discover components with find_component_id; inspect their config schema with get_component_schema. '
     '\n'
@@ -394,12 +394,7 @@ async def create_data_app_local(
         updated_at=now,
     )
 
-    # Pre-compute chart data server-side using DuckDB
-    chart_data: dict = {}
-    for chart in charts:
-        chart_data[chart.id] = local_backend.query_local_structured(chart.sql)
-
-    local_backend.save_data_app(config, chart_data)
+    local_backend.save_data_app(config)
 
     port = local_backend.get_running_port(name)
     return DataAppInfo(
@@ -806,7 +801,7 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
     )
 
     @tool_errors()
-    async def list_configs() -> ConfigsOutput:
+    async def get_configs() -> ConfigsOutput:
         """
         Lists all saved component configurations.
 
@@ -818,7 +813,7 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
 
     mcp.add_tool(
         FunctionTool.from_function(
-            list_configs,
+            get_configs,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={LOCAL_TOOLS_TAG},
         )

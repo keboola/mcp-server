@@ -45,32 +45,44 @@ def _make_config(name='my-app', charts=None):
 
 def test_generate_dashboard_html_structure():
     config = _make_config()
-    data = {'c1': {'columns': ['n'], 'rows': [{'n': 1}]}}
-    html = generate_dashboard_html(config, data)
+    html = generate_dashboard_html(config)
 
     assert '<!DOCTYPE html>' in html
     assert 'echarts' in html
     assert 'pico' in html
     # config embedded as JSON
     assert 'My App' in html
-    assert 'Test dashboard' in html  # embedded in the JSON config block
+    assert 'Test dashboard' in html
     assert '"id": "c1"' in html
+    # live query service config embedded
+    assert '"queryService"' in html
+    assert '"branchId": "local"' in html
 
 
 def test_generate_dashboard_html_escapes_script_tag():
-    config = _make_config()
-    # A value that would break HTML parsing if not escaped
-    data = {'c1': {'columns': ['x'], 'rows': [{'x': '</script><script>alert(1)'}]}}
-    html = generate_dashboard_html(config, data)
+    config = _make_config(
+        charts=[
+            DataAppChartConfig(
+                id='c1',
+                title='T',
+                sql="SELECT '</script><script>alert(1)' AS x",
+                type='table',
+            )
+        ]
+    )
+    html = generate_dashboard_html(config)
     assert '</script><script>' not in html
-    assert '<\\/script>' in html
+    assert '<\\/' in html
 
 
-def test_generate_dashboard_html_error_chart():
+def test_generate_dashboard_html_live_queries():
     config = _make_config()
-    data = {'c1': {'error': 'Table not found', 'columns': [], 'rows': []}}
-    html = generate_dashboard_html(config, data)
-    assert 'Table not found' in html
+    html = generate_dashboard_html(config)
+    # Template uses live fetch — no pre-baked DATA_JSON block
+    assert '__DATA_JSON__' not in html
+    # Query Service API calls present
+    assert '/api/v1/branches/' in html
+    assert 'qs_execute' in html
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +92,7 @@ def test_generate_dashboard_html_error_chart():
 
 def test_save_and_load_data_app(backend):
     config = _make_config()
-    chart_data = {'c1': {'columns': ['n'], 'rows': [{'n': 1}]}}
-    app_dir = backend.save_data_app(config, chart_data)
+    app_dir = backend.save_data_app(config)
 
     assert (app_dir / 'app.json').exists()
     assert (app_dir / 'index.html').exists()
@@ -103,14 +114,14 @@ def test_list_data_apps_empty(backend):
 
 def test_list_data_apps_multiple(backend):
     for name in ('app-a', 'app-b'):
-        backend.save_data_app(_make_config(name=name), {'c1': {'columns': [], 'rows': []}})
+        backend.save_data_app(_make_config(name=name))
     names = [c.name for c in backend.list_data_apps()]
     assert sorted(names) == ['app-a', 'app-b']
 
 
 def test_delete_data_app(backend):
     config = _make_config()
-    backend.save_data_app(config, {})
+    backend.save_data_app(config)
     assert (backend.apps_dir / 'my-app').exists()
 
     result = backend.delete_data_app('my-app')
@@ -168,7 +179,7 @@ def test_start_data_app_not_found(backend):
 
 def test_start_data_app_success(backend):
     config = _make_config()
-    backend.save_data_app(config, {})
+    backend.save_data_app(config)
 
     mock_proc = MagicMock()
     mock_proc.pid = 12345
@@ -179,9 +190,9 @@ def test_start_data_app_success(backend):
     assert pid == 12345
     assert 8101 <= port <= 8199
     mock_popen.assert_called_once()
-    call_args = mock_popen.call_args
-    assert 'python' in call_args[0][0]
-    assert str(port) in call_args[0][0]
+    cmd = mock_popen.call_args[0][0]
+    assert 'appserver' in ' '.join(cmd)
+    assert str(port) in cmd
 
     running = backend._running_apps()
     assert 'my-app' in running
@@ -191,7 +202,7 @@ def test_start_data_app_success(backend):
 
 def test_start_data_app_already_running(backend):
     config = _make_config()
-    backend.save_data_app(config, {})
+    backend.save_data_app(config)
     own_pid = os.getpid()
     backend._save_running_apps({'my-app': {'pid': own_pid, 'port': 8101, 'started_at': 'x'}})
 
@@ -226,7 +237,7 @@ def test_stop_data_app_already_dead(backend):
 
 def test_delete_data_app_removes_running_entry(backend):
     config = _make_config()
-    backend.save_data_app(config, {})
+    backend.save_data_app(config)
     backend._save_running_apps({'my-app': {'pid': 99999, 'port': 8101, 'started_at': 'x'}})
 
     with patch('os.kill'):

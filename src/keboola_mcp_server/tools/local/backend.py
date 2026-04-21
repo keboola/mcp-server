@@ -300,14 +300,14 @@ class LocalBackend:
             raise FileNotFoundError(f'Data app not found: {name!r}')
         return DataAppConfig.model_validate_json(path.read_text(encoding='utf-8'))
 
-    def save_data_app(self, config, chart_data: dict) -> Path:
+    def save_data_app(self, config) -> Path:
         """Persist DataAppConfig and regenerate index.html. Returns the app directory."""
         from keboola_mcp_server.tools.local.dataapp import generate_dashboard_html
 
         app_dir = self.apps_dir / config.name
         app_dir.mkdir(parents=True, exist_ok=True)
         (app_dir / 'app.json').write_text(config.model_dump_json(indent=2), encoding='utf-8')
-        (app_dir / 'index.html').write_text(generate_dashboard_html(config, chart_data), encoding='utf-8')
+        (app_dir / 'index.html').write_text(generate_dashboard_html(config), encoding='utf-8')
         return app_dir
 
     def delete_data_app(self, name: str) -> bool:
@@ -350,8 +350,7 @@ class LocalBackend:
 
         port = self._find_free_port()
         proc = subprocess.Popen(
-            ['python', '-m', 'http.server', str(port)],
-            cwd=self.data_dir,
+            ['python', '-m', 'keboola_mcp_server.tools.local.appserver', str(port), str(self.data_dir)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,

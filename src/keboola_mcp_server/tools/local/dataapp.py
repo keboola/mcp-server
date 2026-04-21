@@ -1,4 +1,4 @@
-"""Local data app: configuration-driven HTML dashboards backed by pre-computed DuckDB queries."""
+"""Local data app: configuration-driven HTML dashboards with live DuckDB queries."""
 
 import json
 from datetime import datetime, timezone
@@ -59,9 +59,19 @@ class DataAppStopResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# HTML template — single-file dashboard with ECharts + Pico CSS
-# All dynamic content is embedded as JSON (never injected into HTML context).
-# innerHTML is only used with static string literals in the template.
+# HTML template — live-query dashboard.
+#
+# Charts fetch data on load and on each Refresh click by calling the local
+# Query Service emulator (appserver.py) at window.location.origin.
+#
+# The emulator implements the same HTTP API contract as the production Query
+# Service (https://query.keboola.com), so migrating to production means only
+# changing the base_url + token in the embedded config — no JS rewrite needed.
+#
+# API calls made by this template (matching the production contract):
+#   POST {base_url}/api/v1/branches/{branchId}/workspaces/{workspaceId}/queries
+#   GET  {base_url}/api/v1/queries/{jobId}
+#   GET  {base_url}/api/v1/queries/{jobId}/{stmtId}/results
 # ---------------------------------------------------------------------------
 
 _HTML_TEMPLATE = """\
@@ -81,6 +91,7 @@ header { margin-bottom: 1.5rem; border-bottom: 1px solid var(--pico-muted-border
 header h1 { margin-bottom: 0.25rem; }
 header p { margin: 0; color: var(--pico-muted-color); }
 .status-bar { font-size: 0.8rem; color: var(--pico-muted-color); margin-top: 0.5rem; min-height: 1.2em; }
+.refresh-btn { margin-top: 0.5rem; font-size: 0.8rem; padding: 0.25rem 0.75rem; cursor: pointer; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 550px), 1fr)); gap: 1.25rem; }
 .card {
   background: var(--pico-card-background-color);
@@ -107,16 +118,20 @@ header p { margin: 0; color: var(--pico-muted-color); }
     <h1 id="app-title"></h1>
     <p id="app-desc"></p>
     <div class="status-bar" id="status"></div>
+    <button class="refresh-btn" id="refresh-btn">&#8635; Refresh</button>
   </header>
   <div class="grid" id="grid"></div>
 </main>
 
 <script id="app-config" type="application/json">__CONFIG_JSON__</script>
-<script id="chart-data" type="application/json">__DATA_JSON__</script>
 <script>
 (function () {
+  'use strict';
+
   var APP_CONFIG = JSON.parse(document.getElementById('app-config').textContent);
-  var CHART_DATA = JSON.parse(document.getElementById('chart-data').textContent);
+  var QS = APP_CONFIG.queryService;  // {token, branchId, workspaceId}
+  // base_url auto-detected from browser URL — works for any port
+  var BASE_URL = window.location.origin;
 
   var PALETTE = [
     '#5470c6','#91cc75','#fac858','#ee6666','#73c0de',
@@ -126,22 +141,77 @@ header p { margin: 0; color: var(--pico-muted-color); }
   document.getElementById('app-title').textContent = APP_CONFIG.title || '';
   document.getElementById('app-desc').textContent = APP_CONFIG.description || '';
 
-  function status(msg) {
-    document.getElementById('status').textContent = msg;
+  // -----------------------------------------------------------------------
+  // Query Service client — calls the same HTTP API as production
+  // POST /api/v1/branches/{branchId}/workspaces/{workspaceId}/queries
+  // GET  /api/v1/queries/{jobId}
+  // GET  /api/v1/queries/{jobId}/{stmtId}/results
+  // -----------------------------------------------------------------------
+
+  function qs_headers() {
+    return { 'Content-Type': 'application/json', 'X-StorageAPI-Token': QS.token };
   }
+
+  async function qs_execute(sql) {
+    var submitUrl = BASE_URL + '/api/v1/branches/' + QS.branchId + '/workspaces/' + QS.workspaceId + '/queries';
+    var submitRes = await fetch(submitUrl, {
+      method: 'POST',
+      headers: qs_headers(),
+      body: JSON.stringify({ statements: [sql], transactional: false, actorType: 'user' })
+    });
+    if (!submitRes.ok) throw new Error('query submit failed: ' + submitRes.status);
+    var submitBody = await submitRes.json();
+    var jobId = submitBody.queryJobId;
+
+    // Poll until completed (emulator returns completed immediately)
+    var statusUrl = BASE_URL + '/api/v1/queries/' + jobId;
+    var stmts;
+    for (var i = 0; i < 30; i++) {
+      var statusRes = await fetch(statusUrl, { headers: qs_headers() });
+      if (!statusRes.ok) throw new Error('status poll failed: ' + statusRes.status);
+      var statusBody = await statusRes.json();
+      if (statusBody.status === 'completed' || statusBody.status === 'failed') {
+        stmts = statusBody.statements || [];
+        break;
+      }
+      await new Promise(function(r) { setTimeout(r, 200); });
+    }
+    if (!stmts) throw new Error('query timed out');
+
+    var stmt = stmts[0];
+    if (!stmt) throw new Error('no statement in response');
+    if (stmt.status === 'error') throw new Error(stmt.error || 'statement error');
+
+    var resultsUrl = BASE_URL + '/api/v1/queries/' + jobId + '/' + stmt.id + '/results?offset=0&pageSize=1000';
+    var resultsRes = await fetch(resultsUrl, { headers: qs_headers() });
+    if (!resultsRes.ok) throw new Error('results fetch failed: ' + resultsRes.status);
+    var body = await resultsRes.json();
+
+    // Normalize to {columns: [str], rows: [{col: val}]}
+    var colNames = (body.columns || []).map(function(c) { return c.name || c; });
+    var rows = (body.data || []).map(function(row) {
+      var obj = {};
+      colNames.forEach(function(c, i) { obj[c] = row[i]; });
+      return obj;
+    });
+    return { columns: colNames, rows: rows };
+  }
+
+  // -----------------------------------------------------------------------
+  // Chart rendering (ECharts)
+  // -----------------------------------------------------------------------
+
+  function status(msg) { document.getElementById('status').textContent = msg; }
 
   function makeCard(chart) {
     var card = document.createElement('div');
     card.className = 'card';
-
     var h3 = document.createElement('h3');
     h3.textContent = chart.title;
     card.appendChild(h3);
-
     var box = document.createElement('div');
     box.className = 'chart-box';
     box.id = 'box-' + chart.id;
-
     var loading = document.createElement('div');
     loading.className = 'loading';
     var spinner = document.createElement('div');
@@ -153,6 +223,21 @@ header p { margin: 0; color: var(--pico-muted-color); }
     box.appendChild(loading);
     card.appendChild(box);
     return card;
+  }
+
+  function setLoading(id) {
+    var box = document.getElementById('box-' + id);
+    if (!box) return;
+    while (box.firstChild) box.removeChild(box.firstChild);
+    var loading = document.createElement('div');
+    loading.className = 'loading';
+    var spinner = document.createElement('div');
+    spinner.className = 'spinner';
+    var label = document.createElement('span');
+    label.textContent = 'Loading\u2026';
+    loading.appendChild(spinner);
+    loading.appendChild(label);
+    box.appendChild(loading);
   }
 
   function setError(id, msg) {
@@ -177,10 +262,8 @@ header p { margin: 0; color: var(--pico-muted-color); }
     var ec = echarts.init(box);
     ec.setOption({
       tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-      legend: {
-        orient: 'vertical', left: '5%', top: 'center',
-        textStyle: { overflow: 'truncate', width: 120 }
-      },
+      legend: { orient: 'vertical', left: '5%', top: 'center',
+        textStyle: { overflow: 'truncate', width: 120 } },
       series: [{
         type: 'pie', radius: ['38%', '68%'], center: ['65%', '50%'],
         data: data.rows.map(function(r) { return { name: String(r[xc]), value: Number(r[yc]) }; }),
@@ -199,18 +282,14 @@ header p { margin: 0; color: var(--pico-muted-color); }
       tooltip: { trigger: 'axis' },
       legend: { data: ycols, bottom: 0 },
       grid: { left: '3%', right: '3%', bottom: ycols.length > 1 ? '12%' : '8%', containLabel: true },
-      xAxis: {
-        type: 'category',
+      xAxis: { type: 'category',
         data: data.rows.map(function(r) { return String(r[xc]); }),
-        axisLabel: { rotate: data.rows.length > 8 ? 30 : 0, overflow: 'truncate', width: 80 }
-      },
+        axisLabel: { rotate: data.rows.length > 8 ? 30 : 0, overflow: 'truncate', width: 80 } },
       yAxis: { type: 'value' },
       series: ycols.map(function(col, i) {
-        return {
-          name: col, type: 'bar',
+        return { name: col, type: 'bar',
           data: data.rows.map(function(r) { return Number(r[col]); }),
-          itemStyle: { color: PALETTE[i % PALETTE.length] }
-        };
+          itemStyle: { color: PALETTE[i % PALETTE.length] } };
       })
     });
     return ec;
@@ -224,19 +303,13 @@ header p { margin: 0; color: var(--pico-muted-color); }
       tooltip: { trigger: 'axis' },
       legend: { data: ycols, bottom: 0 },
       grid: { left: '3%', right: '3%', bottom: '8%', containLabel: true },
-      xAxis: {
-        type: 'category',
-        data: data.rows.map(function(r) { return String(r[xc]); }),
-        boundaryGap: false
-      },
+      xAxis: { type: 'category',
+        data: data.rows.map(function(r) { return String(r[xc]); }), boundaryGap: false },
       yAxis: { type: 'value' },
       series: ycols.map(function(col, i) {
-        return {
-          name: col, type: 'line', smooth: true,
+        return { name: col, type: 'line', smooth: true,
           data: data.rows.map(function(r) { return Number(r[col]); }),
-          itemStyle: { color: PALETTE[i % PALETTE.length] },
-          areaStyle: { opacity: 0.08 }
-        };
+          itemStyle: { color: PALETTE[i % PALETTE.length] }, areaStyle: { opacity: 0.08 } };
       })
     });
     return ec;
@@ -255,27 +328,19 @@ header p { margin: 0; color: var(--pico-muted-color); }
         if (!groups[k]) groups[k] = [];
         groups[k].push([Number(r[xc]), Number(r[yc])]);
       });
-      var keys = Object.keys(groups);
-      series = keys.map(function(k, i) {
-        return {
-          name: k, type: 'scatter', data: groups[k], symbolSize: 7,
-          itemStyle: { color: PALETTE[i % PALETTE.length], opacity: 0.8 }
-        };
+      series = Object.keys(groups).map(function(k, i) {
+        return { name: k, type: 'scatter', data: groups[k], symbolSize: 7,
+          itemStyle: { color: PALETTE[i % PALETTE.length], opacity: 0.8 } };
       });
     } else {
-      series = [{
-        type: 'scatter',
+      series = [{ type: 'scatter',
         data: data.rows.map(function(r) { return [Number(r[xc]), Number(r[yc])]; }),
-        symbolSize: 7
-      }];
+        symbolSize: 7 }];
     }
     ec.setOption({
-      tooltip: {
-        trigger: 'item',
-        formatter: function(p) {
-          return (cc ? p.seriesName + '<br/>' : '') + xc + ': ' + p.value[0] + '<br/>' + yc + ': ' + p.value[1];
-        }
-      },
+      tooltip: { trigger: 'item', formatter: function(p) {
+        return (cc ? p.seriesName + '<br\\/>' : '') + xc + ': ' + p.value[0] + '<br\\/>' + yc + ': ' + p.value[1];
+      }},
       legend: cc ? { bottom: 0 } : undefined,
       grid: { left: '3%', right: '3%', bottom: cc ? '12%' : '8%', containLabel: true },
       xAxis: { name: xc, type: 'value', scale: true },
@@ -339,10 +404,7 @@ header p { margin: 0; color: var(--pico-muted-color); }
     box.appendChild(wrap);
   }
 
-  function renderChart(chart) {
-    var data = CHART_DATA[chart.id];
-    if (!data) { setError(chart.id, 'No data for chart "' + chart.id + '"'); return; }
-    if (data.error) { setError(chart.id, data.error); return; }
+  function renderChart(chart, data) {
     var box = clearBox(chart.id);
     if (!box) return;
     try {
@@ -360,18 +422,33 @@ header p { margin: 0; color: var(--pico-muted-color); }
     }
   }
 
+  async function loadAll() {
+    document.getElementById('refresh-btn').disabled = true;
+    status('Loading\u2026');
+    var errors = 0;
+    var promises = APP_CONFIG.charts.map(async function(chart) {
+      setLoading(chart.id);
+      try {
+        var data = await qs_execute(chart.sql);
+        renderChart(chart, data);
+      } catch (e) {
+        setError(chart.id, e.message);
+        errors++;
+      }
+    });
+    await Promise.all(promises);
+    var tables = (APP_CONFIG.tables || []).join(', ') || 'none';
+    var ok = APP_CONFIG.charts.length - errors;
+    status('Tables: ' + tables + ' \u2022 ' + ok + '/' + APP_CONFIG.charts.length + ' charts'
+      + (errors ? ' (' + errors + ' error' + (errors > 1 ? 's' : '') + ')' : ''));
+    document.getElementById('refresh-btn').disabled = false;
+  }
+
   function init() {
     var grid = document.getElementById('grid');
     APP_CONFIG.charts.forEach(function(chart) { grid.appendChild(makeCard(chart)); });
-    APP_CONFIG.charts.forEach(function(chart) { renderChart(chart); });
 
-    var errors = APP_CONFIG.charts.filter(function(c) {
-      return CHART_DATA[c.id] && CHART_DATA[c.id].error;
-    }).length;
-    var ok = APP_CONFIG.charts.length - errors;
-    var tables = (APP_CONFIG.tables || []).join(', ') || 'none';
-    status('Tables: ' + tables + ' \u2022 ' + ok + '/' + APP_CONFIG.charts.length + ' charts rendered'
-      + (errors ? ' (' + errors + ' error' + (errors > 1 ? 's' : '') + ')' : ''));
+    document.getElementById('refresh-btn').addEventListener('click', loadAll);
 
     window.addEventListener('resize', function() {
       document.querySelectorAll('.chart-box').forEach(function(box) {
@@ -379,6 +456,8 @@ header p { margin: 0; color: var(--pico-muted-color); }
         if (ec) ec.resize();
       });
     });
+
+    loadAll();
   }
 
   if (document.readyState === 'loading') {
@@ -397,20 +476,24 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def generate_dashboard_html(config: DataAppConfig, chart_data: dict) -> str:
-    """Generate a self-contained HTML dashboard.
+def generate_dashboard_html(config: DataAppConfig) -> str:
+    """Generate a self-contained HTML dashboard with live DuckDB queries.
 
-    :param config: App configuration (title, description, charts).
-    :param chart_data: Mapping of chart_id to {columns, rows} or {error} dicts.
+    Charts load data at runtime by calling the local Query Service emulator
+    (appserver.py) at window.location.origin. The same HTML works with the
+    production Query Service when base_url/token/branchId/workspaceId are
+    updated in the embedded app-config.
+
+    :param config: App configuration (title, description, charts, queryService).
     :returns: Complete HTML string ready to write to disk.
     """
+    qs_config = {
+        'token': 'local',
+        'branchId': 'local',
+        'workspaceId': 'local',
+    }
     config_dict = config.model_dump()
-    # Escape </script> to prevent early tag termination inside the JSON script block.
+    config_dict['queryService'] = qs_config
     config_json = json.dumps(config_dict, ensure_ascii=False).replace('</', '<\\/')
-    data_json = json.dumps(chart_data, ensure_ascii=False).replace('</', '<\\/')
 
-    return (
-        _HTML_TEMPLATE.replace('__TITLE__', config.title)
-        .replace('__CONFIG_JSON__', config_json)
-        .replace('__DATA_JSON__', data_json)
-    )
+    return _HTML_TEMPLATE.replace('__TITLE__', config.title).replace('__CONFIG_JSON__', config_json)

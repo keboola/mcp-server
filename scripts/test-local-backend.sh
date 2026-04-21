@@ -305,7 +305,7 @@ EXPECTED = {
     'get_tables', 'get_buckets', 'query_data', 'search', 'get_project_info',
     'setup_component', 'run_component', 'get_component_schema', 'find_component_id',
     'write_table', 'delete_table',
-    'save_config', 'list_configs', 'delete_config', 'run_saved_config',
+    'save_config', 'get_configs', 'delete_config', 'run_saved_config',
     'migrate_to_keboola',
     'create_data_app', 'run_data_app', 'list_data_apps', 'stop_data_app', 'delete_data_app',
 }

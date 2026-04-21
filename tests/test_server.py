@@ -47,6 +47,7 @@ class TestServer:
             'create_flow',
             'create_oauth_url',
             'create_sql_transformation',
+            'delete_config',
             'deploy_data_app',
             'docs_query',
             'find_component_id',

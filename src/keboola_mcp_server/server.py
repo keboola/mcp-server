@@ -259,6 +259,20 @@ def create_platform_server(
         return mcp, custom_routes
 
 
+_LOCAL_ONBOARDING = (
+    'You are running in Keboola local mode — no platform account needed.\n\n'
+    '## 3 workflows to suggest when a user does not know where to start:\n\n'
+    '**A · Explore data you already have**\n'
+    '  write_table → query_data → create_data_app → run_data_app\n\n'
+    '**B · Extract data from an API or source**\n'
+    '  find_component_id → get_component_schema → setup_component → run_component → create_data_app\n\n'
+    '**C · Push local work to Keboola platform**\n'
+    '  get_project_info → migrate_to_keboola(storage_api_url, storage_token)\n\n'
+    'Start by asking: "What data do you want to work with?"\n\n'
+    'SQL engine: DuckDB. Table names in SQL = CSV file stems (customers.csv → SELECT * FROM customers).'
+)
+
+
 def create_local_server(
     data_dir: str,
     docker_network: str = 'bridge',
@@ -272,10 +286,11 @@ def create_local_server(
     When storage_api_url and storage_token are provided, migrate_to_keboola can
     be called without repeating them.
     """
+    from keboola_mcp_server.prompts.add_prompts import add_local_prompts
     from keboola_mcp_server.tools.local import LocalBackend, register_local_tools
 
     LOG.info(f'Creating local-backend server with data_dir={data_dir!r}, docker_network={docker_network!r}')
-    mcp = FastMCP('Keboola MCP Server (local)')
+    mcp = FastMCP('Keboola MCP Server (local)', instructions=_LOCAL_ONBOARDING)
     local_backend = LocalBackend(
         data_dir=data_dir,
         docker_network=docker_network,
@@ -283,6 +298,7 @@ def create_local_server(
         storage_token=storage_token,
     )
     register_local_tools(mcp, local_backend)
+    add_local_prompts(mcp)
     return mcp
 
 
