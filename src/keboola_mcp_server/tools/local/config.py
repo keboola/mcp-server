@@ -22,11 +22,11 @@ class ComponentConfig(BaseModel):
     parameters: dict = Field(default_factory=dict, description='Component parameters written to config.json.')
     component_image: str | None = Field(
         default=None,
-        description='Docker image tag for registry-based execution (alternative to git_url).',
+        description='Docker image tag for a locally available image (not ECR — needs AWS creds). Prefer git_url.',
     )
     git_url: str | None = Field(
         default=None,
-        description='Git URL for source-based execution (alternative to component_image).',
+        description='Git URL of the public component repo (preferred for local execution, e.g. github.com/keboola).',
     )
     created_at: str = Field(default='', description='ISO 8601 creation timestamp.')
     updated_at: str = Field(default='', description='ISO 8601 last-update timestamp.')

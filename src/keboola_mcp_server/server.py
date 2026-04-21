@@ -269,7 +269,13 @@ _LOCAL_ONBOARDING = (
     '**C · Push local work to Keboola platform**\n'
     '  get_project_info → migrate_to_keboola(storage_api_url, storage_token)\n\n'
     'Start by asking: "What data do you want to work with?"\n\n'
-    'SQL engine: DuckDB. Table names in SQL = CSV file stems (customers.csv → SELECT * FROM customers).'
+    'SQL engine: DuckDB. Table names in SQL = CSV file stems (customers.csv → SELECT * FROM customers).\n\n'
+    '## Running components locally\n\n'
+    'Always use `git_url` (public GitHub repo) with `setup_component` + `run_component` or `run_saved_config`.\n'
+    'Do NOT use ECR image URIs (`component_image`) — ECR requires AWS credentials that are not available locally.\n\n'
+    'Example: `setup_component(git_url="https://github.com/keboola/component-daktela")`\n'
+    'Find the GitHub URL with `get_component_schema` or by searching github.com/keboola.\n'
+    'For Python components that use uv/pyproject.toml, build with `--network host` so pip can reach PyPI.'
 )
 
 

@@ -627,9 +627,10 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
             Field(
                 default=None,
                 description=(
-                    'Docker image tag to pull from a registry '
-                    '(e.g. "keboola/generic-extractor:latest"). '
-                    'Provide this OR git_url, not both.'
+                    'Docker image tag for a locally available image (e.g. "myimage:local"). '
+                    'Only use this for images already present on the host — '
+                    'ECR/registry images require AWS credentials not available locally. '
+                    'Prefer git_url for open-source Keboola components.'
                 ),
             ),
         ] = None,
@@ -638,8 +639,9 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
             Field(
                 default=None,
                 description=(
-                    'Git URL of the component source repository. '
-                    'The component will be cloned, built, and run via docker compose. '
+                    'Git URL of the component source repository (preferred for local execution). '
+                    'The component will be cloned, built locally, and run via docker compose. '
+                    'Use this for all open-source Keboola components (github.com/keboola). '
                     'Provide this OR component_image, not both.'
                 ),
             ),
@@ -656,7 +658,8 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
         """
         Runs a Keboola component via Docker using the Common Interface.
 
-        Provide either component_image (pulled from a registry) or git_url (built from source).
+        Prefer git_url (clones and builds from the public GitHub repo) for open-source Keboola
+        components — ECR registry images require AWS credentials not available locally.
         Input tables are copied from the local catalog into /data/in/tables/.
         Output tables written to /data/out/tables/ are collected back into the local catalog.
         """
@@ -773,12 +776,23 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
             str | None,
             Field(
                 default=None,
-                description='Docker image tag for registry-based execution. Provide this OR git_url.',
+                description=(
+                    'Docker image tag for a locally available image. '
+                    'Only for images already on the host — ECR requires AWS credentials. '
+                    'Prefer git_url for open-source Keboola components.'
+                ),
             ),
         ] = None,
         git_url: Annotated[
             str | None,
-            Field(default=None, description='Git URL for source-based execution. Provide this OR component_image.'),
+            Field(
+                default=None,
+                description=(
+                    'Git URL of the component source repository (preferred). '
+                    'Use this for all open-source Keboola components (github.com/keboola). '
+                    'Provide this OR component_image.'
+                ),
+            ),
         ] = None,
     ) -> ComponentConfig:
         """
@@ -787,6 +801,7 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
         Stored at <data-dir>/configs/<config_id>.json. Use run_saved_config to
         execute it without repeating the parameters. Use migrate_to_keboola to
         push saved configs to the Keboola platform.
+        Always use git_url for open-source Keboola components — ECR images require AWS credentials.
         """
         return await save_config_local(
             local_backend, config_id, component_id, name, parameters, component_image, git_url
