@@ -117,7 +117,9 @@ class _Workspace(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
+    async def get_table_info(
+        self, table: Mapping[str, Any], backend_path: list[str] | None = None
+    ) -> DbTableInfo | None:
         # TODO: use a pydantic class for the 'table' param
         pass
 
@@ -211,7 +213,9 @@ class _SnowflakeWorkspace(_Workspace):
             LOG.exception(f'Unexpected error during query cancellation: job_id={job_id}')
             return (False, False)
 
-    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
+    async def get_table_info(
+        self, table: Mapping[str, Any], backend_path: list[str] | None = None
+    ) -> DbTableInfo | None:
         table_id = table['id']
 
         db_name: str | None = None
@@ -240,32 +244,32 @@ class _SnowflakeWorkspace(_Workspace):
                 LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
         else:
-            # Try to use backendPath from the bucket for the correct schema name
-            # (handles all branch patterns including storage-branches)
-            backend_path = _get_backend_path(table)
-
-            sql = 'select CURRENT_DATABASE() as "current_database";'
-            result = await self.execute_query(sql)
-            if result.is_ok:
-                if result.data and result.data.rows:
-                    row = result.data.rows[0]
-                    db_name = row['current_database']
-                    if backend_path and len(backend_path) >= 2:
-                        schema_name = backend_path[1]
-                        table_name = table['name']
-                    elif '.' in table_id:
-                        # a table local in a project for which the snowflake connection/workspace is open
-                        schema_name, table_name = table_id.rsplit(sep='.', maxsplit=1)
-                    else:
-                        # a table not in the project, but in the writable schema created for the workspace
-                        # TODO: we should never come here, because the tools for listing tables can only see
-                        #  tables that are in the project
-                        schema_name = self._schema
-                        table_name = table['name']
-                else:
-                    LOG.warning(f'No current database: {sql}, SAPI response: {result}\n' f'Table: {self._dump(table)}')
+            bp = backend_path or _get_backend_path(table)
+            if bp and len(bp) >= 2:
+                db_name = bp[0]
+                schema_name = bp[1]
+                table_name = table['name']
             else:
-                LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
+                sql = 'select CURRENT_DATABASE() as "current_database";'
+                result = await self.execute_query(sql)
+                if result.is_ok:
+                    if result.data and result.data.rows:
+                        row = result.data.rows[0]
+                        db_name = row['current_database']
+                        if '.' in table_id:
+                            schema_name, table_name = table_id.rsplit(sep='.', maxsplit=1)
+                        else:
+                            # a table not in the project, but in the writable schema created for the workspace
+                            # TODO: we should never come here, because the tools for listing tables can only see
+                            #  tables that are in the project
+                            schema_name = self._schema
+                            table_name = table['name']
+                    else:
+                        LOG.warning(
+                            f'No current database: {sql}, SAPI response: {result}\n' f'Table: {self._dump(table)}'
+                        )
+                else:
+                    LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
 
         if db_name and schema_name and table_name:
             sql = (
@@ -491,14 +495,14 @@ class _BigQueryWorkspace(_Workspace):
     def get_quoted_name(self, name: str) -> str:
         return f'`{name}`'  # wrap name in back tick
 
-    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
+    async def get_table_info(
+        self, table: Mapping[str, Any], backend_path: list[str] | None = None
+    ) -> DbTableInfo | None:
         table_id = table['id']
 
-        # Try to use backendPath from the bucket for the correct schema name
-        backend_path = _get_backend_path(table)
-        if backend_path and len(backend_path) >= 2:
-            # backendPath already contains the correctly formatted schema for BigQuery
-            schema_name = backend_path[1].replace('.', '_').replace('-', '_')
+        bp = backend_path or _get_backend_path(table)
+        if bp and len(bp) >= 2:
+            schema_name = bp[1].replace('.', '_').replace('-', '_')
             table_name = table['name']
         elif '.' in table_id:
             # a table local in a project for which the workspace is open
@@ -828,13 +832,15 @@ class WorkspaceManager:
         workspace = await self._get_workspace()
         return await workspace.execute_query(sql_query, max_rows=max_rows, max_chars=max_chars)
 
-    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
+    async def get_table_info(
+        self, table: Mapping[str, Any], backend_path: list[str] | None = None
+    ) -> DbTableInfo | None:
         table_id = table['id']
         if table_id in self._table_info_cache:
             return self._table_info_cache[table_id]
 
         workspace = await self._get_workspace()
-        if info := await workspace.get_table_info(table):
+        if info := await workspace.get_table_info(table, backend_path=backend_path):
             self._table_info_cache[table_id] = info
 
         return info

@@ -143,24 +143,26 @@ class TestWorkspaceManagerSnowflake:
                 TableFqn(db_name='sapi_1234', schema_name='out.c-baz', table_name='bam', quote_char='"'),
             ),
             (
-                # storage-branches: table with bucket.backendPath containing branch prefix
+                # storage-branches: backendPath present → db_name from backendPath[0], no CURRENT_DATABASE() call
                 {
                     'id': 'out.c-model.customers',
                     'name': 'customers',
                     'bucket': {'id': 'out.c-model', 'backendPath': ['KBC_USE4_3047', '35403_out.c-model']},
                 },
-                {'current_database': 'db_xyz'},
-                TableFqn(db_name='db_xyz', schema_name='35403_out.c-model', table_name='customers', quote_char='"'),
+                {'COLUMN_NAME': 'col1', 'DATA_TYPE': 'STRING', 'IS_NULLABLE': 'YES'},
+                TableFqn(
+                    db_name='KBC_USE4_3047', schema_name='35403_out.c-model', table_name='customers', quote_char='"'
+                ),
             ),
             (
-                # backendPath without branch prefix (production bucket)
+                # backendPath without branch prefix → db_name from backendPath[0], no CURRENT_DATABASE() call
                 {
                     'id': 'in.c-shopify.orders',
                     'name': 'orders',
                     'bucket': {'id': 'in.c-shopify', 'backendPath': ['KBC_USE4_3047', 'in.c-shopify']},
                 },
-                {'current_database': 'db_xyz'},
-                TableFqn(db_name='db_xyz', schema_name='in.c-shopify', table_name='orders', quote_char='"'),
+                {'COLUMN_NAME': 'col1', 'DATA_TYPE': 'STRING', 'IS_NULLABLE': 'YES'},
+                TableFqn(db_name='KBC_USE4_3047', schema_name='in.c-shopify', table_name='orders', quote_char='"'),
             ),
         ],
     )

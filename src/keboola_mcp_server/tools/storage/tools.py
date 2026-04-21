@@ -36,7 +36,7 @@ from keboola_mcp_server.tools.storage_helpers import (
     merged_table_detail,
 )
 from keboola_mcp_server.utils import parse_iso_timestamp
-from keboola_mcp_server.workspace import WorkspaceManager
+from keboola_mcp_server.workspace import WorkspaceManager, _get_backend_path
 
 LOG = logging.getLogger(__name__)
 
@@ -138,6 +138,7 @@ class BucketDetail(BaseModel):
     branch_id: str | None = Field(default=None, exclude=True, description='The ID of the branch the bucket belongs to.')
     prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
     # TODO: add prod_name too to strip the '{branch_id}-' prefix from the name'
+    backend_path: list[str] | None = Field(default=None, exclude=True)
 
     def shade_by(
         self,
@@ -238,6 +239,13 @@ class BucketDetail(BaseModel):
     def set_source_project(cls, values: dict[str, Any]) -> dict[str, Any]:
         if source_project_raw := cast(dict[str, Any], get_nested(values, 'sourceBucket.project')):
             values['source_project'] = f'{source_project_raw["name"]} (ID: {source_project_raw["id"]})'
+        return values
+
+    @model_validator(mode='before')
+    @classmethod
+    def set_backend_path(cls, values: dict[str, Any]) -> dict[str, Any]:
+        raw = values.get('backendPath')
+        values['backend_path'] = raw if isinstance(raw, list) else None
         return values
 
 
@@ -749,7 +757,14 @@ async def _get_table(
     raw_primary_key = cast(list[str], raw_table.get('primaryKey', []))
 
     sql_dialect = await workspace_manager.get_sql_dialect()
-    db_table_info = await workspace_manager.get_table_info(raw_table)
+    backend_path = _get_backend_path(raw_table)
+    if not backend_path:
+        raw_bucket_id = cast(str, raw_table.get('bucket', {}).get('id', ''))
+        if raw_bucket_id:
+            prod_bucket, dev_bucket = await _find_buckets(client, raw_bucket_id)
+            active_bucket = dev_bucket or prod_bucket
+            backend_path = active_bucket.backend_path if active_bucket else None
+    db_table_info = await workspace_manager.get_table_info(raw_table, backend_path=backend_path)
 
     column_info = []
     for col_name in raw_columns:
