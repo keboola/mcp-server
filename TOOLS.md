@@ -1804,14 +1804,35 @@ appropriately based on the parameter type.
 updating, set `authentication_type` to `default` to keep the existing authentication type configuration
 (including OIDC setups) unless explicitly specified otherwise.
 
-SQL & DATA TYPE RULES:
+WORKSPACE & TABLE ACCESS:
+- The data app workspace is ISOLATED and EMPTY by default. Storage tables are NOT automatically
+  available inside it. To access a table, either:
+  (a) Use its `fullyQualifiedName` from `get_tables` — the workspace service account has
+      read access to the underlying backend datasets directly (e.g. BigQuery project datasets).
+  (b) Configure input mapping (not yet supported via MCP — use the Keboola UI for this).
+- Do NOT assume a table is queryable by its Storage ID (e.g. `out.c-bucket.table`).
+  Always retrieve the `fullyQualifiedName` via `get_tables` and use that in queries.
+
+SQL DIALECT RULES:
+- Always check `get_project_info` for the `sql_dialect` field before writing any SQL.
+- Snowflake: use double quotes for identifiers: `"column"`, `"DATABASE"."SCHEMA"."TABLE"`
+- BigQuery: use backticks for identifiers: `` `column` ``, `` `project`.`dataset`.`table` ``
+- Never mix quoting styles.
 - SNOWFLAKE COLUMN ALIASES are auto-uppercased unless quoted. Quote aliases to preserve case:
 `CAST("downloads" AS INTEGER) as "downloads"`. Match exact case in Python code.
+
+DATA TYPE RULES:
 - `query_data` RETURNS ALL COLUMNS AS STRINGS regardless of SQL CAST. Always convert types in Python after loading:
 `df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and
 `df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
-- Pattern:
+
+PATTERN (Snowflake):
 `df = query_data('SELECT "model_id", "downloads", "created_at" FROM "DB"."SCHEMA"."TABLE"')`
+`df["downloads"] = pd.to_numeric(df["downloads"], errors="coerce").fillna(0)`
+`df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")`
+
+PATTERN (BigQuery):
+`df = query_data('SELECT `model_id`, `downloads`, `created_at` FROM `project`.`dataset`.`table`')`
 `df["downloads"] = pd.to_numeric(df["downloads"], errors="coerce").fillna(0)`
 `df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")`
 
