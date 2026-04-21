@@ -1298,7 +1298,7 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
-version = "1.56.2"
+version = "1.61.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -1354,6 +1354,7 @@ tests = [
 requires-dist = [
     { name = "black", marker = "extra == 'codestyle'", specifier = "~=26.3" },
     { name = "cryptography", specifier = "~=46.0" },
+    { name = "duckdb", marker = "extra == 'local'", specifier = ">=0.10.0" },
     { name = "fastmcp", specifier = "==3.2.0" },
     { name = "flake8", marker = "extra == 'codestyle'", specifier = "~=7.3" },
     { name = "flake8-bugbear", marker = "extra == 'codestyle'", specifier = "~=25.11" },

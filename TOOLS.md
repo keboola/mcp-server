@@ -381,6 +381,7 @@ CAUTION:
 **Input JSON Schema**:
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "component_id": {
       "description": "The ID of the component the configuration belongs to.",

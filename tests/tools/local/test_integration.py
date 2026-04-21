@@ -71,7 +71,7 @@ async def test_local_server_registers_all_tools(tmp_path: Path) -> None:
     from keboola_mcp_server.server import create_local_server
 
     server = create_local_server(str(tmp_path))
-    registered = set((await server._tool_manager.get_tools()).keys())
+    registered = {tool.name for tool in await server.list_tools(run_middleware=False)}
     assert EXPECTED_TOOLS == registered
 
 

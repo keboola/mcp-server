@@ -52,7 +52,7 @@ def _exec_duckdb(sql: str, tables_dir: Path) -> dict:
 
     try:
         con = duckdb.connect()
-        con.execute("SET enable_external_access = false")
+        con.execute('SET enable_external_access = false')
         for csv_file in sorted(tables_dir.glob('*.csv')):
             tname = csv_file.stem.replace('"', '_')
             con.execute(
@@ -147,7 +147,7 @@ def make_handler(tables_dir: Path, data_dir: Path, jobs: dict):
                 )
 
             cards = '\n'.join(cards_html) if cards_html else '<p>No apps found.</p>'
-            return f'''<!doctype html>
+            return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -178,7 +178,7 @@ def make_handler(tables_dir: Path, data_dir: Path, jobs: dict):
 {cards}
 </div>
 </body>
-</html>'''
+</html>"""
 
         def _send_json(self, status: int, body: dict) -> None:
             payload = json.dumps(body).encode()
