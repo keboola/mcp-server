@@ -38,7 +38,7 @@ main() {
            -H "Content-Type: application/json" \
            -H "Accept: application/json, text/event-stream" \
            -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "ci-docker-test", "version": "1.0.0"}}}' \
-           "http://localhost:8080/mcp" 2>/dev/null)
+           "http://localhost:8080/mcp" 2>/dev/null) || true
 
         http_code=$(echo "$response" | tail -n1)
         body=$(echo "$response" | sed '$d')
@@ -50,7 +50,7 @@ main() {
                -H "Content-Type: application/json" \
                -H "Accept: application/json, text/event-stream" \
                -d '{"jsonrpc": "2.0", "method": "notifications/initialized"}' \
-               "http://localhost:8080/mcp" 2>/dev/null)
+               "http://localhost:8080/mcp" 2>/dev/null) || true
 
             http_code=$(echo "$response" | tail -n1)
             body=$(echo "$response" | sed '$d')
@@ -62,7 +62,7 @@ main() {
                    -H "Content-Type: application/json" \
                    -H "Accept: application/json, text/event-stream" \
                    -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_project_info", "arguments": {}}}' \
-                   "http://localhost:8080/mcp" 2>/dev/null)
+                   "http://localhost:8080/mcp" 2>/dev/null) || true
 
                 http_code=$(echo "$response" | tail -n1)
                 body=$(echo "$response" | sed '$d')

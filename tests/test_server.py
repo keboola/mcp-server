@@ -2,6 +2,8 @@ import asyncio
 import json
 import subprocess
 import tempfile
+
+import httpx
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
@@ -470,10 +472,21 @@ async def test_json_logging():
         stderr_task = asyncio.create_task(read_stream(p.stderr, stderr_lines))
 
         try:
-            # give the server time to fully start
-            await asyncio.sleep(5)
+            # Poll until the server is ready (up to 30s) instead of a fixed sleep.
+            # A fixed sleep is fragile: slow CI runners may need more than 5s to start.
+            for attempt in range(60):
+                await asyncio.sleep(0.5)
+                if p.poll() is not None:
+                    raise RuntimeError(f'MCP server process exited early (rc={p.returncode})')
+                try:
+                    async with httpx.AsyncClient() as hc:
+                        await hc.get('http://localhost:8000/mcp', timeout=1.0)
+                    break
+                except (httpx.ConnectError, httpx.TimeoutException):
+                    if attempt == 59:
+                        raise RuntimeError('MCP server did not become ready within 30s')
 
-            # connect to the server and list prompts to force 'fastmcp' looger to get used
+            # connect to the server and list prompts to force 'fastmcp' logger to get used
             # the listing of the prompts does not require SAPI connection
             async with Client(StreamableHttpTransport('http://localhost:8000/mcp')) as client:
                 prompts = await client.list_prompts()
