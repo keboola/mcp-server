@@ -627,29 +627,28 @@ async def update_flow_internal(
     folder_preview: dict[str, Any] | None = None
     if folder is not None:
         normalized_folder = folder.strip()
-        if normalized_folder:
-            try:
-                current_metadata = await client.storage_client.configuration_metadata_get(
-                    component_id=flow_type, configuration_id=configuration_id
-                )
-                current_folder = next(
-                    (
-                        m.get('value', '')
-                        for m in current_metadata
-                        if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
-                    ),
-                    '',
-                )
-                if normalized_folder != current_folder:
-                    folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
-            except Exception as e:
-                LOG.warning(
-                    'Failed to fetch configuration metadata for folder preview '
-                    '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
-                    flow_type,
-                    configuration_id,
-                    e,
-                )
+        try:
+            current_metadata = await client.storage_client.configuration_metadata_get(
+                component_id=flow_type, configuration_id=configuration_id
+            )
+            current_folder = next(
+                (
+                    m.get('value', '')
+                    for m in current_metadata
+                    if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
+                ),
+                '',
+            )
+            if normalized_folder != current_folder:
+                folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
+        except Exception as e:
+            LOG.warning(
+                'Failed to fetch configuration metadata for folder preview '
+                '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
+                flow_type,
+                configuration_id,
+                e,
+            )
 
     combined_preview: dict[str, Any] | None = {**(mutator_preview or {}), **(folder_preview or {})} or None
     return current_config, flow_configuration, combined_preview

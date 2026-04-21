@@ -585,7 +585,8 @@ class AsyncStorageClient(KeboolaServiceClient):
 
         :param component_id: The id of the component.
         :param configuration_id: The id of the configuration.
-        :return: Configuration metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        :return: Configuration metadata as a list of dictionaries. Each entry contains at minimum 'id', 'key',
+            'value', and 'provider' fields, plus timestamp fields ('timestamp', 'created', etc.).
         """
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
         return cast(list[JsonDict], await self.get(endpoint=endpoint))
@@ -602,7 +603,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param component_id: The id of the component.
         :param configuration_id: The id of the configuration.
         :param metadata: The metadata to update.
-        :return: Configuration metadata as a list of dictionaries. Each dictionary contains the 'key' and 'value' keys.
+        :return: Updated configuration metadata as a list of dictionaries. Each entry contains at minimum 'id',
+            'key', 'value', and 'provider' fields, plus timestamp fields ('timestamp', 'created', etc.).
         """
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}/metadata'
         payload = {
