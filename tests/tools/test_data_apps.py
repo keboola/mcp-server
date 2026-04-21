@@ -765,10 +765,12 @@ class TestBuildCodeDataAppConfig:
     """Tests for _build_code_data_app_config helper."""
 
     def test_builds_watching_mode_config(self):
+        secrets = {'WORKSPACE_ID': '123', 'BRANCH_ID': 'default'}
         config = _build_code_data_app_config(
             name='My Code App',
             watched_repo_url='https://github.com/user/repo.git',
             watched_repo_branch='main',
+            secrets=secrets,
         )
 
         params = config['parameters']
@@ -784,8 +786,9 @@ class TestBuildCodeDataAppConfig:
             'branch': 'main',
             'autoReSetup': True,
         }
+        assert data_app['secrets'] == secrets
 
-        # No script, no packages, no secrets (streamlit-only)
+        # No script, no packages
         assert 'script' not in params
         assert 'packages' not in params
 
@@ -800,6 +803,7 @@ class TestBuildCodeDataAppConfig:
             name='!!!',
             watched_repo_url='https://github.com/user/repo.git',
             watched_repo_branch='dev',
+            secrets={'WORKSPACE_ID': '1', 'BRANCH_ID': 'default'},
         )
         assert config['parameters']['dataApp']['slug'] == 'Data-App'
 
@@ -829,12 +833,14 @@ class TestUpdateExistingCodeDataAppConfig:
         }
 
     def test_update_watched_repo(self, existing_code_config):
+        secrets = {'WORKSPACE_ID': '123', 'BRANCH_ID': 'default'}
         updated = _update_existing_code_data_app_config(
             existing_code_config,
             name='New Name',
             watched_repo_url='https://github.com/user/new-repo.git',
             watched_repo_branch='feature',
             finalize=False,
+            secrets=secrets,
         )
 
         data_app = updated['parameters']['dataApp']
@@ -847,17 +853,20 @@ class TestUpdateExistingCodeDataAppConfig:
             'branch': 'feature',
             'autoReSetup': True,
         }
+        assert data_app['secrets'] == secrets
         # rest of config untouched
         assert updated['authorization'] == existing_code_config['authorization']
         assert updated['runtime'] == existing_code_config['runtime']
 
     def test_finalize_replaces_git_and_removes_watched_repo(self, existing_code_config):
+        secrets = {'WORKSPACE_ID': '456', 'BRANCH_ID': 'main'}
         updated = _update_existing_code_data_app_config(
             existing_code_config,
             name='',
             watched_repo_url='https://github.com/user/final-repo.git',
             watched_repo_branch='main',
             finalize=True,
+            secrets=secrets,
         )
 
         data_app = updated['parameters']['dataApp']
@@ -867,6 +876,7 @@ class TestUpdateExistingCodeDataAppConfig:
         assert 'watchedRepo' not in data_app
         # slug preserved when name is empty
         assert data_app['slug'] == 'old-slug'
+        assert data_app['secrets'] == secrets
 
     def test_does_not_mutate_original(self, existing_code_config):
         import copy
@@ -878,6 +888,7 @@ class TestUpdateExistingCodeDataAppConfig:
             watched_repo_url='https://github.com/user/x.git',
             watched_repo_branch='y',
             finalize=True,
+            secrets={'WORKSPACE_ID': '1', 'BRANCH_ID': 'default'},
         )
         assert existing_code_config == original
 

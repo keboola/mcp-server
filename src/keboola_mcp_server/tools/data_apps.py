@@ -485,9 +485,14 @@ async def modify_code_data_app(
     authentication is always no-auth.
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
     project_id = await client.storage_client.project_id()
+    secrets = _get_secrets(
+        workspace_id=str(await workspace_manager.get_workspace_id()),
+        branch_id=str(await workspace_manager.get_branch_id()),
+    )
 
     if finalize and not configuration_id:
         raise ValueError('`finalize=True` requires `configuration_id` of an existing data app.')
@@ -501,6 +506,7 @@ async def modify_code_data_app(
             watched_repo_url=watched_repo_url,
             watched_repo_branch=watched_repo_branch,
             finalize=finalize,
+            secrets=secrets,
         )
         updated_config = cast(
             JsonDict,
@@ -544,7 +550,7 @@ async def modify_code_data_app(
         )
     else:
         # Create new python-js data app in watching mode
-        config = _build_code_data_app_config(name, watched_repo_url, watched_repo_branch)
+        config = _build_code_data_app_config(name, watched_repo_url, watched_repo_branch, secrets)
         config = await client.encryption_client.encrypt(
             config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
         )
@@ -1051,6 +1057,7 @@ def _build_code_data_app_config(
     name: str,
     watched_repo_url: str,
     watched_repo_branch: str,
+    secrets: dict[str, Any],
 ) -> dict[str, Any]:
     """
     Builds a python-js data app config in watching mode. The running container pulls code continuously
@@ -1071,6 +1078,7 @@ def _build_code_data_app_config(
                     'branch': watched_repo_branch,
                     'autoReSetup': True,
                 },
+                'secrets': secrets,
             },
         },
         'authorization': _get_authorization(auth_with_password=False),
@@ -1085,6 +1093,7 @@ def _update_existing_code_data_app_config(
     watched_repo_url: str,
     watched_repo_branch: str,
     finalize: bool,
+    secrets: dict[str, Any],
 ) -> dict[str, Any]:
     """
     Updates an existing python-js data app config.
@@ -1107,4 +1116,11 @@ def _update_existing_code_data_app_config(
             'branch': watched_repo_branch,
             'autoReSetup': True,
         }
+
+    updated_secrets = existing_config['parameters']['dataApp'].get('secrets', {}).copy()
+    for key in secrets:
+        if key not in updated_secrets:
+            updated_secrets[key] = secrets[key]
+    data_app['secrets'] = updated_secrets
+
     return new_config
