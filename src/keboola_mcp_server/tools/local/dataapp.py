@@ -225,10 +225,16 @@ header p { margin: 0; color: var(--pico-muted-color); }
     return card;
   }
 
+  function disposeBox(box) {
+    var ec = echarts.getInstanceByDom(box);
+    if (ec) ec.dispose();
+    while (box.firstChild) box.removeChild(box.firstChild);
+  }
+
   function setLoading(id) {
     var box = document.getElementById('box-' + id);
     if (!box) return;
-    while (box.firstChild) box.removeChild(box.firstChild);
+    disposeBox(box);
     var loading = document.createElement('div');
     loading.className = 'loading';
     var spinner = document.createElement('div');
@@ -243,7 +249,7 @@ header p { margin: 0; color: var(--pico-muted-color); }
   function setError(id, msg) {
     var box = document.getElementById('box-' + id);
     if (!box) return;
-    while (box.firstChild) box.removeChild(box.firstChild);
+    disposeBox(box);
     var div = document.createElement('div');
     div.className = 'error-msg';
     div.textContent = '\u26a0 ' + msg;
@@ -252,7 +258,7 @@ header p { margin: 0; color: var(--pico-muted-color); }
 
   function clearBox(id) {
     var box = document.getElementById('box-' + id);
-    if (box) while (box.firstChild) box.removeChild(box.firstChild);
+    if (box) disposeBox(box);
     return box;
   }
 
