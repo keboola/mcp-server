@@ -275,7 +275,17 @@ _LOCAL_ONBOARDING = (
     'Do NOT use ECR image URIs (`component_image`) — ECR requires AWS credentials that are not available locally.\n\n'
     'Example: `setup_component(git_url="https://github.com/keboola/component-daktela")`\n'
     'Find the GitHub URL with `get_component_schema` or by searching github.com/keboola.\n'
-    'For Python components that use uv/pyproject.toml, build with `--network host` so pip can reach PyPI.'
+    'For Python components that use uv/pyproject.toml, build with `--network host` so pip can reach PyPI.\n\n'
+    '## Before saving a component configuration (save_config)\n\n'
+    '1. Call `get_component_schema` to inspect what parameters the component accepts.\n'
+    '   Check for date/time range parameters (commonly `date_from`, `date_to`, `start_date`, `since`, etc.).\n\n'
+    '2. If the component has date range parameters, ALWAYS ask the user before saving:\n'
+    '   "How much historical data do you want to fetch?\n'
+    '    · Sample / exploratory — last 7–30 days (fast, small)\n'
+    '    · Precise analytics — full history, e.g. from 2020-01-01 (complete but slower)\n'
+    '   The default is often just 7 days and will silently miss older records."\n\n'
+    "3. Use the user's answer to set `date_from` in the parameters before calling save_config.\n"
+    '   Never silently default to a short window when the user may need complete data.'
 )
 
 

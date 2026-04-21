@@ -802,6 +802,15 @@ def register_local_tools(mcp: FastMCP, local_backend: LocalBackend) -> None:
         execute it without repeating the parameters. Use migrate_to_keboola to
         push saved configs to the Keboola platform.
         Always use git_url for open-source Keboola components — ECR images require AWS credentials.
+
+        IMPORTANT — before calling this tool:
+        1. Check get_component_schema to see what parameters the component accepts.
+        2. If the component has date range parameters (date_from, date_to, start_date, since, …),
+           ask the user how much history they need:
+             · Exploratory / sample  → last 7–30 days
+             · Full / precise analytics → explicit start date, e.g. 2020-01-01
+           The extractor default is usually "7 days ago" which silently omits older records.
+        3. Set date_from in parameters based on the user's answer before saving.
         """
         return await save_config_local(
             local_backend, config_id, component_id, name, parameters, component_image, git_url
