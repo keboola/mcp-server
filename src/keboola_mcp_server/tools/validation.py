@@ -101,6 +101,21 @@ class RecoverableValidationError(jsonschema.ValidationError):
             str_repr += f'{self.initial_message}\n'
         if self.validation_context:
             str_repr += f'Validation component context: {str(self.validation_context)}\n'
+        # When a required-field violation occurs in parameters scope, surface ALL required fields so
+        # the agent can populate every missing field in a single retry instead of fixing one at a time.
+        # Only emitted for parameters scope — for storage/flow the hint wording does not apply.
+        if (
+            self.validator == 'required'
+            and isinstance(self.validator_value, list)
+            and self.validation_context is not None
+            and self.validation_context.scope == 'parameters'
+        ):
+            required_fields = ', '.join(f'`{f}`' for f in self.validator_value)
+            str_repr += (
+                f'HINT: Ensure ALL of the following required fields are present in `parameters`: {required_fields}. '
+                f'Call `get_components` to retrieve the full schema and `get_config_examples` for real-world examples.'
+                f'\n'
+            )
         return str_repr.rstrip()
 
 
@@ -207,16 +222,12 @@ class KeboolaParametersValidator:
                 if isinstance(items, dict):
                     schema['items'], _ = _sanitize_node(items)
                 elif isinstance(items, list):
-                    schema['items'] = [
-                        _sanitize_node(item)[0] if isinstance(item, dict) else item for item in items
-                    ]
+                    schema['items'] = [_sanitize_node(item)[0] if isinstance(item, dict) else item for item in items]
 
             # Recurse into schema-list keywords (allOf, anyOf, oneOf)
             for keyword in ('allOf', 'anyOf', 'oneOf'):
                 if keyword in schema and isinstance(schema[keyword], list):
-                    schema[keyword] = [
-                        _sanitize_node(s)[0] if isinstance(s, dict) else s for s in schema[keyword]
-                    ]
+                    schema[keyword] = [_sanitize_node(s)[0] if isinstance(s, dict) else s for s in schema[keyword]]
 
             # Recurse into single-schema keywords
             for keyword in ('not', 'if', 'then', 'else'):
