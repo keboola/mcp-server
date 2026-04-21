@@ -162,30 +162,30 @@ class LocalBackend:
 
     def save_config(self, config):
         """Save a ComponentConfig to <data_dir>/configs/<config_id>.json."""
-        from keboola_mcp_server.tools.local.config import save_config
+        from keboola_mcp_server.local_backend.config import save_config
 
         return save_config(self.configs_dir, config)
 
     def list_configs(self):
         """List all saved ComponentConfigs."""
-        from keboola_mcp_server.tools.local.config import list_configs
+        from keboola_mcp_server.local_backend.config import list_configs
 
         return list_configs(self.configs_dir)
 
     def load_config(self, config_id: str):
         """Load a saved ComponentConfig by ID."""
-        from keboola_mcp_server.tools.local.config import load_config
+        from keboola_mcp_server.local_backend.config import load_config
 
         return load_config(self.configs_dir, config_id)
 
     def delete_config(self, config_id: str) -> bool:
         """Delete a saved ComponentConfig. Returns True if deleted."""
-        from keboola_mcp_server.tools.local.config import delete_config
+        from keboola_mcp_server.local_backend.config import delete_config
 
         return delete_config(self.configs_dir, config_id)
 
     # ------------------------------------------------------------------
-    # Docker component execution (delegates to tools/local/docker.py)
+    # Docker component execution (delegates to local_backend/docker.py)
     # ------------------------------------------------------------------
 
     def setup_component(self, git_url: str, force_rebuild: bool = False):
@@ -193,7 +193,7 @@ class LocalBackend:
 
         Returns a ComponentSetupResult with the clone path and optional schema.
         """
-        from keboola_mcp_server.tools.local.docker import setup_component
+        from keboola_mcp_server.local_backend.docker import setup_component
 
         return setup_component(
             self.data_dir / 'components',
@@ -214,7 +214,7 @@ class LocalBackend:
 
         Returns a ComponentRunResult.
         """
-        from keboola_mcp_server.tools.local.docker import run_image_component
+        from keboola_mcp_server.local_backend.docker import run_image_component
 
         return run_image_component(
             self.data_dir,
@@ -238,7 +238,7 @@ class LocalBackend:
 
         Returns a ComponentRunResult.
         """
-        from keboola_mcp_server.tools.local.docker import run_source_component
+        from keboola_mcp_server.local_backend.docker import run_source_component
 
         return run_source_component(
             self.data_dir,
@@ -293,7 +293,7 @@ class LocalBackend:
 
     def list_data_apps(self) -> list:
         """List all saved DataAppConfigs from <data_dir>/apps/."""
-        from keboola_mcp_server.tools.local.dataapp import DataAppConfig
+        from keboola_mcp_server.local_backend.dataapp import DataAppConfig
 
         if not self.apps_dir.exists():
             return []
@@ -307,7 +307,7 @@ class LocalBackend:
 
     def load_data_app(self, name: str):
         """Load a DataAppConfig by name. Raises FileNotFoundError if not found."""
-        from keboola_mcp_server.tools.local.dataapp import DataAppConfig
+        from keboola_mcp_server.local_backend.dataapp import DataAppConfig
 
         path = self.apps_dir / name / 'app.json'
         if not path.exists():
@@ -316,7 +316,7 @@ class LocalBackend:
 
     def save_data_app(self, config) -> Path:
         """Persist DataAppConfig and regenerate index.html. Returns the app directory."""
-        from keboola_mcp_server.tools.local.dataapp import generate_dashboard_html
+        from keboola_mcp_server.local_backend.dataapp import generate_dashboard_html
 
         app_dir = self.apps_dir / config.name
         app_dir.mkdir(parents=True, exist_ok=True)
@@ -364,7 +364,7 @@ class LocalBackend:
 
         port = self._find_free_port()
         proc = subprocess.Popen(
-            ['python', '-m', 'keboola_mcp_server.tools.local.appserver', str(port), str(self.data_dir)],
+            ['python', '-m', 'keboola_mcp_server.local_backend.appserver', str(port), str(self.data_dir)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -406,7 +406,7 @@ class LocalBackend:
 
         Returns a MigrateResult.
         """
-        from keboola_mcp_server.tools.local.migrate import migrate_to_keboola
+        from keboola_mcp_server.local_backend.migrate import migrate_to_keboola
 
         return await migrate_to_keboola(
             self.data_dir, storage_api_url, storage_token, table_names, config_ids, bucket_id

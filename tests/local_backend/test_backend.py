@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from keboola_mcp_server.tools.local.backend import LocalBackend
+from keboola_mcp_server.local_backend.backend import LocalBackend
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -228,7 +228,7 @@ def test_backend_creates_configs_dir(tmp_path: Path) -> None:
 
 
 def test_backend_save_and_load_config(backend: LocalBackend) -> None:
-    from keboola_mcp_server.tools.local.config import ComponentConfig
+    from keboola_mcp_server.local_backend.config import ComponentConfig
 
     cfg = ComponentConfig(
         config_id='test-cfg',
@@ -244,7 +244,7 @@ def test_backend_save_and_load_config(backend: LocalBackend) -> None:
 
 
 def test_backend_list_configs(backend: LocalBackend) -> None:
-    from keboola_mcp_server.tools.local.config import ComponentConfig
+    from keboola_mcp_server.local_backend.config import ComponentConfig
 
     for i in range(3):
         backend.save_config(
@@ -255,7 +255,7 @@ def test_backend_list_configs(backend: LocalBackend) -> None:
 
 
 def test_backend_delete_config(backend: LocalBackend) -> None:
-    from keboola_mcp_server.tools.local.config import ComponentConfig
+    from keboola_mcp_server.local_backend.config import ComponentConfig
 
     backend.save_config(ComponentConfig(config_id='to-del', component_id='keboola.ex-http', name='X', parameters={}))
     assert backend.delete_config('to-del') is True

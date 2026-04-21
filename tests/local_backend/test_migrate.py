@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from keboola_mcp_server.tools.local.config import ComponentConfig
-from keboola_mcp_server.tools.local.migrate import migrate_to_keboola
+from keboola_mcp_server.local_backend.config import ComponentConfig
+from keboola_mcp_server.local_backend.migrate import migrate_to_keboola
 
 API_URL = 'https://connection.keboola.com'
 TOKEN = 'test-token-123'
@@ -46,7 +46,7 @@ def _write_csv(tables_dir: Path, name: str, content: str = 'id,val\n1,a\n') -> N
 
 
 def _write_config(configs_dir: Path, cfg: ComponentConfig) -> None:
-    from keboola_mcp_server.tools.local.config import save_config
+    from keboola_mcp_server.local_backend.config import save_config
 
     configs_dir.mkdir(parents=True, exist_ok=True)
     save_config(configs_dir, cfg)
@@ -68,7 +68,7 @@ async def test_migrate_uploads_tables(tmp_path: Path) -> None:
         _make_resp(201, {'id': 'in.c-local.orders'}),  # upload orders
     ]
 
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         _setup_client(mock_cls, responses)
         result = await migrate_to_keboola(tmp_path, API_URL, TOKEN)
 
@@ -87,7 +87,7 @@ async def test_migrate_already_exists_is_ok(tmp_path: Path) -> None:
         _make_resp(422, {'error': 'already exists'}),
     ]
 
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         _setup_client(mock_cls, responses)
         result = await migrate_to_keboola(tmp_path, API_URL, TOKEN)
 
@@ -105,7 +105,7 @@ async def test_migrate_table_error_captured(tmp_path: Path) -> None:
         _make_resp(500),  # server error → raise_for_status fires
     ]
 
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         _setup_client(mock_cls, responses)
         result = await migrate_to_keboola(tmp_path, API_URL, TOKEN)
 
@@ -124,7 +124,7 @@ async def test_migrate_table_names_filter(tmp_path: Path) -> None:
         _make_resp(201, {'id': 'in.c-local.alpha'}),
     ]
 
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         _setup_client(mock_cls, responses)
         result = await migrate_to_keboola(tmp_path, API_URL, TOKEN, table_names=['alpha'])
 
@@ -136,7 +136,7 @@ async def test_migrate_table_names_filter(tmp_path: Path) -> None:
 async def test_migrate_no_tables(tmp_path: Path) -> None:
     (tmp_path / 'tables').mkdir()
 
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         instance = AsyncMock()
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -169,7 +169,7 @@ async def test_migrate_creates_configs(tmp_path: Path) -> None:
         _make_resp(201, {'id': '12345'}),  # create config
     ]
 
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         _setup_client(mock_cls, responses)
         result = await migrate_to_keboola(tmp_path, API_URL, TOKEN)
 
@@ -191,7 +191,7 @@ async def test_migrate_config_ids_filter(tmp_path: Path) -> None:
         _make_resp(201, {'id': '1'}),  # only cfg-a
     ]
 
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         _setup_client(mock_cls, responses)
         result = await migrate_to_keboola(tmp_path, API_URL, TOKEN, config_ids=['cfg-a'])
 
@@ -210,7 +210,7 @@ async def test_migrate_bucket_error_marks_all_as_error(tmp_path: Path) -> None:
 
     from httpx import HTTPStatusError
 
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         instance = AsyncMock()
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -239,7 +239,7 @@ async def test_migrate_custom_bucket_id(tmp_path: Path) -> None:
             return _make_resp(201, {})
         return _make_resp(201, {'id': 'in.c-custom.data'})
 
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         instance = AsyncMock()
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)

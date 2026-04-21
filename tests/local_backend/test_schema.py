@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from keboola_mcp_server.tools.local.schema import (
+from keboola_mcp_server.local_backend.schema import (
     ComponentSchemaResult,
     ComponentSearchResult,
     find_component_id,
@@ -34,7 +34,7 @@ async def test_get_component_schema_basic():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=_make_response(payload))
 
-    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient', return_value=mock_client):
+    with patch('keboola_mcp_server.local_backend.schema.httpx.AsyncClient', return_value=mock_client):
         result = await get_component_schema('keboola.ex-http')
 
     assert isinstance(result, ComponentSchemaResult)
@@ -58,7 +58,7 @@ async def test_get_component_schema_fallback_uri():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=_make_response(payload))
 
-    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient', return_value=mock_client):
+    with patch('keboola_mcp_server.local_backend.schema.httpx.AsyncClient', return_value=mock_client):
         result = await get_component_schema('keboola.ex-http')
 
     assert result.image == 'keboola/ex-http:fallback'
@@ -73,7 +73,7 @@ async def test_get_component_schema_no_image():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=_make_response(payload))
 
-    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient', return_value=mock_client):
+    with patch('keboola_mcp_server.local_backend.schema.httpx.AsyncClient', return_value=mock_client):
         result = await get_component_schema('keboola.ex-http')
 
     assert result.image is None
@@ -97,7 +97,7 @@ async def test_find_component_id_list_response():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=_make_response(payload))
 
-    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient', return_value=mock_client):
+    with patch('keboola_mcp_server.local_backend.schema.httpx.AsyncClient', return_value=mock_client):
         results = await find_component_id('extractor', limit=5)
 
     assert len(results) == 2
@@ -121,7 +121,7 @@ async def test_find_component_id_dict_response_with_apps_key():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=_make_response(payload))
 
-    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient', return_value=mock_client):
+    with patch('keboola_mcp_server.local_backend.schema.httpx.AsyncClient', return_value=mock_client):
         results = await find_component_id('s3')
 
     assert len(results) == 1
@@ -141,7 +141,7 @@ async def test_find_component_id_skips_missing_id():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=_make_response(payload))
 
-    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient', return_value=mock_client):
+    with patch('keboola_mcp_server.local_backend.schema.httpx.AsyncClient', return_value=mock_client):
         results = await find_component_id('valid')
 
     assert len(results) == 1
@@ -155,7 +155,7 @@ async def test_find_component_id_empty_response():
     mock_client.__aexit__ = AsyncMock(return_value=False)
     mock_client.get = AsyncMock(return_value=_make_response([]))
 
-    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient', return_value=mock_client):
+    with patch('keboola_mcp_server.local_backend.schema.httpx.AsyncClient', return_value=mock_client):
         results = await find_component_id('nonexistent')
 
     assert results == []

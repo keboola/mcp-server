@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from keboola_mcp_server.tools.local.backend import LocalBackend
-from keboola_mcp_server.tools.local.dataapp import (
+from keboola_mcp_server.local_backend.backend import LocalBackend
+from keboola_mcp_server.local_backend.dataapp import (
     DataAppChartConfig,
     DataAppConfig,
     generate_dashboard_html,

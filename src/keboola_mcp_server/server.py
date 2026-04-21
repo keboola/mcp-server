@@ -302,8 +302,8 @@ def create_local_server(
     When storage_api_url and storage_token are provided, migrate_to_keboola can
     be called without repeating them.
     """
+    from keboola_mcp_server.local_backend import LocalBackend, register_local_tools
     from keboola_mcp_server.prompts.add_prompts import add_local_prompts
-    from keboola_mcp_server.tools.local import LocalBackend, register_local_tools
 
     LOG.info(f'Creating local-backend server with data_dir={data_dir!r}, docker_network={docker_network!r}')
     mcp = FastMCP('Keboola MCP Server (local)', instructions=_LOCAL_ONBOARDING)

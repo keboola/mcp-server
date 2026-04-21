@@ -1,7 +1,7 @@
 """Local Query Service emulator + static file server for data apps.
 
 Runs as a standalone process:
-    python -m keboola_mcp_server.tools.local.appserver <port> <data_dir>
+    python -m keboola_mcp_server.local_backend.appserver <port> <data_dir>
 
 Single-port combined server that speaks the Query Service HTTP API (backed by
 DuckDB) at /api/v1/... and serves static HTML files at all other paths.
@@ -264,7 +264,7 @@ if __name__ == '__main__':
 
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     if len(sys.argv) < 3:
-        print('Usage: python -m keboola_mcp_server.tools.local.appserver <port> <data_dir>')
+        print('Usage: python -m keboola_mcp_server.local_backend.appserver <port> <data_dir>')
         sys.exit(1)
 
     port = int(sys.argv[1])

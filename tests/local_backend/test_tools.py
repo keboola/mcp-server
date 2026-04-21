@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from keboola_mcp_server.tools.local.backend import LocalBackend
-from keboola_mcp_server.tools.local.config import ComponentConfig
-from keboola_mcp_server.tools.local.docker import ComponentRunResult, ComponentSetupResult
-from keboola_mcp_server.tools.local.migrate import MigrateResult
-from keboola_mcp_server.tools.local.schema import ComponentSchemaResult
-from keboola_mcp_server.tools.local.tools import (
+from keboola_mcp_server.local_backend.backend import LocalBackend
+from keboola_mcp_server.local_backend.config import ComponentConfig
+from keboola_mcp_server.local_backend.docker import ComponentRunResult, ComponentSetupResult
+from keboola_mcp_server.local_backend.migrate import MigrateResult
+from keboola_mcp_server.local_backend.schema import ComponentSchemaResult
+from keboola_mcp_server.local_backend.tools import (
     LocalBucketsOutput,
     LocalComponentSearchOutput,
     LocalProjectInfo,
@@ -350,7 +350,7 @@ async def test_get_component_schema_local_calls_api() -> None:
     async def _fake_fetch(component_id):
         return schema
 
-    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient') as mock_client_cls:
+    with patch('keboola_mcp_server.local_backend.schema.httpx.AsyncClient') as mock_client_cls:
         instance = AsyncMock()
         mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
         mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -371,7 +371,7 @@ async def test_get_component_schema_local_calls_api() -> None:
 
 @pytest.mark.asyncio
 async def test_find_component_id_local_wraps_results() -> None:
-    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient') as mock_client_cls:
+    with patch('keboola_mcp_server.local_backend.schema.httpx.AsyncClient') as mock_client_cls:
         instance = AsyncMock()
         mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
         mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -392,7 +392,7 @@ async def test_find_component_id_local_wraps_results() -> None:
 
 @pytest.mark.asyncio
 async def test_find_component_id_local_empty() -> None:
-    with patch('keboola_mcp_server.tools.local.schema.httpx.AsyncClient') as mock_client_cls:
+    with patch('keboola_mcp_server.local_backend.schema.httpx.AsyncClient') as mock_client_cls:
         instance = AsyncMock()
         mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
         mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -566,7 +566,7 @@ async def test_migrate_to_keboola_local_uploads_table(backend: LocalBackend, tab
         _make_resp(201, {}),  # ensure_bucket
         _make_resp(201, {'id': 'in.c-local.events'}),  # upload table
     ]
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         _setup_http_mock(mock_cls, responses)
         result = await migrate_to_keboola_local(
             backend,
@@ -587,7 +587,7 @@ async def test_migrate_to_keboola_local_uploads_config(backend: LocalBackend) ->
         _make_resp(201, {}),  # ensure_bucket (no tables)
         _make_resp(201, {'id': '99'}),  # create config
     ]
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         _setup_http_mock(mock_cls, responses)
         result = await migrate_to_keboola_local(
             backend,
@@ -611,7 +611,7 @@ async def test_migrate_to_keboola_local_custom_bucket(backend: LocalBackend, tab
             return _make_resp(201, {})
         return _make_resp(201, {'id': 'in.c-custom.data'})
 
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         instance = AsyncMock()
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -636,7 +636,7 @@ async def test_migrate_to_keboola_local_filter_tables(backend: LocalBackend, tab
         _make_resp(201, {}),
         _make_resp(201, {'id': 'in.c-local.keep'}),
     ]
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         _setup_http_mock(mock_cls, responses)
         result = await migrate_to_keboola_local(
             backend,

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from keboola_mcp_server.tools.local.docker import (
+from keboola_mcp_server.local_backend.docker import (
     collect_output_tables,
     exit_code_to_status,
     get_dep_install_commands,
@@ -308,7 +308,7 @@ def test_setup_component_build_failure_raises(tmp_path):
             setup_component(components_dir, 'https://example.com/repo.git')
 
 
-_LOG_PATCH = 'keboola_mcp_server.tools.local.docker._run_subprocess_logging'
+_LOG_PATCH = 'keboola_mcp_server.local_backend.docker._run_subprocess_logging'
 
 
 # ---------------------------------------------------------------------------

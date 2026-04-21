@@ -11,9 +11,9 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.tools.local.backend import LocalBackend
-from keboola_mcp_server.tools.local.config import ComponentConfig, ConfigsOutput
-from keboola_mcp_server.tools.local.dataapp import (
+from keboola_mcp_server.local_backend.backend import LocalBackend
+from keboola_mcp_server.local_backend.config import ComponentConfig, ConfigsOutput
+from keboola_mcp_server.local_backend.dataapp import (
     DataAppChartConfig,
     DataAppConfig,
     DataAppInfo,
@@ -21,9 +21,9 @@ from keboola_mcp_server.tools.local.dataapp import (
     DataAppsOutput,
     DataAppStopResult,
 )
-from keboola_mcp_server.tools.local.docker import ComponentRunResult, ComponentSetupResult
-from keboola_mcp_server.tools.local.migrate import MigrateResult
-from keboola_mcp_server.tools.local.schema import ComponentSchemaResult, ComponentSearchResult
+from keboola_mcp_server.local_backend.docker import ComponentRunResult, ComponentSetupResult
+from keboola_mcp_server.local_backend.migrate import MigrateResult
+from keboola_mcp_server.local_backend.schema import ComponentSchemaResult, ComponentSearchResult
 
 LOG = logging.getLogger(__name__)
 
@@ -237,14 +237,14 @@ async def run_component_local(
 
 async def get_component_schema_local(component_id: str) -> ComponentSchemaResult:
     """Implementation of get_component_schema for local mode."""
-    from keboola_mcp_server.tools.local.schema import get_component_schema as _fetch_schema
+    from keboola_mcp_server.local_backend.schema import get_component_schema as _fetch_schema
 
     return await _fetch_schema(component_id)
 
 
 async def find_component_id_local(query: str, limit: int = 10) -> LocalComponentSearchOutput:
     """Implementation of find_component_id for local mode."""
-    from keboola_mcp_server.tools.local.schema import find_component_id as _search_components
+    from keboola_mcp_server.local_backend.schema import find_component_id as _search_components
 
     results = await _search_components(query, limit)
     return LocalComponentSearchOutput(results=results, query=query)

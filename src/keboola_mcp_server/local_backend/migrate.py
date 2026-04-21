@@ -7,7 +7,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.tools.local.config import ComponentConfig
+from keboola_mcp_server.local_backend.config import ComponentConfig
 
 LOG = logging.getLogger(__name__)
 
@@ -181,7 +181,7 @@ async def migrate_to_keboola(
     Passing *table_names* / *config_ids* restricts which items are migrated;
     omitting them migrates everything in the catalog.
     """
-    from keboola_mcp_server.tools.local.config import list_configs as _list_configs
+    from keboola_mcp_server.local_backend.config import list_configs as _list_configs
 
     result = MigrateResult(bucket_id=bucket_id)
     tables_dir = data_dir / 'tables'

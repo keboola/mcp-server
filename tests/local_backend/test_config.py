@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from keboola_mcp_server.tools.local.config import (
+from keboola_mcp_server.local_backend.config import (
     ComponentConfig,
     delete_config,
     list_configs,

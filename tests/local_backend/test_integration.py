@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from keboola_mcp_server.tools.local.backend import LocalBackend
-from keboola_mcp_server.tools.local.config import ComponentConfig
-from keboola_mcp_server.tools.local.docker import ComponentRunResult
-from keboola_mcp_server.tools.local.tools import (
+from keboola_mcp_server.local_backend.backend import LocalBackend
+from keboola_mcp_server.local_backend.config import ComponentConfig
+from keboola_mcp_server.local_backend.docker import ComponentRunResult
+from keboola_mcp_server.local_backend.tools import (
     delete_config_local,
     delete_table_local,
     get_buckets_local,
@@ -215,7 +215,7 @@ async def test_complete_migration_workflow(backend: LocalBackend) -> None:
         _make_resp(201, {'id': '555'}),  # create config
     ]
 
-    with patch('keboola_mcp_server.tools.local.migrate.httpx.AsyncClient') as mock_cls:
+    with patch('keboola_mcp_server.local_backend.migrate.httpx.AsyncClient') as mock_cls:
         instance = AsyncMock()
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
