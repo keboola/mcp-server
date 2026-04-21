@@ -147,6 +147,13 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     )
     mcp.add_tool(
         FunctionTool.from_function(
+            delete_config,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
             add_config_row,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
@@ -1418,6 +1425,27 @@ async def update_config(
         links=links,
         version=updated_raw_configuration['version'],
     )
+
+
+@tool_errors()
+async def delete_config(
+    ctx: Context,
+    component_id: Annotated[str, Field(description='The ID of the component the configuration belongs to.')],
+    configuration_id: Annotated[str, Field(description='The ID of the configuration to delete.')],
+) -> dict:
+    """
+    Deletes a component configuration permanently (moves it to trash).
+
+    USAGE:
+    - Use when you want to remove a configuration that is no longer needed.
+
+    CAUTION:
+    - This operation moves the configuration to trash (recoverable via the Keboola UI).
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    LOG.info(f'Deleting configuration "{configuration_id}" for component "{component_id}".')
+    await client.storage_client.configuration_delete(component_id=component_id, configuration_id=configuration_id)
+    return {'deleted': True, 'component_id': component_id, 'configuration_id': configuration_id}
 
 
 # This function must use exactly the same parameters as update_config() function.

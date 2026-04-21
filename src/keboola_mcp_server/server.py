@@ -173,7 +173,7 @@ class CustomRoutes:
                 app.add_route(route.path, route.endpoint, methods=route.methods)
 
 
-def create_server(
+def create_platform_server(
     config: Config,
     *,
     runtime_info: ServerRuntimeInfo,
@@ -257,3 +257,66 @@ def create_server(
         return mcp
     else:
         return mcp, custom_routes
+
+
+_LOCAL_ONBOARDING = (
+    'You are running in Keboola local mode — no platform account needed.\n\n'
+    '## 3 workflows to suggest when a user does not know where to start:\n\n'
+    '**A · Explore data you already have**\n'
+    '  write_table → query_data → create_data_app → run_data_app\n\n'
+    '**B · Extract data from an API or source**\n'
+    '  find_component_id → get_component_schema → setup_component → run_component → create_data_app\n\n'
+    '**C · Push local work to Keboola platform**\n'
+    '  get_project_info → migrate_to_keboola(storage_api_url, storage_token)\n\n'
+    'Start by asking: "What data do you want to work with?"\n\n'
+    'SQL engine: DuckDB. Table names in SQL = CSV file stems (customers.csv → SELECT * FROM customers).\n\n'
+    '## Running components locally\n\n'
+    'Always use `git_url` (public GitHub repo) with `setup_component` + `run_component` or `run_saved_config`.\n'
+    'Do NOT use ECR image URIs (`component_image`) — ECR requires AWS credentials that are not available locally.\n\n'
+    'Example: `setup_component(git_url="https://github.com/keboola/component-daktela")`\n'
+    'Find the GitHub URL with `get_component_schema` or by searching github.com/keboola.\n'
+    'For Python components that use uv/pyproject.toml, build with `--network host` so pip can reach PyPI.\n\n'
+    '## Before saving a component configuration (save_config)\n\n'
+    '1. Call `get_component_schema` to inspect what parameters the component accepts.\n'
+    '   Check for date/time range parameters (commonly `date_from`, `date_to`, `start_date`, `since`, etc.).\n\n'
+    '2. If the component has date range parameters, ALWAYS ask the user before saving:\n'
+    '   "How much historical data do you want to fetch?\n'
+    '    · Sample / exploratory — last 7–30 days (fast, small)\n'
+    '    · Precise analytics — full history, e.g. from 2020-01-01 (complete but slower)\n'
+    '   The default is often just 7 days and will silently miss older records."\n\n'
+    "3. Use the user's answer to set `date_from` in the parameters before calling save_config.\n"
+    '   Never silently default to a short window when the user may need complete data.'
+)
+
+
+def create_local_server(
+    data_dir: str,
+    docker_network: str = 'bridge',
+    storage_api_url: str | None = None,
+    storage_token: str | None = None,
+) -> FastMCP:
+    """Create a local-backend MCP server. No Keboola token required.
+
+    Data is read from CSV files under *data_dir*. SQL is executed via DuckDB.
+    Components run via Docker (Phase 2). No auth middleware, no WorkspaceManager.
+    When storage_api_url and storage_token are provided, migrate_to_keboola can
+    be called without repeating them.
+    """
+    from keboola_mcp_server.local_backend import LocalBackend, register_local_tools
+    from keboola_mcp_server.prompts.add_prompts import add_local_prompts
+
+    LOG.info(f'Creating local-backend server with data_dir={data_dir!r}, docker_network={docker_network!r}')
+    mcp = FastMCP('Keboola MCP Server (local)', instructions=_LOCAL_ONBOARDING)
+    local_backend = LocalBackend(
+        data_dir=data_dir,
+        docker_network=docker_network,
+        storage_api_url=storage_api_url,
+        storage_token=storage_token,
+    )
+    register_local_tools(mcp, local_backend)
+    add_local_prompts(mcp)
+    return mcp
+
+
+# Backward-compatible alias — callers that imported create_server by name continue to work.
+create_server = create_platform_server

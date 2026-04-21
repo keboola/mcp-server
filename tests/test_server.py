@@ -2,12 +2,11 @@ import asyncio
 import json
 import subprocess
 import tempfile
-
-import httpx
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
 
+import httpx
 import pytest
 from fastmcp import Client, Context, FastMCP
 from fastmcp.client import StreamableHttpTransport
@@ -47,6 +46,7 @@ class TestServer:
             'create_flow',
             'create_oauth_url',
             'create_sql_transformation',
+            'delete_config',
             'deploy_data_app',
             'docs_query',
             'find_component_id',

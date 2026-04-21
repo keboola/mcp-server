@@ -207,16 +207,12 @@ class KeboolaParametersValidator:
                 if isinstance(items, dict):
                     schema['items'], _ = _sanitize_node(items)
                 elif isinstance(items, list):
-                    schema['items'] = [
-                        _sanitize_node(item)[0] if isinstance(item, dict) else item for item in items
-                    ]
+                    schema['items'] = [_sanitize_node(item)[0] if isinstance(item, dict) else item for item in items]
 
             # Recurse into schema-list keywords (allOf, anyOf, oneOf)
             for keyword in ('allOf', 'anyOf', 'oneOf'):
                 if keyword in schema and isinstance(schema[keyword], list):
-                    schema[keyword] = [
-                        _sanitize_node(s)[0] if isinstance(s, dict) else s for s in schema[keyword]
-                    ]
+                    schema[keyword] = [_sanitize_node(s)[0] if isinstance(s, dict) else s for s in schema[keyword]]
 
             # Recurse into single-schema keywords
             for keyword in ('not', 'if', 'then', 'else'):

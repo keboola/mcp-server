@@ -20,7 +20,7 @@ from starlette.responses import JSONResponse
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ForwardSlashMiddleware
-from keboola_mcp_server.server import CustomRoutes, create_server
+from keboola_mcp_server.server import CustomRoutes, create_local_server, create_platform_server
 
 LOG = logging.getLogger(__name__)
 
@@ -57,6 +57,28 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument('--host', default='localhost', metavar='STR', help='The host to listen on.')
     parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
     parser.add_argument('--log-config', type=pathlib.Path, metavar='PATH', help='Logging config file.')
+    parser.add_argument(
+        '--local-backend',
+        action='store_true',
+        default=os.environ.get('KBC_LOCAL_BACKEND', '').lower() in ('true', '1', 'yes'),
+        help='Run in local mode — no Storage token required; data served from CSV files via DuckDB.',
+    )
+    parser.add_argument(
+        '--data-dir',
+        default=os.environ.get('KBC_DATA_DIR', './keboola_data'),
+        metavar='PATH',
+        help='Root directory for local data storage (default: ./keboola_data). Only used with --local-backend.',
+    )
+    parser.add_argument(
+        '--docker-network',
+        default=os.environ.get('KBC_DOCKER_NETWORK', 'bridge'),
+        metavar='NETWORK',
+        help=(
+            'Docker network for component execution (default: bridge). '
+            'Use "host" if bridge DNS resolution fails. Only used with --local-backend. '
+            '(env: KBC_DOCKER_NETWORK)'
+        ),
+    )
 
     return parser.parse_args(args)
 
@@ -125,6 +147,21 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             stream=sys.stderr,
         )
 
+    # Local-backend mode: no token required, data served from CSV files.
+    if parsed_args.local_backend:
+        try:
+            local_server: FastMCP = create_local_server(
+                parsed_args.data_dir,
+                docker_network=parsed_args.docker_network,
+                storage_api_url=parsed_args.api_url,
+                storage_token=parsed_args.storage_token,
+            )
+            await local_server.run_async(transport=parsed_args.transport)
+        except Exception as e:
+            LOG.exception(f'Local server failed: {e}')
+            sys.exit(1)
+        return
+
     # Create config from the CLI arguments
     config = Config(
         storage_api_url=parsed_args.api_url,
@@ -136,7 +173,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         # Create and run the server
         if parsed_args.transport == 'stdio':
             runtime_config = ServerRuntimeInfo(transport=parsed_args.transport)
-            keboola_mcp_server: FastMCP = create_server(config, runtime_info=runtime_config)
+            keboola_mcp_server: FastMCP = create_platform_server(config, runtime_info=runtime_config)
             if config.oauth_client_id or config.oauth_client_secret:
                 raise RuntimeError('OAuth authorization can only be used with HTTP-based transports.')
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
@@ -157,7 +194,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
             if parsed_args.transport in ['http-compat', 'streamable-http']:
                 http_runtime_config = ServerRuntimeInfo('http-compat/streamable-http')
-                mcp_server, custom_routes = create_server(
+                mcp_server, custom_routes = create_platform_server(
                     config, runtime_info=http_runtime_config, custom_routes_handling='return'
                 )
                 http_app: StarletteWithLifespan = mcp_server.http_app(

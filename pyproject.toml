@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.56.2"
+version = "1.61.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -51,6 +51,9 @@ tests = [
 integtests = [
     "kbcstorage ~= 0.9",
     "requests ~= 2.32",
+]
+local = [
+    "duckdb >= 0.10.0",
 ]
 dev = [
     "tox ~= 4.35",
@@ -125,7 +128,7 @@ labels = { cs-fix = ["black", "isort"], cs = ["isort", "flake8"] }
 
 [tool.tox.env_run_base]
 description = "Run tests"
-extras = ["tests"]
+extras = ["tests", "local"]
 package = "wheel"
 wheel_build_env = ".pkg"
 commands = [

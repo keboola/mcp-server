@@ -9,6 +9,7 @@ component ID, configuration JSON, and description.
 - [create_config](#create_config): Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 - [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
 description, and a list of created table names.
+- [delete_config](#delete_config): Deletes a component configuration permanently (moves it to trash).
 - [get_components](#get_components): Retrieves detailed information about one or more components by their IDs.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
 - [get_configs](#get_configs): Retrieves component configurations in the project with optional filtering.
@@ -354,6 +355,46 @@ EXAMPLES:
     "name",
     "description",
     "sql_code_blocks"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="delete_config"></a>
+## delete_config
+**Annotations**: `destructive`
+
+**Tags**: `components`
+
+**Description**:
+
+Deletes a component configuration permanently (moves it to trash).
+
+USAGE:
+- Use when you want to remove a configuration that is no longer needed.
+
+CAUTION:
+- This operation moves the configuration to trash (recoverable via the Keboola UI).
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "component_id": {
+      "description": "The ID of the component the configuration belongs to.",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the configuration to delete.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "component_id",
+    "configuration_id"
   ],
   "type": "object"
 }

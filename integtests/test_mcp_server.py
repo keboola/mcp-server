@@ -167,6 +167,7 @@ async def _assert_basic_setup(client: Client):
         'add_config_row',
         'create_conditional_flow',
         'create_config',
+        'delete_config',
         'create_flow',
         'create_oauth_url',
         'create_sql_transformation',
