@@ -131,11 +131,11 @@ class TestWorkspaceManagerSnowflake:
             ),
             (
                 # table out.c-baz.bam exported from project 1234
-                # and imported as table in.c-foo.bar in some other project
+                # and imported as table in.c-foo.bar in some other project (isAlias=False = regular shared table)
                 {
                     'id': 'in.c-foo.bar',
                     'name': 'bar',
-                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam'},
+                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': False},
                 },
                 {'DATABASE_NAME': 'sapi_1234'},
                 TableFqn(db_name='sapi_1234', schema_name='out.c-baz', table_name='bam', quote_char='"'),
@@ -274,20 +274,20 @@ class TestWorkspaceManagerSnowflake:
                 [],
             ),
             (
-                # sourceTable — database lookup SQL fails
+                # linked non-alias table — database lookup SQL fails (shared DB not accessible)
                 {
                     'id': 'in.c-foo.bar',
                     'name': 'bar',
-                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam'},
+                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': False},
                 },
                 [{'status': 'failed', 'data': [], 'columns': [], 'message': 'SQL error'}],
             ),
             (
-                # sourceTable — database lookup returns no rows (linked project not accessible from workspace)
+                # linked non-alias table — database lookup returns no rows (shared DB not yet accessible)
                 {
                     'id': 'in.c-foo.bar',
                     'name': 'bar',
-                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam'},
+                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': False},
                 },
                 [{'status': 'completed', 'data': [], 'columns': [{'name': 'DATABASE_NAME'}], 'message': ''}],
             ),
