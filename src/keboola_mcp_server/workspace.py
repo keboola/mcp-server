@@ -482,6 +482,10 @@ class _BigQueryWorkspace(_Workspace):
     ) -> DbTableInfo | None:
         table_id = table['id']
 
+        # BigQuery cannot query tables from other projects — linked bucket tables have sourceTable set
+        if table.get('sourceTable'):
+            return None
+
         bp = backend_path or _get_backend_path(table)
         if bp:
             # BigQuery backendPath is a single-element list containing the dataset name
@@ -815,8 +819,8 @@ class WorkspaceManager:
     async def get_table_info(
         self, table: Mapping[str, Any], backend_path: list[str] | None = None
     ) -> DbTableInfo | None:
-        # Tables with isAlias=true are linked from another project and cannot be queried from this workspace
-        if table.get('isAlias'):
+        # Alias tables (isAlias=true in the source project) are not queryable from any workspace backend
+        if table.get('sourceTable', {}).get('isAlias'):
             return None
 
         table_id = table['id']

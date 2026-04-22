@@ -265,11 +265,10 @@ class TestWorkspaceManagerSnowflake:
                 ],
             ),
             (
-                # alias table from linked bucket — top-level isAlias=True, not queryable, no SQL issued
+                # alias table (sourceTable.isAlias=True) — not queryable on any backend, no SQL issued
                 {
                     'id': 'in.c-foo.bar',
                     'name': 'bar',
-                    'isAlias': True,
                     'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
                 },
                 [],
@@ -584,6 +583,36 @@ class TestWorkspaceManagerBigQuery:
         info = await m.get_table_info(table)
         assert info is not None
         assert info.fqn == expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'table',
+        [
+            (
+                # real linked table (sourceTable.isAlias=False) — BQ cannot query cross-project, no SQL issued
+                {
+                    'id': 'in.c-foo.bar',
+                    'name': 'bar',
+                    'sourceTable': {'project': {'id': '1234'}, 'id': 'in.c-foo.bar', 'isAlias': False},
+                }
+            ),
+            (
+                # alias linked table (sourceTable.isAlias=True) — blocked at WorkspaceManager level, no SQL
+                {
+                    'id': 'in.c-foo.bar',
+                    'name': 'bar',
+                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
+                }
+            ),
+        ],
+    )
+    async def test_get_table_info_returns_none(
+        self, table: dict[str, Any], keboola_client: KeboolaClient, context: Context
+    ):
+        m = WorkspaceManager.from_state(context.session.state)
+        info = await m.get_table_info(table)
+        assert info is None
+        keboola_client.storage_client.workspace_query.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
