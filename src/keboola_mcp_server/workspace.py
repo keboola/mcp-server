@@ -482,10 +482,6 @@ class _BigQueryWorkspace(_Workspace):
     ) -> DbTableInfo | None:
         table_id = table['id']
 
-        # BigQuery cannot query tables from other projects — linked bucket tables have sourceTable set
-        if table.get('sourceTable'):
-            return None
-
         bp = backend_path or _get_backend_path(table)
         if bp:
             # BigQuery backendPath is a single-element list containing the dataset name

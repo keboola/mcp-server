@@ -570,6 +570,21 @@ class TestWorkspaceManagerBigQuery:
                     quote_char='`',
                 ),
             ),
+            (
+                # linked (non-alias) bucket — data copied to destination dataset, queryable via backendPath FQN
+                {
+                    'id': 'in.c-abc.customers',
+                    'name': 'customers',
+                    'bucket': {'id': 'in.c-abc', 'backendPath': ['in_c_abc']},
+                    'sourceTable': {'project': {'id': '9999'}, 'id': 'in.c-abc.customers', 'isAlias': False},
+                },
+                TableFqn(
+                    db_name='project_1234',
+                    schema_name='in_c_abc',
+                    table_name='customers',
+                    quote_char='`',
+                ),
+            ),
         ],
     )
     async def test_get_table_fqn(
@@ -588,14 +603,6 @@ class TestWorkspaceManagerBigQuery:
     @pytest.mark.parametrize(
         'table',
         [
-            (
-                # real linked table (sourceTable.isAlias=False) — BQ cannot query cross-project, no SQL issued
-                {
-                    'id': 'in.c-foo.bar',
-                    'name': 'bar',
-                    'sourceTable': {'project': {'id': '1234'}, 'id': 'in.c-foo.bar', 'isAlias': False},
-                }
-            ),
             (
                 # alias linked table (sourceTable.isAlias=True) — blocked at WorkspaceManager level, no SQL
                 {
