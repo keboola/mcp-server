@@ -814,6 +814,10 @@ class WorkspaceManager:
     async def get_table_info(
         self, table: Mapping[str, Any], backend_path: list[str] | None = None
     ) -> DbTableInfo | None:
+        # Alias tables from linked buckets cannot be queried from this workspace
+        if table.get('sourceTable', {}).get('isAlias'):
+            return None
+
         table_id = table['id']
         if table_id in self._table_info_cache:
             return self._table_info_cache[table_id]

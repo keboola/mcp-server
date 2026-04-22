@@ -265,6 +265,15 @@ class TestWorkspaceManagerSnowflake:
                 ],
             ),
             (
+                # alias table from linked bucket — isAlias=True, not queryable, no SQL issued
+                {
+                    'id': 'in.c-foo.bar',
+                    'name': 'bar',
+                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
+                },
+                [],
+            ),
+            (
                 # sourceTable — database lookup SQL fails
                 {
                     'id': 'in.c-foo.bar',
