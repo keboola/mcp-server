@@ -430,8 +430,14 @@ async def create_sql_transformation(
       semantically related SQL statements.
     - Each SQL query statement within a code block must be executable and follow the current SQL dialect, which can be
       retrieved using appropriate tool.
+    - DIALECT-SPECIFIC IDENTIFIER QUOTING (never mix styles within a single query):
+      - Snowflake: use double quotes for all identifiers — "schema"."table", "column_name"
+      - BigQuery: use backticks for all identifiers — `dataset`.`table`, `column_name`
     - When referring to the input tables within the SQL query, use fully qualified table names, which can be
       retrieved using appropriate tools.
+    - DIALECT-SPECIFIC FULLY QUALIFIED TABLE NAMES:
+      - Snowflake format: "DATABASE"."SCHEMA"."TABLE"
+      - BigQuery format: `project`.`dataset`.`table`
     - When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
       fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
     - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
@@ -716,7 +722,9 @@ async def update_sql_transformation(
     IMPORTANT CONSIDERATIONS:
     - Parameter updates are PARTIAL - only the operations you specify are applied
     - All other parts of the transformation remain unchanged
-    - Each SQL script must be executable and follow the current SQL dialect
+    - Each SQL script must be executable and follow the current SQL dialect:
+      - Snowflake: use double quotes for identifiers — "schema"."table", "column_name"
+      - BigQuery: use backticks for identifiers — `dataset`.`table`, `column_name`
     - Storage configuration is COMPLETE REPLACEMENT - include ALL mappings you want to keep
     - Leave updated_description empty to preserve the original description
     - SCHEMA CHANGES: Destructive schema changes (removing columns, changing types, renaming columns) require
