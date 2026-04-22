@@ -483,8 +483,9 @@ class _BigQueryWorkspace(_Workspace):
         table_id = table['id']
 
         bp = backend_path or _get_backend_path(table)
-        if bp and len(bp) >= 2:
-            schema_name = bp[1].replace('.', '_').replace('-', '_')
+        if bp:
+            # BigQuery backendPath is a single-element list containing the dataset name
+            schema_name = bp[0].replace('.', '_').replace('-', '_')
             table_name = table['name']
         elif '.' in table_id:
             # fallback: derive schema from table_id when backendPath is unavailable
@@ -814,8 +815,8 @@ class WorkspaceManager:
     async def get_table_info(
         self, table: Mapping[str, Any], backend_path: list[str] | None = None
     ) -> DbTableInfo | None:
-        # Alias tables from linked buckets cannot be queried from this workspace
-        if table.get('sourceTable', {}).get('isAlias'):
+        # Tables with isAlias=true are linked from another project and cannot be queried from this workspace
+        if table.get('isAlias'):
             return None
 
         table_id = table['id']

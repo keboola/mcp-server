@@ -265,10 +265,11 @@ class TestWorkspaceManagerSnowflake:
                 ],
             ),
             (
-                # alias table from linked bucket — isAlias=True, not queryable, no SQL issued
+                # alias table from linked bucket — top-level isAlias=True, not queryable, no SQL issued
                 {
                     'id': 'in.c-foo.bar',
                     'name': 'bar',
+                    'isAlias': True,
                     'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
                 },
                 [],
@@ -543,11 +544,11 @@ class TestWorkspaceManagerBigQuery:
                 TableFqn(db_name='project_1234', schema_name='in_c_foo', table_name='bar', quote_char='`'),
             ),
             (
-                # storage-branches: table with bucket.backendPath containing branch prefix
+                # storage-branches: backendPath with branch-prefixed dataset name (1 element in BQ)
                 {
                     'id': 'out.c-model.customers',
                     'name': 'customers',
-                    'bucket': {'id': 'out.c-model', 'backendPath': ['KBC_USE4_3047', '35403_out.c-model']},
+                    'bucket': {'id': 'out.c-model', 'backendPath': ['35403_out_c_model']},
                 },
                 TableFqn(
                     db_name='project_1234',
@@ -557,11 +558,11 @@ class TestWorkspaceManagerBigQuery:
                 ),
             ),
             (
-                # backendPath without branch prefix (production bucket)
+                # production bucket — backendPath is single dataset name
                 {
                     'id': 'in.c-shopify.orders',
                     'name': 'orders',
-                    'bucket': {'id': 'in.c-shopify', 'backendPath': ['KBC_USE4_3047', 'in.c-shopify']},
+                    'bucket': {'id': 'in.c-shopify', 'backendPath': ['in_c_shopify']},
                 },
                 TableFqn(
                     db_name='project_1234',
