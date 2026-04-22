@@ -1,5 +1,6 @@
 """Storage-related tools for the MCP server (buckets, tables, etc.)."""
 
+import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime
@@ -685,9 +686,10 @@ async def get_tables(
             tables_by_id[table.id] = table
 
     if table_ids:
+        bucket_cache: dict[str, asyncio.Task[tuple[BucketDetail | None, BucketDetail | None]]] = {}
 
         async def _fetch_table_detail(_table_id: str) -> TableDetail | str:
-            if _table := await _get_table(_table_id, client, workspace_manager, links_manager):
+            if _table := await _get_table(_table_id, client, workspace_manager, links_manager, bucket_cache):
                 return _table
             else:
                 return _table_id
@@ -730,7 +732,11 @@ async def get_tables(
 
 
 async def _get_table(
-    table_id: str, client: KeboolaClient, workspace_manager: WorkspaceManager, links_manager: ProjectLinksManager
+    table_id: str,
+    client: KeboolaClient,
+    workspace_manager: WorkspaceManager,
+    links_manager: ProjectLinksManager,
+    bucket_cache: dict[str, asyncio.Task[tuple[BucketDetail | None, BucketDetail | None]]] | None = None,
 ) -> TableDetail | None:
     prod_table, dev_table = await merged_table_detail(client, table_id)
 
@@ -761,7 +767,12 @@ async def _get_table(
     if not backend_path:
         raw_bucket_id = cast(str, raw_table.get('bucket', {}).get('id', ''))
         if raw_bucket_id:
-            prod_bucket, dev_bucket = await _find_buckets(client, raw_bucket_id)
+            if bucket_cache is not None:
+                if raw_bucket_id not in bucket_cache:
+                    bucket_cache[raw_bucket_id] = asyncio.create_task(_find_buckets(client, raw_bucket_id))
+                prod_bucket, dev_bucket = await bucket_cache[raw_bucket_id]
+            else:
+                prod_bucket, dev_bucket = await _find_buckets(client, raw_bucket_id)
             active_bucket = dev_bucket or prod_bucket
             backend_path = active_bucket.backend_path if active_bucket else None
     db_table_info = await workspace_manager.get_table_info(raw_table, backend_path=backend_path)
