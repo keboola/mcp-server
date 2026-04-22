@@ -120,16 +120,14 @@ class TestWorkspaceManagerSnowflake:
         ('table', 'sapi_result', 'expected'),
         [
             (
-                # table in.c-foo.bar in its own project
-                {'id': 'in.c-foo.bar', 'name': 'bar'},
-                {'current_database': 'db_xyz'},
+                # table in.c-foo.bar in its own project — db_name from backendPath[0]
+                {
+                    'id': 'in.c-foo.bar',
+                    'name': 'bar',
+                    'bucket': {'id': 'in.c-foo', 'backendPath': ['db_xyz', 'in.c-foo']},
+                },
+                {'COLUMN_NAME': 'col1', 'DATA_TYPE': 'STRING', 'IS_NULLABLE': 'YES'},
                 TableFqn(db_name='db_xyz', schema_name='in.c-foo', table_name='bar', quote_char='"'),
-            ),
-            (
-                # temporary table not in a project, but in the writable schema of the workspace
-                {'id': 'bar', 'name': 'bar'},
-                {'current_database': 'db_xyz'},
-                TableFqn(db_name='db_xyz', schema_name='workspace_1234', table_name='bar', quote_char='"'),
             ),
             (
                 # table out.c-baz.bam exported from project 1234
@@ -212,12 +210,6 @@ class TestWorkspaceManagerSnowflake:
                     'columns': [{'name': key} for key in sapi_result.keys()],
                     'message': '',
                 },
-                {
-                    'status': 'completed',
-                    'data': [['col1', 'STRING', True]],
-                    'columns': [{'name': 'COLUMN_NAME'}, {'name': 'DATA_TYPE'}, {'name': 'IS_NULLABLE'}],
-                    'message': '',
-                },
             ]
 
         mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
@@ -237,39 +229,27 @@ class TestWorkspaceManagerSnowflake:
         ('table', 'job_results'),
         [
             (
-                # local table — CURRENT_DATABASE() SQL fails
+                # no backendPath — returns None without any SQL
                 {'id': 'in.c-foo.bar', 'name': 'bar'},
+                [],
+            ),
+            (
+                # backendPath present, COLUMNS query SQL fails
+                {
+                    'id': 'in.c-foo.bar',
+                    'name': 'bar',
+                    'bucket': {'id': 'in.c-foo', 'backendPath': ['db_xyz', 'in.c-foo']},
+                },
                 [{'status': 'failed', 'data': [], 'columns': [], 'message': 'SQL error'}],
             ),
             (
-                # local table — CURRENT_DATABASE() returns no rows
-                {'id': 'in.c-foo.bar', 'name': 'bar'},
-                [{'status': 'completed', 'data': [], 'columns': [{'name': 'current_database'}], 'message': ''}],
-            ),
-            (
-                # local table — COLUMNS query SQL fails
-                {'id': 'in.c-foo.bar', 'name': 'bar'},
+                # backendPath present, COLUMNS returns no rows (not in INFORMATION_SCHEMA), count(*) fails
+                {
+                    'id': 'in.c-foo.bar',
+                    'name': 'bar',
+                    'bucket': {'id': 'in.c-foo', 'backendPath': ['db_xyz', 'in.c-foo']},
+                },
                 [
-                    {
-                        'status': 'completed',
-                        'data': [['db_xyz']],
-                        'columns': [{'name': 'current_database'}],
-                        'message': '',
-                    },
-                    {'status': 'failed', 'data': [], 'columns': [], 'message': 'SQL error'},
-                ],
-            ),
-            (
-                # local table — COLUMNS query returns no rows (table not in INFORMATION_SCHEMA)
-                # key behavioral change: was DbTableInfo(columns={}), now None
-                {'id': 'in.c-foo.bar', 'name': 'bar'},
-                [
-                    {
-                        'status': 'completed',
-                        'data': [['db_xyz']],
-                        'columns': [{'name': 'current_database'}],
-                        'message': '',
-                    },
                     {
                         'status': 'completed',
                         'data': [],
@@ -549,19 +529,9 @@ class TestWorkspaceManagerBigQuery:
         ('table', 'expected'),
         [
             (
-                # table in.c-foo.bar in its own project or a tables shared from other project
+                # table in.c-foo.bar — schema derived from table_id when backendPath absent
                 {'id': 'in.c-foo.bar', 'name': 'bar'},
                 TableFqn(db_name='project_1234', schema_name='in_c_foo', table_name='bar', quote_char='`'),
-            ),
-            (
-                # temporary table not in a project, but in the writable schema of the workspace
-                {'id': 'bar', 'name': 'bar'},
-                TableFqn(
-                    db_name='project_1234',
-                    schema_name='workspace_1234',
-                    table_name='bar',
-                    quote_char='`',
-                ),
             ),
             (
                 # storage-branches: table with bucket.backendPath containing branch prefix

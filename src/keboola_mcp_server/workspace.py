@@ -250,26 +250,8 @@ class _SnowflakeWorkspace(_Workspace):
                 schema_name = bp[1]
                 table_name = table['name']
             else:
-                sql = 'select CURRENT_DATABASE() as "current_database";'
-                result = await self.execute_query(sql)
-                if result.is_ok:
-                    if result.data and result.data.rows:
-                        row = result.data.rows[0]
-                        db_name = row['current_database']
-                        if '.' in table_id:
-                            schema_name, table_name = table_id.rsplit(sep='.', maxsplit=1)
-                        else:
-                            # a table not in the project, but in the writable schema created for the workspace
-                            # TODO: we should never come here, because the tools for listing tables can only see
-                            #  tables that are in the project
-                            schema_name = self._schema
-                            table_name = table['name']
-                    else:
-                        LOG.warning(
-                            f'No current database: {sql}, SAPI response: {result}\n' f'Table: {self._dump(table)}'
-                        )
-                else:
-                    LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
+                LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
+                return None
 
         if db_name and schema_name and table_name:
             sql = (
@@ -505,15 +487,12 @@ class _BigQueryWorkspace(_Workspace):
             schema_name = bp[1].replace('.', '_').replace('-', '_')
             table_name = table['name']
         elif '.' in table_id:
-            # a table local in a project for which the workspace is open
+            # fallback: derive schema from table_id when backendPath is unavailable
             schema_name, table_name = table_id.rsplit(sep='.', maxsplit=1)
             schema_name = schema_name.replace('.', '_').replace('-', '_')
         else:
-            # a table not in the project, but in the writable schema created for the workspace
-            # TODO: we should never come here, because the tools for listing tables can only see
-            #  tables that are in the project
-            schema_name = self._dataset_id
-            table_name = table['name']
+            LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
+            return None
 
         if schema_name and table_name:
             sql = (
