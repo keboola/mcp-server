@@ -218,91 +218,29 @@ class _SnowflakeWorkspace(_Workspace):
     ) -> DbTableInfo | None:
         table_id = table['id']
 
-        db_name: str | None = None
-        schema_name: str | None = None
-        table_name: str | None = None
-
         if source_table := table.get('sourceTable'):
-            # a table linked from some other project
-            schema_name, table_name = source_table['id'].rsplit(sep='.', maxsplit=1)
-            source_project_id = source_table['project']['id']
-            # sql = f"show databases like '%_{source_project_id}';"
-            sql = (
-                f'select "DATABASE_NAME" from "INFORMATION_SCHEMA"."DATABASES" '
-                f'where "DATABASE_NAME" like \'%^_{source_project_id}\' escape \'^\';'
-            )
-            result = await self.execute_query(sql)
-            if result.is_ok:
-                if result.data and result.data.rows:
-                    db_name = result.data.rows[0]['DATABASE_NAME']
-                else:
-                    LOG.warning(
-                        f'No database found for {source_project_id} project: {sql}, SAPI response: {result}\n'
-                        f'Table: {self._dump(table)}'
-                    )
-            else:
-                LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
-
+            # Cross-project linked table — read db/schema from sourceTable.bucket.backendPath
+            bp = _get_backend_path(source_table)
+            if not bp or len(bp) < 2:
+                LOG.warning(f'No backendPath in sourceTable for {table_id}, cannot construct FQN')
+                return None
+            db_name = bp[0]
+            schema_name = bp[1]
+            table_name = source_table['id'].rsplit(sep='.', maxsplit=1)[1]
         else:
             bp = backend_path or _get_backend_path(table)
-            if bp and len(bp) >= 2:
-                db_name = bp[0]
-                schema_name = bp[1]
-                table_name = table['name']
-            else:
+            if not bp or len(bp) < 2:
                 LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
                 return None
+            db_name = bp[0]
+            schema_name = bp[1]
+            table_name = table['name']
 
-        if db_name and schema_name and table_name:
-            sql = (
-                f'SELECT "COLUMN_NAME", "DATA_TYPE", "IS_NULLABLE" '
-                f'FROM "INFORMATION_SCHEMA"."COLUMNS" '
-                f'WHERE "TABLE_CATALOG" = \'{db_name}\' AND "TABLE_SCHEMA" = \'{schema_name}\' '
-                f'AND "TABLE_NAME" = \'{table_name}\' '
-                f'ORDER BY "ORDINAL_POSITION";'
-            )
-            result = await self.execute_query(sql)
-            if result.is_ok:
-                fqn = TableFqn(db_name, schema_name, table_name, quote_char='"')
-                if result.data and result.data.rows:
-                    return DbTableInfo(
-                        id=table_id,
-                        fqn=fqn,
-                        columns={
-                            row['COLUMN_NAME']: DbColumnInfo(
-                                name=row['COLUMN_NAME'],
-                                quoted_name=self.get_quoted_name(row['COLUMN_NAME']),
-                                native_type=row['DATA_TYPE'],
-                                nullable=row['IS_NULLABLE'] == 'YES',
-                            )
-                            for row in result.data.rows
-                        },
-                    )
-                else:
-                    # the sql shows the db_name, schema_name and table_name
-                    LOG.warning(
-                        f'No "{table_id}" table in the database: {sql}, SAPI response: {result}\n'
-                        f'Table: {self._dump(table)}'
-                    )
-
-                    # The linked tables are not visible in INFORMATION_SCHEMA.COLUMNS. Fall back to count(*) query
-                    # to verify whether the fqn is valid.
-                    sql = f'SELECT count(*) FROM {fqn};'
-                    result = await self.execute_query(sql)
-                    if result.is_ok:
-                        if result.data and result.data.rows:
-                            return DbTableInfo(id=table_id, fqn=fqn, columns={})
-                        else:
-                            LOG.warning(
-                                f'Unexpected empty result from count(*): {sql}, SAPI response: {result}\n'
-                                f'Table: {self._dump(table)}'
-                            )
-                    else:
-                        LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
-            else:
-                LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
-
-        return None
+        return DbTableInfo(
+            id=table_id,
+            fqn=TableFqn(db_name, schema_name, table_name, quote_char='"'),
+            columns={},
+        )
 
     async def execute_query(
         self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
@@ -483,44 +421,19 @@ class _BigQueryWorkspace(_Workspace):
         table_id = table['id']
 
         bp = backend_path or _get_backend_path(table)
-        if bp:
-            # BigQuery backendPath is a single-element list containing the dataset name
-            schema_name = bp[0].replace('.', '_').replace('-', '_')
-            table_name = table['name']
-        elif '.' in table_id:
-            # fallback: derive schema from table_id when backendPath is unavailable
-            schema_name, table_name = table_id.rsplit(sep='.', maxsplit=1)
-            schema_name = schema_name.replace('.', '_').replace('-', '_')
-        else:
+        if not bp:
             LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
             return None
 
-        if schema_name and table_name:
-            sql = (
-                f'SELECT column_name, data_type, is_nullable '
-                f'FROM `{self._project_id}`.`{schema_name}`.`INFORMATION_SCHEMA`.`COLUMNS` '
-                f"WHERE table_name = '{table_name}' "
-                f'ORDER BY ordinal_position;'
-            )
-            result = await self.execute_query(sql)
-            if result.is_ok and result.data:
-                return DbTableInfo(
-                    id=table_id,
-                    fqn=TableFqn(self._project_id, schema_name, table_name, quote_char='`'),
-                    columns={
-                        row['column_name']: DbColumnInfo(
-                            name=row['column_name'],
-                            quoted_name=self.get_quoted_name(row['column_name']),
-                            native_type=row['data_type'],
-                            nullable=row['is_nullable'] == 'YES',
-                        )
-                        for row in result.data.rows
-                    },
-                )
-            else:
-                LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
+        # BigQuery backendPath[0] is the dataset name; normalize separators for BQ dataset naming
+        schema_name = bp[0].replace('.', '_').replace('-', '_')
+        table_name = table['name']
 
-        return None
+        return DbTableInfo(
+            id=table_id,
+            fqn=TableFqn(self._project_id, schema_name, table_name, quote_char='`'),
+            columns={},
+        )
 
     async def execute_query(
         self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None

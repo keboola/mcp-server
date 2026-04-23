@@ -117,7 +117,7 @@ class TestWorkspaceManagerSnowflake:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('table', 'sapi_result', 'expected'),
+        ('table', 'expected'),
         [
             (
                 # table in.c-foo.bar in its own project — db_name from backendPath[0]
@@ -126,40 +126,42 @@ class TestWorkspaceManagerSnowflake:
                     'name': 'bar',
                     'bucket': {'id': 'in.c-foo', 'backendPath': ['db_xyz', 'in.c-foo']},
                 },
-                {'COLUMN_NAME': 'col1', 'DATA_TYPE': 'STRING', 'IS_NULLABLE': 'YES'},
                 TableFqn(db_name='db_xyz', schema_name='in.c-foo', table_name='bar', quote_char='"'),
             ),
             (
                 # table out.c-baz.bam exported from project 1234
                 # and imported as table in.c-foo.bar in some other project (isAlias=False = regular shared table)
+                # db_name comes from sourceTable.bucket.backendPath[0] — no SQL needed
                 {
                     'id': 'in.c-foo.bar',
                     'name': 'bar',
-                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': False},
+                    'sourceTable': {
+                        'project': {'id': '1234'},
+                        'id': 'out.c-baz.bam',
+                        'isAlias': False,
+                        'bucket': {'id': 'out.c-baz', 'backendPath': ['sapi_1234', 'out.c-baz']},
+                    },
                 },
-                {'DATABASE_NAME': 'sapi_1234'},
                 TableFqn(db_name='sapi_1234', schema_name='out.c-baz', table_name='bam', quote_char='"'),
             ),
             (
-                # storage-branches: backendPath present → db_name from backendPath[0], no CURRENT_DATABASE() call
+                # storage-branches: backendPath present → db_name from backendPath[0]
                 {
                     'id': 'out.c-model.customers',
                     'name': 'customers',
                     'bucket': {'id': 'out.c-model', 'backendPath': ['KBC_USE4_3047', '35403_out.c-model']},
                 },
-                {'COLUMN_NAME': 'col1', 'DATA_TYPE': 'STRING', 'IS_NULLABLE': 'YES'},
                 TableFqn(
                     db_name='KBC_USE4_3047', schema_name='35403_out.c-model', table_name='customers', quote_char='"'
                 ),
             ),
             (
-                # backendPath without branch prefix → db_name from backendPath[0], no CURRENT_DATABASE() call
+                # production bucket — db_name from backendPath[0]
                 {
                     'id': 'in.c-shopify.orders',
                     'name': 'orders',
                     'bucket': {'id': 'in.c-shopify', 'backendPath': ['KBC_USE4_3047', 'in.c-shopify']},
                 },
-                {'COLUMN_NAME': 'col1', 'DATA_TYPE': 'STRING', 'IS_NULLABLE': 'YES'},
                 TableFqn(db_name='KBC_USE4_3047', schema_name='in.c-shopify', table_name='orders', quote_char='"'),
             ),
         ],
@@ -167,150 +169,48 @@ class TestWorkspaceManagerSnowflake:
     async def test_get_table_fqn(
         self,
         table: dict[str, Any],
-        sapi_result,
         expected: TableFqn,
         keboola_client: KeboolaClient,
         context: Context,
         mocker,
     ):
         keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
-
-        qsclient = mocker.AsyncMock(QueryServiceClient)
-        qsclient.submit_job.return_value = 'qs-job-1234'
-        qsclient.get_job_status.return_value = {
-            'status': 'completed',
-            'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
-        }
-        if 'sourceTable' in table:
-            qsclient.get_job_results.side_effect = [
-                {
-                    'status': 'completed',
-                    'data': [[value for value in sapi_result.values()]],
-                    'columns': [{'name': key} for key in sapi_result.keys()],
-                    'message': '',
-                },
-                {
-                    'status': 'completed',
-                    'data': [],
-                    'columns': [],
-                    'message': 'Not found',
-                },
-                {
-                    'status': 'completed',
-                    'data': [[123]],
-                    'columns': [{'name': 'count(*)'}],
-                    'message': '',
-                },
-            ]
-        else:
-            qsclient.get_job_results.side_effect = [
-                {
-                    'status': 'completed',
-                    'data': [[value for value in sapi_result.values()]],
-                    'columns': [{'name': key} for key in sapi_result.keys()],
-                    'message': '',
-                },
-            ]
-
-        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(QueryServiceClient, 'create', side_effect=AssertionError('no SQL should be issued'))
 
         m = WorkspaceManager.from_state(context.session.state)
         info = await m.get_table_info(table)
         assert info is not None
         assert info.fqn == expected
 
-        keboola_client.storage_client.branches_list.assert_called_once()
-        qsclient.submit_job.assert_called()
-        qsclient.get_job_status.assert_called()
-        qsclient.get_job_results.assert_called()
-
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('table', 'job_results'),
+        'table',
         [
-            (
-                # no backendPath — returns None without any SQL
-                {'id': 'in.c-foo.bar', 'name': 'bar'},
-                [],
-            ),
-            (
-                # backendPath present, COLUMNS query SQL fails
-                {
-                    'id': 'in.c-foo.bar',
-                    'name': 'bar',
-                    'bucket': {'id': 'in.c-foo', 'backendPath': ['db_xyz', 'in.c-foo']},
-                },
-                [{'status': 'failed', 'data': [], 'columns': [], 'message': 'SQL error'}],
-            ),
-            (
-                # backendPath present, COLUMNS returns no rows (not in INFORMATION_SCHEMA), count(*) fails
-                {
-                    'id': 'in.c-foo.bar',
-                    'name': 'bar',
-                    'bucket': {'id': 'in.c-foo', 'backendPath': ['db_xyz', 'in.c-foo']},
-                },
-                [
-                    {
-                        'status': 'completed',
-                        'data': [],
-                        'columns': [{'name': 'COLUMN_NAME'}, {'name': 'DATA_TYPE'}, {'name': 'IS_NULLABLE'}],
-                        'message': '',
-                    },
-                    {
-                        'status': 'failed',
-                        'data': [],
-                        'columns': [],
-                        'message': 'Table does not exist or not authorized',
-                    },
-                ],
-            ),
-            (
-                # alias table (sourceTable.isAlias=True) — not queryable on any backend, no SQL issued
-                {
-                    'id': 'in.c-foo.bar',
-                    'name': 'bar',
-                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
-                },
-                [],
-            ),
-            (
-                # linked non-alias table — database lookup SQL fails (shared DB not accessible)
-                {
-                    'id': 'in.c-foo.bar',
-                    'name': 'bar',
-                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': False},
-                },
-                [{'status': 'failed', 'data': [], 'columns': [], 'message': 'SQL error'}],
-            ),
-            (
-                # linked non-alias table — database lookup returns no rows (shared DB not yet accessible)
-                {
-                    'id': 'in.c-foo.bar',
-                    'name': 'bar',
-                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': False},
-                },
-                [{'status': 'completed', 'data': [], 'columns': [{'name': 'DATABASE_NAME'}], 'message': ''}],
-            ),
+            # no backendPath — returns None without any SQL
+            {'id': 'in.c-foo.bar', 'name': 'bar'},
+            # alias table (sourceTable.isAlias=True) — blocked at WorkspaceManager level, no SQL
+            {
+                'id': 'in.c-foo.bar',
+                'name': 'bar',
+                'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
+            },
+            # linked non-alias table — no backendPath in sourceTable → cannot construct FQN
+            {
+                'id': 'in.c-foo.bar',
+                'name': 'bar',
+                'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': False},
+            },
         ],
     )
     async def test_get_table_info_returns_none(
         self,
         table: dict[str, Any],
-        job_results: list,
         keboola_client: KeboolaClient,
         context: Context,
         mocker,
     ):
         keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
-
-        qsclient = mocker.AsyncMock(QueryServiceClient)
-        qsclient.submit_job.return_value = 'qs-job-1234'
-        qsclient.get_job_status.return_value = {
-            'status': 'completed',
-            'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
-        }
-        qsclient.get_job_results.side_effect = job_results
-        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(QueryServiceClient, 'create', side_effect=AssertionError('no SQL should be issued'))
 
         m = WorkspaceManager.from_state(context.session.state)
         info = await m.get_table_info(table)
@@ -538,11 +438,6 @@ class TestWorkspaceManagerBigQuery:
         ('table', 'expected'),
         [
             (
-                # table in.c-foo.bar — schema derived from table_id when backendPath absent
-                {'id': 'in.c-foo.bar', 'name': 'bar'},
-                TableFqn(db_name='project_1234', schema_name='in_c_foo', table_name='bar', quote_char='`'),
-            ),
-            (
                 # storage-branches: backendPath with branch-prefixed dataset name (1 element in BQ)
                 {
                     'id': 'out.c-model.customers',
@@ -590,27 +485,24 @@ class TestWorkspaceManagerBigQuery:
     async def test_get_table_fqn(
         self, table: dict[str, Any], expected: TableFqn, keboola_client: KeboolaClient, context: Context
     ):
-        keboola_client.storage_client.workspace_query.return_value = QueryResult(
-            status='ok',
-            data=SqlSelectData(columns=['column_name', 'data_type', 'is_nullable'], rows=[]),
-        )
         m = WorkspaceManager.from_state(context.session.state)
         info = await m.get_table_info(table)
         assert info is not None
         assert info.fqn == expected
+        keboola_client.storage_client.workspace_query.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         'table',
         [
-            (
-                # alias linked table (sourceTable.isAlias=True) — blocked at WorkspaceManager level, no SQL
-                {
-                    'id': 'in.c-foo.bar',
-                    'name': 'bar',
-                    'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
-                }
-            ),
+            # no backendPath — returns None without any SQL
+            {'id': 'in.c-foo.bar', 'name': 'bar'},
+            # alias linked table (sourceTable.isAlias=True) — blocked at WorkspaceManager level, no SQL
+            {
+                'id': 'in.c-foo.bar',
+                'name': 'bar',
+                'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
+            },
         ],
     )
     async def test_get_table_info_returns_none(

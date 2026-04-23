@@ -1,6 +1,5 @@
 """Storage-related tools for the MCP server (buckets, tables, etc.)."""
 
-import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime
@@ -686,10 +685,9 @@ async def get_tables(
             tables_by_id[table.id] = table
 
     if table_ids:
-        bucket_cache: dict[str, asyncio.Task[tuple[BucketDetail | None, BucketDetail | None]]] = {}
 
         async def _fetch_table_detail(_table_id: str) -> TableDetail | str:
-            if _table := await _get_table(_table_id, client, workspace_manager, links_manager, bucket_cache):
+            if _table := await _get_table(_table_id, client, workspace_manager, links_manager):
                 return _table
             else:
                 return _table_id
@@ -736,7 +734,6 @@ async def _get_table(
     client: KeboolaClient,
     workspace_manager: WorkspaceManager,
     links_manager: ProjectLinksManager,
-    bucket_cache: dict[str, asyncio.Task[tuple[BucketDetail | None, BucketDetail | None]]] | None = None,
 ) -> TableDetail | None:
     prod_table, dev_table = await merged_table_detail(client, table_id)
 
@@ -760,21 +757,11 @@ async def _get_table(
     raw_source_column_metadata = cast(
         dict[str, list[dict[str, Any]]], get_nested(raw_table, 'sourceTable.columnMetadata', default={})
     )
-    raw_primary_key = cast(list[str], raw_table.get('primaryKey', []))
 
     sql_dialect = await workspace_manager.get_sql_dialect()
     backend_path = _get_backend_path(raw_table)
     if not backend_path:
-        raw_bucket_id = cast(str, raw_table.get('bucket', {}).get('id', ''))
-        if raw_bucket_id:
-            if bucket_cache is not None:
-                if raw_bucket_id not in bucket_cache:
-                    bucket_cache[raw_bucket_id] = asyncio.create_task(_find_buckets(client, raw_bucket_id))
-                prod_bucket, dev_bucket = await bucket_cache[raw_bucket_id]
-            else:
-                prod_bucket, dev_bucket = await _find_buckets(client, raw_bucket_id)
-            active_bucket = dev_bucket or prod_bucket
-            backend_path = active_bucket.backend_path if active_bucket else None
+        LOG.warning(f'No backendPath in table_detail response for {table_id} — FQN will be unavailable')
     db_table_info = await workspace_manager.get_table_info(raw_table, backend_path=backend_path)
 
     column_info = []
@@ -794,17 +781,23 @@ async def _get_table(
                 source_col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user']
             )
 
-        if db_table_info and (db_column_info := db_table_info.columns.get(col_name)):
-            native_type = db_column_info.native_type
-            nullable = db_column_info.nullable
-        else:
-            # should not happen
+        native_type: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
+        if not native_type:
+            native_type = get_metadata_property(source_col_meta, MetadataField.DATATYPE_TYPE)
+
+        nullable_str: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE)
+        if not nullable_str:
+            nullable_str = get_metadata_property(source_col_meta, MetadataField.DATATYPE_NULLABLE)
+
+        if native_type is None:
             native_type = 'STRING' if sql_dialect == 'BigQuery' else 'VARCHAR'
-            nullable = col_name not in raw_primary_key
             LOG.warning(
-                f'No column info from the database: '
-                f'col_name={col_name}, sql_dialect={sql_dialect}, db_table_info={db_table_info}'
+                f'No KBC.datatype.type in columnMetadata: '
+                f'col_name={col_name}, sql_dialect={sql_dialect}, table_id={table_id}'
             )
+
+        # KBC.datatype.nullable is stored as '1'/'true' for nullable, '0'/'false' (or absent) for non-nullable
+        nullable = nullable_str.lower() in ('1', 'true') if nullable_str is not None else False
 
         column_info.append(
             TableColumnInfo(

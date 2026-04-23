@@ -10,7 +10,7 @@ from mcp.types import TextContent
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.server import create_server
@@ -966,15 +966,7 @@ async def test_get_table(
                 table_name=sapi_table['id'].rsplit('.')[-1],
                 quote_char='#',
             ),
-            columns={
-                col_name: DbColumnInfo(
-                    name=col_name,
-                    quoted_name=f'#{col_name}#',
-                    native_type=get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE),
-                    nullable=get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) == '1',
-                )
-                for col_name, col_meta in sapi_table['columnMetadata'].items()
-            },
+            columns={},
         )
     )
     workspace_manager.get_quoted_name = mocker.AsyncMock(side_effect=lambda name: f'#{name}#')
