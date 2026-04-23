@@ -18,7 +18,7 @@ from keboola_mcp_server.clients.query import QueryServiceClient
 LOG = logging.getLogger(__name__)
 
 
-def _get_backend_path(table: Mapping[str, Any]) -> list[str] | None:
+def get_backend_path(table: Mapping[str, Any]) -> list[str] | None:
     """Extracts the backendPath from a table's bucket info if available."""
     bucket = table.get('bucket')
     if isinstance(bucket, dict):
@@ -219,8 +219,8 @@ class _SnowflakeWorkspace(_Workspace):
         table_id = table['id']
 
         if source_table := table.get('sourceTable'):
-            # Cross-project linked table — read db/schema from sourceTable.bucket.backendPath
-            bp = _get_backend_path(source_table)
+            # Cross-project linked table — prefer caller-supplied backend_path, fall back to sourceTable
+            bp = backend_path or get_backend_path(source_table)
             if not bp or len(bp) < 2:
                 LOG.warning(f'No backendPath in sourceTable for {table_id}, cannot construct FQN')
                 return None
@@ -228,7 +228,7 @@ class _SnowflakeWorkspace(_Workspace):
             schema_name = bp[1]
             table_name = source_table['id'].rsplit(sep='.', maxsplit=1)[1]
         else:
-            bp = backend_path or _get_backend_path(table)
+            bp = backend_path or get_backend_path(table)
             if not bp or len(bp) < 2:
                 LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
                 return None
@@ -420,7 +420,7 @@ class _BigQueryWorkspace(_Workspace):
     ) -> DbTableInfo | None:
         table_id = table['id']
 
-        bp = backend_path or _get_backend_path(table)
+        bp = backend_path or get_backend_path(table)
         if not bp:
             LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
             return None

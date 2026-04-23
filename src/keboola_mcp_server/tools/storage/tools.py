@@ -36,7 +36,7 @@ from keboola_mcp_server.tools.storage_helpers import (
     merged_table_detail,
 )
 from keboola_mcp_server.utils import parse_iso_timestamp
-from keboola_mcp_server.workspace import WorkspaceManager, _get_backend_path
+from keboola_mcp_server.workspace import WorkspaceManager, get_backend_path
 
 LOG = logging.getLogger(__name__)
 
@@ -759,7 +759,7 @@ async def _get_table(
     )
 
     sql_dialect = await workspace_manager.get_sql_dialect()
-    backend_path = _get_backend_path(raw_table)
+    backend_path = get_backend_path(raw_table)
     if not backend_path:
         LOG.warning(f'No backendPath in table_detail response for {table_id} — FQN will be unavailable')
     db_table_info = await workspace_manager.get_table_info(raw_table, backend_path=backend_path)
@@ -797,7 +797,7 @@ async def _get_table(
             )
 
         # KBC.datatype.nullable is stored as '1'/'true' for nullable, '0'/'false' (or absent) for non-nullable
-        nullable = nullable_str.lower() in ('1', 'true') if nullable_str is not None else False
+        nullable = str(nullable_str).lower() in ('1', 'true') if nullable_str is not None else False
 
         column_info.append(
             TableColumnInfo(
