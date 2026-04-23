@@ -1,4 +1,7 @@
+import logging
 from importlib import resources
+
+LOG = logging.getLogger(__name__)
 
 _DIALECT_CONFIGS: dict[str, dict] = {
     'BigQuery': {
@@ -27,6 +30,7 @@ _DIALECT_CONFIGS: dict[str, dict] = {
 def _build_dialect_section(sql_dialect: str) -> str:
     cfg = _DIALECT_CONFIGS.get(sql_dialect)
     if not cfg:
+        LOG.warning('Unknown SQL dialect %r — no dialect-specific identifier guidance will be emitted.', sql_dialect)
         return f'### SQL Identifiers\n\nSQL dialect: **{sql_dialect}**.\n'
     lines = [
         '### SQL Identifiers\n',
