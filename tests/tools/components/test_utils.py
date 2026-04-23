@@ -73,7 +73,7 @@ def test_expand_component_types(
                             codes=[
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
-                                    script=['SELECT * FROM test;', 'SELECT * FROM test2;'],
+                                    script=['SELECT\n  *\nFROM test;', 'SELECT\n  *\nFROM test2;'],
                                 )
                             ],
                         )
@@ -109,9 +109,11 @@ def test_expand_component_types(
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
                                     script=[
-                                        'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
-                                        '-- comment\n'
-                                        'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";',
+                                        'CREATE OR REPLACE TABLE "test_table_1" AS\nSELECT\n  *\nFROM "test";',
+                                        (
+                                            '/* comment */\nCREATE OR REPLACE TABLE "test_table_2"'
+                                            ' AS\nSELECT\n  *\nFROM "test";'
+                                        ),
                                     ],
                                 )
                             ],
@@ -153,7 +155,7 @@ def test_expand_component_types(
                             codes=[
                                 TransformationConfiguration.Parameters.Block.Code(
                                     name='Code 0',
-                                    script=['CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";'],
+                                    script=['CREATE OR REPLACE TABLE "test_table_1" AS\nSELECT\n  *\nFROM "test";'],
                                 )
                             ],
                         )
@@ -1109,7 +1111,7 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(
                         name='Block A',
                         codes=[
-                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT\n  *\nFROM new_table;'),
                         ],
                     ),
                 ]
@@ -1137,7 +1139,7 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(
                         name='Renamed Block',
                         codes=[
-                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM new_table'),
+                            SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT\n  *\nFROM new_table;'),
                         ],
                     ),
                 ]
@@ -1178,7 +1180,7 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(
                         name='New Block',
                         codes=[
-                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * IN table2'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT\n  *\nIN table2;'),
                         ],
                     ),
                 ]
@@ -1252,7 +1254,7 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                         name='Block A',
                         codes=[
                             SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * IN table1'),
-                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT * IN table2'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT\n  *\nIN table2;'),
                         ],
                     ),
                 ]
@@ -1319,7 +1321,7 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                         name='Block A',
                         codes=[
                             SimplifiedTfBlocks.Block.Code(name='Code X', script='SELECT * FROM table1'),
-                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT 1'),
+                            SimplifiedTfBlocks.Block.Code(name='New Code', script='SELECT\n  1;'),
                         ],
                     ),
                     SimplifiedTfBlocks.Block(name='New Block', codes=[]),
