@@ -280,9 +280,12 @@ CONSIDERATIONS:
 - Use delimited identifiers as defined in project info for all identifiers and FQN references.
 - When referring to the input tables within the SQL query, use fully qualified table names, which can be
   retrieved using appropriate tools.
-- When creating a new table within the SQL query (e.g. CREATE TABLE ...): use only the table name with
-  delimited identifiers, without the fully qualified path; add the plain table name without delimiters
-  to the `created_table_names` list.
+- DIALECT-SPECIFIC FULLY QUALIFIED TABLE NAMES:
+  - Snowflake format: "DATABASE"."SCHEMA"."TABLE"
+  - BigQuery format: `project`.`dataset`.`table`
+- When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the dialect-appropriate
+  quoted table name without fully qualified table name (backticks for BigQuery — `table_name`; double quotes for
+  Snowflake — "table_name"), and add the plain table name without quotes to the `created_table_names` list.
 - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
   and user intent.
 - If there are 20 or more SQL transformations in the project, consider organizing them with a folder: existing
@@ -1203,7 +1206,9 @@ IMPORTANT CONSIDERATIONS:
 - Parameter updates are PARTIAL - only the operations you specify are applied
 - All other parts of the transformation remain unchanged
 - Each SQL script must be executable and follow the current SQL dialect:
-  - Use delimited identifiers as defined in project info.
+  - Snowflake: use double quotes for identifiers — "schema"."table", "column_name"
+  - BigQuery: use backticks for identifiers — `dataset`.`table`, `column_name`
+  - Never mix quoting styles within a single query
 - Storage configuration is COMPLETE REPLACEMENT - include ALL mappings you want to keep
 - Leave updated_description empty to preserve the original description
 - SCHEMA CHANGES: Destructive schema changes (removing columns, changing types, renaming columns) require
@@ -1821,8 +1826,10 @@ from the workspace.
 - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
 parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
 appropriately based on the parameter type.
-- After creating or updating a data app with this tool, ALWAYS call `deploy_data_app(action="deploy",
-configuration_id=...)` to start or restart the app. Without this step the app is not running.
+- After creating or updating a data app with this tool, ALWAYS call
+`deploy_data_app(action="deploy", configuration_id=...)` to start a new app or restart an existing app so
+changes take effect. Without this step, a newly created app will not start, and an existing app will keep
+running the previous deployment without the latest changes.
 - New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
 updating, set `authentication_type` to `default` to keep the existing authentication type configuration
 (including OIDC setups) unless explicitly specified otherwise.
