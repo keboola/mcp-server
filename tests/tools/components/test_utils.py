@@ -28,6 +28,7 @@ from keboola_mcp_server.tools.components.utils import (
     _apply_param_update,
     _normalize_jsonpath,
     clean_bucket_name,
+    clear_configuration_folder_metadata,
     create_transformation_configuration,
     expand_component_types,
     get_config_folders,
@@ -1530,3 +1531,41 @@ async def test_set_configuration_folder_metadata(
         )
     else:
         client.storage_client.configuration_metadata_update.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ('metadata', 'expected_delete_ids'),
+    [
+        ([], []),
+        ([{'key': 'other.key', 'id': '99'}], []),
+        ([{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'id': '1'}], ['1']),
+        (
+            [
+                {'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'id': '1'},
+                {'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'id': '2'},
+            ],
+            ['1', '2'],
+        ),
+        ([{'key': MetadataField.CONFIGURATION_FOLDER_NAME}], []),
+    ],
+    ids=['no_metadata', 'other_key', 'single_match', 'multiple_matches_all_deleted', 'missing_id_skipped'],
+)
+@pytest.mark.asyncio
+async def test_clear_configuration_folder_metadata(
+    metadata: list[dict[str, Any]],
+    expected_delete_ids: list[str],
+) -> None:
+    """Test clear_configuration_folder_metadata deletes all matching entries."""
+    client = _make_client([], [])
+    client.storage_client.configuration_metadata_get = AsyncMock(return_value=metadata)
+    client.storage_client.configuration_metadata_delete = AsyncMock()
+
+    await clear_configuration_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1')
+
+    assert client.storage_client.configuration_metadata_delete.call_count == len(expected_delete_ids)
+    for metadata_id in expected_delete_ids:
+        client.storage_client.configuration_metadata_delete.assert_any_call(
+            component_id='keboola.snowflake-transformation',
+            configuration_id='cfg-1',
+            metadata_id=metadata_id,
+        )

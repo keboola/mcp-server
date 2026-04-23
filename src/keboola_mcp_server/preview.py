@@ -10,7 +10,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from keboola_mcp_server.clients import KeboolaClient
-from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, get_metadata_property
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
 from keboola_mcp_server.tools import data_apps as data_app_tools
@@ -212,10 +212,7 @@ def _prepare_mutator(
                         component_id=kwargs['component_id'],
                         configuration_id=kwargs['configuration_id'],
                     )
-                    current = next(
-                        (m.get('value', '') for m in meta if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME),
-                        '',
-                    )
+                    current = get_metadata_property(meta, MetadataField.CONFIGURATION_FOLDER_NAME, default='') or ''
                     if normalized != current:
                         folder_preview = {'original_folder': current, 'updated_folder': normalized}
                 except Exception as e:

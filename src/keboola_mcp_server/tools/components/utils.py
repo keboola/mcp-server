@@ -485,13 +485,12 @@ async def clear_configuration_folder_metadata(client: KeboolaClient, component_i
                         component_id,
                         configuration_id,
                     )
-                    break
+                    continue
                 await client.storage_client.configuration_metadata_delete(
                     component_id=component_id,
                     configuration_id=configuration_id,
                     metadata_id=metadata_id,
                 )
-                break
     except Exception:
         LOG.warning(
             'Unable to clear folder metadata for component "%s", configuration "%s".',
