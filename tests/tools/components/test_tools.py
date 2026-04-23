@@ -1341,7 +1341,7 @@ async def test_update_config_folder(
     )
     keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
     mocker.patch(
-        'keboola_mcp_server.tools.components.tools.get_config_folders',
+        'keboola_mcp_server.tools.components.utils.get_config_folders',
         mocker.AsyncMock(return_value=(cfg_count, cfg_folders)),
     )
 

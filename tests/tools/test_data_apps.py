@@ -726,7 +726,7 @@ async def test_modify_data_app_folder(
         keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=data_app_response)
 
     mocker.patch(
-        'keboola_mcp_server.tools.data_apps.get_config_folders',
+        'keboola_mcp_server.tools.components.utils.get_config_folders',
         mocker.AsyncMock(return_value=(app_count, app_folders)),
     )
     keboola_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
