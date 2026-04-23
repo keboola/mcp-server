@@ -24,7 +24,7 @@ import copy
 import logging
 import re
 import unicodedata
-from typing import Any, Mapping, Sequence, TypeVar, cast
+from typing import Any, Mapping, Optional, Sequence, TypeVar, cast
 
 import jsonpath_ng
 from httpx import HTTPStatusError
@@ -435,11 +435,11 @@ async def get_config_folders(client: KeboolaClient, component_id: str) -> tuple[
     return total, folders
 
 
-async def set_transformation_folder_metadata(
+async def set_configuration_folder_metadata(
     client: KeboolaClient, component_id: str, configuration_id: str, folder: str
 ) -> None:
     """
-    Sets the KBC.configuration.folderName metadata for a transformation configuration.
+    Sets the KBC.configuration.folderName metadata for a configuration.
     Strips whitespace from the folder name; does nothing if the result is empty.
 
     :param client: KeboolaClient instance
@@ -457,7 +457,7 @@ async def set_transformation_folder_metadata(
     )
 
 
-async def clear_transformation_folder_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
+async def clear_configuration_folder_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
     """Removes the KBC.configuration.folderName metadata entry if present."""
     try:
         metadata = await client.storage_client.configuration_metadata_get(
@@ -486,6 +486,51 @@ async def clear_transformation_folder_metadata(client: KeboolaClient, component_
             component_id,
             configuration_id,
         )
+
+
+async def apply_folder_metadata(
+    client: KeboolaClient,
+    component_id: str,
+    configuration_id: str,
+    folder: Optional[str],
+    kind: str,
+    tool_name: str,
+    *,
+    is_new: bool = False,
+) -> str | None:
+    """
+    Sets or clears folder metadata for a configuration, or returns a hint when many exist.
+
+    :param kind: Human-readable plural noun for the hint (e.g. 'configurations', 'data apps').
+    :param tool_name: Tool name for the hint (e.g. 'update_config', 'modify_data_app').
+    :param is_new: When True, an empty folder string is a no-op (no folder to remove on a new item).
+    :return: Folder hint string if applicable, else None.
+    """
+    if folder is None:
+        try:
+            total, existing_folders = await get_config_folders(client, component_id)
+            return build_folder_hint(total, existing_folders, kind, tool_name)
+        except Exception:
+            LOG.warning(
+                'Unable to fetch %s folders for component "%s" when processing configuration "%s".',
+                kind,
+                component_id,
+                configuration_id,
+            )
+            return None
+    normalized = folder.strip()
+    if normalized:
+        try:
+            await set_configuration_folder_metadata(client, component_id, configuration_id, normalized)
+        except Exception:
+            LOG.warning(
+                'Unable to set folder metadata for component "%s", configuration "%s".',
+                component_id,
+                configuration_id,
+            )
+    elif not is_new:
+        await clear_configuration_folder_metadata(client, component_id, configuration_id)
+    return None
 
 
 def folder_field_description(singular: str, plural: str) -> str:

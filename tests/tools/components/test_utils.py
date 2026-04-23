@@ -31,8 +31,8 @@ from keboola_mcp_server.tools.components.utils import (
     create_transformation_configuration,
     expand_component_types,
     get_config_folders,
+    set_configuration_folder_metadata,
     set_nested_value,
-    set_transformation_folder_metadata,
     structure_summary,
     update_params,
     update_transformation_parameters,
@@ -1377,7 +1377,7 @@ def test_update_transformation_parameters(
 
 
 # ============================================================================
-# get_transformation_folders / set_transformation_folder_metadata TESTS
+# get_transformation_folders / set_configuration_folder_metadata TESTS
 # ============================================================================
 
 
@@ -1486,14 +1486,14 @@ async def test_get_config_folders(
     ids=['normal', 'whitespace_stripped', 'empty', 'whitespace_only'],
 )
 @pytest.mark.asyncio
-async def test_set_transformation_folder_metadata(
+async def test_set_configuration_folder_metadata(
     folder: str,
     expected_saved: str | None,
     expect_call: bool,
 ) -> None:
-    """Test set_transformation_folder_metadata: strips whitespace, skips empty, propagates errors."""
+    """Test set_configuration_folder_metadata: strips whitespace, skips empty, propagates errors."""
     client = _make_client([], [])
-    await set_transformation_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1', folder)
+    await set_configuration_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1', folder)
     if expect_call:
         client.storage_client.configuration_metadata_update.assert_called_once_with(
             component_id='keboola.snowflake-transformation',

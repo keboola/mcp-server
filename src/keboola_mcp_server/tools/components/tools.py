@@ -67,9 +67,10 @@ from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     SNOWFLAKE_TRANSFORMATION_ID,
     add_ids,
+    apply_folder_metadata,
     build_folder_hint,
     check_suitable,
-    clear_transformation_folder_metadata,
+    clear_configuration_folder_metadata,
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
@@ -80,8 +81,8 @@ from keboola_mcp_server.tools.components.utils import (
     list_configs_by_types,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
+    set_configuration_folder_metadata,
     set_nested_value,
-    set_transformation_folder_metadata,
     update_params,
     update_transformation_parameters,
 )
@@ -484,7 +485,7 @@ async def create_sql_transformation(
     folder = folder.strip()
     if folder:
         try:
-            await set_transformation_folder_metadata(client, component_id, configuration_id, folder)
+            await set_configuration_folder_metadata(client, component_id, configuration_id, folder)
         except Exception:
             LOG.warning(
                 'Unable to set folder metadata for component "%s", configuration "%s".',
@@ -856,9 +857,9 @@ async def update_sql_transformation(
     else:
         folder_stripped = folder.strip()
         if folder_stripped:
-            await set_transformation_folder_metadata(client, sql_transformation_id, configuration_id, folder_stripped)
+            await set_configuration_folder_metadata(client, sql_transformation_id, configuration_id, folder_stripped)
         else:
-            await clear_transformation_folder_metadata(client, sql_transformation_id, configuration_id)
+            await clear_configuration_folder_metadata(client, sql_transformation_id, configuration_id)
 
     change_summary = ' '.join(filter(None, [msg, folder_hint])) or None
 
@@ -1412,30 +1413,9 @@ async def update_config(
         configuration_version=updated_raw_configuration['version'],
     )
 
-    folder_hint = None
-    if folder is None:
-        try:
-            total, existing_folders = await get_config_folders(client, component_id)
-            folder_hint = build_folder_hint(total, existing_folders, 'configurations', 'update_config')
-        except Exception:
-            LOG.warning(
-                'Unable to fetch configuration folders for component "%s" when updating configuration "%s".',
-                component_id,
-                configuration_id,
-            )
-    else:
-        folder_stripped = folder.strip()
-        if folder_stripped:
-            try:
-                await set_transformation_folder_metadata(client, component_id, configuration_id, folder_stripped)
-            except Exception:
-                LOG.warning(
-                    'Unable to set folder metadata for component "%s", configuration "%s".',
-                    component_id,
-                    configuration_id,
-                )
-        else:
-            await clear_transformation_folder_metadata(client, component_id, configuration_id)
+    folder_hint = await apply_folder_metadata(
+        client, component_id, configuration_id, folder, 'configurations', 'update_config'
+    )
 
     links = links_manager.get_configuration_links(
         component_id=component_id,
