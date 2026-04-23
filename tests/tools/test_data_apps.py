@@ -727,7 +727,7 @@ async def test_modify_data_app_folder(
 
     mocker.patch(
         'keboola_mcp_server.tools.components.utils.get_config_folders',
-        mocker.AsyncMock(return_value=(app_count, app_folders)),
+        mocker.AsyncMock(return_value=(app_count, app_folders, False)),
     )
     keboola_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
         return_value=[{'id': 'meta-1', 'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'OldFolder'}]

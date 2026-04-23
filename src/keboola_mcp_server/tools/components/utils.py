@@ -406,14 +406,19 @@ async def set_cfg_update_metadata(
         logging.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}')
 
 
-async def get_config_folders(client: KeboolaClient, component_id: str) -> tuple[int, list[str]]:
+async def get_config_folders(client: KeboolaClient, component_id: str) -> tuple[int, list[str], bool]:
     """
-    Returns the total number of existing configurations and the distinct folder names
-    already in use, fetched via the component-configurations search endpoint.
+    Returns the total number of existing configurations, the distinct folder names already in use,
+    and a flag indicating whether the count is a lower bound.
+
+    When ≥20 configs already carry folder metadata, the full configuration list is skipped for
+    performance. In that case the returned count equals the number of folder-bearing configs, which
+    is a lower bound on the real total (``lower_bound=True``). Callers that surface this count to
+    the user should phrase it as "at least N" to avoid misrepresenting the actual total.
 
     :param client: KeboolaClient instance
-    :param component_id: ID of the component (e.g. keboola.snowflake-transformation, keboola.orchestrator)
-    :return: Tuple of (total_config_count, list_of_distinct_folder_names)
+    :param component_id: ID of the component (e.g. keboola.snowflake-transformation)
+    :return: Tuple of (count, distinct_folder_names, lower_bound)
     """
     # Fetch folder-bearing configs first — lighter than a full configuration_list for large projects.
     folder_configs = await client.storage_client.component_configurations_search(
@@ -432,14 +437,14 @@ async def get_config_folders(client: KeboolaClient, component_id: str) -> tuple[
 
     # If ≥20 configs already have folders, total must be at least that many — skip configuration_list.
     if len(folder_configs) >= 20:
-        return len(folder_configs), folders
+        return len(folder_configs), folders, True
 
     # Fewer than 20 folder-bearing configs — check actual total to decide whether to hint.
     raw_configs = await client.storage_client.configuration_list(component_id=component_id)
     total = len(raw_configs)
     if total < 20:
-        return total, []
-    return total, folders
+        return total, [], False
+    return total, folders, False
 
 
 async def set_configuration_folder_metadata(
@@ -515,8 +520,8 @@ async def apply_folder_metadata(
     """
     if folder is None:
         try:
-            total, existing_folders = await get_config_folders(client, component_id)
-            return build_folder_hint(total, existing_folders, kind, tool_name)
+            total, existing_folders, lower_bound = await get_config_folders(client, component_id)
+            return build_folder_hint(total, existing_folders, kind, tool_name, lower_bound=lower_bound)
         except Exception:
             LOG.warning(
                 'Unable to fetch %s folders for component "%s" when processing configuration "%s".',
@@ -556,18 +561,27 @@ def folder_field_description(singular: str, plural: str) -> str:
     )
 
 
-def build_folder_hint(total: int, existing_folders: list[str], config_label: str, update_tool: str) -> str | None:
+def build_folder_hint(
+    total: int,
+    existing_folders: list[str],
+    config_label: str,
+    update_tool: str,
+    *,
+    lower_bound: bool = False,
+) -> str | None:
     """Returns a folder-organization hint for the LLM when a project has ≥20 configurations of the given type.
 
-    :param total: Total number of existing configurations for this component type
+    :param total: Total (or lower-bound) number of existing configurations for this component type
     :param existing_folders: List of folder names already in use
     :param config_label: Human-readable label for the config type (e.g. "SQL transformations", "flows")
     :param update_tool: Name of the tool to call to assign a folder (e.g. "update_sql_transformation")
+    :param lower_bound: When True, ``total`` is a lower bound; the hint says "at least N" instead of "N"
     :return: Hint string, or None if not enough configurations to warrant organizing
     """
     if total < 20:
         return None
-    hint = f'Note: This project already has {total} {config_label}. Consider organizing them with folders. '
+    count_str = f'at least {total}' if lower_bound else str(total)
+    hint = f'Note: This project already has {count_str} {config_label}. Consider organizing them with folders. '
     if existing_folders:
         hint += (
             f'Existing folders: {", ".join(existing_folders)}. '

@@ -1408,9 +1408,10 @@ async def test_get_config_folders_short_circuit(
 ) -> None:
     """Test that configuration_list is still called (and returns early) when total < 20."""
     client = _make_client(all_configs, [])
-    count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
+    count, folders, lower_bound = await get_config_folders(client, 'keboola.snowflake-transformation')
     assert count == expected_count
     assert folders == []
+    assert lower_bound is False
     client.storage_client.component_configurations_search.assert_called_once_with(
         component_id='keboola.snowflake-transformation',
         metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
@@ -1430,9 +1431,10 @@ async def test_get_config_folders_skips_list_when_enough_folder_configs() -> Non
         for i in range(22)
     ]
     client = _make_client([], folder_configs)  # configuration_list returns [] but should not be called
-    count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
+    count, folders, lower_bound = await get_config_folders(client, 'keboola.snowflake-transformation')
     assert count == 22
     assert len(folders) == 5  # 22 configs across 5 distinct folders
+    assert lower_bound is True
     client.storage_client.component_configurations_search.assert_called_once_with(
         component_id='keboola.snowflake-transformation',
         metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
@@ -1490,9 +1492,10 @@ async def test_get_config_folders(
 ) -> None:
     """Test get_config_folders when count >= 20 (search endpoint is called)."""
     client = _make_client(_MANY_CONFIGS, folder_configs)
-    count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
+    count, folders, lower_bound = await get_config_folders(client, 'keboola.snowflake-transformation')
     assert count == len(_MANY_CONFIGS)
     assert folders == expected_folders
+    assert lower_bound is False
     client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
     client.storage_client.component_configurations_search.assert_called_once_with(
         component_id='keboola.snowflake-transformation',

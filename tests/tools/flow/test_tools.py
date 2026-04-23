@@ -1049,7 +1049,7 @@ async def test_create_flow_folder(
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
     mocker.patch(
         'keboola_mcp_server.tools.flow.tools.get_config_folders',
-        mocker.AsyncMock(return_value=(flow_count, flow_folders)),
+        mocker.AsyncMock(return_value=(flow_count, flow_folders, False)),
     )
 
     result = await create_flow(
@@ -1114,7 +1114,7 @@ async def test_create_conditional_flow_folder(
     )
     mocker.patch(
         'keboola_mcp_server.tools.flow.tools.get_config_folders',
-        mocker.AsyncMock(return_value=(flow_count, flow_folders)),
+        mocker.AsyncMock(return_value=(flow_count, flow_folders, False)),
     )
 
     result = await create_conditional_flow(
@@ -1196,7 +1196,7 @@ async def test_modify_flow_folder(
     keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
     mocker.patch(
         'keboola_mcp_server.tools.flow.tools.get_config_folders',
-        mocker.AsyncMock(return_value=(flow_count, flow_folders)),
+        mocker.AsyncMock(return_value=(flow_count, flow_folders, False)),
     )
 
     result = await modify_flow(

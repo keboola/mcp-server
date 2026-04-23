@@ -495,9 +495,13 @@ async def create_sql_transformation(
         change_summary = None
     else:
         try:
-            total, existing_folders = await get_config_folders(client, component_id)
+            total, existing_folders, lower_bound = await get_config_folders(client, component_id)
             change_summary = build_folder_hint(
-                total, existing_folders, 'SQL transformations', 'update_sql_transformation'
+                total,
+                existing_folders,
+                'SQL transformations',
+                'update_sql_transformation',
+                lower_bound=lower_bound,
             )
         except Exception:
             LOG.warning(
@@ -846,8 +850,14 @@ async def update_sql_transformation(
     folder_hint = None
     if folder is None:
         try:
-            total, existing_folders = await get_config_folders(client, sql_transformation_id)
-            folder_hint = build_folder_hint(total, existing_folders, 'SQL transformations', 'update_sql_transformation')
+            total, existing_folders, lower_bound = await get_config_folders(client, sql_transformation_id)
+            folder_hint = build_folder_hint(
+                total,
+                existing_folders,
+                'SQL transformations',
+                'update_sql_transformation',
+                lower_bound=lower_bound,
+            )
         except Exception:
             LOG.warning(
                 'Unable to fetch transformation folders for component "%s" when updating configuration "%s".',

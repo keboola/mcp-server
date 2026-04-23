@@ -216,8 +216,10 @@ async def create_flow(
             )
     else:
         try:
-            total, existing_folders = await get_config_folders(client, flow_type)
-            change_summary = build_folder_hint(total, existing_folders, 'legacy flows', 'modify_flow')
+            total, existing_folders, lower_bound = await get_config_folders(client, flow_type)
+            change_summary = build_folder_hint(
+                total, existing_folders, 'legacy flows', 'modify_flow', lower_bound=lower_bound
+            )
         except Exception:
             LOG.warning(
                 'Unable to fetch flow folders for component "%s" when creating flow "%s".',
@@ -309,8 +311,10 @@ async def create_conditional_flow(
             )
     else:
         try:
-            total, existing_folders = await get_config_folders(client, flow_type)
-            change_summary = build_folder_hint(total, existing_folders, 'conditional flows', 'modify_flow')
+            total, existing_folders, lower_bound = await get_config_folders(client, flow_type)
+            change_summary = build_folder_hint(
+                total, existing_folders, 'conditional flows', 'modify_flow', lower_bound=lower_bound
+            )
         except Exception:
             LOG.warning(
                 'Unable to fetch flow folders for component "%s" when creating flow "%s".',
@@ -539,9 +543,11 @@ async def modify_flow(
     folder_hint = None
     if folder is None:
         try:
-            total, existing_folders = await get_config_folders(client, flow_type)
+            total, existing_folders, lower_bound = await get_config_folders(client, flow_type)
             config_label = 'legacy flows' if flow_type == ORCHESTRATOR_COMPONENT_ID else 'conditional flows'
-            folder_hint = build_folder_hint(total, existing_folders, config_label, 'modify_flow')
+            folder_hint = build_folder_hint(
+                total, existing_folders, config_label, 'modify_flow', lower_bound=lower_bound
+            )
         except Exception:
             LOG.warning(
                 'Unable to fetch flow folders for component "%s" when updating flow "%s".',

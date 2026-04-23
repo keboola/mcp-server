@@ -706,7 +706,7 @@ async def test_create_sql_transformation_folder(
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
     mocker.patch(
         'keboola_mcp_server.tools.components.tools.get_config_folders',
-        mocker.AsyncMock(return_value=(tf_count, tf_folders)),
+        mocker.AsyncMock(return_value=(tf_count, tf_folders, False)),
     )
 
     result = await create_sql_transformation(
@@ -792,7 +792,7 @@ async def test_update_sql_transformation_folder(
     keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
     mocker.patch(
         'keboola_mcp_server.tools.components.tools.get_config_folders',
-        mocker.AsyncMock(return_value=(tf_count, tf_folders)),
+        mocker.AsyncMock(return_value=(tf_count, tf_folders, False)),
     )
 
     result = await update_sql_transformation(
@@ -1342,7 +1342,7 @@ async def test_update_config_folder(
     keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
     mocker.patch(
         'keboola_mcp_server.tools.components.utils.get_config_folders',
-        mocker.AsyncMock(return_value=(cfg_count, cfg_folders)),
+        mocker.AsyncMock(return_value=(cfg_count, cfg_folders, False)),
     )
 
     result = await update_config(
