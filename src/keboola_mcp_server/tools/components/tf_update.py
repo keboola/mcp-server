@@ -18,6 +18,11 @@ from keboola_mcp_server.tools.components.model import (
     TfSetCode,
     TfStrReplace,
 )
+from keboola_mcp_server.tools.components.sql_utils import (
+    format_simplified_tf_block,
+    format_simplified_tf_code,
+    format_sql,
+)
 
 # Operations that change the structure of the transformation
 STRUCTURAL_OPS = frozenset[str]({'add_block', 'add_code', 'remove_block', 'remove_code'})
@@ -39,7 +44,8 @@ def add_block(params: dict, op: TfAddBlock, sql_dialect: str) -> tuple[dict, str
     if not op.block.name.strip():
         raise ValueError('Invalid operation: block name cannot be empty')
 
-    new_block_dict = op.block.model_dump()
+    new_block, _ = format_simplified_tf_block(block=op.block, dialect=sql_dialect)
+    new_block_dict = new_block.model_dump()
 
     if op.position == 'start':
         params['blocks'].insert(0, new_block_dict)
@@ -111,7 +117,8 @@ def add_code(params: dict, op: TfAddCode, sql_dialect: str) -> tuple[dict, str]:
 
     codes = matches[0].value
 
-    new_code_dict = op.code.model_dump()
+    new_code, _ = format_simplified_tf_code(code=op.code, dialect=sql_dialect)
+    new_code_dict = new_code.model_dump()
 
     if op.position == 'start':
         codes.insert(0, new_code_dict)
@@ -175,6 +182,8 @@ def set_code(params: dict, op: TfSetCode, sql_dialect: str) -> tuple[dict, str]:
     if not op.script.strip():
         raise ValueError('Invalid operation: script cannot be empty')
 
+    formatted_script = format_sql(sql=op.script, dialect=sql_dialect)
+
     # Target the specific code's script field directly
     expr = parse_jsonpath(f"$.blocks[?(@.id = '{op.block_id}')].codes[?(@.id = '{op.code_id}')].script")
     matches = expr.find(params)
@@ -184,7 +193,7 @@ def set_code(params: dict, op: TfSetCode, sql_dialect: str) -> tuple[dict, str]:
 
     # Update the script field
     message = f"Changed code with id '{op.code_id}' in block '{op.block_id}'"
-    return expr.update(params, op.script), message
+    return expr.update(params, formatted_script), message
 
 
 def add_script(params: dict, op: TfAddScript, sql_dialect: str) -> tuple[dict, str]:
@@ -210,9 +219,9 @@ def add_script(params: dict, op: TfAddScript, sql_dialect: str) -> tuple[dict, s
 
     # Compute new script based on position
     if op.position == 'start':
-        new_script = f'{op.script} {current_script}' if current_script else op.script
+        new_script = f'{op.script}\n{current_script}' if current_script else op.script
     else:  # 'end'
-        new_script = f'{current_script} {op.script}' if current_script else op.script
+        new_script = f'{current_script}\n{op.script}' if current_script else op.script
 
     # Update the script field
     message = f"Added script to code with id '{op.code_id}' in block '{op.block_id}'"

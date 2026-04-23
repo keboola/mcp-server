@@ -52,6 +52,7 @@ from keboola_mcp_server.tools.components.model import (
     TfParamUpdate,
     TransformationConfiguration,
 )
+from keboola_mcp_server.tools.components.sql_utils import format_simplified_tf_block
 
 LOG = logging.getLogger(__name__)
 T = TypeVar('T')
@@ -338,6 +339,7 @@ async def create_transformation_configuration(
         name='Blocks',
         codes=list(codes),
     )
+    block, _ = format_simplified_tf_block(block=block, dialect=sql_dialect)
     parameters = SimplifiedTfBlocks(blocks=[block])
     raw_parameters = await parameters.to_raw_parameters()
 

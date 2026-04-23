@@ -129,7 +129,8 @@ def format_sql(sql: str, dialect: str) -> str:
     """
     try:
         # transpile returns a list - one item per statement/comment
-        formatted_items = sqlglot.transpile(sql, read=dialect.lower(), pretty=True)
+        # write=dialect preserves dialect-specific functions/operators (TO_VARCHAR, !=, etc.)
+        formatted_items = sqlglot.transpile(sql, read=dialect.lower(), write=dialect.lower(), pretty=True)
 
         if not formatted_items:
             return sql

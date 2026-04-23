@@ -148,18 +148,18 @@ def empty_params():
                             {
                                 'name': 'Code 1',
                                 'script': (
-                                    'SELECT u.id, u.name, COUNT(o.id) as order_count '
-                                    'FROM users u LEFT JOIN orders o ON u.id = o.user_id '
-                                    "WHERE u.created_at > '2024-01-01' "
-                                    'GROUP BY u.id, u.name HAVING COUNT(o.id) > 5'
+                                    'SELECT\n  u.id,\n  u.name,\n  COUNT(o.id) AS order_count\n'
+                                    'FROM users AS u\nLEFT JOIN orders AS o\n  ON u.id = o.user_id\n'
+                                    "WHERE\n  u.created_at > '2024-01-01'\n"
+                                    'GROUP BY\n  u.id,\n  u.name\nHAVING\n  COUNT(o.id) > 5;'
                                 ),
                             },
                             {
                                 'name': 'Code 2',
                                 'script': (
-                                    'SELECT p.product_name, SUM(oi.quantity * oi.price) as revenue '
-                                    'FROM products p INNER JOIN order_items oi ON p.id = oi.product_id '
-                                    'GROUP BY p.product_name ORDER BY revenue DESC LIMIT 10'
+                                    'SELECT\n  p.product_name,\n  SUM(oi.quantity * oi.price) AS revenue\n'
+                                    'FROM products AS p\nINNER JOIN order_items AS oi\n  ON p.id = oi.product_id\n'
+                                    'GROUP BY\n  p.product_name\nORDER BY\n  revenue DESC\nLIMIT 10;'
                                 ),
                             },
                         ],
@@ -442,7 +442,7 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
                         'codes': [
                             {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM table1'},
                             {'id': 'b0.c1', 'name': 'Code Y', 'script': 'SELECT * FROM table2'},
-                            {'name': 'New Code at End', 'script': 'SELECT col1 FROM table1;'},
+                            {'name': 'New Code at End', 'script': 'SELECT\n  col1\nFROM table1;'},
                         ],
                     },
                 ]
@@ -483,8 +483,9 @@ def test_rename_block_error(sample_params, block_id, block_name, error_match):
                             {
                                 'name': 'New Code at Start',
                                 'script': (
-                                    'SELECT DISTINCT category, AVG(price) OVER (PARTITION BY category) as avg_price '
-                                    'FROM products WHERE in_stock = true ORDER BY category'
+                                    'SELECT DISTINCT\n  category,\n'
+                                    '  AVG(price) OVER (PARTITION BY category) AS avg_price\n'
+                                    'FROM products\nWHERE\n  in_stock = TRUE\nORDER BY\n  category;'
                                 ),
                             },
                             {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM table1'},
@@ -758,7 +759,7 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT * FROM new_table'},
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT\n  *\nFROM new_table;'},
                         ],
                     },
                 ]
@@ -785,7 +786,7 @@ def test_rename_code_error(sample_params, block_id, code_id, code_name, error_ma
                         'id': 'b0',
                         'name': 'Block A',
                         'codes': [
-                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT *\nFROM table1\nWHERE col = 1'},
+                            {'id': 'b0.c0', 'name': 'Code X', 'script': 'SELECT\n  *\nFROM table1\nWHERE\n  col = 1;'},
                         ],
                     },
                 ]
@@ -851,7 +852,7 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                             {
                                 'id': 'b0.c0',
                                 'name': 'Code X',
-                                'script': 'SELECT * FROM table1 WHERE col = 1',
+                                'script': 'SELECT * FROM table1\nWHERE col = 1',
                             },
                         ],
                     },
@@ -884,7 +885,7 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                             {
                                 'id': 'b0.c0',
                                 'name': 'Code X',
-                                'script': 'SELECT * FROM table0; SELECT * FROM table1',
+                                'script': 'SELECT * FROM table0;\nSELECT * FROM table1',
                             },
                         ],
                     },
@@ -917,7 +918,7 @@ def test_set_code_error(sample_params, block_id, code_id, script, error_match):
                             {
                                 'id': 'b0.c0',
                                 'name': 'Code X',
-                                'script': 'SELECT * FROM table0 SELECT * FROM table1',
+                                'script': 'SELECT * FROM table0\nSELECT * FROM table1',
                             },
                         ],
                     },
