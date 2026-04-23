@@ -713,6 +713,7 @@ async def update_sql_transformation(
     - All other parts of the transformation remain unchanged
     - Each SQL script must be executable and follow the current SQL dialect:
       - Use delimited identifiers as defined in project info.
+      - Never mix delimiter styles within a single query.
     - Storage configuration is COMPLETE REPLACEMENT - include ALL mappings you want to keep
     - Leave updated_description empty to preserve the original description
     - SCHEMA CHANGES: Destructive schema changes (removing columns, changing types, renaming columns) require
