@@ -45,18 +45,18 @@ def test_get_toolset_restrictions(role: str, expected_substring: str | None, exp
 
 
 @pytest.mark.parametrize(
-    ('token_role', 'expected_user_role', 'expected_restriction_substrings', 'restriction_is_none'),
+    ('token_role', 'expected_user_role', 'expected_restriction_substrings', 'restriction_is_none', 'sql_dialect'),
     [
         # developer role: schedules not available
-        ('developer', 'developer', ['cannot set their schedules'], False),
+        ('developer', 'developer', ['cannot set their schedules'], False, 'Snowflake'),
         # guest role: schedules not available
-        ('guest', 'guest', ['cannot set their schedules'], False),
+        ('guest', 'guest', ['cannot set their schedules'], False, 'BigQuery'),
         # no role: schedules not available
-        (None, 'unknown', ['cannot set their schedules'], False),
+        (None, 'unknown', ['cannot set their schedules'], False, 'Snowflake'),
         # readonly role: only read-only tools
-        ('readonly', 'readonly', ['read-only'], False),
+        ('readonly', 'readonly', ['read-only'], False, 'BigQuery'),
         # admin role: no restrictions
-        ('admin', 'admin', [], True),
+        ('admin', 'admin', [], True, 'Snowflake'),
     ],
 )
 @pytest.mark.asyncio
@@ -67,6 +67,7 @@ async def test_get_project_info(
     expected_user_role: str,
     expected_restriction_substrings: list[str],
     restriction_is_none: bool,
+    sql_dialect: str,
 ) -> None:
     admin_data = {'role': token_role} if token_role is not None else {}
     token_data = {
@@ -82,7 +83,7 @@ async def test_get_project_info(
     keboola_client.storage_client.verify_token = mocker.AsyncMock(return_value=token_data)
     keboola_client.storage_client.branch_metadata_get = mocker.AsyncMock(return_value=metadata)
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
 
     project_id = 'proj-123'
     base_url = 'https://connection.test.keboola.com'
@@ -101,10 +102,10 @@ async def test_get_project_info(
     assert result.project_name == 'Test Project'
     assert result.organization_id == 'org-456'
     assert result.project_description == 'A test project.'
-    assert result.sql_dialect == 'Snowflake'
+    assert result.sql_dialect == sql_dialect
     assert result.links == links
     assert result.user_role == expected_user_role
-    assert result.llm_instruction == get_project_system_prompt('Snowflake')
+    assert result.llm_instruction == get_project_system_prompt(sql_dialect)
 
     if restriction_is_none:
         assert result.toolset_restrictions is None

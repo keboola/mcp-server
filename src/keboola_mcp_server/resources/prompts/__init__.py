@@ -33,9 +33,9 @@ def _build_dialect_section(sql_dialect: str) -> str:
         f'This project uses **{sql_dialect}** SQL dialect.',
         f'The delimited identifier character is the {cfg["delimiter"]}.',
         '**Always wrap every identifier** (column name, table name, alias) ' 'in delimited identifiers:\n',
-        f'- Column reference: `{cfg["col"]}`',
-        f'- Fully qualified table name: `{cfg["fqn"]}`',
-        f'- New table in CREATE TABLE (table name only, no FQN): `{cfg["new_table"]}`',
+        f'- Column reference: {cfg["col"]}',
+        f'- Fully qualified table name: {cfg["fqn"]}',
+        f'- New table in CREATE TABLE (table name only, no FQN): {cfg["new_table"]}',
         '- Never mix delimiter styles within a single query.\n',
     ]
     for note in cfg['extra']:
@@ -47,6 +47,8 @@ def load_prompt(name: str) -> str:
     return resources.read_text(__package__, name)
 
 
-def get_project_system_prompt(sql_dialect: str) -> str:
+def get_project_system_prompt(sql_dialect: str = '') -> str:
     base = load_prompt('project_system_prompt.md')
+    if not sql_dialect:
+        return base
     return _build_dialect_section(sql_dialect) + '\n\n---\n\n' + base
