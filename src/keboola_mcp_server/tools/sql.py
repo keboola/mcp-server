@@ -73,7 +73,7 @@ async def query_data(
 
     CTE (WITH CLAUSE) RULES:
     * ALL column references in main query MUST match exact case used in the CTE
-    * If you alias a column as "project_id" in CTE, reference it as "project_id" in subsequent queries
+    * If you alias a column as project_id in a CTE, reference it as project_id in subsequent queries
     * Define all column aliases explicitly in CTEs
     * Use delimited identifiers in both CTE definition and references to preserve case
 
