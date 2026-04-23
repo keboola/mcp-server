@@ -67,8 +67,8 @@ async def query_data(
     * Use delimited identifiers and FQN format as defined in the project info (see get_project_info).
 
     TABLE AND COLUMN REFERENCES:
-    * Always use fully qualified table names that include database name, schema name and table name
-    * Get fully qualified table names using table information tools - use exact format shown
+    * Always use fully qualified table names in the exact FQN format provided by table information tools
+    * Follow the identifier structure exactly as shown by table info tools and project info for the current SQL dialect
     * Always use delimited identifiers when referring to table columns
 
     CTE (WITH CLAUSE) RULES:
