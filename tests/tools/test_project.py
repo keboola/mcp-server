@@ -104,7 +104,7 @@ async def test_get_project_info(
     assert result.sql_dialect == 'Snowflake'
     assert result.links == links
     assert result.user_role == expected_user_role
-    assert result.llm_instruction == get_project_system_prompt()
+    assert result.llm_instruction == get_project_system_prompt('Snowflake')
 
     if restriction_is_none:
         assert result.toolset_restrictions is None

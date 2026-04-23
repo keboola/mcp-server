@@ -154,7 +154,7 @@ async def get_project_info(
         links=links,
         user_role=user_role,
         toolset_restrictions=_get_toolset_restrictions(user_role),
-        llm_instruction=get_project_system_prompt(),
+        llm_instruction=get_project_system_prompt(sql_dialect),
     )
 
     LOG.info('Returning unified project info.')
