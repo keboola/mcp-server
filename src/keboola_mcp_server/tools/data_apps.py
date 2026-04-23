@@ -1071,7 +1071,7 @@ def _build_code_data_app_config(
             'dataApp': {
                 'slug': slug,
                 'type': 'python-js',
-                'git': {'repository': _CONTINUOUS_PULL_BASE_REPO},
+                'git': {'repository': _CONTINUOUS_PULL_BASE_REPO, 'branch': 'feat/user-nginx-and-multi-process'},
                 'watchedRepo': {
                     'pullPeriod': _DEFAULT_PULL_PERIOD_SECONDS,
                     'url': watched_repo_url,

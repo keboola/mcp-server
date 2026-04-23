@@ -779,7 +779,10 @@ class TestBuildCodeDataAppConfig:
         data_app = params['dataApp']
         assert data_app['slug'] == 'my-code-app'
         assert data_app['type'] == 'python-js'
-        assert data_app['git'] == {'repository': _CONTINUOUS_PULL_BASE_REPO}
+        assert data_app['git'] == {
+            'repository': _CONTINUOUS_PULL_BASE_REPO,
+            'branch': 'feat/user-nginx-and-multi-process',
+        }
         assert data_app['watchedRepo'] == {
             'pullPeriod': _DEFAULT_PULL_PERIOD_SECONDS,
             'url': 'https://github.com/user/repo.git',

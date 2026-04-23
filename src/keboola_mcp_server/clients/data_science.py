@@ -105,6 +105,7 @@ class CodeDataAppConfig(BaseModel):
         class DataApp(BaseModel):
             class Git(BaseModel):
                 repository: str = Field(description='Git repository URL of the base image or final app source')
+                branch: str | None = Field(description='Git branch to use', default=None)
 
             class WatchedRepo(BaseModel):
                 pull_period: int = Field(
@@ -123,6 +124,7 @@ class CodeDataAppConfig(BaseModel):
             slug: str = Field(description='The slug of the data app')
             type: Literal['python-js'] = Field(description='The data app sub-type')
             git: Git = Field(description='Git source of the base image or final app source')
+            secrets: dict[str, str] | None = Field(description='The secrets of the data app', default=None)
             watched_repo: WatchedRepo | None = Field(
                 default=None,
                 validation_alias=AliasChoices('watchedRepo', 'watched_repo'),
