@@ -1406,13 +1406,38 @@ async def test_get_config_folders_short_circuit(
     all_configs: list[dict[str, Any]],
     expected_count: int,
 ) -> None:
-    """Test that the search endpoint is skipped when count < 20."""
+    """Test that configuration_list is still called (and returns early) when total < 20."""
     client = _make_client(all_configs, [])
     count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
     assert count == expected_count
     assert folders == []
+    client.storage_client.component_configurations_search.assert_called_once_with(
+        component_id='keboola.snowflake-transformation',
+        metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
+    )
     client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
-    client.storage_client.component_configurations_search.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_config_folders_skips_list_when_enough_folder_configs() -> None:
+    """Test that configuration_list is skipped when ≥20 configs already have folder metadata."""
+    folder_configs = [
+        {
+            'id': str(i),
+            'componentId': 'keboola.snowflake-transformation',
+            'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': f'Folder{i % 5}'}],
+        }
+        for i in range(22)
+    ]
+    client = _make_client([], folder_configs)  # configuration_list returns [] but should not be called
+    count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
+    assert count == 22
+    assert len(folders) == 5  # 22 configs across 5 distinct folders
+    client.storage_client.component_configurations_search.assert_called_once_with(
+        component_id='keboola.snowflake-transformation',
+        metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
+    )
+    client.storage_client.configuration_list.assert_not_called()
 
 
 _MANY_CONFIGS = [{'id': str(i)} for i in range(25)]

@@ -415,10 +415,7 @@ async def get_config_folders(client: KeboolaClient, component_id: str) -> tuple[
     :param component_id: ID of the component (e.g. keboola.snowflake-transformation, keboola.orchestrator)
     :return: Tuple of (total_config_count, list_of_distinct_folder_names)
     """
-    raw_configs = await client.storage_client.configuration_list(component_id=component_id)
-    total = len(raw_configs)
-    if total < 20:
-        return total, []
+    # Fetch folder-bearing configs first — lighter than a full configuration_list for large projects.
     folder_configs = await client.storage_client.component_configurations_search(
         component_id=component_id,
         metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
@@ -432,6 +429,16 @@ async def get_config_folders(client: KeboolaClient, component_id: str) -> tuple[
                 if folder_name and folder_name not in seen:
                     seen.add(folder_name)
                     folders.append(folder_name)
+
+    # If ≥20 configs already have folders, total must be at least that many — skip configuration_list.
+    if len(folder_configs) >= 20:
+        return len(folder_configs), folders
+
+    # Fewer than 20 folder-bearing configs — check actual total to decide whether to hint.
+    raw_configs = await client.storage_client.configuration_list(component_id=component_id)
+    total = len(raw_configs)
+    if total < 20:
+        return total, []
     return total, folders
 
 
