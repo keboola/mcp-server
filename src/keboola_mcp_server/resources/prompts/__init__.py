@@ -44,7 +44,7 @@ def _build_dialect_section(sql_dialect: str) -> str:
 
 
 def load_prompt(name: str) -> str:
-    return resources.read_text(__package__, name)
+    return resources.files(__package__).joinpath(name).read_text(encoding='utf-8')
 
 
 def get_project_system_prompt(sql_dialect: str = '') -> str:
