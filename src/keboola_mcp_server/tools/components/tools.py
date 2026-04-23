@@ -719,9 +719,8 @@ async def update_sql_transformation(
     - Parameter updates are PARTIAL - only the operations you specify are applied
     - All other parts of the transformation remain unchanged
     - Each SQL script must be executable and follow the current SQL dialect:
-      - Snowflake: use double quotes for identifiers — "schema"."table", "column_name"
-      - BigQuery: use backticks for identifiers — `dataset`.`table`, `column_name`
-      - Never mix quoting styles within a single query
+      - Use delimited identifiers as defined in project info.
+      - Never mix delimiter styles within a single query.
     - Storage configuration is COMPLETE REPLACEMENT - include ALL mappings you want to keep
     - Leave updated_description empty to preserve the original description
     - SCHEMA CHANGES: Destructive schema changes (removing columns, changing types, renaming columns) require
