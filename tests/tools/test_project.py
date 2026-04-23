@@ -5,7 +5,6 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.tools.project import (
     ProjectInfo,
     _get_toolset_restrictions,
@@ -45,18 +44,25 @@ def test_get_toolset_restrictions(role: str, expected_substring: str | None, exp
 
 
 @pytest.mark.parametrize(
-    ('token_role', 'expected_user_role', 'expected_restriction_substrings', 'restriction_is_none', 'sql_dialect'),
+    (
+        'token_role',
+        'expected_user_role',
+        'expected_restriction_substrings',
+        'restriction_is_none',
+        'sql_dialect',
+        'expected_fqn_example',
+    ),
     [
         # developer role: schedules not available
-        ('developer', 'developer', ['cannot set their schedules'], False, 'Snowflake'),
+        ('developer', 'developer', ['cannot set their schedules'], False, 'Snowflake', '"DATABASE"."SCHEMA"."TABLE"'),
         # guest role: schedules not available
-        ('guest', 'guest', ['cannot set their schedules'], False, 'BigQuery'),
+        ('guest', 'guest', ['cannot set their schedules'], False, 'BigQuery', '`project`.`dataset`.`table`'),
         # no role: schedules not available
-        (None, 'unknown', ['cannot set their schedules'], False, 'Snowflake'),
+        (None, 'unknown', ['cannot set their schedules'], False, 'Snowflake', '"DATABASE"."SCHEMA"."TABLE"'),
         # readonly role: only read-only tools
-        ('readonly', 'readonly', ['read-only'], False, 'BigQuery'),
+        ('readonly', 'readonly', ['read-only'], False, 'BigQuery', '`project`.`dataset`.`table`'),
         # admin role: no restrictions
-        ('admin', 'admin', [], True, 'Snowflake'),
+        ('admin', 'admin', [], True, 'Snowflake', '"DATABASE"."SCHEMA"."TABLE"'),
     ],
 )
 @pytest.mark.asyncio
@@ -68,6 +74,7 @@ async def test_get_project_info(
     expected_restriction_substrings: list[str],
     restriction_is_none: bool,
     sql_dialect: str,
+    expected_fqn_example: str,
 ) -> None:
     admin_data = {'role': token_role} if token_role is not None else {}
     token_data = {
@@ -105,7 +112,7 @@ async def test_get_project_info(
     assert result.sql_dialect == sql_dialect
     assert result.links == links
     assert result.user_role == expected_user_role
-    assert result.llm_instruction == get_project_system_prompt(sql_dialect)
+    assert expected_fqn_example in result.llm_instruction
 
     if restriction_is_none:
         assert result.toolset_restrictions is None
