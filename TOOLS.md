@@ -1802,8 +1802,10 @@ from the workspace.
 - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
 parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
 appropriately based on the parameter type.
-- After creating or updating a data app with this tool, ALWAYS call `deploy_data_app(action="deploy",
-configuration_id=...)` to start or restart the app. Without this step the app is not running.
+- After creating or updating a data app with this tool, ALWAYS call
+`deploy_data_app(action="deploy", configuration_id=...)` to start a new app or restart an existing app so
+changes take effect. Without this step, a newly created app will not start, and an existing app will keep
+running the previous deployment without the latest changes.
 - New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
 updating, set `authentication_type` to `default` to keep the existing authentication type configuration
 (including OIDC setups) unless explicitly specified otherwise.
