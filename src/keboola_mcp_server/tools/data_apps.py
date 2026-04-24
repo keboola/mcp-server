@@ -310,7 +310,7 @@ async def modify_data_app(
     (including OIDC setups) unless explicitly specified otherwise.
 
     SQL & DATA TYPE RULES:
-    - Use delimited identifiers (as defined in project info) for all column names and aliases in SQL.
+    - Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
       Match the exact identifier case used in SQL when referencing columns in Python code.
     - `query_data` RETURNS ALL COLUMNS AS STRINGS regardless of SQL CAST. Always convert types in Python after loading:
     `df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and

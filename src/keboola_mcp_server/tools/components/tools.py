@@ -425,9 +425,8 @@ async def create_sql_transformation(
       explicitly indicates that no table creation is needed.
     - Each SQL code block must include descriptive name that reflects its purpose and group one or more executable
       semantically related SQL statements.
-    - Each SQL query statement within a code block must be executable and follow the current SQL dialect, which can be
-      retrieved using appropriate tool.
-    - Use delimited identifiers as defined in project info for all identifiers and FQN references.
+    - Each SQL query statement within a code block must be executable and follow the current SQL dialect.
+    - Use delimited identifiers for the current SQL dialect for all identifiers and FQN references.
     - Never mix delimiter styles within a single query.
     - When referring to the input tables within the SQL query, use fully qualified table names, which can be
       retrieved using appropriate tools.
@@ -713,7 +712,7 @@ async def update_sql_transformation(
     - Parameter updates are PARTIAL - only the operations you specify are applied
     - All other parts of the transformation remain unchanged
     - Each SQL script must be executable and follow the current SQL dialect:
-      - Use delimited identifiers as defined in project info.
+      - Use delimited identifiers for the current SQL dialect.
       - Never mix delimiter styles within a single query.
     - Storage configuration is COMPLETE REPLACEMENT - include ALL mappings you want to keep
     - Leave updated_description empty to preserve the original description

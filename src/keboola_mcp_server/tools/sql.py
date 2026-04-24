@@ -62,19 +62,19 @@ async def query_data(
 
     CRITICAL SQL REQUIREMENTS:
 
-    * ALWAYS check the SQL dialect before constructing queries. The SQL dialect can be found in the project info.
+    * ALWAYS check the SQL dialect before constructing queries.
     * Do not include any comments in the SQL code
-    * Use delimited identifiers and FQN format as defined in the project info (see get_project_info).
+    * Use delimited identifiers and FQN format for the current SQL dialect.
     * Never mix delimiter styles within a single query.
 
     TABLE AND COLUMN REFERENCES:
     * Always use fully qualified table names in the exact FQN format provided by table information tools
-    * Follow the identifier structure exactly as shown by table info tools and project info for the current SQL dialect
+    * Follow the identifier structure exactly as shown by table info tools for the current SQL dialect
     * Always use delimited identifiers when referring to table columns
 
     CTE (WITH CLAUSE) RULES:
     * ALL column references in main query MUST match exact case used in the CTE
-    * If you alias a column as project_id in a CTE, reference it as project_id in subsequent queries
+    * If you alias a column in a CTE, reference it under the aliased name in the subsequent queries
     * Define all column aliases explicitly in CTEs
     * Use delimited identifiers in both CTE definition and references to preserve case
 
