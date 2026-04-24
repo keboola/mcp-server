@@ -1,7 +1,10 @@
 import asyncio
 from typing import Any, Callable
+from unittest.mock import MagicMock
 
+import httpx
 import pytest
+from fastmcp.exceptions import ToolError
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
@@ -937,6 +940,43 @@ async def test_update_sql_transformation(
         updated_name=updated_name,
         updated_description=updated_description,
     )
+
+
+@pytest.mark.asyncio
+async def test_update_sql_transformation_wrong_component_type(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+) -> None:
+    """
+    update_sql_transformation should raise ToolError with actionable guidance when the
+    configuration belongs to a Python/R transformation (Storage returns 404 for the SQL
+    component + config-ID combination).
+    """
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+
+    # Simulate Storage returning 404: the config exists under python-transformation-v2,
+    # not under keboola.snowflake-transformation.
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.status_code = 404
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        side_effect=httpx.HTTPStatusError('Not Found', request=MagicMock(), response=mock_response)
+    )
+
+    with pytest.raises(ToolError) as exc_info:
+        await update_sql_transformation(
+            context,
+            change_description='update python transformation',
+            configuration_id='python-config-id',
+        )
+
+    error_msg = str(exc_info.value)
+    assert 'python-config-id' in error_msg
+    assert 'keboola.snowflake-transformation' in error_msg
+    assert 'update_config' in error_msg
+    assert 'keboola.python-transformation-v2' in error_msg
 
 
 @pytest.mark.asyncio
