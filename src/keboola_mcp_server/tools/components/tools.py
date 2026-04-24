@@ -431,6 +431,7 @@ async def create_sql_transformation(
     - Each SQL query statement within a code block must be executable and follow the current SQL dialect, which can be
       retrieved using appropriate tool.
     - Use delimited identifiers as defined in project info for all identifiers and FQN references.
+    - Never mix delimiter styles within a single query.
     - When referring to the input tables within the SQL query, use fully qualified table names, which can be
       retrieved using appropriate tools.
     - When creating a new table within the SQL query (e.g. CREATE TABLE ...): use only the table name with
