@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Sequence, cast
 
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import FunctionTool
 from httpx import HTTPStatusError
 from mcp.types import ToolAnnotations
@@ -633,10 +634,15 @@ async def update_sql_transformation(
     - Changing input/output table mappings for the transformation
     - Updating the transformation name or description
     - Any combination of the above
+    - ONLY for SQL transformations: keboola.snowflake-transformation (Snowflake) or
+      keboola.google-bigquery-transformation (BigQuery). Do NOT call this for Python
+      (keboola.python-transformation-v2) or R (keboola.r-transformation-v2) transformations —
+      those must be updated with update_config using their respective component_id.
 
     PREREQUISITES:
     - Transformation must already exist (use create_sql_transformation for new transformations)
     - You must know the configuration_id of the transformation
+    - Confirm the config's component_id is a SQL transformation before calling; use get_configs to check
     - SQL dialect is determined automatically from the workspace
     - CRITICAL: Use get_configs first to see the current transformation structure and get block_id/code_id values
 
@@ -901,9 +907,19 @@ async def update_sql_transformation_internal(
 ) -> tuple[JsonDict, JsonDict, str, dict | None]:
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
-    config_details = await client.storage_client.configuration_detail(
-        component_id=sql_transformation_id, configuration_id=configuration_id
-    )
+    try:
+        config_details = await client.storage_client.configuration_detail(
+            component_id=sql_transformation_id, configuration_id=configuration_id
+        )
+    except HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise ToolError(
+                f"Configuration '{configuration_id}' was not found under SQL transformation component "
+                f"'{sql_transformation_id}'. If this is a Python or R transformation, use 'update_config' "
+                f"with component_id 'keboola.python-transformation-v2' or 'keboola.r-transformation-v2' "
+                f"instead of 'update_sql_transformation'."
+            ) from e
+        raise
     api_component = await fetch_component(client=client, component_id=sql_transformation_id)
     transformation = Component.from_api_response(api_component)
 
