@@ -278,6 +278,7 @@ CONSIDERATIONS:
 - Each SQL query statement within a code block must be executable and follow the current SQL dialect, which can be
   retrieved using appropriate tool.
 - Use delimited identifiers as defined in project info for all identifiers and FQN references.
+- Never mix delimiter styles within a single query.
 - When referring to the input tables within the SQL query, use fully qualified table names, which can be
   retrieved using appropriate tools.
 - When creating a new table within the SQL query (e.g. CREATE TABLE ...): use only the table name with
@@ -3454,6 +3455,7 @@ CRITICAL SQL REQUIREMENTS:
 * ALWAYS check the SQL dialect before constructing queries. The SQL dialect can be found in the project info.
 * Do not include any comments in the SQL code
 * Use delimited identifiers and FQN format as defined in the project info (see get_project_info).
+* Never mix delimiter styles within a single query.
 
 TABLE AND COLUMN REFERENCES:
 * Always use fully qualified table names in the exact FQN format provided by table information tools
