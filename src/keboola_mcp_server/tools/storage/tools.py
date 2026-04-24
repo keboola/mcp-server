@@ -36,7 +36,7 @@ from keboola_mcp_server.tools.storage_helpers import (
     merged_table_detail,
 )
 from keboola_mcp_server.utils import parse_iso_timestamp
-from keboola_mcp_server.workspace import WorkspaceManager
+from keboola_mcp_server.workspace import WorkspaceManager, get_backend_path
 
 LOG = logging.getLogger(__name__)
 
@@ -138,6 +138,7 @@ class BucketDetail(BaseModel):
     branch_id: str | None = Field(default=None, exclude=True, description='The ID of the branch the bucket belongs to.')
     prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
     # TODO: add prod_name too to strip the '{branch_id}-' prefix from the name'
+    backend_path: list[str] | None = Field(default=None, exclude=True)
 
     def shade_by(
         self,
@@ -238,6 +239,13 @@ class BucketDetail(BaseModel):
     def set_source_project(cls, values: dict[str, Any]) -> dict[str, Any]:
         if source_project_raw := cast(dict[str, Any], get_nested(values, 'sourceBucket.project')):
             values['source_project'] = f'{source_project_raw["name"]} (ID: {source_project_raw["id"]})'
+        return values
+
+    @model_validator(mode='before')
+    @classmethod
+    def set_backend_path(cls, values: dict[str, Any]) -> dict[str, Any]:
+        raw = values.get('backendPath')
+        values['backend_path'] = raw if isinstance(raw, list) else None
         return values
 
 
@@ -722,7 +730,10 @@ async def get_tables(
 
 
 async def _get_table(
-    table_id: str, client: KeboolaClient, workspace_manager: WorkspaceManager, links_manager: ProjectLinksManager
+    table_id: str,
+    client: KeboolaClient,
+    workspace_manager: WorkspaceManager,
+    links_manager: ProjectLinksManager,
 ) -> TableDetail | None:
     prod_table, dev_table = await merged_table_detail(client, table_id)
 
@@ -746,10 +757,12 @@ async def _get_table(
     raw_source_column_metadata = cast(
         dict[str, list[dict[str, Any]]], get_nested(raw_table, 'sourceTable.columnMetadata', default={})
     )
-    raw_primary_key = cast(list[str], raw_table.get('primaryKey', []))
 
     sql_dialect = await workspace_manager.get_sql_dialect()
-    db_table_info = await workspace_manager.get_table_info(raw_table)
+    backend_path = get_backend_path(raw_table)
+    if not backend_path:
+        LOG.warning(f'No backendPath in table_detail response for {table_id} — FQN will be unavailable')
+    db_table_info = await workspace_manager.get_table_info(raw_table, backend_path=backend_path)
 
     column_info = []
     for col_name in raw_columns:
@@ -768,17 +781,23 @@ async def _get_table(
                 source_col_meta, MetadataField.DATATYPE_BASETYPE, preferred_providers=['user']
             )
 
-        if db_table_info and (db_column_info := db_table_info.columns.get(col_name)):
-            native_type = db_column_info.native_type
-            nullable = db_column_info.nullable
-        else:
-            # should not happen
+        native_type: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE)
+        if not native_type:
+            native_type = get_metadata_property(source_col_meta, MetadataField.DATATYPE_TYPE)
+
+        nullable_str: str | None = get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE)
+        if not nullable_str:
+            nullable_str = get_metadata_property(source_col_meta, MetadataField.DATATYPE_NULLABLE)
+
+        if native_type is None:
             native_type = 'STRING' if sql_dialect == 'BigQuery' else 'VARCHAR'
-            nullable = col_name not in raw_primary_key
             LOG.warning(
-                f'No column info from the database: '
-                f'col_name={col_name}, sql_dialect={sql_dialect}, db_table_info={db_table_info}'
+                f'No KBC.datatype.type in columnMetadata: '
+                f'col_name={col_name}, sql_dialect={sql_dialect}, table_id={table_id}'
             )
+
+        # KBC.datatype.nullable is stored as '1'/'true' for nullable, '0'/'false' (or absent) for non-nullable
+        nullable = str(nullable_str).lower() in ('1', 'true') if nullable_str is not None else False
 
         column_info.append(
             TableColumnInfo(

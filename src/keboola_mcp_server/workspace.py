@@ -18,7 +18,7 @@ from keboola_mcp_server.clients.query import QueryServiceClient
 LOG = logging.getLogger(__name__)
 
 
-def _get_backend_path(table: Mapping[str, Any]) -> list[str] | None:
+def get_backend_path(table: Mapping[str, Any]) -> list[str] | None:
     """Extracts the backendPath from a table's bucket info if available."""
     bucket = table.get('bucket')
     if isinstance(bucket, dict):
@@ -117,7 +117,9 @@ class _Workspace(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
+    async def get_table_info(
+        self, table: Mapping[str, Any], backend_path: list[str] | None = None
+    ) -> DbTableInfo | None:
         # TODO: use a pydantic class for the 'table' param
         pass
 
@@ -211,112 +213,34 @@ class _SnowflakeWorkspace(_Workspace):
             LOG.exception(f'Unexpected error during query cancellation: job_id={job_id}')
             return (False, False)
 
-    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
+    async def get_table_info(
+        self, table: Mapping[str, Any], backend_path: list[str] | None = None
+    ) -> DbTableInfo | None:
         table_id = table['id']
 
-        db_name: str | None = None
-        schema_name: str | None = None
-        table_name: str | None = None
-
         if source_table := table.get('sourceTable'):
-            # a table linked from some other project
-            schema_name, table_name = source_table['id'].rsplit(sep='.', maxsplit=1)
-            source_project_id = source_table['project']['id']
-            # sql = f"show databases like '%_{source_project_id}';"
-            sql = (
-                f'select "DATABASE_NAME" from "INFORMATION_SCHEMA"."DATABASES" '
-                f'where "DATABASE_NAME" like \'%^_{source_project_id}\' escape \'^\';'
-            )
-            result = await self.execute_query(sql)
-            if result.is_ok:
-                if result.data and result.data.rows:
-                    db_name = result.data.rows[0]['DATABASE_NAME']
-                else:
-                    LOG.warning(
-                        f'No database found for {source_project_id} project: {sql}, SAPI response: {result}\n'
-                        f'Table: {self._dump(table)}'
-                    )
-            else:
-                LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
-
+            # Cross-project linked table — prefer caller-supplied backend_path, fall back to sourceTable
+            bp = backend_path or get_backend_path(source_table)
+            if not bp or len(bp) < 2:
+                LOG.warning(f'No backendPath in sourceTable for {table_id}, cannot construct FQN')
+                return None
+            db_name = bp[0]
+            schema_name = bp[1]
+            table_name = source_table['id'].rsplit(sep='.', maxsplit=1)[1]
         else:
-            # Try to use backendPath from the bucket for the correct schema name
-            # (handles all branch patterns including storage-branches)
-            backend_path = _get_backend_path(table)
+            bp = backend_path or get_backend_path(table)
+            if not bp or len(bp) < 2:
+                LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
+                return None
+            db_name = bp[0]
+            schema_name = bp[1]
+            table_name = table['name']
 
-            sql = 'select CURRENT_DATABASE() as "current_database";'
-            result = await self.execute_query(sql)
-            if result.is_ok:
-                if result.data and result.data.rows:
-                    row = result.data.rows[0]
-                    db_name = row['current_database']
-                    if backend_path and len(backend_path) >= 2:
-                        schema_name = backend_path[1]
-                        table_name = table['name']
-                    elif '.' in table_id:
-                        # a table local in a project for which the snowflake connection/workspace is open
-                        schema_name, table_name = table_id.rsplit(sep='.', maxsplit=1)
-                    else:
-                        # a table not in the project, but in the writable schema created for the workspace
-                        # TODO: we should never come here, because the tools for listing tables can only see
-                        #  tables that are in the project
-                        schema_name = self._schema
-                        table_name = table['name']
-                else:
-                    LOG.warning(f'No current database: {sql}, SAPI response: {result}\n' f'Table: {self._dump(table)}')
-            else:
-                LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
-
-        if db_name and schema_name and table_name:
-            sql = (
-                f'SELECT "COLUMN_NAME", "DATA_TYPE", "IS_NULLABLE" '
-                f'FROM "INFORMATION_SCHEMA"."COLUMNS" '
-                f'WHERE "TABLE_CATALOG" = \'{db_name}\' AND "TABLE_SCHEMA" = \'{schema_name}\' '
-                f'AND "TABLE_NAME" = \'{table_name}\' '
-                f'ORDER BY "ORDINAL_POSITION";'
-            )
-            result = await self.execute_query(sql)
-            if result.is_ok:
-                fqn = TableFqn(db_name, schema_name, table_name, quote_char='"')
-                if result.data and result.data.rows:
-                    return DbTableInfo(
-                        id=table_id,
-                        fqn=fqn,
-                        columns={
-                            row['COLUMN_NAME']: DbColumnInfo(
-                                name=row['COLUMN_NAME'],
-                                quoted_name=self.get_quoted_name(row['COLUMN_NAME']),
-                                native_type=row['DATA_TYPE'],
-                                nullable=row['IS_NULLABLE'] == 'YES',
-                            )
-                            for row in result.data.rows
-                        },
-                    )
-                else:
-                    # the sql shows the db_name, schema_name and table_name
-                    LOG.warning(
-                        f'No "{table_id}" table in the database: {sql}, SAPI response: {result}\n'
-                        f'Table: {self._dump(table)}'
-                    )
-
-                    # The linked tables are not visible in INFORMATION_SCHEMA.COLUMNS. Fall back to count(*) query
-                    # to verify whether the fqn is valid.
-                    sql = f'SELECT count(*) FROM {fqn};'
-                    result = await self.execute_query(sql)
-                    if result.is_ok:
-                        if result.data and result.data.rows:
-                            return DbTableInfo(id=table_id, fqn=fqn, columns={})
-                        else:
-                            LOG.warning(
-                                f'Unexpected empty result from count(*): {sql}, SAPI response: {result}\n'
-                                f'Table: {self._dump(table)}'
-                            )
-                    else:
-                        LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
-            else:
-                LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
-
-        return None
+        return DbTableInfo(
+            id=table_id,
+            fqn=TableFqn(db_name, schema_name, table_name, quote_char='"'),
+            columns={},
+        )
 
     async def execute_query(
         self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
@@ -491,52 +415,25 @@ class _BigQueryWorkspace(_Workspace):
     def get_quoted_name(self, name: str) -> str:
         return f'`{name}`'  # wrap name in back tick
 
-    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
+    async def get_table_info(
+        self, table: Mapping[str, Any], backend_path: list[str] | None = None
+    ) -> DbTableInfo | None:
         table_id = table['id']
 
-        # Try to use backendPath from the bucket for the correct schema name
-        backend_path = _get_backend_path(table)
-        if backend_path and len(backend_path) >= 2:
-            # backendPath already contains the correctly formatted schema for BigQuery
-            schema_name = backend_path[1].replace('.', '_').replace('-', '_')
-            table_name = table['name']
-        elif '.' in table_id:
-            # a table local in a project for which the workspace is open
-            schema_name, table_name = table_id.rsplit(sep='.', maxsplit=1)
-            schema_name = schema_name.replace('.', '_').replace('-', '_')
-        else:
-            # a table not in the project, but in the writable schema created for the workspace
-            # TODO: we should never come here, because the tools for listing tables can only see
-            #  tables that are in the project
-            schema_name = self._dataset_id
-            table_name = table['name']
+        bp = backend_path or get_backend_path(table)
+        if not bp:
+            LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
+            return None
 
-        if schema_name and table_name:
-            sql = (
-                f'SELECT column_name, data_type, is_nullable '
-                f'FROM `{self._project_id}`.`{schema_name}`.`INFORMATION_SCHEMA`.`COLUMNS` '
-                f"WHERE table_name = '{table_name}' "
-                f'ORDER BY ordinal_position;'
-            )
-            result = await self.execute_query(sql)
-            if result.is_ok and result.data:
-                return DbTableInfo(
-                    id=table_id,
-                    fqn=TableFqn(self._project_id, schema_name, table_name, quote_char='`'),
-                    columns={
-                        row['column_name']: DbColumnInfo(
-                            name=row['column_name'],
-                            quoted_name=self.get_quoted_name(row['column_name']),
-                            native_type=row['data_type'],
-                            nullable=row['is_nullable'] == 'YES',
-                        )
-                        for row in result.data.rows
-                    },
-                )
-            else:
-                LOG.error(f'Failed to run SQL: {sql}, SAPI response: {result}')
+        # BigQuery backendPath[0] is the dataset name; normalize separators for BQ dataset naming
+        schema_name = bp[0].replace('.', '_').replace('-', '_')
+        table_name = table['name']
 
-        return None
+        return DbTableInfo(
+            id=table_id,
+            fqn=TableFqn(self._project_id, schema_name, table_name, quote_char='`'),
+            columns={},
+        )
 
     async def execute_query(
         self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
@@ -828,13 +725,19 @@ class WorkspaceManager:
         workspace = await self._get_workspace()
         return await workspace.execute_query(sql_query, max_rows=max_rows, max_chars=max_chars)
 
-    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
+    async def get_table_info(
+        self, table: Mapping[str, Any], backend_path: list[str] | None = None
+    ) -> DbTableInfo | None:
+        # Alias tables (isAlias=true in the source project) are not queryable from any workspace backend
+        if table.get('sourceTable', {}).get('isAlias'):
+            return None
+
         table_id = table['id']
         if table_id in self._table_info_cache:
             return self._table_info_cache[table_id]
 
         workspace = await self._get_workspace()
-        if info := await workspace.get_table_info(table):
+        if info := await workspace.get_table_info(table, backend_path=backend_path):
             self._table_info_cache[table_id] = info
 
         return info

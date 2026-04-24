@@ -10,7 +10,7 @@ from mcp.types import TextContent
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.server import create_server
@@ -958,7 +958,7 @@ async def test_get_table(
 
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_table_info = mocker.AsyncMock(
-        side_effect=lambda sapi_table: DbTableInfo(
+        side_effect=lambda sapi_table, backend_path=None: DbTableInfo(
             id=sapi_table['id'],
             fqn=TableFqn(
                 db_name='SAPI_TEST',
@@ -966,15 +966,7 @@ async def test_get_table(
                 table_name=sapi_table['id'].rsplit('.')[-1],
                 quote_char='#',
             ),
-            columns={
-                col_name: DbColumnInfo(
-                    name=col_name,
-                    quoted_name=f'#{col_name}#',
-                    native_type=get_metadata_property(col_meta, MetadataField.DATATYPE_TYPE),
-                    nullable=get_metadata_property(col_meta, MetadataField.DATATYPE_NULLABLE) == '1',
-                )
-                for col_name, col_meta in sapi_table['columnMetadata'].items()
-            },
+            columns={},
         )
     )
     workspace_manager.get_quoted_name = mocker.AsyncMock(side_effect=lambda name: f'#{name}#')
@@ -1436,6 +1428,11 @@ async def test_get_table_column_metadata_fallback(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.branch_id = None
     keboola_client.storage_client.table_detail = mocker.AsyncMock(return_value=raw_table)
+    keboola_client.storage_client.bucket_detail = mocker.AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            message='Not found', request=AsyncMock(), response=httpx.Response(status_code=404)
+        )
+    )
 
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_table_info = mocker.AsyncMock(
@@ -1989,7 +1986,7 @@ async def test_get_table_storage_branches(mocker: MockerFixture, mcp_context_cli
 
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_table_info = mocker.AsyncMock(
-        side_effect=lambda sapi_table: DbTableInfo(
+        side_effect=lambda sapi_table, backend_path=None: DbTableInfo(
             id=sapi_table['id'],
             fqn=TableFqn(db_name='SAPI_TEST', schema_name=sapi_table['id'].rsplit('.', 1)[0], table_name='customers'),
             columns={
