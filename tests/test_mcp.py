@@ -12,6 +12,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     AggregateError,
+    HSTSMiddleware,
     ServerState,
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
@@ -707,3 +708,59 @@ class TestSessionStateMiddleware:
         assert result is expected_result
         assert len(captured_configs) == 1
         assert captured_configs[0].branch_id == expected_branch_id
+
+
+# ── HSTSMiddleware tests ──────────────────────────────────────────────────────
+
+
+async def _run_hsts_middleware(forwarded_proto: str | None) -> dict:
+    """Helper: run HSTSMiddleware with a minimal HTTP scope and return the response.start message."""
+    headers = []
+    if forwarded_proto is not None:
+        headers.append((b'x-forwarded-proto', forwarded_proto.encode()))
+
+    scope = {'type': 'http', 'headers': headers}
+    received_start: dict = {}
+
+    async def app(s, r, send):
+        await send({'type': 'http.response.start', 'status': 200, 'headers': []})
+        await send({'type': 'http.response.body', 'body': b''})
+
+    async def capture_send(message):
+        if message['type'] == 'http.response.start':
+            received_start.update(message)
+
+    middleware = HSTSMiddleware(app)
+    await middleware(scope, None, capture_send)
+    return received_start
+
+
+@pytest.mark.parametrize(
+    ('forwarded_proto', 'expect_hsts'),
+    [
+        ('https', True),
+        ('http', False),
+        (None, False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_hsts_middleware_http(forwarded_proto, expect_hsts):
+    msg = await _run_hsts_middleware(forwarded_proto)
+    response_headers = dict(msg.get('headers', []))
+    hsts_present = b'strict-transport-security' in response_headers
+    assert hsts_present == expect_hsts
+    if expect_hsts:
+        assert response_headers[b'strict-transport-security'] == b'max-age=31536000; includeSubDomains'
+
+
+@pytest.mark.asyncio
+async def test_hsts_middleware_non_http_scope():
+    """Non-HTTP scopes (lifespan, websocket) pass through unchanged."""
+    called = []
+
+    async def app(scope, receive, send):
+        called.append(scope['type'])
+
+    middleware = HSTSMiddleware(app)
+    await middleware({'type': 'lifespan'}, None, None)
+    assert called == ['lifespan']

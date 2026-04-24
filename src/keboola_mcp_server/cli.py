@@ -19,7 +19,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ForwardSlashMiddleware
+from keboola_mcp_server.mcp import ForwardSlashMiddleware, HSTSMiddleware
 from keboola_mcp_server.server import CustomRoutes, create_server
 
 LOG = logging.getLogger(__name__)
@@ -176,7 +176,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                     yield
 
             app = Starlette(
-                middleware=[Middleware(ForwardSlashMiddleware)],
+                middleware=[Middleware(HSTSMiddleware), Middleware(ForwardSlashMiddleware)],
                 lifespan=lifespan,
                 exception_handlers=_exception_handlers,
             )
