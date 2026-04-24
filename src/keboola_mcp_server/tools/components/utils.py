@@ -63,6 +63,13 @@ T = TypeVar('T')
 
 SNOWFLAKE_TRANSFORMATION_ID = 'keboola.snowflake-transformation'
 BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
+PYTHON_TRANSFORMATION_ID = 'keboola.python-transformation-v2'
+R_TRANSFORMATION_ID = 'keboola.r-transformation-v2'
+
+# Component IDs for which update_config actively manages folder metadata (set/clear/hint).
+# For all other components the folder parameter is accepted but silently skipped to avoid
+# unnecessary API calls on components where folder organisation is not expected.
+FOLDER_SUPPORTING_COMPONENT_IDS: frozenset[str] = frozenset({PYTHON_TRANSFORMATION_ID, R_TRANSFORMATION_ID})
 
 
 # ============================================================================

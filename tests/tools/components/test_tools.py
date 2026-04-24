@@ -52,6 +52,7 @@ from keboola_mcp_server.tools.components.tools import (
 )
 from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
+    FOLDER_SUPPORTING_COMPONENT_IDS,
     SNOWFLAKE_TRANSFORMATION_ID,
     clean_bucket_name,
 )
@@ -1375,6 +1376,64 @@ async def test_update_config_folder(
         assert str(cfg_count) in result.change_summary
     else:
         assert result.change_summary is None
+
+
+@pytest.mark.parametrize(
+    'folder',
+    [None, 'Analytics', ''],
+    ids=['folder_none', 'folder_provided', 'folder_empty'],
+)
+@pytest.mark.asyncio
+async def test_update_config_folder_skipped_for_extractor(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    folder: Any,
+) -> None:
+    """Folder logic is entirely skipped for components not in FOLDER_SUPPORTING_COMPONENT_IDS."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    component_id = 'keboola.ex-aws-s3'
+    assert component_id not in FOLDER_SUPPORTING_COMPONENT_IDS
+    mock_component['id'] = component_id
+    configuration_id = 'cfg-s3-test'
+    existing = {
+        'id': configuration_id,
+        'name': 'My S3 Extractor',
+        'description': 'desc',
+        'configuration': {'parameters': {}, 'storage': {}},
+        'version': 1,
+    }
+    updated = {**existing, 'version': 2}
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated)
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+    keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
+    mock_get_config_folders = mocker.patch(
+        'keboola_mcp_server.tools.components.utils.get_config_folders',
+        mocker.AsyncMock(),
+    )
+
+    result = await update_config(
+        ctx=context,
+        change_description='test',
+        component_id=component_id,
+        configuration_id=configuration_id,
+        folder=folder,
+    )
+
+    assert isinstance(result, ConfigToolOutput)
+    mock_get_config_folders.assert_not_called()
+    folder_metadata_calls = [
+        call
+        for call in keboola_client.storage_client.configuration_metadata_update.call_args_list
+        if call.kwargs.get('metadata', {}).get(MetadataField.CONFIGURATION_FOLDER_NAME)
+    ]
+    assert len(folder_metadata_calls) == 0
+    keboola_client.storage_client.configuration_metadata_delete.assert_not_called()
+    assert result.change_summary is None
 
 
 @pytest.mark.parametrize(

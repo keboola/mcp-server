@@ -65,6 +65,7 @@ from keboola_mcp_server.tools.components.model import (
 )
 from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
+    FOLDER_SUPPORTING_COMPONENT_IDS,
     SNOWFLAKE_TRANSFORMATION_ID,
     add_ids,
     apply_folder_metadata,
@@ -1423,8 +1424,10 @@ async def update_config(
         configuration_version=updated_raw_configuration['version'],
     )
 
-    folder_hint = await apply_folder_metadata(
-        client, component_id, configuration_id, folder, 'configurations', 'update_config'
+    folder_hint = (
+        await apply_folder_metadata(client, component_id, configuration_id, folder, 'configurations', 'update_config')
+        if component_id in FOLDER_SUPPORTING_COMPONENT_IDS
+        else None
     )
 
     links = links_manager.get_configuration_links(
