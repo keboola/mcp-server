@@ -8,6 +8,7 @@ from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.model import (
@@ -746,6 +747,34 @@ class TestGetFlowsTool:
         assert keboola_client.storage_client.configuration_detail.call_count == 3
 
 
+@pytest.mark.parametrize(
+    ('metadata', 'expected_folder'),
+    [
+        ([{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'ETL', 'provider': 'user'}], 'ETL'),
+        ([], ''),
+    ],
+    ids=['folder_in_metadata', 'no_metadata'],
+)
+def test_get_flows_includes_folder(
+    metadata: list[dict],
+    expected_folder: str,
+    legacy_flow_phases: list[dict[str, Any]],
+    legacy_flow_tasks: list[dict[str, Any]],
+) -> None:
+    """FlowSummary.from_api_response extracts folder from metadata."""
+    api_config = APIFlowResponse.model_validate(
+        {
+            'id': 'flow_123',
+            'name': 'My Flow',
+            'version': 1,
+            'configuration': {'phases': legacy_flow_phases, 'tasks': legacy_flow_tasks},
+            'metadata': metadata,
+        }
+    )
+    summary = FlowSummary.from_api_response(api_config, ORCHESTRATOR_COMPONENT_ID)
+    assert summary.folder == expected_folder
+
+
 # =============================================================================
 # GET_FLOW_SCHEMA TOOL TESTS
 # =============================================================================
@@ -1020,7 +1049,7 @@ async def test_create_flow_folder(
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
     mocker.patch(
         'keboola_mcp_server.tools.flow.tools.get_config_folders',
-        mocker.AsyncMock(return_value=(flow_count, flow_folders)),
+        mocker.AsyncMock(return_value=(flow_count, flow_folders, False)),
     )
 
     result = await create_flow(
@@ -1085,7 +1114,7 @@ async def test_create_conditional_flow_folder(
     )
     mocker.patch(
         'keboola_mcp_server.tools.flow.tools.get_config_folders',
-        mocker.AsyncMock(return_value=(flow_count, flow_folders)),
+        mocker.AsyncMock(return_value=(flow_count, flow_folders, False)),
     )
 
     result = await create_conditional_flow(
@@ -1116,13 +1145,14 @@ async def test_create_conditional_flow_folder(
 
 
 @pytest.mark.parametrize(
-    ('folder', 'flow_count', 'flow_folders', 'expect_folder_metadata', 'expect_hint'),
+    ('folder', 'flow_count', 'flow_folders', 'expect_folder_metadata', 'expect_folder_delete', 'expect_hint'),
     [
-        ('ETL', 0, [], True, False),
-        ('  ETL  ', 0, [], True, False),  # whitespace stripped
-        ('', 5, [], False, False),
-        ('', 25, ['ETL'], False, True),
-        ('', 25, [], False, True),
+        ('ETL', 0, [], True, False, False),
+        ('  ETL  ', 0, [], True, False, False),  # whitespace stripped
+        (None, 5, [], False, False, False),
+        (None, 25, ['ETL'], False, False, True),
+        (None, 25, [], False, False, True),
+        ('', 5, [], False, True, False),  # empty string → delete
     ],
     ids=[
         'folder_provided',
@@ -1130,6 +1160,7 @@ async def test_create_conditional_flow_folder(
         'no_folder_few',
         'no_folder_many_with_folders',
         'no_folder_many_no_folders',
+        'folder_empty_deletes',
     ],
 )
 @pytest.mark.asyncio
@@ -1139,10 +1170,11 @@ async def test_modify_flow_folder(
     mock_legacy_flow_create_update: dict[str, Any],
     legacy_flow_phases: list[dict[str, Any]],
     legacy_flow_tasks: list[dict[str, Any]],
-    folder: str,
+    folder: Any,
     flow_count: int,
     flow_folders: list[str],
     expect_folder_metadata: bool,
+    expect_folder_delete: bool,
     expect_hint: bool,
 ) -> None:
     """Test folder metadata and change_summary hint for modify_flow."""
@@ -1158,9 +1190,13 @@ async def test_modify_flow_folder(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
+    keboola_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
+        return_value=[{'id': 'meta-1', 'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'OldFolder'}]
+    )
+    keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
     mocker.patch(
         'keboola_mcp_server.tools.flow.tools.get_config_folders',
-        mocker.AsyncMock(return_value=(flow_count, flow_folders)),
+        mocker.AsyncMock(return_value=(flow_count, flow_folders, False)),
     )
 
     result = await modify_flow(
@@ -1183,8 +1219,53 @@ async def test_modify_flow_folder(
         assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: folder.strip()}
     else:
         assert len(metadata_calls) == 0
+    if expect_folder_delete:
+        keboola_client.storage_client.configuration_metadata_delete.assert_called_once_with(
+            component_id=ORCHESTRATOR_COMPONENT_ID,
+            configuration_id=mock_legacy_flow_create_update['id'],
+            metadata_id='meta-1',
+        )
+    else:
+        keboola_client.storage_client.configuration_metadata_delete.assert_not_called()
     if expect_hint:
         assert result.change_summary is not None
         assert str(flow_count) in result.change_summary
     else:
         assert result.change_summary is None
+
+
+@pytest.mark.asyncio
+async def test_modify_flow_folder_only(
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+    mock_legacy_flow_create_update: dict[str, Any],
+) -> None:
+    """Test folder metadata is set when folder is the only change (no config fields updated)."""
+    mock_project_info = mocker.Mock()
+    mock_project_info.conditional_flows = True
+    mock_project_info.project_name = 'Test Project'
+    mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=lambda ctx: mock_project_info)
+
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
+
+    result = await modify_flow(
+        ctx=mcp_context_client,
+        configuration_id=mock_legacy_flow_create_update['id'],
+        flow_type=ORCHESTRATOR_COMPONENT_ID,
+        change_description='assign folder',
+        folder='ETL',
+    )
+
+    assert isinstance(result, FlowToolOutput)
+    assert result.success is True
+    # configuration_update must NOT be called — no config changes
+    keboola_client.storage_client.configuration_update.assert_not_called()
+    # folder metadata MUST be set
+    metadata_calls = [
+        call
+        for call in keboola_client.storage_client.configuration_metadata_update.call_args_list
+        if call.kwargs.get('metadata', {}).get(MetadataField.CONFIGURATION_FOLDER_NAME)
+    ]
+    assert len(metadata_calls) == 1
+    assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: 'ETL'}

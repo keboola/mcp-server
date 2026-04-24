@@ -28,7 +28,7 @@ import copy
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, Any, Sequence, cast
+from typing import Annotated, Any, Optional, Sequence, cast
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
@@ -65,10 +65,13 @@ from keboola_mcp_server.tools.components.model import (
 )
 from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
+    FOLDER_SUPPORTING_COMPONENT_IDS,
     SNOWFLAKE_TRANSFORMATION_ID,
     add_ids,
+    apply_folder_metadata,
     build_folder_hint,
     check_suitable,
+    clear_configuration_folder_metadata,
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
@@ -79,8 +82,8 @@ from keboola_mcp_server.tools.components.utils import (
     list_configs_by_types,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
+    set_configuration_folder_metadata,
     set_nested_value,
-    set_transformation_folder_metadata,
     update_params,
     update_transformation_parameters,
 )
@@ -483,7 +486,7 @@ async def create_sql_transformation(
     folder = folder.strip()
     if folder:
         try:
-            await set_transformation_folder_metadata(client, component_id, configuration_id, folder)
+            await set_configuration_folder_metadata(client, component_id, configuration_id, folder)
         except Exception:
             LOG.warning(
                 'Unable to set folder metadata for component "%s", configuration "%s".',
@@ -493,9 +496,13 @@ async def create_sql_transformation(
         change_summary = None
     else:
         try:
-            total, existing_folders = await get_config_folders(client, component_id)
+            total, existing_folders, lower_bound = await get_config_folders(client, component_id)
             change_summary = build_folder_hint(
-                total, existing_folders, 'SQL transformations', 'update_sql_transformation'
+                total,
+                existing_folders,
+                'SQL transformations',
+                'update_sql_transformation',
+                lower_bound=lower_bound,
             )
         except Exception:
             LOG.warning(
@@ -614,9 +621,9 @@ async def update_sql_transformation(
         ),
     ] = None,
     folder: Annotated[
-        str,
+        Optional[str],
         Field(description=folder_field_description('transformation', 'transformations')),
-    ] = '',
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
@@ -841,21 +848,29 @@ async def update_sql_transformation(
         configuration_version=updated_raw_configuration.get('version'),
     )
 
-    folder = folder.strip()
-    if folder:
-        await set_transformation_folder_metadata(client, sql_transformation_id, configuration_id, folder)
-        folder_hint = None
-    else:
+    folder_hint = None
+    if folder is None:
         try:
-            total, existing_folders = await get_config_folders(client, sql_transformation_id)
-            folder_hint = build_folder_hint(total, existing_folders, 'SQL transformations', 'update_sql_transformation')
+            total, existing_folders, lower_bound = await get_config_folders(client, sql_transformation_id)
+            folder_hint = build_folder_hint(
+                total,
+                existing_folders,
+                'SQL transformations',
+                'update_sql_transformation',
+                lower_bound=lower_bound,
+            )
         except Exception:
             LOG.warning(
                 'Unable to fetch transformation folders for component "%s" when updating configuration "%s".',
                 sql_transformation_id,
                 configuration_id,
             )
-            folder_hint = None
+    else:
+        folder_stripped = folder.strip()
+        if folder_stripped:
+            await set_configuration_folder_metadata(client, sql_transformation_id, configuration_id, folder_stripped)
+        else:
+            await clear_configuration_folder_metadata(client, sql_transformation_id, configuration_id)
 
     change_summary = ' '.join(filter(None, [msg, folder_hint])) or None
 
@@ -894,7 +909,7 @@ async def update_sql_transformation_internal(
     description: str = '',
     parameter_updates: list[TfParamUpdate] | None = None,
     storage: dict[str, Any] | None = None,
-    folder: str = '',
+    folder: Optional[str] = None,
 ) -> tuple[JsonDict, JsonDict, str, dict | None]:
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
@@ -939,8 +954,8 @@ async def update_sql_transformation_internal(
         updated_configuration['storage'] = storage_cfg
 
     folder_preview: dict | None = None
-    normalized_folder = folder.strip()
-    if normalized_folder:
+    if folder is not None:
+        normalized_folder = folder.strip()
         try:
             current_metadata = await client.storage_client.configuration_metadata_get(
                 component_id=sql_transformation_id, configuration_id=configuration_id
@@ -1332,6 +1347,10 @@ async def update_config(
         list[dict[str, Any]],
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
+    folder: Annotated[
+        Optional[str],
+        Field(description=folder_field_description('configuration', 'configurations')),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
@@ -1405,6 +1424,12 @@ async def update_config(
         configuration_version=updated_raw_configuration['version'],
     )
 
+    folder_hint = (
+        await apply_folder_metadata(client, component_id, configuration_id, folder, 'configurations', 'update_config')
+        if component_id in FOLDER_SUPPORTING_COMPONENT_IDS
+        else None
+    )
+
     links = links_manager.get_configuration_links(
         component_id=component_id,
         configuration_id=configuration_id,
@@ -1419,11 +1444,12 @@ async def update_config(
         success=True,
         links=links,
         version=updated_raw_configuration['version'],
+        change_summary=folder_hint,
     )
 
 
-# This function must use exactly the same parameters as update_config() function.
-# Except for the `ctx` and `client` parameters.
+# This function must use exactly the same parameters as update_config() function,
+# except for `ctx`, `client`, and `folder` (folder is metadata-only, not a payload field).
 async def update_config_internal(
     *,
     client: KeboolaClient,

@@ -28,11 +28,12 @@ from keboola_mcp_server.tools.components.utils import (
     _apply_param_update,
     _normalize_jsonpath,
     clean_bucket_name,
+    clear_configuration_folder_metadata,
     create_transformation_configuration,
     expand_component_types,
     get_config_folders,
+    set_configuration_folder_metadata,
     set_nested_value,
-    set_transformation_folder_metadata,
     structure_summary,
     update_params,
     update_transformation_parameters,
@@ -1377,7 +1378,7 @@ def test_update_transformation_parameters(
 
 
 # ============================================================================
-# get_transformation_folders / set_transformation_folder_metadata TESTS
+# get_transformation_folders / set_configuration_folder_metadata TESTS
 # ============================================================================
 
 
@@ -1406,13 +1407,40 @@ async def test_get_config_folders_short_circuit(
     all_configs: list[dict[str, Any]],
     expected_count: int,
 ) -> None:
-    """Test that the search endpoint is skipped when count < 20."""
+    """Test that configuration_list is still called (and returns early) when total < 20."""
     client = _make_client(all_configs, [])
-    count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
+    count, folders, lower_bound = await get_config_folders(client, 'keboola.snowflake-transformation')
     assert count == expected_count
     assert folders == []
+    assert lower_bound is False
+    client.storage_client.component_configurations_search.assert_called_once_with(
+        component_id='keboola.snowflake-transformation',
+        metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
+    )
     client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
-    client.storage_client.component_configurations_search.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_config_folders_skips_list_when_enough_folder_configs() -> None:
+    """Test that configuration_list is skipped when ≥20 configs already have folder metadata."""
+    folder_configs = [
+        {
+            'id': str(i),
+            'componentId': 'keboola.snowflake-transformation',
+            'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': f'Folder{i % 5}'}],
+        }
+        for i in range(22)
+    ]
+    client = _make_client([], folder_configs)  # configuration_list returns [] but should not be called
+    count, folders, lower_bound = await get_config_folders(client, 'keboola.snowflake-transformation')
+    assert count == 22
+    assert len(folders) == 5  # 22 configs across 5 distinct folders
+    assert lower_bound is True
+    client.storage_client.component_configurations_search.assert_called_once_with(
+        component_id='keboola.snowflake-transformation',
+        metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
+    )
+    client.storage_client.configuration_list.assert_not_called()
 
 
 _MANY_CONFIGS = [{'id': str(i)} for i in range(25)]
@@ -1465,9 +1493,10 @@ async def test_get_config_folders(
 ) -> None:
     """Test get_config_folders when count >= 20 (search endpoint is called)."""
     client = _make_client(_MANY_CONFIGS, folder_configs)
-    count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
+    count, folders, lower_bound = await get_config_folders(client, 'keboola.snowflake-transformation')
     assert count == len(_MANY_CONFIGS)
     assert folders == expected_folders
+    assert lower_bound is False
     client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
     client.storage_client.component_configurations_search.assert_called_once_with(
         component_id='keboola.snowflake-transformation',
@@ -1486,14 +1515,14 @@ async def test_get_config_folders(
     ids=['normal', 'whitespace_stripped', 'empty', 'whitespace_only'],
 )
 @pytest.mark.asyncio
-async def test_set_transformation_folder_metadata(
+async def test_set_configuration_folder_metadata(
     folder: str,
     expected_saved: str | None,
     expect_call: bool,
 ) -> None:
-    """Test set_transformation_folder_metadata: strips whitespace, skips empty, propagates errors."""
+    """Test set_configuration_folder_metadata: strips whitespace, skips empty, propagates errors."""
     client = _make_client([], [])
-    await set_transformation_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1', folder)
+    await set_configuration_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1', folder)
     if expect_call:
         client.storage_client.configuration_metadata_update.assert_called_once_with(
             component_id='keboola.snowflake-transformation',
@@ -1502,3 +1531,41 @@ async def test_set_transformation_folder_metadata(
         )
     else:
         client.storage_client.configuration_metadata_update.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ('metadata', 'expected_delete_ids'),
+    [
+        ([], []),
+        ([{'key': 'other.key', 'id': '99'}], []),
+        ([{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'id': '1'}], ['1']),
+        (
+            [
+                {'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'id': '1'},
+                {'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'id': '2'},
+            ],
+            ['1', '2'],
+        ),
+        ([{'key': MetadataField.CONFIGURATION_FOLDER_NAME}], []),
+    ],
+    ids=['no_metadata', 'other_key', 'single_match', 'multiple_matches_all_deleted', 'missing_id_skipped'],
+)
+@pytest.mark.asyncio
+async def test_clear_configuration_folder_metadata(
+    metadata: list[dict[str, Any]],
+    expected_delete_ids: list[str],
+) -> None:
+    """Test clear_configuration_folder_metadata deletes all matching entries."""
+    client = _make_client([], [])
+    client.storage_client.configuration_metadata_get = AsyncMock(return_value=metadata)
+    client.storage_client.configuration_metadata_delete = AsyncMock()
+
+    await clear_configuration_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1')
+
+    assert client.storage_client.configuration_metadata_delete.call_count == len(expected_delete_ids)
+    for metadata_id in expected_delete_ids:
+        client.storage_client.configuration_metadata_delete.assert_any_call(
+            component_id='keboola.snowflake-transformation',
+            configuration_id='cfg-1',
+            metadata_id=metadata_id,
+        )

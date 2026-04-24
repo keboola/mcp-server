@@ -10,7 +10,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from keboola_mcp_server.clients import KeboolaClient
-from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, get_metadata_property
+from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
 from keboola_mcp_server.tools import data_apps as data_app_tools
 from keboola_mcp_server.tools.components import tools as components_tools
@@ -190,10 +191,41 @@ def _prepare_mutator(
     }
 
     if preview_rq.tool_name == 'update_config':
-        mutator_fn = components_tools.update_config_internal
+        folder = mutator_params.pop(
+            'folder', None
+        )  # folder is metadata-only; update_config_internal does not accept it
         if parameter_updates := mutator_params.get('parameter_updates'):
             type_adapter = TypeAdapter(list[ConfigParamUpdate])
             mutator_params['parameter_updates'] = type_adapter.validate_python(parameter_updates)
+
+        if folder is None:
+            mutator_fn = components_tools.update_config_internal
+        else:
+            _folder = folder
+
+            async def _update_config_with_folder_preview(**kwargs: Any) -> tuple:
+                orig, updated = await components_tools.update_config_internal(**kwargs)
+                normalized = _folder.strip()
+                folder_preview: dict | None = None
+                try:
+                    meta = await client.storage_client.configuration_metadata_get(
+                        component_id=kwargs['component_id'],
+                        configuration_id=kwargs['configuration_id'],
+                    )
+                    current = get_metadata_property(meta, MetadataField.CONFIGURATION_FOLDER_NAME, default='') or ''
+                    if normalized != current:
+                        folder_preview = {'original_folder': current, 'updated_folder': normalized}
+                except Exception as e:
+                    LOG.warning(
+                        'Failed to fetch configuration metadata for folder preview '
+                        '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
+                        kwargs['component_id'],
+                        kwargs['configuration_id'],
+                        e,
+                    )
+                return orig, updated, folder_preview
+
+            mutator_fn = _update_config_with_folder_preview
 
     elif preview_rq.tool_name == 'update_config_row':
         mutator_fn = components_tools.update_config_row_internal

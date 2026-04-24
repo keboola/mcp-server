@@ -11,7 +11,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient, get_metadata_property
 from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppResponse
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
@@ -19,12 +19,10 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact
 from keboola_mcp_server.tools.components.utils import (
-    build_folder_hint,
+    apply_folder_metadata,
     folder_field_description,
-    get_config_folders,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
-    set_transformation_folder_metadata,
 )
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -178,6 +176,7 @@ class DataApp(BaseModel):
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters, storage and authorization'
     )
+    folder: str = Field(default='', description='The UI folder this data app is organized into')
     deployment_info: Optional[DeploymentInfo] = Field(
         description='Deployment info of the data app including a url of the app and logs to diagnose in-app errors.',
         default=None,
@@ -203,6 +202,7 @@ class DataApp(BaseModel):
             auto_suspend_after_seconds=api_response.auto_suspend_after_seconds,
             name=api_configuration.name,
             description=api_configuration.description,
+            folder=get_metadata_property(api_configuration.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
             configuration=api_configuration.configuration,
             deployment_info=None,
             links=[],
@@ -285,9 +285,9 @@ async def modify_data_app(
         Field(description='The description of the change when updating (e.g. "Update Code"), otherwise empty string.'),
     ] = '',
     folder: Annotated[
-        str,
+        Optional[str],
         Field(description=folder_field_description('data app', 'data apps')),
-    ] = '',
+    ] = None,
 ) -> ModifiedDataAppOutput:
     """Creates or updates a Streamlit data app.
 
@@ -359,7 +359,9 @@ async def modify_data_app(
             configuration_id=configuration_id,
             configuration_version=int(data_app.config_version),
         )
-        folder_hint = await _apply_folder(client, DATA_APP_COMPONENT_ID, configuration_id, folder)
+        folder_hint = await apply_folder_metadata(
+            client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_data_app'
+        )
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=name,
@@ -392,7 +394,9 @@ async def modify_data_app(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=data_app_resp.config_id,
         )
-        folder_hint = await _apply_folder(client, DATA_APP_COMPONENT_ID, data_app_resp.config_id, folder)
+        folder_hint = await apply_folder_metadata(
+            client, DATA_APP_COMPONENT_ID, data_app_resp.config_id, folder, 'data apps', 'modify_data_app', is_new=True
+        )
         links = links_manager.get_data_app_links(
             configuration_id=data_app_resp.config_id,
             configuration_name=name,
@@ -407,35 +411,6 @@ async def modify_data_app(
         )
 
 
-async def _apply_folder(client: KeboolaClient, component_id: str, configuration_id: str, folder: str) -> str | None:
-    """
-    Sets the folder metadata for a data app configuration if provided, or returns a hint when 20+ data apps exist.
-
-    :return: Folder hint string if applicable, else None.
-    """
-    normalized = folder.strip()
-    if normalized:
-        try:
-            await set_transformation_folder_metadata(client, component_id, configuration_id, normalized)
-        except Exception:
-            LOG.warning(
-                'Unable to set folder metadata for component "%s", configuration "%s".',
-                component_id,
-                configuration_id,
-            )
-        return None
-    try:
-        total, existing_folders = await get_config_folders(client, component_id)
-        return build_folder_hint(total, existing_folders, 'data apps', 'modify_data_app')
-    except Exception:
-        LOG.warning(
-            'Unable to fetch data app folders for component "%s" when processing configuration "%s".',
-            component_id,
-            configuration_id,
-        )
-        return None
-
-
 async def modify_data_app_internal(
     *,
     client: KeboolaClient,
@@ -447,7 +422,7 @@ async def modify_data_app_internal(
     authentication_type: AuthenticationType,
     configuration_id: str,
     change_description: str = '',
-    folder: str = '',
+    folder: Optional[str] = None,
 ) -> tuple[DataApp, JsonDict, dict | None]:
     secrets = _get_secrets(
         workspace_id=str(await workspace_manager.get_workspace_id()),
@@ -472,8 +447,8 @@ async def modify_data_app_internal(
     )
 
     folder_preview: dict | None = None
-    normalized_folder = folder.strip()
-    if normalized_folder:
+    if folder is not None:
+        normalized_folder = folder.strip()
         try:
             current_metadata = await client.storage_client.configuration_metadata_get(
                 component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
