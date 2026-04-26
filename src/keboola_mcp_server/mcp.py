@@ -100,6 +100,34 @@ class ForwardSlashMiddleware:
         await self._app(scope, receive, send)
 
 
+class HSTSMiddleware:
+    """Injects Strict-Transport-Security on HTTPS responses (detected via X-Forwarded-Proto)."""
+
+    _HSTS_HEADER = b'strict-transport-security'
+    _HSTS_VALUE = b'max-age=31536000; includeSubDomains'
+
+    def __init__(self, app: ASGIApp):
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope['type'] != 'http':
+            await self._app(scope, receive, send)
+            return
+
+        headers = dict(scope.get('headers', []))
+        if headers.get(b'x-forwarded-proto', b'') != b'https':
+            await self._app(scope, receive, send)
+            return
+
+        async def _send(message):
+            if message['type'] == 'http.response.start':
+                message = dict(message)
+                message['headers'] = list(message.get('headers', [])) + [(self._HSTS_HEADER, self._HSTS_VALUE)]
+            await send(message)
+
+        await self._app(scope, receive, _send)
+
+
 class KeboolaMcpServer(FastMCP):
     def add_tool(self, tool: Tool) -> None:
         """Applies `textwrap.dedent()` function to the tool's docstring, if no explicit description is provided."""
