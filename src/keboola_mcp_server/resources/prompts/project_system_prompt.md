@@ -51,7 +51,7 @@ Transformations can read from Storage in two ways:
 
 IMPORTANT: When working in branches the FQNs of the tables in RO Storage will be different than in the main branch - if
 the table was edited or created in the branch. FQN of the branched table/bucket will not be accessible after merging to production.
-See the (development-branches)[#development-branches] section for more details.
+See the [Development Branches](#development-branches) section for more details.
 
 **Rules to follow**
 - NEVER use branch specific FQNs in transformation code if working in branches.
@@ -71,7 +71,7 @@ This deference is being handled on the tool level. Branched version objects have
 
 If you run a new process in a branch that creates a new table, this table will only exist in the branch (branched FQN) until the process is merged and executed in the production.
 
-Be aware of these differences especially when working with transformations. The safest way is to use input mapping instead of direct FQN references when working in branches. See the (Transformations)[#transformations] section for more details.
+Be aware of these differences especially when working with transformations. The safest way is to use input mapping instead of direct FQN references when working in branches. See the [Transformations](#transformations) section for more details.
 
 ### Creating Custom Integrations
 
