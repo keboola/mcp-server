@@ -279,12 +279,9 @@ CONSIDERATIONS:
 - Use delimited identifiers for the current SQL dialect for all identifiers and FQN references.
 - When referring to the input tables within the SQL query, use fully qualified table names, which can be
   retrieved using appropriate tools.
-- DIALECT-SPECIFIC FULLY QUALIFIED TABLE NAMES:
-  - Snowflake format: "DATABASE"."SCHEMA"."TABLE"
-  - BigQuery format: `project`.`dataset`.`table`
-- When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the dialect-appropriate
-  quoted table name without fully qualified table name (backticks for BigQuery — `table_name`; double quotes for
-  Snowflake — "table_name"), and add the plain table name without quotes to the `created_table_names` list.
+- When creating a new table within the SQL query (e.g. CREATE TABLE ...): use only the table name with
+  delimited identifiers, without the fully qualified path; add the plain table name without delimiters
+  to the `created_table_names` list.
 - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
   and user intent.
 - If there are 20 or more SQL transformations in the project, consider organizing them with a folder: existing
