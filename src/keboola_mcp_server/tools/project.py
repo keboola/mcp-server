@@ -67,9 +67,13 @@ async def _resolve_branch_context(client: KeboolaClient) -> tuple[str | int, str
 
     if selected is None:
         # Should not happen in a healthy project, but stay defensive.
-        return target_branch_id or 'default', 'unknown', target_branch_id is not None
+        fallback_id: str | int = target_branch_id if target_branch_id is not None else 'default'
+        return fallback_id, 'unknown', target_branch_id is not None
 
-    branch_id = cast('str | int', selected.get('id', target_branch_id or 'default'))
+    branch_id = cast(
+        'str | int',
+        selected.get('id', target_branch_id if target_branch_id is not None else 'default'),
+    )
     branch_name = cast(str, selected.get('name', 'unknown'))
     is_development_branch = selected.get('isDefault') is not True
     return branch_id, branch_name, is_development_branch
