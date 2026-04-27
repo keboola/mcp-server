@@ -18,6 +18,7 @@ from mcp.types import ClientCapabilities, InitializeRequestParams
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import ServerRuntimeInfo, ServerState
+from keboola_mcp_server.tools.project import get_project_info
 from keboola_mcp_server.tools.storage.tools import get_buckets, get_tables
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -380,18 +381,20 @@ def branch_project(request, branch_test_projects: list[BranchTestProject]) -> Br
     pytest.skip(f'No project matching {request.param}')
 
 
-@pytest_asyncio.fixture
-async def branch_context(
+async def _build_context(
     mocker,
     branch_project: BranchTestProject,
+    *,
+    branch_id: str | None,
 ) -> Context:
-    """MCP context bound to Branch A of the current parametrized project."""
+    """Build an MCP context bound to a specific branch (or the default branch when None)."""
     keboola_client = KeboolaClient(
         storage_api_url=branch_project.storage_api_url,
         storage_api_token=branch_project.storage_api_token,
         headers={'User-Agent': 'KeboolaMCPServer/integtest'},
     )
-    keboola_client = await keboola_client.with_branch_id(branch_project.branch_a_id)
+    if branch_id is not None:
+        keboola_client = await keboola_client.with_branch_id(branch_id)
     workspace_manager = await WorkspaceManager.create(keboola_client)
 
     mcp_config = Config(
@@ -414,6 +417,24 @@ async def branch_context(
     ctx.request_context = mocker.MagicMock()
     ctx.request_context.lifespan_context = ServerState(mcp_config, ServerRuntimeInfo(transport='stdio'))
     return ctx
+
+
+@pytest_asyncio.fixture
+async def branch_context(
+    mocker,
+    branch_project: BranchTestProject,
+) -> Context:
+    """MCP context bound to Branch A of the current parametrized project."""
+    return await _build_context(mocker, branch_project, branch_id=branch_project.branch_a_id)
+
+
+@pytest_asyncio.fixture
+async def default_branch_context(
+    mocker,
+    branch_project: BranchTestProject,
+) -> Context:
+    """MCP context bound to the default/production branch of the current parametrized project."""
+    return await _build_context(mocker, branch_project, branch_id=None)
 
 
 # --- Tests ---
@@ -460,3 +481,34 @@ async def test_deference_branched_table(
 
     table = next(t for t in result.tables if t.id == 'in.c-test_bucket_01.test_table_01')
     assert table.branch_id is None
+
+
+@pytest.mark.asyncio
+async def test_get_project_info_reports_dev_branch(
+    branch_context: Context,
+    branch_project: BranchTestProject,
+) -> None:
+    """get_project_info from a dev-branch context should populate branch fields and is_development_branch=True."""
+    result = await get_project_info(branch_context)
+
+    assert str(result.branch_id) == str(branch_project.branch_a_id)
+    assert isinstance(result.branch_name, str)
+    assert result.branch_name
+    assert result.is_development_branch is True
+
+
+@pytest.mark.asyncio
+async def test_get_project_info_reports_default_branch(
+    default_branch_context: Context,
+    branch_project: BranchTestProject,
+) -> None:
+    """get_project_info from a default-branch context should populate branch fields and is_development_branch=False."""
+    result = await get_project_info(default_branch_context)
+
+    assert isinstance(result.branch_id, (str, int))
+    assert isinstance(result.branch_name, str)
+    assert result.branch_name
+    assert result.is_development_branch is False
+    # Sanity: the default branch must not be the dev branch we created for this session.
+    assert str(result.branch_id) != str(branch_project.branch_a_id)
+    assert str(result.branch_id) != str(branch_project.branch_b_id)

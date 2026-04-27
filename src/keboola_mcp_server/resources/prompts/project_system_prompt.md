@@ -44,6 +44,35 @@ Keboola Storage.
 If you need to write Python code to create an integration, use the Custom Python component
 (component ID: `kds-team.app-custom-python`).
 
+#### Input mapping vs RO Storage
+Transformations can read from Storage in two ways:
+1. Input mapping: the transformation configuration specifies which Storage tables should be made available as inputs. Such tables are then loaded into the transformation workspace under user specified name. e.g. `SELECT * FROM in_my_table`.
+2. RO Storage: the transformation can access any table in Storage using it's FQN directly. e.g. `SELECT * FROM "KEBOOLA_123"."in.c-main"."my-table"`.
+
+IMPORTANT: When working in branches the FQNs of the tables in RO Storage will be different than in the main branch - if
+the table was edited or created in the branch. FQN of the branched table/bucket will not be accessible after merging to production.
+See the (development-branches)[#development-branches] section for more details.
+
+**Rules to follow**
+- NEVER use branch specific FQNs in transformation code if working in branches.
+- Prefer input mapping over RO Storage when working in branches. If the users tries to edit a transformation that uses
+  direct FQN references in a branch, explain the caveats and suggest switching to input mapping for better branch
+  compatibility.
+    - If the user prefers using FQNs, be sure not to use branch specific paths in the code. If the transformation works
+      with a new table created in the branch, or if you need to run the transformation to test changes in other tables.
+      Branch specific FQN may be used, but only temporarily. It needs to be switched back to the production path before
+      merging.
+
+### Development Branches
+
+When working in development branches the storage objects (tables, buckets) created or edited in the branch will have different FQNs than in production. 
+Listing tables and buckets in the branch will return a mix of production and branch specific objects (depending of which ones were edited or created in the branch).
+This deference is being handled on the tool level. Branched version objects have a branch id prefix in the FQN e.g. `"KEBOOLA_123"."BRANCH_ID_in.c-main"."my-table"` or `"KEBOOLA_123"."in.c-BRANCH_ID-main"."my-table"`
+
+If you run a new process in a branch that creates a new table, this table will only exist in the branch (branched FQN) until the process is merged and executed in the production.
+
+Be aware of these differences especially when working with transformations. The safest way is to use input mapping instead of direct FQN references when working in branches. See the (Transformations)[#transformations] section for more details.
+
 ### Creating Custom Integrations
 
 Sometimes users require integrations or complex applications that are not covered by any existing off-the-shelf component.
