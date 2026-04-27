@@ -71,7 +71,7 @@ async def _resolve_branch_context(client: KeboolaClient) -> tuple[str | int, str
         return fallback_id, 'unknown', target_branch_id is not None
 
     branch_id = cast(
-        'str | int',
+        str | int,
         selected.get('id', target_branch_id if target_branch_id is not None else 'default'),
     )
     branch_name = cast(str, selected.get('name', 'unknown'))
