@@ -2,6 +2,7 @@ import json
 from typing import Any
 from unittest.mock import call
 
+import httpx
 import pytest
 from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
@@ -14,6 +15,7 @@ from keboola_mcp_server.workspace import (
     SqlSelectData,
     TableFqn,
     WorkspaceManager,
+    _BigQueryWorkspace,
     _SnowflakeWorkspace,
 )
 
@@ -591,6 +593,11 @@ class TestWorkspaceManagerBigQuery:
         actual = await m.execute_query(query, max_rows=max_rows, max_chars=max_chars)
 
         assert actual == expected
+        keboola_client.storage_client.workspace_query.assert_called_once_with(
+            workspace_id=1234,
+            query=query,
+            timeout=httpx.Timeout(connect=5.0, read=_BigQueryWorkspace._QUERY_TIMEOUT, write=10.0, pool=5.0),
+        )
 
 
 class TestQueryCancellation:
@@ -686,7 +693,7 @@ class TestQueryCancellation:
         result = await qsclient.cancel_job('job-abc-123', reason='Test cancellation')
 
         raw_client.post.assert_called_once_with(
-            endpoint='queries/job-abc-123/cancel', data={'reason': 'Test cancellation'}, params=None
+            endpoint='queries/job-abc-123/cancel', data={'reason': 'Test cancellation'}, params=None, timeout=None
         )
         assert result == {'status': 'canceling'}
 

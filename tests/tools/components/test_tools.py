@@ -830,6 +830,65 @@ async def test_update_sql_transformation_folder(
 
 
 @pytest.mark.parametrize(
+    ('folder', 'patched_fn'),
+    [
+        ('Sales', 'set_configuration_folder_metadata'),
+        ('', 'clear_configuration_folder_metadata'),
+    ],
+    ids=['set_raises', 'clear_raises'],
+)
+@pytest.mark.asyncio
+async def test_update_sql_transformation_folder_metadata_error_is_swallowed(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+    folder: str,
+    patched_fn: str,
+) -> None:
+    """Metadata errors in update_sql_transformation are swallowed and logged, not raised."""
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    mock_component['id'] = 'keboola.snowflake-transformation'
+    configuration_id = 'cfg-error-test'
+    existing = {
+        'id': configuration_id,
+        'name': 'T',
+        'description': 'D',
+        'configuration': {'parameters': {'blocks': []}, 'storage': {}},
+        'version': 1,
+    }
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={**existing, 'version': 2})
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
+        return_value=[{'id': 'meta-1', 'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'OldFolder'}]
+    )
+    keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
+    mocker.patch(
+        f'keboola_mcp_server.tools.components.tools.{patched_fn}',
+        mocker.AsyncMock(side_effect=RuntimeError('metadata API unavailable')),
+    )
+    mocker.patch(
+        'keboola_mcp_server.tools.components.tools.get_config_folders',
+        mocker.AsyncMock(return_value=(0, [], False)),
+    )
+
+    result = await update_sql_transformation(
+        context,
+        change_description='test',
+        configuration_id=configuration_id,
+        folder=folder,
+    )
+
+    assert isinstance(result, ConfigToolOutput)
+    assert result.success is True
+
+
+@pytest.mark.parametrize(
     ('sql_dialect', 'expected_component_id', 'parameter_updates', 'storage', 'expected_config'),
     [
         pytest.param(

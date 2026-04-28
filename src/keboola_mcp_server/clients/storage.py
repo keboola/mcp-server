@@ -3,6 +3,7 @@ import math
 from datetime import datetime
 from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, cast
 
+import httpx
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.clients.base import JsonDict, KeboolaServiceClient, RawKeboolaClient
@@ -988,12 +989,13 @@ class AsyncStorageClient(KeboolaServiceClient):
     #  and replaced by QueryService.
     #  Unfortunately the QueryService supports only Snowflake backends. We use it in _SnowflakeWorkspace implementation,
     #  but not in _BigQueryWorkspace implementation, which still uses this function.
-    async def workspace_query(self, workspace_id: int, query: str) -> JsonDict:
+    async def workspace_query(self, workspace_id: int, query: str, timeout: httpx.Timeout | None = None) -> JsonDict:
         """
         Executes a query in a given workspace.
 
         :param workspace_id: The id of the workspace
         :param query: The query to execute
+        :param timeout: Optional per-call timeout override; falls back to the client default when None
         :return: The SAPI call response - query result or raise an error.
         """
         return cast(
@@ -1001,6 +1003,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             await self.post(
                 endpoint=f'branch/{self._branch_id}/workspaces/{workspace_id}/query',
                 data={'query': query},
+                timeout=timeout,
             ),
         )
 
