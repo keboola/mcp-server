@@ -871,9 +871,25 @@ async def update_sql_transformation(
     else:
         folder_stripped = folder.strip()
         if folder_stripped:
-            await set_configuration_folder_metadata(client, sql_transformation_id, configuration_id, folder_stripped)
+            try:
+                await set_configuration_folder_metadata(client, sql_transformation_id, configuration_id, folder_stripped)
+            except Exception as exc:
+                LOG.warning(
+                    'Unable to set folder metadata for component "%s", configuration "%s".',
+                    sql_transformation_id,
+                    configuration_id,
+                    exc_info=exc,
+                )
         else:
-            await clear_configuration_folder_metadata(client, sql_transformation_id, configuration_id)
+            try:
+                await clear_configuration_folder_metadata(client, sql_transformation_id, configuration_id)
+            except Exception as exc:
+                LOG.warning(
+                    'Unable to clear folder metadata for component "%s", configuration "%s".',
+                    sql_transformation_id,
+                    configuration_id,
+                    exc_info=exc,
+                )
 
     change_summary = ' '.join(filter(None, [msg, folder_hint])) or None
 
