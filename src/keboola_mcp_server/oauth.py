@@ -3,11 +3,10 @@ import json
 import logging
 import math
 import os
-import re
 import secrets
 import time
 from http.client import HTTPException
-from typing import Any, Mapping, cast
+from typing import Any, Literal, Mapping, cast
 from urllib.parse import urljoin
 
 import httpx
@@ -22,32 +21,11 @@ from mcp.server.auth.provider import (
 )
 from mcp.server.auth.settings import ClientRegistrationOptions
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
-from pydantic import AnyHttpUrl, AnyUrl
+from pydantic import AnyHttpUrl, AnyUrl, BaseModel
 
 LOG = logging.getLogger(__name__)
 _OAUTH_LOG_ALL = bool(os.getenv('KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL'))
-_RE_LOCALHOST = re.compile(r'^(localhost|127\.0\.0\.1|\[::1]|::1)$', re.IGNORECASE)
-_ALLOWED_DOMAINS = {
-    'https': [
-        re.compile(r'^.+\.keboola\.(com|dev)$', re.IGNORECASE),
-        re.compile(r'^(.*\.)?chatgpt\.com$', re.IGNORECASE),
-        re.compile(r'^(.*\.)?claude\.ai$', re.IGNORECASE),
-        re.compile(r'^librechat\.glami-ml\.com$', re.IGNORECASE),  # no subdomains allowed
-        re.compile(r'^(.*\.)?make\.com$', re.IGNORECASE),
-        re.compile(r'^api\.devin\.ai$', re.IGNORECASE),  # devin.ai API domain
-        re.compile(r'^cloud\.onyx\.app$', re.IGNORECASE),  # onyx.app OAuth callback
-        re.compile(r'^global\.consent\.azure-apim\.net$', re.IGNORECASE),  # Azure APIM consent domain
-        re.compile(r'^n8n\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-business\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-merchant\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-llm-traffic\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-finance\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-playground\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-staging\.groupondev\.com$', re.IGNORECASE),
-    ],
-    'http': [_RE_LOCALHOST],
-    'cursor': [re.compile(r'^(anysphere\.cursor-retrieval|anysphere\.cursor-mcp)$', re.IGNORECASE)],
-}
+_DANGEROUS_SCHEMES = frozenset({'javascript', 'data', 'vbscript'})
 
 
 def _log_debug(msg: str) -> None:
@@ -57,6 +35,14 @@ def _log_debug(msg: str) -> None:
     """
     if _OAUTH_LOG_ALL:
         LOG.debug(msg)
+
+
+class ClientValidationResult(BaseModel):
+    """Result of validating an OAuth client against Connection's /oauth/clients/validate endpoint."""
+
+    status: Literal['approved', 'pending', 'rejected']
+    # Registered redirect URIs for pre-approved clients; empty for pending/rejected.
+    redirect_uris: list[str] = []
 
 
 class _OAuthClientInformationFull(OAuthClientInformationFull):
@@ -70,29 +56,16 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
             return None
 
     def validate_redirect_uri(self, redirect_uri: AnyUrl | None) -> AnyUrl:
-        # Ideally, this should verify the redirect_uri against the URI registered by the client.
-        # That, however, would require a persistent registry of clients.
-        # So, instead we require the clients to send their redirect URI in the authorization request,
-        # and we discard all URIs that are not on a whitelist.
+        # Basic sanity check: reject missing URIs and dangerous scripting schemes.
+        # Per-client redirect URI validation against Connection's registered URIs happens
+        # in SimpleOAuthProvider.authorize() after the client is validated via /oauth/clients/validate.
         if not redirect_uri:
             LOG.warning('[validate_redirect_uri] No redirect_uri specified.')
             raise InvalidRedirectUriError('The redirect_uri must be specified.')
 
         stripped_uri = self._strip_redirect_uri(redirect_uri)
-        if not redirect_uri.scheme:
-            LOG.warning(f'[validate_redirect_uri] No scheme in redirect_uri: {stripped_uri}')
-            raise InvalidRedirectUriError(f'Invalid redirect_uri: {stripped_uri}')
-
-        # The custom schemes (e.g. cursor://) require a custom handler registered in a browser.
-        # They are used for redirecting a browser to a locally running app.
-
-        if allowed_domains := _ALLOWED_DOMAINS.get(redirect_uri.scheme):
-            if not any(p.fullmatch(redirect_uri.host or '') for p in allowed_domains):
-                LOG.warning(f'[validate_redirect_uri] Unknown domain in redirect_uri: {stripped_uri}')
-                raise InvalidRedirectUriError(f'Invalid redirect_uri: {stripped_uri}')
-
-        else:
-            LOG.warning(f'[validate_redirect_uri] Forbidden scheme in redirect_uri: {stripped_uri}')
+        if redirect_uri.scheme in _DANGEROUS_SCHEMES:
+            LOG.warning(f'[validate_redirect_uri] Dangerous scheme in redirect_uri: {stripped_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {stripped_uri}')
 
         LOG.info(f'[validate_redirect_uri] Accepted redirect_uri: {stripped_uri}]')
@@ -154,6 +127,7 @@ class SimpleOAuthProvider(OAuthProvider):
         self._mcp_callback_url = urljoin(mcp_server_url, callback_endpoint)
         self._oauth_client_id = client_id
         self._oauth_client_secret = client_secret
+        self._oauth_server_url = server_url
         self._oauth_server_auth_url = urljoin(server_url, '/oauth/authorize')
         self._oauth_server_token_url = urljoin(server_url, '/oauth/token')
         self._oauth_scope = scope
@@ -192,21 +166,49 @@ class SimpleOAuthProvider(OAuthProvider):
         """
         Creates a URL that redirects to the OAuth server for authorization.
 
-        The authorization URL's state parameter is an encrypted JWT that contains all the authorization parameters.
-        The state expires after 5 minutes.
+        Validates the requesting client against Connection's /oauth/clients/validate endpoint before
+        building the authorization URL. Pre-registered clients (Flow A) are validated against their
+        registered redirect URIs. Unknown clients (Flow B) trigger an approval screen in Connection by
+        passing pending client info as extra URL parameters.
+
+        The authorization URL's state parameter is an encrypted JWT that contains all the authorization
+        parameters. The state expires after 5 minutes.
 
         :param client: The OAuth client details.
-        :param params: The authorization parameters provided by the client, such as redirect URI, state, scopes, etc.
+        :param params: The authorization parameters provided by the client, such as redirect URI, scopes, etc.
 
         :return: The authorization URL that redirects to the OAuth server.
+        :raises HTTPException: If the client is rejected by Connection.
+        :raises InvalidRedirectUriError: If the redirect_uri is not registered for the client.
         """
+        redirect_uri_str = str(params.redirect_uri) if params.redirect_uri else ''
+
+        validation = await self._validate_client(
+            client_id=client.client_id,
+            redirect_uri=redirect_uri_str,
+            client_name=getattr(client, 'client_name', None),
+            client_uri=str(getattr(client, 'client_uri', '') or ''),
+        )
+
+        if validation.status == 'rejected':
+            LOG.warning(f'[authorize] Rejected client: client_id={client.client_id}')
+            raise HTTPException(403, f"OAuth client '{client.client_id}' is not authorized.")
+
+        # Flow A: for pre-registered clients, validate the redirect_uri against Connection's registered list.
+        if validation.redirect_uris and redirect_uri_str not in validation.redirect_uris:
+            LOG.warning(
+                f'[authorize] redirect_uri not registered for client: '
+                f'client_id={client.client_id}, redirect_uri={redirect_uri_str}'
+            )
+            raise InvalidRedirectUriError(f'Invalid redirect_uri: {redirect_uri_str}')
+
         # Create and encode the authorization state.
         # We don't store the authentication states that we create here to avoid having to persist them.
         # Instead, we encode them to JWT and pass them back to the client.
         # The states expire after 5 minutes.
         scopes = cast(list[str], params.scopes or [])
         state = {
-            'redirect_uri': str(params.redirect_uri),
+            'redirect_uri': redirect_uri_str,
             'redirect_uri_provided_explicitly': str(params.redirect_uri_provided_explicitly),
             # the scopes sent by the MCP server's OAuth client (e.g. claude.ai)
             'scopes': scopes,
@@ -220,7 +222,7 @@ class SimpleOAuthProvider(OAuthProvider):
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, state={state}')
 
         # create the authorization URL
-        url_params = {
+        url_params: dict[str, str] = {
             'client_id': self._oauth_client_id,
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
@@ -228,10 +230,70 @@ class SimpleOAuthProvider(OAuthProvider):
             # send no scopes to Keboola OAuth server and let it use its own default scope
         }
 
+        # Flow B: pass pending client info to Connection so it can show an approval screen.
+        if validation.status == 'pending':
+            url_params['pending_client_id'] = client.client_id
+            url_params['pending_redirect_uri'] = redirect_uri_str
+            if client_name := getattr(client, 'client_name', None):
+                url_params['pending_client_name'] = client_name
+
         auth_url = construct_redirect_uri(self._oauth_server_auth_url, **url_params)
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
 
         return auth_url
+
+    async def _validate_client(
+        self,
+        client_id: str,
+        redirect_uri: str,
+        client_name: str | None = None,
+        client_uri: str | None = None,
+    ) -> ClientValidationResult:
+        """
+        Validates an OAuth client against Connection's /oauth/clients/validate endpoint.
+
+        :param client_id: The OAuth client identifier.
+        :param redirect_uri: The redirect URI requested by the client.
+        :param client_name: Optional human-readable name of the client (used on the approval screen).
+        :param client_uri: Optional URL of the client's homepage.
+
+        :return: ClientValidationResult with status:
+          - 'approved': client is pre-registered; redirect_uris contains the registered URIs
+          - 'pending': client is unknown; Connection will show an approval screen
+          - 'rejected': client is explicitly denied; the authorization should be refused
+        """
+        payload: dict[str, Any] = {'client_id': client_id, 'redirect_uri': redirect_uri}
+        if client_name:
+            payload['client_name'] = client_name
+        if client_uri:
+            payload['client_uri'] = client_uri
+
+        try:
+            async with self._create_http_client() as http_client:
+                response = await http_client.post(
+                    urljoin(self._oauth_server_url, '/oauth/clients/validate'),
+                    json=payload,
+                )
+        except Exception:
+            # Fail open during the migration period to avoid breaking existing clients when Connection is
+            # temporarily unreachable. Switch to fail-closed once all known clients are pre-registered.
+            LOG.warning(
+                '[_validate_client] Failed to reach Connection; treating client as approved (fail-open)',
+                exc_info=True,
+            )
+            return ClientValidationResult(status='approved')
+
+        if response.status_code == 200:
+            return ClientValidationResult.model_validate(response.json())
+        elif response.status_code in (401, 403):
+            LOG.warning(f'[_validate_client] Connection rejected client: client_id={client_id}')
+            return ClientValidationResult(status='rejected')
+        else:
+            LOG.warning(
+                f'[_validate_client] Unexpected response from Connection (fail-open): '
+                f'client_id={client_id}, status={response.status_code}, text={response.text}'
+            )
+            return ClientValidationResult(status='approved')
 
     async def handle_oauth_callback(self, code: str, state: str) -> str:
         """
