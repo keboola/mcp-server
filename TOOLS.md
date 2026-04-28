@@ -275,12 +275,13 @@ CONSIDERATIONS:
   explicitly indicates that no table creation is needed.
 - Each SQL code block must include descriptive name that reflects its purpose and group one or more executable
   semantically related SQL statements.
-- Each SQL query statement within a code block must be executable and follow the current SQL dialect, which can be
-  retrieved using appropriate tool.
+- Each SQL query statement within a code block must be executable and follow the current SQL dialect.
+- Use delimited identifiers for the current SQL dialect for all identifiers and FQN references.
 - When referring to the input tables within the SQL query, use fully qualified table names, which can be
   retrieved using appropriate tools.
-- When creating a new table within the SQL query (e.g. CREATE TABLE ...), use only the quoted table name without
-  fully qualified table name, and add the plain table name without quotes to the `created_table_names` list.
+- When creating a new table within the SQL query (e.g. CREATE TABLE ...): use only the table name with
+  delimited identifiers, without the fully qualified path; add the plain table name without delimiters
+  to the `created_table_names` list.
 - Unless otherwise specified by user, transformation name and description are generated based on the SQL query
   and user intent.
 - If there are 20 or more SQL transformations in the project, consider organizing them with a folder: existing
@@ -1200,7 +1201,9 @@ ID Format:
 IMPORTANT CONSIDERATIONS:
 - Parameter updates are PARTIAL - only the operations you specify are applied
 - All other parts of the transformation remain unchanged
-- Each SQL script must be executable and follow the current SQL dialect
+- Each SQL script must be executable and follow the current SQL dialect:
+  - Use delimited identifiers for the current SQL dialect.
+  - Never mix delimiter styles within a single query.
 - Storage configuration is COMPLETE REPLACEMENT - include ALL mappings you want to keep
 - Leave updated_description empty to preserve the original description
 - SCHEMA CHANGES: Destructive schema changes (removing columns, changing types, renaming columns) require
@@ -1818,21 +1821,20 @@ from the workspace.
 - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
 parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
 appropriately based on the parameter type.
-- If the data app is updated while running, it must be redeployed for the changes to take effect.
+- After creating or updating a data app with this tool, ALWAYS call
+`deploy_data_app(action="deploy", configuration_id=...)` to start a new app or restart an existing app so
+changes take effect. Without this step, a newly created app will not start, and an existing app will keep
+running the previous deployment without the latest changes.
 - New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
 updating, set `authentication_type` to `default` to keep the existing authentication type configuration
 (including OIDC setups) unless explicitly specified otherwise.
 
 SQL & DATA TYPE RULES:
-- SNOWFLAKE COLUMN ALIASES are auto-uppercased unless quoted. Quote aliases to preserve case:
-`CAST("downloads" AS INTEGER) as "downloads"`. Match exact case in Python code.
+- Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
+  Match the exact identifier case used in SQL when referencing columns in Python code.
 - `query_data` RETURNS ALL COLUMNS AS STRINGS regardless of SQL CAST. Always convert types in Python after loading:
 `df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and
 `df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
-- Pattern:
-`df = query_data('SELECT "model_id", "downloads", "created_at" FROM "DB"."SCHEMA"."TABLE"')`
-`df["downloads"] = pd.to_numeric(df["downloads"], errors="coerce").fillna(0)`
-`df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")`
 
 
 **Input JSON Schema**:
@@ -3488,30 +3490,22 @@ BEFORE QUERYING:
 
 CRITICAL SQL REQUIREMENTS:
 
-* ALWAYS check the SQL dialect before constructing queries. The SQL dialect can be found in the project info.
+* ALWAYS check the SQL dialect before constructing queries.
 * Do not include any comments in the SQL code
-
-DIALECT-SPECIFIC REQUIREMENTS:
-* Snowflake: Use double quotes for identifiers: "column_name", "table_name"
-* BigQuery: Use backticks for identifiers: `column_name`, `table_name`
-* Never mix quoting styles within a single query
+* Use delimited identifiers and FQN format for the current SQL dialect.
 
 TABLE AND COLUMN REFERENCES:
-* Always use fully qualified table names that include database name, schema name and table name
-* Get fully qualified table names using table information tools - use exact format shown
-* Snowflake format: "DATABASE"."SCHEMA"."TABLE"
-* BigQuery format: `project`.`dataset`.`table`
-* Always use quoted column names when referring to table columns (exact quotes from table info)
+* Always use fully qualified table names in the exact FQN format provided by table information tools
+* Follow the identifier structure exactly as shown by table info tools for the current SQL dialect
+* Always use delimited identifiers when referring to table columns
 
 CTE (WITH CLAUSE) RULES:
 * ALL column references in main query MUST match exact case used in the CTE
-* If you alias a column as "project_id" in CTE, reference it as "project_id" in subsequent queries
-* For Snowflake: Unless columns are quoted in CTE, they become UPPERCASE. To preserve case, use quotes
+* If you alias a column in a CTE, reference it under the aliased name in the subsequent queries
 * Define all column aliases explicitly in CTEs
-* Quote identifiers in both CTE definition and references to preserve case
+* Use delimited identifiers in both CTE definition and references to preserve case
 
 FUNCTION COMPATIBILITY:
-* Snowflake: Use LISTAGG instead of STRING_AGG
 * Check data types before using date functions (DATE_TRUNC, EXTRACT require proper date/timestamp types)
 * Cast VARCHAR columns to appropriate types before using in date/numeric functions
 

@@ -62,30 +62,22 @@ async def query_data(
 
     CRITICAL SQL REQUIREMENTS:
 
-    * ALWAYS check the SQL dialect before constructing queries. The SQL dialect can be found in the project info.
+    * ALWAYS check the SQL dialect before constructing queries.
     * Do not include any comments in the SQL code
-
-    DIALECT-SPECIFIC REQUIREMENTS:
-    * Snowflake: Use double quotes for identifiers: "column_name", "table_name"
-    * BigQuery: Use backticks for identifiers: `column_name`, `table_name`
-    * Never mix quoting styles within a single query
+    * Use delimited identifiers and FQN format for the current SQL dialect.
 
     TABLE AND COLUMN REFERENCES:
-    * Always use fully qualified table names that include database name, schema name and table name
-    * Get fully qualified table names using table information tools - use exact format shown
-    * Snowflake format: "DATABASE"."SCHEMA"."TABLE"
-    * BigQuery format: `project`.`dataset`.`table`
-    * Always use quoted column names when referring to table columns (exact quotes from table info)
+    * Always use fully qualified table names in the exact FQN format provided by table information tools
+    * Follow the identifier structure exactly as shown by table info tools for the current SQL dialect
+    * Always use delimited identifiers when referring to table columns
 
     CTE (WITH CLAUSE) RULES:
     * ALL column references in main query MUST match exact case used in the CTE
-    * If you alias a column as "project_id" in CTE, reference it as "project_id" in subsequent queries
-    * For Snowflake: Unless columns are quoted in CTE, they become UPPERCASE. To preserve case, use quotes
+    * If you alias a column in a CTE, reference it under the aliased name in the subsequent queries
     * Define all column aliases explicitly in CTEs
-    * Quote identifiers in both CTE definition and references to preserve case
+    * Use delimited identifiers in both CTE definition and references to preserve case
 
     FUNCTION COMPATIBILITY:
-    * Snowflake: Use LISTAGG instead of STRING_AGG
     * Check data types before using date functions (DATE_TRUNC, EXTRACT require proper date/timestamp types)
     * Cast VARCHAR columns to appropriate types before using in date/numeric functions
 

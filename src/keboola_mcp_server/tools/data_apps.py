@@ -301,21 +301,20 @@ async def modify_data_app(
     - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
     parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
     appropriately based on the parameter type.
-    - If the data app is updated while running, it must be redeployed for the changes to take effect.
+    - After creating or updating a data app with this tool, ALWAYS call
+    `deploy_data_app(action="deploy", configuration_id=...)` to start a new app or restart an existing app so
+    changes take effect. Without this step, a newly created app will not start, and an existing app will keep
+    running the previous deployment without the latest changes.
     - New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
     updating, set `authentication_type` to `default` to keep the existing authentication type configuration
     (including OIDC setups) unless explicitly specified otherwise.
 
     SQL & DATA TYPE RULES:
-    - SNOWFLAKE COLUMN ALIASES are auto-uppercased unless quoted. Quote aliases to preserve case:
-    `CAST("downloads" AS INTEGER) as "downloads"`. Match exact case in Python code.
+    - Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
+      Match the exact identifier case used in SQL when referencing columns in Python code.
     - `query_data` RETURNS ALL COLUMNS AS STRINGS regardless of SQL CAST. Always convert types in Python after loading:
     `df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and
     `df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
-    - Pattern:
-    `df = query_data('SELECT "model_id", "downloads", "created_at" FROM "DB"."SCHEMA"."TABLE"')`
-    `df["downloads"] = pd.to_numeric(df["downloads"], errors="coerce").fillna(0)`
-    `df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")`
     """
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
