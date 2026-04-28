@@ -149,6 +149,7 @@ class RawKeboolaClient:
         data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
+        timeout: httpx.Timeout | None = None,
     ) -> JsonStruct:
         """
         Makes a POST request to the service API.
@@ -157,13 +158,14 @@ class RawKeboolaClient:
         :param data: Request payload
         :param params: Query parameters for the request
         :param headers: Additional headers for the request
+        :param timeout: Optional per-call timeout override; falls back to the client default when None
         :return: API response as dictionary
         """
         if self.readonly:
             raise RuntimeError(f'Forbidden POST operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout, transport=self._create_transport()) as client:
+        async with httpx.AsyncClient(timeout=timeout or self.timeout, transport=self._create_transport()) as client:
             response = await client.post(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
@@ -314,6 +316,7 @@ class KeboolaServiceClient:
         endpoint: str,
         data: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, Any]] = None,
+        timeout: Optional[httpx.Timeout] = None,
     ) -> JsonStruct:
         """
         Makes a POST request to the service API.
@@ -321,9 +324,10 @@ class KeboolaServiceClient:
         :param endpoint: API endpoint to call
         :param data: Request payload
         :param params: Query parameters for the request
+        :param timeout: Optional per-call timeout override; falls back to the client default when None
         :return: API response as dictionary
         """
-        return await self.raw_client.post(endpoint=endpoint, data=data, params=params)
+        return await self.raw_client.post(endpoint=endpoint, data=data, params=params, timeout=timeout)
 
     async def put(
         self,

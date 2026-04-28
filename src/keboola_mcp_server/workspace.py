@@ -7,6 +7,7 @@ import uuid
 from typing import Any, Literal, Mapping, Sequence, cast
 from urllib.parse import urlunparse
 
+import httpx
 from httpx import HTTPStatusError
 from pydantic import Field, TypeAdapter
 from pydantic.dataclasses import dataclass
@@ -443,7 +444,11 @@ class _BigQueryWorkspace(_Workspace):
         if max_chars is not None and max_chars <= 0:
             raise ValueError('The "max_chars" must be a positive integer or None.')
 
-        resp = await self._client.storage_client.workspace_query(workspace_id=self.id, query=sql_query)
+        resp = await self._client.storage_client.workspace_query(
+            workspace_id=self.id,
+            query=sql_query,
+            timeout=httpx.Timeout(connect=5.0, read=self._QUERY_TIMEOUT, write=10.0, pool=5.0),
+        )
         qr = cast(QueryResult, TypeAdapter(QueryResult).validate_python(resp))
         if qr.data:
             total_query_rows = len(qr.data.rows)
