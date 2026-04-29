@@ -23,3 +23,9 @@ async def test_get_project_info(mcp_context: Context, keboola_project) -> None:
         assert link.type in {'ui-detail', 'ui-dashboard', 'docs'}
         assert isinstance(link.title, str)
         assert isinstance(link.url, str)
+
+    assert isinstance(result.branch_id, (str, int))
+    assert isinstance(result.branch_name, str)
+    assert result.branch_name
+    # The pool fixture runs on the default branch — see integtests/conftest.py.
+    assert result.is_development_branch is False
