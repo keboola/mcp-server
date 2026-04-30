@@ -63,9 +63,15 @@ async def _ensure_bucket(client: httpx.AsyncClient, api_url: str, token: str, bu
         headers=_auth_headers(token),
         data={'stage': stage, 'name': name},
     )
-    # 200 = created, 422 = already exists — both are OK
-    if resp.status_code not in (200, 201, 422):
-        resp.raise_for_status()
+    # 200/201 = created, 422 = already exists (most stacks).
+    # Some stacks return 400 with an "already exists" body instead of 422.
+    if resp.status_code in (200, 201, 422):
+        return
+    if resp.status_code == 400:
+        body = resp.json() if resp.content else {}
+        if 'already exist' in str(body).lower():
+            return
+    resp.raise_for_status()
 
 
 async def _upload_table(

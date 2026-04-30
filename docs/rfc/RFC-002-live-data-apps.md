@@ -73,3 +73,70 @@ The new template includes a `⟳ Refresh` button that re-executes all chart quer
 - `src/keboola_mcp_server/tools/local/backend.py` — `save_data_app(config)` (no `chart_data`); `start_data_app()` spawns `appserver` instead of `http.server`
 - `src/keboola_mcp_server/tools/local/tools.py` — `create_data_app_local()` no longer pre-executes queries
 - `tests/tools/local/test_dataapp.py` — updated for new API (no `chart_data` param; assert `appserver` in cmd)
+
+---
+
+## Migrating Local Data Apps to the Keboola Platform
+
+Local data apps (ECharts + Pico CSS HTML) and Keboola platform data apps (Streamlit)
+are different runtimes. `migrate_to_keboola` intentionally skips data apps because a
+direct file transfer is not meaningful. The SQL queries, however, transfer cleanly.
+
+### App config source of truth
+
+Every local data app persists its configuration to:
+
+```
+<data_dir>/apps/<name>/app.json
+```
+
+`app.json` is a JSON object matching `DataAppConfig` — it contains the full list of
+chart definitions including SQL queries, chart type, x/y column assignments, and the
+app title/description. This is the migration source.
+
+### Migration steps (today — manual)
+
+1. **Read the local app config:**
+
+   ```bash
+   cat keboola_data/apps/my-dashboard/app.json
+   ```
+
+2. **Extract the SQL queries** from each chart's `sql` field.
+
+3. **Write a Streamlit script** using the extracted SQL. Each chart becomes a
+   `st.dataframe(query_data(sql))` or an `st.altair_chart(...)` call. A minimal
+   template:
+
+   ```python
+   import streamlit as st
+
+   st.title("My Dashboard")
+
+   with st.expander("Tickets by Stage"):
+       df = query_data("SELECT stage, COUNT(*) AS n FROM tickets GROUP BY stage")
+       st.bar_chart(df.set_index("stage"))
+   ```
+
+4. **Create the platform app** (run in platform mode, not local mode):
+
+   ```
+   modify_data_app(name="my-dashboard", script=<streamlit_source>, ...)
+   deploy_data_app(config_id=<returned_id>, action="deploy")
+   ```
+
+   `modify_data_app` injects the production `query_data` function automatically;
+   local SQL queries work unchanged since DuckDB and Snowflake/BigQuery dialects
+   are compatible for simple SELECT/GROUP BY/aggregation patterns.
+
+### Future tool: `migrate_data_app` (Phase 4)
+
+A `migrate_data_app(name, storage_api_url, storage_token)` tool will automate steps
+1–4:
+
+1. Read `app.json` from the local apps directory
+2. Generate a Streamlit script from the chart SQL queries using a standard template
+3. Call `modify_data_app` (platform API) to create the app
+4. Return the Keboola UI URL
+
+This is tracked as a Phase 4 item in `docs/local-backend.md`.
