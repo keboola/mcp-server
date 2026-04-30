@@ -1878,12 +1878,23 @@ _PARENT_CFG_ID = 'parent-cfg-1'
 _PARENT_COMPONENT_ID = SNOWFLAKE_TRANSFORMATION_ID
 
 
-def _make_vars_config(component_id: str = _PARENT_COMPONENT_ID, config_id: str = _PARENT_CFG_ID) -> dict[str, Any]:
+_DEFAULT_ROW_ID = 'default-row-1'
+
+
+def _make_vars_config(
+    component_id: str = _PARENT_COMPONENT_ID,
+    config_id: str = _PARENT_CFG_ID,
+    *,
+    with_default_row: bool = False,
+) -> dict[str, Any]:
+    rows = (
+        [{'id': _DEFAULT_ROW_ID, 'name': 'Default Values', 'configuration': {'values': []}}] if with_default_row else []
+    )
     return {
         'id': _VARS_CONFIG_ID,
         'name': f'Variables definition for {component_id}/{config_id}',
         'configuration': {'variables': [{'name': 'env', 'type': 'string'}]},
-        'rows': [],
+        'rows': rows,
     }
 
 
@@ -1901,18 +1912,20 @@ def _make_parent_config(extra: dict | None = None) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    ('existing_vars_configs', 'has_default_value', 'expect_create', 'expect_row_create'),
+    ('existing_vars_configs', 'has_default_value', 'expect_create', 'expect_row_create', 'expect_row_update'),
     [
         # No existing vars config → create; no default value
-        ([], False, True, False),
+        ([], False, True, False, False),
         # No existing vars config → create; with default value → also create row
-        ([], True, True, True),
+        ([], True, True, True, False),
         # Existing vars config → update; no default value
-        ([_make_vars_config()], False, False, False),
-        # Existing vars config → update; with default value → create row (row not in existing)
-        ([_make_vars_config()], True, False, True),
+        ([_make_vars_config()], False, False, False, False),
+        # Existing vars config → update; with default value → create row (no existing row)
+        ([_make_vars_config()], True, False, True, False),
+        # Existing vars config WITH a Default Values row → update row instead of create
+        ([_make_vars_config(with_default_row=True)], True, False, False, True),
     ],
-    ids=['new-no-default', 'new-with-default', 'existing-no-default', 'existing-with-default'],
+    ids=['new-no-default', 'new-with-default', 'existing-no-default', 'existing-with-default', 'existing-row-update'],
 )
 @pytest.mark.asyncio
 async def test_create_sql_transformation_variables(
@@ -1924,6 +1937,7 @@ async def test_create_sql_transformation_variables(
     has_default_value: bool,
     expect_create: bool,
     expect_row_create: bool,
+    expect_row_update: bool,
 ) -> None:
     context = mcp_context_components_configs
     workspace_manager = WorkspaceManager.from_state(context.session.state)
@@ -1946,6 +1960,7 @@ async def test_create_sql_transformation_variables(
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=existing_vars_configs)
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
     keboola_client.storage_client.configuration_row_create = mocker.AsyncMock(return_value={})
+    keboola_client.storage_client.configuration_row_update = mocker.AsyncMock(return_value={})
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=_make_parent_config())
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
 
@@ -1977,17 +1992,29 @@ async def test_create_sql_transformation_variables(
             change_description='Update variable definitions',
         )
 
-    # Verify default values row was created if expected.
+    row_cfg = {'values': [{'name': 'env', 'value': 'prod'}]}
+
     if expect_row_create:
         keboola_client.storage_client.configuration_row_create.assert_called_once_with(
             component_id=VARIABLES_COMPONENT_ID,
             config_id=_VARS_CONFIG_ID,
             name='Default Values',
             description='',
-            configuration={'values': [{'name': 'env', 'value': 'prod'}]},
+            configuration=row_cfg,
         )
+        keboola_client.storage_client.configuration_row_update.assert_not_called()
+    elif expect_row_update:
+        keboola_client.storage_client.configuration_row_update.assert_called_once_with(
+            component_id=VARIABLES_COMPONENT_ID,
+            config_id=_VARS_CONFIG_ID,
+            configuration_row_id=_DEFAULT_ROW_ID,
+            configuration=row_cfg,
+            change_description='Update default variable values',
+        )
+        keboola_client.storage_client.configuration_row_create.assert_not_called()
     else:
         keboola_client.storage_client.configuration_row_create.assert_not_called()
+        keboola_client.storage_client.configuration_row_update.assert_not_called()
 
     # Verify parent config was patched with variables_id.
     parent_update_calls = [

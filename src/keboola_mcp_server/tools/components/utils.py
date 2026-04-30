@@ -543,7 +543,9 @@ async def apply_configuration_variables(
     if existing_vars_id:
         try:
             existing = await client.storage_client.configuration_detail(VARIABLES_COMPONENT_ID, existing_vars_id)
-        except Exception:
+        except HTTPStatusError as e:
+            if e.response.status_code != 404:
+                raise
             existing = None
     if existing is None:
         vars_name = _variables_config_name(component_id, config_id)
