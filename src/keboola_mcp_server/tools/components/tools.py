@@ -62,12 +62,14 @@ from keboola_mcp_server.tools.components.model import (
     SimplifiedTfBlocks,
     TfParamUpdate,
     TransformationConfiguration,
+    VariableDefinition,
 )
 from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     FOLDER_SUPPORTING_COMPONENT_IDS,
     SNOWFLAKE_TRANSFORMATION_ID,
     add_ids,
+    apply_configuration_variables,
     apply_folder_metadata,
     build_folder_hint,
     check_suitable,
@@ -418,6 +420,15 @@ async def create_sql_transformation(
         str,
         Field(description=folder_field_description('transformation', 'transformations')),
     ] = '',
+    variables: Annotated[
+        Optional[list[VariableDefinition]],
+        Field(
+            description=(
+                'Variable definitions to attach to this transformation. '
+                'Each entry specifies a name, type ("string" or "vault"), and an optional default value.'
+            ),
+        ),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
@@ -514,6 +525,9 @@ async def create_sql_transformation(
             change_summary = None
 
     LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
+
+    if variables:
+        await apply_configuration_variables(client, component_id, configuration_id, variables)
 
     links = links_manager.get_transformation_links(
         transformation_type=component_id,
@@ -624,6 +638,17 @@ async def update_sql_transformation(
     folder: Annotated[
         Optional[str],
         Field(description=folder_field_description('transformation', 'transformations')),
+    ] = None,
+    variables: Annotated[
+        Optional[list[VariableDefinition]],
+        Field(
+            description=(
+                'Variable definitions for this transformation. '
+                'Provide a non-empty list to create or replace all variable definitions. '
+                'Provide an empty list ([]) to remove all variables. '
+                'Omit (None) to leave existing variables unchanged.'
+            ),
+        ),
     ] = None,
 ) -> ConfigToolOutput:
     """
@@ -872,7 +897,9 @@ async def update_sql_transformation(
         folder_stripped = folder.strip()
         if folder_stripped:
             try:
-                await set_configuration_folder_metadata(client, sql_transformation_id, configuration_id, folder_stripped)
+                await set_configuration_folder_metadata(
+                    client, sql_transformation_id, configuration_id, folder_stripped
+                )
             except Exception as exc:
                 LOG.warning(
                     'Unable to set folder metadata for component "%s", configuration "%s".',
@@ -903,6 +930,9 @@ async def update_sql_transformation(
         f'Updated transformation configuration: {updated_raw_configuration["id"]} for '
         f'component: {sql_transformation_id}.'
     )
+
+    if variables is not None:
+        await apply_configuration_variables(client, sql_transformation_id, configuration_id, variables)
 
     return ConfigToolOutput(
         component_id=sql_transformation_id,
@@ -1040,6 +1070,15 @@ async def create_config(
         list[dict[str, Any]],
         Field(description='The list of processors that will run after the configured component runs.'),
     ] = None,
+    variables: Annotated[
+        Optional[list[VariableDefinition]],
+        Field(
+            description=(
+                'Variable definitions to attach to this configuration. '
+                'Each entry specifies a name, type ("string" or "vault"), and an optional default value.'
+            ),
+        ),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -1118,6 +1157,9 @@ async def create_config(
     LOG.info(f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".')
 
     await set_cfg_creation_metadata(client, component_id, configuration_id)
+
+    if variables:
+        await apply_configuration_variables(client, component_id, configuration_id, variables)
 
     links = links_manager.get_configuration_links(
         component_id=component_id, configuration_id=configuration_id, configuration_name=name
@@ -1370,6 +1412,17 @@ async def update_config(
         Optional[str],
         Field(description=folder_field_description('configuration', 'configurations')),
     ] = None,
+    variables: Annotated[
+        Optional[list[VariableDefinition]],
+        Field(
+            description=(
+                'Variable definitions for this configuration. '
+                'Provide a non-empty list to create or replace all variable definitions. '
+                'Provide an empty list ([]) to remove all variables. '
+                'Omit (None) to leave existing variables unchanged.'
+            ),
+        ),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
@@ -1448,6 +1501,9 @@ async def update_config(
         if component_id in FOLDER_SUPPORTING_COMPONENT_IDS
         else None
     )
+
+    if variables is not None:
+        await apply_configuration_variables(client, component_id, configuration_id, variables)
 
     links = links_manager.get_configuration_links(
         component_id=component_id,

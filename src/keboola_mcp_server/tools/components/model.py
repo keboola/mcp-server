@@ -48,6 +48,15 @@ from keboola_mcp_server.links import Link
 # TYPE DEFINITIONS
 # ============================================================================
 
+
+class VariableDefinition(BaseModel):
+    """A single variable definition to attach to a configuration."""
+
+    name: str = Field(description='Variable name.')
+    type: str = Field(default='string', description='Variable type: "string" or "vault".')
+    default_value: Optional[str] = Field(default=None, description='Optional default value bound at creation time.')
+
+
 ALL_COMPONENT_TYPES = tuple(component_type for component_type in get_args(ComponentType))
 
 
