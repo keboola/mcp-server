@@ -869,13 +869,6 @@ async def update_sql_transformation(
         updated_description=description,
     )
 
-    await set_cfg_update_metadata(
-        client=client,
-        component_id=sql_transformation_id,
-        configuration_id=configuration_id,
-        configuration_version=updated_raw_configuration.get('version'),
-    )
-
     folder_hint = None
     if folder is None:
         try:
@@ -918,6 +911,19 @@ async def update_sql_transformation(
                     exc_info=exc,
                 )
 
+    parent_update_result = None
+    if variables is not None:
+        parent_update_result = await apply_configuration_variables(
+            client, sql_transformation_id, configuration_id, variables
+        )
+
+    await set_cfg_update_metadata(
+        client=client,
+        component_id=sql_transformation_id,
+        configuration_id=configuration_id,
+        configuration_version=(parent_update_result or updated_raw_configuration).get('version'),
+    )
+
     change_summary = ' '.join(filter(None, [msg, folder_hint])) or None
 
     links = links_manager.get_transformation_links(
@@ -930,9 +936,6 @@ async def update_sql_transformation(
         f'Updated transformation configuration: {updated_raw_configuration["id"]} for '
         f'component: {sql_transformation_id}.'
     )
-
-    if variables is not None:
-        await apply_configuration_variables(client, sql_transformation_id, configuration_id, variables)
 
     return ConfigToolOutput(
         component_id=sql_transformation_id,
@@ -1489,21 +1492,22 @@ async def update_config(
 
     LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
 
-    await set_cfg_update_metadata(
-        client=client,
-        component_id=component_id,
-        configuration_id=configuration_id,
-        configuration_version=updated_raw_configuration['version'],
-    )
-
     folder_hint = (
         await apply_folder_metadata(client, component_id, configuration_id, folder, 'configurations', 'update_config')
         if component_id in FOLDER_SUPPORTING_COMPONENT_IDS
         else None
     )
 
+    parent_update_result = None
     if variables is not None:
-        await apply_configuration_variables(client, component_id, configuration_id, variables)
+        parent_update_result = await apply_configuration_variables(client, component_id, configuration_id, variables)
+
+    await set_cfg_update_metadata(
+        client=client,
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_version=(parent_update_result or updated_raw_configuration).get('version'),
+    )
 
     links = links_manager.get_configuration_links(
         component_id=component_id,

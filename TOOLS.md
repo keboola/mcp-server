@@ -215,6 +215,10 @@ EXAMPLES:
         "type": {
           "default": "string",
           "description": "Variable type: \"string\" or \"vault\".",
+          "enum": [
+            "string",
+            "vault"
+          ],
           "type": "string"
         },
         "default_value": {
@@ -378,6 +382,10 @@ EXAMPLES:
         "type": {
           "default": "string",
           "description": "Variable type: \"string\" or \"vault\".",
+          "enum": [
+            "string",
+            "vault"
+          ],
           "type": "string"
         },
         "default_value": {
@@ -853,6 +861,10 @@ WORKFLOW:
         "type": {
           "default": "string",
           "description": "Variable type: \"string\" or \"vault\".",
+          "enum": [
+            "string",
+            "vault"
+          ],
           "type": "string"
         },
         "default_value": {
@@ -1751,6 +1763,10 @@ Example 4 - Update storage mappings:
         "type": {
           "default": "string",
           "description": "Variable type: \"string\" or \"vault\".",
+          "enum": [
+            "string",
+            "vault"
+          ],
           "type": "string"
         },
         "default_value": {
