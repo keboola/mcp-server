@@ -2033,15 +2033,19 @@ async def test_update_sql_transformation_variables(
     component['id'] = SNOWFLAKE_TRANSFORMATION_ID
     existing_raw = _make_parent_config({'variables_id': _VARS_CONFIG_ID} if existing_vars_configs else None)
 
+    vars_config = {**_make_vars_config(), 'id': _VARS_CONFIG_ID}
+
+    async def detail_side_effect(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        cid = args[0] if args else kwargs.get('component_id')
+        return vars_config if cid == VARIABLES_COMPONENT_ID else existing_raw
+
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
     keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
-    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing_raw)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=detail_side_effect)
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=existing_raw)
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=existing_vars_configs)
-    keboola_client.storage_client.configuration_create = mocker.AsyncMock(
-        return_value={**_make_vars_config(), 'id': _VARS_CONFIG_ID}
-    )
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=vars_config)
     keboola_client.storage_client.configuration_row_create = mocker.AsyncMock(return_value={})
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
 
@@ -2148,3 +2152,97 @@ async def test_create_config_variables(
         assert vars_create_calls[0].kwargs['configuration']['variables'][0]['name'] == variables[0].name
     else:
         assert not vars_create_calls
+
+
+_GENERIC_COMPONENT_ID = 'keboola.ex-generic-v2'
+
+
+@pytest.mark.parametrize(
+    ('variables', 'existing_vars_configs', 'expect_vars_update', 'expect_parent_update'),
+    [
+        # None → leave unchanged, no vars API calls.
+        (None, [], False, False),
+        # Empty list, no existing vars config → no-op (parent has no variables_id to unlink).
+        ([], [], False, False),
+        # Empty list, existing vars config → clear + remove variables_id from parent.
+        ([], [_make_vars_config(_GENERIC_COMPONENT_ID)], True, True),
+        # Non-empty list → update vars config + patch parent.
+        ([VariableDefinition(name='env', type='string')], [], True, True),
+    ],
+    ids=['none-no-op', 'empty-no-existing', 'empty-clear', 'set-vars'],
+)
+@pytest.mark.asyncio
+async def test_update_config_variables(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    variables: list[VariableDefinition] | None,
+    existing_vars_configs: list[dict[str, Any]],
+    expect_vars_update: bool,
+    expect_parent_update: bool,
+) -> None:
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    component_id = _GENERIC_COMPONENT_ID
+    configuration_id = _PARENT_CFG_ID
+    existing_raw = _make_parent_config({'variables_id': _VARS_CONFIG_ID} if existing_vars_configs else None)
+
+    vars_config = {**_make_vars_config(_GENERIC_COMPONENT_ID), 'id': _VARS_CONFIG_ID}
+
+    async def detail_side_effect(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        cid = args[0] if args else kwargs.get('component_id')
+        return vars_config if cid == VARIABLES_COMPONENT_ID else existing_raw
+
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=detail_side_effect)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=existing_raw)
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=existing_vars_configs)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=vars_config)
+    keboola_client.storage_client.configuration_row_create = mocker.AsyncMock(return_value={})
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    mock_component['id'] = component_id
+
+    result = await update_config(
+        ctx=context,
+        component_id=component_id,
+        configuration_id=configuration_id,
+        change_description='test update',
+        variables=variables,
+    )
+
+    assert result.success is True
+
+    vars_update_calls = [
+        c
+        for c in keboola_client.storage_client.configuration_update.call_args_list
+        if c.kwargs.get('component_id') == VARIABLES_COMPONENT_ID
+    ]
+    parent_update_calls = [
+        c
+        for c in keboola_client.storage_client.configuration_update.call_args_list
+        if c.kwargs.get('component_id') == component_id
+        and c.kwargs.get('change_description') in ('Link variables', 'Unlink variables')
+    ]
+    vars_create_calls = [
+        c
+        for c in keboola_client.storage_client.configuration_create.call_args_list
+        if c.kwargs.get('component_id') == VARIABLES_COMPONENT_ID
+    ]
+
+    if not expect_vars_update:
+        assert not vars_update_calls
+        assert not vars_create_calls
+    if not expect_parent_update:
+        assert not parent_update_calls
+
+    if variables is not None and len(variables) > 0 and expect_vars_update:
+        assert vars_update_calls or vars_create_calls
+
+    if variables == [] and existing_vars_configs:
+        assert any(c.kwargs.get('configuration') == {'variables': []} for c in vars_update_calls)
+        assert parent_update_calls
+        assert 'variables_id' not in parent_update_calls[0].kwargs['configuration']

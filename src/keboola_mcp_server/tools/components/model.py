@@ -53,7 +53,7 @@ class VariableDefinition(BaseModel):
     """A single variable definition to attach to a configuration."""
 
     name: str = Field(description='Variable name.')
-    type: str = Field(default='string', description='Variable type: "string" or "vault".')
+    type: Literal['string', 'vault'] = Field(default='string', description='Variable type: "string" or "vault".')
     default_value: Optional[str] = Field(default=None, description='Optional default value bound at creation time.')
 
 

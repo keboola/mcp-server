@@ -517,42 +517,58 @@ async def apply_configuration_variables(
     component_id: str,
     config_id: str,
     variables: list[VariableDefinition],
-) -> None:
+) -> dict[str, Any] | None:
     """
     Creates, updates, or clears the keboola.variables config linked to a parent configuration.
+
+    Resolves an existing variables config by the parent's variables_id first; falls back to
+    a name-based search so renames do not cause duplicate configs to be created.
 
     - Non-empty list: creates or updates variable definitions, creates/updates a
       "Default Values" row for any variable with a default_value, and patches
       variables_id onto the parent config.
     - Empty list: clears all definitions (PUT with empty array) and removes
-      variables_id from the parent config. No-op if no variables config exists yet.
+      variables_id from the parent config. The parent is always unlinked even when
+      the referenced variables config cannot be found.
+
+    Returns the parent config update response if the parent was updated, None otherwise.
     """
-    vars_name = _variables_config_name(component_id, config_id)
-    existing_vars_configs = await client.storage_client.configuration_list(VARIABLES_COMPONENT_ID)
-    existing = next((c for c in existing_vars_configs if c.get('name') == vars_name), None)
+    # Read parent config once; used for variables_id resolution and for patching.
+    parent = await client.storage_client.configuration_detail(component_id, config_id)
+    parent_cfg = dict(parent.get('configuration') or {})
+    existing_vars_id: str | None = parent_cfg.get('variables_id')
+
+    # Resolve existing vars config: prefer the linked variables_id, fallback to name search.
+    existing: dict[str, Any] | None = None
+    if existing_vars_id:
+        try:
+            existing = await client.storage_client.configuration_detail(VARIABLES_COMPONENT_ID, existing_vars_id)
+        except Exception:
+            existing = None
+    if existing is None:
+        vars_name = _variables_config_name(component_id, config_id)
+        all_vars_configs = await client.storage_client.configuration_list(VARIABLES_COMPONENT_ID)
+        existing = next((c for c in all_vars_configs if c.get('name') == vars_name), None)
 
     if not variables:
-        # Clear path — only act if a variables config already exists.
-        if existing is None:
-            return
-        vars_config_id = str(existing['id'])
-        await client.storage_client.configuration_update(
-            component_id=VARIABLES_COMPONENT_ID,
-            configuration_id=vars_config_id,
-            configuration={'variables': []},
-            change_description='Remove all variables',
-        )
-        # Remove variables_id from parent config.
-        parent = await client.storage_client.configuration_detail(component_id, config_id)
-        parent_cfg = dict(parent.get('configuration') or {})
-        parent_cfg.pop('variables_id', None)
-        await client.storage_client.configuration_update(
-            component_id=component_id,
-            configuration_id=config_id,
-            configuration=parent_cfg,
-            change_description='Unlink variables',
-        )
-        return
+        # Clear path — empty the vars config if one was found.
+        if existing is not None:
+            await client.storage_client.configuration_update(
+                component_id=VARIABLES_COMPONENT_ID,
+                configuration_id=str(existing['id']),
+                configuration={'variables': []},
+                change_description='Remove all variables',
+            )
+        # Always unlink variables_id from the parent, even when the vars config was not found.
+        if 'variables_id' in parent_cfg:
+            parent_cfg.pop('variables_id')
+            return await client.storage_client.configuration_update(
+                component_id=component_id,
+                configuration_id=config_id,
+                configuration=parent_cfg,
+                change_description='Unlink variables',
+            )
+        return None
 
     # Set path — create or update variables config.
     var_defs = [{'name': v.name, 'type': v.type} for v in variables]
@@ -560,7 +576,7 @@ async def apply_configuration_variables(
     if existing is None:
         created = await client.storage_client.configuration_create(
             component_id=VARIABLES_COMPONENT_ID,
-            name=vars_name,
+            name=_variables_config_name(component_id, config_id),
             description='',
             configuration=vars_configuration,
         )
@@ -597,11 +613,9 @@ async def apply_configuration_variables(
                 change_description='Update default variable values',
             )
 
-    # Patch variables_id onto parent config.
-    parent = await client.storage_client.configuration_detail(component_id, config_id)
-    parent_cfg = dict(parent.get('configuration') or {})
+    # Patch variables_id onto parent config using the already-loaded parent_cfg.
     parent_cfg['variables_id'] = vars_config_id
-    await client.storage_client.configuration_update(
+    return await client.storage_client.configuration_update(
         component_id=component_id,
         configuration_id=config_id,
         configuration=parent_cfg,
