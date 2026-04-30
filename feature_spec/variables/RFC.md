@@ -67,18 +67,18 @@ that create or update configurations:
 
 | Tool | New parameter | Semantics |
 |---|---|---|
-| `create_sql_transformation` | `variables: list[VariableDefinition] = []` | Attach variables at creation; empty = skip |
-| `update_sql_transformation` | `variables: list[VariableDefinition] \| None = None` | `None` = leave unchanged; `[]` = remove all; list = replace all |
-| `create_config` | `variables: list[VariableDefinition] = []` | Same as create_sql_transformation |
-| `update_config` | `variables: list[VariableDefinition] \| None = None` | Same as update_sql_transformation |
+| `create_sql_transformation` | `variables: Optional[list[VariableDefinition]] = None` | Attach variables at creation; `None`/`[]` = skip |
+| `update_sql_transformation` | `variables: Optional[list[VariableDefinition]] = None` | `None` = leave unchanged; `[]` = remove all; list = replace all |
+| `create_config` | `variables: Optional[list[VariableDefinition]] = None` | Same as create_sql_transformation |
+| `update_config` | `variables: Optional[list[VariableDefinition]] = None` | Same as update_sql_transformation |
 
 ### `VariableDefinition` model
 
 ```python
 class VariableDefinition(BaseModel):
-    name: str                           # variable name
-    type: str = "string"                # "string" or "vault"
-    default_value: Optional[str] = None # if provided, creates a Default Values row
+    name: str                                      # variable name
+    type: Literal["string", "vault"] = "string"   # constrained to valid API values
+    default_value: Optional[str] = None            # if provided, creates a Default Values row
 ```
 
 ### `apply_configuration_variables` utility
