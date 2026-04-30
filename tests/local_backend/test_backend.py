@@ -207,6 +207,76 @@ def test_delete_csv_table_not_found(backend: LocalBackend) -> None:
     assert backend.delete_csv_table('nonexistent') is False
 
 
+# ---------------------------------------------------------------------------
+# Schema sidecar
+# ---------------------------------------------------------------------------
+
+
+def test_write_csv_table_creates_schema_sidecar(backend: LocalBackend) -> None:
+    backend.write_csv_table('typed', 'flag,count\ntrue,1\nfalse,2\n')
+    schema_path = backend.data_dir / 'tables' / 'typed.schema.json'
+    assert schema_path.exists(), 'Schema sidecar should be created after write_csv_table'
+
+
+def test_load_schema_returns_column_list(backend: LocalBackend) -> None:
+    backend.write_csv_table('typed', 'flag,count\ntrue,1\nfalse,2\n')
+    csv_path = backend.data_dir / 'tables' / 'typed.csv'
+    cols = backend._load_schema(csv_path)
+    assert cols is not None
+    names = [c['name'] for c in cols]
+    assert 'flag' in names
+    assert 'count' in names
+    for c in cols:
+        assert 'duckdb_type' in c
+
+
+def test_load_schema_returns_none_when_absent(backend: LocalBackend, tables_dir: Path) -> None:
+    p = _write_csv(tables_dir, 'no_schema.csv', 'id\n1\n')
+    assert backend._load_schema(p) is None
+
+
+def test_duckdb_connection_uses_explicit_types(backend: LocalBackend) -> None:
+    # Write a CSV with boolean column; after schema detection BOOLEAN type is enforced.
+    backend.write_csv_table('flags', 'active\ntrue\nfalse\n')
+    # Query using boolean literal — must not raise ConversionException.
+    result = backend.query_local('SELECT COUNT(*) AS n FROM flags WHERE active = true')
+    assert '1' in result
+
+
+def test_duckdb_connection_generates_schema_on_first_load(backend: LocalBackend, tables_dir: Path) -> None:
+    # Place a CSV without a sidecar (simulating externally-produced files).
+    _write_csv(tables_dir, 'external.csv', 'x,y\n1,2\n3,4\n')
+    schema_path = backend.data_dir / 'tables' / 'external.schema.json'
+    assert not schema_path.exists()
+    # Opening a connection should auto-generate the sidecar.
+    con = backend._duckdb_connection()
+    con.close()
+    assert schema_path.exists(), 'Schema sidecar should be auto-generated on first connection'
+
+
+def test_delete_csv_table_also_removes_schema(backend: LocalBackend) -> None:
+    backend.write_csv_table('byebye', 'a\n1\n')
+    schema_path = backend.data_dir / 'tables' / 'byebye.schema.json'
+    assert schema_path.exists()
+    backend.delete_csv_table('byebye')
+    assert not schema_path.exists(), 'Schema sidecar should be removed together with the CSV'
+
+
+def test_stale_schema_falls_back_to_auto_detect(backend: LocalBackend, tables_dir: Path) -> None:
+    # Write a schema with a wrong/stale column definition.
+    import json
+
+    _write_csv(tables_dir, 'stale.csv', 'name,score\nalice,10\n')
+    schema_path = backend.data_dir / 'tables' / 'stale.schema.json'
+    schema_path.write_text(
+        json.dumps({'version': 1, 'columns': [{'name': 'nonexistent_col', 'duckdb_type': 'BIGINT'}]}),
+        encoding='utf-8',
+    )
+    # Query must succeed despite stale schema (fallback to read_csv_auto).
+    result = backend.query_local('SELECT name FROM stale')
+    assert 'alice' in result
+
+
 def test_delete_csv_table_strips_extension(backend: LocalBackend) -> None:
     backend.write_csv_table('t', 'id\n1\n')
     assert backend.delete_csv_table('t.csv') is True

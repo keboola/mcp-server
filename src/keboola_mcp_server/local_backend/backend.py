@@ -99,8 +99,68 @@ class LocalBackend:
             rows.append(row)
         return {'columns': columns, 'rows': rows}
 
+    # ------------------------------------------------------------------
+    # Schema sidecar (.schema.json alongside each CSV)
+    # ------------------------------------------------------------------
+
+    def _schema_path(self, csv_path: Path) -> Path:
+        """Return the sidecar schema path for a CSV file."""
+        return csv_path.with_suffix('.schema.json')
+
+    def _load_schema(self, csv_path: Path) -> list[dict] | None:
+        """Load the sidecar schema for *csv_path*; return None if absent or unreadable."""
+        try:
+            data = json.loads(self._schema_path(csv_path).read_text(encoding='utf-8'))
+            cols = data.get('columns')
+            if cols and isinstance(cols, list):
+                return cols
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
+        return None
+
+    def _save_schema_from_describe(self, con, table_name: str, csv_path: Path) -> None:
+        """Run DESCRIBE on an already-registered table and persist the sidecar schema."""
+        try:
+            cursor = con.execute(f'DESCRIBE "{table_name}"')
+            rows = cursor.fetchall()
+            columns = [{'name': row[0], 'duckdb_type': row[1]} for row in rows]
+            schema = {'version': 1, 'columns': columns}
+            self._schema_path(csv_path).write_text(json.dumps(schema, indent=2), encoding='utf-8')
+        except Exception:
+            pass  # Best-effort; never block queries
+
+    def detect_and_save_schema(self, csv_path: Path) -> list[dict] | None:
+        """Detect column types for *csv_path* via DuckDB and write the sidecar schema.
+
+        Returns the detected column list, or None if detection fails.
+        Called by write_csv_table and by external code after producing new CSVs.
+        """
+        try:
+            import duckdb
+        except ImportError:
+            return None
+        try:
+            con = duckdb.connect()
+            con.execute('CREATE TEMP TABLE _schema_probe AS SELECT * FROM read_csv_auto(?)', [str(csv_path)])
+            cursor = con.execute('DESCRIBE _schema_probe')
+            rows = cursor.fetchall()
+            con.close()
+            columns = [{'name': row[0], 'duckdb_type': row[1]} for row in rows]
+            schema = {'version': 1, 'columns': columns}
+            self._schema_path(csv_path).write_text(json.dumps(schema, indent=2), encoding='utf-8')
+            return columns
+        except Exception:
+            return None
+
     def _duckdb_connection(self):
-        """Open a DuckDB connection with all local CSV tables registered."""
+        """Open a DuckDB connection with all local CSV tables registered.
+
+        When a sidecar .schema.json exists for a CSV, its column types are used
+        explicitly so DuckDB applies consistent coercions (e.g. BOOLEAN, TIMESTAMP)
+        rather than re-inferring from the data on every connection.  If the explicit
+        schema fails (stale schema after a column change) it falls back to auto-detect
+        and refreshes the sidecar.  If no sidecar exists yet it is created on first load.
+        """
         try:
             import duckdb
         except ImportError:
@@ -117,10 +177,28 @@ class LocalBackend:
             # name uniqueness and avoiding empty-identifier crashes.
             # CREATE OR REPLACE ensures stale tables are refreshed on each call.
             table_name = csv_file.stem.replace('"', '_')
+            schema_cols = self._load_schema(csv_file)
+            if schema_cols:
+                # Build the columns={...} struct literal from the trusted sidecar.
+                # Column names are single-quote-escaped; types come verbatim from DESCRIBE.
+                col_parts = ', '.join(
+                    f"'{col['name'].replace(chr(39), chr(39) * 2)}': '{col['duckdb_type']}'" for col in schema_cols
+                )
+                try:
+                    con.execute(
+                        f'CREATE OR REPLACE TABLE "{table_name}" AS '
+                        f'SELECT * FROM read_csv(?, columns={{{col_parts}}})',
+                        [str(csv_file)],
+                    )
+                    continue
+                except Exception:
+                    # Sidecar is stale (columns changed) — fall through to auto-detect + refresh.
+                    LOG.debug('Schema sidecar stale for %s, falling back to read_csv_auto', csv_file.name)
             con.execute(
                 f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM read_csv_auto(?)',
                 [str(csv_file)],
             )
+            self._save_schema_from_describe(con, table_name, csv_file)
         return con
 
     # ------------------------------------------------------------------
@@ -131,6 +209,7 @@ class LocalBackend:
         """Write CSV content to <data_dir>/tables/<name>.csv.
 
         Raises ValueError if the name is empty or contains path-separator characters.
+        After writing, column types are auto-detected and saved to a sidecar schema file.
         """
         name = name.strip()
         if not name or '/' in name or '\\' in name or '..' in name:
@@ -140,15 +219,19 @@ class LocalBackend:
             name = name[:-4]
         path = self.data_dir / 'tables' / f'{name}.csv'
         path.write_text(csv_content, encoding='utf-8')
+        self.detect_and_save_schema(path)
         return path
 
     def delete_csv_table(self, name: str) -> bool:
-        """Delete <data_dir>/tables/<name>.csv. Returns True if deleted, False if not found."""
+        """Delete <data_dir>/tables/<name>.csv and its sidecar schema. Returns True if deleted."""
         if name.endswith('.csv'):
             name = name[:-4]
         path = self.data_dir / 'tables' / f'{name}.csv'
         if path.exists():
             path.unlink()
+            schema = self._schema_path(path)
+            if schema.exists():
+                schema.unlink()
             return True
         return False
 

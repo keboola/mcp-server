@@ -125,6 +125,40 @@ async def test_get_tables_filter(
 
 
 # ---------------------------------------------------------------------------
+# column_types in get_tables_local / write_table_local
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_tables_column_types_none_without_schema(backend: LocalBackend, tables_dir: Path) -> None:
+    # CSV placed directly without going through write_csv_table → no sidecar → column_types is None.
+    _csv(tables_dir, 'raw.csv', 'id,name\n1,alice\n')
+    result = await get_tables_local(backend)
+    assert result.tables[0].column_types is None
+
+
+@pytest.mark.asyncio
+async def test_get_tables_column_types_populated_after_write_table(backend: LocalBackend) -> None:
+    await write_table_local(backend, 'typed', 'active,score\ntrue,10\nfalse,20\n')
+    result = await get_tables_local(backend)
+    table = result.tables[0]
+    assert table.column_types is not None
+    names = [c.name for c in table.column_types]
+    assert 'active' in names
+    assert 'score' in names
+    for col in table.column_types:
+        assert col.duckdb_type  # non-empty type string
+
+
+@pytest.mark.asyncio
+async def test_write_table_local_returns_column_types(backend: LocalBackend) -> None:
+    result = await write_table_local(backend, 'flags', 'enabled\ntrue\nfalse\n')
+    assert result.column_types is not None
+    assert result.column_types[0].name == 'enabled'
+    assert result.column_types[0].duckdb_type  # non-empty
+
+
+# ---------------------------------------------------------------------------
 # get_buckets_local
 # ---------------------------------------------------------------------------
 

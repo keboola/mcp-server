@@ -35,9 +35,22 @@ LOCAL_TOOLS_TAG = 'local'
 # ---------------------------------------------------------------------------
 
 
+class LocalColumnInfo(BaseModel):
+    name: str = Field(description='Column name.')
+    duckdb_type: str = Field(description='DuckDB type (e.g. BOOLEAN, VARCHAR, TIMESTAMP WITH TIME ZONE).')
+
+
 class LocalTableInfo(BaseModel):
     name: str = Field(description='Table name (CSV stem).')
     columns: list[str] = Field(description='Column names read from the CSV header.')
+    column_types: list[LocalColumnInfo] | None = Field(
+        default=None,
+        description=(
+            'Column names and DuckDB types from the sidecar schema. '
+            'Use these types when writing SQL: BOOLEAN columns require `= true` not `= "true"`, '
+            'TIMESTAMP columns use TRY_CAST(col AS TIMESTAMP) for safe comparison with empty rows.'
+        ),
+    )
     rows_count: int | None = Field(default=None, description='Row count (None if unreadable).')
     size_bytes: int | None = Field(default=None, description='File size in bytes.')
 
@@ -93,6 +106,9 @@ _LOCAL_PROJECT_INSTRUCTION = (
     'Use get_tables to list available tables, query_data to run DuckDB SQL queries, '
     'and search to find tables or columns by name. '
     'Table names in SQL correspond to CSV file stems (e.g. customers.csv → SELECT * FROM customers). '
+    'get_tables returns column_types with DuckDB types — always check these before writing SQL: '
+    'BOOLEAN columns require `= true` (not `= "true"`), '
+    'TIMESTAMP columns use TRY_CAST(col AS TIMESTAMP) for safe comparison with empty-string rows. '
     'Use write_table to add or overwrite a table and delete_table to remove one. '
     '\n'
     'Component configs: save_config / get_configs / delete_config / run_saved_config. '
@@ -137,7 +153,21 @@ async def get_tables_local(
             rows_count = _count_csv_rows(path)
         except Exception:
             rows_count = None
-        tables.append(LocalTableInfo(name=stem, columns=columns, rows_count=rows_count, size_bytes=size_bytes))
+        schema_cols = local_backend._load_schema(path)
+        column_types = (
+            [LocalColumnInfo(name=c['name'], duckdb_type=c['duckdb_type']) for c in schema_cols]
+            if schema_cols
+            else None
+        )
+        tables.append(
+            LocalTableInfo(
+                name=stem,
+                columns=columns,
+                column_types=column_types,
+                rows_count=rows_count,
+                size_bytes=size_bytes,
+            )
+        )
     return LocalTablesOutput(tables=tables, total=len(tables))
 
 
@@ -262,7 +292,17 @@ async def write_table_local(local_backend: LocalBackend, name: str, csv_content:
         rows_count = _count_csv_rows(path)
     except Exception:
         rows_count = None
-    return LocalTableInfo(name=path.stem, columns=columns, rows_count=rows_count, size_bytes=size_bytes)
+    schema_cols = local_backend._load_schema(path)
+    column_types = (
+        [LocalColumnInfo(name=c['name'], duckdb_type=c['duckdb_type']) for c in schema_cols] if schema_cols else None
+    )
+    return LocalTableInfo(
+        name=path.stem,
+        columns=columns,
+        column_types=column_types,
+        rows_count=rows_count,
+        size_bytes=size_bytes,
+    )
 
 
 async def delete_table_local(local_backend: LocalBackend, name: str) -> dict:
