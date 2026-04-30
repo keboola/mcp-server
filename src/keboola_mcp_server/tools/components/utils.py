@@ -51,6 +51,7 @@ from keboola_mcp_server.tools.components.model import (
     SimplifiedTfBlocks,
     TfParamUpdate,
     TransformationConfiguration,
+    VariableDefinition,
 )
 
 LOG = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ SNOWFLAKE_TRANSFORMATION_ID = 'keboola.snowflake-transformation'
 BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 PYTHON_TRANSFORMATION_ID = 'keboola.python-transformation-v2'
 R_TRANSFORMATION_ID = 'keboola.r-transformation-v2'
+VARIABLES_COMPONENT_ID = 'keboola.variables'
 
 # Component IDs for which update_config actively manages folder metadata (set/clear/hint).
 # For all other components the folder parameter is accepted but silently skipped to avoid
@@ -504,6 +506,123 @@ async def clear_configuration_folder_metadata(client: KeboolaClient, component_i
             component_id,
             configuration_id,
         )
+
+
+def _variables_config_name(component_id: str, config_id: str) -> str:
+    return f'Variables definition for {component_id}/{config_id}'
+
+
+async def apply_configuration_variables(
+    client: KeboolaClient,
+    component_id: str,
+    config_id: str,
+    variables: list[VariableDefinition],
+) -> dict[str, Any] | None:
+    """
+    Creates, updates, or clears the keboola.variables config linked to a parent configuration.
+
+    Resolves an existing variables config by the parent's variables_id first; falls back to
+    a name-based search so renames do not cause duplicate configs to be created.
+
+    - Non-empty list: creates or updates variable definitions, creates/updates a
+      "Default Values" row for any variable with a default_value, and patches
+      variables_id onto the parent config.
+    - Empty list: clears all definitions (PUT with empty array) and removes
+      variables_id from the parent config. The parent is always unlinked even when
+      the referenced variables config cannot be found.
+
+    Returns the parent config update response if the parent was updated, None otherwise.
+    """
+    # Read parent config once; used for variables_id resolution and for patching.
+    parent = await client.storage_client.configuration_detail(component_id, config_id)
+    parent_cfg = dict(parent.get('configuration') or {})
+    existing_vars_id: str | None = parent_cfg.get('variables_id')
+
+    # Resolve existing vars config: prefer the linked variables_id, fallback to name search.
+    existing: dict[str, Any] | None = None
+    if existing_vars_id:
+        try:
+            existing = await client.storage_client.configuration_detail(VARIABLES_COMPONENT_ID, existing_vars_id)
+        except HTTPStatusError as e:
+            if e.response.status_code != 404:
+                raise
+            existing = None
+    if existing is None:
+        vars_name = _variables_config_name(component_id, config_id)
+        all_vars_configs = await client.storage_client.configuration_list(VARIABLES_COMPONENT_ID)
+        existing = next((c for c in all_vars_configs if c.get('name') == vars_name), None)
+
+    if not variables:
+        # Clear path — empty the vars config if one was found.
+        if existing is not None:
+            await client.storage_client.configuration_update(
+                component_id=VARIABLES_COMPONENT_ID,
+                configuration_id=str(existing['id']),
+                configuration={'variables': []},
+                change_description='Remove all variables',
+            )
+        # Always unlink variables_id from the parent, even when the vars config was not found.
+        if 'variables_id' in parent_cfg:
+            parent_cfg.pop('variables_id')
+            return await client.storage_client.configuration_update(
+                component_id=component_id,
+                configuration_id=config_id,
+                configuration=parent_cfg,
+                change_description='Unlink variables',
+            )
+        return None
+
+    # Set path — create or update variables config.
+    var_defs = [{'name': v.name, 'type': v.type} for v in variables]
+    vars_configuration = {'variables': var_defs}
+    if existing is None:
+        created = await client.storage_client.configuration_create(
+            component_id=VARIABLES_COMPONENT_ID,
+            name=_variables_config_name(component_id, config_id),
+            description='',
+            configuration=vars_configuration,
+        )
+        vars_config_id = str(created['id'])
+    else:
+        vars_config_id = str(existing['id'])
+        await client.storage_client.configuration_update(
+            component_id=VARIABLES_COMPONENT_ID,
+            configuration_id=vars_config_id,
+            configuration=vars_configuration,
+            change_description='Update variable definitions',
+        )
+
+    # Create or update a "Default Values" row if any variable has a default_value.
+    defaults = [{'name': v.name, 'value': v.default_value} for v in variables if v.default_value is not None]
+    if defaults:
+        existing_rows = (existing or {}).get('rows') or []
+        default_row = next((r for r in existing_rows if r.get('name') == 'Default Values'), None)
+        row_cfg = {'values': defaults}
+        if default_row is None:
+            await client.storage_client.configuration_row_create(
+                component_id=VARIABLES_COMPONENT_ID,
+                config_id=vars_config_id,
+                name='Default Values',
+                description='',
+                configuration=row_cfg,
+            )
+        else:
+            await client.storage_client.configuration_row_update(
+                component_id=VARIABLES_COMPONENT_ID,
+                config_id=vars_config_id,
+                configuration_row_id=str(default_row['id']),
+                configuration=row_cfg,
+                change_description='Update default variable values',
+            )
+
+    # Patch variables_id onto parent config using the already-loaded parent_cfg.
+    parent_cfg['variables_id'] = vars_config_id
+    return await client.storage_client.configuration_update(
+        component_id=component_id,
+        configuration_id=config_id,
+        configuration=parent_cfg,
+        change_description='Link variables',
+    )
 
 
 async def apply_folder_metadata(
