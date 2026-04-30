@@ -209,6 +209,38 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "VariableDefinition": {
+      "description": "A single variable definition to attach to a configuration.",
+      "properties": {
+        "name": {
+          "description": "Variable name.",
+          "type": "string"
+        },
+        "type": {
+          "default": "string",
+          "description": "Variable type: \"string\" or \"vault\".",
+          "type": "string"
+        },
+        "default_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional default value bound at creation time."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "name": {
@@ -251,6 +283,21 @@ EXAMPLES:
         "type": "object"
       },
       "type": "array"
+    },
+    "variables": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/VariableDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Variable definitions to attach to this configuration. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value."
     }
   },
   "required": [
@@ -325,6 +372,36 @@ EXAMPLES:
         "script"
       ],
       "type": "object"
+    },
+    "VariableDefinition": {
+      "description": "A single variable definition to attach to a configuration.",
+      "properties": {
+        "name": {
+          "description": "Variable name.",
+          "type": "string"
+        },
+        "type": {
+          "default": "string",
+          "description": "Variable type: \"string\" or \"vault\".",
+          "type": "string"
+        },
+        "default_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional default value bound at creation time."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -356,6 +433,21 @@ EXAMPLES:
       "default": "",
       "description": "Folder name to organize this transformation in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose.",
       "type": "string"
+    },
+    "variables": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/VariableDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Variable definitions to attach to this transformation. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value."
     }
   },
   "required": [
@@ -753,6 +845,36 @@ WORKFLOW:
         "value"
       ],
       "type": "object"
+    },
+    "VariableDefinition": {
+      "description": "A single variable definition to attach to a configuration.",
+      "properties": {
+        "name": {
+          "description": "Variable name.",
+          "type": "string"
+        },
+        "type": {
+          "default": "string",
+          "description": "Variable type: \"string\" or \"vault\".",
+          "type": "string"
+        },
+        "default_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional default value bound at creation time."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -844,6 +966,21 @@ WORKFLOW:
       ],
       "default": null,
       "description": "Folder name to organize this configuration in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more configurations in the project. If there are 20 or more configurations, you should assign one of the existing folders or create a new one that clearly reflects the configuration purpose."
+    },
+    "variables": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/VariableDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Variable definitions for this configuration. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged."
     }
   },
   "required": [
@@ -1604,6 +1741,36 @@ Example 4 - Update storage mappings:
         "replace_with"
       ],
       "type": "object"
+    },
+    "VariableDefinition": {
+      "description": "A single variable definition to attach to a configuration.",
+      "properties": {
+        "name": {
+          "description": "Variable name.",
+          "type": "string"
+        },
+        "type": {
+          "default": "string",
+          "description": "Variable type: \"string\" or \"vault\".",
+          "type": "string"
+        },
+        "default_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional default value bound at creation time."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -1693,6 +1860,21 @@ Example 4 - Update storage mappings:
       ],
       "default": null,
       "description": "Folder name to organize this transformation in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose."
+    },
+    "variables": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/VariableDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Variable definitions for this transformation. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged."
     }
   },
   "required": [
