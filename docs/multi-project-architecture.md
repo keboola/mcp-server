@@ -30,7 +30,7 @@ OAuth users continue exactly as today.
 | **mcp.keboola.com** (public hosted) | Regular users (Claude.ai, Claude Code) | OAuth → bearer token | ❌ No — OAuth always resolves to 1 project. No changes needed. |
 | **Local / self-hosted** | Power users, developers | Programmatic token + refresh token | ✅ Yes |
 | **Kai** (internal AI platform) | Keboola AI service | Programmatic token + refresh token | ✅ Yes |
-| **Kai / headless single-project** | Internal pipelines | PAT token | Single project only |
+| **Kai / headless single-project** | Internal pipelines | PAT token | ❌ No (single project only) |
 
 ---
 
@@ -193,14 +193,21 @@ token_refresh_loop():
       mark session expired, stop loop
     else:
       POST /token/refresh → new_token, new_refresh_token
-      update ProgrammaticTokenContext in state
+      update ProgrammaticTokenContext in state  # must hold asyncio.Lock
 
 On any tool call (programmatic mode):
+  → acquire asyncio.Lock
   → update last_used_at = now
+  → release lock
 
 On session close:
   → cancel refresh_task
 ```
+
+**Concurrency:** `token_refresh_loop` and tool calls both read/write `ProgrammaticTokenContext`
+concurrently. The implementation must use a single `asyncio.Lock` (or replace the whole
+context atomically) to prevent races — e.g., a refresh overwriting `last_used_at` set by a
+concurrent tool call, or a tool call reading a partially-updated token pair.
 
 **24-hour idle rule:** If no tool call is made for 24 hours the refresh loop stops and the
 session is marked expired. The next tool call raises a `ToolError`:
@@ -328,7 +335,7 @@ Error if auth_mode != "programmatic":
 
 ```
 Auth:     programmatic token required
-readOnlyHint: true  (purely in-memory; no external API call)
+readOnlyHint: false  (mutates server session state: appends to project_registry; no external Keboola API call)
 Tags:     project, multi-project
 
 Parameters:
