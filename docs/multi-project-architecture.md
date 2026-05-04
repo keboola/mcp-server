@@ -140,7 +140,7 @@ class ProjectEntry:
     project_name: str
     region: str
     storage_api_url: str
-    sapi_client: KeboolaClient      # credential depends on auth_mode (programmatic token / PAT / OAuth)
+    sapi_client: KeboolaClient      # credential depends on auth_mode (programmatic token / PAT / OAuth / Storage Token)
     workspace_manager: WorkspaceManager
     added_at: datetime
 
@@ -285,9 +285,23 @@ async def get_tables(
 |---|---|
 | `list_accessible_projects` | New; org-level, no project scope |
 | `add_project_to_session` | New; org-level, no project scope |
-| `find_component_id` | Component catalogue is global |
-| `docs_query` | Documentation is global |
-| `get_flow_schema` | Schema is global |
+
+### Tools that need `project_id` despite appearing global
+
+The following tools look global in intent but are currently project-bound in their
+implementation. They must receive `project_id` in multi-project mode:
+
+| Tool | Why it needs `project_id` |
+|---|---|
+| `find_component_id` | Uses `KeboolaClient.from_state()` and generates project-specific UI links via `ProjectLinksManager` |
+| `docs_query` | Uses a project-scoped Storage API token to authenticate against the AI doc service; needs at least one active project for auth |
+| `get_flow_schema` | Calls `get_project_info()` and gates the conditional-flow schema by the project-level `conditional_flows` feature flag |
+
+> **Implementation decision:** during the coding phase, evaluate whether any of these can be
+> decoupled from the project context (e.g., `docs_query` could use the programmatic token
+> directly without project registration; `find_component_id` could omit project links when
+> no `project_id` is supplied). Until that refactor is done, treat all three as
+> project-scoped and add `project_id` alongside the rest.
 
 ---
 
