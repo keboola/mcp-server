@@ -77,8 +77,8 @@ MCP Server ──► Keboola Storage API: verify token → project_id
   ▼
 Server ready (1 project active)
   │
-  │  get_project_info(project_id="123")
-  │  get_tables(project_id="123")
+  │  get_project_info()   ← project_id omitted — only one project active, auto-resolved
+  │  get_tables()         ← same
   ▼
 Storage API (using PAT)
 ```
@@ -188,7 +188,7 @@ On session start (programmatic token mode):
 
 token_refresh_loop():
   while session alive:
-    sleep until (expires_at − 60 s)
+    sleep max(0, expires_at − now − 60 s)   # clamp to avoid negative sleep on near-expiry token
     if (now − last_used_at) > 24 h:
       mark session expired, stop loop
     else:
@@ -220,7 +220,8 @@ mid-conversation requires the client to change a hidden header — impractical i
 conversation, and invisible in the conversation history.
 
 **Option 2 — Explicit `project_id` tool argument** ✅ chosen
-Each project-scoped tool declares `project_id` as a required parameter.
+Each project-scoped tool declares `project_id` as an **optional** parameter (`str | None = None`)
+with runtime ambiguity checks in `from_project` — not required at the MCP schema level.
 *Benefits:* Fully transparent to the LLM; the agent explicitly states which project each
 call targets; multi-project calls within one conversation are unambiguous; reviewable in
 conversation history; natural for cross-project reasoning ("compare tables in A vs B").
@@ -273,7 +274,8 @@ async def get_tables(ctx: Context) -> list[Table]:
 # AFTER
 async def get_tables(
     ctx: Context,
-    project_id: Annotated[str, Field(description="ID of the project to query.")],
+    project_id: Annotated[str | None, Field(description="ID of the project to query. "
+        "Omit when only one project is active.")] = None,
 ) -> list[Table]:
     client = KeboolaClient.from_project(ctx.session.state, project_id)
     …
@@ -311,7 +313,7 @@ implementation. They must receive `project_id` in multi-project mode:
 
 ```
 Auth:     programmatic token required
-Readonly: true
+readOnlyHint: true
 Tags:     project, multi-project
 
 Returns:  list of { project_id, project_name, region, storage_api_url }
@@ -326,7 +328,7 @@ Error if auth_mode != "programmatic":
 
 ```
 Auth:     programmatic token required
-Readonly: true  (purely in-memory; no external API call)
+readOnlyHint: true  (purely in-memory; no external API call)
 Tags:     project, multi-project
 
 Parameters:
