@@ -53,6 +53,11 @@ python -m keboola_mcp_server \
   --api-url https://connection.eu-central-1.keboola.com
 ```
 
+> **Security note:** Passing tokens as CLI arguments exposes them in shell history
+> (`~/.bash_history`) and process listings (`ps aux`). For production and headless
+> deployments (Kai), prefer the environment variable equivalents `KBC_PROGRAMMATIC_TOKEN`
+> and `KBC_REFRESH_TOKEN` instead of CLI flags.
+
 **Mode B (deferred): server performs login interactively.**
 Deferred because MFA handling in a headless process is non-trivial. For Kai, pre-obtained
 tokens are always available.
@@ -96,17 +101,16 @@ Server ready (0 projects active)
 
   │  add_project_to_session(project_id="A")
   ▼
-MCP Server ──► Management API: POST /projects/A/tokens → PAT_A
-             ──► Create KeboolaClient(PAT_A)
-             ──► Session registry = { A: KeboolaClient(PAT_A) }
+MCP Server: validate A is in accessible list (in-memory)
+            Session registry = { A }  (append-only, no external call)
 
   │  add_project_to_session(project_id="B")
   ▼
-MCP Server ──► Management API: POST /projects/B/tokens → PAT_B
-             ──► Session registry = { A, B }
+MCP Server: validate B is in accessible list (in-memory)
+            Session registry = { A, B }
 
-  │  get_tables(project_id="A")   →  Storage API (PAT_A)
-  │  get_tables(project_id="B")   →  Storage API (PAT_B)
+  │  get_tables(project_id="A")   →  Storage API (programmatic token, scoped to A)
+  │  get_tables(project_id="B")   →  Storage API (programmatic token, scoped to B)
 ```
 
 ### Flow C — OAuth bearer (existing, mcp.keboola.com, unchanged)
@@ -136,8 +140,7 @@ class ProjectEntry:
     project_name: str
     region: str
     storage_api_url: str
-    pat_token: str
-    sapi_client: KeboolaClient
+    sapi_client: KeboolaClient      # created with the programmatic token
     workspace_manager: WorkspaceManager
     added_at: datetime
 
@@ -167,6 +170,14 @@ ctx.session.state = {
 operation is exposed. Removing a project mid-conversation would invalidate prior reasoning
 and confuse the agent.
 
+> **Implementation note — stateful sessions:** The `ctx.session.state` pattern above requires
+> the MCP session to be long-lived. The current Streamable-HTTP transport creates a new
+> `ServerSession` per request (stateless). MPA therefore requires either (a) switching to
+> stateful SSE/WebSocket transport for multi-project clients, or (b) a process-level
+> `ServerState` store keyed by a stable `session_id` (supplied by the client or assigned at
+> connection time) with an explicit cleanup / TTL policy. The choice is an implementation
+> decision deferred to the coding phase; the logical design above is transport-agnostic.
+
 ---
 
 ## Token Refresh Strategy
@@ -192,7 +203,7 @@ On session close:
 ```
 
 **24-hour idle rule:** If no tool call is made for 24 hours the refresh loop stops and the
-session is marked expired. The next tool call returns HTTP 401:
+session is marked expired. The next tool call raises a `ToolError`:
 > "Session expired due to inactivity. Restart the server with fresh credentials."
 
 ---
@@ -215,6 +226,12 @@ call targets; multi-project calls within one conversation are unambiguous; revie
 conversation history; natural for cross-project reasoning ("compare tables in A vs B").
 *Cost:* All project-scoped tool signatures change. Centralised via a new helper
 `KeboolaClient.from_project(state, project_id)`.
+
+**Backward compatibility:** In single-project modes (PAT / OAuth / Storage Token) and in
+multi-project mode with exactly one project registered, `project_id` may be made optional
+— the helper defaults to the only active project. When two or more projects are active and
+`project_id` is omitted, the call raises a `ToolError` explaining the ambiguity. This
+preserves existing single-project prompts without modification.
 
 ---
 
@@ -285,21 +302,21 @@ Error if auth_mode != "programmatic":
 
 ```
 Auth:     programmatic token required
-Readonly: false  (generates a PAT via Management API)
+Readonly: true  (purely in-memory; no external API call)
 Tags:     project, multi-project
 
 Parameters:
   project_id: str
 
 Behaviour:
-  1. Verify project_id is in the accessible projects list.
+  1. Verify project_id is in the accessible projects list (in-memory check).
   2. If already in registry → return { status: "already_active" }  (idempotent).
-  3. Generate PAT via Management API.
-  4. Create KeboolaClient + WorkspaceManager.
-  5. Append to project_registry.
-  6. Return { project_id, project_name, region, status: "added" }
+  3. Create KeboolaClient (using the programmatic token) + WorkspaceManager for this project.
+  4. Append ProjectEntry to project_registry (append-only).
+  5. Return { project_id, project_name, region, status: "added" }
 
-Error: project not accessible → 403.
+Error: project not accessible → ToolError "Project '<id>' is not accessible with the
+       current programmatic token."
 ```
 
 ---
@@ -309,7 +326,7 @@ Error: project not accessible → 403.
 | Credential | `list_accessible_projects` | `add_project_to_session` | Project-scoped tools |
 |---|---|---|---|
 | PAT | ❌ not applicable | ❌ not applicable | ✅ PAT's project only |
-| Programmatic, 0 projects added | ✅ | ✅ | ❌ 403 "add a project first" |
+| Programmatic, 0 projects added | ✅ | ✅ | ❌ ToolError "add a project first" |
 | Programmatic, ≥1 project added | ✅ | ✅ | ✅ any registered project |
 | OAuth / Storage Token | ❌ not applicable | ❌ not applicable | ✅ token's project only |
 
@@ -335,11 +352,11 @@ MCP Server
  └─► Background token refresh
 
  │  list_accessible_projects()   →  [A, B, C, …]
- │  add_project_to_session(A)    →  generate PAT_A, register
- │  add_project_to_session(B)    →  generate PAT_B, register
+ │  add_project_to_session(A)    →  in-memory register only
+ │  add_project_to_session(B)    →  in-memory register only
 
- │  get_tables(project_id=A)     →  Storage API (PAT_A)
- │  run_job(project_id=B)        →  Jobs API   (PAT_B)
+ │  get_tables(project_id=A)     →  Storage API (programmatic token, project A)
+ │  run_job(project_id=B)        →  Jobs API   (programmatic token, project B)
 ```
 
 ---
@@ -389,7 +406,7 @@ Server start
                      ┌───────────────────────────────────┐
                      │ list_accessible_projects   ✅     │
                      │ add_project_to_session     ✅     │
-                     │ All project-scoped tools   ❌ 403 │
+                     │ All project-scoped tools   ❌ ToolError │
                      └───────────────────────────────────┘
                                      │
                        add_project_to_session(A)
@@ -405,7 +422,7 @@ Server start
                      [idle > 24 h without any tool call]
                                      ▼
                              Token refresh stops
-                             Next tool call → 401 "Session expired"
+                             Next tool call → ToolError "Session expired"
 ```
 
 ---
@@ -428,13 +445,13 @@ When `auth_mode == "programmatic"` the system prompt must include:
 
 ## Open Questions
 
-1. **Management API base URL** — Is `manage.keboola.com` the right host for listing projects
-   and generating PATs, or is it the same `connection.<region>.keboola.com`? May need a new
-   `--management-api-url` CLI arg.
+1. **Management API base URL** — `list_accessible_projects` still needs to call a Management
+   API endpoint to enumerate projects. Is `manage.keboola.com` the right host, or is it the
+   same `connection.<region>.keboola.com`? May need a new `--management-api-url` CLI arg.
 
 2. **Multiple PATs at startup** — Should the server accept multiple `--pat-token` args (one
-   per project, all registered at startup)? Deferred — single PAT + programmatic token is
-   the primary multi-project path.
+   per project, all registered at startup)? Deferred — programmatic token is the primary
+   multi-project path.
 
 3. **Branch support** — In multi-project mode, does each project get an independent branch
    setting, or is `branch_id` also a per-tool parameter alongside `project_id`?
