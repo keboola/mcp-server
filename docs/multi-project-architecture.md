@@ -140,7 +140,7 @@ class ProjectEntry:
     project_name: str
     region: str
     storage_api_url: str
-    sapi_client: KeboolaClient      # created with the programmatic token
+    sapi_client: KeboolaClient      # credential depends on auth_mode (programmatic token / PAT / OAuth)
     workspace_manager: WorkspaceManager
     added_at: datetime
 
@@ -231,7 +231,8 @@ conversation history; natural for cross-project reasoning ("compare tables in A 
 multi-project mode with exactly one project registered, `project_id` may be made optional
 — the helper defaults to the only active project. When two or more projects are active and
 `project_id` is omitted, the call raises a `ToolError` explaining the ambiguity. This
-preserves existing single-project prompts without modification.
+preserves existing single-project prompts without modification. See the `from_project`
+helper in the Tool Signature Changes section for the full implementation.
 
 ---
 
@@ -242,8 +243,17 @@ preserves existing single-project prompts without modification.
 ```python
 # In KeboolaClient
 @classmethod
-def from_project(cls, state: dict, project_id: str) -> 'KeboolaClient':
+def from_project(cls, state: dict, project_id: str | None = None) -> 'KeboolaClient':
     registry = state.get("project_registry", {})
+    if project_id is None:
+        if len(registry) == 1:
+            project_id = next(iter(registry))
+        elif len(registry) == 0:
+            raise ToolError("No project is active. Call add_project_to_session first.")
+        else:
+            raise ToolError(
+                "Multiple projects are active. Specify project_id explicitly."
+            )
     if project_id not in registry:
         raise ToolError(
             f"Project '{project_id}' is not active in this session. "
@@ -294,7 +304,7 @@ Returns:  list of { project_id, project_name, region, storage_api_url }
 
 Error if auth_mode != "programmatic":
   "list_accessible_projects requires a programmatic token.
-   In PAT / OAuth / storage-token mode the project is already active —
+   In PAT / OAuth / Storage Token mode the project is already active —
    call get_project_info instead."
 ```
 
@@ -445,9 +455,12 @@ When `auth_mode == "programmatic"` the system prompt must include:
 
 ## Open Questions
 
-1. **Management API base URL** — `list_accessible_projects` still needs to call a Management
-   API endpoint to enumerate projects. Is `manage.keboola.com` the right host, or is it the
-   same `connection.<region>.keboola.com`? May need a new `--management-api-url` CLI arg.
+1. **Management API base URL and caching** — At startup (programmatic mode) the server calls
+   the Management API once to enumerate accessible projects and caches the result in session
+   state. `list_accessible_projects` returns from that cache — it does **not** re-call the
+   API on each invocation. Staleness is acceptable for the session lifetime (a restart picks
+   up any new projects). Confirm whether the endpoint is on `manage.keboola.com` or on the
+   same `connection.<region>.keboola.com` host; may need a new `--management-api-url` CLI arg.
 
 2. **Multiple PATs at startup** — Should the server accept multiple `--pat-token` args (one
    per project, all registered at startup)? Deferred — programmatic token is the primary
