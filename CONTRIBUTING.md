@@ -10,18 +10,22 @@ See [CLAUDE.md](CLAUDE.md) for the full git workflow, versioning rules, and test
 
 ## RFC Requirement
 
-**Any PR that adds or changes more than ~200 lines of non-test code requires an RFC to be approved before implementation begins.**
-PRs without an RFC will not be accepted when they exceed this threshold.
+Some changes need design agreement before implementation starts. The signal is the **nature** of the change, not the line count — a new function parameter with many test cases is fine without an RFC; a new tool with two lines of glue code is not.
 
 ### When an RFC is required
 
 | Change type | RFC required? |
 |---|---|
-| New feature ≥ 200 lines | **Yes** |
-| Significant refactor ≥ 200 lines | **Yes** |
+| New MCP tool | **Yes** |
+| New end-to-end behavior or data flow | **Yes** |
+| New architectural concept (new client, new session model, new transport layer) | **Yes** |
+| Fully new functionality with no existing hook to extend | **Yes** |
 | Bug fix (any size) | No |
-| Small enhancement / existing code | No |
+| Refactoring (no behavior change) | No |
+| Enhancement to existing tool / function (new param, extended response) | No |
 | Docs, tests, chores | No |
+
+If you are unsure, ask in the Linear issue before starting. The cost of a short RFC is low; the cost of reworking a merged implementation is high.
 
 ### Writing an RFC
 
