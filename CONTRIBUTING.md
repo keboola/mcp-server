@@ -4,6 +4,7 @@
 
 Check the [Linear board](https://linear.app/keboola) for an existing issue, or create one.
 Branch names must start with the Linear issue ID (e.g. `AI-1234-short-description`).
+Exception: release branches use `release/vX.Y.Z` and do not require a Linear issue ID.
 See [CLAUDE.md](CLAUDE.md) for the full git workflow, versioning rules, and testing setup.
 
 ---
@@ -15,7 +16,7 @@ Some changes need design agreement before implementation starts. The signal is t
 ### When an RFC is required
 
 | Change type | RFC required? |
-|---|---|
+| --- | --- |
 | New MCP tool | **Yes** |
 | New end-to-end behavior or data flow | **Yes** |
 | New architectural concept (new client, new session model, new transport layer) | **Yes** |
@@ -118,7 +119,7 @@ addressed before requesting review.
 - [ ] Regression test added that reproduces the bug
 - [ ] E2E scenario described in PR description (wrong behavior → correct behavior)
 
-### Large features (≥ 200 lines)
+### Features requiring an RFC
 
 - [ ] RFC in `feature_spec/<feature-name>/RFC.md` reviewed and agreed on **before** this PR
 - [ ] RFC linked in the PR description
