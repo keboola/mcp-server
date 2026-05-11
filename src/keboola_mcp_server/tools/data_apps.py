@@ -57,6 +57,13 @@ def add_data_app_tools(mcp: FastMCP) -> None:
             annotations=ToolAnnotations(destructiveHint=False),
         )
     )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_git_data_app,
+            tags={DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
+        )
+    )
     LOG.info('Data app tools initialized.')
 
 
@@ -66,7 +73,7 @@ State = Literal['created', 'running', 'stopped', 'starting', 'stopping', 'restar
 # LLM agent can still understand the state of the data app even if it is different from the known states
 SafeState = Union[State, str]
 # Type of the data app
-Type = Literal['streamlit']
+Type = Literal['streamlit', 'python-js']
 # Accepts known types or any string preventing from validation errors when receiving unknown types from the API
 # LLM agent can still understand the type of the data app even if it is different from the known types
 SafeType = Union[Type, str]
@@ -570,6 +577,228 @@ async def deploy_data_app(
         return DeploymentDataAppOutput(state=data_app.state, links=links, deployment_info=None)
     else:
         raise ValueError(f'Invalid action: {action}')
+
+
+GIT_DATA_APP_TYPE = 'python-js'
+
+
+class CreateGitDataAppOutput(BaseModel):
+    """Output of the create_git_data_app tool."""
+
+    response: str = Field(description='The response of the action performed with potential additional information.')
+    change_summary: Optional[str] = Field(default=None, description='Additional notes or hints about the operation.')
+    data_app: DataAppSummary = Field(description='The data app.')
+    links: list[Link] = Field(description='Navigation links for the web interface.')
+
+
+@tool_errors()
+async def create_git_data_app(
+    ctx: Context,
+    name: Annotated[str, Field(description='Name of the data app (max ~50 chars to fit DNS label limit).')],
+    description: Annotated[str, Field(description='Description of the data app.')],
+    git_repo: Annotated[
+        str,
+        Field(
+            description=(
+                'Full URL of the git repository containing the data app source code. '
+                'Use HTTPS URL (e.g. https://github.com/org/repo) for username/PAT auth, '
+                'or SSH URL (e.g. git@github.com:org/repo.git) for SSH key auth.'
+            )
+        ),
+    ],
+    git_branch: Annotated[str, Field(description='Git branch to deploy (default: "main").')] = 'main',
+    git_username: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                'Git username for HTTPS private repositories. '
+                'Required when git_pat is provided. Leave empty for public repos or SSH auth.'
+            )
+        ),
+    ] = None,
+    git_pat: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                'Plaintext GitHub Personal Access Token for HTTPS private repositories. '
+                'The tool encrypts it automatically before storing — never pass a pre-encrypted value. '
+                'Leave empty for public repos or SSH auth.'
+            )
+        ),
+    ] = None,
+    git_ssh_key: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                'Plaintext SSH private key for private repositories accessed via SSH URL. '
+                'The tool encrypts it automatically before storing — never pass a pre-encrypted value. '
+                'Leave empty for public repos or HTTPS auth.'
+            )
+        ),
+    ] = None,
+    authentication_type: Annotated[
+        AuthenticationType,
+        Field(
+            description=(
+                'Authentication type for the data app UI: "no-auth" removes authentication completely, '
+                '"basic-auth" secures the app with HTTP basic authentication, '
+                '"default" keeps the existing authentication type when updating.'
+            )
+        ),
+    ] = 'basic-auth',
+    configuration_id: Annotated[
+        str, Field(description='The ID of an existing data app configuration when updating, otherwise empty string.')
+    ] = '',
+    change_description: Annotated[
+        str,
+        Field(description='Description of the change when updating (e.g. "Update git branch"), otherwise empty.'),
+    ] = '',
+    folder: Annotated[
+        Optional[str],
+        Field(description=folder_field_description('data app', 'data apps')),
+    ] = None,
+) -> CreateGitDataAppOutput:
+    """Creates or updates a git-backed JS/TypeScript data app deployed from a git repository.
+
+    Use this tool when the data app source code lives in a git repository (JS/TypeScript, Node.js,
+    React, etc.) rather than being provided as inline Python/Streamlit code.
+
+    Considerations:
+    - After creating or updating, ALWAYS call `deploy_data_app(action="deploy", configuration_id=...)`
+      to start or restart the app so changes take effect.
+    - For public repositories, omit git_username, git_pat, and git_ssh_key.
+    - For HTTPS private repositories, provide git_username and git_pat (plaintext — encrypted automatically).
+    - For SSH private repositories, use an SSH git_repo URL and provide git_ssh_key (plaintext — encrypted
+      automatically). Do not provide git_username or git_pat in this case.
+    - git_pat and git_ssh_key are mutually exclusive.
+    - New apps use HTTP basic authentication by default for security; set authentication_type to "default"
+      when updating to preserve the existing authentication configuration.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
+    project_id = await client.storage_client.project_id()
+
+    config = _build_git_data_app_config(
+        name=name,
+        git_repo=git_repo,
+        git_branch=git_branch,
+        git_username=git_username,
+        git_pat=git_pat,
+        git_ssh_key=git_ssh_key,
+        authentication_type=authentication_type,
+    )
+    config = cast(
+        dict[str, Any],
+        await client.encryption_client.encrypt(config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id),
+    )
+
+    if configuration_id:
+        await client.storage_client.configuration_update(
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            configuration=config,
+            change_description=change_description or 'Update git data app',
+            updated_name=name,
+            updated_description=description,
+        )
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        await set_cfg_update_metadata(
+            client=client,
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            configuration_version=int(data_app.config_version),
+        )
+        folder_hint = await apply_folder_metadata(
+            client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'create_git_data_app'
+        )
+        links = links_manager.get_data_app_links(
+            configuration_id=data_app.configuration_id,
+            configuration_name=name,
+            deployment_link=data_app.deployment_url,
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
+        )
+        response = (
+            'updated (redeploy required to apply changes in the running app)'
+            if data_app.state in ('running', 'starting')
+            else 'updated'
+        )
+        return CreateGitDataAppOutput(
+            response=response,
+            change_summary=folder_hint,
+            data_app=DataAppSummary.model_validate(data_app.model_dump()),
+            links=links,
+        )
+    else:
+        data_app_resp = await client.data_science_client.create_data_app_from_config(
+            name=name,
+            description=description,
+            config=config,
+            app_type=GIT_DATA_APP_TYPE,
+        )
+        await set_cfg_creation_metadata(
+            client=client,
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=data_app_resp.config_id,
+        )
+        folder_hint = await apply_folder_metadata(
+            client,
+            DATA_APP_COMPONENT_ID,
+            data_app_resp.config_id,
+            folder,
+            'data apps',
+            'create_git_data_app',
+            is_new=True,
+        )
+        uses_basic_auth = authentication_type == 'basic-auth'
+        links = links_manager.get_data_app_links(
+            configuration_id=data_app_resp.config_id,
+            configuration_name=name,
+            deployment_link=data_app_resp.url,
+            uses_basic_authentication=uses_basic_auth,
+        )
+        return CreateGitDataAppOutput(
+            response='created',
+            change_summary=folder_hint,
+            data_app=DataAppSummary.from_api_response(data_app_resp),
+            links=links,
+        )
+
+
+def _build_git_data_app_config(
+    name: str,
+    git_repo: str,
+    git_branch: str,
+    git_username: Optional[str],
+    git_pat: Optional[str],
+    git_ssh_key: Optional[str],
+    authentication_type: AuthenticationType,
+) -> dict[str, Any]:
+    """Build the Storage config dict for a git-backed data app.
+
+    Keys prefixed with '#' are encrypted by the caller via the Encryption API.
+    """
+    slug = _get_data_app_slug(name) or 'data-app'
+    git_block: dict[str, Any] = {
+        'repository': git_repo,
+        'branch': git_branch,
+    }
+    if git_username:
+        git_block['username'] = git_username
+    if git_pat:
+        git_block['#password'] = git_pat
+    if git_ssh_key:
+        git_block['#sshPrivateKey'] = git_ssh_key
+
+    parameters: dict[str, Any] = {
+        'size': 'tiny',
+        'autoSuspendAfterSeconds': 900,
+        'dataApp': {
+            'slug': slug,
+            'git': git_block,
+        },
+    }
+    authorization = _get_authorization(authentication_type == 'basic-auth')
+    return {'parameters': parameters, 'authorization': authorization}
 
 
 def _build_data_app_config(

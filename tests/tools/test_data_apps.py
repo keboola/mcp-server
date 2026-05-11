@@ -13,12 +13,15 @@ from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
     _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
     _STORAGE_QUERY_DATA_FUNCTION_CODE,
+    GIT_DATA_APP_TYPE,
     MAX_DNS_LABEL_LENGTH,
+    CreateGitDataAppOutput,
     DataApp,
     DataAppSlugTooLongError,
     DataAppSummary,
     ModifiedDataAppOutput,
     _build_data_app_config,
+    _build_git_data_app_config,
     _fetch_data_app,
     _get_authorization,
     _get_data_app_slug,
@@ -27,6 +30,7 @@ from keboola_mcp_server.tools.data_apps import (
     _inject_query_to_source_code,
     _update_existing_data_app_config,
     _uses_basic_authentication,
+    create_git_data_app,
     deploy_data_app,
     get_data_apps,
     modify_data_app,
@@ -770,3 +774,224 @@ async def test_modify_data_app_folder(
         assert str(app_count) in result.change_summary
     else:
         assert result.change_summary is None
+
+
+# ---------------------------------------------------------------------------
+# _build_git_data_app_config unit tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ('git_username', 'git_pat', 'git_ssh_key', 'expected_keys'),
+    [
+        pytest.param(None, None, None, [], id='public_repo'),
+        pytest.param('alice', 'ghp_tok', None, ['username', '#password'], id='https_private_pat'),
+        pytest.param(None, None, '-----BEGIN...', ['#sshPrivateKey'], id='ssh_private_key'),
+    ],
+)
+def test_build_git_data_app_config(
+    git_username: str | None,
+    git_pat: str | None,
+    git_ssh_key: str | None,
+    expected_keys: list[str],
+) -> None:
+    config = _build_git_data_app_config(
+        name='My Dashboard',
+        git_repo='https://github.com/org/repo',
+        git_branch='main',
+        git_username=git_username,
+        git_pat=git_pat,
+        git_ssh_key=git_ssh_key,
+        authentication_type='basic-auth',
+    )
+    git_block = config['parameters']['dataApp']['git']
+    assert git_block['repository'] == 'https://github.com/org/repo'
+    assert git_block['branch'] == 'main'
+    for key in expected_keys:
+        assert key in git_block
+    # Only the expected keys (plus repository + branch) should be present
+    extra_keys = set(git_block.keys()) - {'repository', 'branch'} - set(expected_keys)
+    assert not extra_keys, f'Unexpected keys in git block: {extra_keys}'
+
+
+def test_build_git_data_app_config_auth_basic() -> None:
+    config = _build_git_data_app_config(
+        name='App',
+        git_repo='https://github.com/org/repo',
+        git_branch='main',
+        git_username=None,
+        git_pat=None,
+        git_ssh_key=None,
+        authentication_type='basic-auth',
+    )
+    assert _uses_basic_authentication(config['authorization']) is True
+
+
+def test_build_git_data_app_config_auth_no_auth() -> None:
+    config = _build_git_data_app_config(
+        name='App',
+        git_repo='https://github.com/org/repo',
+        git_branch='main',
+        git_username=None,
+        git_pat=None,
+        git_ssh_key=None,
+        authentication_type='no-auth',
+    )
+    assert _uses_basic_authentication(config['authorization']) is False
+
+
+# ---------------------------------------------------------------------------
+# create_git_data_app integration tests
+# ---------------------------------------------------------------------------
+
+
+def _make_encrypted_git_config() -> dict:
+    return {
+        'parameters': {
+            'dataApp': {'slug': 'my-dashboard', 'git': {'repository': 'https://github.com/org/repo', 'branch': 'main'}},
+            'size': 'tiny',
+            'autoSuspendAfterSeconds': 900,
+        },
+        'authorization': {'app_proxy': {'auth_providers': [], 'auth_rules': []}},
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('git_username', 'git_pat', 'git_ssh_key', 'plaintext_secret_key'),
+    [
+        pytest.param(None, None, None, None, id='public_repo'),
+        pytest.param('alice', 'ghp_tok', None, '#password', id='https_private'),
+        pytest.param(None, None, '-----BEGIN RSA PRIVATE KEY-----', '#sshPrivateKey', id='ssh_private'),
+    ],
+)
+async def test_create_git_data_app_create_path(
+    mocker,
+    mcp_context_client: Context,
+    git_username: str | None,
+    git_pat: str | None,
+    git_ssh_key: str | None,
+    plaintext_secret_key: str | None,
+) -> None:
+    """create_git_data_app create path: encryption called with plaintext secrets, DS API called with python-js type."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+
+    encrypted_config = _make_encrypted_git_config()
+
+    # Track what the encryption client receives
+    received_configs: list[dict] = []
+
+    async def capture_encrypt(value, **_kwargs):
+        received_configs.append(value)
+        return encrypted_config
+
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = capture_encrypt
+
+    data_app_response = _make_data_app_response(config_id='new-cfg-1')
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.create_data_app_from_config = mocker.AsyncMock(return_value=data_app_response)
+
+    mocker.patch(
+        'keboola_mcp_server.tools.components.utils.get_config_folders',
+        mocker.AsyncMock(return_value=(0, [], False)),
+    )
+
+    result = await create_git_data_app(
+        ctx=mcp_context_client,
+        name='My Dashboard',
+        description='desc',
+        git_repo='https://github.com/org/repo',
+        git_branch='main',
+        git_username=git_username,
+        git_pat=git_pat,
+        git_ssh_key=git_ssh_key,
+        authentication_type='basic-auth',
+    )
+
+    assert isinstance(result, CreateGitDataAppOutput)
+    assert result.response == 'created'
+
+    # Encryption must have been called exactly once
+    assert len(received_configs) == 1
+    sent_config = received_configs[0]
+
+    if plaintext_secret_key:
+        # The plaintext credential must appear in the pre-encryption config
+        assert sent_config['parameters']['dataApp']['git'][plaintext_secret_key] in (
+            git_pat,
+            git_ssh_key,
+        )
+
+    # DS API must be called with the python-js type
+    keboola_client.data_science_client.create_data_app_from_config.assert_called_once()
+    call_kwargs = keboola_client.data_science_client.create_data_app_from_config.call_args.kwargs
+    assert call_kwargs['app_type'] == GIT_DATA_APP_TYPE
+
+
+@pytest.mark.asyncio
+async def test_create_git_data_app_update_path(
+    mocker,
+    mcp_context_client: Context,
+    data_app: DataApp,
+) -> None:
+    """create_git_data_app update path: storage config_update called, DS API create_data_app_from_config not called."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+
+    encrypted_config = _make_encrypted_git_config()
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = mocker.AsyncMock(return_value=encrypted_config)
+
+    data_app.configuration_id = 'cfg-existing'
+    data_app.config_version = '3'
+    data_app.state = 'stopped'
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', return_value=data_app)
+
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    mocker.patch(
+        'keboola_mcp_server.tools.components.utils.get_config_folders',
+        mocker.AsyncMock(return_value=(0, [], False)),
+    )
+
+    result = await create_git_data_app(
+        ctx=mcp_context_client,
+        name='My Dashboard',
+        description='desc',
+        git_repo='https://github.com/org/repo',
+        git_branch='main',
+        authentication_type='default',
+        configuration_id='cfg-existing',
+        change_description='Update branch',
+    )
+
+    assert isinstance(result, CreateGitDataAppOutput)
+    assert result.response == 'updated'
+    keboola_client.storage_client.configuration_update.assert_called_once()
+    keboola_client.data_science_client.create_data_app_from_config.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_git_data_app_slug_too_long(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """create_git_data_app raises DataAppSlugTooLongError for names that exceed the DNS label limit."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = mocker.AsyncMock(return_value={})
+
+    with pytest.raises(DataAppSlugTooLongError):
+        await create_git_data_app(
+            ctx=mcp_context_client,
+            name='a' * (MAX_DNS_LABEL_LENGTH + 1),
+            description='desc',
+            git_repo='https://github.com/org/repo',
+            authentication_type='no-auth',
+        )

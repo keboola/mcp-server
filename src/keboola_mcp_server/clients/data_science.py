@@ -196,20 +196,47 @@ class DataScienceClient(KeboolaServiceClient):
         name: str,
         description: str,
         configuration: DataAppConfig,
+        app_type: str = 'streamlit',
     ) -> DataAppResponse:
         """
         Create a data app from a simplified config used in the MCP server.
         :param name: The name of the data app
         :param description: The description of the data app
         :param configuration: The simplified configuration of the data app
+        :param app_type: The type of the data app (e.g. 'streamlit', 'python-js')
         :return: The data app
         """
         data = {
             'branchId': self._branch_id,
             'name': name,
-            'type': 'streamlit',
+            'type': app_type,
             'description': description,
             'config': configuration.model_dump(exclude_none=True, by_alias=True),
+        }
+        response = await self.post(endpoint='apps', data=data)
+        return DataAppResponse.model_validate(response)
+
+    async def create_data_app_from_config(
+        self,
+        name: str,
+        description: str,
+        config: dict[str, Any],
+        app_type: str,
+    ) -> DataAppResponse:
+        """
+        Create a data app from a raw config dict (used for git-backed apps).
+        :param name: The name of the data app
+        :param description: The description of the data app
+        :param config: The raw configuration dict (already encrypted)
+        :param app_type: The type of the data app (e.g. 'python-js')
+        :return: The data app
+        """
+        data: dict[str, Any] = {
+            'branchId': self._branch_id,
+            'name': name,
+            'type': app_type,
+            'description': description,
+            'config': config,
         }
         response = await self.post(endpoint='apps', data=data)
         return DataAppResponse.model_validate(response)
