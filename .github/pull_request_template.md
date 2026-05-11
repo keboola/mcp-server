@@ -27,5 +27,5 @@ Describe what has changed and why.
 - [ ] Self-review completed
 - [ ] Unit tests added/updated (if applicable)
 - [ ] Integration tests added/updated (if applicable)
-- [ ] Project version bumped according to the change type (if applicable)
+- [ ] Project version bumped according to the change type
 - [ ] Documentation updated (if applicable)

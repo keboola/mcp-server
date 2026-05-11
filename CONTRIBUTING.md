@@ -92,7 +92,7 @@ Without a regression test the bug is likely to resurface silently.
 
 These apply to all change types:
 
-- Run `tox` before pushing. CI runs the same checks (pytest, black, flake8,
+- Run `tox` before pushing. CI runs the same checks (pytest, black, isort, flake8,
   check-tools-docs) and will fail if any of them fail.
 - Declare `@pytest.mark.parametrize` parameter names as a tuple of strings, not a
   comma-separated string (e.g. `('a', 'b')` not `'a, b'`).
@@ -111,7 +111,7 @@ addressed before requesting review.
 - [ ] Commit messages start with the Linear issue ID
 - [ ] `pyproject.toml` version bumped (patch / minor / major per CLAUDE.md)
 - [ ] `uv.lock` synced (`uv lock`)
-- [ ] `tox` passes locally (pytest + black + flake8 + check-tools-docs)
+- [ ] `tox` passes locally (pytest + black + isort + flake8 + check-tools-docs)
 - [ ] Self-review completed
 
 ### Bug fixes
