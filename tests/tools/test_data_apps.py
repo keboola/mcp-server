@@ -785,8 +785,8 @@ async def test_modify_data_app_folder(
     ('git_username', 'git_pat', 'git_ssh_key', 'expected_keys'),
     [
         pytest.param(None, None, None, [], id='public_repo'),
-        pytest.param('alice', 'ghp_tok', None, ['username', '#password'], id='https_private_pat'),
-        pytest.param(None, None, '-----BEGIN...', ['#sshPrivateKey'], id='ssh_private_key'),
+        pytest.param('alice', 'ghp_tok', None, ['private', 'username', '#password'], id='https_private_pat'),
+        pytest.param(None, None, '-----BEGIN...', ['private', '#sshPrivateKey'], id='ssh_private_key'),
     ],
 )
 def test_build_git_data_app_config(
@@ -918,12 +918,13 @@ async def test_create_git_data_app_create_path(
     assert len(received_configs) == 1
     sent_config = received_configs[0]
 
+    git_block = sent_config['parameters']['dataApp']['git']
     if plaintext_secret_key:
         # The plaintext credential must appear in the pre-encryption config
-        assert sent_config['parameters']['dataApp']['git'][plaintext_secret_key] in (
-            git_pat,
-            git_ssh_key,
-        )
+        assert git_block[plaintext_secret_key] in (git_pat, git_ssh_key)
+        assert git_block.get('private') is True
+    else:
+        assert 'private' not in git_block
 
     # DS API must be called with the python-js type
     keboola_client.data_science_client.create_data_app_from_config.assert_called_once()

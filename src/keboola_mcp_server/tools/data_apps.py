@@ -782,6 +782,8 @@ def _build_git_data_app_config(
         'repository': git_repo,
         'branch': git_branch,
     }
+    if git_pat or git_ssh_key:
+        git_block['private'] = True
     if git_username:
         git_block['username'] = git_username
     if git_pat:

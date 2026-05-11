@@ -89,34 +89,135 @@ names, and dashboard requirements so the sub-skill generates appropriate code.
 | `hono-data-app` | Hono (lightweight edge-ready Node.js) |
 | _(none matched)_ | Generate code directly based on requirements |
 
-If no sub-skill matches the user's preference, generate the JS/TypeScript code
-directly. Aim for the simplest structure that meets the requirements:
-- Minimal dependencies (CDN preferred over npm install for libraries)
-- A working `setup.sh` and a clear entry point
-- nginx or Node.js to serve the app on the Keboola platform port
+If no sub-skill matches the user's preference, generate the JS/TypeScript code directly.
+
+### Required repo structure for Keboola `python-js` data apps
+
+Reference: https://help.keboola.com/data-apps/python-js/#step-3---create-the-keboola-config-folder
+
+```
+repo/
+├── keboola-config/
+│   ├── setup.sh                          ← install (+ build for static apps)
+│   ├── nginx/
+│   │   └── sites/
+│   │       └── default.conf             ← reverse proxy to 127.0.0.1:<app-port>
+│   └── supervisord/
+│       └── services/
+│           └── app.conf                 ← long-running app process
+├── package.json                         ← include "serve" in dependencies for static apps
+└── src/
+```
+
+**`keboola-config/setup.sh`** — runs once at container start, before the app launches.
+Install deps here; also run the build step for static Vite/React apps.
+Always `cd /app` first (default working dir is `/home/app`).
+Use `set -Eeuo pipefail` (stricter than `set -e`):
+
+```bash
+# Node.js app (install only)
+#!/bin/bash
+set -Eeuo pipefail
+cd /app && npm install
+
+# Vite/React static app (install + build)
+#!/bin/bash
+set -Eeuo pipefail
+cd /app && npm install && npm run build
+```
+
+**`keboola-config/supervisord/services/app.conf`** — defines the long-running process
+that supervisord keeps alive. For a static Vite app served via `serve`:
+
+```ini
+[program:app]
+command=node /app/node_modules/.bin/serve -s /app/dist -l 5000
+directory=/app
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+```
+
+For a Node.js server (`server.js` listening on port 5000):
+
+```ini
+[program:app]
+command=node /app/server.js
+directory=/app
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+```
+
+**`keboola-config/nginx/sites/default.conf`** — nginx runs as non-root and acts as a
+**reverse proxy** to the app on localhost. Port must be >= 1024; use **8888**:
+
+```nginx
+server {
+    listen 8888;
+    server_name _;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+For apps with WebSockets (Dash, live-updating content), add inside the `location /` block:
+
+```nginx
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+```
 
 ---
 
 ## Step 5 — GitHub repo setup and code push (new repo path only)
 
 ```bash
-# Create the repo in the user's org
-gh repo create <org>/<repo-name> --public/--private --clone --description "<description>"
+# 1. Create the remote repo (no --clone; we init locally instead)
+gh repo create <org>/<repo-name> --public/--private --description "<description>"
 
-# cd into the cloned repo, copy generated files
-cd <repo-name>
-# ... write all generated files ...
+# 2. Write all generated files into a temp directory
+mkdir -p /tmp/<repo-name>
+# ... write all files (Write tool) ...
 
-# Stage, commit, push
+# 3. Init, stage, and commit locally
+cd /tmp/<repo-name>
+git init
 git add .
 git commit -m "Initial dashboard scaffold"
-git push origin main
+
+# 4. Push — use a temporary .netrc for HTTPS PAT auth (never pass token in URL)
+printf 'machine github.com login %s password %s\n' "<username>" "<pat>" \
+  > /tmp/.ghcreds && chmod 600 /tmp/.ghcreds
+GIT_CONFIG_COUNT=1 \
+  GIT_CONFIG_KEY_0=credential.helper \
+  GIT_CONFIG_VALUE_0="store --file /tmp/.ghcreds" \
+  git remote add origin https://github.com/<org>/<repo-name>.git
+git push -u origin main
+rm -f /tmp/.ghcreds   # discard immediately after push
 ```
+
+For SSH push, write the key to a temp file (`chmod 600`), add to `ssh-agent`, push, then
+remove the file.
 
 ### Credential safety rules
 
 - **Never** pass PATs or SSH keys as plain shell arguments (no `echo "ghp_..."` or `git clone https://user:token@...`).
-- For HTTPS push with a PAT, configure via `gh auth` or a one-time `.netrc` entry before pushing.
+- For HTTPS push with a PAT, use a temporary `.netrc` / `credential.helper store` file as shown above — delete it right after pushing.
 - For SSH push, use `ssh-agent` or write the key to a temp file with restricted permissions,
   add to agent, then delete the file after the push.
 - After the push is done, **discard** the credential — do not store or log it anywhere.
@@ -172,6 +273,16 @@ different branch", etc.:
 2. Call `create_git_data_app` with the same `configuration_id` and the changed params
 3. Call `deploy_data_app(action="deploy", configuration_id=...)` to apply changes
 
+## Redeploying after a git push
+
+When new code is pushed to the repo (bug fix, UI change, etc.) **without** changing the
+Keboola configuration, skip `create_git_data_app` and call `deploy_data_app` directly —
+the platform re-clones the repo and rebuilds on every deploy:
+
+```
+deploy_data_app(action="deploy", configuration_id=<existing id>)
+```
+
 ---
 
 ## CRITICAL RULES
@@ -179,20 +290,28 @@ different branch", etc.:
 1. **Always call `deploy_data_app` after `create_git_data_app`** — without it the app
    will not start (or the updated config won't take effect for running apps).
 
-2. **Never handle encryption yourself.** The `create_git_data_app` MCP tool encrypts
+2. **Always call `deploy_data_app` after a `git push`** — pushing code does not
+   automatically restart the app. The platform re-clones and rebuilds only on deploy.
+
+3. **Never handle encryption yourself.** The `create_git_data_app` MCP tool encrypts
    all credentials via the project's KMS. Pass plaintext values; the tool does the rest.
 
-3. **Credentials are session-only.** Do not write PATs or SSH keys to disk, memory files,
+4. **Credentials are session-only.** Do not write PATs or SSH keys to disk, memory files,
    or any persistent location. Use them only for the git push in Step 5, then discard.
 
-4. **SSH URL format**: `git@github.com:org/repo.git` — not HTTPS.
+5. **SSH URL format**: `git@github.com:org/repo.git` — not HTTPS.
    HTTPS URL format: `https://github.com/org/repo` — not SSH.
 
-5. **Explore before generating.** Always run Step 2 (data exploration) before writing
+6. **Explore before generating.** Always run Step 2 (data exploration) before writing
    any code. Generating code without knowing the actual column names leads to bugs.
 
-6. **One prompt for credentials.** Collect username, PAT/SSH key, org, and repo name
+7. **One prompt for credentials.** Collect username, PAT/SSH key, org, and repo name
    in a single prompt — do not ask for them one at a time.
+
+8. **`setup.sh` is for install/build only** — it lives in `keboola-config/setup.sh`, not
+   the repo root. Never start a server there. The long-running process goes in
+   `keboola-config/supervisord/services/app.conf`. nginx (port 8888) reverse-proxies to it.
+   Always `cd /app` first — npm's default working dir is `/home/app`.
 
 ---
 
@@ -208,8 +327,8 @@ Skill Step 2: search("snowflake") → find output tables → query_data(LIMIT 10
 Skill Step 3: "New or existing repo? Public or private?"
               → User: "New, private, org=acme, name=revenue-dashboard, PAT=ghp_..."
 Skill Step 4: invoke vite-data-app sub-skill (or generate directly) with schema context
-Skill Step 5: gh repo create acme/revenue-dashboard --private --clone
-              → push generated code
+Skill Step 5: gh repo create acme/revenue-dashboard --private
+              → write files to /tmp/revenue-dashboard, git init, push via temp .netrc
 Skill Step 6: create_git_data_app(name="Revenue Dashboard",
                                    git_repo="https://github.com/acme/revenue-dashboard",
                                    git_username="acme-bot", git_pat="ghp_...")
