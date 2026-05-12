@@ -244,6 +244,9 @@ class ConfigurationRoot(BaseModel):
         default=None, description='The processors that run before or after the configured component.'
     )
     variables_id: Optional[str] = Field(default=None, description='ID of the linked keboola.variables configuration')
+    variables_values_id: Optional[str] = Field(
+        default=None, description='ID of the Default Values row in the linked keboola.variables configuration'
+    )
     variables: Optional[list[dict[str, Any]]] = Field(
         default=None, description='Variable definitions (keboola.variables configs only)'
     )
@@ -283,6 +286,7 @@ class ConfigurationRoot(BaseModel):
             storage=api_config.configuration.get('storage'),
             processors=api_config.configuration.get('processors'),
             variables_id=api_config.configuration.get('variables_id'),
+            variables_values_id=api_config.configuration.get('variables_values_id'),
             variables=api_config.configuration.get('variables'),
             configuration_metadata=api_config.metadata,
         )

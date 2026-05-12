@@ -2206,7 +2206,8 @@ async def test_create_sql_transformation_variables(
         )
     )
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=existing_vars_configs)
-    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    vars_link_version = 3
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={'version': vars_link_version})
     keboola_client.storage_client.configuration_row_create = mocker.AsyncMock(return_value={'id': _CREATED_ROW_ID})
     keboola_client.storage_client.configuration_row_update = mocker.AsyncMock(return_value={})
 
@@ -2293,6 +2294,14 @@ async def test_create_sql_transformation_variables(
         assert parent_update_calls[0].kwargs['configuration']['variables_values_id'] == expected_values_id
     else:
         assert 'variables_values_id' not in parent_update_calls[0].kwargs['configuration']
+
+    # Verify UPDATED_BY_MCP metadata is stamped with the version from the vars-link parent update.
+    updated_by_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{vars_link_version}'
+    metadata_calls = keboola_client.storage_client.configuration_metadata_update.call_args_list
+    updated_by_calls = [c for c in metadata_calls if c.kwargs.get('metadata', {}).get(updated_by_key) == 'true']
+    assert len(updated_by_calls) == 1
+    assert updated_by_calls[0].kwargs['component_id'] == SNOWFLAKE_TRANSFORMATION_ID
+    assert updated_by_calls[0].kwargs['configuration_id'] == _PARENT_CFG_ID
 
 
 @pytest.mark.parametrize(
@@ -2426,12 +2435,13 @@ async def test_create_config_variables(
     configuration = mock_configuration
     configuration['id'] = _PARENT_CFG_ID
 
+    vars_link_version = 3
     keboola_client.ai_service_client = mocker.MagicMock()
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=configuration)
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=existing_vars_configs)
-    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={'version': vars_link_version})
     keboola_client.storage_client.configuration_row_create = mocker.AsyncMock(return_value={})
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=_make_parent_config())
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
@@ -2455,6 +2465,12 @@ async def test_create_config_variables(
     if expect_vars_api_calls:
         assert len(vars_create_calls) == 1
         assert vars_create_calls[0].kwargs['configuration']['variables'][0]['name'] == variables[0].name
+        updated_by_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{vars_link_version}'
+        metadata_calls = keboola_client.storage_client.configuration_metadata_update.call_args_list
+        updated_by_calls = [c for c in metadata_calls if c.kwargs.get('metadata', {}).get(updated_by_key) == 'true']
+        assert len(updated_by_calls) == 1
+        assert updated_by_calls[0].kwargs['component_id'] == component_id
+        assert updated_by_calls[0].kwargs['configuration_id'] == _PARENT_CFG_ID
     else:
         assert not vars_create_calls
 

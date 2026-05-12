@@ -671,15 +671,17 @@ async def apply_configuration_variables(
     changed, vars_config_id_to_delete = await _apply_vars_to_parent_cfg(
         client, component_id, config_id, variables, parent_cfg
     )
-    if not changed:
+    if not changed and not vars_config_id_to_delete:
         return None
     change_description = 'Link variables' if variables else 'Unlink variables'
-    result = await client.storage_client.configuration_update(
-        component_id=component_id,
-        configuration_id=config_id,
-        configuration=parent_cfg,
-        change_description=change_description,
-    )
+    result = None
+    if changed:
+        result = await client.storage_client.configuration_update(
+            component_id=component_id,
+            configuration_id=config_id,
+            configuration=parent_cfg,
+            change_description=change_description,
+        )
     if vars_config_id_to_delete:
         await client.storage_client.configuration_delete(
             component_id=VARIABLES_COMPONENT_ID,

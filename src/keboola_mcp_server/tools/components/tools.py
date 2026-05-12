@@ -532,6 +532,8 @@ async def create_sql_transformation(
     vars_result = None
     if variables:
         vars_result = await apply_configuration_variables(client, component_id, configuration_id, variables)
+        if vars_result is not None:
+            await set_cfg_update_metadata(client, component_id, configuration_id, vars_result['version'])
 
     links = links_manager.get_transformation_links(
         transformation_type=component_id,
@@ -1203,6 +1205,8 @@ async def create_config(
     vars_result = None
     if variables:
         vars_result = await apply_configuration_variables(client, component_id, configuration_id, variables)
+        if vars_result is not None:
+            await set_cfg_update_metadata(client, component_id, configuration_id, vars_result['version'])
 
     links = links_manager.get_configuration_links(
         component_id=component_id, configuration_id=configuration_id, configuration_name=name
