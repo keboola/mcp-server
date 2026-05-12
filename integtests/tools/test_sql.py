@@ -51,7 +51,6 @@ async def test_query_data(mcp_context: Context):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=False, reason='Workspace query endpoint may be unreachable from CI environment')
 async def test_query_data_invalid_query(mcp_context: Context):
     """Tests that `query_data` properly handles invalid SQL queries."""
 
