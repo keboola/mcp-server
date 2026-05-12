@@ -2563,3 +2563,117 @@ async def test_update_config_variables(
         assert vars_delete_calls
         assert not vars_update_calls
         assert 'variables_id' not in main_cfg
+
+
+@pytest.mark.parametrize('has_linked_vars', [False, True], ids=['no-vars', 'with-vars'])
+@pytest.mark.asyncio
+async def test_update_sql_transformation_delete(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    has_linked_vars: bool,
+) -> None:
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    component = mock_component
+    component['id'] = SNOWFLAKE_TRANSFORMATION_ID
+    vars_config = {**_make_vars_config(), 'id': _VARS_CONFIG_ID}
+    parent_raw = _make_parent_config({'variables_id': _VARS_CONFIG_ID} if has_linked_vars else None)
+
+    async def detail_side_effect(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        cid = args[0] if args else kwargs.get('component_id')
+        return vars_config if cid == VARIABLES_COMPONENT_ID else parent_raw
+
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=detail_side_effect)
+    keboola_client.storage_client.configuration_delete = mocker.AsyncMock(return_value=None)
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(
+        return_value=[vars_config] if has_linked_vars else []
+    )
+
+    result = await update_sql_transformation(
+        ctx=context,
+        change_description='delete transformation',
+        configuration_id=_PARENT_CFG_ID,
+        delete=True,
+    )
+
+    assert result.success is True
+    assert result.version == parent_raw['version']
+    assert result.description == parent_raw['description']
+
+    def _cid(call: Any) -> str | None:
+        return call.args[0] if call.args else call.kwargs.get('component_id')
+
+    all_deletes = keboola_client.storage_client.configuration_delete.call_args_list
+    main_delete_calls = [c for c in all_deletes if _cid(c) == SNOWFLAKE_TRANSFORMATION_ID]
+    assert len(main_delete_calls) == 1
+
+    vars_delete_calls = [c for c in all_deletes if _cid(c) == VARIABLES_COMPONENT_ID]
+    if has_linked_vars:
+        assert len(vars_delete_calls) == 1
+        assert vars_delete_calls[0].kwargs.get('configuration_id') == _VARS_CONFIG_ID
+    else:
+        assert not vars_delete_calls
+
+
+@pytest.mark.parametrize('has_linked_vars', [False, True], ids=['no-vars', 'with-vars'])
+@pytest.mark.asyncio
+async def test_update_config_delete(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    has_linked_vars: bool,
+) -> None:
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    component_id = _GENERIC_COMPONENT_ID
+    component = mock_component
+    component['id'] = component_id
+    vars_config = {**_make_vars_config(component_id), 'id': _VARS_CONFIG_ID}
+    parent_raw = _make_parent_config({'variables_id': _VARS_CONFIG_ID} if has_linked_vars else None)
+
+    async def detail_side_effect(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        cid = args[0] if args else kwargs.get('component_id')
+        return vars_config if cid == VARIABLES_COMPONENT_ID else parent_raw
+
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=detail_side_effect)
+    keboola_client.storage_client.configuration_delete = mocker.AsyncMock(return_value=None)
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(
+        return_value=[vars_config] if has_linked_vars else []
+    )
+
+    result = await update_config(
+        ctx=context,
+        component_id=component_id,
+        configuration_id=_PARENT_CFG_ID,
+        change_description='delete config',
+        delete=True,
+    )
+
+    assert result.success is True
+    assert result.version == parent_raw['version']
+    assert result.description == parent_raw['description']
+
+    def _cid(call: Any) -> str | None:
+        return call.args[0] if call.args else call.kwargs.get('component_id')
+
+    all_deletes = keboola_client.storage_client.configuration_delete.call_args_list
+    main_delete_calls = [c for c in all_deletes if _cid(c) == component_id]
+    assert len(main_delete_calls) == 1
+
+    vars_delete_calls = [c for c in all_deletes if _cid(c) == VARIABLES_COMPONENT_ID]
+    if has_linked_vars:
+        assert len(vars_delete_calls) == 1
+        assert vars_delete_calls[0].kwargs.get('configuration_id') == _VARS_CONFIG_ID
+    else:
+        assert not vars_delete_calls

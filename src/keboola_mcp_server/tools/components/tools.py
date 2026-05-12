@@ -68,6 +68,7 @@ from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     FOLDER_SUPPORTING_COMPONENT_IDS,
     SNOWFLAKE_TRANSFORMATION_ID,
+    VARIABLES_COMPONENT_ID,
     _apply_vars_to_parent_cfg,
     _delete_linked_vars_config,
     add_ids,
@@ -859,14 +860,15 @@ async def update_sql_transformation(
 
     if delete:
         LOG.info(f'Deleting transformation "{configuration_id}" for component "{sql_transformation_id}".')
+        detail = await client.storage_client.configuration_detail(sql_transformation_id, configuration_id)
         await _delete_linked_vars_config(client, sql_transformation_id, configuration_id)
         await client.storage_client.configuration_delete(sql_transformation_id, configuration_id, skip_trash=True)
         LOG.info(f'Deleted transformation "{configuration_id}" for component "{sql_transformation_id}".')
         return ConfigToolOutput(
             component_id=sql_transformation_id,
             configuration_id=configuration_id,
-            description='',
-            version=0,
+            description=detail.get('description', ''),
+            version=detail.get('version', 0),
             timestamp=datetime.now(timezone.utc),
             success=True,
             links=[],
@@ -890,8 +892,9 @@ async def update_sql_transformation(
         storage=storage,
     )
 
+    vars_config_id_to_delete: str | None = None
     if variables is not None:
-        await _apply_vars_to_parent_cfg(
+        _, vars_config_id_to_delete = await _apply_vars_to_parent_cfg(
             client, sql_transformation_id, configuration_id, variables, updated_configuration
         )
 
@@ -903,6 +906,13 @@ async def update_sql_transformation(
         updated_name=name,
         updated_description=description,
     )
+
+    if vars_config_id_to_delete:
+        await client.storage_client.configuration_delete(
+            component_id=VARIABLES_COMPONENT_ID,
+            configuration_id=vars_config_id_to_delete,
+            skip_trash=True,
+        )
 
     folder_hint = None
     if folder is None:
@@ -1511,14 +1521,15 @@ async def update_config(
     if delete:
         check_suitable('update_config', component_id)
         LOG.info(f'Deleting configuration "{configuration_id}" for component "{component_id}".')
+        detail = await client.storage_client.configuration_detail(component_id, configuration_id)
         await _delete_linked_vars_config(client, component_id, configuration_id)
         await client.storage_client.configuration_delete(component_id, configuration_id, skip_trash=True)
         LOG.info(f'Deleted configuration "{configuration_id}" for component "{component_id}".')
         return ConfigToolOutput(
             component_id=component_id,
             configuration_id=configuration_id,
-            description='',
-            version=0,
+            description=detail.get('description', ''),
+            version=detail.get('version', 0),
             timestamp=datetime.now(timezone.utc),
             success=True,
             links=[],
@@ -1541,8 +1552,11 @@ async def update_config(
         processors_after=processors_after,
     )
 
+    vars_config_id_to_delete: str | None = None
     if variables is not None:
-        await _apply_vars_to_parent_cfg(client, component_id, configuration_id, variables, configuration_payload)
+        _, vars_config_id_to_delete = await _apply_vars_to_parent_cfg(
+            client, component_id, configuration_id, variables, configuration_payload
+        )
 
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=component_id,
@@ -1552,6 +1566,13 @@ async def update_config(
         updated_name=name,
         updated_description=description,
     )
+
+    if vars_config_id_to_delete:
+        await client.storage_client.configuration_delete(
+            component_id=VARIABLES_COMPONENT_ID,
+            configuration_id=vars_config_id_to_delete,
+            skip_trash=True,
+        )
 
     LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
 
