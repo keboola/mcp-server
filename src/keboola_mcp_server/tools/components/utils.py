@@ -512,68 +512,78 @@ def _variables_config_name(component_id: str, config_id: str) -> str:
     return f'Variables definition for {component_id}/{config_id}'
 
 
-async def apply_configuration_variables(
+async def _find_vars_config(
+    client: KeboolaClient,
+    component_id: str,
+    config_id: str,
+    existing_vars_id: str | None,
+) -> dict[str, Any] | None:
+    """Resolves the existing keboola.variables config for a parent configuration.
+
+    Prefers the linked variables_id; falls back to a name search. After a name-based
+    match, re-fetches via configuration_detail to guarantee the rows field is present.
+    """
+    if existing_vars_id:
+        try:
+            return await client.storage_client.configuration_detail(VARIABLES_COMPONENT_ID, existing_vars_id)
+        except HTTPStatusError as e:
+            if e.response.status_code != 404:
+                raise
+    vars_name = _variables_config_name(component_id, config_id)
+    all_vars_configs = await client.storage_client.configuration_list(VARIABLES_COMPONENT_ID)
+    found = next((c for c in all_vars_configs if c.get('name') == vars_name), None)
+    if found is None:
+        return None
+    return await client.storage_client.configuration_detail(VARIABLES_COMPONENT_ID, str(found['id']))
+
+
+async def _delete_linked_vars_config(
+    client: KeboolaClient,
+    component_id: str,
+    config_id: str,
+) -> None:
+    """Deletes the keboola.variables config linked to a parent config without updating the parent.
+
+    Used when the parent itself is about to be deleted — no parent update is needed.
+    """
+    parent = await client.storage_client.configuration_detail(component_id, config_id)
+    parent_cfg = dict(parent.get('configuration') or {})
+    existing = await _find_vars_config(client, component_id, config_id, parent_cfg.get('variables_id'))
+    if existing is not None:
+        await client.storage_client.configuration_delete(
+            component_id=VARIABLES_COMPONENT_ID,
+            configuration_id=str(existing['id']),
+            skip_trash=True,
+        )
+
+
+async def _apply_vars_to_parent_cfg(
     client: KeboolaClient,
     component_id: str,
     config_id: str,
     variables: list[VariableDefinition],
-) -> dict[str, Any] | None:
+    parent_cfg: dict[str, Any],
+) -> bool:
+    """Manages the keboola.variables config for a parent and mutates parent_cfg with link fields.
+
+    Returns True if parent_cfg was changed. Does NOT write parent_cfg to Storage — the
+    caller is responsible for the configuration_update call.
     """
-    Creates, updates, or clears the keboola.variables config linked to a parent configuration.
-
-    Resolves an existing variables config by the parent's variables_id first; falls back to
-    a name-based search so renames do not cause duplicate configs to be created.
-
-    - Non-empty list: creates or updates variable definitions, creates/updates a
-      "Default Values" row for any variable with a default_value, and patches
-      variables_id onto the parent config.
-    - Empty list: clears all definitions (PUT with empty array) and removes
-      variables_id from the parent config. The parent is always unlinked even when
-      the referenced variables config cannot be found.
-
-    Returns the parent config update response if the parent was updated, None otherwise.
-    """
-    # Read parent config once; used for variables_id resolution and for patching.
-    parent = await client.storage_client.configuration_detail(component_id, config_id)
-    parent_cfg = dict(parent.get('configuration') or {})
-    existing_vars_id: str | None = parent_cfg.get('variables_id')
-
-    # Resolve existing vars config: prefer the linked variables_id, fallback to name search.
-    existing: dict[str, Any] | None = None
-    if existing_vars_id:
-        try:
-            existing = await client.storage_client.configuration_detail(VARIABLES_COMPONENT_ID, existing_vars_id)
-        except HTTPStatusError as e:
-            if e.response.status_code != 404:
-                raise
-            existing = None
-    if existing is None:
-        vars_name = _variables_config_name(component_id, config_id)
-        all_vars_configs = await client.storage_client.configuration_list(VARIABLES_COMPONENT_ID)
-        existing = next((c for c in all_vars_configs if c.get('name') == vars_name), None)
+    existing = await _find_vars_config(client, component_id, config_id, parent_cfg.get('variables_id'))
 
     if not variables:
-        # Clear path — delete the vars config if one was found.
         if existing is not None:
             await client.storage_client.configuration_delete(
                 component_id=VARIABLES_COMPONENT_ID,
                 configuration_id=str(existing['id']),
                 skip_trash=True,
             )
-        # Always unlink variables_id and variables_values_id from the parent.
         changed = False
         for key in ('variables_id', 'variables_values_id'):
             if key in parent_cfg:
                 parent_cfg.pop(key)
                 changed = True
-        if changed:
-            return await client.storage_client.configuration_update(
-                component_id=component_id,
-                configuration_id=config_id,
-                configuration=parent_cfg,
-                change_description='Unlink variables',
-            )
-        return None
+        return changed
 
     # Set path — create or update variables config.
     var_defs = [{'name': v.name, 'type': v.type} for v in variables]
@@ -595,7 +605,6 @@ async def apply_configuration_variables(
             change_description='Update variable definitions',
         )
 
-    # Create, update, or clear the "Default Values" row.
     defaults = [{'name': v.name, 'value': v.default_value} for v in variables if v.default_value is not None]
     existing_rows = (existing or {}).get('rows') or []
     default_row = next((r for r in existing_rows if r.get('name') == 'Default Values'), None)
@@ -621,7 +630,6 @@ async def apply_configuration_variables(
                 change_description='Update default variable values',
             )
     elif default_row is not None:
-        # No new defaults but an existing row remains — clear it.
         await client.storage_client.configuration_row_update(
             component_id=VARIABLES_COMPONENT_ID,
             config_id=vars_config_id,
@@ -630,17 +638,44 @@ async def apply_configuration_variables(
             change_description='Clear default variable values',
         )
 
-    # Patch variables_id and variables_values_id onto parent config.
     parent_cfg['variables_id'] = vars_config_id
     if default_values_row_id is not None:
         parent_cfg['variables_values_id'] = default_values_row_id
     else:
         parent_cfg.pop('variables_values_id', None)
+    return True
+
+
+async def apply_configuration_variables(
+    client: KeboolaClient,
+    component_id: str,
+    config_id: str,
+    variables: list[VariableDefinition],
+) -> dict[str, Any] | None:
+    """
+    Creates, updates, or clears the keboola.variables config linked to a parent configuration.
+
+    Resolves an existing variables config by the parent's variables_id first; falls back to
+    a name-based search so renames do not cause duplicate configs to be created.
+
+    - Non-empty list: creates or updates variable definitions, creates/updates a
+      "Default Values" row for any variable with a default_value, and patches
+      variables_id onto the parent config.
+    - Empty list: deletes the vars config (if found) and removes variables_id from the parent.
+
+    Returns the parent config update response if the parent was updated, None otherwise.
+    """
+    parent = await client.storage_client.configuration_detail(component_id, config_id)
+    parent_cfg = dict(parent.get('configuration') or {})
+    changed = await _apply_vars_to_parent_cfg(client, component_id, config_id, variables, parent_cfg)
+    if not changed:
+        return None
+    change_description = 'Link variables' if variables else 'Unlink variables'
     return await client.storage_client.configuration_update(
         component_id=component_id,
         configuration_id=config_id,
         configuration=parent_cfg,
-        change_description='Link variables',
+        change_description=change_description,
     )
 
 
