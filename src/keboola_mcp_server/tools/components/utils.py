@@ -563,27 +563,28 @@ async def _apply_vars_to_parent_cfg(
     config_id: str,
     variables: list[VariableDefinition],
     parent_cfg: dict[str, Any],
-) -> bool:
+) -> tuple[bool, str | None]:
     """Manages the keboola.variables config for a parent and mutates parent_cfg with link fields.
 
-    Returns True if parent_cfg was changed. Does NOT write parent_cfg to Storage — the
-    caller is responsible for the configuration_update call.
+    Returns ``(changed, vars_config_id_to_delete)``:
+    - ``changed``: True if parent_cfg was modified.
+    - ``vars_config_id_to_delete``: ID of the keboola.variables config that the caller must
+      delete AFTER successfully writing parent_cfg to Storage.  Deleting before the parent
+      update risks leaving a stale ``variables_id`` reference if the update then fails.
+
+    Does NOT write parent_cfg to Storage and does NOT delete any config — both are the
+    caller's responsibility.
     """
     existing = await _find_vars_config(client, component_id, config_id, parent_cfg.get('variables_id'))
 
     if not variables:
-        if existing is not None:
-            await client.storage_client.configuration_delete(
-                component_id=VARIABLES_COMPONENT_ID,
-                configuration_id=str(existing['id']),
-                skip_trash=True,
-            )
+        vars_config_id_to_delete: str | None = str(existing['id']) if existing is not None else None
         changed = False
         for key in ('variables_id', 'variables_values_id'):
             if key in parent_cfg:
                 parent_cfg.pop(key)
                 changed = True
-        return changed
+        return changed, vars_config_id_to_delete
 
     # Set path — create or update variables config.
     var_defs = [{'name': v.name, 'type': v.type} for v in variables]
@@ -643,7 +644,7 @@ async def _apply_vars_to_parent_cfg(
         parent_cfg['variables_values_id'] = default_values_row_id
     else:
         parent_cfg.pop('variables_values_id', None)
-    return True
+    return True, None
 
 
 async def apply_configuration_variables(
@@ -667,16 +668,25 @@ async def apply_configuration_variables(
     """
     parent = await client.storage_client.configuration_detail(component_id, config_id)
     parent_cfg = dict(parent.get('configuration') or {})
-    changed = await _apply_vars_to_parent_cfg(client, component_id, config_id, variables, parent_cfg)
+    changed, vars_config_id_to_delete = await _apply_vars_to_parent_cfg(
+        client, component_id, config_id, variables, parent_cfg
+    )
     if not changed:
         return None
     change_description = 'Link variables' if variables else 'Unlink variables'
-    return await client.storage_client.configuration_update(
+    result = await client.storage_client.configuration_update(
         component_id=component_id,
         configuration_id=config_id,
         configuration=parent_cfg,
         change_description=change_description,
     )
+    if vars_config_id_to_delete:
+        await client.storage_client.configuration_delete(
+            component_id=VARIABLES_COMPONENT_ID,
+            configuration_id=vars_config_id_to_delete,
+            skip_trash=True,
+        )
+    return result
 
 
 async def apply_folder_metadata(
