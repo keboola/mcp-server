@@ -244,6 +244,10 @@ class ConfigurationRoot(BaseModel):
     processors: Optional[dict[str, Any]] = Field(
         default=None, description='The processors that run before or after the configured component.'
     )
+    variables_id: Optional[str] = Field(default=None, description='ID of the linked keboola.variables configuration')
+    variables: Optional[list[dict[str, Any]]] = Field(
+        default=None, description='Variable definitions (keboola.variables configs only)'
+    )
     configuration_metadata: list[dict[str, Any]] = Field(
         default_factory=list, description='Configuration metadata including MCP tracking'
     )
@@ -281,6 +285,8 @@ class ConfigurationRoot(BaseModel):
             parameters=redact_secrets(api_config.configuration.get('parameters', {})),
             storage=api_config.configuration.get('storage'),
             processors=redact_secrets(api_config.configuration.get('processors')),
+            variables_id=api_config.configuration.get('variables_id'),
+            variables=api_config.configuration.get('variables'),
             configuration_metadata=api_config.metadata,
         )
 
@@ -311,6 +317,9 @@ class ConfigurationRow(BaseModel):
     processors: Optional[dict[str, Any]] = Field(
         default=None, description='The processors that run before or after the configured component row.'
     )
+    values: Optional[list[dict[str, Any]]] = Field(
+        default=None, description='Variable default values (keboola.variables rows only)'
+    )
     configuration_metadata: list[dict[str, Any]] = Field(default_factory=list, description='Configuration row metadata')
 
     @field_validator('processors', mode='before')
@@ -339,6 +348,7 @@ class ConfigurationRow(BaseModel):
         :param configuration_id: ID of the parent configuration
         :return: Complete configuration row domain model
         """
+        row_cfg = row_data.get('configuration', {})
         return cls(
             component_id=component_id,
             configuration_id=configuration_id,
@@ -349,10 +359,11 @@ class ConfigurationRow(BaseModel):
             is_disabled=row_data.get('isDisabled', False),
             is_deleted=row_data.get('isDeleted', False),
             # Plaintext '#'-prefixed secret values are redacted so that they never reach the model's context.
-            parameters=redact_secrets(row_data.get('configuration', {}).get('parameters', {})),
-            storage=row_data.get('configuration', {}).get('storage'),
-            processors=redact_secrets(row_data.get('configuration', {}).get('processors')),
-            configuration_metadata=row_data.get('configuration', {}).get('metadata', []),
+            parameters=redact_secrets(row_cfg.get('parameters', {})),
+            storage=row_cfg.get('storage'),
+            processors=redact_secrets(row_cfg.get('processors')),
+            values=row_cfg.get('values'),
+            configuration_metadata=row_cfg.get('metadata', []),
         )
 
 

@@ -553,27 +553,20 @@ async def apply_configuration_variables(
         existing = next((c for c in all_vars_configs if c.get('name') == vars_name), None)
 
     if not variables:
-        # Clear path — empty the vars config if one was found.
+        # Clear path — delete the vars config if one was found.
         if existing is not None:
-            existing_rows = existing.get('rows') or []
-            default_row = next((r for r in existing_rows if r.get('name') == 'Default Values'), None)
-            if default_row is not None:
-                await client.storage_client.configuration_row_update(
-                    component_id=VARIABLES_COMPONENT_ID,
-                    config_id=str(existing['id']),
-                    configuration_row_id=str(default_row['id']),
-                    configuration={'values': []},
-                    change_description='Clear default variable values',
-                )
-            await client.storage_client.configuration_update(
+            await client.storage_client.configuration_delete(
                 component_id=VARIABLES_COMPONENT_ID,
                 configuration_id=str(existing['id']),
-                configuration={'variables': []},
-                change_description='Remove all variables',
+                skip_trash=True,
             )
-        # Always unlink variables_id from the parent, even when the vars config was not found.
-        if 'variables_id' in parent_cfg:
-            parent_cfg.pop('variables_id')
+        # Always unlink variables_id and variables_values_id from the parent.
+        changed = False
+        for key in ('variables_id', 'variables_values_id'):
+            if key in parent_cfg:
+                parent_cfg.pop(key)
+                changed = True
+        if changed:
             return await client.storage_client.configuration_update(
                 component_id=component_id,
                 configuration_id=config_id,
@@ -606,21 +599,24 @@ async def apply_configuration_variables(
     defaults = [{'name': v.name, 'value': v.default_value} for v in variables if v.default_value is not None]
     existing_rows = (existing or {}).get('rows') or []
     default_row = next((r for r in existing_rows if r.get('name') == 'Default Values'), None)
+    default_values_row_id: str | None = None
     if defaults:
         row_cfg = {'values': defaults}
         if default_row is None:
-            await client.storage_client.configuration_row_create(
+            created_row = await client.storage_client.configuration_row_create(
                 component_id=VARIABLES_COMPONENT_ID,
                 config_id=vars_config_id,
                 name='Default Values',
                 description='',
                 configuration=row_cfg,
             )
+            default_values_row_id = str(created_row['id'])
         else:
+            default_values_row_id = str(default_row['id'])
             await client.storage_client.configuration_row_update(
                 component_id=VARIABLES_COMPONENT_ID,
                 config_id=vars_config_id,
-                configuration_row_id=str(default_row['id']),
+                configuration_row_id=default_values_row_id,
                 configuration=row_cfg,
                 change_description='Update default variable values',
             )
@@ -634,8 +630,12 @@ async def apply_configuration_variables(
             change_description='Clear default variable values',
         )
 
-    # Patch variables_id onto parent config using the already-loaded parent_cfg.
+    # Patch variables_id and variables_values_id onto parent config.
     parent_cfg['variables_id'] = vars_config_id
+    if default_values_row_id is not None:
+        parent_cfg['variables_values_id'] = default_values_row_id
+    else:
+        parent_cfg.pop('variables_values_id', None)
     return await client.storage_client.configuration_update(
         component_id=component_id,
         configuration_id=config_id,
