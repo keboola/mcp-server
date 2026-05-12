@@ -206,9 +206,8 @@ PROMPT:
   Then delete the configuration.
 
 EXPECTED:
-  - After update: variables_id removed from the config.
-  - vars config still exists (keboola.variables) but its variables=[] and
-    Default Values row is empty.
+  - After update: variables_id removed from the config, vars config is DELETED
+    from Storage (same behaviour as transformations — see Known Limitations #4).
   - After delete: config is gone.
 
 
