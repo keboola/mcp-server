@@ -68,6 +68,8 @@ from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     FOLDER_SUPPORTING_COMPONENT_IDS,
     SNOWFLAKE_TRANSFORMATION_ID,
+    _apply_vars_to_parent_cfg,
+    _delete_linked_vars_config,
     add_ids,
     apply_configuration_variables,
     apply_folder_metadata,
@@ -661,7 +663,7 @@ async def update_sql_transformation(
             ),
         ),
     ] = False,
-) -> Any:
+) -> ConfigToolOutput:
     """
     Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
     name or description. Can also delete the transformation by passing delete=True.
@@ -857,10 +859,18 @@ async def update_sql_transformation(
 
     if delete:
         LOG.info(f'Deleting transformation "{configuration_id}" for component "{sql_transformation_id}".')
-        await apply_configuration_variables(client, sql_transformation_id, configuration_id, [])
+        await _delete_linked_vars_config(client, sql_transformation_id, configuration_id)
         await client.storage_client.configuration_delete(sql_transformation_id, configuration_id, skip_trash=True)
         LOG.info(f'Deleted transformation "{configuration_id}" for component "{sql_transformation_id}".')
-        return {'success': True, 'component_id': sql_transformation_id, 'configuration_id': configuration_id}
+        return ConfigToolOutput(
+            component_id=sql_transformation_id,
+            configuration_id=configuration_id,
+            description='',
+            version=0,
+            timestamp=datetime.now(timezone.utc),
+            success=True,
+            links=[],
+        )
 
     links_manager = await ProjectLinksManager.from_client(client)
 
@@ -879,6 +889,12 @@ async def update_sql_transformation(
         parameter_updates=parameter_updates,
         storage=storage,
     )
+
+    if variables is not None:
+        await _apply_vars_to_parent_cfg(
+            client, sql_transformation_id, configuration_id, variables, updated_configuration
+        )
+
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=sql_transformation_id,
         configuration_id=configuration_id,
@@ -930,17 +946,11 @@ async def update_sql_transformation(
                     exc_info=exc,
                 )
 
-    parent_update_result = None
-    if variables is not None:
-        parent_update_result = await apply_configuration_variables(
-            client, sql_transformation_id, configuration_id, variables
-        )
-
     await set_cfg_update_metadata(
         client=client,
         component_id=sql_transformation_id,
         configuration_id=configuration_id,
-        configuration_version=(parent_update_result or updated_raw_configuration).get('version'),
+        configuration_version=updated_raw_configuration.get('version'),
     )
 
     change_summary = ' '.join(filter(None, [msg, folder_hint])) or None
@@ -963,7 +973,7 @@ async def update_sql_transformation(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
-        version=(parent_update_result or updated_raw_configuration)['version'],
+        version=updated_raw_configuration['version'],
         change_summary=change_summary,
     )
 
@@ -1456,7 +1466,7 @@ async def update_config(
             ),
         ),
     ] = False,
-) -> Any:
+) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
     Can also delete the configuration by passing delete=True.
@@ -1501,10 +1511,18 @@ async def update_config(
     if delete:
         check_suitable('update_config', component_id)
         LOG.info(f'Deleting configuration "{configuration_id}" for component "{component_id}".')
-        await apply_configuration_variables(client, component_id, configuration_id, [])
+        await _delete_linked_vars_config(client, component_id, configuration_id)
         await client.storage_client.configuration_delete(component_id, configuration_id, skip_trash=True)
         LOG.info(f'Deleted configuration "{configuration_id}" for component "{component_id}".')
-        return {'success': True, 'component_id': component_id, 'configuration_id': configuration_id}
+        return ConfigToolOutput(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            description='',
+            version=0,
+            timestamp=datetime.now(timezone.utc),
+            success=True,
+            links=[],
+        )
 
     links_manager = await ProjectLinksManager.from_client(client)
 
@@ -1522,6 +1540,10 @@ async def update_config(
         processors_before=processors_before,
         processors_after=processors_after,
     )
+
+    if variables is not None:
+        await _apply_vars_to_parent_cfg(client, component_id, configuration_id, variables, configuration_payload)
+
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=component_id,
         configuration_id=configuration_id,
@@ -1539,15 +1561,11 @@ async def update_config(
         else None
     )
 
-    parent_update_result = None
-    if variables is not None:
-        parent_update_result = await apply_configuration_variables(client, component_id, configuration_id, variables)
-
     await set_cfg_update_metadata(
         client=client,
         component_id=component_id,
         configuration_id=configuration_id,
-        configuration_version=(parent_update_result or updated_raw_configuration).get('version'),
+        configuration_version=updated_raw_configuration.get('version'),
     )
 
     links = links_manager.get_configuration_links(
@@ -1563,7 +1581,7 @@ async def update_config(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
-        version=(parent_update_result or updated_raw_configuration)['version'],
+        version=updated_raw_configuration['version'],
         change_summary=folder_hint,
     )
 

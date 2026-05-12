@@ -2209,7 +2209,14 @@ async def test_create_sql_transformation_variables(
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
     keboola_client.storage_client.configuration_row_create = mocker.AsyncMock(return_value={'id': _CREATED_ROW_ID})
     keboola_client.storage_client.configuration_row_update = mocker.AsyncMock(return_value={})
-    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=_make_parent_config())
+
+    async def detail_side_effect(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        cid = args[0] if args else kwargs.get('component_id')
+        if cid == VARIABLES_COMPONENT_ID and existing_vars_configs:
+            return existing_vars_configs[0]
+        return _make_parent_config()
+
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=detail_side_effect)
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
 
     var_def = VariableDefinition(name='env', type='string', default_value='prod' if has_default_value else None)
@@ -2357,31 +2364,31 @@ async def test_update_sql_transformation_variables(
         for c in keboola_client.storage_client.configuration_update.call_args_list
         if c.kwargs.get('component_id') == VARIABLES_COMPONENT_ID
     ]
-    parent_update_calls = [
-        c
-        for c in keboola_client.storage_client.configuration_update.call_args_list
-        if c.kwargs.get('component_id') == SNOWFLAKE_TRANSFORMATION_ID
-        # The main transformation update is the first call; vars link update comes after.
-        and c.kwargs.get('change_description') in ('Link variables', 'Unlink variables')
-    ]
     vars_create_calls = [
         c
         for c in keboola_client.storage_client.configuration_create.call_args_list
         if c.kwargs.get('component_id') == VARIABLES_COMPONENT_ID
     ]
+    # The single parent update call (vars link is now folded into the main PUT).
+    all_parent_updates = [
+        c
+        for c in keboola_client.storage_client.configuration_update.call_args_list
+        if c.kwargs.get('component_id') == SNOWFLAKE_TRANSFORMATION_ID
+    ]
+    assert len(all_parent_updates) == 1
+    main_cfg = all_parent_updates[0].kwargs['configuration']
 
     if not expect_vars_update:
         assert not vars_update_calls
         assert not vars_create_calls
-    if not expect_parent_update:
-        assert not parent_update_calls
 
     if variables is not None and len(variables) > 0 and expect_vars_update:
-        # Setting vars: either created or updated.
+        # Setting vars: either created or updated, and variables_id embedded in main PUT.
         assert vars_update_calls or vars_create_calls
+        assert 'variables_id' in main_cfg
 
     if variables == [] and existing_vars_configs:
-        # Deletion: vars config is deleted, not updated.
+        # Deletion: vars config is deleted, not updated; variables_id removed from main PUT.
         vars_delete_calls = [
             c
             for c in keboola_client.storage_client.configuration_delete.call_args_list
@@ -2389,9 +2396,7 @@ async def test_update_sql_transformation_variables(
         ]
         assert vars_delete_calls
         assert not vars_update_calls
-        # Parent update removes variables_id.
-        assert parent_update_calls
-        assert 'variables_id' not in parent_update_calls[0].kwargs['configuration']
+        assert 'variables_id' not in main_cfg
 
 
 @pytest.mark.parametrize(
@@ -2526,29 +2531,30 @@ async def test_update_config_variables(
         for c in keboola_client.storage_client.configuration_update.call_args_list
         if c.kwargs.get('component_id') == VARIABLES_COMPONENT_ID
     ]
-    parent_update_calls = [
-        c
-        for c in keboola_client.storage_client.configuration_update.call_args_list
-        if c.kwargs.get('component_id') == component_id
-        and c.kwargs.get('change_description') in ('Link variables', 'Unlink variables')
-    ]
     vars_create_calls = [
         c
         for c in keboola_client.storage_client.configuration_create.call_args_list
         if c.kwargs.get('component_id') == VARIABLES_COMPONENT_ID
     ]
+    # The single parent update call (vars link is now folded into the main PUT).
+    all_parent_updates = [
+        c
+        for c in keboola_client.storage_client.configuration_update.call_args_list
+        if c.kwargs.get('component_id') == component_id
+    ]
+    assert len(all_parent_updates) == 1
+    main_cfg = all_parent_updates[0].kwargs['configuration']
 
     if not expect_vars_update:
         assert not vars_update_calls
         assert not vars_create_calls
-    if not expect_parent_update:
-        assert not parent_update_calls
 
     if variables is not None and len(variables) > 0 and expect_vars_update:
         assert vars_update_calls or vars_create_calls
+        assert 'variables_id' in main_cfg
 
     if variables == [] and existing_vars_configs:
-        # Deletion: vars config is deleted, not updated.
+        # Deletion: vars config is deleted, not updated; variables_id removed from main PUT.
         vars_delete_calls = [
             c
             for c in keboola_client.storage_client.configuration_delete.call_args_list
@@ -2556,6 +2562,4 @@ async def test_update_config_variables(
         ]
         assert vars_delete_calls
         assert not vars_update_calls
-        # Parent update removes variables_id.
-        assert parent_update_calls
-        assert 'variables_id' not in parent_update_calls[0].kwargs['configuration']
+        assert 'variables_id' not in main_cfg
