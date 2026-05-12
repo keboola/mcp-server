@@ -64,6 +64,7 @@ async def _wait_for_job_in_list(
 
 
 @pytest.mark.asyncio
+@pytest.mark.xfail(strict=False, reason='Jobs Queue API may be unreachable from CI environment')
 async def test_get_jobs_listing_with_component_and_config_filter(mcp_context: Context, configs: list[ConfigDef]):
     """Tests that `get_jobs` works with component and config filtering when listing."""
 
