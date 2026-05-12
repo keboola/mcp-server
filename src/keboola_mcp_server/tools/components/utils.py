@@ -555,6 +555,16 @@ async def apply_configuration_variables(
     if not variables:
         # Clear path — empty the vars config if one was found.
         if existing is not None:
+            existing_rows = existing.get('rows') or []
+            default_row = next((r for r in existing_rows if r.get('name') == 'Default Values'), None)
+            if default_row is not None:
+                await client.storage_client.configuration_row_update(
+                    component_id=VARIABLES_COMPONENT_ID,
+                    config_id=str(existing['id']),
+                    configuration_row_id=str(default_row['id']),
+                    configuration={'values': []},
+                    change_description='Clear default variable values',
+                )
             await client.storage_client.configuration_update(
                 component_id=VARIABLES_COMPONENT_ID,
                 configuration_id=str(existing['id']),
@@ -592,11 +602,11 @@ async def apply_configuration_variables(
             change_description='Update variable definitions',
         )
 
-    # Create or update a "Default Values" row if any variable has a default_value.
+    # Create, update, or clear the "Default Values" row.
     defaults = [{'name': v.name, 'value': v.default_value} for v in variables if v.default_value is not None]
+    existing_rows = (existing or {}).get('rows') or []
+    default_row = next((r for r in existing_rows if r.get('name') == 'Default Values'), None)
     if defaults:
-        existing_rows = (existing or {}).get('rows') or []
-        default_row = next((r for r in existing_rows if r.get('name') == 'Default Values'), None)
         row_cfg = {'values': defaults}
         if default_row is None:
             await client.storage_client.configuration_row_create(
@@ -614,6 +624,15 @@ async def apply_configuration_variables(
                 configuration=row_cfg,
                 change_description='Update default variable values',
             )
+    elif default_row is not None:
+        # No new defaults but an existing row remains — clear it.
+        await client.storage_client.configuration_row_update(
+            component_id=VARIABLES_COMPONENT_ID,
+            config_id=vars_config_id,
+            configuration_row_id=str(default_row['id']),
+            configuration={'values': []},
+            change_description='Clear default variable values',
+        )
 
     # Patch variables_id onto parent config using the already-loaded parent_cfg.
     parent_cfg['variables_id'] = vars_config_id

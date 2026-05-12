@@ -526,8 +526,9 @@ async def create_sql_transformation(
 
     LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
 
+    vars_result = None
     if variables:
-        await apply_configuration_variables(client, component_id, configuration_id, variables)
+        vars_result = await apply_configuration_variables(client, component_id, configuration_id, variables)
 
     links = links_manager.get_transformation_links(
         transformation_type=component_id,
@@ -542,7 +543,7 @@ async def create_sql_transformation(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
-        version=new_raw_transformation_configuration['version'],
+        version=(vars_result or new_raw_transformation_configuration)['version'],
         change_summary=change_summary,
     )
 
@@ -944,7 +945,7 @@ async def update_sql_transformation(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
-        version=updated_raw_configuration['version'],
+        version=(parent_update_result or updated_raw_configuration)['version'],
         change_summary=change_summary,
     )
 
@@ -1161,8 +1162,9 @@ async def create_config(
 
     await set_cfg_creation_metadata(client, component_id, configuration_id)
 
+    vars_result = None
     if variables:
-        await apply_configuration_variables(client, component_id, configuration_id, variables)
+        vars_result = await apply_configuration_variables(client, component_id, configuration_id, variables)
 
     links = links_manager.get_configuration_links(
         component_id=component_id, configuration_id=configuration_id, configuration_name=name
@@ -1172,7 +1174,7 @@ async def create_config(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        version=new_raw_configuration['version'],
+        version=(vars_result or new_raw_configuration)['version'],
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
@@ -1522,7 +1524,7 @@ async def update_config(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
-        version=updated_raw_configuration['version'],
+        version=(parent_update_result or updated_raw_configuration)['version'],
         change_summary=folder_hint,
     )
 
