@@ -95,6 +95,7 @@ from keboola_mcp_server.tools.components.utils import (
     sync_shared_code_markers_in_dict,
     update_params,
     update_transformation_parameters,
+    validate_shared_code_linkage,
 )
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.tools.validation import (
@@ -612,6 +613,15 @@ async def create_sql_transformation(
             shared_code_id=shared_code_id,
             shared_code_row_ids=shared_code_row_ids,
         )
+
+    # Enforce: any `{{rowId}}` placeholder in the script array must have a matching entry in
+    # `shared_code_row_ids` and a non-empty `shared_code_id`. Otherwise the runtime cannot
+    # resolve the placeholder and the snippet is silently skipped.
+    validate_shared_code_linkage(
+        parameters=transformation_configuration_payload.model_dump(exclude_none=True).get('parameters', {}),
+        shared_code_id=shared_code_id or '',
+        shared_code_row_ids=list(shared_code_row_ids),
+    )
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -1153,6 +1163,14 @@ async def update_sql_transformation_internal(
     # expansion never substitutes `{{rowId}}`.
     sync_shared_code_markers_in_dict(updated_configuration)
 
+    # Reject configurations where a `{{rowId}}` placeholder is used without a matching
+    # entry in `shared_code_row_ids` (or with `shared_code_id` empty).
+    validate_shared_code_linkage(
+        parameters=updated_configuration.get('parameters', {}),
+        shared_code_id=str(updated_configuration.get('shared_code_id') or ''),
+        shared_code_row_ids=list(updated_configuration.get('shared_code_row_ids') or []),
+    )
+
     if storage is not None:
         storage_cfg = validate_root_storage_configuration(
             component=transformation,
@@ -1348,6 +1366,18 @@ async def create_config(
     if shared_code_id:
         configuration_payload['shared_code_id'] = shared_code_id
         configuration_payload['shared_code_row_ids'] = list(shared_code_row_ids)
+
+    # Symmetry with `create_sql_transformation`: when the target is a transformation backend
+    # that supports shared code (Python/R/DuckDB/SQL via the generic create_config path),
+    # auto-emit the UI-canonical `Shared Code (...)` marker code blocks and validate the
+    # placeholder linkage so the runtime expansion can resolve every `{{rowId}}` reference.
+    if component_id in SHARED_CODE_TRANSFORMATION_IDS:
+        sync_shared_code_markers_in_dict(configuration_payload)
+        validate_shared_code_linkage(
+            parameters=configuration_payload.get('parameters', {}),
+            shared_code_id=shared_code_id,
+            shared_code_row_ids=list(shared_code_row_ids),
+        )
 
     new_raw_configuration = cast(
         dict[str, Any],
@@ -1846,6 +1876,16 @@ async def update_config_internal(
         else:
             configuration_payload.pop('shared_code_id', None)
             configuration_payload.pop('shared_code_row_ids', None)
+
+    # Symmetry with `update_sql_transformation`: when the target supports shared code,
+    # (re)sync the marker code blocks and enforce the placeholder linkage rule.
+    if component_id in SHARED_CODE_TRANSFORMATION_IDS:
+        sync_shared_code_markers_in_dict(configuration_payload)
+        validate_shared_code_linkage(
+            parameters=configuration_payload.get('parameters', {}),
+            shared_code_id=str(configuration_payload.get('shared_code_id') or ''),
+            shared_code_row_ids=list(configuration_payload.get('shared_code_row_ids') or []),
+        )
 
     return current_config, configuration_payload
 

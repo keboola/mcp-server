@@ -65,105 +65,34 @@ See the [Development Branches](#development-branches) section for more details.
 
 ### Shared Code
 
-**Shared code** is Keboola's mechanism for storing reusable SQL / Python / R snippets that one or more transformations
-can reference via Mustache placeholders. It eliminates code duplication and centralises maintenance of common logic.
+**Shared code** is Keboola's reusable-snippet primitive for transformations. Snippets live under the
+`keboola.shared-code` component (one parent library per transformation backend, rows are individual snippets);
+transformations link to them via `shared_code_id` + `shared_code_row_ids` at the configuration root.
 
-#### Discovery — before writing transformation code
+**Before writing transformation code:** call `get_shared_codes(transformation_component_ids=[…])` and reuse an
+existing snippet whenever the same logic would appear in two or more transformations.
 
-Before writing or editing any transformation, call `get_shared_codes` filtered to the relevant transformation
-component (e.g. `keboola.snowflake-transformation`). This surfaces snippets the project already maintains. If a
-snippet covers the logic you were about to write, reuse it via `{{ rowId }}` rather than duplicating the code
-inline.
+**Wire format (canonical IDs and required fields):**
 
-#### When to create shared code
+| Operation | Tool call |
+|---|---|
+| Create parent library | `create_config(component_id="keboola.shared-code", configuration_id="shared-codes.<transformation-id>", parameters={"componentId":"<transformation-id>"})` — `configuration_id` MUST be the conventional `shared-codes.<keboola.snowflake-transformation\|…bigquery…\|…python-transformation-v2\|…r-transformation-v2>`. Auto-generated UUIDs are not recognised by the runtime. |
+| Add a row | `add_config_row(component_id="keboola.shared-code", row_id="<mustache-key>", parameters={"code_content":["<complete-statement>"]})` — `row_id` is the case-sensitive Mustache key. |
+| Edit a snippet | `update_config_row(parameter_updates=[{"op":"set","path":"code_content","value":["<new>"]}])`. Disable with `is_disabled=True` (no delete-row tool). |
+| Reference from a SQL transformation | `create_sql_transformation` / `update_sql_transformation` with `shared_code_id` + `shared_code_row_ids`. The tool auto-emits the `Shared Code (<sid>-<rid>)` marker code blocks. |
+| Reference from Python / R | `create_config` / `update_config` with the same `shared_code_id` + `shared_code_row_ids`. Marker blocks are auto-emitted here too. |
+| Change linkage on an existing SQL transformation | `update_sql_transformation(parameter_updates=[{"op":"set_shared_code","shared_code_id":"…","shared_code_row_ids":["…"]}])`, or `{"op":"remove_shared_code"}` to unlink. |
 
-Create a new shared code entry only when **reuse intent is clear**:
-- The user explicitly asks for reusable / shared code, OR
-- The same logic needs to appear in two or more transformations.
+**Hard rules** — the tool will reject the call otherwise:
 
-Do **not** proactively convert every snippet to shared code. A one-off transformation stays inline.
-
-#### Domain model
-
-- Shared code lives under the `keboola.shared-code` component as **parent configurations**, one per transformation
-  backend. The parent config's payload declares which transformation it serves:
-  `parameters = {"componentId": "keboola.snowflake-transformation"}` (or `…bigquery…`, `…python-transformation-v2`,
-  `…r-transformation-v2`).
-- Each **row** of the parent config is one snippet:
-  - `rowId` — the Mustache placeholder key (e.g. `dumpfiles`), **set explicitly at creation time**; case-sensitive.
-  - `parameters.code_content` — an array of code strings (joined at runtime), e.g. `["SELECT 1"]`.
-- A transformation references shared code in **two places** that must match:
-  1. `shared_code_id` (parent config ID) + `shared_code_row_ids` (list of `rowId`s) at the configuration root,
-  2. one **dedicated code block per referenced row** whose entire script is just `{{ rowId }}` (the "marker"
-     code, named `Shared Code (<config-id>-<row-id>)`).
-  Placeholders embedded inline inside another query (e.g. `SELECT 1, {{ rowId }};`) are **not**
-  text-substituted by the platform — the runtime treats `{{ rowId }}` as a *whole-query* substitution.
-  The SQL transformation tools (`create_sql_transformation` / `update_sql_transformation`) automatically
-  emit / sync the marker code blocks whenever you pass `shared_code_id` + `shared_code_row_ids`; you only
-  need to author the rest of your SQL as ordinary code blocks.
-
-- **Shared-code row content must be a complete, independently executable statement**, because the
-  runtime expansion substitutes each `{{ rowId }}` marker with the row's `code_content` and runs the
-  result as its own query (the surrounding text of any inline placeholder is dropped). Good row
-  content: `CREATE OR REPLACE VIEW \`audit_helper\` AS SELECT …`, `DROP TABLE IF EXISTS \`stage\`;`,
-  full procedure definitions. Bad row content: column-list fragments, sub-expressions, `WHERE` clauses —
-  these will fail at run time as standalone queries.
-
-#### Conventional naming
-
-The parent config ID **must** follow `shared-codes.<transformation-component-id>` —
-`shared-codes.snowflake-transformation`, `shared-codes.google-bigquery-transformation`,
-`shared-codes.python-transformation-v2`, `shared-codes.r-transformation-v2`. The Keboola UI and
-the runtime expansion look up libraries by this exact ID; auto-generated UUIDs from SAPI are not
-recognised. **Always use the conventional ID when creating a new parent library**, and use the
-actual ID returned by `get_shared_codes` when referencing an existing one.
-
-#### Creating / editing shared code
-
-Use the existing generic configuration tools — no specialised tools exist. The MCP server
-special-cases `component_id="keboola.shared-code"` so the snippet fields land at the
-configuration root (where the platform expects them); pass the fields you want via `parameters`
-and the tool will unwrap them.
-
-| Operation | Tool | Key parameters |
-|---|---|---|
-| Create parent library | `create_config` | `component_id="keboola.shared-code"`, `configuration_id="shared-codes.<transformation-component-id>"`, `parameters={"componentId":"<transformation-component-id>"}` |
-| Add snippet row | `add_config_row` | `component_id="keboola.shared-code"`, `row_id="<mustache-key>"`, `parameters={"code_content":["<code>"]}` |
-| Update snippet content | `update_config_row` | `parameter_updates=[{"op":"set","path":"code_content","value":["<new code>"]}]` |
-| Disable a snippet | `update_config_row` | `is_disabled=True` (there is no delete-row tool) |
-
-#### Referencing shared code from a transformation
-
-For **SQL transformations** (`keboola.snowflake-transformation` / `keboola.google-bigquery-transformation`):
-
-```
-create_sql_transformation(
-  name=...,
-  sql_code_blocks=[Code(name="Reused logic", script="{{ dumpfiles }}")],
-  shared_code_id="shared-codes.snowflake-transformation",
-  shared_code_row_ids=["dumpfiles"],
-)
-```
-
-To add / change / remove the linkage on an **existing** SQL transformation, use `update_sql_transformation` with
-the `parameter_updates` operations:
-
-- `{"op":"set_shared_code", "shared_code_id":"…", "shared_code_row_ids":["…"]}` — replaces any existing linkage.
-- `{"op":"remove_shared_code"}` — clears both root fields.
-
-For **Python / R / DuckDB transformations** (created via the generic `create_config`), pass `shared_code_id` and
-`shared_code_row_ids` directly to `create_config` or `update_config`. The same `{{ rowId }}` mechanic applies in
-the component's script.
-
-#### Validation rules to respect
-
-- **Case-sensitive row IDs**: `{{ DumpFiles }}` and `{{ dumpfiles }}` are different rows; row IDs in
-  `shared_code_row_ids` must match exactly.
-- **Bidirectional consistency**: every `{{ rowId }}` placeholder in a script must appear in `shared_code_row_ids`,
-  and every entry in `shared_code_row_ids` must have at least one `{{ rowId }}` placeholder. Missing rows or
-  unused entries are rejected by the platform.
-- **Both fields together**: setting `shared_code_id` without `shared_code_row_ids` (or vice versa) yields a
-  transformation with no actual substitution at runtime.
+- **Row content must be a complete executable statement** (e.g. `CREATE OR REPLACE TABLE …`, `from datetime import …`).
+  The runtime substitutes a `{{ rowId }}` script array element with the row's `code_content` array and runs the
+  result as its own query. Fragments (column-list, `WHERE` clause, sub-expression) will fail at run time.
+- **A `{{ rowId }}` placeholder requires linkage** — every referenced row must appear in `shared_code_row_ids` and
+  `shared_code_id` must be set. Without the linkage the platform cannot resolve the placeholder. The tool emits
+  the marker blocks for you; **do NOT embed `{{ rowId }}` inline inside another SQL string** — inline placeholders
+  are not substituted (only `["{{ rowId }}"]` as its own array element is).
+- **Row IDs are case-sensitive.**
 
 ### Development Branches
 

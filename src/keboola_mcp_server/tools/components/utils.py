@@ -379,6 +379,64 @@ async def create_transformation_configuration(
     return TransformationConfiguration(parameters=raw_parameters, storage=storage)
 
 
+# Regex for shared-code Mustache placeholders inside a script array element.
+# Matches `{{ rowId }}` (case-sensitive payload, optional inner whitespace).
+SHARED_CODE_PLACEHOLDER_RE = re.compile(r'\{\{\s*([A-Za-z0-9_-]+)\s*\}\}')
+
+
+def extract_shared_code_row_ids_from_blocks(blocks: Sequence[Any]) -> set[str]:
+    """
+    Walks `parameters.blocks[*].codes[*].script` and returns the set of shared-code row IDs
+    referenced by `{{ rowId }}` placeholders. Tolerates `script` being a string or a list.
+    """
+    referenced: set[str] = set()
+    for block in blocks or ():
+        codes = block.get('codes', []) if isinstance(block, dict) else getattr(block, 'codes', [])
+        for code in codes or ():
+            script = code.get('script') if isinstance(code, dict) else getattr(code, 'script', None)
+            items = script if isinstance(script, list) else [script]
+            for item in items:
+                if not isinstance(item, str):
+                    continue
+                referenced.update(SHARED_CODE_PLACEHOLDER_RE.findall(item))
+    return referenced
+
+
+def validate_shared_code_linkage(
+    parameters: Mapping[str, Any] | None,
+    shared_code_id: str,
+    shared_code_row_ids: Sequence[str],
+) -> None:
+    """
+    Enforces the platform's shared-code linkage rule on a transformation configuration:
+    if any `{{ rowId }}` placeholder appears in `parameters.blocks[*].codes[*].script`,
+    then `shared_code_id` must be non-empty AND every referenced `rowId` must be present
+    in `shared_code_row_ids`. Inline placeholders (e.g. `["SELECT 1, {{ rowId }};"]`) are
+    NOT substituted by the platform; the LLM must let the SQL transformation tools emit
+    the marker code blocks via `shared_code_id` + `shared_code_row_ids` instead.
+
+    Raises `ValueError` with a precise message when the rule is violated.
+    """
+    blocks = (parameters or {}).get('blocks', [])
+    referenced = extract_shared_code_row_ids_from_blocks(blocks)
+    if not referenced:
+        return
+    declared = set(shared_code_row_ids or ())
+    if not shared_code_id:
+        raise ValueError(
+            f'Transformation script references shared-code placeholders {sorted(referenced)} '
+            f'but `shared_code_id` is not set at the configuration root. Pass `shared_code_id` '
+            f'and `shared_code_row_ids` so the runtime can resolve the placeholders.'
+        )
+    missing = referenced - declared
+    if missing:
+        raise ValueError(
+            f'Transformation script references shared-code rows {sorted(missing)} that are not '
+            f'in `shared_code_row_ids={sorted(declared)}`. Add the missing row IDs or remove the '
+            f'placeholders.'
+        )
+
+
 def shared_code_marker_code_name(shared_code_id: str, row_id: str) -> str:
     """
     Returns the canonical name the Keboola UI uses for a shared-code marker code block:
