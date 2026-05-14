@@ -1,0 +1,32 @@
+name: Linear Release
+
+# Reports a completed release to Linear when a production version tag is pushed.
+# Scans commits between the previous release and this tag for AI-XXXX issue
+# references and attaches them to a Linear release named after the git tag.
+#
+# Skips canary/dev tags (e.g. v1.50.0-dev.0, agent-v1.50.0-dev.0) so Linear
+# releases reflect actual production cuts, not Helm canary deploys.
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'agent-v*'
+
+jobs:
+  linear-release:
+    name: Sync release to Linear
+    runs-on: ubuntu-latest
+    if: |
+      (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/agent-v'))
+      && !contains(github.ref, '-dev.')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # action needs full history back to the previous release tag
+
+      - name: Sync release to Linear
+        uses: linear/linear-release-action@v0
+        with:
+          access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
