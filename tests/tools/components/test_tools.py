@@ -3,6 +3,7 @@ from typing import Any, Callable
 
 import pytest
 from mcp.server.fastmcp import Context
+from pydantic import ValidationError
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.client import (
@@ -27,7 +28,9 @@ from keboola_mcp_server.tools.components.model import (
     ConfigSummary,
     ConfigToolOutput,
     Configuration,
+    ConfigurationRoot,
     ConfigurationRootSummary,
+    ConfigurationRow,
     FullConfigId,
     GetComponentsOutput,
     GetConfigsDetailOutput,
@@ -431,6 +434,134 @@ async def test_get_configs_detail_ignores_other_params(
     keboola_client.storage_client.configuration_detail.assert_called_once_with(
         component_id=mock_component['id'], configuration_id=mock_configuration['id']
     )
+
+
+@pytest.mark.asyncio
+async def test_get_configs_detail_empty_list_processors(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_metadata: list[dict[str, Any]],
+):
+    """get_configs must not raise when the Storage API returns processors=[] on a row."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    mock_ai_service = mocker.MagicMock()
+    mock_ai_service.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.ai_service_client = mock_ai_service
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+
+    config_with_empty_processors = {
+        'id': '123',
+        'name': 'My Config',
+        'description': 'Test',
+        'version': 1,
+        'isDisabled': False,
+        'isDeleted': False,
+        'configuration': {'processors': []},
+        'rows': [
+            {
+                'id': 'row-1',
+                'name': 'Row 1',
+                'version': 1,
+                'configuration': {'parameters': {}, 'processors': []},
+            }
+        ],
+    }
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        return_value={
+            **config_with_empty_processors,
+            'component': mock_component,
+            'configurationMetadata': mock_metadata,
+        }
+    )
+
+    configs = [FullConfigId(component_id=mock_component['id'], configuration_id='123')]
+    result = await get_configs(ctx=context, configs=configs)
+
+    assert isinstance(result, GetConfigsDetailOutput)
+    assert len(result.configs) == 1
+    config = result.configs[0]
+    config_root = config.configuration_root
+    assert config_root.configuration_id == '123'
+    assert config_root.processors is None
+    assert config.configuration_rows is not None
+    assert len(config.configuration_rows) == 1
+    assert config.configuration_rows[0].processors is None
+
+
+@pytest.mark.parametrize(
+    ('processors_value', 'expected'),
+    [
+        ([], None),
+        (None, None),
+        ('omit', None),
+        ({'after': [{'definition': {'component': 'x'}}]}, {'after': [{'definition': {'component': 'x'}}]}),
+    ],
+    ids=['empty_list_normalized', 'none_passthrough', 'field_omitted', 'dict_passthrough'],
+)
+def test_configuration_root_processors_normalization(processors_value: Any, expected: Any) -> None:
+    """ConfigurationRoot.from_api_response normalizes Storage API processors=[] but preserves dicts."""
+    api_config = ConfigurationAPIResponse.model_validate(
+        {
+            'componentId': 'keboola.ex-aws-s3',
+            'id': '123',
+            'name': 'My Config',
+            'version': 1,
+            'configuration': {'processors': processors_value} if processors_value != 'omit' else {},
+            'metadata': [],
+        }
+    )
+    root = ConfigurationRoot.from_api_response(api_config)
+    assert root.processors == expected
+
+
+@pytest.mark.parametrize(
+    'invalid_processors',
+    [
+        ['unexpected'],
+        [{'after': []}],
+    ],
+    ids=['non_empty_list_of_str', 'non_empty_list_of_dict'],
+)
+def test_configuration_root_rejects_non_empty_list_processors(invalid_processors: list) -> None:
+    """A non-empty list at the root must fail Pydantic validation, not be silently accepted."""
+    api_config = ConfigurationAPIResponse.model_validate(
+        {
+            'componentId': 'keboola.ex-aws-s3',
+            'id': '123',
+            'name': 'My Config',
+            'version': 1,
+            'configuration': {'processors': invalid_processors},
+            'metadata': [],
+        }
+    )
+    with pytest.raises(ValidationError):
+        ConfigurationRoot.from_api_response(api_config)
+
+
+@pytest.mark.parametrize(
+    'invalid_processors',
+    [
+        ['unexpected'],
+        [{'after': []}],
+    ],
+    ids=['non_empty_list_of_str', 'non_empty_list_of_dict'],
+)
+def test_configuration_row_rejects_non_empty_list_processors(invalid_processors: list) -> None:
+    """A non-empty list on a row must fail Pydantic validation, not be silently accepted."""
+    with pytest.raises(ValidationError):
+        ConfigurationRow.from_api_row_data(
+            row_data={
+                'id': 'row-1',
+                'name': 'Row 1',
+                'version': 1,
+                'configuration': {'parameters': {}, 'processors': invalid_processors},
+            },
+            component_id='keboola.ex-aws-s3',
+            configuration_id='123',
+        )
 
 
 @pytest.mark.parametrize(
