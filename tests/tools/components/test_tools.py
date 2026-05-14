@@ -1764,7 +1764,16 @@ async def test_update_config_row(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('root_params', 'root_storage', 'row_params', 'row_storage', 'expected_params', 'expected_storage'),
+    (
+        'root_params',
+        'root_storage',
+        'root_runtime',
+        'row_params',
+        'row_storage',
+        'expected_params',
+        'expected_storage',
+        'expected_runtime',
+    ),
     [
         # No row - uses root config only
         (
@@ -1772,38 +1781,74 @@ async def test_update_config_row(
             {'input': {'tables': []}},
             None,
             None,
+            None,
             {'host': 'db.example.com', 'port': 3306},
             {'input': {'tables': []}},
+            None,
         ),
         # With row - row params override root params (shallow merge)
         (
             {'host': 'db.example.com', 'port': 3306, 'database': 'prod'},
             {'input': {'tables': [{'source': 't1'}]}},
+            None,
             {'database': 'staging', 'schema': 'public'},
             {'input': {'tables': [{'source': 't2'}]}},
             {'host': 'db.example.com', 'port': 3306, 'database': 'staging', 'schema': 'public'},
             {'input': {'tables': [{'source': 't2'}]}},
+            None,
         ),
         # With row - empty root, row provides all
         (
             {},
             {},
+            None,
             {'key': 'value'},
             {'output': {'tables': []}},
             {'key': 'value'},
             {'output': {'tables': []}},
+            None,
+        ),
+        # Root has runtime.image_tag - must be forwarded so the runner picks up the pinned tag
+        (
+            {'host': 'db.example.com'},
+            {'input': {'tables': []}},
+            {'image_tag': '1.2.3'},
+            None,
+            None,
+            {'host': 'db.example.com'},
+            {'input': {'tables': []}},
+            {'image_tag': '1.2.3'},
+        ),
+        # Root runtime is preserved alongside row overrides for parameters/storage
+        (
+            {'host': 'db.example.com'},
+            {'input': {'tables': []}},
+            {'image_tag': '4.5.6', 'safe': True},
+            {'database': 'staging'},
+            {'input': {'tables': [{'source': 't2'}]}},
+            {'host': 'db.example.com', 'database': 'staging'},
+            {'input': {'tables': [{'source': 't2'}]}},
+            {'image_tag': '4.5.6', 'safe': True},
         ),
     ],
-    ids=['no-row', 'row-overrides-root', 'empty-root-with-row'],
+    ids=[
+        'no-row',
+        'row-overrides-root',
+        'empty-root-with-row',
+        'root-runtime-image-tag',
+        'root-runtime-with-row',
+    ],
 )
 async def test_run_sync_action(
     mcp_context_components_configs: Context,
     root_params: dict,
     root_storage: dict,
+    root_runtime: dict | None,
     row_params: dict | None,
     row_storage: dict | None,
     expected_params: dict,
     expected_storage: dict,
+    expected_runtime: dict | None,
 ):
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
@@ -1813,6 +1858,13 @@ async def test_run_sync_action(
     action_name = 'testConnection'
     expected_response = {'status': 'ok'}
 
+    root_configuration: dict[str, Any] = {
+        'parameters': root_params,
+        'storage': root_storage,
+    }
+    if root_runtime is not None:
+        root_configuration['runtime'] = root_runtime
+
     keboola_client.storage_client.configuration_detail.return_value = {
         'id': configuration_id,
         'componentId': component_id,
@@ -1820,10 +1872,7 @@ async def test_run_sync_action(
         'version': 1,
         'isDisabled': False,
         'isDeleted': False,
-        'configuration': {
-            'parameters': root_params,
-            'storage': root_storage,
-        },
+        'configuration': root_configuration,
         'rows': [],
     }
 
@@ -1851,14 +1900,18 @@ async def test_run_sync_action(
 
     assert result == expected_response
 
+    expected_config_data: dict[str, Any] = {
+        'parameters': expected_params,
+        'storage': expected_storage,
+    }
+    if expected_runtime is not None:
+        expected_config_data['runtime'] = expected_runtime
+
     keboola_client.storage_client.configuration_detail.assert_called_once_with(component_id, configuration_id)
     keboola_client.sync_actions_client.execute_action.assert_called_once_with(
         component_id=component_id,
         action=action_name,
-        config_data={
-            'parameters': expected_params,
-            'storage': expected_storage,
-        },
+        config_data=expected_config_data,
     )
 
     if row_id:
