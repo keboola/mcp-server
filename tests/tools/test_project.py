@@ -63,13 +63,57 @@ _DEV_BRANCH = {'id': 456, 'name': 'feature-x', 'isDefault': False}
     ),
     [
         # developer role on default branch
-        ('developer', 'developer', ['cannot set their schedules'], False, 'Snowflake', '"DATABASE"."SCHEMA"."TABLE"', None, 123, 'Main', False),
+        (
+            'developer',
+            'developer',
+            ['cannot set their schedules'],
+            False,
+            'Snowflake',
+            '"DATABASE"."SCHEMA"."TABLE"',
+            None,
+            123,
+            'Main',
+            False,
+        ),
         # guest role on default branch
-        ('guest', 'guest', ['cannot set their schedules'], False, 'BigQuery', '`project`.`dataset`.`table`', None, 123, 'Main', False),
+        (
+            'guest',
+            'guest',
+            ['cannot set their schedules'],
+            False,
+            'BigQuery',
+            '`project`.`dataset`.`table`',
+            None,
+            123,
+            'Main',
+            False,
+        ),
         # no role on default branch
-        (None, 'unknown', ['cannot set their schedules'], False, 'Snowflake', '"DATABASE"."SCHEMA"."TABLE"', None, 123, 'Main', False),
+        (
+            None,
+            'unknown',
+            ['cannot set their schedules'],
+            False,
+            'Snowflake',
+            '"DATABASE"."SCHEMA"."TABLE"',
+            None,
+            123,
+            'Main',
+            False,
+        ),
         # readonly role on default branch
-        ('readonly', 'readonly', ['read-only'], False, 'BigQuery', '`project`.`dataset`.`table`', None, 123, 'Main', False),
+        (
+            'readonly',
+            'readonly',
+            ['read-only'],
+            False,
+            'BigQuery',
+            '`project`.`dataset`.`table`',
+            None,
+            123,
+            'Main',
+            False,
+        ),
         # admin role on default branch
         ('admin', 'admin', [], True, 'Snowflake', '"DATABASE"."SCHEMA"."TABLE"', None, 123, 'Main', False),
         # admin role on a dev branch — exercises the dev-branch resolution path

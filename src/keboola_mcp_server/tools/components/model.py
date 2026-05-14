@@ -37,7 +37,7 @@ import asyncio
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Sequence, Union, get_args
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 from keboola_mcp_server.clients.client import get_metadata_property
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ComponentType, ConfigurationAPIResponse
@@ -238,6 +238,14 @@ class ConfigurationRoot(BaseModel):
         default_factory=list, description='Configuration metadata including MCP tracking'
     )
 
+    @field_validator('processors', mode='before')
+    @classmethod
+    def validate_processors(cls, value: Any) -> Any:
+        # Storage API returns [] when no processors are configured instead of None or {}
+        if value == []:
+            return None
+        return value
+
     @classmethod
     def from_api_response(cls, api_config: 'ConfigurationAPIResponse') -> 'ConfigurationRoot':
         """
@@ -249,7 +257,7 @@ class ConfigurationRoot(BaseModel):
         :param api_config: Validated API configuration response
         :return: Complete configuration root domain model
         """
-        return cls.model_construct(
+        return cls(
             component_id=api_config.component_id,
             configuration_id=api_config.configuration_id,
             name=api_config.name,
@@ -292,6 +300,14 @@ class ConfigurationRow(BaseModel):
         default=None, description='The processors that run before or after the configured component row.'
     )
     configuration_metadata: list[dict[str, Any]] = Field(default_factory=list, description='Configuration row metadata')
+
+    @field_validator('processors', mode='before')
+    @classmethod
+    def validate_processors(cls, value: Any) -> Any:
+        # Storage API returns [] when no processors are configured instead of None or {}
+        if value == []:
+            return None
+        return value
 
     @classmethod
     def from_api_row_data(
