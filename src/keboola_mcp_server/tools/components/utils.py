@@ -65,6 +65,17 @@ SNOWFLAKE_TRANSFORMATION_ID = 'keboola.snowflake-transformation'
 BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 PYTHON_TRANSFORMATION_ID = 'keboola.python-transformation-v2'
 R_TRANSFORMATION_ID = 'keboola.r-transformation-v2'
+SHARED_CODE_COMPONENT_ID = 'keboola.shared-code'
+
+# Transformation component IDs that may have a shared-code library associated with them.
+SHARED_CODE_TRANSFORMATION_IDS: frozenset[str] = frozenset(
+    {
+        SNOWFLAKE_TRANSFORMATION_ID,
+        BIGQUERY_TRANSFORMATION_ID,
+        PYTHON_TRANSFORMATION_ID,
+        R_TRANSFORMATION_ID,
+    }
+)
 
 # Component IDs for which update_config actively manages folder metadata (set/clear/hint).
 # For all other components the folder parameter is accepted but silently skipped to avoid

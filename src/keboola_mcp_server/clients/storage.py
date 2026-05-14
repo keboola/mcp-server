@@ -668,6 +668,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         name: str,
         description: str,
         configuration: dict[str, Any],
+        row_id: Optional[str] = None,
     ) -> JsonDict:
         """
         Creates a new row configuration for a component configuration.
@@ -677,13 +678,18 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param name: The name of the row configuration.
         :param description: The description of the row configuration.
         :param configuration: The configuration data to create row configuration.
+        :param row_id: Optional explicit row ID (forwarded to SAPI as `rowId`). When provided,
+            it becomes the row's identifier — used e.g. as the Mustache placeholder key for
+            `keboola.shared-code` rows. When omitted, SAPI generates a numeric ID.
         :return: The SAPI call response - created row configuration or raise an error.
         """
-        payload = {
+        payload: dict[str, Any] = {
             'name': name,
             'description': description,
             'configuration': configuration,
         }
+        if row_id:
+            payload['rowId'] = row_id
 
         return cast(
             JsonDict,

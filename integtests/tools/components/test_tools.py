@@ -29,17 +29,27 @@ from keboola_mcp_server.tools.components.model import (
     GetComponentsOutput,
     GetConfigsDetailOutput,
     GetConfigsListOutput,
+    GetSharedCodesOutput,
     SimplifiedTfBlocks,
     TfAddScript,
     TfParamUpdate,
+    TfRemoveSharedCode,
     TfRenameBlock,
     TfRenameCode,
     TfSetCode,
+    TfSetSharedCode,
     TfStrReplace,
     TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
+from keboola_mcp_server.tools.components.tools import (
+    get_shared_codes,
+    update_config,
+    update_sql_transformation,
+)
 from keboola_mcp_server.tools.components.utils import (
+    PYTHON_TRANSFORMATION_ID,
+    SHARED_CODE_COMPONENT_ID,
     clean_bucket_name,
     expand_component_types,
     get_sql_transformation_id_from_sql_dialect,
@@ -1050,3 +1060,383 @@ async def test_get_config_examples_with_invalid_component(mcp_context: Context):
     result = await get_config_examples(ctx=mcp_context, component_id='completely-non-existent-component-12345')
 
     assert result == ''
+
+
+# ============================================================================
+# SHARED CODE TESTS
+# ============================================================================
+
+
+@pytest_asyncio.fixture
+async def shared_code_parent_factory(mcp_context: Context) -> AsyncGenerator[Any, None]:
+    """
+    Factory fixture: creates `keboola.shared-code` parent configs on demand and cleans them
+    up at teardown. Yields a callable `make(target_component_id, name=...) -> ConfigToolOutput`.
+    """
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    created: list[tuple[str, str]] = []  # (component_id, configuration_id)
+
+    async def make(target_component_id: str, name: str = '') -> ConfigToolOutput:
+        config = await create_config(
+            ctx=mcp_context,
+            name=name or f'Shared Codes for {target_component_id}',
+            description='Created by integtest — safe to delete',
+            component_id=SHARED_CODE_COMPONENT_ID,
+            parameters={'componentId': target_component_id},
+        )
+        created.append((SHARED_CODE_COMPONENT_ID, config.configuration_id))
+        return config
+
+    try:
+        yield make
+    finally:
+        for component_id, configuration_id in created:
+            try:
+                await client.storage_client.configuration_delete(
+                    component_id=component_id,
+                    configuration_id=configuration_id,
+                    skip_trash=True,
+                )
+            except Exception:  # noqa: BLE001
+                LOG.exception('Failed to clean up shared-code config %s/%s', component_id, configuration_id)
+
+
+@pytest.mark.asyncio
+async def test_get_shared_codes_empty_or_filtered(mcp_context: Context):
+    """`get_shared_codes` on a project with no `keboola.shared-code` configs returns an empty list."""
+    # No fixtures created — project may already have shared codes from other tests/seed data, so
+    # we just assert the output shape rather than emptiness. Filtering to an invalid combo gives [].
+    result = await get_shared_codes(ctx=mcp_context)
+    assert isinstance(result, GetSharedCodesOutput)
+
+    # Filtering by a known-empty component (no shared code library created for it in this project)
+    # must not error and must return shared_codes consistent with the requested filter.
+    filtered = await get_shared_codes(ctx=mcp_context, transformation_component_ids=[PYTHON_TRANSFORMATION_ID])
+    for cfg in filtered.shared_codes:
+        assert cfg.transformation_component_id == PYTHON_TRANSFORMATION_ID
+
+
+@pytest.mark.asyncio
+async def test_get_shared_codes_rejects_unknown_filter(mcp_context: Context):
+    """An unknown component ID in the filter must raise without hitting the API."""
+    with pytest.raises(ValueError, match='Unknown transformation component IDs'):
+        await get_shared_codes(ctx=mcp_context, transformation_component_ids=['nonsense.fake'])
+
+
+@pytest.mark.asyncio
+async def test_add_config_row_forwards_row_id_to_shared_code_parent(
+    mcp_context: Context,
+    shared_code_parent_factory: Any,
+):
+    """
+    Verifies the storage-layer rowId forwarding fix: when `add_config_row` is called with a
+    `row_id`, the created row's identifier in SAPI is exactly that value (the Mustache key).
+    """
+    sql_dialect = await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()
+    target_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
+
+    parent = await shared_code_parent_factory(target_component_id)
+    client = KeboolaClient.from_state(mcp_context.session.state)
+
+    row_id = 'integ_dumpfiles'
+    await add_config_row(
+        ctx=mcp_context,
+        name='Dump files helper',
+        description='Reusable snippet for integration tests',
+        component_id=SHARED_CODE_COMPONENT_ID,
+        configuration_id=parent.configuration_id,
+        parameters={'code_content': ['SELECT 1 AS integ_marker']},
+        row_id=row_id,
+    )
+
+    detail = await client.storage_client.configuration_detail(
+        component_id=SHARED_CODE_COMPONENT_ID,
+        configuration_id=parent.configuration_id,
+    )
+    rows = cast(list, detail.get('rows') or [])
+    assert any(
+        row.get('id') == row_id for row in rows
+    ), f'Expected row with id={row_id!r} in shared-code config; got rows: {[r.get("id") for r in rows]}'
+
+
+@pytest.mark.asyncio
+async def test_get_shared_codes_returns_created_library(
+    mcp_context: Context,
+    shared_code_parent_factory: Any,
+):
+    """End-to-end: create a shared-code library with one row and confirm `get_shared_codes` lists it."""
+    sql_dialect = await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()
+    target_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
+
+    parent = await shared_code_parent_factory(target_component_id, name='Integ shared library')
+    row_id = 'integ_now'
+    await add_config_row(
+        ctx=mcp_context,
+        name='now()',
+        description='returns current timestamp',
+        component_id=SHARED_CODE_COMPONENT_ID,
+        configuration_id=parent.configuration_id,
+        parameters={'code_content': ['SELECT current_timestamp']},
+        row_id=row_id,
+    )
+
+    result = await get_shared_codes(ctx=mcp_context, transformation_component_ids=[target_component_id])
+    libraries = [cfg for cfg in result.shared_codes if cfg.config_id == parent.configuration_id]
+    assert len(libraries) == 1, 'Created library not surfaced by get_shared_codes'
+    library = libraries[0]
+    assert library.transformation_component_id == target_component_id
+    assert any(row.row_id == row_id for row in library.rows)
+
+
+@pytest.mark.asyncio
+async def test_create_sql_transformation_with_shared_code_linkage(
+    mcp_context: Context,
+    shared_code_parent_factory: Any,
+):
+    """`create_sql_transformation` writes shared_code_id + shared_code_row_ids at the config root."""
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    sql_dialect = await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()
+    expected_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
+
+    parent = await shared_code_parent_factory(expected_component_id)
+    row_id = 'integ_marker'
+    await add_config_row(
+        ctx=mcp_context,
+        name='Marker snippet',
+        description='reusable SELECT',
+        component_id=SHARED_CODE_COMPONENT_ID,
+        configuration_id=parent.configuration_id,
+        parameters={'code_content': ['SELECT 1 AS integ_marker']},
+        row_id=row_id,
+    )
+
+    tf = await create_sql_transformation(
+        ctx=mcp_context,
+        name='Integ TF with shared code',
+        description='references {{ integ_marker }}',
+        sql_code_blocks=[
+            SimplifiedTfBlocks.Block.Code(name='Reused', script='SELECT * FROM ({{ integ_marker }}) AS x'),
+        ],
+        created_table_names=[],
+        shared_code_id=parent.configuration_id,
+        shared_code_row_ids=[row_id],
+    )
+
+    try:
+        detail = await client.storage_client.configuration_detail(
+            component_id=tf.component_id, configuration_id=tf.configuration_id
+        )
+        config_root = cast(dict, detail.get('configuration') or {})
+        assert config_root.get('shared_code_id') == parent.configuration_id
+        assert config_root.get('shared_code_row_ids') == [row_id]
+    finally:
+        await client.storage_client.configuration_delete(
+            component_id=tf.component_id,
+            configuration_id=tf.configuration_id,
+            skip_trash=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_sql_transformation_set_and_remove_shared_code(
+    mcp_context: Context,
+    shared_code_parent_factory: Any,
+):
+    """TfSetSharedCode then TfRemoveSharedCode round-trip the linkage at the config root."""
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    sql_dialect = await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()
+    expected_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
+
+    parent = await shared_code_parent_factory(expected_component_id)
+    for row_id in ('integ_a', 'integ_b'):
+        await add_config_row(
+            ctx=mcp_context,
+            name=row_id,
+            description='int',
+            component_id=SHARED_CODE_COMPONENT_ID,
+            configuration_id=parent.configuration_id,
+            parameters={'code_content': ['SELECT 1']},
+            row_id=row_id,
+        )
+
+    tf = await create_sql_transformation(
+        ctx=mcp_context,
+        name='Integ TF for set/remove',
+        description='will receive a shared code link via update',
+        sql_code_blocks=[SimplifiedTfBlocks.Block.Code(name='Body', script='SELECT 1')],
+        created_table_names=[],
+    )
+
+    try:
+        # SET
+        await update_sql_transformation(
+            mcp_context,
+            change_description='link shared code',
+            configuration_id=tf.configuration_id,
+            parameter_updates=[
+                TfSetSharedCode(
+                    op='set_shared_code',
+                    shared_code_id=parent.configuration_id,
+                    shared_code_row_ids=['integ_a', 'integ_b'],
+                ),
+            ],
+        )
+        detail = await client.storage_client.configuration_detail(
+            component_id=tf.component_id, configuration_id=tf.configuration_id
+        )
+        root = cast(dict, detail.get('configuration') or {})
+        assert root.get('shared_code_id') == parent.configuration_id
+        assert root.get('shared_code_row_ids') == ['integ_a', 'integ_b']
+
+        # REMOVE
+        await update_sql_transformation(
+            mcp_context,
+            change_description='unlink shared code',
+            configuration_id=tf.configuration_id,
+            parameter_updates=[TfRemoveSharedCode(op='remove_shared_code')],
+        )
+        detail = await client.storage_client.configuration_detail(
+            component_id=tf.component_id, configuration_id=tf.configuration_id
+        )
+        root = cast(dict, detail.get('configuration') or {})
+        assert 'shared_code_id' not in root
+        assert 'shared_code_row_ids' not in root
+    finally:
+        await client.storage_client.configuration_delete(
+            component_id=tf.component_id,
+            configuration_id=tf.configuration_id,
+            skip_trash=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_sql_transformation_preserves_shared_code_on_parameter_only_update(
+    mcp_context: Context,
+    shared_code_parent_factory: Any,
+):
+    """Regression guard: a parameter-only update must not silently drop existing shared-code fields."""
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    sql_dialect = await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()
+    expected_component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
+
+    parent = await shared_code_parent_factory(expected_component_id)
+    row_id = 'integ_keep'
+    await add_config_row(
+        ctx=mcp_context,
+        name=row_id,
+        description='keep me',
+        component_id=SHARED_CODE_COMPONENT_ID,
+        configuration_id=parent.configuration_id,
+        parameters={'code_content': ['SELECT 1']},
+        row_id=row_id,
+    )
+
+    tf = await create_sql_transformation(
+        ctx=mcp_context,
+        name='Integ TF preserve test',
+        description='linkage must survive parameter-only update',
+        sql_code_blocks=[SimplifiedTfBlocks.Block.Code(name='B', script='SELECT 1')],
+        created_table_names=[],
+        shared_code_id=parent.configuration_id,
+        shared_code_row_ids=[row_id],
+    )
+
+    try:
+        await update_sql_transformation(
+            mcp_context,
+            change_description='rename block only',
+            configuration_id=tf.configuration_id,
+            parameter_updates=[TfRenameBlock(op='rename_block', block_id='b0', block_name='Renamed')],
+        )
+
+        detail = await client.storage_client.configuration_detail(
+            component_id=tf.component_id, configuration_id=tf.configuration_id
+        )
+        root = cast(dict, detail.get('configuration') or {})
+        assert (
+            root.get('shared_code_id') == parent.configuration_id
+        ), 'shared_code_id was silently dropped by parameter-only update'
+        assert root.get('shared_code_row_ids') == [row_id]
+    finally:
+        await client.storage_client.configuration_delete(
+            component_id=tf.component_id,
+            configuration_id=tf.configuration_id,
+            skip_trash=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_config_set_clear_preserve_shared_code(
+    mcp_context: Context,
+    shared_code_parent_factory: Any,
+    configs: list[ConfigDef],
+):
+    """`update_config`: non-empty sets linkage, empty clears it, None preserves existing linkage."""
+    client = KeboolaClient.from_state(mcp_context.session.state)
+    # Use any config from the project (component-agnostic — shared-code fields are meta-fields).
+    target = configs[0]
+    component_id = target.component_id
+    configuration_id = target.configuration_id
+
+    sql_dialect = await WorkspaceManager.from_state(mcp_context.session.state).get_sql_dialect()
+    parent = await shared_code_parent_factory(get_sql_transformation_id_from_sql_dialect(sql_dialect))
+
+    # Snapshot current root keys so we can restore at teardown.
+    snapshot = await client.storage_client.configuration_detail(
+        component_id=component_id, configuration_id=configuration_id
+    )
+    original_root = cast(dict, snapshot.get('configuration') or {})
+
+    try:
+        # SET
+        await update_config(
+            ctx=mcp_context,
+            change_description='set shared code linkage',
+            component_id=component_id,
+            configuration_id=configuration_id,
+            shared_code_id=parent.configuration_id,
+            shared_code_row_ids=['integ_x'],
+        )
+        detail = await client.storage_client.configuration_detail(
+            component_id=component_id, configuration_id=configuration_id
+        )
+        root = cast(dict, detail.get('configuration') or {})
+        assert root.get('shared_code_id') == parent.configuration_id
+        assert root.get('shared_code_row_ids') == ['integ_x']
+
+        # PRESERVE (None means don't touch)
+        await update_config(
+            ctx=mcp_context,
+            change_description='unrelated update',
+            component_id=component_id,
+            configuration_id=configuration_id,
+            description='still has shared code',
+        )
+        detail = await client.storage_client.configuration_detail(
+            component_id=component_id, configuration_id=configuration_id
+        )
+        root = cast(dict, detail.get('configuration') or {})
+        assert root.get('shared_code_id') == parent.configuration_id, 'linkage was dropped when shared_code_id=None'
+
+        # CLEAR (empty string)
+        await update_config(
+            ctx=mcp_context,
+            change_description='clear shared code linkage',
+            component_id=component_id,
+            configuration_id=configuration_id,
+            shared_code_id='',
+        )
+        detail = await client.storage_client.configuration_detail(
+            component_id=component_id, configuration_id=configuration_id
+        )
+        root = cast(dict, detail.get('configuration') or {})
+        assert 'shared_code_id' not in root
+        assert 'shared_code_row_ids' not in root
+    finally:
+        # Restore the original configuration so we don't pollute other tests.
+        await client.storage_client.configuration_update(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            configuration=original_root,
+            change_description='integtest cleanup: restore original config',
+        )

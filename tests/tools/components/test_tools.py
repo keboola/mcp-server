@@ -32,10 +32,13 @@ from keboola_mcp_server.tools.components.model import (
     GetComponentsOutput,
     GetConfigsDetailOutput,
     GetConfigsListOutput,
+    GetSharedCodesOutput,
     SimplifiedTfBlocks,
     TfParamUpdate,
+    TfRemoveSharedCode,
     TfRenameBlock,
     TfSetCode,
+    TfSetSharedCode,
     TfStrReplace,
 )
 from keboola_mcp_server.tools.components.tools import (
@@ -45,6 +48,7 @@ from keboola_mcp_server.tools.components.tools import (
     get_components,
     get_config_examples,
     get_configs,
+    get_shared_codes,
     run_sync_action,
     update_config,
     update_config_row,
@@ -53,6 +57,7 @@ from keboola_mcp_server.tools.components.tools import (
 from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     FOLDER_SUPPORTING_COMPONENT_IDS,
+    SHARED_CODE_COMPONENT_ID,
     SNOWFLAKE_TRANSFORMATION_ID,
     clean_bucket_name,
 )
@@ -1183,6 +1188,7 @@ async def test_add_config_row(
         name=name,
         description=description,
         configuration={'storage': storage, 'parameters': parameters},
+        row_id=None,
     )
 
 
@@ -1867,3 +1873,470 @@ async def test_run_sync_action(
         )
     else:
         keboola_client.storage_client.configuration_row_detail.assert_not_called()
+
+
+# ============================================================================
+# SHARED CODE TESTS
+# ============================================================================
+
+
+@pytest.mark.parametrize(
+    ('row_id', 'expected_forwarded'),
+    [
+        pytest.param('dumpfiles', 'dumpfiles', id='explicit_row_id_forwarded'),
+        pytest.param('', None, id='empty_row_id_omitted'),
+    ],
+)
+@pytest.mark.asyncio
+async def test_add_config_row_forwards_row_id(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    row_id: str,
+    expected_forwarded: str | None,
+):
+    """`add_config_row` must forward an explicit row_id as the SAPI `rowId` (Mustache key for shared code)."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    component_id = mock_component['id']
+    configuration_id = 'parent-config'
+
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_row_create = mocker.AsyncMock(
+        return_value={'id': expected_forwarded or 'auto-id', 'version': 1}
+    )
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    await add_config_row(
+        ctx=context,
+        name='shared snippet',
+        description='reusable SELECT',
+        component_id=component_id,
+        configuration_id=configuration_id,
+        parameters={'code_content': ['SELECT 1']},
+        row_id=row_id,
+    )
+
+    keboola_client.storage_client.configuration_row_create.assert_called_once_with(
+        component_id=component_id,
+        config_id=configuration_id,
+        name='shared snippet',
+        description='reusable SELECT',
+        configuration={'storage': {}, 'parameters': {'code_content': ['SELECT 1']}},
+        row_id=expected_forwarded,
+    )
+
+
+@pytest.mark.parametrize(
+    ('sql_dialect', 'expected_component_id'),
+    [
+        ('Snowflake', SNOWFLAKE_TRANSFORMATION_ID),
+        ('BigQuery', BIGQUERY_TRANSFORMATION_ID),
+    ],
+)
+@pytest.mark.asyncio
+async def test_create_sql_transformation_with_shared_code(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+    sql_dialect: str,
+    expected_component_id: str,
+):
+    """When shared_code_id/row_ids are provided they must appear at the configuration root."""
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
+
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    component = {**mock_component, 'id': expected_component_id}
+    configuration = {**mock_configuration, 'id': 'tf-with-sc'}
+
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=configuration)
+
+    shared_code_id = f'shared-codes.{expected_component_id.split(".")[-1]}'
+    shared_code_row_ids = ['dumpfiles', 'cleanup']
+
+    await create_sql_transformation(
+        ctx=context,
+        name='tf_with_sc',
+        description='uses shared code',
+        sql_code_blocks=[
+            SimplifiedTfBlocks.Block.Code(name='Reused', script='{{ dumpfiles }}\n{{ cleanup }}'),
+        ],
+        shared_code_id=shared_code_id,
+        shared_code_row_ids=shared_code_row_ids,
+    )
+
+    call = keboola_client.storage_client.configuration_create.call_args
+    assert call is not None
+    payload = call.kwargs['configuration']
+    assert payload['shared_code_id'] == shared_code_id
+    assert payload['shared_code_row_ids'] == shared_code_row_ids
+
+
+@pytest.mark.asyncio
+async def test_create_sql_transformation_without_shared_code_omits_fields(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """Default-empty shared_code_id must not introduce null/empty linkage fields into the payload."""
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    component = {**mock_component, 'id': SNOWFLAKE_TRANSFORMATION_ID}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
+
+    await create_sql_transformation(
+        ctx=context,
+        name='no_sc',
+        description='no shared code',
+        sql_code_blocks=[SimplifiedTfBlocks.Block.Code(name='c', script='SELECT 1')],
+    )
+
+    payload = keboola_client.storage_client.configuration_create.call_args.kwargs['configuration']
+    assert 'shared_code_id' not in payload
+    assert 'shared_code_row_ids' not in payload
+
+
+@pytest.mark.parametrize(
+    ('parameter_updates', 'existing_root_extras', 'expected_root'),
+    [
+        pytest.param(
+            [TfSetSharedCode(op='set_shared_code', shared_code_id='lib-1', shared_code_row_ids=['a', 'b'])],
+            {},
+            {'shared_code_id': 'lib-1', 'shared_code_row_ids': ['a', 'b']},
+            id='set_shared_code_adds_root_fields',
+        ),
+        pytest.param(
+            [TfSetSharedCode(op='set_shared_code', shared_code_id='lib-2', shared_code_row_ids=['x'])],
+            {'shared_code_id': 'lib-1', 'shared_code_row_ids': ['a', 'b']},
+            {'shared_code_id': 'lib-2', 'shared_code_row_ids': ['x']},
+            id='set_shared_code_replaces_existing',
+        ),
+        pytest.param(
+            [TfRemoveSharedCode(op='remove_shared_code')],
+            {'shared_code_id': 'lib-1', 'shared_code_row_ids': ['a']},
+            {},
+            id='remove_shared_code_clears_root_fields',
+        ),
+        pytest.param(
+            [TfRemoveSharedCode(op='remove_shared_code')],
+            {},
+            {},
+            id='remove_shared_code_is_noop_when_no_linkage',
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_update_sql_transformation_shared_code_ops(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    parameter_updates: list[TfParamUpdate],
+    existing_root_extras: dict[str, Any],
+    expected_root: dict[str, Any],
+):
+    """TfSetSharedCode / TfRemoveSharedCode patch the configuration root, not parameters."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+
+    component = {**mock_component, 'id': SNOWFLAKE_TRANSFORMATION_ID}
+    existing_configuration = {
+        'id': 'tf-1',
+        'name': 'tf',
+        'description': 'd',
+        'configuration': {
+            'parameters': {
+                'blocks': [{'name': 'B', 'codes': [{'name': 'C', 'script': ['SELECT 1;']}]}],
+            },
+            'storage': {'input': {'tables': []}, 'output': {'tables': []}},
+            **existing_root_extras,
+        },
+        'version': 1,
+    }
+    updated_configuration = {**existing_configuration, 'version': 2}
+
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing_configuration)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=updated_configuration)
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    await update_sql_transformation(
+        context,
+        change_description='shared code change',
+        configuration_id='tf-1',
+        parameter_updates=parameter_updates,
+    )
+
+    sent_config = keboola_client.storage_client.configuration_update.call_args.kwargs['configuration']
+    for key in ('shared_code_id', 'shared_code_row_ids'):
+        assert sent_config.get(key) == expected_root.get(key)
+    assert 'parameters' in sent_config
+    assert sent_config['parameters']['blocks']
+
+
+@pytest.mark.asyncio
+async def test_update_sql_transformation_preserves_unrelated_root_fields(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """Root-level shared_code fields must survive a parameter-only update (no silent drop)."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+
+    component = {**mock_component, 'id': SNOWFLAKE_TRANSFORMATION_ID}
+    existing_configuration = {
+        'id': 'tf-2',
+        'name': 'tf',
+        'description': 'd',
+        'configuration': {
+            'parameters': {
+                'blocks': [{'name': 'B', 'codes': [{'name': 'C', 'script': ['SELECT 1;']}]}],
+            },
+            'storage': {'input': {'tables': []}, 'output': {'tables': []}},
+            'shared_code_id': 'lib-keep',
+            'shared_code_row_ids': ['keep'],
+        },
+        'version': 3,
+    }
+
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing_configuration)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(
+        return_value={**existing_configuration, 'version': 4}
+    )
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    await update_sql_transformation(
+        context,
+        change_description='rename only',
+        configuration_id='tf-2',
+        parameter_updates=[
+            TfRenameBlock(op='rename_block', block_id='b0', block_name='Renamed'),
+        ],
+    )
+
+    sent_config = keboola_client.storage_client.configuration_update.call_args.kwargs['configuration']
+    assert sent_config['shared_code_id'] == 'lib-keep'
+    assert sent_config['shared_code_row_ids'] == ['keep']
+
+
+@pytest.mark.asyncio
+async def test_create_config_with_shared_code(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """create_config writes shared_code_id and shared_code_row_ids at the config root for Python/R/DuckDB."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    component_id = mock_component['id']
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    await create_config(
+        ctx=context,
+        name='py-tf',
+        description='python tf with shared code',
+        component_id=component_id,
+        parameters={'script': ['print("hi")']},
+        shared_code_id='shared-codes.python-transformation-v2',
+        shared_code_row_ids=['imports'],
+    )
+
+    payload = keboola_client.storage_client.configuration_create.call_args.kwargs['configuration']
+    assert payload['shared_code_id'] == 'shared-codes.python-transformation-v2'
+    assert payload['shared_code_row_ids'] == ['imports']
+
+
+@pytest.mark.parametrize(
+    ('shared_code_id', 'shared_code_row_ids', 'existing_extras', 'expected_root'),
+    [
+        pytest.param(
+            'lib-1',
+            ['a'],
+            {},
+            {'shared_code_id': 'lib-1', 'shared_code_row_ids': ['a']},
+            id='set_linkage',
+        ),
+        pytest.param(
+            '',
+            (),
+            {'shared_code_id': 'lib-1', 'shared_code_row_ids': ['a']},
+            {},
+            id='clear_linkage_with_empty_string',
+        ),
+        pytest.param(
+            None,
+            (),
+            {'shared_code_id': 'lib-1', 'shared_code_row_ids': ['a']},
+            {'shared_code_id': 'lib-1', 'shared_code_row_ids': ['a']},
+            id='none_preserves_existing_linkage',
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_update_config_shared_code_linkage(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    shared_code_id: str | None,
+    shared_code_row_ids: tuple[str, ...],
+    existing_extras: dict[str, Any],
+    expected_root: dict[str, Any],
+):
+    """update_config: non-empty sets linkage, empty clears it, None leaves existing untouched."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    component_id = mock_component['id']
+
+    existing = {
+        'id': 'cfg-1',
+        'name': 'cfg',
+        'description': 'd',
+        'configuration': {
+            'parameters': {'k': 'v'},
+            'storage': {},
+            **existing_extras,
+        },
+        'version': 1,
+    }
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={**existing, 'version': 2})
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    await update_config(
+        ctx=context,
+        change_description='tweak shared code',
+        component_id=component_id,
+        configuration_id='cfg-1',
+        shared_code_id=shared_code_id,
+        shared_code_row_ids=shared_code_row_ids,
+    )
+
+    payload = keboola_client.storage_client.configuration_update.call_args.kwargs['configuration']
+    for key in ('shared_code_id', 'shared_code_row_ids'):
+        assert payload.get(key) == expected_root.get(key)
+
+
+@pytest.mark.parametrize(
+    ('filter_ids', 'expected_config_ids'),
+    [
+        pytest.param(
+            (),
+            {'shared-codes.snowflake-transformation', 'shared-codes.python-transformation-v2'},
+            id='no_filter_returns_all',
+        ),
+        pytest.param(
+            (SNOWFLAKE_TRANSFORMATION_ID,), {'shared-codes.snowflake-transformation'}, id='filter_by_snowflake'
+        ),
+        pytest.param((BIGQUERY_TRANSFORMATION_ID,), set(), id='filter_with_no_matches_returns_empty'),
+    ],
+)
+@pytest.mark.asyncio
+async def test_get_shared_codes(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    filter_ids: tuple[str, ...],
+    expected_config_ids: set[str],
+):
+    """get_shared_codes lists keboola.shared-code configs and applies the component-id filter."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    list_response = [
+        {
+            'id': 'shared-codes.snowflake-transformation',
+            'name': 'Snowflake snippets',
+            'configuration': {'componentId': SNOWFLAKE_TRANSFORMATION_ID},
+        },
+        {
+            'id': 'shared-codes.python-transformation-v2',
+            'name': 'Python snippets',
+            'configuration': {'componentId': 'keboola.python-transformation-v2'},
+        },
+    ]
+    detail_by_id = {
+        'shared-codes.snowflake-transformation': {
+            'rows': [
+                {
+                    'id': 'dumpfiles',
+                    'name': 'Dump files',
+                    'configuration': {'code_content': ['SELECT * FROM info', 'WHERE 1=1']},
+                },
+            ],
+        },
+        'shared-codes.python-transformation-v2': {
+            'rows': [
+                {
+                    'id': 'imports',
+                    'name': 'imports',
+                    'configuration': {'code_content': ['import pandas as pd']},
+                },
+            ],
+        },
+    }
+
+    async def fake_detail(component_id: str, configuration_id: str) -> dict[str, Any]:
+        assert component_id == SHARED_CODE_COMPONENT_ID
+        return detail_by_id[configuration_id]
+
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=list_response)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=fake_detail)
+
+    result = await get_shared_codes(ctx=context, transformation_component_ids=filter_ids)
+
+    assert isinstance(result, GetSharedCodesOutput)
+    assert {cfg.config_id for cfg in result.shared_codes} == expected_config_ids
+    for cfg in result.shared_codes:
+        if cfg.config_id == 'shared-codes.snowflake-transformation':
+            assert cfg.transformation_component_id == SNOWFLAKE_TRANSFORMATION_ID
+            assert [row.row_id for row in cfg.rows] == ['dumpfiles']
+            assert cfg.rows[0].code == 'SELECT * FROM info\nWHERE 1=1'
+
+
+@pytest.mark.asyncio
+async def test_get_shared_codes_rejects_unknown_component_id(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+):
+    """An unknown component ID in the filter must raise before hitting the API."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match='Unknown transformation component IDs'):
+        await get_shared_codes(ctx=context, transformation_component_ids=['nonsense.component'])
+
+    keboola_client.storage_client.configuration_list.assert_not_called()

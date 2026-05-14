@@ -613,6 +613,21 @@ class TransformationConfiguration(BaseModel):
 
     parameters: Parameters = Field(description='The parameters for the transformation')
     storage: Storage = Field(description='The storage configuration for the transformation')
+    shared_code_id: Optional[str] = Field(
+        default=None,
+        description=(
+            'The configuration ID of the parent `keboola.shared-code` configuration this transformation '
+            'references (e.g. `shared-codes.snowflake-transformation`). `None` when no shared code is used.'
+        ),
+    )
+    shared_code_row_ids: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            'The list of shared code row IDs (Mustache placeholder keys) referenced by this transformation. '
+            'Each entry must correspond to a row in the parent shared-code configuration and to a '
+            '`{{ rowId }}` placeholder in one of the script blocks. `None` when no shared code is used.'
+        ),
+    )
 
 
 # Type alias for TransformationConfiguration.Parameters for convenience
@@ -760,6 +775,28 @@ class TfStrReplace(BaseModel, frozen=True):
         return self
 
 
+class TfSetSharedCode(BaseModel, frozen=True):
+    """
+    Link the transformation to shared code snippets at the configuration root.
+
+    Sets both `shared_code_id` (the parent `keboola.shared-code` configuration ID) and
+    `shared_code_row_ids` (the list of Mustache placeholder keys referenced from the script).
+    Replaces any existing shared-code linkage on the transformation.
+    """
+
+    op: Literal['set_shared_code']
+    shared_code_id: str = Field(description='The parent `keboola.shared-code` configuration ID')
+    shared_code_row_ids: list[str] = Field(
+        description='The list of shared code row IDs (Mustache keys) the script references'
+    )
+
+
+class TfRemoveSharedCode(BaseModel, frozen=True):
+    """Remove the shared-code linkage from the transformation (clears both root fields)."""
+
+    op: Literal['remove_shared_code']
+
+
 # Discriminated union of all transformation parameter update operations
 TfParamUpdate = Annotated[
     Union[
@@ -772,9 +809,45 @@ TfParamUpdate = Annotated[
         TfSetCode,
         TfAddScript,
         TfStrReplace,
+        TfSetSharedCode,
+        TfRemoveSharedCode,
     ],
     Field(discriminator='op'),
 ]
+
+
+# ============================================================================
+# SHARED CODE MODELS
+# ============================================================================
+
+
+class SharedCodeRow(BaseModel):
+    """One reusable code snippet stored as a row of a `keboola.shared-code` configuration."""
+
+    row_id: str = Field(description='The row ID — also the Mustache placeholder key (e.g. `dumpfiles`)')
+    name: str = Field(description='Human-readable label for the snippet')
+    code: str = Field(description="The code body (joined from the row's `code_content` array)")
+
+
+class SharedCodeConfig(BaseModel):
+    """A `keboola.shared-code` parent configuration grouping reusable snippets for one transformation backend."""
+
+    config_id: str = Field(description='The parent configuration ID (used as `shared_code_id` in transformations)')
+    name: str = Field(description='Human-readable label for the shared-code configuration')
+    transformation_component_id: str = Field(
+        description=(
+            'The transformation component ID this shared code is intended for, e.g. '
+            '`keboola.snowflake-transformation`, `keboola.google-bigquery-transformation`, '
+            '`keboola.python-transformation-v2`, `keboola.r-transformation-v2`'
+        )
+    )
+    rows: list[SharedCodeRow] = Field(description='Available shared code snippets in this configuration')
+
+
+class GetSharedCodesOutput(BaseModel):
+    """Output of the `get_shared_codes` tool."""
+
+    shared_codes: list[SharedCodeConfig] = Field(description='Shared code configurations and their rows')
 
 
 # ============================================================================
