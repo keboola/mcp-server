@@ -94,6 +94,12 @@ existing snippet whenever the same logic would appear in two or more transformat
   script element — no duplicate); **do NOT embed `{{ rowId }}` inline inside another SQL string** — inline
   placeholders are not substituted (only `["{{ rowId }}"]` as its own array element is).
 - **Row IDs are case-sensitive.**
+- **Marker ordering** — the auto-emitted marker is appended *after* the user-authored code in
+  the first parameters block. If your user code depends on the shared snippet's side-effect
+  (e.g. shared code does `SET (region) = ('EU')` and your code reads `$region`, or shared code
+  creates a temp table/view your code selects from), the marker must run first. Reorder via
+  `update_sql_transformation` with `remove_code` + `add_code(position="start")`, or author the
+  marker yourself as a pure `["{{ rowId }}"]` script block at the start (the tool de-duplicates).
 
 ### Development Branches
 
