@@ -76,6 +76,7 @@ from keboola_mcp_server.tools.components.utils import (
     SNOWFLAKE_TRANSFORMATION_ID,
     add_ids,
     apply_folder_metadata,
+    apply_shared_code_markers,
     build_folder_hint,
     check_suitable,
     clear_configuration_folder_metadata,
@@ -91,6 +92,7 @@ from keboola_mcp_server.tools.components.utils import (
     set_cfg_update_metadata,
     set_configuration_folder_metadata,
     set_nested_value,
+    sync_shared_code_markers_in_dict,
     update_params,
     update_transformation_parameters,
 )
@@ -292,7 +294,7 @@ async def get_configs(
             raw_configuration = cast(
                 JsonDict,
                 await client.storage_client.configuration_detail(
-                    component_id=component_id, configuration_id=configuration_id
+                    component_id=component_id, configuration_id=configuration_id, include=['rows']
                 ),
             )
 
@@ -602,6 +604,14 @@ async def create_sql_transformation(
     if shared_code_id:
         transformation_configuration_payload.shared_code_id = shared_code_id
         transformation_configuration_payload.shared_code_row_ids = list(shared_code_row_ids)
+        # Match the Keboola UI's emit: each row_id gets its own `Shared Code (...)` code block
+        # whose script is just `{{rowId}}`. The runtime expansion is driven by these marker
+        # blocks, not by `{{rowId}}` text occurrences inside the user's other queries.
+        apply_shared_code_markers(
+            transformation_configuration_payload,
+            shared_code_id=shared_code_id,
+            shared_code_row_ids=shared_code_row_ids,
+        )
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -1137,6 +1147,12 @@ async def update_sql_transformation_internal(
     if shared_code_messages:
         msg = ' '.join(filter(None, [msg, *shared_code_messages]))
 
+    # After any TfSet/TfRemoveSharedCode op (and after any block_updates), make sure the
+    # parameters.blocks reflect the current shared-code linkage with the UI-canonical
+    # `Shared Code (...)` marker blocks. Without these markers the platform's runtime
+    # expansion never substitutes `{{rowId}}`.
+    sync_shared_code_markers_in_dict(updated_configuration)
+
     if storage is not None:
         storage_cfg = validate_root_storage_configuration(
             component=transformation,
@@ -1511,6 +1527,17 @@ async def add_config_row(
         ),
     )
 
+    assigned_row_id = str(new_raw_configuration.get('id') or '')
+    if row_id and assigned_row_id and assigned_row_id != row_id:
+        LOG.warning(
+            'add_config_row requested row_id=%r but SAPI assigned %r for component=%s config=%s. '
+            'Use the assigned id when addressing this row.',
+            row_id,
+            assigned_row_id,
+            component_id,
+            configuration_id,
+        )
+
     LOG.info(
         f'Created new configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".'
     )
@@ -1531,6 +1558,7 @@ async def add_config_row(
     return ConfigToolOutput(
         component_id=component_id,
         configuration_id=configuration_id,
+        configuration_row_id=assigned_row_id or None,
         description=description,
         version=new_raw_configuration['version'],
         timestamp=datetime.now(timezone.utc),

@@ -860,6 +860,14 @@ class ConfigToolOutput(BaseModel):
 
     component_id: str = Field(description='The ID of the component.')
     configuration_id: str = Field(description='The ID of the configuration.')
+    configuration_row_id: Optional[str] = Field(
+        default=None,
+        description=(
+            'For row-level operations (e.g. `add_config_row`), the actual row ID assigned by SAPI. '
+            'For `keboola.shared-code` rows this is the Mustache placeholder key. Use it when '
+            'addressing the row in subsequent calls such as `update_config_row`.'
+        ),
+    )
     description: str = Field(description='The description of the configuration.')
     version: int = Field(description='The version number of the configuration.')
     timestamp: datetime = Field(description='The timestamp of the operation.')

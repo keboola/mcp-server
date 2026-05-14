@@ -379,6 +379,116 @@ async def create_transformation_configuration(
     return TransformationConfiguration(parameters=raw_parameters, storage=storage)
 
 
+def shared_code_marker_code_name(shared_code_id: str, row_id: str) -> str:
+    """
+    Returns the canonical name the Keboola UI uses for a shared-code marker code block:
+    `Shared Code ({shared_code_id}-{row_id})`.
+    """
+    return f'Shared Code ({shared_code_id}-{row_id})'
+
+
+def is_shared_code_marker(code_name: str, code_script: Any) -> bool:
+    """
+    Detects whether a code block is a Keboola shared-code marker: name starts with
+    `Shared Code (` and the script is just a single Mustache placeholder.
+    """
+    if not isinstance(code_name, str) or not code_name.startswith('Shared Code ('):
+        return False
+    script_text: str
+    if isinstance(code_script, list):
+        if len(code_script) != 1:
+            return False
+        script_text = str(code_script[0])
+    else:
+        script_text = str(code_script or '')
+    return script_text.strip().startswith('{{') and script_text.strip().endswith('}}')
+
+
+def build_shared_code_marker_codes(
+    shared_code_id: str,
+    shared_code_row_ids: Sequence[str],
+) -> list[TransformationConfiguration.Parameters.Block.Code]:
+    """
+    Builds the raw shared-code marker code blocks the Keboola UI emits for each referenced row.
+    The runtime expansion processes these placeholders by replacing each `{{ rowId }}` with the
+    row's `code_content` and running the result as a standalone query.
+
+    Returns one Code per row_id, with `name=shared_code_marker_code_name(...)` and
+    `script=["{{rowId}}"]`.
+    """
+    return [
+        TransformationConfiguration.Parameters.Block.Code(
+            name=shared_code_marker_code_name(shared_code_id, row_id),
+            script=[f'{{{{{row_id}}}}}'],
+        )
+        for row_id in shared_code_row_ids
+    ]
+
+
+def sync_shared_code_markers_in_dict(updated_configuration: dict[str, Any]) -> None:
+    """
+    Dict-form sibling of `apply_shared_code_markers`. Operates on a raw configuration dict
+    (as round-tripped by `update_sql_transformation_internal`) and rewrites the first block's
+    code list so it carries one shared-code marker per current `shared_code_row_ids` entry —
+    or none when the linkage has been cleared.
+
+    The marker layout (`Shared Code (<sid>-<rid>)` + `script=["{{rid}}"]`) is what the Keboola
+    UI emits and what the platform runtime expansion drives off of; user-authored code blocks
+    are preserved unchanged.
+    """
+    shared_code_id = str(updated_configuration.get('shared_code_id') or '')
+    row_ids = list(updated_configuration.get('shared_code_row_ids') or [])
+
+    parameters = updated_configuration.setdefault('parameters', {})
+    blocks = parameters.setdefault('blocks', [])
+
+    if not blocks:
+        if not row_ids:
+            return
+        blocks.append({'name': 'Blocks', 'codes': []})
+
+    target_block = blocks[0]
+    codes = target_block.setdefault('codes', [])
+    user_codes = [c for c in codes if not is_shared_code_marker(c.get('name', ''), c.get('script'))]
+    marker_codes: list[dict[str, Any]] = []
+    if shared_code_id and row_ids:
+        marker_codes = [
+            {
+                'name': shared_code_marker_code_name(shared_code_id, rid),
+                'script': [f'{{{{{rid}}}}}'],
+            }
+            for rid in row_ids
+        ]
+    target_block['codes'] = user_codes + marker_codes
+
+
+def apply_shared_code_markers(
+    transformation_config: TransformationConfiguration,
+    shared_code_id: str,
+    shared_code_row_ids: Sequence[str],
+) -> None:
+    """
+    Mutates the given transformation config so that its FIRST block contains exactly one
+    shared-code marker per row_id (and no stale markers from a previous linkage).
+
+    The Keboola UI mirrors this layout: every shared-code reference appears as a sibling
+    code block whose script is just `{{rowId}}`. The runtime expansion uses the marker
+    blocks (not text-substituted occurrences in the user's surrounding SQL) so omitting
+    them causes the shared snippet to never run.
+
+    If `shared_code_row_ids` is empty, all existing markers are removed.
+    """
+    blocks = transformation_config.parameters.blocks
+    if not blocks:
+        if not shared_code_row_ids:
+            return
+        blocks.append(TransformationConfiguration.Parameters.Block(name='Blocks', codes=[]))
+
+    target_block = blocks[0]
+    user_codes = [code for code in target_block.codes if not is_shared_code_marker(code.name, code.script)]
+    target_block.codes = user_codes + build_shared_code_marker_codes(shared_code_id, shared_code_row_ids)
+
+
 async def set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
     """
     Sets the configuration metadata to indicate it was created by MCP.

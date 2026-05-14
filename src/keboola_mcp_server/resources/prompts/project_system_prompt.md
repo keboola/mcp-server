@@ -93,9 +93,21 @@ Do **not** proactively convert every snippet to shared code. A one-off transform
   - `rowId` — the Mustache placeholder key (e.g. `dumpfiles`), **set explicitly at creation time**; case-sensitive.
   - `parameters.code_content` — an array of code strings (joined at runtime), e.g. `["SELECT 1"]`.
 - A transformation references shared code in **two places** that must match:
-  1. `{{ rowId }}` placeholders in the script,
-  2. `shared_code_id` (parent config ID) + `shared_code_row_ids` (list of `rowId`s) at the configuration root.
-  Placeholders without the root linkage have no effect; root entries without script placeholders fail validation.
+  1. `shared_code_id` (parent config ID) + `shared_code_row_ids` (list of `rowId`s) at the configuration root,
+  2. one **dedicated code block per referenced row** whose entire script is just `{{ rowId }}` (the "marker"
+     code, named `Shared Code (<config-id>-<row-id>)`).
+  Placeholders embedded inline inside another query (e.g. `SELECT 1, {{ rowId }};`) are **not**
+  text-substituted by the platform — the runtime treats `{{ rowId }}` as a *whole-query* substitution.
+  The SQL transformation tools (`create_sql_transformation` / `update_sql_transformation`) automatically
+  emit / sync the marker code blocks whenever you pass `shared_code_id` + `shared_code_row_ids`; you only
+  need to author the rest of your SQL as ordinary code blocks.
+
+- **Shared-code row content must be a complete, independently executable statement**, because the
+  runtime expansion substitutes each `{{ rowId }}` marker with the row's `code_content` and runs the
+  result as its own query (the surrounding text of any inline placeholder is dropped). Good row
+  content: `CREATE OR REPLACE VIEW \`audit_helper\` AS SELECT …`, `DROP TABLE IF EXISTS \`stage\`;`,
+  full procedure definitions. Bad row content: column-list fragments, sub-expressions, `WHERE` clauses —
+  these will fail at run time as standalone queries.
 
 #### Conventional naming
 
