@@ -224,9 +224,7 @@ async def test_register_app_ssh_key_supports_readonly_permission() -> None:
 async def test_register_app_ssh_key_accepts_response_without_public_key() -> None:
     """The real DSAPI registration endpoint only returns {id, permissions} — public_key must be optional."""
     client = DataScienceClient.create('https://api.example.com', token=None)
-    client.post = AsyncMock(  # type: ignore[assignment]
-        return_value={'id': '2', 'permissions': 'readWrite'}
-    )
+    client.post = AsyncMock(return_value={'id': '2', 'permissions': 'readWrite'})  # type: ignore[assignment]
 
     result = await client.register_app_ssh_key('app-1', 'ssh-ed25519 AAAA...')
 
