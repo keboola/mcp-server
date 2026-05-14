@@ -2579,6 +2579,157 @@ async def test_create_config_emits_markers_for_python_transformation(
     assert sent['shared_code_row_ids'] == ['imports']
 
 
+@pytest.mark.parametrize(
+    ('sql_dialect', 'expected_component_id'),
+    [
+        ('Snowflake', SNOWFLAKE_TRANSFORMATION_ID),
+        ('BigQuery', BIGQUERY_TRANSFORMATION_ID),
+    ],
+)
+@pytest.mark.asyncio
+async def test_create_sql_transformation_skips_marker_when_user_code_is_pure_placeholder(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+    sql_dialect: str,
+    expected_component_id: str,
+):
+    """
+    When a user-authored code block's script IS exactly `{{ rowId }}`, the platform's runtime
+    will substitute the snippet there. Emitting an additional `Shared Code (...)` marker for
+    the same row would execute the snippet twice, so the marker must be suppressed.
+    """
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
+
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    component = {**mock_component, 'id': expected_component_id}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
+
+    shared_code_id = f'shared-codes.{expected_component_id.split(".")[-1]}'
+
+    await create_sql_transformation(
+        ctx=context,
+        name='tf_no_dup',
+        description='user already references shared row',
+        sql_code_blocks=[
+            SimplifiedTfBlocks.Block.Code(name='Audit (shared)', script='{{ audit_columns }}'),
+            SimplifiedTfBlocks.Block.Code(name='Summary', script='SELECT 1 AS k'),
+        ],
+        shared_code_id=shared_code_id,
+        shared_code_row_ids=['audit_columns'],
+    )
+
+    sent = keboola_client.storage_client.configuration_create.call_args.kwargs['configuration']
+    codes = sent['parameters']['blocks'][0]['codes']
+    assert [c['name'] for c in codes] == ['Audit (shared)', 'Summary'], (
+        'user code preserved verbatim; no auto-emitted marker for a row already referenced as a pure placeholder'
+    )
+    assert sent['shared_code_id'] == shared_code_id
+    assert sent['shared_code_row_ids'] == ['audit_columns']
+
+
+@pytest.mark.asyncio
+async def test_create_sql_transformation_emits_marker_for_inline_placeholder(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """
+    A `{{ rowId }}` embedded INSIDE a single SQL statement (not on its own line, e.g. quoted
+    inside a string literal) is NOT promoted to its own script element by the SQL splitter
+    and therefore NOT substituted by the platform. The marker must still be emitted so the
+    snippet actually runs at the configuration root.
+    """
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    component = {**mock_component, 'id': SNOWFLAKE_TRANSFORMATION_ID}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
+
+    shared_code_id = 'shared-codes.snowflake-transformation'
+
+    await create_sql_transformation(
+        ctx=context,
+        name='tf_inline',
+        description='inline placeholder still needs marker',
+        sql_code_blocks=[
+            SimplifiedTfBlocks.Block.Code(name='Inline use', script="SELECT '{{ audit_columns }}' AS lit"),
+        ],
+        shared_code_id=shared_code_id,
+        shared_code_row_ids=['audit_columns'],
+    )
+
+    sent = keboola_client.storage_client.configuration_create.call_args.kwargs['configuration']
+    codes = sent['parameters']['blocks'][0]['codes']
+    assert codes[0]['name'] == 'Inline use'
+    assert codes[-1]['name'] == f'Shared Code ({shared_code_id}-audit_columns)', (
+        'inline placeholder (not the sole content of any script element) is not natively '
+        'substituted, so the marker must still be appended'
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_config_python_skips_marker_when_user_code_is_pure_placeholder(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """Python transformation: skip the auto-emit when a user code already has `["{{ rid }}"]`."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    python_component = {**mock_component, 'id': 'keboola.python-transformation-v2'}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=python_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=python_component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    await create_config(
+        ctx=context,
+        name='py_tf_no_dup',
+        description='Python tf where user already references shared row',
+        component_id='keboola.python-transformation-v2',
+        parameters={
+            'blocks': [
+                {
+                    'name': 'Audit',
+                    'codes': [{'name': 'shared imports', 'script': ['{{ audit_imports }}']}],
+                },
+                {
+                    'name': 'Summary',
+                    'codes': [{'name': 'print', 'script': ['print("ok")']}],
+                },
+            ],
+            'packages': [],
+        },
+        shared_code_id='shared-codes.python-transformation-v2',
+        shared_code_row_ids=['audit_imports'],
+    )
+
+    sent = keboola_client.storage_client.configuration_create.call_args.kwargs['configuration']
+    first_block_codes = sent['parameters']['blocks'][0]['codes']
+    assert [c['name'] for c in first_block_codes] == ['shared imports'], (
+        'no auto-emitted marker should appear next to a user code whose script is a pure placeholder'
+    )
+    # No marker should leak into the second block either.
+    second_block_codes = sent['parameters']['blocks'][1]['codes']
+    assert all('Shared Code (' not in c['name'] for c in second_block_codes)
+
+
 @pytest.mark.asyncio
 async def test_add_config_row_surfaces_assigned_row_id(
     mocker: MockerFixture,

@@ -79,8 +79,8 @@ existing snippet whenever the same logic would appear in two or more transformat
 | Create parent library | `create_config(component_id="keboola.shared-code", configuration_id="shared-codes.<transformation-id>", parameters={"componentId":"<transformation-id>"})` — `configuration_id` MUST be the conventional `shared-codes.<keboola.snowflake-transformation\|…bigquery…\|…python-transformation-v2\|…r-transformation-v2>`. Auto-generated UUIDs are not recognised by the runtime. |
 | Add a row | `add_config_row(component_id="keboola.shared-code", row_id="<mustache-key>", parameters={"code_content":["<complete-statement>"]})` — `row_id` is the case-sensitive Mustache key. |
 | Edit a snippet | `update_config_row(parameter_updates=[{"op":"set","path":"code_content","value":["<new>"]}])`. Disable with `is_disabled=True` (no delete-row tool). |
-| Reference from a SQL transformation | `create_sql_transformation` / `update_sql_transformation` with `shared_code_id` + `shared_code_row_ids`. The tool auto-emits the `Shared Code (<sid>-<rid>)` marker code blocks. |
-| Reference from Python / R | `create_config` / `update_config` with the same `shared_code_id` + `shared_code_row_ids`. Marker blocks are auto-emitted here too. |
+| Reference from a SQL transformation | `create_sql_transformation` / `update_sql_transformation` with `shared_code_id` + `shared_code_row_ids`. The tool auto-emits a `Shared Code (<sid>-<rid>)` marker per row — skipped when a user-authored code block already has `["{{ rowId }}"]` as its own pure script element. |
+| Reference from Python / R | `create_config` / `update_config` with the same `shared_code_id` + `shared_code_row_ids`. Same auto-emit + skip-if-already-referenced behavior as the SQL path. |
 | Change linkage on an existing SQL transformation | `update_sql_transformation(parameter_updates=[{"op":"set_shared_code","shared_code_id":"…","shared_code_row_ids":["…"]}])`, or `{"op":"remove_shared_code"}` to unlink. |
 
 **Hard rules** — the tool will reject the call otherwise:
@@ -90,8 +90,9 @@ existing snippet whenever the same logic would appear in two or more transformat
   result as its own query. Fragments (column-list, `WHERE` clause, sub-expression) will fail at run time.
 - **A `{{ rowId }}` placeholder requires linkage** — every referenced row must appear in `shared_code_row_ids` and
   `shared_code_id` must be set. Without the linkage the platform cannot resolve the placeholder. The tool emits
-  the marker blocks for you; **do NOT embed `{{ rowId }}` inline inside another SQL string** — inline placeholders
-  are not substituted (only `["{{ rowId }}"]` as its own array element is).
+  one marker block per linked row (or skips it when your own code already has `["{{ rowId }}"]` as a standalone
+  script element — no duplicate); **do NOT embed `{{ rowId }}` inline inside another SQL string** — inline
+  placeholders are not substituted (only `["{{ rowId }}"]` as its own array element is).
 - **Row IDs are case-sensitive.**
 
 ### Development Branches

@@ -383,6 +383,12 @@ async def create_transformation_configuration(
 # Matches `{{ rowId }}` (case-sensitive payload, optional inner whitespace).
 SHARED_CODE_PLACEHOLDER_RE = re.compile(r'\{\{\s*([A-Za-z0-9_-]+)\s*\}\}')
 
+# Matches a script element whose ENTIRE content is a single `{{ rowId }}` placeholder
+# (allowing surrounding whitespace, including trailing `\n` injected by the SQL joiner).
+# Only such elements are substituted by the platform's runtime expansion — so a code block
+# whose script is "pure" placeholder is already equivalent to an auto-emitted marker.
+PURE_SHARED_CODE_PLACEHOLDER_RE = re.compile(r'\A\s*\{\{\s*([A-Za-z0-9_-]+)\s*\}\}\s*\Z')
+
 
 def extract_shared_code_row_ids_from_blocks(blocks: Sequence[Any]) -> set[str]:
     """
@@ -399,6 +405,35 @@ def extract_shared_code_row_ids_from_blocks(blocks: Sequence[Any]) -> set[str]:
                 if not isinstance(item, str):
                     continue
                 referenced.update(SHARED_CODE_PLACEHOLDER_RE.findall(item))
+    return referenced
+
+
+def user_substitution_eligible_row_ids(blocks: Sequence[Any]) -> set[str]:
+    """
+    Returns row IDs whose `{{ rowId }}` placeholder already appears as the sole content of a
+    script element in a NON-marker user code block — i.e. positions where the platform's
+    runtime expansion will substitute the snippet natively. The marker emitter consults this
+    so it does not append a duplicate `Shared Code (...)` block (which would execute the same
+    snippet twice at run time).
+
+    Inline occurrences such as `["SELECT 1; {{ rowId }}"]` are deliberately ignored: the
+    platform does not substitute those, so the marker is still required.
+    """
+    referenced: set[str] = set()
+    for block in blocks or ():
+        codes = block.get('codes', []) if isinstance(block, dict) else getattr(block, 'codes', [])
+        for code in codes or ():
+            name = code.get('name', '') if isinstance(code, dict) else getattr(code, 'name', '')
+            script = code.get('script') if isinstance(code, dict) else getattr(code, 'script', None)
+            if is_shared_code_marker(name, script):
+                continue
+            items = script if isinstance(script, list) else [script]
+            for item in items:
+                if not isinstance(item, str):
+                    continue
+                m = PURE_SHARED_CODE_PLACEHOLDER_RE.match(item)
+                if m:
+                    referenced.add(m.group(1))
     return referenced
 
 
@@ -510,12 +545,17 @@ def sync_shared_code_markers_in_dict(updated_configuration: dict[str, Any]) -> N
     user_codes = [c for c in codes if not is_shared_code_marker(c.get('name', ''), c.get('script'))]
     marker_codes: list[dict[str, Any]] = []
     if shared_code_id and row_ids:
+        # Skip rows the user already references as a pure-placeholder script element
+        # somewhere in the config — those positions are substituted natively, so adding
+        # a marker would execute the snippet twice at run time.
+        already_substituted = user_substitution_eligible_row_ids(blocks)
         marker_codes = [
             {
                 'name': shared_code_marker_code_name(shared_code_id, rid),
                 'script': [f'{{{{{rid}}}}}'],
             }
             for rid in row_ids
+            if rid not in already_substituted
         ]
     target_block['codes'] = user_codes + marker_codes
 
@@ -544,7 +584,12 @@ def apply_shared_code_markers(
 
     target_block = blocks[0]
     user_codes = [code for code in target_block.codes if not is_shared_code_marker(code.name, code.script)]
-    target_block.codes = user_codes + build_shared_code_marker_codes(shared_code_id, shared_code_row_ids)
+    # Skip rows the user already references as a pure-placeholder script element somewhere
+    # in the config — those positions are substituted natively, so adding a marker would
+    # execute the snippet twice at run time.
+    already_substituted = user_substitution_eligible_row_ids(blocks)
+    pending_row_ids = [rid for rid in shared_code_row_ids if rid not in already_substituted]
+    target_block.codes = user_codes + build_shared_code_marker_codes(shared_code_id, pending_row_ids)
 
 
 async def set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
