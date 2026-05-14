@@ -110,6 +110,8 @@ AuthenticationType = Literal['no-auth', 'basic-auth', 'default']
 
 SECRET_WORKSPACE_ID = 'WORKSPACE_ID'
 SECRET_BRANCH_ID = 'BRANCH_ID'
+SECRET_KBC_TOKEN = 'KBC_TOKEN'
+SECRET_KBC_URL = 'KBC_URL'
 
 
 class DataAppSummary(BaseModel):
@@ -381,6 +383,8 @@ async def modify_streamlit_data_app(
     secrets = _get_secrets(
         workspace_id=str(workspace_id),
         branch_id=str(branch_id),
+        storage_token=client.token,
+        storage_api_url=client.storage_api_url,
     )
 
     if configuration_id:
@@ -485,6 +489,8 @@ async def modify_streamlit_data_app_internal(
     secrets = _get_secrets(
         workspace_id=str(await workspace_manager.get_workspace_id()),
         branch_id=str(await workspace_manager.get_branch_id()),
+        storage_token=client.token,
+        storage_api_url=client.storage_api_url,
     )
     data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
     existing_config = data_app.configuration
@@ -667,7 +673,15 @@ async def modify_python_js_data_app(
             raise ValueError('slug is required when creating a python-js data app.')
 
     client = KeboolaClient.from_state(ctx.session.state)
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
+
+    secrets = _get_secrets(
+        workspace_id=str(await workspace_manager.get_workspace_id()),
+        branch_id=str(await workspace_manager.get_branch_id()),
+        storage_token=client.token,
+        storage_api_url=client.storage_api_url,
+    )
 
     if configuration_id:
         # Update existing python-js data app
@@ -677,6 +691,7 @@ async def modify_python_js_data_app(
             image_version=_HARDCODED_PYTHON_JS_IMAGE_VERSION,
             auto_suspend_after_seconds=auto_suspend_after_seconds,
             authentication_type=authentication_type,
+            secrets=secrets,
         )
         await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
@@ -732,7 +747,7 @@ async def modify_python_js_data_app(
         config = CodeDataAppConfig(
             parameters=CodeDataAppConfig.Parameters(
                 auto_suspend_after_seconds=auto_suspend_after_seconds,
-                data_app=CodeDataAppConfig.Parameters.DataApp(slug=slug),
+                data_app=CodeDataAppConfig.Parameters.DataApp(slug=slug, secrets=secrets),
             ),
             runtime=CodeDataAppConfig.Runtime(
                 image=CodeDataAppConfig.Runtime.Image(version=_HARDCODED_PYTHON_JS_IMAGE_VERSION),
@@ -856,12 +871,15 @@ def _update_existing_code_data_app_config(
     image_version: Optional[str],
     auto_suspend_after_seconds: int,
     authentication_type: AuthenticationType = 'default',
+    secrets: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Apply requested updates to the existing python-js data app storage configuration.
 
     Slug is intentionally not updated here (immutable post-create).
     `authentication_type='default'` preserves the existing `authorization` block (including OIDC
     setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it.
+    `secrets` are merged into the existing `parameters.dataApp.secrets` map without overwriting
+    keys that are already present (mirrors the Streamlit update path).
     """
     new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
     new_config.setdefault('parameters', {})
@@ -872,6 +890,13 @@ def _update_existing_code_data_app_config(
         image['version'] = image_version
     if authentication_type != 'default':
         new_config['authorization'] = _get_authorization(authentication_type == 'basic-auth')
+    if secrets:
+        data_app = new_config['parameters'].setdefault('dataApp', {})
+        updated_secrets = dict(data_app.get('secrets') or {})
+        for key, value in secrets.items():
+            if key not in updated_secrets:
+                updated_secrets[key] = value
+        data_app['secrets'] = updated_secrets
     return new_config
 
 
@@ -1303,12 +1328,16 @@ def _inject_query_to_source_code(source_code: str, sql_dialect: str) -> str:
         return f'{query_function_code}\n\n{source_code.lstrip()}'
 
 
-def _get_secrets(workspace_id: str, branch_id: str) -> dict[str, Any]:
+def _get_secrets(workspace_id: str, branch_id: str, storage_token: str, storage_api_url: str) -> dict[str, Any]:
     """
-    Generates secrets for the data app for querying the tables in the given workspace QS or SAPI.
+    Generates secrets exposed to the data app as runtime environment variables. The injected
+    `query_data` helper (and python-js apps that call Storage/Query Service directly) reads
+    `BRANCH_ID`, `WORKSPACE_ID`, `KBC_TOKEN` and `KBC_URL` from the environment.
     """
     secrets: dict[str, Any] = {
         SECRET_WORKSPACE_ID: workspace_id,
         SECRET_BRANCH_ID: branch_id,
+        SECRET_KBC_TOKEN: storage_token,
+        SECRET_KBC_URL: storage_api_url,
     }
     return secrets
