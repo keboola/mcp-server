@@ -751,8 +751,8 @@ class TestPreviewConfigDiff:
         assert result['isValid'] is False
         assert expected_error_fragment in str(result.get('validationErrors', ''))
 
-    def test_preview_modify_data_app_success(self, test_client: TestClient, mocker):
-        """Test successful preview of modify_data_app tool."""
+    def test_preview_modify_streamlit_data_app_success(self, test_client: TestClient, mocker):
+        """Test successful preview of modify_streamlit_data_app tool."""
         from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
 
         # Mock the data app configuration data
@@ -837,7 +837,7 @@ class TestPreviewConfigDiff:
 
         # Request payload
         request_payload = {
-            'toolName': 'modify_data_app',
+            'toolName': 'modify_streamlit_data_app',
             'toolParams': {
                 'configuration_id': 'app-123',
                 'change_description': 'Update data app',

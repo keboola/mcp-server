@@ -393,7 +393,12 @@ class TestToolsFilteringMiddleware:
         keboola_client.branch_id = branch_id
         keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
 
-        tools = [_tool('modify_data_app'), _tool('get_data_apps'), _tool('deploy_data_app'), _tool('other_tool')]
+        tools = [
+            _tool('modify_streamlit_data_app'),
+            _tool('get_data_apps'),
+            _tool('deploy_data_app'),
+            _tool('other_tool'),
+        ]
 
         async def call_next(_):
             return tools
@@ -404,11 +409,11 @@ class TestToolsFilteringMiddleware:
 
         result_names = {t.name for t in result}
         if expect_filtered:
-            assert 'modify_data_app' not in result_names
+            assert 'modify_streamlit_data_app' not in result_names
             assert 'get_data_apps' not in result_names
             assert 'deploy_data_app' not in result_names
         else:
-            assert 'modify_data_app' in result_names
+            assert 'modify_streamlit_data_app' in result_names
             assert 'get_data_apps' in result_names
             assert 'deploy_data_app' in result_names
         assert 'other_tool' in result_names
@@ -533,9 +538,11 @@ class TestToolsFilteringMiddleware:
         keboola_client.branch_id = branch_id
         keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
 
-        tool = _tool('modify_data_app')
+        tool = _tool('modify_streamlit_data_app')
         mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
-        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name='modify_data_app'))
+        context = SimpleNamespace(
+            fastmcp_context=mcp_context_client, message=SimpleNamespace(name='modify_streamlit_data_app')
+        )
 
         expected = MagicMock()
 
