@@ -29,7 +29,7 @@ from keboola_mcp_server.tools.data_apps import (
     _uses_basic_authentication,
     deploy_data_app,
     get_data_apps,
-    modify_data_app,
+    modify_streamlit_data_app,
 )
 
 
@@ -663,7 +663,7 @@ class TestFetchDataAppValidation:
     ],
 )
 @pytest.mark.asyncio
-async def test_modify_data_app_folder(
+async def test_modify_streamlit_data_app_folder(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
@@ -675,7 +675,7 @@ async def test_modify_data_app_folder(
     expect_folder_delete: bool,
     expect_hint: bool,
 ) -> None:
-    """Test folder metadata and change_summary hint for modify_data_app (create and update paths)."""
+    """Test folder metadata and change_summary hint for modify_streamlit_data_app (create and update paths)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
     workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=1)
@@ -712,7 +712,7 @@ async def test_modify_data_app_folder(
         )
         mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', return_value=existing_data_app)
         mocker.patch(
-            'keboola_mcp_server.tools.data_apps.modify_data_app_internal',
+            'keboola_mcp_server.tools.data_apps.modify_streamlit_data_app_internal',
             mocker.AsyncMock(return_value=(existing_data_app, encrypted_config, None)),
         )
         keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
@@ -734,7 +734,7 @@ async def test_modify_data_app_folder(
     )
     keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
 
-    result = await modify_data_app(
+    result = await modify_streamlit_data_app(
         ctx=mcp_context_client,
         name='My App',
         description='desc',
@@ -770,3 +770,554 @@ async def test_modify_data_app_folder(
         assert str(app_count) in result.change_summary
     else:
         assert result.change_summary is None
+
+
+# ===== Tests for modify_python_js_data_app =====
+
+
+from keboola_mcp_server.clients.data_science import (  # noqa: E402
+    AppGitRepoResponse,
+    AppSshKeyResponse,
+)
+from keboola_mcp_server.tools.data_apps import (  # noqa: E402
+    ModifiedPythonJsDataAppOutput,
+    RegisteredSshKeyOutput,
+    _update_existing_code_data_app_config,
+    modify_python_js_data_app,
+    register_python_js_data_app_ssh_key,
+)
+
+
+def _make_python_js_data_app_response(
+    data_app_id: str = 'app-pyjs-1',
+    config_id: str = 'cfg-pyjs-1',
+) -> DataAppResponse:
+    return DataAppResponse(
+        id=data_app_id,
+        project_id='proj-1',
+        component_id=DATA_APP_COMPONENT_ID,
+        branch_id='branch-1',
+        config_id=config_id,
+        config_version='1',
+        type='python-js',
+        state='created',
+        desired_state='created',
+        url='https://demo.canary-orion.keboola.dev',
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('missing_arg', 'kwargs', 'error_match'),
+    [
+        (
+            'slug',
+            {'name': 'A', 'description': ''},
+            'slug is required',
+        ),
+    ],
+)
+async def test_modify_python_js_data_app_create_validates_required_args(
+    mcp_context_client: Context,
+    missing_arg: str,
+    kwargs: dict,
+    error_match: str,
+) -> None:
+    """Create path raises clear ValueError when slug is missing."""
+    with pytest.raises(ValueError, match=error_match):
+        await modify_python_js_data_app(ctx=mcp_context_client, **kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('disallowed_arg', 'kwargs', 'error_match'),
+    [
+        (
+            'slug',
+            {'name': 'A', 'description': '', 'configuration_id': 'cfg-1', 'slug': 'new'},
+            'slug cannot be changed',
+        ),
+    ],
+)
+async def test_modify_python_js_data_app_update_rejects_create_only_args(
+    mcp_context_client: Context,
+    disallowed_arg: str,
+    kwargs: dict,
+    error_match: str,
+) -> None:
+    """Update path rejects slug (immutable subdomain)."""
+    with pytest.raises(ValueError, match=error_match):
+        await modify_python_js_data_app(ctx=mcp_context_client, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """Create path: POST /apps with type=python-js + useManagedGitRepo, fetch repo URL. SSH-key
+    registration is now a separate tool — not exercised here."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    app_response = _make_python_js_data_app_response()
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(url='git@managed.repo:org/app.git')
+    )
+
+    # avoid hitting Storage API for metadata helpers
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='My App',
+        description='desc',
+        slug='my-app',
+        auto_suspend_after_seconds=300,
+    )
+
+    assert isinstance(result, ModifiedPythonJsDataAppOutput)
+    assert result.response == 'created'
+    assert result.repo_url == 'git@managed.repo:org/app.git'
+    assert result.data_app.repo_url == 'git@managed.repo:org/app.git'
+    assert result.data_app.type == 'python-js'
+
+    # Verify the create payload was python-js + managed repo
+    create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
+    assert create_kwargs['app_type'] == 'python-js'
+    assert create_kwargs['use_managed_git_repo'] is True
+    # Verify auto_suspend_after_seconds flows through and image_version is hardcoded
+    serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
+    assert serialized['parameters']['autoSuspendAfterSeconds'] == 300
+    assert serialized['parameters']['dataApp']['slug'] == 'my-app'
+    assert serialized['runtime']['image']['version'] == 'dev-PAT-1772.4'
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_update_patches_storage_config(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """Update path: fetch storage config → merge updates → PATCH via configuration_update."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+    existing_data_app = DataApp(
+        name='Old',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='2',
+        type='python-js',
+        configuration={
+            'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'old-slug'}},
+            'runtime': {'image': {'version': 'old-version'}},
+        },
+        state='stopped',
+    )
+    updated_data_app = existing_data_app.model_copy(update={'config_version': '3', 'name': 'New'})
+
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(side_effect=[existing_data_app, updated_data_app]),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(url='git@managed.repo:org/app.git')
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='New',
+        description='new desc',
+        configuration_id='cfg-1',
+        auto_suspend_after_seconds=600,
+    )
+
+    assert isinstance(result, ModifiedPythonJsDataAppOutput)
+    assert result.response == 'updated'
+    # The PATCH should carry merged config
+    patch_kwargs = keboola_client.storage_client.configuration_update.await_args.kwargs
+    new_cfg = patch_kwargs['configuration']
+    assert new_cfg['parameters']['autoSuspendAfterSeconds'] == 600
+    # image version is always forced to the hardcoded value
+    assert new_cfg['runtime']['image']['version'] == 'dev-PAT-1772.4'
+    # slug must remain untouched (immutable)
+    assert new_cfg['parameters']['dataApp']['slug'] == 'old-slug'
+
+
+def test_update_existing_code_data_app_config_keeps_image_when_not_provided() -> None:
+    existing = {
+        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
+        'runtime': {'image': {'version': 'old'}},
+    }
+    new = _update_existing_code_data_app_config(existing, image_version=None, auto_suspend_after_seconds=600)
+    assert new['runtime']['image']['version'] == 'old'
+    assert new['parameters']['autoSuspendAfterSeconds'] == 600
+    # original must not be mutated
+    assert existing['parameters']['autoSuspendAfterSeconds'] == 900
+
+
+def test_update_existing_code_data_app_config_replaces_image_version() -> None:
+    existing = {
+        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
+        'runtime': {'image': {'version': 'old'}},
+    }
+    new = _update_existing_code_data_app_config(existing, image_version='v2', auto_suspend_after_seconds=900)
+    assert new['runtime']['image']['version'] == 'v2'
+
+
+# ===== Tests for deploy_data_app with mode and python-js =====
+
+
+@pytest.mark.asyncio
+async def test_deploy_data_app_python_js_skips_storage_config_version_and_passes_mode(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """python-js deploy: no configVersion fetch from Storage, mode forwarded to DSAPI."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    pyjs_app = DataApp(
+        name='py-app',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='python-js',
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}}},
+        state='stopped',
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=pyjs_app))
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+
+    # If the code accidentally calls storage_client.configuration_version_latest, this AsyncMock raises.
+    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(
+        side_effect=AssertionError('Should not call configuration_version_latest for python-js apps')
+    )
+
+    _ = await deploy_data_app(
+        ctx=mcp_context_client,
+        action='deploy',
+        configuration_id='cfg-1',
+        mode='dev',
+    )
+
+    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-1', None, mode='dev', branch=None)
+    keboola_client.storage_client.configuration_version_latest.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_deploy_data_app_streamlit_still_passes_config_version(
+    mocker,
+    mcp_context_client: Context,
+    data_app: DataApp,  # streamlit fixture
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    data_app.state = 'stopped'
+    data_app.type = 'streamlit'
+    data_app.configuration = {'authorization': {'app_proxy': {'auth_providers': [], 'auth_rules': []}}}
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=7)
+
+    _ = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-streamlit')
+
+    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with(
+        data_app.data_app_id, '7', mode=None, branch=None
+    )
+
+
+# ===== Tests for modify_python_js_data_app with existing_repo_url =====
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_with_existing_repo_url_skips_provisioning(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """When existing_repo_url is set, the new app binds to the existing repo: no get_app_git_repo call,
+    and the existing URL is returned unchanged."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    app_response = _make_python_js_data_app_response(data_app_id='app-prod-1', config_id='cfg-prod-1')
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
+    # If the code accidentally calls get_app_git_repo, fail loudly.
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        side_effect=AssertionError('Should not fetch git repo URL when existing_repo_url is provided')
+    )
+
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    existing_repo = 'git@managed.repo:org/shared.git'
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='Prod App',
+        description='prod twin sharing repo',
+        slug='demo',
+        existing_repo_url=existing_repo,
+    )
+
+    assert isinstance(result, ModifiedPythonJsDataAppOutput)
+    assert result.response == 'created'
+    assert result.repo_url == existing_repo
+    assert result.data_app.repo_url == existing_repo
+    keboola_client.data_science_client.get_app_git_repo.assert_not_called()
+    # The DSAPI client must be told about the existing repo binding.
+    create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
+    assert create_kwargs['existing_repo_url'] == existing_repo
+    assert create_kwargs['use_managed_git_repo'] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('missing_arg', 'kwargs', 'error_match'),
+    [
+        (
+            'slug',
+            {
+                'name': 'A',
+                'description': '',
+                'existing_repo_url': 'git@managed:org/r.git',
+            },
+            'slug is required',
+        ),
+    ],
+)
+async def test_modify_python_js_data_app_create_with_existing_repo_url_still_requires_slug(
+    mcp_context_client: Context,
+    missing_arg: str,
+    kwargs: dict,
+    error_match: str,
+) -> None:
+    """`existing_repo_url` does not waive any required create-time argument."""
+    with pytest.raises(ValueError, match=error_match):
+        await modify_python_js_data_app(ctx=mcp_context_client, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_update_rejects_existing_repo_url(
+    mcp_context_client: Context,
+) -> None:
+    """The update path rejects `existing_repo_url` — repo binding is fixed at creation."""
+    with pytest.raises(ValueError, match='existing_repo_url is only valid on create'):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='A',
+            description='',
+            configuration_id='cfg-1',
+            existing_repo_url='git@managed:org/r.git',
+        )
+
+
+# ===== Tests for deploy_data_app branch parameter =====
+
+
+@pytest.mark.asyncio
+async def test_deploy_data_app_python_js_with_branch_forwards_to_client(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """For python-js dev twins, `branch` must be forwarded to the underlying DSAPI deploy call."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    pyjs_app = DataApp(
+        name='twin',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-twin',
+        data_app_id='app-twin',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='python-js',
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'demo-dev'}}},
+        state='stopped',
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=pyjs_app))
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+
+    _ = await deploy_data_app(
+        ctx=mcp_context_client,
+        action='deploy',
+        configuration_id='cfg-twin',
+        mode='dev',
+        branch='feature-x',
+    )
+
+    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with(
+        'app-twin', None, mode='dev', branch='feature-x'
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('bad_mode', [None, 'production'])
+async def test_deploy_data_app_branch_without_dev_mode_rejected(
+    mcp_context_client: Context,
+    bad_mode,
+) -> None:
+    """`branch` is only meaningful with mode='dev' — anything else must raise."""
+    with pytest.raises(ValueError, match='branch is only meaningful with mode="dev"'):
+        await deploy_data_app(
+            ctx=mcp_context_client,
+            action='deploy',
+            configuration_id='cfg-1',
+            mode=bad_mode,
+            branch='feature-x',
+        )
+
+
+@pytest.mark.asyncio
+async def test_deploy_data_app_streamlit_silently_ignores_branch_param(
+    mocker,
+    mcp_context_client: Context,
+    data_app: DataApp,
+) -> None:
+    """Streamlit apps don't carry a branch on deploy — the `branch` arg is dropped silently."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    data_app.state = 'stopped'
+    data_app.type = 'streamlit'
+    data_app.configuration = {'authorization': {'app_proxy': {'auth_providers': [], 'auth_rules': []}}}
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=7)
+
+    # Streamlit only allows mode='dev' to legitimately pass branch through, but on Streamlit it's a no-op.
+    _ = await deploy_data_app(
+        ctx=mcp_context_client,
+        action='deploy',
+        configuration_id='cfg-streamlit',
+        mode='dev',
+        branch='ignored-on-streamlit',
+    )
+
+    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with(
+        data_app.data_app_id, '7', mode='dev', branch=None
+    )
+
+
+# ===== Tests for register_python_js_data_app_ssh_key =====
+
+
+@pytest.mark.asyncio
+async def test_register_python_js_data_app_ssh_key_happy_path(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """Resolves configuration_id → data_app_id via _fetch_data_app, then registers the SSH key."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    pyjs_app = DataApp(
+        name='my-app',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-pyjs-1',
+        data_app_id='app-pyjs-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='python-js',
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'my-app'}}},
+        state='running',
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=pyjs_app))
+    # Real DSAPI registration response omits publicKey; the tool echoes back the caller-supplied key.
+    keboola_client.data_science_client.register_app_ssh_key = mocker.AsyncMock(
+        return_value=AppSshKeyResponse(id='key-99', permissions='readWrite')
+    )
+
+    result = await register_python_js_data_app_ssh_key(
+        ctx=mcp_context_client,
+        configuration_id='cfg-pyjs-1',
+        public_key='ssh-ed25519 ZZZZ',
+    )
+
+    assert isinstance(result, RegisteredSshKeyOutput)
+    assert result.response == 'registered'
+    assert result.configuration_id == 'cfg-pyjs-1'
+    assert result.data_app_id == 'app-pyjs-1'
+    assert result.ssh_key_id == 'key-99'
+    # Echoed from the input, not from the server response (which lacks publicKey).
+    assert result.public_key == 'ssh-ed25519 ZZZZ'
+    assert result.permissions == 'readWrite'
+
+    keboola_client.data_science_client.register_app_ssh_key.assert_awaited_once_with(
+        data_app_id='app-pyjs-1', public_key='ssh-ed25519 ZZZZ'
+    )
+
+
+@pytest.mark.asyncio
+async def test_register_python_js_data_app_ssh_key_rejects_streamlit_app(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """Streamlit apps have no managed git repo — must raise a clear ValueError."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    streamlit_app = DataApp(
+        name='streamlit-app',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-streamlit-1',
+        data_app_id='app-streamlit-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='streamlit',
+        configuration={'parameters': {'dataApp': {'slug': 'streamlit-app'}}},
+        state='running',
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=streamlit_app))
+
+    with pytest.raises(ValueError, match='only supports python-js data apps'):
+        await register_python_js_data_app_ssh_key(
+            ctx=mcp_context_client,
+            configuration_id='cfg-streamlit-1',
+            public_key='ssh-ed25519 NOPE',
+        )
+
+    keboola_client.data_science_client.register_app_ssh_key.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_register_python_js_data_app_ssh_key_invalid_configuration_id(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """Regression smoke test: _fetch_data_app's component_id validation still surfaces through the new tool."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    # Simulate a configuration_id that resolves to a non-data-app component_id, mirroring how
+    # _fetch_data_app raises today.
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(
+            side_effect=ValueError(
+                f'Data app tools only support {DATA_APP_COMPONENT_ID} component, but the data app '
+                f'"app-x" has component_id "keboola.sandboxes".'
+            )
+        ),
+    )
+
+    with pytest.raises(ValueError, match=f'Data app tools only support {DATA_APP_COMPONENT_ID} component'):
+        await register_python_js_data_app_ssh_key(
+            ctx=mcp_context_client,
+            configuration_id='cfg-bogus',
+            public_key='ssh-ed25519 AAAA',
+        )
+
+    keboola_client.data_science_client.register_app_ssh_key.assert_not_called()

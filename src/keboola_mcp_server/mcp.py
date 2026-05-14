@@ -370,7 +370,18 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
         if not self.is_client_using_main_branch(context.fastmcp_context):
             # Filter out data app tools when the client is not using the main/production branch
-            tools = [t for t in tools if t.name not in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}]
+            tools = [
+                t
+                for t in tools
+                if t.name
+                not in {
+                    'modify_streamlit_data_app',
+                    'modify_python_js_data_app',
+                    'register_python_js_data_app_ssh_key',
+                    'get_data_apps',
+                    'deploy_data_app',
+                }
+            ]
 
         if token_role == 'readonly':
             tools = [t for t in tools if is_read_only_tool(t)]
@@ -435,7 +446,13 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                     f'Use "{UPDATE_FLOW_TOOL_NAME}" to update flow configuration instead.'
                 )
 
-        if tool.name in ('modify_data_app', 'get_data_apps', 'deploy_data_app'):
+        if tool.name in (
+            'modify_streamlit_data_app',
+            'modify_python_js_data_app',
+            'register_python_js_data_app_ssh_key',
+            'get_data_apps',
+            'deploy_data_app',
+        ):
             if not self.is_client_using_main_branch(context.fastmcp_context):
                 raise ToolError('Data apps are supported only in the main production branch.')
 
