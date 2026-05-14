@@ -2309,8 +2309,9 @@ async def test_get_shared_codes(
         },
     }
 
-    async def fake_detail(component_id: str, configuration_id: str) -> dict[str, Any]:
+    async def fake_detail(component_id: str, configuration_id: str, include=None) -> dict[str, Any]:
         assert component_id == SHARED_CODE_COMPONENT_ID
+        assert include == ['rows']
         return detail_by_id[configuration_id]
 
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=list_response)
@@ -2449,7 +2450,7 @@ async def test_get_shared_codes_reads_root_and_parameters_paths(
     }
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=list_response)
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
-        side_effect=lambda component_id, configuration_id: detail_by_id[configuration_id]
+        side_effect=lambda component_id, configuration_id, include=None: detail_by_id[configuration_id]
     )
 
     result = await get_shared_codes(ctx=context)

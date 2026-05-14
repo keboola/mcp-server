@@ -450,6 +450,7 @@ async def get_shared_codes(
         detail = await client.storage_client.configuration_detail(
             component_id=SHARED_CODE_COMPONENT_ID,
             configuration_id=str(parent.get('id')),
+            include=['rows'],
         )
         rows: list[SharedCodeRow] = []
         for raw_row in cast(list[dict[str, Any]], detail.get('rows') or []):

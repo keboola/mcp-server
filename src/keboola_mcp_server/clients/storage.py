@@ -532,12 +532,20 @@ class AsyncStorageClient(KeboolaServiceClient):
         if skip_trash:
             await self.delete(endpoint=endpoint)
 
-    async def configuration_detail(self, component_id: str, configuration_id: str) -> JsonDict:
+    async def configuration_detail(
+        self,
+        component_id: str,
+        configuration_id: str,
+        include: Optional[Sequence[str]] = None,
+    ) -> JsonDict:
         """
         Retrieves information about a given configuration.
 
         :param component_id: The id of the component.
         :param configuration_id: The id of the configuration.
+        :param include: Optional list of SAPI `include` values (e.g. `["rows"]`) to request
+            additional fields the API only returns on demand. Without `include=rows` the
+            response omits the configuration's row data.
         :return: The parsed json from the HTTP response.
         :raises ValueError: If the component_id or configuration_id is invalid.
         """
@@ -546,8 +554,9 @@ class AsyncStorageClient(KeboolaServiceClient):
         if not isinstance(configuration_id, str) or configuration_id == '':
             raise ValueError(f"Invalid configuration_id '{configuration_id}'.")
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
+        params = {'include': ','.join(include)} if include else None
 
-        return cast(JsonDict, await self.get(endpoint=endpoint))
+        return cast(JsonDict, await self.get(endpoint=endpoint, params=params))
 
     async def configuration_list(self, component_id: str) -> list[JsonDict]:
         """
