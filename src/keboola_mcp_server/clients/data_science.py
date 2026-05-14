@@ -129,6 +129,13 @@ class CodeDataAppConfig(BaseModel):
 
     parameters: 'CodeDataAppConfig.Parameters' = Field(description='The parameters of the data app.')
     runtime: 'CodeDataAppConfig.Runtime' = Field(description='The runtime configuration (image version, etc.).')
+    authorization: DataAppConfig.Authorization | None = Field(
+        default=None,
+        description=(
+            'Optional authorization block. Same shape as for Streamlit data apps. Omit (None) to let the '
+            'DSAPI apply its default behavior for python-js apps.'
+        ),
+    )
 
 
 class AppSshKeyResponse(BaseModel):

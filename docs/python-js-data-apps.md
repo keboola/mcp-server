@@ -246,6 +246,13 @@ This works regardless of whether the app is a dev twin or a prod app — both ex
 - **`configuration_id`** (`str`, required): Storage configuration ID of an existing python-js data app. The tool resolves it to the underlying `data_app_id` and rejects Streamlit apps with a clear error.
 - **`public_key`** (`str`, required): full SSH public key contents (e.g. the contents of an `id_ed25519.pub` file). Always registered with `readWrite` permissions — the tool does not expose a permissions knob.
 
+### `modify_python_js_data_app(authentication_type=...)`
+
+- **Type**: `'no-auth' | 'basic-auth' | 'default'` (default: `'default'`).
+- **Semantics on create**: `'default'` and `'basic-auth'` both apply HTTP basic authentication (safe-by-default for new apps); `'no-auth'` exposes the app publicly.
+- **Semantics on update**: `'default'` leaves the existing `authorization` block untouched (so OIDC and other advanced setups configured outside the MCP survive); `'basic-auth'` and `'no-auth'` overwrite it.
+- **Wire shape**: identical to Streamlit — `authorization.app_proxy.{auth_providers, auth_rules}`. The DSAPI's python-js endpoint accepts this block alongside `useManagedGitRepo: true`.
+
 ---
 
 ## What's intentionally NOT a separate tool
