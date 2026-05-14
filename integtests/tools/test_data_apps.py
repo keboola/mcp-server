@@ -85,7 +85,7 @@ async def initial_data_app(
     try:
         # Create
         created_result = await mcp_client.call_tool(
-            name='modify_data_app',
+            name='modify_streamlit_data_app',
             arguments={
                 'name': app_name,
                 'description': app_description,
@@ -204,7 +204,7 @@ async def test_data_app_lifecycle(
     updated_description = 'Data app updated by integration test'
     updated_source_code = 'import numpy as np\n\n'
     updated_result = await mcp_client.call_tool(
-        name='modify_data_app',
+        name='modify_streamlit_data_app',
         arguments={
             'name': updated_name,
             'description': updated_description,

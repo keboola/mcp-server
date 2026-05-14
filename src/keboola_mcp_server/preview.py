@@ -112,7 +112,7 @@ async def _extract_coordinates(
             component_id=tool_params.get('flow_type'),
             configuration_id=tool_params.get('configuration_id'),
         )
-    elif tool_name == 'modify_data_app':
+    elif tool_name == 'modify_streamlit_data_app':
         return ConfigCoordinates(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=tool_params.get('configuration_id'),
@@ -246,8 +246,8 @@ def _prepare_mutator(
             type_adapter = TypeAdapter(list[ScheduleRequest])
             mutator_params['schedules'] = type_adapter.validate_python(schedules)
 
-    elif preview_rq.tool_name == 'modify_data_app':
-        mutator_fn = data_app_tools.modify_data_app_internal
+    elif preview_rq.tool_name == 'modify_streamlit_data_app':
+        mutator_fn = data_app_tools.modify_streamlit_data_app_internal
         mutator_params['workspace_manager'] = workspace_manager
 
     else:

@@ -1,8 +1,8 @@
 import logging
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Union, cast
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
 
@@ -95,6 +95,72 @@ class DataAppConfig(BaseModel):
     storage: dict[str, Any] = Field(description='The storage of the data app', default_factory=dict)
 
 
+class CodeDataAppConfig(BaseModel):
+    """
+    Config model for python-js (code) data apps backed by a managed git repository.
+
+    Unlike `DataAppConfig` (Streamlit), python-js apps don't embed source code in the config.
+    Code lives in the managed git repo; the config only carries deployment metadata
+    (slug, auto-suspend, runtime image version).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    class Parameters(BaseModel):
+        class DataApp(BaseModel):
+            slug: str = Field(description='The slug of the data app (used as URL subdomain).')
+
+        auto_suspend_after_seconds: int = Field(
+            validation_alias=AliasChoices('autoSuspendAfterSeconds', 'auto_suspend_after_seconds'),
+            serialization_alias='autoSuspendAfterSeconds',
+            description='The number of seconds after which the running data app is automatically suspended.',
+        )
+        data_app: 'CodeDataAppConfig.Parameters.DataApp' = Field(
+            validation_alias=AliasChoices('dataApp', 'data_app'),
+            serialization_alias='dataApp',
+            description='The data app sub config.',
+        )
+
+    class Runtime(BaseModel):
+        class Image(BaseModel):
+            version: str = Field(description='The runtime image version tag.')
+
+        image: 'CodeDataAppConfig.Runtime.Image' = Field(description='The runtime image.')
+
+    parameters: 'CodeDataAppConfig.Parameters' = Field(description='The parameters of the data app.')
+    runtime: 'CodeDataAppConfig.Runtime' = Field(description='The runtime configuration (image version, etc.).')
+
+
+class AppSshKeyResponse(BaseModel):
+    """Response model for SSH key registration on a managed-git-repo data app."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(description='The ID of the registered SSH key.')
+    public_key: str | None = Field(
+        validation_alias=AliasChoices('publicKey', 'public_key'),
+        default=None,
+        description=(
+            'The registered public key. The DSAPI registration endpoint does not echo it back, so this is '
+            'typically only populated when the response comes from a list/get endpoint that includes it.'
+        ),
+    )
+    permissions: str = Field(description='The permissions of the key, e.g. "readWrite" or "readOnly".')
+    created_at: str | None = Field(
+        validation_alias=AliasChoices('createdAt', 'created_at'),
+        default=None,
+        description='The timestamp when the key was registered.',
+    )
+
+
+class AppGitRepoResponse(BaseModel):
+    """Response model for the managed git repo info of a data app."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    url: str = Field(description='The clone URL of the managed git repo (typically an SSH URL).')
+
+
 class DataScienceClient(KeboolaServiceClient):
 
     def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
@@ -149,8 +215,10 @@ class DataScienceClient(KeboolaServiceClient):
     async def deploy_data_app(
         self,
         data_app_id: str,
-        config_version: str,
+        config_version: str | None = None,
         *,
+        mode: str | None = None,
+        branch: str | None = None,
         restart_if_running: bool = True,
         update_dependencies: bool = False,
     ) -> DataAppResponse:
@@ -158,18 +226,28 @@ class DataScienceClient(KeboolaServiceClient):
         Deploy a data app by its ID.
 
         :param data_app_id: The ID of the data app
-        :param config_version: The version of the config to deploy
+        :param config_version: The version of the config to deploy. Required for Streamlit apps; omit for python-js
+                    apps backed by a managed git repo (they have no Storage configVersion).
+        :param mode: Deployment mode. Set to 'dev' to enable the in-platform preview for python-js apps.
+                    Leave None for Streamlit apps.
+        :param branch: Git branch to deploy from. Only meaningful for python-js apps in `mode='dev'`; when set,
+                    the dev twin deploys from this branch instead of `main`. Leave None for `main` / prod deploys.
         :param restart_if_running: Whether to restart the data app if it is already running
         :param update_dependencies: If set to `true`, latest package versions are installed during app startup,
                     instead of using frozen versions.
         :return: The data app
         """
-        data = {
+        data: dict[str, Any] = {
             'desiredState': 'running',
-            'configVersion': config_version,
             'restartIfRunning': restart_if_running,
             'updateDependencies': update_dependencies,
         }
+        if config_version is not None:
+            data['configVersion'] = config_version
+        if mode is not None:
+            data['mode'] = mode
+        if branch is not None:
+            data['branch'] = branch
         response = await self.patch(endpoint=f'apps/{data_app_id}', data=data)
         return DataAppResponse.model_validate(response)
 
@@ -195,24 +273,71 @@ class DataScienceClient(KeboolaServiceClient):
         self,
         name: str,
         description: str,
-        configuration: DataAppConfig,
+        configuration: Union['DataAppConfig', 'CodeDataAppConfig'],
+        *,
+        app_type: str = 'streamlit',
+        use_managed_git_repo: bool = False,
+        existing_repo_url: str | None = None,
     ) -> DataAppResponse:
         """
         Create a data app from a simplified config used in the MCP server.
+
         :param name: The name of the data app
         :param description: The description of the data app
         :param configuration: The simplified configuration of the data app
+        :param app_type: The data app type, e.g. 'streamlit' or 'python-js'. Defaults to 'streamlit'.
+        :param use_managed_git_repo: When True, the data-science API provisions a managed git repo for the app.
+                    Only meaningful for python-js apps.
+        :param existing_repo_url: When set, bind the new app to this existing managed git repo (no fresh
+                    provisioning). Use this to create a prod app sharing a dev app's repo, or a dev twin
+                    sharing an existing prod app's repo. Pair with `use_managed_git_repo=True`.
         :return: The data app
         """
-        data = {
+        data: dict[str, Any] = {
             'branchId': self._branch_id,
             'name': name,
-            'type': 'streamlit',
+            'type': app_type,
             'description': description,
             'config': configuration.model_dump(exclude_none=True, by_alias=True),
         }
+        if use_managed_git_repo:
+            data['useManagedGitRepo'] = True
+        if existing_repo_url is not None:
+            data['existingRepoUrl'] = existing_repo_url
         response = await self.post(endpoint='apps', data=data)
         return DataAppResponse.model_validate(response)
+
+    async def register_app_ssh_key(
+        self,
+        data_app_id: str,
+        public_key: str,
+        *,
+        permissions: str = 'readWrite',
+    ) -> AppSshKeyResponse:
+        """
+        Register an SSH public key on a managed-git-repo data app so the holder of the matching
+        private key can clone, pull, and push to the app's repo.
+
+        :param data_app_id: The ID of the data app
+        :param public_key: The full public key contents (e.g. the contents of an `id_ed25519.pub` file).
+        :param permissions: 'readWrite' (default) or 'readOnly'.
+        :return: The registered SSH key metadata.
+        """
+        data = {'publicKey': public_key, 'permissions': permissions}
+        response = await self.post(endpoint=f'apps/{data_app_id}/git-repo/ssh-keys', data=data)
+        return AppSshKeyResponse.model_validate(response)
+
+    async def get_app_git_repo(self, data_app_id: str) -> AppGitRepoResponse:
+        """
+        Get the managed git repo info (clone URL) for a data app.
+
+        Only meaningful for python-js apps created with `use_managed_git_repo=True`.
+
+        :param data_app_id: The ID of the data app
+        :return: The git repo info, including the clone URL.
+        """
+        response = await self.get(endpoint=f'apps/{data_app_id}/git-repo')
+        return AppGitRepoResponse.model_validate(response)
 
     async def delete_data_app(self, data_app_id: str) -> None:
         """

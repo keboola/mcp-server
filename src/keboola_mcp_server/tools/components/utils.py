@@ -520,7 +520,7 @@ async def apply_folder_metadata(
     Sets or clears folder metadata for a configuration, or returns a hint when many exist.
 
     :param kind: Human-readable plural noun for the hint (e.g. 'configurations', 'data apps').
-    :param tool_name: Tool name for the hint (e.g. 'update_config', 'modify_data_app').
+    :param tool_name: Tool name for the hint (e.g. 'update_config', 'modify_streamlit_data_app').
     :param is_new: When True, an empty folder string is a no-op (no folder to remove on a new item).
     :return: Folder hint string if applicable, else None.
     """

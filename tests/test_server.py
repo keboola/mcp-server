@@ -62,9 +62,11 @@ class TestServer:
             'get_semantic_context',
             'get_semantic_schema',
             'get_tables',
-            'modify_data_app',
             'modify_flow',
+            'modify_python_js_data_app',
+            'modify_streamlit_data_app',
             'query_data',
+            'register_python_js_data_app_ssh_key',
             'run_job',
             'run_sync_action',
             'search',
@@ -389,7 +391,9 @@ async def test_tool_annotations_and_tags():
         # oauth
         ('create_oauth_url', None, True, None, {OAUTH_TOOLS_TAG}),
         # data apps
-        ('modify_data_app', None, True, None, {DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
+        ('modify_streamlit_data_app', None, True, None, {DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
+        ('modify_python_js_data_app', None, True, None, {DATA_APP_TOOLS_TAG}),
+        ('register_python_js_data_app_ssh_key', None, False, None, {DATA_APP_TOOLS_TAG}),
         ('get_data_apps', True, None, None, {DATA_APP_TOOLS_TAG}),
         ('deploy_data_app', None, False, None, {DATA_APP_TOOLS_TAG}),
     ],
