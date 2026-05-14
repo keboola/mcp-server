@@ -109,6 +109,13 @@ class CodeDataAppConfig(BaseModel):
     class Parameters(BaseModel):
         class DataApp(BaseModel):
             slug: str = Field(description='The slug of the data app (used as URL subdomain).')
+            secrets: dict[str, str] | None = Field(
+                description=(
+                    'Runtime secrets exposed to the data app as environment variables (e.g. KBC_TOKEN, '
+                    'KBC_URL, BRANCH_ID, WORKSPACE_ID). Mirrors the Streamlit data-app secrets shape.'
+                ),
+                default=None,
+            )
 
         auto_suspend_after_seconds: int = Field(
             validation_alias=AliasChoices('autoSuspendAfterSeconds', 'auto_suspend_after_seconds'),

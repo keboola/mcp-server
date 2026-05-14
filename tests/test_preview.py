@@ -775,6 +775,8 @@ class TestPreviewConfigDiff:
 
         # Mock the KeboolaClient
         mock_client = mocker.AsyncMock(KeboolaClient)
+        mock_client.token = 'test-token'
+        mock_client.storage_api_url = 'https://connection.test.keboola.com'
 
         async def mock_config_detail(**kwargs):
             return copy.deepcopy(original_config_data)
@@ -876,7 +878,14 @@ class TestPreviewConfigDiff:
                 'parameters': {
                     'dataApp': {
                         'slug': 'updated-data-app',
-                        'secrets': {'FOO': 'old', 'KEEP': 'x', 'BRANCH_ID': '456', 'WORKSPACE_ID': '123'},
+                        'secrets': {
+                            'FOO': 'old',
+                            'KEEP': 'x',
+                            'BRANCH_ID': '456',
+                            'WORKSPACE_ID': '123',
+                            'KBC_TOKEN': 'test-token',
+                            'KBC_URL': 'https://connection.test.keboola.com',
+                        },
                     },
                     'script': [],
                     'packages': ['httpx', 'pandas', 'streamlit'],
