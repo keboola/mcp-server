@@ -1906,10 +1906,17 @@ Steps:
    section until the user discards it.
 
 ## Update flow (modifying an existing app's deployment metadata)
-When `configuration_id` is set: updates the Storage configuration (auto-suspend, name, description).
-`slug` and `existing_repo_url` are rejected here — slug is immutable and the repo binding is fixed
-at creation. After updating, ALWAYS call `deploy_data_app(action='deploy', ...)` to restart the app
-so the changes take effect.
+When `configuration_id` is set: updates the Storage configuration (auto-suspend, name, description,
+`authentication_type`). `slug` and `existing_repo_url` are rejected here — slug is immutable and the
+repo binding is fixed at creation. Use `authentication_type='default'` to keep the existing auth
+setup (including OIDC configured outside the MCP); pass `'no-auth'` or `'basic-auth'` to overwrite.
+After updating, ALWAYS call `deploy_data_app(action='deploy', ...)` to restart the app so the changes
+take effect.
+
+## Authentication
+New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
+explicitly to expose the app publicly. OIDC and other advanced auth setups are managed outside the
+MCP — when updating such an app, leave `authentication_type='default'` to preserve them.
 
 ## Slug constraint
 Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). For dev twins in the edit flow,
@@ -1966,6 +1973,16 @@ metadata. Source code changes are pushed via `git push` to the repo URL.
       ],
       "default": null,
       "description": "When set on create, the new data app is bound to this existing managed git repo (the URL returned by `get_data_apps` on a sibling app) instead of provisioning a fresh repo. Use this to create a prod app that shares its sibling dev app's repo (promote-to-prod), or to create a dev twin that shares an existing prod app's repo (edit flow). Ignored when updating."
+    },
+    "authentication_type": {
+      "default": "default",
+      "description": "Authentication type. \"no-auth\" removes authentication completely, \"basic-auth\" secures the data app via HTTP basic authentication, and \"default\" means: on create, apply basic auth (safe default for new apps); on update, keep the existing authentication configuration (including OIDC setups configured outside the MCP).",
+      "enum": [
+        "no-auth",
+        "basic-auth",
+        "default"
+      ],
+      "type": "string"
     },
     "auto_suspend_after_seconds": {
       "default": 900,

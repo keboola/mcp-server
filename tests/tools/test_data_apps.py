@@ -893,6 +893,60 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     assert serialized['parameters']['autoSuspendAfterSeconds'] == 300
     assert serialized['parameters']['dataApp']['slug'] == 'my-app'
     assert serialized['runtime']['image']['version'] == 'dev-PAT-1772.4'
+    # Default `authentication_type='default'` produces basic-auth on create (safe-by-default).
+    assert serialized['authorization']['app_proxy']['auth_providers'] == [
+        {'id': 'simpleAuth', 'type': 'password'}
+    ]
+    assert serialized['authorization']['app_proxy']['auth_rules'] == [
+        {'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('authentication_type', 'expect_basic_auth'),
+    [
+        ('default', True),
+        ('basic-auth', True),
+        ('no-auth', False),
+    ],
+)
+async def test_modify_python_js_data_app_create_authentication_type(
+    mocker,
+    mcp_context_client: Context,
+    authentication_type: str,
+    expect_basic_auth: bool,
+) -> None:
+    """Create path translates authentication_type to the right authorization block:
+    'default' and 'basic-auth' → password-protected; 'no-auth' → public."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    app_response = _make_python_js_data_app_response()
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(url='git@managed.repo:org/app.git')
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    _ = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='My App',
+        description='desc',
+        slug='my-app',
+        authentication_type=cast(Literal['no-auth', 'basic-auth', 'default'], authentication_type),
+    )
+
+    serialized = keboola_client.data_science_client.create_data_app.await_args.kwargs[
+        'configuration'
+    ].model_dump(by_alias=True, exclude_none=True)
+    auth_rule = serialized['authorization']['app_proxy']['auth_rules'][0]
+    if expect_basic_auth:
+        assert auth_rule['auth_required'] is True
+        assert auth_rule['auth'] == ['simpleAuth']
+    else:
+        assert auth_rule['auth_required'] is False
 
 
 @pytest.mark.asyncio
@@ -971,6 +1025,61 @@ def test_update_existing_code_data_app_config_replaces_image_version() -> None:
     }
     new = _update_existing_code_data_app_config(existing, image_version='v2', auto_suspend_after_seconds=900)
     assert new['runtime']['image']['version'] == 'v2'
+
+
+def test_update_existing_code_data_app_config_default_auth_preserves_existing() -> None:
+    """`authentication_type='default'` must not touch an existing authorization block (e.g. OIDC)."""
+    existing_authorization = {
+        'app_proxy': {
+            'auth_providers': [{'id': 'oidc', 'type': 'oidc', 'issuer_url': 'https://issuer'}],
+            'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['oidc']}],
+        }
+    }
+    existing = {
+        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
+        'runtime': {'image': {'version': 'v1'}},
+        'authorization': existing_authorization,
+    }
+    new = _update_existing_code_data_app_config(
+        existing, image_version='v1', auto_suspend_after_seconds=900, authentication_type='default'
+    )
+    # Deepcopy makes it equal-but-not-identical.
+    assert new['authorization'] == existing_authorization
+
+
+def test_update_existing_code_data_app_config_basic_auth_overwrites() -> None:
+    existing = {
+        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
+        'runtime': {'image': {'version': 'v1'}},
+        'authorization': {'app_proxy': {'auth_providers': [], 'auth_rules': []}},
+    }
+    new = _update_existing_code_data_app_config(
+        existing, image_version='v1', auto_suspend_after_seconds=900, authentication_type='basic-auth'
+    )
+    assert new['authorization']['app_proxy']['auth_rules'] == [
+        {'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}
+    ]
+
+
+def test_update_existing_code_data_app_config_no_auth_overwrites() -> None:
+    existing = {
+        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
+        'runtime': {'image': {'version': 'v1'}},
+        'authorization': {
+            'app_proxy': {
+                'auth_providers': [{'id': 'simpleAuth', 'type': 'password'}],
+                'auth_rules': [
+                    {'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}
+                ],
+            }
+        },
+    }
+    new = _update_existing_code_data_app_config(
+        existing, image_version='v1', auto_suspend_after_seconds=900, authentication_type='no-auth'
+    )
+    assert new['authorization']['app_proxy']['auth_rules'] == [
+        {'type': 'pathPrefix', 'value': '/', 'auth_required': False}
+    ]
 
 
 # ===== Tests for deploy_data_app with mode and python-js =====
