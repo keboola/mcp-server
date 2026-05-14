@@ -99,17 +99,23 @@ Do **not** proactively convert every snippet to shared code. A one-off transform
 
 #### Conventional naming
 
-The parent config ID follows `shared-codes.<transformation-component-id>` by convention (`shared-codes.snowflake-transformation`,
-`shared-codes.google-bigquery-transformation`, etc.), but **always use the actual ID returned by `get_shared_codes`**
-rather than assuming the conventional name.
+The parent config ID **must** follow `shared-codes.<transformation-component-id>` —
+`shared-codes.snowflake-transformation`, `shared-codes.google-bigquery-transformation`,
+`shared-codes.python-transformation-v2`, `shared-codes.r-transformation-v2`. The Keboola UI and
+the runtime expansion look up libraries by this exact ID; auto-generated UUIDs from SAPI are not
+recognised. **Always use the conventional ID when creating a new parent library**, and use the
+actual ID returned by `get_shared_codes` when referencing an existing one.
 
 #### Creating / editing shared code
 
-Use the existing generic configuration tools — no specialised tools exist:
+Use the existing generic configuration tools — no specialised tools exist. The MCP server
+special-cases `component_id="keboola.shared-code"` so the snippet fields land at the
+configuration root (where the platform expects them); pass the fields you want via `parameters`
+and the tool will unwrap them.
 
 | Operation | Tool | Key parameters |
 |---|---|---|
-| Create parent library | `create_config` | `component_id="keboola.shared-code"`, `parameters={"componentId":"<transformation-component-id>"}` |
+| Create parent library | `create_config` | `component_id="keboola.shared-code"`, `configuration_id="shared-codes.<transformation-component-id>"`, `parameters={"componentId":"<transformation-component-id>"}` |
 | Add snippet row | `add_config_row` | `component_id="keboola.shared-code"`, `row_id="<mustache-key>"`, `parameters={"code_content":["<code>"]}` |
 | Update snippet content | `update_config_row` | `parameter_updates=[{"op":"set","path":"code_content","value":["<new code>"]}]` |
 | Disable a snippet | `update_config_row` | `is_disabled=True` (there is no delete-row tool) |

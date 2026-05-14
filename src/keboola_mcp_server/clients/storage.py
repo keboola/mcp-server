@@ -490,6 +490,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         name: str,
         description: str,
         configuration: dict[str, Any],
+        configuration_id: Optional[str] = None,
     ) -> JsonDict:
         """
         Creates a new configuration for a component.
@@ -498,16 +499,22 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param name: The name of the configuration.
         :param description: The description of the configuration.
         :param configuration: The configuration definition as a dictionary.
+        :param configuration_id: Optional explicit configuration ID (forwarded to SAPI as
+            `configurationId`). Required for `keboola.shared-code` parent libraries, which
+            must use the conventional `shared-codes.<transformation-component-id>` ID for
+            the UI and runtime expansion to find them. Leave `None` to let SAPI auto-assign.
 
         :return: The SAPI call response - created configuration or raise an error.
         """
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs'
 
-        payload = {
+        payload: dict[str, Any] = {
             'name': name,
             'description': description,
             'configuration': configuration,
         }
+        if configuration_id:
+            payload['configurationId'] = configuration_id
         return cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
 
     async def configuration_delete(self, component_id: str, configuration_id: str, skip_trash: bool = False) -> None:

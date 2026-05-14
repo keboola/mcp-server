@@ -435,8 +435,15 @@ async def get_shared_codes(
     parent_configs = await client.storage_client.configuration_list(SHARED_CODE_COMPONENT_ID)
 
     async def build_shared_code_config(parent: JsonDict) -> Optional[SharedCodeConfig]:
+        # Shared-code parents and rows use a FLAT configuration body — `componentId` and
+        # `code_content` live at the configuration root, not under `parameters`. Historical
+        # configs created via the generic create_config wrapper may still have them nested,
+        # so read root first and fall back to `parameters.<field>` for compatibility.
         parent_configuration = cast(dict[str, Any], parent.get('configuration') or {})
-        transformation_component_id = cast(str, parent_configuration.get('componentId') or '')
+        parent_parameters = cast(dict[str, Any], parent_configuration.get('parameters') or {})
+        transformation_component_id = cast(
+            str, parent_configuration.get('componentId') or parent_parameters.get('componentId') or ''
+        )
         if filter_set and transformation_component_id not in filter_set:
             return None
 
@@ -447,7 +454,10 @@ async def get_shared_codes(
         rows: list[SharedCodeRow] = []
         for raw_row in cast(list[dict[str, Any]], detail.get('rows') or []):
             row_config = cast(dict[str, Any], raw_row.get('configuration') or {})
-            code_content = row_config.get('code_content') or []
+            row_parameters = cast(dict[str, Any], row_config.get('parameters') or {})
+            code_content = row_config.get('code_content')
+            if code_content is None:
+                code_content = row_parameters.get('code_content') or []
             if isinstance(code_content, list):
                 code = '\n'.join(str(item) for item in code_content)
             else:
@@ -1225,6 +1235,20 @@ async def create_config(
             ),
         ),
     ] = tuple(),
+    configuration_id: Annotated[
+        str,
+        Field(
+            description=(
+                'Optional explicit configuration ID. When non-empty, forwarded to SAPI as `configurationId`. '
+                'REQUIRED for `keboola.shared-code` parent libraries — pass the conventional '
+                '`shared-codes.<transformation-component-id>` value (e.g. '
+                '`shared-codes.snowflake-transformation`, `shared-codes.google-bigquery-transformation`, '
+                '`shared-codes.python-transformation-v2`, `shared-codes.r-transformation-v2`). The UI and '
+                'runtime expansion look up shared-code libraries by this exact ID. Leave empty to let SAPI '
+                'auto-assign for any other component.'
+            ),
+        ),
+    ] = '',
 ) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -1240,10 +1264,14 @@ async def create_config(
     - Use when you want to create a new root configuration for a specific component.
 
     SHARED CODE:
-    - For `keboola.shared-code` parent libraries, pass `component_id="keboola.shared-code"` and put the target
-      transformation component ID in `parameters` as `{"componentId": "<keboola.snowflake-transformation>"}`.
+    - For `keboola.shared-code` parent libraries: pass `component_id="keboola.shared-code"`,
+      `parameters={"componentId": "<target-transformation-id>"}`, AND `configuration_id="shared-codes.<target>"`
+      (e.g. `shared-codes.snowflake-transformation`). The platform stores `componentId` AT THE
+      CONFIGURATION ROOT for shared-code (not nested under `parameters`); this tool unwraps the
+      provided parameters dict accordingly. The conventional `configuration_id` is required —
+      auto-generated IDs are not recognised by the runtime expansion.
     - For Python/R/DuckDB transformations that should reuse shared snippets, set `shared_code_id` and
-      `shared_code_row_ids` and embed `{{ rowId }}` Mustache placeholders in the component\'s script.
+      `shared_code_row_ids` and embed `{{ rowId }}` Mustache placeholders in the component's script.
 
     WHEN NOT TO USE:
     - `keboola.orchestrator` / `keboola.flow` → use flows tools
@@ -1276,7 +1304,13 @@ async def create_config(
         initial_message='The "parameters" field is not valid.',
     )
 
-    configuration_payload: dict[str, Any] = {'storage': storage_cfg, 'parameters': parameters}
+    # `keboola.shared-code` parent libraries use a flat configuration body — the platform's UI
+    # and runtime expansion read `componentId` at the configuration root, not under `parameters`.
+    # For every other component the generic wrapper applies.
+    if component_id == SHARED_CODE_COMPONENT_ID:
+        configuration_payload: dict[str, Any] = dict(parameters or {})
+    else:
+        configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
     if processors_before:
         processors_before = await validate_processors_configuration(
@@ -1305,6 +1339,7 @@ async def create_config(
             name=name,
             description=description,
             configuration=configuration_payload,
+            configuration_id=configuration_id or None,
         ),
     )
 
@@ -1440,7 +1475,12 @@ async def add_config_row(
         configuration_id=configuration_id,
     )
 
-    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
+    # `keboola.shared-code` rows use a flat configuration body — the platform reads
+    # `code_content` at the row configuration root, not under `parameters`.
+    if component_id == SHARED_CODE_COMPONENT_ID:
+        configuration_payload: dict[str, Any] = dict(parameters or {})
+    else:
+        configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
     if processors_before:
         processors_before = await validate_processors_configuration(

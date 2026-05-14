@@ -1132,6 +1132,7 @@ async def test_create_config(
         name=name,
         description=description,
         configuration={'storage': storage, 'parameters': parameters},
+        configuration_id=None,
     )
 
 
@@ -2324,6 +2325,141 @@ async def test_get_shared_codes(
             assert cfg.transformation_component_id == SNOWFLAKE_TRANSFORMATION_ID
             assert [row.row_id for row in cfg.rows] == ['dumpfiles']
             assert cfg.rows[0].code == 'SELECT * FROM info\nWHERE 1=1'
+
+
+@pytest.mark.asyncio
+async def test_create_config_for_shared_code_parent_uses_flat_body_and_conventional_id(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """
+    Shared-code parent libraries must be created with `componentId` at the configuration root
+    (not nested under `parameters`) and with the conventional `shared-codes.<transformation>` ID,
+    not an auto-assigned UUID — otherwise the UI and runtime expansion cannot find the library.
+    """
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    shared_code_component = {**mock_component, 'id': SHARED_CODE_COMPONENT_ID}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    await create_config(
+        ctx=context,
+        name='Shared codes for Snowflake',
+        description='reusable snippets',
+        component_id=SHARED_CODE_COMPONENT_ID,
+        parameters={'componentId': SNOWFLAKE_TRANSFORMATION_ID},
+        configuration_id='shared-codes.snowflake-transformation',
+    )
+
+    call = keboola_client.storage_client.configuration_create.call_args
+    assert call.kwargs['configuration_id'] == 'shared-codes.snowflake-transformation'
+    assert call.kwargs['configuration'] == {
+        'componentId': SNOWFLAKE_TRANSFORMATION_ID
+    }, 'Shared-code parent body must be flat (componentId at root), not wrapped under "parameters"'
+
+
+@pytest.mark.asyncio
+async def test_add_config_row_for_shared_code_uses_flat_body(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """Shared-code rows must persist `code_content` at the row configuration root, not under `parameters`."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    shared_code_component = {**mock_component, 'id': SHARED_CODE_COMPONENT_ID}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.configuration_row_create = mocker.AsyncMock(
+        return_value={'id': 'dumpfiles', 'version': 1}
+    )
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    await add_config_row(
+        ctx=context,
+        name='Dump files helper',
+        description='reusable SELECT',
+        component_id=SHARED_CODE_COMPONENT_ID,
+        configuration_id='shared-codes.snowflake-transformation',
+        parameters={'code_content': ['SELECT 1']},
+        row_id='dumpfiles',
+    )
+
+    call = keboola_client.storage_client.configuration_row_create.call_args
+    assert call.kwargs['row_id'] == 'dumpfiles'
+    assert call.kwargs['configuration'] == {
+        'code_content': ['SELECT 1']
+    }, 'Shared-code row body must be flat (code_content at root), not wrapped under "parameters"'
+
+
+@pytest.mark.asyncio
+async def test_get_shared_codes_reads_root_and_parameters_paths(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+):
+    """
+    Reads `componentId` / `code_content` from the configuration root first (current platform
+    wire format) and falls back to `parameters.<field>` for legacy/wrapper-created configs.
+    """
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    list_response = [
+        # Canonical: componentId at root.
+        {
+            'id': 'shared-codes.snowflake-transformation',
+            'name': 'Snowflake snippets',
+            'configuration': {'componentId': SNOWFLAKE_TRANSFORMATION_ID},
+        },
+        # Legacy: componentId nested under parameters (matches old wrapper output).
+        {
+            'id': 'legacy-shared-codes-python',
+            'name': 'Legacy Python snippets',
+            'configuration': {'parameters': {'componentId': 'keboola.python-transformation-v2'}},
+        },
+    ]
+    detail_by_id = {
+        'shared-codes.snowflake-transformation': {
+            'rows': [
+                {
+                    'id': 'dumpfiles',
+                    'name': 'Dump files',
+                    'configuration': {'code_content': ['SELECT 1']},  # canonical: root
+                }
+            ],
+        },
+        'legacy-shared-codes-python': {
+            'rows': [
+                {
+                    'id': 'imports',
+                    'name': 'imports',
+                    'configuration': {'parameters': {'code_content': ['import pandas as pd']}},  # legacy
+                }
+            ],
+        },
+    }
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=list_response)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        side_effect=lambda component_id, configuration_id: detail_by_id[configuration_id]
+    )
+
+    result = await get_shared_codes(ctx=context)
+    by_id = {cfg.config_id: cfg for cfg in result.shared_codes}
+
+    assert by_id['shared-codes.snowflake-transformation'].transformation_component_id == SNOWFLAKE_TRANSFORMATION_ID
+    assert by_id['shared-codes.snowflake-transformation'].rows[0].code == 'SELECT 1'
+
+    assert by_id['legacy-shared-codes-python'].transformation_component_id == 'keboola.python-transformation-v2'
+    assert by_id['legacy-shared-codes-python'].rows[0].code == 'import pandas as pd'
 
 
 @pytest.mark.asyncio

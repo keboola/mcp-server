@@ -201,8 +201,12 @@ USAGE:
 - Use when you want to create a new root configuration for a specific component.
 
 SHARED CODE:
-- For `keboola.shared-code` parent libraries, pass `component_id="keboola.shared-code"` and put the target
-  transformation component ID in `parameters` as `{"componentId": "<keboola.snowflake-transformation>"}`.
+- For `keboola.shared-code` parent libraries: pass `component_id="keboola.shared-code"`,
+  `parameters={"componentId": "<target-transformation-id>"}`, AND `configuration_id="shared-codes.<target>"`
+  (e.g. `shared-codes.snowflake-transformation`). The platform stores `componentId` AT THE
+  CONFIGURATION ROOT for shared-code (not nested under `parameters`); this tool unwraps the
+  provided parameters dict accordingly. The conventional `configuration_id` is required —
+  auto-generated IDs are not recognised by the runtime expansion.
 - For Python/R/DuckDB transformations that should reuse shared snippets, set `shared_code_id` and
   `shared_code_row_ids` and embed `{{ rowId }}` Mustache placeholders in the component's script.
 
@@ -275,6 +279,11 @@ EXAMPLES:
         "type": "string"
       },
       "type": "array"
+    },
+    "configuration_id": {
+      "default": "",
+      "description": "Optional explicit configuration ID. When non-empty, forwarded to SAPI as `configurationId`. REQUIRED for `keboola.shared-code` parent libraries \u2014 pass the conventional `shared-codes.<transformation-component-id>` value (e.g. `shared-codes.snowflake-transformation`, `shared-codes.google-bigquery-transformation`, `shared-codes.python-transformation-v2`, `shared-codes.r-transformation-v2`). The UI and runtime expansion look up shared-code libraries by this exact ID. Leave empty to let SAPI auto-assign for any other component.",
+      "type": "string"
     }
   },
   "required": [
