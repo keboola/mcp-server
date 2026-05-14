@@ -564,6 +564,17 @@ async def modify_python_js_data_app(
             ),
         ),
     ] = None,
+    authentication_type: Annotated[
+        AuthenticationType,
+        Field(
+            description=(
+                'Authentication type. "no-auth" removes authentication completely, "basic-auth" secures the '
+                'data app via HTTP basic authentication, and "default" means: on create, apply basic auth '
+                '(safe default for new apps); on update, keep the existing authentication configuration '
+                '(including OIDC setups configured outside the MCP).'
+            ),
+        ),
+    ] = 'default',
     auto_suspend_after_seconds: Annotated[
         int,
         Field(
@@ -626,10 +637,17 @@ async def modify_python_js_data_app(
        section until the user discards it.
 
     ## Update flow (modifying an existing app's deployment metadata)
-    When `configuration_id` is set: updates the Storage configuration (auto-suspend, name, description).
-    `slug` and `existing_repo_url` are rejected here — slug is immutable and the repo binding is fixed
-    at creation. After updating, ALWAYS call `deploy_data_app(action='deploy', ...)` to restart the app
-    so the changes take effect.
+    When `configuration_id` is set: updates the Storage configuration (auto-suspend, name, description,
+    `authentication_type`). `slug` and `existing_repo_url` are rejected here — slug is immutable and the
+    repo binding is fixed at creation. Use `authentication_type='default'` to keep the existing auth
+    setup (including OIDC configured outside the MCP); pass `'no-auth'` or `'basic-auth'` to overwrite.
+    After updating, ALWAYS call `deploy_data_app(action='deploy', ...)` to restart the app so the changes
+    take effect.
+
+    ## Authentication
+    New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
+    explicitly to expose the app publicly. OIDC and other advanced auth setups are managed outside the
+    MCP — when updating such an app, leave `authentication_type='default'` to preserve them.
 
     ## Slug constraint
     Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). For dev twins in the edit flow,
@@ -658,6 +676,7 @@ async def modify_python_js_data_app(
             existing_config=data_app.configuration,
             image_version=_HARDCODED_PYTHON_JS_IMAGE_VERSION,
             auto_suspend_after_seconds=auto_suspend_after_seconds,
+            authentication_type=authentication_type,
         )
         await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
@@ -687,7 +706,7 @@ async def modify_python_js_data_app(
             configuration_id=data_app.configuration_id,
             configuration_name=name or data_app.name,
             deployment_link=data_app.deployment_url,
-            uses_basic_authentication=False,
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
         response = (
             'updated (redeploy required to apply changes in the running app)'
@@ -707,6 +726,9 @@ async def modify_python_js_data_app(
         # Create new python-js data app
         # Narrowed by the validation block at the top of this function.
         assert slug is not None
+        # On create, treat 'default' as 'basic-auth' (safe-by-default) to match modify_streamlit_data_app.
+        uses_basic_auth = authentication_type in ('basic-auth', 'default')
+        authorization_model = DataAppConfig.Authorization.model_validate(_get_authorization(uses_basic_auth))
         config = CodeDataAppConfig(
             parameters=CodeDataAppConfig.Parameters(
                 auto_suspend_after_seconds=auto_suspend_after_seconds,
@@ -715,6 +737,7 @@ async def modify_python_js_data_app(
             runtime=CodeDataAppConfig.Runtime(
                 image=CodeDataAppConfig.Runtime.Image(version=_HARDCODED_PYTHON_JS_IMAGE_VERSION),
             ),
+            authorization=authorization_model,
         )
         data_app_resp = await client.data_science_client.create_data_app(
             name=name,
@@ -747,7 +770,7 @@ async def modify_python_js_data_app(
             configuration_id=data_app_resp.config_id,
             configuration_name=name,
             deployment_link=data_app_resp.url,
-            uses_basic_authentication=False,
+            uses_basic_authentication=uses_basic_auth,
         )
         data_app_summary = DataAppSummary.from_api_response(data_app_resp)
         data_app_summary.repo_url = repo_url
@@ -832,10 +855,13 @@ def _update_existing_code_data_app_config(
     existing_config: Mapping[str, Any],
     image_version: Optional[str],
     auto_suspend_after_seconds: int,
+    authentication_type: AuthenticationType = 'default',
 ) -> dict[str, Any]:
     """Apply requested updates to the existing python-js data app storage configuration.
 
     Slug is intentionally not updated here (immutable post-create).
+    `authentication_type='default'` preserves the existing `authorization` block (including OIDC
+    setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it.
     """
     new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
     new_config.setdefault('parameters', {})
@@ -844,6 +870,8 @@ def _update_existing_code_data_app_config(
         runtime = new_config.setdefault('runtime', {})
         image = runtime.setdefault('image', {})
         image['version'] = image_version
+    if authentication_type != 'default':
+        new_config['authorization'] = _get_authorization(authentication_type == 'basic-auth')
     return new_config
 
 
