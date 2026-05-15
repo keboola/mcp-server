@@ -8,6 +8,7 @@ import pytest
 from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
 
+from keboola_mcp_server import cancellation
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.tools.sql import QueryDataOutput, _watch_for_http_disconnect, query_data
@@ -940,6 +941,48 @@ class TestQueryCancellation:
         result = await query_data('SELECT 1', 'test', mcp_context_client)
         assert isinstance(result, QueryDataOutput)
         assert result.csv_data == 'a\r\n1\r\n'
+
+    @pytest.mark.asyncio
+    async def test_query_data_registers_and_cancels_via_registry(self, mcp_context_client: Context, mocker) -> None:
+        """End-to-end stateless flow: query_data registers its task in the registry, an
+        external `cancel(request_id)` (as the middleware would do) aborts it, and the
+        workspace task receives CancelledError."""
+        cancellation._running.clear()
+        execute_query_cancelled = asyncio.Event()
+
+        async def long_running(*_a, **_kw):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                execute_query_cancelled.set()
+                raise
+
+        manager = AsyncMock(WorkspaceManager)
+        manager.execute_query.side_effect = long_running
+        mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+        mcp_context_client.request_id = 'rpc-id-42'
+
+        # Pin the disconnect watcher off so this test exercises only the registry path.
+        mocker.patch(
+            'keboola_mcp_server.tools.sql.get_http_request',
+            side_effect=RuntimeError('No active HTTP request found.'),
+        )
+
+        task = asyncio.create_task(query_data('SELECT 1', 'cancel-test', mcp_context_client))
+        # Wait until query_data has registered the inner task.
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if 'rpc-id-42' in cancellation._running:
+                break
+        assert 'rpc-id-42' in cancellation._running
+
+        assert await cancellation.cancel('rpc-id-42') is True
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert execute_query_cancelled.is_set()
+        # Registry must be cleaned up regardless of how query_data exited.
+        assert 'rpc-id-42' not in cancellation._running
 
     @pytest.mark.asyncio
     async def test_watch_for_http_disconnect_treats_errors_as_connected(self, mocker) -> None:

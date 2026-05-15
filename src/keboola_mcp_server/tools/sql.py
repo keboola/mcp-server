@@ -11,6 +11,7 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
+from keboola_mcp_server.cancellation import track_request
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.workspace import SqlSelectData, WorkspaceManager
 
@@ -22,6 +23,20 @@ MAX_CHARS = 50_000
 # How often to check whether the HTTP client has disconnected during a long query.
 # Mirrors the 1 s job-poll cadence in `_SnowflakeWorkspace.execute_query`.
 _DISCONNECT_POLL_INTERVAL = 1.0
+
+
+def _safe_request_id(ctx: Context) -> str | None:
+    """Return the current JSON-RPC request id, or None if unavailable.
+
+    The id is needed to register the running task in the cancellation registry so
+    that `notifications/cancelled` can find and abort it. Outside of an active MCP
+    request (e.g. in some unit tests, or during initialization) the id is missing —
+    in that case we just skip registration and rely on the disconnect watcher.
+    """
+    try:
+        return str(ctx.request_id)
+    except (AttributeError, RuntimeError):
+        return None
 
 
 async def _watch_for_http_disconnect(poll_interval: float = _DISCONNECT_POLL_INTERVAL) -> None:
@@ -136,35 +151,43 @@ async def query_data(
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
 
-    # Race the query against the HTTP client disconnecting. If the client gives up
-    # before the query finishes, cancelling `query_task` triggers the CancelledError
-    # branch inside `_SnowflakeWorkspace.execute_query`, which fires `cancel_job` on
-    # the backend so the scan stops. Needed because in stateless HTTP mode the MCP
-    # cancel notification cannot reach this running request — see `_watch_for_http_disconnect`.
+    # Race the workspace task against an HTTP-disconnect watcher AND register it in
+    # the process-wide cancellation registry. The registry path is what actually
+    # works in stateless streamable-HTTP mode: when the client sends
+    # `notifications/cancelled` it lands on a different transport instance, but
+    # `CancellationInterceptorMiddleware` peeks at the body, looks the request id
+    # up here, and cancels the task. The cancellation then trips the CancelledError
+    # branch inside `_SnowflakeWorkspace.execute_query` and fires `cancel_job`.
+    # The disconnect watcher is kept as a belt-and-braces signal for clients that
+    # actually close the socket on stop (see `_watch_for_http_disconnect`).
     query_task = asyncio.create_task(workspace_manager.execute_query(sql_query, max_rows=MAX_ROWS, max_chars=MAX_CHARS))
     disconnect_task = asyncio.create_task(_watch_for_http_disconnect())
-    try:
-        done, _pending = await asyncio.wait(
-            [query_task, disconnect_task],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-    except BaseException:
-        query_task.cancel()
+    request_id = _safe_request_id(ctx)
+    cancel_tracking = track_request(request_id, query_task) if request_id is not None else contextlib.nullcontext()
+
+    async with cancel_tracking:
+        try:
+            done, _pending = await asyncio.wait(
+                [query_task, disconnect_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        except BaseException:
+            query_task.cancel()
+            disconnect_task.cancel()
+            raise
+
+        if query_task not in done:
+            LOG.info(f'HTTP client disconnected during query_data "{query_name}"; cancelling underlying query')
+            query_task.cancel()
+            with contextlib.suppress(BaseException):
+                await query_task
+            raise asyncio.CancelledError(f'HTTP client disconnected during query_data "{query_name}"')
+
         disconnect_task.cancel()
-        raise
-
-    if query_task not in done:
-        LOG.info(f'HTTP client disconnected during query_data "{query_name}"; cancelling underlying query')
-        query_task.cancel()
         with contextlib.suppress(BaseException):
-            await query_task
-        raise asyncio.CancelledError(f'HTTP client disconnected during query_data "{query_name}"')
+            await disconnect_task
 
-    disconnect_task.cancel()
-    with contextlib.suppress(BaseException):
-        await disconnect_task
-
-    result = query_task.result()
+        result = query_task.result()
     LOG.info(' '.join(filter(None, [f'Query "{query_name}" executed successfully.', result.message])))
     if result.is_ok:
         if result.data:

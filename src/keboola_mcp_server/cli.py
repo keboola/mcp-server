@@ -18,6 +18,7 @@ from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from keboola_mcp_server.cancellation import CancellationInterceptorMiddleware
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ForwardSlashMiddleware
 from keboola_mcp_server.server import CustomRoutes, create_server
@@ -176,7 +177,14 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                     yield
 
             app = Starlette(
-                middleware=[Middleware(ForwardSlashMiddleware)],
+                middleware=[
+                    Middleware(ForwardSlashMiddleware),
+                    # In stateless HTTP mode the MCP SDK cannot route `notifications/cancelled`
+                    # to the in-flight tool call's session — see `cancellation.py` docstring.
+                    # This middleware intercepts those notifications and cancels via a
+                    # process-wide registry that long-running tools register with.
+                    Middleware(CancellationInterceptorMiddleware),
+                ],
                 lifespan=lifespan,
                 exception_handlers=_exception_handlers,
             )
