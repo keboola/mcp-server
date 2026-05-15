@@ -110,11 +110,12 @@ class ProjectInfo(BaseModel):
         description=(
             'The ID of the read-only Keboola workspace that the MCP server uses to run SQL queries '
             'against the project (via the `query_data` tool). '
-            'This workspace is always bound to the production/default branch — branched read-only '
-            'workspaces are not supported, so all SQL queries (including those issued while operating '
-            'on a development branch) read production storage. '
-            'When reusing this `workspace_id` in other tooling, do not pair it with a development '
-            '`branch_id`; treat it as a production-branch resource.'
+            'On projects with the `storage-branches` feature, each development branch has its own '
+            'workspace bound to that branch; on the default branch and on legacy projects without '
+            '`storage-branches`, all callers share the production-branch workspace. '
+            'In every case the workspace pairs with the `branch_id` returned in this same response, '
+            'so other RO tooling (e.g. data-app testing) can reuse it without provisioning a '
+            'private workspace.'
         )
     )
     conditional_flows: bool = Field(description='Whether the project supports conditional flows.')
