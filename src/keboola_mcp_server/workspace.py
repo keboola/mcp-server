@@ -256,38 +256,52 @@ class _SnowflakeWorkspace(_Workspace):
 
         ts_start = time.perf_counter()
         job_id = await self._qsclient.submit_job(statements=[sql_query], workspace_id=str(self.id))
-        while (job_status := await self._qsclient.get_job_status(job_id)) and job_status['status'] not in [
-            'completed',
-            'failed',
-            'canceled',
-            'cancelled',
-        ]:
-            await asyncio.sleep(1)
-            elapsed_time = time.perf_counter() - ts_start
-            if elapsed_time > self._QUERY_TIMEOUT:
-                # Cancel the query before raising timeout error
-                reason = f'Query timeout exceeded after {elapsed_time:.2f} seconds'
-                cancellation_confirmed, query_completed = await self._cancel_job_with_timeout(job_id, reason)
+        try:
+            while (job_status := await self._qsclient.get_job_status(job_id)) and job_status['status'] not in [
+                'completed',
+                'failed',
+                'canceled',
+                'cancelled',
+            ]:
+                await asyncio.sleep(1)
+                elapsed_time = time.perf_counter() - ts_start
+                if elapsed_time > self._QUERY_TIMEOUT:
+                    # Cancel the query before raising timeout error
+                    reason = f'Query timeout exceeded after {elapsed_time:.2f} seconds'
+                    cancellation_confirmed, query_completed = await self._cancel_job_with_timeout(job_id, reason)
 
-                # If query completed during cancellation, fetch and return results
-                if query_completed:
-                    LOG.info(f'Query completed during cancellation polling, returning results: job_id={job_id}')
-                    # Break out of the polling loop to fetch results below
-                    job_status = await self._qsclient.get_job_status(job_id)
-                    break
+                    # If query completed during cancellation, fetch and return results
+                    if query_completed:
+                        LOG.info(f'Query completed during cancellation polling, returning results: job_id={job_id}')
+                        # Break out of the polling loop to fetch results below
+                        job_status = await self._qsclient.get_job_status(job_id)
+                        break
 
-                # Query did not complete - raise timeout error
-                if cancellation_confirmed:
-                    raise RuntimeError(
-                        f'Query execution timed out after {elapsed_time:.2f} seconds. '
-                        f'The query has been cancelled: job_id={job_id}'
-                    )
-                else:
-                    raise RuntimeError(
-                        f'Query execution timed out after {elapsed_time:.2f} seconds. '
-                        f'Cancellation was attempted but could not be confirmed. '
-                        f'The query may still be running on the server: job_id={job_id}'
-                    )
+                    # Query did not complete - raise timeout error
+                    if cancellation_confirmed:
+                        raise RuntimeError(
+                            f'Query execution timed out after {elapsed_time:.2f} seconds. '
+                            f'The query has been cancelled: job_id={job_id}'
+                        )
+                    else:
+                        raise RuntimeError(
+                            f'Query execution timed out after {elapsed_time:.2f} seconds. '
+                            f'Cancellation was attempted but could not be confirmed. '
+                            f'The query may still be running on the server: job_id={job_id}'
+                        )
+        except asyncio.CancelledError:
+            # Client (e.g. MCP `notifications/cancelled`) cancelled the in-flight tool call.
+            # Propagate the cancel to the backend so the query doesn't keep scanning data.
+            # `asyncio.shield` keeps the cancel HTTP call alive even though our own task
+            # is being cancelled; without it the request would be torn down immediately.
+            LOG.info(f'Query cancelled by client: job_id={job_id}')
+            try:
+                await asyncio.shield(self._cancel_job_with_timeout(job_id, reason='Client cancelled the request'))
+            except asyncio.CancelledError:
+                # Outer scope was cancelled again while the shielded cancel was still running;
+                # we did our best — let the original CancelledError propagate below.
+                pass
+            raise
 
         statement_id = cast(list[JsonDict], job_status['statements'])[0]['id']
 
@@ -439,6 +453,13 @@ class _BigQueryWorkspace(_Workspace):
     async def execute_query(
         self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
     ) -> QueryResult:
+        # Note on cancellation: unlike Snowflake (see `_SnowflakeWorkspace.execute_query`),
+        # client-initiated cancellation cannot kill an in-flight BigQuery job from here.
+        # The SAPI `workspace_query` endpoint is a synchronous proxy and does not expose
+        # a job ID, so there is nothing to address a cancel request to. If the asyncio
+        # task is cancelled, the HTTP connection is dropped but the underlying BigQuery
+        # job keeps running until it finishes or hits its own timeout. Tracked separately
+        # — requires SAPI changes to expose the job handle and a cancel endpoint.
         if max_rows is not None and max_rows <= 0:
             raise ValueError('The "max_rows" must be a positive integer or None.')
         if max_chars is not None and max_chars <= 0:
