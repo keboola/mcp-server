@@ -123,6 +123,17 @@ only on `storage-branches` projects.
    `create()` stops forcing the production branch, they automatically resolve
    to the correct one.
 
+### Contract with explicit `KBC_WORKSPACE_SCHEMA`
+
+The branch-aware rule applies uniformly whether the workspace is auto-managed by the MCP
+server or pinned via `KBC_WORKSPACE_SCHEMA`. `KBC_BRANCH_ID` is the single source of
+truth for branch context: on a `storage-branches` project, the named workspace is
+expected to live in the explicitly-bound branch; on legacy projects it is expected to
+live in the production branch (since branched read-only workspaces don't exist there).
+The user owns the placement of any pre-existing workspace they reference by schema;
+there is no carve-out that auto-rebinds an explicit schema lookup to the production
+client.
+
 Trade-offs:
 
 - **Workspace cleanup on branch deletion**: handled by the platform's existing

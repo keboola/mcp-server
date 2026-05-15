@@ -133,31 +133,44 @@ async def test_workspace_creation_cleans_up_config_on_failure():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('input_branch_id', 'has_sb_feature', 'expected_bound_branch_id'),
+    ('input_branch_id', 'has_sb_feature', 'workspace_schema', 'expected_bound_branch_id'),
     [
         # default branch: always production, regardless of feature
-        (None, True, None),
-        (None, False, None),
+        (None, True, None, None),
+        (None, False, None, None),
         # dev branch + storage-branches feature on: keep dev branch
-        ('456', True, '456'),
+        ('456', True, None, '456'),
         # dev branch without storage-branches (legacy): fall back to production
-        ('456', False, None),
+        ('456', False, None, None),
+        # dev branch + storage-branches + explicit workspace_schema (KBC_WORKSPACE_SCHEMA):
+        # stay branch-aware. The user is responsible for ensuring the named workspace
+        # exists in the explicitly-bound branch — there is no carve-out for explicit schemas.
+        ('456', True, 'WORKSPACE_XYZ', '456'),
+        # dev branch + legacy + explicit workspace_schema: still rebinds to production,
+        # since branched workspaces don't exist on legacy projects.
+        ('456', False, 'WORKSPACE_XYZ', None),
     ],
     ids=[
         'default_branch_with_sb',
         'default_branch_without_sb',
         'dev_branch_with_sb',
         'dev_branch_legacy',
+        'dev_branch_with_sb_explicit_schema',
+        'dev_branch_legacy_explicit_schema',
     ],
 )
 async def test_workspace_manager_create_is_branch_aware(
     input_branch_id: str | None,
     has_sb_feature: bool,
+    workspace_schema: str | None,
     expected_bound_branch_id: str | None,
 ):
     """
     WorkspaceManager.create() must keep the client on the dev branch only when the project
     has the `storage-branches` feature; otherwise it must rebind to the production branch.
+    The rule applies uniformly whether the workspace is auto-managed or pinned via an
+    explicit `workspace_schema` (KBC_WORKSPACE_SCHEMA) — branch context is governed solely
+    by KBC_BRANCH_ID and the project's `storage-branches` feature.
     """
     input_client = Mock(spec=KeboolaClient)
     input_client.branch_id = input_branch_id
@@ -174,11 +187,13 @@ async def test_workspace_manager_create_is_branch_aware(
 
     input_client.with_branch_id = AsyncMock(side_effect=_rebind)
 
-    manager = await WorkspaceManager.create(input_client)
+    manager = await WorkspaceManager.create(input_client, workspace_schema=workspace_schema)
 
     # noinspection PyProtectedMember
     bound_client = manager._client
     assert bound_client.branch_id == expected_bound_branch_id
+    # noinspection PyProtectedMember
+    assert manager._workspace_schema == workspace_schema
 
     # has_feature is only meaningful when the client is on a dev branch — the helper
     # short-circuits otherwise, so on the default branch we should not even ask.
