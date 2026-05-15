@@ -1,12 +1,14 @@
+import asyncio
 import json
 from typing import Any
-from unittest.mock import call
+from unittest.mock import AsyncMock, call
 
 import httpx
 import pytest
 from mcp.server.fastmcp import Context
 from pydantic import TypeAdapter
 
+from keboola_mcp_server import cancellation
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
@@ -892,6 +894,42 @@ class TestQueryCancellation:
 
         # Verify cancellation was attempted
         qsclient.cancel_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_query_data_registers_and_cancels_via_registry(self, mcp_context_client: Context) -> None:
+        """End-to-end stateless flow: query_data registers its task in the registry, an
+        external `cancel(request_id)` (as the middleware would do) aborts it, and the
+        workspace task receives CancelledError."""
+        cancellation._running.clear()
+        execute_query_cancelled = asyncio.Event()
+
+        async def long_running(*_a, **_kw):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                execute_query_cancelled.set()
+                raise
+
+        manager = AsyncMock(WorkspaceManager)
+        manager.execute_query.side_effect = long_running
+        mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+        mcp_context_client.request_id = 'rpc-id-42'
+
+        task = asyncio.create_task(query_data('SELECT 1', 'cancel-test', mcp_context_client))
+        # Wait until query_data has registered the inner task.
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if 'rpc-id-42' in cancellation._running:
+                break
+        assert 'rpc-id-42' in cancellation._running
+
+        assert await cancellation.cancel('rpc-id-42') is True
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert execute_query_cancelled.is_set()
+        # Registry must be cleaned up regardless of how query_data exited.
+        assert 'rpc-id-42' not in cancellation._running
 
     @pytest.mark.asyncio
     async def test_query_completes_just_before_timeout(

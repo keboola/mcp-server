@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import csv
 import logging
 from io import StringIO
@@ -8,6 +10,7 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
+from keboola_mcp_server.cancellation import track_request
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.workspace import SqlSelectData, WorkspaceManager
 
@@ -16,6 +19,20 @@ LOG = logging.getLogger(__name__)
 SQL_TOOLS_TAG = 'sql'
 MAX_ROWS = 1_000
 MAX_CHARS = 50_000
+
+
+def _safe_request_id(ctx: Context) -> str | None:
+    """Return the current JSON-RPC request id, or None if unavailable.
+
+    The id is needed to register the running task in the cancellation registry so
+    that `notifications/cancelled` can find and abort it. Outside of an active MCP
+    request (e.g. some unit tests, or during initialization) the id is missing — in
+    that case we skip registration and the call cannot be cancelled by the registry.
+    """
+    try:
+        return str(ctx.request_id)
+    except (AttributeError, RuntimeError):
+        return None
 
 
 class QueryDataOutput(BaseModel):
@@ -95,7 +112,28 @@ async def query_data(
     * Ensure valid filtering by checking actual data values first
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    result = await workspace_manager.execute_query(sql_query, max_rows=MAX_ROWS, max_chars=MAX_CHARS)
+
+    # Run the query as a separate task and register it in the process-wide cancellation
+    # registry. When the client sends `notifications/cancelled`,
+    # `CancellationInterceptorMiddleware` peeks at the body, looks the request id up
+    # here, and cancels this task. That trips the CancelledError branch inside
+    # `_SnowflakeWorkspace.execute_query`, which fires `cancel_job` on the backend.
+    # We also cancel the inner task if our own coroutine is cancelled (e.g. by the
+    # MCP SDK on a stateful transport) so the inner task isn't left running.
+    query_task = asyncio.create_task(workspace_manager.execute_query(sql_query, max_rows=MAX_ROWS, max_chars=MAX_CHARS))
+    request_id = _safe_request_id(ctx)
+    cancel_tracking = track_request(request_id, query_task) if request_id is not None else contextlib.nullcontext()
+
+    async with cancel_tracking:
+        try:
+            result = await query_task
+        except BaseException:
+            if not query_task.done():
+                query_task.cancel()
+                with contextlib.suppress(BaseException):
+                    await query_task
+            raise
+
     LOG.info(' '.join(filter(None, [f'Query "{query_name}" executed successfully.', result.message])))
     if result.is_ok:
         if result.data:
