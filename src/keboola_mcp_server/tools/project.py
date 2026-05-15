@@ -108,13 +108,11 @@ class ProjectInfo(BaseModel):
     sql_dialect: str = Field(description='The sql dialect used in the project.')
     workspace_id: int = Field(
         description=(
-            'The ID of the read-only Keboola workspace that the MCP server uses to run SQL queries '
-            'against the project (via the `query_data` tool). '
-            'On projects with the `storage-branches` feature, each development branch has its own '
-            'workspace bound to that branch; on the default branch and on legacy projects without '
-            '`storage-branches`, all callers share the production-branch workspace. '
-            'In every case the workspace pairs with the `branch_id` returned in this same response, '
-            'so other RO tooling (e.g. data-app testing) can reuse it without provisioning a '
+            'The ID of the read-only Keboola workspace the MCP server uses to run SQL queries '
+            '(via `query_data`). It exposes all production tables, plus the current development '
+            "branch's tables when operating on a branch. On legacy projects (without the "
+            '`storage-branches` feature) the workspace always lives in the production branch. '
+            'Reusable by other RO tooling (e.g. data-app testing) without provisioning a '
             'private workspace.'
         )
     )
