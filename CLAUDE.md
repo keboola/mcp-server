@@ -1,5 +1,15 @@
 # Keboola MCP Server - Project Guide
 
+## Contributing Guidelines
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the authoritative contributor guide. It covers:
+
+- **RFC requirement** — when a design doc in `feature_spec/<feature-name>/RFC.md` is required before implementation (new tools, new architectural concepts, new end-to-end behavior), and the required RFC structure
+- **Testing requirements** — regression tests for bug fixes, unit + E2E tests for features, and parametrize conventions
+- **PR checklist** — the full set of items every PR must address (branch naming, version bump, `uv.lock`, `tox`, RFC link, etc.)
+
+The rules in this file (git workflow, versioning, venv setup) complement `CONTRIBUTING.md` — when the two overlap, `CONTRIBUTING.md` is the source of truth for contributor-facing process. Read it before opening a PR.
+
 ## Git Workflow
 - **Always create a branch first** before committing changes
 - Branch names must start with the Linear issue ID and be short (e.g., `AI-2480-whitelist-n8n-domains`)
