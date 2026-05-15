@@ -38,6 +38,19 @@ However, even though Python and R transformations allow you to write code in the
 integrations with external systems that download or push data, manipulate remote systems, or require user parameters as
 input.
 
+#### Updating transformations
+
+Use `get_configs` to inspect the `component_id` of an existing transformation, then call the correct update tool:
+
+| Transformation type | component_id | Update tool |
+|---------------------|--------------|-------------|
+| Snowflake SQL | `keboola.snowflake-transformation` | `update_sql_transformation` |
+| BigQuery SQL | `keboola.google-bigquery-transformation` | `update_sql_transformation` |
+| Python | `keboola.python-transformation-v2` | `update_config` |
+| R | `keboola.r-transformation-v2` | `update_config` |
+
+Never call `update_sql_transformation` on a Python or R transformation — it will raise a `ToolError` with guidance. Use `update_config` for Python and R transformations.
+
 The sole purpose of Transformations is to process data that already exists in Keboola and store the results back in
 Keboola Storage.
 
