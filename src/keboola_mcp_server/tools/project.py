@@ -106,6 +106,12 @@ class ProjectInfo(BaseModel):
     )
     organization_id: str | int = Field(description='The ID of the organization this project belongs to.')
     sql_dialect: str = Field(description='The sql dialect used in the project.')
+    workspace_id: int = Field(
+        description=(
+            'The ID of the read-only Keboola workspace that the MCP server uses to run SQL queries '
+            'against the project (via the `query_data` tool).'
+        )
+    )
     conditional_flows: bool = Field(description='Whether the project supports conditional flows.')
     links: list[Link] = Field(description='The links relevant to the project.')
     branch_id: str | int = Field(
@@ -186,7 +192,9 @@ async def get_project_info(
         str, next((item['value'] for item in metadata if item.get('key') == MetadataField.PROJECT_DESCRIPTION), '')
     )
 
-    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+    sql_dialect = await workspace_manager.get_sql_dialect()
+    workspace_id = await workspace_manager.get_workspace_id()
     project_features = cast(JsonDict, project_data.get('features', {}))
     conditional_flows = 'hide-conditional-flows' not in project_features
     links = links_manager.get_project_links()
@@ -199,6 +207,7 @@ async def get_project_info(
         project_description=description,
         organization_id=organization_id,
         sql_dialect=sql_dialect,
+        workspace_id=workspace_id,
         conditional_flows=conditional_flows,
         links=links,
         branch_id=branch_id,
