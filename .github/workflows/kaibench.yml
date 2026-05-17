@@ -196,22 +196,32 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.KAI_GOOGLE_VERTEX_CREDENTIALS }}
           GOOGLE_VERTEX_PROJECT: ${{ secrets.KAI_GOOGLE_VERTEX_PROJECT }}
           GOOGLE_VERTEX_LOCATION: ${{ secrets.KAI_GOOGLE_VERTEX_LOCATION }}
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
         run: |
           # kai-agent uses a slimmer env (no AUTH_SECRET, no REDIS_URL); it does
           # require KAI_ASSISTANT_BACKEND_POSTGRES_URL — set to the "not-deployed"
           # sentinel so the on-demand history migration is explicitly skipped.
+          # MCP_SERVER_URL differs: kai-assistant treats it as the full /mcp
+          # endpoint, while kai-agent expects the base URL and appends `/mcp`
+          # itself (apps/kai-agent/src/services/mcp-client.ts: `${MCP_SERVER_URL}/mcp`).
           # Both backends listen on PORT=3000 by default and expose /ping.
           if [ "$BACKEND" = "kai-agent" ]; then
+            if [ -z "$E2B_API_KEY" ]; then
+              echo "::error::E2B_API_KEY secret is required for kai-agent runs"
+              echo "::error::Add it under https://github.com/keboola/mcp-server/settings/secrets/actions"
+              exit 1
+            fi
             docker run -d --name "$BACKEND" --network host \
               -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
               -e KAI_ASSISTANT_BACKEND_POSTGRES_URL="not-deployed" \
-              -e MCP_SERVER_URL="http://localhost:8000/mcp" \
+              -e MCP_SERVER_URL="http://localhost:8000" \
               -e KEBOOLA_STORAGE_API_URL="$KAIBENCH_API_URL" \
               -e KEBOOLA_STACK="dev-keboola-canary-orion" \
               -e CLOUD_LLM_PROVIDER="google-vertex" \
               -e GOOGLE_SERVICE_ACCOUNT_JSON="$GOOGLE_SERVICE_ACCOUNT_JSON" \
               -e GOOGLE_VERTEX_PROJECT="$GOOGLE_VERTEX_PROJECT" \
               -e GOOGLE_VERTEX_LOCATION="$GOOGLE_VERTEX_LOCATION" \
+              -e E2B_API_KEY="$E2B_API_KEY" \
               "ghcr.io/keboola/${BACKEND}:${KAI_IMAGE_TAG}"
           else
             AUTH_SECRET=$(openssl rand -base64 32)
