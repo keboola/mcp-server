@@ -1,8 +1,9 @@
 name: KaiBench Evaluation
 
 # Runs KaiBench evaluations against the MCP server built from the current branch.
-# Spins up the MCP server (from this repo), kai-assistant (pre-built image),
-# Postgres, and Redis, then runs the KaiBench evaluation suite.
+# Spins up the MCP server (from this repo), one of the two Kai backends
+# (kai-assistant or kai-agent, pre-built image), Postgres, and Redis,
+# then runs the KaiBench evaluation suite.
 
 permissions:
   contents: read
@@ -12,6 +13,13 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      backend:
+        description: 'Which Kai backend to evaluate against'
+        type: choice
+        options:
+          - kai-assistant
+          - kai-agent
+        default: kai-assistant
       question_types:
         description: 'Question types (comma-separated, or "all")'
         default: 'Data Analysis Query,Configuration Reasoning,Storage Object Reasoning,MCP Tool Validation'
@@ -20,12 +28,26 @@ on:
         description: 'Only regression-flagged questions'
         type: boolean
         default: false
-      kai_assistant_image_tag:
-        description: 'kai-assistant image tag (default: latest production)'
+      backend_image_tag:
+        description: 'Backend image tag (default: latest production-* for the selected backend)'
         required: false
         type: string
         default: ''
   workflow_call:
+    inputs:
+      backend:
+        description: 'Which Kai backend to evaluate against (kai-assistant or kai-agent)'
+        type: string
+        default: kai-assistant
+      question_types:
+        type: string
+        default: 'Data Analysis Query,Configuration Reasoning,Storage Object Reasoning,MCP Tool Validation'
+      regression_only:
+        type: boolean
+        default: false
+      backend_image_tag:
+        type: string
+        default: ''
 
 jobs:
   evaluate:
@@ -95,29 +117,34 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Resolve kai-assistant image tag
+      - name: Resolve backend image tag
         id: resolve-kai
         env:
-          KAI_IMAGE_TAG_INPUT: ${{ inputs.kai_assistant_image_tag }}
+          BACKEND: ${{ inputs.backend }}
+          KAI_IMAGE_TAG_INPUT: ${{ inputs.backend_image_tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -n "$KAI_IMAGE_TAG_INPUT" ]; then
             echo "tag=$KAI_IMAGE_TAG_INPUT" >> $GITHUB_OUTPUT
           else
-            # Fetch latest production-* tag from GHCR via GitHub Packages API
-            TAG=$(gh api "/orgs/keboola/packages/container/kai-assistant/versions"               --paginate               --jq '[.[] | select(.metadata.container.tags[] | startswith("production-"))] | sort_by(.updated_at) | last | .metadata.container.tags[] | select(startswith("production-"))'               | head -1)
+            # Fetch latest production-* tag from GHCR for the selected backend
+            TAG=$(gh api "/orgs/keboola/packages/container/${BACKEND}/versions" \
+              --paginate \
+              --jq '[.[] | select(.metadata.container.tags[] | startswith("production-"))] | sort_by(.updated_at) | last | .metadata.container.tags[] | select(startswith("production-"))' \
+              | head -1)
             if [ -z "$TAG" ]; then
-              echo "::error::Could not resolve latest kai-assistant production tag"
+              echo "::error::Could not resolve latest ${BACKEND} production tag"
               exit 1
             fi
-            echo "Resolved kai-assistant tag: $TAG"
+            echo "Resolved ${BACKEND} tag: $TAG"
             echo "tag=$TAG" >> $GITHUB_OUTPUT
           fi
 
-      - name: Pull kai-assistant image
+      - name: Pull backend image
         env:
+          BACKEND: ${{ inputs.backend }}
           KAI_IMAGE_TAG: ${{ steps.resolve-kai.outputs.tag }}
-        run: docker pull ghcr.io/keboola/kai-assistant:$KAI_IMAGE_TAG
+        run: docker pull ghcr.io/keboola/${BACKEND}:${KAI_IMAGE_TAG}
 
       - name: Start MCP server
         run: |
@@ -141,44 +168,75 @@ jobs:
 
       - name: Run database migrations
         env:
+          BACKEND: ${{ inputs.backend }}
           KAI_IMAGE_TAG: ${{ steps.resolve-kai.outputs.tag }}
         run: |
-          docker run --rm --network host \
-            -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
-            --workdir /app/apps/kai-assistant-backend \
-            ghcr.io/keboola/kai-assistant:$KAI_IMAGE_TAG \
-            node dist/lib/db/migrate.js
+          # Migration path differs per backend:
+          #   kai-assistant uses Drizzle in apps/kai-assistant-backend (dist/lib/db/migrate.js)
+          #   kai-agent uses Drizzle in apps/kai-agent (dist/db/migrate.js)
+          if [ "$BACKEND" = "kai-agent" ]; then
+            docker run --rm --network host \
+              -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
+              --workdir /app/apps/kai-agent \
+              "ghcr.io/keboola/${BACKEND}:${KAI_IMAGE_TAG}" \
+              node dist/db/migrate.js
+          else
+            docker run --rm --network host \
+              -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
+              --workdir /app/apps/kai-assistant-backend \
+              "ghcr.io/keboola/${BACKEND}:${KAI_IMAGE_TAG}" \
+              node dist/lib/db/migrate.js
+          fi
 
-      - name: Start kai-assistant
+      - name: Start Kai backend
         env:
+          BACKEND: ${{ inputs.backend }}
           KAI_IMAGE_TAG: ${{ steps.resolve-kai.outputs.tag }}
           KAIBENCH_API_URL: ${{ vars.KAIBENCH_API_URL }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.KAI_GOOGLE_VERTEX_CREDENTIALS }}
           GOOGLE_VERTEX_PROJECT: ${{ secrets.KAI_GOOGLE_VERTEX_PROJECT }}
           GOOGLE_VERTEX_LOCATION: ${{ secrets.KAI_GOOGLE_VERTEX_LOCATION }}
         run: |
-          AUTH_SECRET=$(openssl rand -base64 32)
-          docker run -d --name kai-assistant --network host \
-            -e AUTH_SECRET="$AUTH_SECRET" \
-            -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
-            -e REDIS_URL="redis://localhost:6379" \
-            -e MCP_SERVER_URL="http://localhost:8000/mcp" \
-            -e KEBOOLA_STORAGE_API_URL="$KAIBENCH_API_URL" \
-            -e KEBOOLA_STACK="dev-keboola-canary-orion" \
-            -e CLOUD_LLM_PROVIDER="google-vertex" \
-            -e GOOGLE_SERVICE_ACCOUNT_JSON="$GOOGLE_SERVICE_ACCOUNT_JSON" \
-            -e GOOGLE_VERTEX_PROJECT="$GOOGLE_VERTEX_PROJECT" \
-            -e GOOGLE_VERTEX_LOCATION="$GOOGLE_VERTEX_LOCATION" \
-            ghcr.io/keboola/kai-assistant:$KAI_IMAGE_TAG
-          echo "Waiting for kai-assistant..."
+          # kai-agent uses a slimmer env (no AUTH_SECRET, no REDIS_URL); it does
+          # require KAI_ASSISTANT_BACKEND_POSTGRES_URL — set to the "not-deployed"
+          # sentinel so the on-demand history migration is explicitly skipped.
+          # Both backends listen on PORT=3000 by default and expose /ping.
+          if [ "$BACKEND" = "kai-agent" ]; then
+            docker run -d --name "$BACKEND" --network host \
+              -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
+              -e KAI_ASSISTANT_BACKEND_POSTGRES_URL="not-deployed" \
+              -e MCP_SERVER_URL="http://localhost:8000/mcp" \
+              -e KEBOOLA_STORAGE_API_URL="$KAIBENCH_API_URL" \
+              -e KEBOOLA_STACK="dev-keboola-canary-orion" \
+              -e CLOUD_LLM_PROVIDER="google-vertex" \
+              -e GOOGLE_SERVICE_ACCOUNT_JSON="$GOOGLE_SERVICE_ACCOUNT_JSON" \
+              -e GOOGLE_VERTEX_PROJECT="$GOOGLE_VERTEX_PROJECT" \
+              -e GOOGLE_VERTEX_LOCATION="$GOOGLE_VERTEX_LOCATION" \
+              "ghcr.io/keboola/${BACKEND}:${KAI_IMAGE_TAG}"
+          else
+            AUTH_SECRET=$(openssl rand -base64 32)
+            docker run -d --name "$BACKEND" --network host \
+              -e AUTH_SECRET="$AUTH_SECRET" \
+              -e POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/kai_db" \
+              -e REDIS_URL="redis://localhost:6379" \
+              -e MCP_SERVER_URL="http://localhost:8000/mcp" \
+              -e KEBOOLA_STORAGE_API_URL="$KAIBENCH_API_URL" \
+              -e KEBOOLA_STACK="dev-keboola-canary-orion" \
+              -e CLOUD_LLM_PROVIDER="google-vertex" \
+              -e GOOGLE_SERVICE_ACCOUNT_JSON="$GOOGLE_SERVICE_ACCOUNT_JSON" \
+              -e GOOGLE_VERTEX_PROJECT="$GOOGLE_VERTEX_PROJECT" \
+              -e GOOGLE_VERTEX_LOCATION="$GOOGLE_VERTEX_LOCATION" \
+              "ghcr.io/keboola/${BACKEND}:${KAI_IMAGE_TAG}"
+          fi
+          echo "Waiting for ${BACKEND}..."
           for i in $(seq 1 60); do
             if curl -sf http://localhost:3000/ping > /dev/null 2>&1; then
-              echo "kai-assistant is ready"
+              echo "${BACKEND} is ready"
               break
             fi
             if [ $i -eq 60 ]; then
-              echo "::error::kai-assistant failed to start"
-              docker logs kai-assistant
+              echo "::error::${BACKEND} failed to start"
+              docker logs "$BACKEND"
               exit 1
             fi
             sleep 2
@@ -218,10 +276,10 @@ jobs:
             CMD_ARGS=(-t "Data Analysis Query" -t "Configuration Reasoning" -t "Storage Object Reasoning" -t "MCP Tool Validation")
           fi
           if [ "${{ inputs.regression_only }}" = "true" ]; then
-            CMD_ARGS+=(--regression-only)
+            # KaiBench CLI exposes this as --regression (no -only suffix).
+            CMD_ARGS+=(--regression)
           fi
           uv run kaibench run "${CMD_ARGS[@]}"
-        continue-on-error: true
 
       - name: Find previous successful run
         id: find-prev-run
@@ -266,9 +324,11 @@ jobs:
 
       - name: Dump container logs
         if: always()
+        env:
+          BACKEND: ${{ inputs.backend }}
         run: |
-          echo "=== kai-assistant logs ==="
-          docker logs kai-assistant 2>&1 || true
+          echo "=== ${BACKEND} logs ==="
+          docker logs "$BACKEND" 2>&1 || true
           echo ""
           echo "=== mcp-server logs ==="
           docker logs mcp-server 2>&1 || true
