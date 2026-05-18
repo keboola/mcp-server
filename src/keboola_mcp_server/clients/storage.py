@@ -490,6 +490,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         name: str,
         description: str,
         configuration: dict[str, Any],
+        configuration_id: Optional[str] = None,
     ) -> JsonDict:
         """
         Creates a new configuration for a component.
@@ -498,16 +499,22 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param name: The name of the configuration.
         :param description: The description of the configuration.
         :param configuration: The configuration definition as a dictionary.
+        :param configuration_id: Optional explicit configuration ID (forwarded to SAPI as
+            `configurationId`). Required for `keboola.shared-code` parent libraries, which
+            must use the conventional `shared-codes.<transformation-component-id>` ID for
+            the UI and runtime expansion to find them. Leave `None` to let SAPI auto-assign.
 
         :return: The SAPI call response - created configuration or raise an error.
         """
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs'
 
-        payload = {
+        payload: dict[str, Any] = {
             'name': name,
             'description': description,
             'configuration': configuration,
         }
+        if configuration_id:
+            payload['configurationId'] = configuration_id
         return cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
 
     async def configuration_delete(self, component_id: str, configuration_id: str, skip_trash: bool = False) -> None:
@@ -525,12 +532,20 @@ class AsyncStorageClient(KeboolaServiceClient):
         if skip_trash:
             await self.delete(endpoint=endpoint)
 
-    async def configuration_detail(self, component_id: str, configuration_id: str) -> JsonDict:
+    async def configuration_detail(
+        self,
+        component_id: str,
+        configuration_id: str,
+        include: Optional[Sequence[str]] = None,
+    ) -> JsonDict:
         """
         Retrieves information about a given configuration.
 
         :param component_id: The id of the component.
         :param configuration_id: The id of the configuration.
+        :param include: Optional list of SAPI `include` values (e.g. `["rows"]`) to request
+            additional fields the API only returns on demand. Without `include=rows` the
+            response omits the configuration's row data.
         :return: The parsed json from the HTTP response.
         :raises ValueError: If the component_id or configuration_id is invalid.
         """
@@ -539,8 +554,9 @@ class AsyncStorageClient(KeboolaServiceClient):
         if not isinstance(configuration_id, str) or configuration_id == '':
             raise ValueError(f"Invalid configuration_id '{configuration_id}'.")
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
+        params = {'include': ','.join(include)} if include else None
 
-        return cast(JsonDict, await self.get(endpoint=endpoint))
+        return cast(JsonDict, await self.get(endpoint=endpoint, params=params))
 
     async def configuration_list(self, component_id: str) -> list[JsonDict]:
         """
@@ -668,6 +684,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         name: str,
         description: str,
         configuration: dict[str, Any],
+        row_id: Optional[str] = None,
     ) -> JsonDict:
         """
         Creates a new row configuration for a component configuration.
@@ -677,13 +694,18 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param name: The name of the row configuration.
         :param description: The description of the row configuration.
         :param configuration: The configuration data to create row configuration.
+        :param row_id: Optional explicit row ID (forwarded to SAPI as `rowId`). When provided,
+            it becomes the row's identifier — used e.g. as the Mustache placeholder key for
+            `keboola.shared-code` rows. When omitted, SAPI generates a numeric ID.
         :return: The SAPI call response - created row configuration or raise an error.
         """
-        payload = {
+        payload: dict[str, Any] = {
             'name': name,
             'description': description,
             'configuration': configuration,
         }
+        if row_id:
+            payload['rowId'] = row_id
 
         return cast(
             JsonDict,

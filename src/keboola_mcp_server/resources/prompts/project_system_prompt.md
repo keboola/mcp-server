@@ -63,6 +63,44 @@ See the [Development Branches](#development-branches) section for more details.
       test changes in other tables, a branch-specific FQN may be used temporarily, but it must be switched back to the
       production path before merging.
 
+### Shared Code
+
+**Shared code** is Keboola's reusable-snippet primitive for transformations. Snippets live under the
+`keboola.shared-code` component (one parent library per transformation backend, rows are individual snippets);
+transformations link to them via `shared_code_id` + `shared_code_row_ids` at the configuration root.
+
+**Before writing transformation code:** call `get_shared_codes(transformation_component_ids=[…])` and reuse an
+existing snippet whenever the same logic would appear in two or more transformations.
+
+**Wire format (canonical IDs and required fields):**
+
+| Operation | Tool call |
+|---|---|
+| Create parent library | `create_config(component_id="keboola.shared-code", configuration_id="shared-codes.<transformation-id>", parameters={"componentId":"<transformation-id>"})` — `configuration_id` MUST be the conventional `shared-codes.<keboola.snowflake-transformation\|…bigquery…\|…python-transformation-v2\|…r-transformation-v2>`. Auto-generated UUIDs are not recognised by the runtime. |
+| Add a row | `add_config_row(component_id="keboola.shared-code", row_id="<mustache-key>", parameters={"code_content":["<complete-statement>"]})` — `row_id` is the case-sensitive Mustache key. |
+| Edit a snippet | `update_config_row(parameter_updates=[{"op":"set","path":"code_content","value":["<new>"]}])`. Disable with `is_disabled=True` (no delete-row tool). |
+| Reference from a SQL transformation | `create_sql_transformation` / `update_sql_transformation` with `shared_code_id` + `shared_code_row_ids`. The tool auto-emits a `Shared Code (<sid>-<rid>)` marker per row — skipped when a user-authored code block already has `["{{ rowId }}"]` as its own pure script element. |
+| Reference from Python / R | `create_config` / `update_config` with the same `shared_code_id` + `shared_code_row_ids`. Same auto-emit + skip-if-already-referenced behavior as the SQL path. |
+| Change linkage on an existing SQL transformation | `update_sql_transformation(parameter_updates=[{"op":"set_shared_code","shared_code_id":"…","shared_code_row_ids":["…"]}])`, or `{"op":"remove_shared_code"}` to unlink. |
+
+**Hard rules** — the tool will reject the call otherwise:
+
+- **Row content must be a complete executable statement** (e.g. `CREATE OR REPLACE TABLE …`, `from datetime import …`).
+  The runtime substitutes a `{{ rowId }}` script array element with the row's `code_content` array and runs the
+  result as its own query. Fragments (column-list, `WHERE` clause, sub-expression) will fail at run time.
+- **A `{{ rowId }}` placeholder requires linkage** — every referenced row must appear in `shared_code_row_ids` and
+  `shared_code_id` must be set. Without the linkage the platform cannot resolve the placeholder. The tool emits
+  one marker block per linked row (or skips it when your own code already has `["{{ rowId }}"]` as a standalone
+  script element — no duplicate); **do NOT embed `{{ rowId }}` inline inside another SQL string** — inline
+  placeholders are not substituted (only `["{{ rowId }}"]` as its own array element is).
+- **Row IDs are case-sensitive.**
+- **Marker ordering** — the auto-emitted marker is appended *after* the user-authored code in
+  the first parameters block. If your user code depends on the shared snippet's side-effect
+  (e.g. shared code does `SET (region) = ('EU')` and your code reads `$region`, or shared code
+  creates a temp table/view your code selects from), the marker must run first. Reorder via
+  `update_sql_transformation` with `remove_code` + `add_code(position="start")`, or author the
+  marker yourself as a pure `["{{ rowId }}"]` script block at the start (the tool de-duplicates).
+
 ### Development Branches
 
 When working in development branches the storage objects (tables, buckets) created or edited in the branch will have different FQNs than in production. 

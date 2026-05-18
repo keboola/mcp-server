@@ -12,6 +12,7 @@ description, and a list of created table names.
 - [get_components](#get_components): Retrieves detailed information about one or more components by their IDs.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
 - [get_configs](#get_configs): Retrieves component configurations in the project with optional filtering.
+- [get_shared_codes](#get_shared_codes): Discovers Keboola shared-code libraries and their reusable snippets in the current project.
 - [run_sync_action](#run_sync_action): Executes a synchronous action for a component configuration or a component row configuration.
 - [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
@@ -96,6 +97,10 @@ Skipping these steps will cause a schema validation error.
 USAGE:
 - Use when you want to create a new row configuration for a specific component configuration.
 
+SHARED CODE ROWS:
+- For `keboola.shared-code` rows, set `row_id` to the Mustache placeholder key (e.g. `dumpfiles`)
+  and put the snippet body in `parameters` as `{"code_content": ["<code>"]}`.
+
 WHEN NOT TO USE:
 - `keboola.orchestrator` / `keboola.flow` → use flows tools
 - `keboola.data-apps` → use data applications tools
@@ -156,6 +161,11 @@ EXAMPLES:
         "type": "object"
       },
       "type": "array"
+    },
+    "row_id": {
+      "default": "",
+      "description": "Optional explicit row ID. When provided, becomes the row identifier in SAPI (forwarded as `rowId`). For `keboola.shared-code` rows this is the Mustache placeholder key used in transformation scripts (e.g. `dumpfiles` \u2192 referenced as `{{ dumpfiles }}`). Row IDs are case-sensitive. Leave empty to let SAPI auto-assign a numeric ID.",
+      "type": "string"
     }
   },
   "required": [
@@ -189,6 +199,16 @@ Skipping these steps will cause a schema validation error.
 
 USAGE:
 - Use when you want to create a new root configuration for a specific component.
+
+SHARED CODE:
+- For `keboola.shared-code` parent libraries: pass `component_id="keboola.shared-code"`,
+  `parameters={"componentId": "<target-transformation-id>"}`, AND `configuration_id="shared-codes.<target>"`
+  (e.g. `shared-codes.snowflake-transformation`). The platform stores `componentId` AT THE
+  CONFIGURATION ROOT for shared-code (not nested under `parameters`); this tool unwraps the
+  provided parameters dict accordingly. The conventional `configuration_id` is required —
+  auto-generated IDs are not recognised by the runtime expansion.
+- For Python/R/DuckDB transformations that should reuse shared snippets, set `shared_code_id` and
+  `shared_code_row_ids` and embed `{{ rowId }}` Mustache placeholders in the component's script.
 
 WHEN NOT TO USE:
 - `keboola.orchestrator` / `keboola.flow` → use flows tools
@@ -246,6 +266,24 @@ EXAMPLES:
         "type": "object"
       },
       "type": "array"
+    },
+    "shared_code_id": {
+      "default": "",
+      "description": "Optional. The configuration ID of the parent `keboola.shared-code` library this configuration references at the root level. Useful when creating Python (`keboola.python-transformation-v2`), R (`keboola.r-transformation-v2`) or DuckDB transformation configurations that need to reuse shared snippets. Must be paired with `shared_code_row_ids` and matching `{{ rowId }}` placeholders in the component's script. Leave empty when not using shared code.",
+      "type": "string"
+    },
+    "shared_code_row_ids": {
+      "default": [],
+      "description": "Optional. The list of shared code row IDs (Mustache placeholder keys) referenced from the configuration. Each entry must exist as a row in the parent shared-code configuration and appear as `{{ rowId }}` in the component's script. Row IDs are case-sensitive.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "configuration_id": {
+      "default": "",
+      "description": "Optional explicit configuration ID. When non-empty, forwarded to SAPI as `configurationId`. REQUIRED for `keboola.shared-code` parent libraries \u2014 pass the conventional `shared-codes.<transformation-component-id>` value (e.g. `shared-codes.snowflake-transformation`, `shared-codes.google-bigquery-transformation`, `shared-codes.python-transformation-v2`, `shared-codes.r-transformation-v2`). The UI and runtime expansion look up shared-code libraries by this exact ID. Leave empty to let SAPI auto-assign for any other component.",
+      "type": "string"
     }
   },
   "required": [
@@ -286,6 +324,11 @@ CONSIDERATIONS:
   and user intent.
 - If there are 20 or more SQL transformations in the project, consider organizing them with a folder: existing
   folder names are surfaced in the response's change_summary — use one of them or create a new one.
+
+SHARED CODE LINKAGE:
+- To reuse snippets from the project's `keboola.shared-code` library, embed `{{ rowId }}` placeholders in the
+  script AND pass `shared_code_id` + `shared_code_row_ids`. Both must be set together; the placeholders alone
+  have no effect. Discover existing libraries with `get_shared_codes` before creating new ones.
 
 USAGE:
 - Use when you want to create a new SQL transformation.
@@ -351,6 +394,19 @@ EXAMPLES:
       "default": "",
       "description": "Folder name to organize this transformation in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose.",
       "type": "string"
+    },
+    "shared_code_id": {
+      "default": "",
+      "description": "Optional. The configuration ID of the parent `keboola.shared-code` library this transformation should reference (e.g. `shared-codes.snowflake-transformation`). When provided together with `shared_code_row_ids`, every `{{ rowId }}` Mustache placeholder used in the SQL script is expanded at runtime to the matching row's code. Discover available libraries via `get_shared_codes`. Leave empty when not using shared code.",
+      "type": "string"
+    },
+    "shared_code_row_ids": {
+      "default": [],
+      "description": "Optional. The list of shared code row IDs (Mustache placeholder keys) referenced from the SQL script. Each entry must (a) exist as a row in the parent shared-code configuration and (b) appear as `{{ rowId }}` in at least one script block. Row IDs are case-sensitive.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
   "required": [
@@ -554,6 +610,52 @@ EXAMPLES:
 ```
 
 ---
+<a name="get_shared_codes"></a>
+## get_shared_codes
+**Annotations**: `read-only`
+
+**Tags**: `components`
+
+**Description**:
+
+Discovers Keboola shared-code libraries and their reusable snippets in the current project.
+
+Shared code is a Keboola primitive for storing reusable SQL/Python/R snippets that transformations
+reference via Mustache placeholders (`{{ rowId }}`). Each transformation backend can have a parent
+`keboola.shared-code` configuration whose rows are the individual snippets. The `rowId` of each row
+is the case-sensitive Mustache key used in transformation scripts; the `code_content` of the row is
+the snippet body expanded at runtime.
+
+WHEN TO USE:
+- Before writing or editing transformation code, check whether the project already maintains a
+  reusable snippet you can reference via `{{ rowId }}` instead of duplicating logic inline.
+- When the user asks about existing shared code libraries or wants to inventory reusable snippets.
+
+RETURNS:
+- A list of `SharedCodeConfig` entries, each with `config_id` (use as `shared_code_id` in
+  transformations), `transformation_component_id` (which backend the library belongs to),
+  and the `rows` available — each row's `row_id` is the Mustache placeholder key.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "transformation_component_ids": {
+      "default": [],
+      "description": "Optional filter limiting results to shared-code libraries that belong to the given transformation components. Accepted values are `keboola.snowflake-transformation`, `keboola.google-bigquery-transformation`, `keboola.python-transformation-v2`, and `keboola.r-transformation-v2`. When empty, every shared-code library in the project is returned.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "type": "object"
+}
+```
+
+---
 <a name="run_sync_action"></a>
 ## run_sync_action
 **Annotations**: `read-only`
@@ -628,6 +730,7 @@ WHEN TO USE:
 - Modifying configuration parameters (credentials, settings, API keys, etc.)
 - Updating storage mappings (input/output tables or files)
 - Changing configuration name or description
+- Adding/removing shared-code linkage on Python/R/DuckDB transformations (via `shared_code_id`)
 - Any combination of the above
 
 WHEN NOT TO USE:
@@ -841,6 +944,26 @@ WORKFLOW:
       ],
       "default": null,
       "description": "Folder name to organize this configuration in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more configurations in the project. If there are 20 or more configurations, you should assign one of the existing folders or create a new one that clearly reflects the configuration purpose."
+    },
+    "shared_code_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional. Updates the shared-code linkage on the configuration root. Non-empty string: sets `shared_code_id` (parent `keboola.shared-code` config ID) and replaces `shared_code_row_ids` with the value below. Empty string `\"\"`: clears the linkage (removes both root fields). `None` (default): leaves the existing linkage untouched. Use for Python/R/DuckDB transformations; SQL transformations use update_sql_transformation."
+    },
+    "shared_code_row_ids": {
+      "default": [],
+      "description": "Optional. The list of shared code row IDs (Mustache placeholder keys). Only applied when `shared_code_id` is non-empty; ignored otherwise. Row IDs are case-sensitive.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     }
   },
   "required": [
@@ -1478,6 +1601,19 @@ Example 4 - Update storage mappings:
       ],
       "type": "object"
     },
+    "TfRemoveSharedCode": {
+      "description": "Remove the shared-code linkage from the transformation (clears both root fields).",
+      "properties": {
+        "op": {
+          "const": "remove_shared_code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
     "TfRenameBlock": {
       "description": "Rename an existing block in the transformation.",
       "properties": {
@@ -1554,6 +1690,32 @@ Example 4 - Update storage mappings:
         "block_id",
         "code_id",
         "script"
+      ],
+      "type": "object"
+    },
+    "TfSetSharedCode": {
+      "description": "Link the transformation to shared code snippets at the configuration root.\n\nSets both `shared_code_id` (the parent `keboola.shared-code` configuration ID) and\n`shared_code_row_ids` (the list of Mustache placeholder keys referenced from the script).\nReplaces any existing shared-code linkage on the transformation.",
+      "properties": {
+        "op": {
+          "const": "set_shared_code",
+          "type": "string"
+        },
+        "shared_code_id": {
+          "description": "The parent `keboola.shared-code` configuration ID",
+          "type": "string"
+        },
+        "shared_code_row_ids": {
+          "description": "The list of shared code row IDs (Mustache keys) the script references",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "op",
+        "shared_code_id",
+        "shared_code_row_ids"
       ],
       "type": "object"
     },
@@ -1636,9 +1798,11 @@ Example 4 - Update storage mappings:
             "add_script": "#/$defs/TfAddScript",
             "remove_block": "#/$defs/TfRemoveBlock",
             "remove_code": "#/$defs/TfRemoveCode",
+            "remove_shared_code": "#/$defs/TfRemoveSharedCode",
             "rename_block": "#/$defs/TfRenameBlock",
             "rename_code": "#/$defs/TfRenameCode",
             "set_code": "#/$defs/TfSetCode",
+            "set_shared_code": "#/$defs/TfSetSharedCode",
             "str_replace": "#/$defs/TfStrReplace"
           },
           "propertyName": "op"
@@ -1670,6 +1834,12 @@ Example 4 - Update storage mappings:
           },
           {
             "$ref": "#/$defs/TfStrReplace"
+          },
+          {
+            "$ref": "#/$defs/TfSetSharedCode"
+          },
+          {
+            "$ref": "#/$defs/TfRemoveSharedCode"
           }
         ]
       },

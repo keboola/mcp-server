@@ -65,6 +65,17 @@ SNOWFLAKE_TRANSFORMATION_ID = 'keboola.snowflake-transformation'
 BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 PYTHON_TRANSFORMATION_ID = 'keboola.python-transformation-v2'
 R_TRANSFORMATION_ID = 'keboola.r-transformation-v2'
+SHARED_CODE_COMPONENT_ID = 'keboola.shared-code'
+
+# Transformation component IDs that may have a shared-code library associated with them.
+SHARED_CODE_TRANSFORMATION_IDS: frozenset[str] = frozenset(
+    {
+        SNOWFLAKE_TRANSFORMATION_ID,
+        BIGQUERY_TRANSFORMATION_ID,
+        PYTHON_TRANSFORMATION_ID,
+        R_TRANSFORMATION_ID,
+    }
+)
 
 # Component IDs for which update_config actively manages folder metadata (set/clear/hint).
 # For all other components the folder parameter is accepted but silently skipped to avoid
@@ -366,6 +377,219 @@ async def create_transformation_configuration(
         ]
 
     return TransformationConfiguration(parameters=raw_parameters, storage=storage)
+
+
+# Regex for shared-code Mustache placeholders inside a script array element.
+# Matches `{{ rowId }}` (case-sensitive payload, optional inner whitespace).
+SHARED_CODE_PLACEHOLDER_RE = re.compile(r'\{\{\s*([A-Za-z0-9_-]+)\s*\}\}')
+
+# Matches a script element whose ENTIRE content is a single `{{ rowId }}` placeholder
+# (allowing surrounding whitespace, including trailing `\n` injected by the SQL joiner).
+# Only such elements are substituted by the platform's runtime expansion — so a code block
+# whose script is "pure" placeholder is already equivalent to an auto-emitted marker.
+PURE_SHARED_CODE_PLACEHOLDER_RE = re.compile(r'\A\s*\{\{\s*([A-Za-z0-9_-]+)\s*\}\}\s*\Z')
+
+
+def extract_shared_code_row_ids_from_blocks(blocks: Sequence[Any]) -> set[str]:
+    """
+    Walks `parameters.blocks[*].codes[*].script` and returns the set of shared-code row IDs
+    referenced by `{{ rowId }}` placeholders. Tolerates `script` being a string or a list.
+    """
+    referenced: set[str] = set()
+    for block in blocks or ():
+        codes = block.get('codes', []) if isinstance(block, dict) else getattr(block, 'codes', [])
+        for code in codes or ():
+            script = code.get('script') if isinstance(code, dict) else getattr(code, 'script', None)
+            items = script if isinstance(script, list) else [script]
+            for item in items:
+                if not isinstance(item, str):
+                    continue
+                referenced.update(SHARED_CODE_PLACEHOLDER_RE.findall(item))
+    return referenced
+
+
+def user_substitution_eligible_row_ids(blocks: Sequence[Any]) -> set[str]:
+    """
+    Returns row IDs whose `{{ rowId }}` placeholder already appears as the sole content of a
+    script element in a NON-marker user code block — i.e. positions where the platform's
+    runtime expansion will substitute the snippet natively. The marker emitter consults this
+    so it does not append a duplicate `Shared Code (...)` block (which would execute the same
+    snippet twice at run time).
+
+    Inline occurrences such as `["SELECT 1; {{ rowId }}"]` are deliberately ignored: the
+    platform does not substitute those, so the marker is still required.
+    """
+    referenced: set[str] = set()
+    for block in blocks or ():
+        codes = block.get('codes', []) if isinstance(block, dict) else getattr(block, 'codes', [])
+        for code in codes or ():
+            name = code.get('name', '') if isinstance(code, dict) else getattr(code, 'name', '')
+            script = code.get('script') if isinstance(code, dict) else getattr(code, 'script', None)
+            if is_shared_code_marker(name, script):
+                continue
+            items = script if isinstance(script, list) else [script]
+            for item in items:
+                if not isinstance(item, str):
+                    continue
+                m = PURE_SHARED_CODE_PLACEHOLDER_RE.match(item)
+                if m:
+                    referenced.add(m.group(1))
+    return referenced
+
+
+def validate_shared_code_linkage(
+    parameters: Mapping[str, Any] | None,
+    shared_code_id: str,
+    shared_code_row_ids: Sequence[str],
+) -> None:
+    """
+    Enforces the platform's shared-code linkage rule on a transformation configuration:
+    if any `{{ rowId }}` placeholder appears in `parameters.blocks[*].codes[*].script`,
+    then `shared_code_id` must be non-empty AND every referenced `rowId` must be present
+    in `shared_code_row_ids`. Inline placeholders (e.g. `["SELECT 1, {{ rowId }};"]`) are
+    NOT substituted by the platform; the LLM must let the SQL transformation tools emit
+    the marker code blocks via `shared_code_id` + `shared_code_row_ids` instead.
+
+    Raises `ValueError` with a precise message when the rule is violated.
+    """
+    blocks = (parameters or {}).get('blocks', [])
+    referenced = extract_shared_code_row_ids_from_blocks(blocks)
+    if not referenced:
+        return
+    declared = set(shared_code_row_ids or ())
+    if not shared_code_id:
+        raise ValueError(
+            f'Transformation script references shared-code placeholders {sorted(referenced)} '
+            f'but `shared_code_id` is not set at the configuration root. Pass `shared_code_id` '
+            f'and `shared_code_row_ids` so the runtime can resolve the placeholders.'
+        )
+    missing = referenced - declared
+    if missing:
+        raise ValueError(
+            f'Transformation script references shared-code rows {sorted(missing)} that are not '
+            f'in `shared_code_row_ids={sorted(declared)}`. Add the missing row IDs or remove the '
+            f'placeholders.'
+        )
+
+
+def shared_code_marker_code_name(shared_code_id: str, row_id: str) -> str:
+    """
+    Returns the canonical name the Keboola UI uses for a shared-code marker code block:
+    `Shared Code ({shared_code_id}-{row_id})`.
+    """
+    return f'Shared Code ({shared_code_id}-{row_id})'
+
+
+def is_shared_code_marker(code_name: str, code_script: Any) -> bool:
+    """
+    Detects whether a code block is a Keboola shared-code marker: name starts with
+    `Shared Code (` and the script is just a single Mustache placeholder.
+    """
+    if not isinstance(code_name, str) or not code_name.startswith('Shared Code ('):
+        return False
+    script_text: str
+    if isinstance(code_script, list):
+        if len(code_script) != 1:
+            return False
+        script_text = str(code_script[0])
+    else:
+        script_text = str(code_script or '')
+    return script_text.strip().startswith('{{') and script_text.strip().endswith('}}')
+
+
+def build_shared_code_marker_codes(
+    shared_code_id: str,
+    shared_code_row_ids: Sequence[str],
+) -> list[TransformationConfiguration.Parameters.Block.Code]:
+    """
+    Builds the raw shared-code marker code blocks the Keboola UI emits for each referenced row.
+    The runtime expansion processes these placeholders by replacing each `{{ rowId }}` with the
+    row's `code_content` and running the result as a standalone query.
+
+    Returns one Code per row_id, with `name=shared_code_marker_code_name(...)` and
+    `script=["{{rowId}}"]`.
+    """
+    return [
+        TransformationConfiguration.Parameters.Block.Code(
+            name=shared_code_marker_code_name(shared_code_id, row_id),
+            script=[f'{{{{{row_id}}}}}'],
+        )
+        for row_id in shared_code_row_ids
+    ]
+
+
+def sync_shared_code_markers_in_dict(updated_configuration: dict[str, Any]) -> None:
+    """
+    Dict-form sibling of `apply_shared_code_markers`. Operates on a raw configuration dict
+    (as round-tripped by `update_sql_transformation_internal`) and rewrites the first block's
+    code list so it carries one shared-code marker per current `shared_code_row_ids` entry —
+    or none when the linkage has been cleared.
+
+    The marker layout (`Shared Code (<sid>-<rid>)` + `script=["{{rid}}"]`) is what the Keboola
+    UI emits and what the platform runtime expansion drives off of; user-authored code blocks
+    are preserved unchanged.
+    """
+    shared_code_id = str(updated_configuration.get('shared_code_id') or '')
+    row_ids = list(updated_configuration.get('shared_code_row_ids') or [])
+
+    parameters = updated_configuration.setdefault('parameters', {})
+    blocks = parameters.setdefault('blocks', [])
+
+    if not blocks:
+        if not row_ids:
+            return
+        blocks.append({'name': 'Blocks', 'codes': []})
+
+    target_block = blocks[0]
+    codes = target_block.setdefault('codes', [])
+    user_codes = [c for c in codes if not is_shared_code_marker(c.get('name', ''), c.get('script'))]
+    marker_codes: list[dict[str, Any]] = []
+    if shared_code_id and row_ids:
+        # Skip rows the user already references as a pure-placeholder script element
+        # somewhere in the config — those positions are substituted natively, so adding
+        # a marker would execute the snippet twice at run time.
+        already_substituted = user_substitution_eligible_row_ids(blocks)
+        marker_codes = [
+            {
+                'name': shared_code_marker_code_name(shared_code_id, rid),
+                'script': [f'{{{{{rid}}}}}'],
+            }
+            for rid in row_ids
+            if rid not in already_substituted
+        ]
+    target_block['codes'] = user_codes + marker_codes
+
+
+def apply_shared_code_markers(
+    transformation_config: TransformationConfiguration,
+    shared_code_id: str,
+    shared_code_row_ids: Sequence[str],
+) -> None:
+    """
+    Mutates the given transformation config so that its FIRST block contains exactly one
+    shared-code marker per row_id (and no stale markers from a previous linkage).
+
+    The Keboola UI mirrors this layout: every shared-code reference appears as a sibling
+    code block whose script is just `{{rowId}}`. The runtime expansion uses the marker
+    blocks (not text-substituted occurrences in the user's surrounding SQL) so omitting
+    them causes the shared snippet to never run.
+
+    If `shared_code_row_ids` is empty, all existing markers are removed.
+    """
+    blocks = transformation_config.parameters.blocks
+    if not blocks:
+        if not shared_code_row_ids:
+            return
+        blocks.append(TransformationConfiguration.Parameters.Block(name='Blocks', codes=[]))
+
+    target_block = blocks[0]
+    user_codes = [code for code in target_block.codes if not is_shared_code_marker(code.name, code.script)]
+    # Skip rows the user already references as a pure-placeholder script element somewhere
+    # in the config — those positions are substituted natively, so adding a marker would
+    # execute the snippet twice at run time.
+    already_substituted = user_substitution_eligible_row_ids(blocks)
+    pending_row_ids = [rid for rid in shared_code_row_ids if rid not in already_substituted]
+    target_block.codes = user_codes + build_shared_code_marker_codes(shared_code_id, pending_row_ids)
 
 
 async def set_cfg_creation_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:

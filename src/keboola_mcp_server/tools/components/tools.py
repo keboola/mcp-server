@@ -59,16 +59,24 @@ from keboola_mcp_server.tools.components.model import (
     GetConfigsDetailOutput,
     GetConfigsListOutput,
     GetConfigsOutput,
+    GetSharedCodesOutput,
+    SharedCodeConfig,
+    SharedCodeRow,
     SimplifiedTfBlocks,
     TfParamUpdate,
+    TfRemoveSharedCode,
+    TfSetSharedCode,
     TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     FOLDER_SUPPORTING_COMPONENT_IDS,
+    SHARED_CODE_COMPONENT_ID,
+    SHARED_CODE_TRANSFORMATION_IDS,
     SNOWFLAKE_TRANSFORMATION_ID,
     add_ids,
     apply_folder_metadata,
+    apply_shared_code_markers,
     build_folder_hint,
     check_suitable,
     clear_configuration_folder_metadata,
@@ -84,8 +92,10 @@ from keboola_mcp_server.tools.components.utils import (
     set_cfg_update_metadata,
     set_configuration_folder_metadata,
     set_nested_value,
+    sync_shared_code_markers_in_dict,
     update_params,
     update_transformation_parameters,
+    validate_shared_code_linkage,
 )
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.tools.validation import (
@@ -128,6 +138,13 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_config_examples,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_shared_codes,
             tags={COMPONENT_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
         )
@@ -278,7 +295,7 @@ async def get_configs(
             raw_configuration = cast(
                 JsonDict,
                 await client.storage_client.configuration_detail(
-                    component_id=component_id, configuration_id=configuration_id
+                    component_id=component_id, configuration_id=configuration_id, include=['rows']
                 ),
             )
 
@@ -373,6 +390,101 @@ async def get_components(
     return GetComponentsOutput(components=components, links=[links_manager.get_used_components_link()])
 
 
+@tool_errors()
+async def get_shared_codes(
+    ctx: Context,
+    transformation_component_ids: Annotated[
+        Sequence[str],
+        Field(
+            description=(
+                'Optional filter limiting results to shared-code libraries that belong to the given '
+                'transformation components. Accepted values are `keboola.snowflake-transformation`, '
+                '`keboola.google-bigquery-transformation`, `keboola.python-transformation-v2`, and '
+                '`keboola.r-transformation-v2`. When empty, every shared-code library in the project '
+                'is returned.'
+            ),
+        ),
+    ] = tuple(),
+) -> GetSharedCodesOutput:
+    """
+    Discovers Keboola shared-code libraries and their reusable snippets in the current project.
+
+    Shared code is a Keboola primitive for storing reusable SQL/Python/R snippets that transformations
+    reference via Mustache placeholders (`{{ rowId }}`). Each transformation backend can have a parent
+    `keboola.shared-code` configuration whose rows are the individual snippets. The `rowId` of each row
+    is the case-sensitive Mustache key used in transformation scripts; the `code_content` of the row is
+    the snippet body expanded at runtime.
+
+    WHEN TO USE:
+    - Before writing or editing transformation code, check whether the project already maintains a
+      reusable snippet you can reference via `{{ rowId }}` instead of duplicating logic inline.
+    - When the user asks about existing shared code libraries or wants to inventory reusable snippets.
+
+    RETURNS:
+    - A list of `SharedCodeConfig` entries, each with `config_id` (use as `shared_code_id` in
+      transformations), `transformation_component_id` (which backend the library belongs to),
+      and the `rows` available — each row\'s `row_id` is the Mustache placeholder key.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+
+    filter_set = {component_id for component_id in transformation_component_ids if component_id}
+    if filter_set and not filter_set.issubset(SHARED_CODE_TRANSFORMATION_IDS):
+        unknown = sorted(filter_set - SHARED_CODE_TRANSFORMATION_IDS)
+        raise ValueError(
+            f'Unknown transformation component IDs in filter: {unknown}. '
+            f'Accepted values: {sorted(SHARED_CODE_TRANSFORMATION_IDS)}.'
+        )
+
+    parent_configs = await client.storage_client.configuration_list(SHARED_CODE_COMPONENT_ID)
+
+    async def build_shared_code_config(parent: JsonDict) -> Optional[SharedCodeConfig]:
+        # Shared-code parents and rows use a FLAT configuration body — `componentId` and
+        # `code_content` live at the configuration root, not under `parameters`. Historical
+        # configs created via the generic create_config wrapper may still have them nested,
+        # so read root first and fall back to `parameters.<field>` for compatibility.
+        parent_configuration = cast(dict[str, Any], parent.get('configuration') or {})
+        parent_parameters = cast(dict[str, Any], parent_configuration.get('parameters') or {})
+        transformation_component_id = cast(
+            str, parent_configuration.get('componentId') or parent_parameters.get('componentId') or ''
+        )
+        if filter_set and transformation_component_id not in filter_set:
+            return None
+
+        detail = await client.storage_client.configuration_detail(
+            component_id=SHARED_CODE_COMPONENT_ID,
+            configuration_id=str(parent.get('id')),
+            include=['rows'],
+        )
+        rows: list[SharedCodeRow] = []
+        for raw_row in cast(list[dict[str, Any]], detail.get('rows') or []):
+            row_config = cast(dict[str, Any], raw_row.get('configuration') or {})
+            row_parameters = cast(dict[str, Any], row_config.get('parameters') or {})
+            code_content = row_config.get('code_content')
+            if code_content is None:
+                code_content = row_parameters.get('code_content') or []
+            if isinstance(code_content, list):
+                code = '\n'.join(str(item) for item in code_content)
+            else:
+                code = str(code_content)
+            rows.append(
+                SharedCodeRow(
+                    row_id=str(raw_row.get('id') or ''),
+                    name=str(raw_row.get('name') or ''),
+                    code=code,
+                )
+            )
+        return SharedCodeConfig(
+            config_id=str(parent.get('id') or ''),
+            name=str(parent.get('name') or ''),
+            transformation_component_id=transformation_component_id,
+            rows=rows,
+        )
+
+    results = await process_concurrently(parent_configs, build_shared_code_config)
+    configs = [item for item in unwrap_results(results, 'Failed to fetch shared code library') if item is not None]
+    return GetSharedCodesOutput(shared_codes=configs)
+
+
 # ============================================================================
 # CONFIGURATION MANAGEMENT TOOLS
 # ============================================================================
@@ -418,6 +530,28 @@ async def create_sql_transformation(
         str,
         Field(description=folder_field_description('transformation', 'transformations')),
     ] = '',
+    shared_code_id: Annotated[
+        str,
+        Field(
+            description=(
+                'Optional. The configuration ID of the parent `keboola.shared-code` library this transformation '
+                'should reference (e.g. `shared-codes.snowflake-transformation`). When provided together with '
+                '`shared_code_row_ids`, every `{{ rowId }}` Mustache placeholder used in the SQL script is '
+                "expanded at runtime to the matching row's code. Discover available libraries via "
+                '`get_shared_codes`. Leave empty when not using shared code.'
+            ),
+        ),
+    ] = '',
+    shared_code_row_ids: Annotated[
+        Sequence[str],
+        Field(
+            description=(
+                'Optional. The list of shared code row IDs (Mustache placeholder keys) referenced from the SQL '
+                'script. Each entry must (a) exist as a row in the parent shared-code configuration and (b) appear '
+                'as `{{ rowId }}` in at least one script block. Row IDs are case-sensitive.'
+            ),
+        ),
+    ] = tuple(),
 ) -> ConfigToolOutput:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
@@ -439,6 +573,11 @@ async def create_sql_transformation(
       and user intent.
     - If there are 20 or more SQL transformations in the project, consider organizing them with a folder: existing
       folder names are surfaced in the response's change_summary — use one of them or create a new one.
+
+    SHARED CODE LINKAGE:
+    - To reuse snippets from the project's `keboola.shared-code` library, embed `{{ rowId }}` placeholders in the
+      script AND pass `shared_code_id` + `shared_code_row_ids`. Both must be set together; the placeholders alone
+      have no effect. Discover existing libraries with `get_shared_codes` before creating new ones.
 
     USAGE:
     - Use when you want to create a new SQL transformation.
@@ -463,6 +602,26 @@ async def create_sql_transformation(
     transformation_configuration_payload = await create_transformation_configuration(
         codes=sql_code_blocks, transformation_name=name, output_tables=created_table_names, sql_dialect=sql_dialect
     )
+    if shared_code_id:
+        transformation_configuration_payload.shared_code_id = shared_code_id
+        transformation_configuration_payload.shared_code_row_ids = list(shared_code_row_ids)
+        # Match the Keboola UI's emit: each row_id gets its own `Shared Code (...)` code block
+        # whose script is just `{{rowId}}`. The runtime expansion is driven by these marker
+        # blocks, not by `{{rowId}}` text occurrences inside the user's other queries.
+        apply_shared_code_markers(
+            transformation_configuration_payload,
+            shared_code_id=shared_code_id,
+            shared_code_row_ids=shared_code_row_ids,
+        )
+
+    # Enforce: any `{{rowId}}` placeholder in the script array must have a matching entry in
+    # `shared_code_row_ids` and a non-empty `shared_code_id`. Otherwise the runtime cannot
+    # resolve the placeholder and the snippet is silently skipped.
+    validate_shared_code_linkage(
+        parameters=transformation_configuration_payload.model_dump(exclude_none=True).get('parameters', {}),
+        shared_code_id=shared_code_id or '',
+        shared_code_row_ids=list(shared_code_row_ids),
+    )
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -473,7 +632,7 @@ async def create_sql_transformation(
         component_id=component_id,
         name=name,
         description=description,
-        configuration=transformation_configuration_payload.model_dump(by_alias=True),
+        configuration=transformation_configuration_payload.model_dump(by_alias=True, exclude_none=True),
     )
 
     configuration_id = str(new_raw_transformation_configuration['id'])
@@ -944,26 +1103,73 @@ async def update_sql_transformation_internal(
     updated_configuration = copy.deepcopy(updated_configuration)
 
     msg: str = ''
+    shared_code_messages: list[str] = []
 
     if parameter_updates:
-        current_param_dict = updated_configuration.get('parameters', {})
-        current_raw_parameters = TransformationConfiguration.Parameters.model_validate(current_param_dict)
-        simplified_parameters = await current_raw_parameters.to_simplified_parameters()
+        # Root-level operations (shared code) live alongside `parameters`/`storage`, not within them.
+        # Partition the updates so we can dispatch root ops against `updated_configuration` directly
+        # and leave the block/code ops to the existing parameters pipeline.
+        root_updates: list[TfParamUpdate] = []
+        block_updates: list[TfParamUpdate] = []
+        for update in parameter_updates:
+            if isinstance(update, (TfSetSharedCode, TfRemoveSharedCode)):
+                root_updates.append(update)
+            else:
+                block_updates.append(update)
 
-        updated_params, msg = update_transformation_parameters(
-            parameters=simplified_parameters,
-            updates=parameter_updates,
-            sql_dialect=sql_dialect,
-        )
-        updated_raw_parameters = await updated_params.to_raw_parameters()
+        for update in root_updates:
+            if isinstance(update, TfSetSharedCode):
+                updated_configuration['shared_code_id'] = update.shared_code_id
+                updated_configuration['shared_code_row_ids'] = list(update.shared_code_row_ids)
+                shared_code_messages.append(
+                    f'Linked shared code {update.shared_code_id!r} '
+                    f'(rows: {", ".join(update.shared_code_row_ids) or "<none>"}).'
+                )
+            else:  # TfRemoveSharedCode
+                removed_id = updated_configuration.pop('shared_code_id', None)
+                updated_configuration.pop('shared_code_row_ids', None)
+                shared_code_messages.append(
+                    f'Removed shared code linkage (was {removed_id!r}).'
+                    if removed_id
+                    else 'Removed shared code linkage (none was set).'
+                )
 
-        parameters_cfg = validate_root_parameters_configuration(
-            component=transformation,
-            parameters=updated_raw_parameters.model_dump(exclude_none=True),
-            initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
-            configuration_id=configuration_id,
-        )
-        updated_configuration['parameters'] = parameters_cfg
+        if block_updates:
+            current_param_dict = updated_configuration.get('parameters', {})
+            current_raw_parameters = TransformationConfiguration.Parameters.model_validate(current_param_dict)
+            simplified_parameters = await current_raw_parameters.to_simplified_parameters()
+
+            updated_params, msg = update_transformation_parameters(
+                parameters=simplified_parameters,
+                updates=block_updates,
+                sql_dialect=sql_dialect,
+            )
+            updated_raw_parameters = await updated_params.to_raw_parameters()
+
+            parameters_cfg = validate_root_parameters_configuration(
+                component=transformation,
+                parameters=updated_raw_parameters.model_dump(exclude_none=True),
+                initial_message='Applying the "parameter_updates" resulted in an invalid configuration.',
+                configuration_id=configuration_id,
+            )
+            updated_configuration['parameters'] = parameters_cfg
+
+    if shared_code_messages:
+        msg = ' '.join(filter(None, [msg, *shared_code_messages]))
+
+    # After any TfSet/TfRemoveSharedCode op (and after any block_updates), make sure the
+    # parameters.blocks reflect the current shared-code linkage with the UI-canonical
+    # `Shared Code (...)` marker blocks. Without these markers the platform's runtime
+    # expansion never substitutes `{{rowId}}`.
+    sync_shared_code_markers_in_dict(updated_configuration)
+
+    # Reject configurations where a `{{rowId}}` placeholder is used without a matching
+    # entry in `shared_code_row_ids` (or with `shared_code_id` empty).
+    validate_shared_code_linkage(
+        parameters=updated_configuration.get('parameters', {}),
+        shared_code_id=str(updated_configuration.get('shared_code_id') or ''),
+        shared_code_row_ids=list(updated_configuration.get('shared_code_row_ids') or []),
+    )
 
     if storage is not None:
         storage_cfg = validate_root_storage_configuration(
@@ -1042,6 +1248,42 @@ async def create_config(
         list[dict[str, Any]],
         Field(description='The list of processors that will run after the configured component runs.'),
     ] = None,
+    shared_code_id: Annotated[
+        str,
+        Field(
+            description=(
+                'Optional. The configuration ID of the parent `keboola.shared-code` library this configuration '
+                'references at the root level. Useful when creating Python (`keboola.python-transformation-v2`), '
+                'R (`keboola.r-transformation-v2`) or DuckDB transformation configurations that need to reuse '
+                'shared snippets. Must be paired with `shared_code_row_ids` and matching `{{ rowId }}` placeholders '
+                "in the component's script. Leave empty when not using shared code."
+            ),
+        ),
+    ] = '',
+    shared_code_row_ids: Annotated[
+        Sequence[str],
+        Field(
+            description=(
+                'Optional. The list of shared code row IDs (Mustache placeholder keys) referenced from the '
+                'configuration. Each entry must exist as a row in the parent shared-code configuration and '
+                "appear as `{{ rowId }}` in the component's script. Row IDs are case-sensitive."
+            ),
+        ),
+    ] = tuple(),
+    configuration_id: Annotated[
+        str,
+        Field(
+            description=(
+                'Optional explicit configuration ID. When non-empty, forwarded to SAPI as `configurationId`. '
+                'REQUIRED for `keboola.shared-code` parent libraries — pass the conventional '
+                '`shared-codes.<transformation-component-id>` value (e.g. '
+                '`shared-codes.snowflake-transformation`, `shared-codes.google-bigquery-transformation`, '
+                '`shared-codes.python-transformation-v2`, `shared-codes.r-transformation-v2`). The UI and '
+                'runtime expansion look up shared-code libraries by this exact ID. Leave empty to let SAPI '
+                'auto-assign for any other component.'
+            ),
+        ),
+    ] = '',
 ) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -1055,6 +1297,16 @@ async def create_config(
 
     USAGE:
     - Use when you want to create a new root configuration for a specific component.
+
+    SHARED CODE:
+    - For `keboola.shared-code` parent libraries: pass `component_id="keboola.shared-code"`,
+      `parameters={"componentId": "<target-transformation-id>"}`, AND `configuration_id="shared-codes.<target>"`
+      (e.g. `shared-codes.snowflake-transformation`). The platform stores `componentId` AT THE
+      CONFIGURATION ROOT for shared-code (not nested under `parameters`); this tool unwraps the
+      provided parameters dict accordingly. The conventional `configuration_id` is required —
+      auto-generated IDs are not recognised by the runtime expansion.
+    - For Python/R/DuckDB transformations that should reuse shared snippets, set `shared_code_id` and
+      `shared_code_row_ids` and embed `{{ rowId }}` Mustache placeholders in the component's script.
 
     WHEN NOT TO USE:
     - `keboola.orchestrator` / `keboola.flow` → use flows tools
@@ -1087,7 +1339,13 @@ async def create_config(
         initial_message='The "parameters" field is not valid.',
     )
 
-    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
+    # `keboola.shared-code` parent libraries use a flat configuration body — the platform's UI
+    # and runtime expansion read `componentId` at the configuration root, not under `parameters`.
+    # For every other component the generic wrapper applies.
+    if component_id == SHARED_CODE_COMPONENT_ID:
+        configuration_payload: dict[str, Any] = dict(parameters or {})
+    else:
+        configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
     if processors_before:
         processors_before = await validate_processors_configuration(
@@ -1105,6 +1363,22 @@ async def create_config(
         )
         set_nested_value(configuration_payload, 'processors.after', processors_after)
 
+    if shared_code_id:
+        configuration_payload['shared_code_id'] = shared_code_id
+        configuration_payload['shared_code_row_ids'] = list(shared_code_row_ids)
+
+    # Symmetry with `create_sql_transformation`: when the target is a transformation backend
+    # that supports shared code (Python/R/DuckDB/SQL via the generic create_config path),
+    # auto-emit the UI-canonical `Shared Code (...)` marker code blocks and validate the
+    # placeholder linkage so the runtime expansion can resolve every `{{rowId}}` reference.
+    if component_id in SHARED_CODE_TRANSFORMATION_IDS:
+        sync_shared_code_markers_in_dict(configuration_payload)
+        validate_shared_code_linkage(
+            parameters=configuration_payload.get('parameters', {}),
+            shared_code_id=shared_code_id,
+            shared_code_row_ids=list(shared_code_row_ids),
+        )
+
     new_raw_configuration = cast(
         dict[str, Any],
         await client.storage_client.configuration_create(
@@ -1112,6 +1386,7 @@ async def create_config(
             name=name,
             description=description,
             configuration=configuration_payload,
+            configuration_id=configuration_id or None,
         ),
     )
 
@@ -1181,6 +1456,17 @@ async def add_config_row(
         list[dict[str, Any]],
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
+    row_id: Annotated[
+        str,
+        Field(
+            description=(
+                'Optional explicit row ID. When provided, becomes the row identifier in SAPI '
+                '(forwarded as `rowId`). For `keboola.shared-code` rows this is the Mustache placeholder '
+                'key used in transformation scripts (e.g. `dumpfiles` → referenced as `{{ dumpfiles }}`). '
+                'Row IDs are case-sensitive. Leave empty to let SAPI auto-assign a numeric ID.'
+            ),
+        ),
+    ] = '',
 ) -> ConfigToolOutput:
     """
     Creates a component configuration row in the specified configuration_id, using the specified name,
@@ -1195,6 +1481,10 @@ async def add_config_row(
 
     USAGE:
     - Use when you want to create a new row configuration for a specific component configuration.
+
+    SHARED CODE ROWS:
+    - For `keboola.shared-code` rows, set `row_id` to the Mustache placeholder key (e.g. `dumpfiles`)
+      and put the snippet body in `parameters` as `{"code_content": ["<code>"]}`.
 
     WHEN NOT TO USE:
     - `keboola.orchestrator` / `keboola.flow` → use flows tools
@@ -1232,7 +1522,12 @@ async def add_config_row(
         configuration_id=configuration_id,
     )
 
-    configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
+    # `keboola.shared-code` rows use a flat configuration body — the platform reads
+    # `code_content` at the row configuration root, not under `parameters`.
+    if component_id == SHARED_CODE_COMPONENT_ID:
+        configuration_payload: dict[str, Any] = dict(parameters or {})
+    else:
+        configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
 
     if processors_before:
         processors_before = await validate_processors_configuration(
@@ -1258,8 +1553,20 @@ async def add_config_row(
             name=name,
             description=description,
             configuration=configuration_payload,
+            row_id=row_id or None,
         ),
     )
+
+    assigned_row_id = str(new_raw_configuration.get('id') or '')
+    if row_id and assigned_row_id and assigned_row_id != row_id:
+        LOG.warning(
+            'add_config_row requested row_id=%r but SAPI assigned %r for component=%s config=%s. '
+            'Use the assigned id when addressing this row.',
+            row_id,
+            assigned_row_id,
+            component_id,
+            configuration_id,
+        )
 
     LOG.info(
         f'Created new configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".'
@@ -1281,6 +1588,7 @@ async def add_config_row(
     return ConfigToolOutput(
         component_id=component_id,
         configuration_id=configuration_id,
+        configuration_row_id=assigned_row_id or None,
         description=description,
         version=new_raw_configuration['version'],
         timestamp=datetime.now(timezone.utc),
@@ -1372,6 +1680,27 @@ async def update_config(
         Optional[str],
         Field(description=folder_field_description('configuration', 'configurations')),
     ] = None,
+    shared_code_id: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                'Optional. Updates the shared-code linkage on the configuration root. '
+                'Non-empty string: sets `shared_code_id` (parent `keboola.shared-code` config ID) and replaces '
+                '`shared_code_row_ids` with the value below. Empty string `""`: clears the linkage (removes '
+                'both root fields). `None` (default): leaves the existing linkage untouched. '
+                'Use for Python/R/DuckDB transformations; SQL transformations use update_sql_transformation.'
+            ),
+        ),
+    ] = None,
+    shared_code_row_ids: Annotated[
+        Sequence[str],
+        Field(
+            description=(
+                'Optional. The list of shared code row IDs (Mustache placeholder keys). Only applied when '
+                '`shared_code_id` is non-empty; ignored otherwise. Row IDs are case-sensitive.'
+            ),
+        ),
+    ] = tuple(),
 ) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
@@ -1384,6 +1713,7 @@ async def update_config(
     - Modifying configuration parameters (credentials, settings, API keys, etc.)
     - Updating storage mappings (input/output tables or files)
     - Changing configuration name or description
+    - Adding/removing shared-code linkage on Python/R/DuckDB transformations (via `shared_code_id`)
     - Any combination of the above
 
     WHEN NOT TO USE:
@@ -1426,6 +1756,8 @@ async def update_config(
         storage=storage,
         processors_before=processors_before,
         processors_after=processors_after,
+        shared_code_id=shared_code_id,
+        shared_code_row_ids=shared_code_row_ids,
     )
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=component_id,
@@ -1483,6 +1815,8 @@ async def update_config_internal(
     storage: dict[str, Any] | None = None,
     processors_before: list[dict[str, Any]] | None = None,
     processors_after: list[dict[str, Any]] | None = None,
+    shared_code_id: Optional[str] = None,
+    shared_code_row_ids: Optional[Sequence[str]] = None,
 ) -> tuple[JsonDict, JsonDict]:
     check_suitable('update_config', component_id)
 
@@ -1531,6 +1865,27 @@ async def update_config_internal(
             configuration_id=configuration_id,
         )
         configuration_payload['parameters'] = parameters_cfg
+
+    # Shared code linkage lives at the configuration root alongside `parameters`/`storage`.
+    # Non-empty `shared_code_id` sets the linkage; empty string explicitly clears it.
+    # `None` (the default) means "leave existing linkage untouched".
+    if shared_code_id is not None:
+        if shared_code_id:
+            configuration_payload['shared_code_id'] = shared_code_id
+            configuration_payload['shared_code_row_ids'] = list(shared_code_row_ids or ())
+        else:
+            configuration_payload.pop('shared_code_id', None)
+            configuration_payload.pop('shared_code_row_ids', None)
+
+    # Symmetry with `update_sql_transformation`: when the target supports shared code,
+    # (re)sync the marker code blocks and enforce the placeholder linkage rule.
+    if component_id in SHARED_CODE_TRANSFORMATION_IDS:
+        sync_shared_code_markers_in_dict(configuration_payload)
+        validate_shared_code_linkage(
+            parameters=configuration_payload.get('parameters', {}),
+            shared_code_id=str(configuration_payload.get('shared_code_id') or ''),
+            shared_code_row_ids=list(configuration_payload.get('shared_code_row_ids') or []),
+        )
 
     return current_config, configuration_payload
 
