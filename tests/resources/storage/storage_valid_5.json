@@ -1,0 +1,12 @@
+{
+  "storage": {
+    "output": {
+      "tables": [
+        {
+          "destination": "in.c-ex-generic-v2.earthquake_events",
+          "unload_strategy": "direct-grant"
+        }
+      ]
+    }
+  }
+}

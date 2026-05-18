@@ -257,7 +257,7 @@ class KeboolaParametersValidator:
         return sanitized_schema
 
 
-def _validate_storage_configuration_against_schema(
+def validate_storage_configuration_against_schema(
     storage: JsonDict,
     initial_message: Optional[str] = None,
     validation_context: ValidationContext | None = None,
@@ -490,7 +490,7 @@ def _validate_storage_configuration(
         configuration_row_id=configuration_row_id,
         scope='storage',
     )
-    normalized_storage = _validate_storage_configuration_against_schema(
+    normalized_storage = validate_storage_configuration_against_schema(
         normalized_storage,
         initial_message,
         validation_context=validation_context,
