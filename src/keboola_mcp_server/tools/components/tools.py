@@ -1886,10 +1886,12 @@ async def run_sync_action(
     root_configuration = config_response.configuration
     parameters = root_configuration.get('parameters') or {}
     storage = root_configuration.get('storage') or {}
-    # `runtime` (which carries `image_tag`, backend hints, etc.) lives only on the root configuration
-    # in the docker-runner's contract — rows do not override it. Forward it so the sync-actions
-    # service honors `runtime.image_tag` from the saved configuration.
+    # `runtime` and `authorization` live only on the root configuration in the docker-runner's
+    # contract — rows do not override them. `authorization.oauth_api.id` is a broker reference
+    # that the sync-actions service resolves and decrypts before invoking the component; without
+    # it, OAuth/Service-Account components reject the call with "Missing authorization data".
     runtime = root_configuration.get('runtime') or {}
+    authorization = root_configuration.get('authorization') or {}
 
     if configuration_row_id:
         row_detail = await client.storage_client.configuration_row_detail(
@@ -1907,6 +1909,8 @@ async def run_sync_action(
     }
     if runtime:
         config_data['runtime'] = runtime
+    if authorization:
+        config_data['authorization'] = authorization
 
     result = await client.sync_actions_client.execute_action(
         component_id=component_id,
