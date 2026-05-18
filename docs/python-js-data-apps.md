@@ -66,6 +66,14 @@ The flow is taught to the LLM exclusively through the tool docstrings; there is 
 
 The runtime image version is currently **hardcoded** in the MCP server (constant `_HARDCODED_PYTHON_JS_IMAGE_VERSION` in `src/keboola_mcp_server/tools/data_apps.py`, value `dev-PAT-1772.4`). The tool does not expose it as an argument. Remove the hardcoded constant and re-introduce the argument (or simply drop the field from the payload) once the platform sets a default image for python-js apps.
 
+### Per-app workspace
+
+Newly created python-js apps carry `runtime.workspace.enabled = true` in their Storage configuration. The platform reads this flag and **auto-provisions a workspace per data app**, then injects its ID into the app's runtime as the `WORKSPACE_ID` environment variable. As a consequence:
+
+- The MCP server does **not** inject `WORKSPACE_ID` as an app secret for python-js apps (it still does for Streamlit, which has no auto-workspace feature). The other runtime secrets — `BRANCH_ID`, `KBC_TOKEN`, `KBC_URL` — are still injected by the MCP server.
+- The flag is hardcoded `true` on create; there is no tool argument to opt out.
+- This is a **create-only** behaviour. The update path does not backfill `runtime.workspace` on existing apps — apps created before this change continue to operate against whichever workspace was injected at their original create time.
+
 ---
 
 ## Create flow (new project bootstrap)
@@ -275,6 +283,7 @@ The two parameters map to the data-science API as follows. Confirm field names w
 | `existing_repo_url` | `POST /apps` | `existingRepoUrl` (alongside `useManagedGitRepo: true`) |
 | `branch` | `PATCH /apps/{id}` | `branch` (alongside `desiredState: 'running'`, `mode: 'dev'`) |
 | `register_python_js_data_app_ssh_key` | `POST /apps/{id}/git-repo/ssh-keys` | `publicKey`, `permissions: 'readWrite'` |
+| auto-workspace flag (hardcoded `true` on create) | `POST /apps` | `configuration.runtime.workspace.enabled` |
 
 ---
 
