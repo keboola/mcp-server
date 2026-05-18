@@ -15,6 +15,7 @@ from pydantic.dataclasses import dataclass
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
+from keboola_mcp_server.tools.storage_helpers import has_storage_branches
 
 LOG = logging.getLogger(__name__)
 
@@ -509,8 +510,16 @@ class WorkspaceManager:
 
     @classmethod
     async def create(cls, client: KeboolaClient, workspace_schema: str | None = None) -> 'WorkspaceManager':
-        # We use the read-only workspace with access to all project data which lives in the production branch.
-        # Hence, we need KeboolaClient bound to the production/default branch.
+        # On projects with the `storage-branches` feature, each dev branch needs its own
+        # workspace so the agent's queries (FQN paths, `query_data`) see that branch's
+        # table versions. The workspace ID is stored under the same metadata key but in
+        # the branch's own metadata, which is per-branch (`branch/{id}/metadata`).
+        # On legacy projects (no `storage-branches`) and on the default branch, fall back
+        # to the production-branch workspace shared by the whole project.
+        # `has_storage_branches` already requires `branch_id is not None`, so the default
+        # branch always takes the prod-client path.
+        if await has_storage_branches(client):
+            return cls(client, workspace_schema)
         prod_client = await client.with_branch_id(None)
         return cls(prod_client, workspace_schema)
 
@@ -518,13 +527,12 @@ class WorkspaceManager:
         """
         Initializes the WorkspaceManager.
 
-        :param client: The KeboolaClient bound to the production/default branch.
+        :param client: The KeboolaClient bound to the branch whose workspace this manager
+            owns. On default-branch or legacy-project paths this is the production-branch
+            client; on a `storage-branches` project bound to a dev branch this is the
+            dev-branch client (see :meth:`create`).
         :param workspace_schema: The schema of the workspace to use.
         """
-        if client.branch_id is not None:
-            raise ValueError(
-                'WorkspaceManager cannot be created for a branch other than the production/default branch.'
-            )
         self._client = client
         self._workspace_schema = workspace_schema
         self._workspace: _Workspace | None = None
