@@ -38,6 +38,7 @@ name or description.
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
+- [create_git_data_app](#create_git_data_app): Creates or updates a git-backed JS/TypeScript data app deployed from a git repository.
 - [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
 and the configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
@@ -1705,6 +1706,132 @@ Example 4 - Update storage mappings:
 ---
 
 # Other Tools
+<a name="create_git_data_app"></a>
+## create_git_data_app
+**Annotations**: 
+
+**Tags**: `config-diff-preview, data-apps`
+
+**Description**:
+
+Creates or updates a git-backed JS/TypeScript data app deployed from a git repository.
+
+Use this tool when the data app source code lives in a git repository (JS/TypeScript, Node.js,
+React, etc.) rather than being provided as inline Python/Streamlit code.
+
+Considerations:
+- After creating or updating, ALWAYS call `deploy_data_app(action="deploy", configuration_id=...)`
+  to start or restart the app so changes take effect.
+- For public repositories, omit git_username, git_pat, and git_ssh_key.
+- For HTTPS private repositories, provide git_username and git_pat (plaintext — encrypted automatically).
+- For SSH private repositories, use an SSH git_repo URL and provide git_ssh_key (plaintext — encrypted
+  automatically). Do not provide git_username or git_pat in this case.
+- git_pat and git_ssh_key are mutually exclusive.
+- New apps use HTTP basic authentication by default for security; set authentication_type to "default"
+  when updating to preserve the existing authentication configuration.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "description": "Name of the data app (max ~50 chars to fit DNS label limit).",
+      "type": "string"
+    },
+    "description": {
+      "description": "Description of the data app.",
+      "type": "string"
+    },
+    "git_repo": {
+      "description": "Full URL of the git repository containing the data app source code. Use HTTPS URL (e.g. https://github.com/org/repo) for username/PAT auth, or SSH URL (e.g. git@github.com:org/repo.git) for SSH key auth.",
+      "type": "string"
+    },
+    "git_branch": {
+      "default": "main",
+      "description": "Git branch to deploy (default: \"main\").",
+      "type": "string"
+    },
+    "git_username": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Git username for HTTPS private repositories. Required when git_pat is provided. Leave empty for public repos or SSH auth."
+    },
+    "git_pat": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Plaintext GitHub Personal Access Token for HTTPS private repositories. The tool encrypts it automatically before storing \u2014 never pass a pre-encrypted value. Leave empty for public repos or SSH auth."
+    },
+    "git_ssh_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Plaintext SSH private key for private repositories accessed via SSH URL. The tool encrypts it automatically before storing \u2014 never pass a pre-encrypted value. Leave empty for public repos or HTTPS auth."
+    },
+    "authentication_type": {
+      "default": "basic-auth",
+      "description": "Authentication type for the data app UI: \"no-auth\" removes authentication completely, \"basic-auth\" secures the app with HTTP basic authentication, \"default\" keeps the existing authentication type when updating.",
+      "enum": [
+        "no-auth",
+        "basic-auth",
+        "default"
+      ],
+      "type": "string"
+    },
+    "configuration_id": {
+      "default": "",
+      "description": "The ID of an existing data app configuration when updating, otherwise empty string.",
+      "type": "string"
+    },
+    "change_description": {
+      "default": "",
+      "description": "Description of the change when updating (e.g. \"Update git branch\"), otherwise empty.",
+      "type": "string"
+    },
+    "folder": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Folder name to organize this data app in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose."
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "git_repo"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="deploy_data_app"></a>
 ## deploy_data_app
 **Annotations**: 

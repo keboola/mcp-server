@@ -44,6 +44,7 @@ class TestServer:
             'create_conditional_flow',
             'create_config',
             'create_flow',
+            'create_git_data_app',
             'create_oauth_url',
             'create_sql_transformation',
             'deploy_data_app',
@@ -392,6 +393,7 @@ async def test_tool_annotations_and_tags():
         ('modify_data_app', None, True, None, {DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
         ('get_data_apps', True, None, None, {DATA_APP_TOOLS_TAG}),
         ('deploy_data_app', None, False, None, {DATA_APP_TOOLS_TAG}),
+        ('create_git_data_app', None, False, None, {DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
     ],
 )
 async def test_tool_annotations_tags_values(
