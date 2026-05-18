@@ -127,6 +127,13 @@ CRITICAL: The user_parameters are exposed as normal configuration parameters whe
   ```
   NEVER like this: `params = ci.configuration.parameters.get("user_properties", {})`
 
+CRITICAL: **Configuration variables** (those attached via the `variables` parameter on `create_config` / `update_config` / `create_sql_transformation` / `update_sql_transformation`) are a different mechanism from `user_parameters`. They are stored in a separate `keboola.variables` config and interpolated into the configuration JSON at run time by the Keboola platform — **before** the Custom Python code executes. In Custom Python (and in SQL/other transformations), reference these variables with **`{{my-var}}` mustache syntax** placed directly inside the configuration values (e.g. the `code` field, a parameter string), not via the CommonInterface library:
+  ```python
+  # CORRECT — the placeholder is interpolated server-side before the script runs
+  api_url = "https://api.example.com/?token={{api_token}}&env={{env}}"
+  ```
+  Do NOT try to read variables through `ci.configuration.parameters` — they are not exposed there. Mustache placeholders work in any string field of the configuration (parameters, code blocks, etc.) and are resolved against the `Default Values` row of the linked variables config (or the runtime-supplied value set).
+
 
 ### Creating or Updating Component Configurations
 
