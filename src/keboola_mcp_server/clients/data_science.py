@@ -112,7 +112,8 @@ class CodeDataAppConfig(BaseModel):
             secrets: dict[str, str] | None = Field(
                 description=(
                     'Runtime secrets exposed to the data app as environment variables (e.g. KBC_TOKEN, '
-                    'KBC_URL, BRANCH_ID, WORKSPACE_ID). Mirrors the Streamlit data-app secrets shape.'
+                    'KBC_URL, BRANCH_ID). Mirrors the Streamlit data-app secrets shape. WORKSPACE_ID is '
+                    'set by the platform itself when `runtime.workspace.enabled = true`.'
                 ),
                 default=None,
             )
@@ -132,7 +133,22 @@ class CodeDataAppConfig(BaseModel):
         class Image(BaseModel):
             version: str = Field(description='The runtime image version tag.')
 
+        class Workspace(BaseModel):
+            enabled: bool = Field(
+                description=(
+                    'When true, the platform auto-provisions a workspace per data app and injects '
+                    'its WORKSPACE_ID into the runtime env.'
+                ),
+            )
+
         image: 'CodeDataAppConfig.Runtime.Image' = Field(description='The runtime image.')
+        workspace: 'CodeDataAppConfig.Runtime.Workspace | None' = Field(
+            default=None,
+            description=(
+                'Optional workspace runtime config. Provide `{enabled: true}` to opt into '
+                'platform-managed per-app workspaces.'
+            ),
+        )
 
     parameters: 'CodeDataAppConfig.Parameters' = Field(description='The parameters of the data app.')
     runtime: 'CodeDataAppConfig.Runtime' = Field(description='The runtime configuration (image version, etc.).')

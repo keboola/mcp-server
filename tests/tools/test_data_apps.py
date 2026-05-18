@@ -22,6 +22,7 @@ from keboola_mcp_server.tools.data_apps import (
     _fetch_data_app,
     _get_authorization,
     _get_data_app_slug,
+    _get_python_js_secrets,
     _get_query_function_code,
     _get_secrets,
     _inject_query_to_source_code,
@@ -399,6 +400,21 @@ def test_get_secrets():
         'KBC_TOKEN': 'kbc-token',
         'KBC_URL': 'https://connection.test.keboola.com',
     }
+
+
+def test_get_python_js_secrets():
+    """Python-js secrets omit WORKSPACE_ID — the platform sets it via runtime.workspace.enabled."""
+    secrets = _get_python_js_secrets(
+        branch_id='123',
+        storage_token='kbc-token',
+        storage_api_url='https://connection.test.keboola.com',
+    )
+    assert secrets == {
+        'BRANCH_ID': '123',
+        'KBC_TOKEN': 'kbc-token',
+        'KBC_URL': 'https://connection.test.keboola.com',
+    }
+    assert 'WORKSPACE_ID' not in secrets
 
 
 def test_update_existing_data_app_config_keeps_previous_properties_when_undefined():
@@ -868,7 +884,6 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
 
-    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value='wid-1')
     workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     app_response = _make_python_js_data_app_response()
@@ -904,9 +919,12 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     assert serialized['parameters']['autoSuspendAfterSeconds'] == 300
     assert serialized['parameters']['dataApp']['slug'] == 'my-app'
     assert serialized['runtime']['image']['version'] == 'dev-PAT-1772.4'
-    # Runtime secrets are injected from the workspace/client context so the app can call SAPI.
+    # Created with the auto-workspace flag so the platform provisions a per-app workspace
+    # and sets WORKSPACE_ID itself.
+    assert serialized['runtime']['workspace'] == {'enabled': True}
+    # Runtime secrets are injected from the client/branch context so the app can call SAPI.
+    # WORKSPACE_ID is intentionally NOT in this dict — the platform sets it.
     assert serialized['parameters']['dataApp']['secrets'] == {
-        'WORKSPACE_ID': 'wid-1',
         'BRANCH_ID': 'branch-1',
         'KBC_TOKEN': 'test-token',
         'KBC_URL': 'https://connection.test.keboola.com',
@@ -939,7 +957,6 @@ async def test_modify_python_js_data_app_create_authentication_type(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
 
-    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value='wid-1')
     workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     app_response = _make_python_js_data_app_response()
@@ -978,7 +995,6 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     """Update path: fetch storage config → merge updates → PATCH via configuration_update."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
-    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value='wid-1')
     workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     existing_data_app = DataApp(
@@ -1028,9 +1044,11 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     assert new_cfg['runtime']['image']['version'] == 'dev-PAT-1772.4'
     # slug must remain untouched (immutable)
     assert new_cfg['parameters']['dataApp']['slug'] == 'old-slug'
-    # Runtime secrets are injected from the workspace/client context on update too.
+    # Update does NOT backfill `runtime.workspace` — only the create path sets it.
+    assert 'workspace' not in new_cfg['runtime']
+    # Runtime secrets are injected from the branch/client context on update too.
+    # WORKSPACE_ID is not injected — the platform sets it via runtime.workspace.enabled (on create).
     assert new_cfg['parameters']['dataApp']['secrets'] == {
-        'WORKSPACE_ID': 'wid-1',
         'BRANCH_ID': 'branch-1',
         'KBC_TOKEN': 'test-token',
         'KBC_URL': 'https://connection.test.keboola.com',
@@ -1093,12 +1111,14 @@ def test_update_existing_code_data_app_config_basic_auth_overwrites() -> None:
 
 
 def test_update_existing_code_data_app_config_merges_secrets() -> None:
+    """Legacy configs may carry a WORKSPACE_ID secret from before runtime.workspace was used.
+    The merge must preserve it (and any other existing keys) while adding new keys passed in."""
     existing = {
         'parameters': {
             'autoSuspendAfterSeconds': 900,
             'dataApp': {
                 'slug': 'x',
-                'secrets': {'WORKSPACE_ID': 'wid-old', 'KEEP': 'x'},
+                'secrets': {'WORKSPACE_ID': 'wid-legacy', 'KEEP': 'x'},
             },
         },
         'runtime': {'image': {'version': 'v1'}},
@@ -1108,15 +1128,14 @@ def test_update_existing_code_data_app_config_merges_secrets() -> None:
         image_version='v1',
         auto_suspend_after_seconds=900,
         secrets={
-            'WORKSPACE_ID': 'wid-new',
             'BRANCH_ID': 'branch-new',
             'KBC_TOKEN': 'tok',
             'KBC_URL': 'https://connection.test.keboola.com',
         },
     )
-    # Existing keys are preserved; only new keys are added.
+    # Legacy WORKSPACE_ID and other existing keys are preserved; new keys are appended.
     assert new['parameters']['dataApp']['secrets'] == {
-        'WORKSPACE_ID': 'wid-old',
+        'WORKSPACE_ID': 'wid-legacy',
         'KEEP': 'x',
         'BRANCH_ID': 'branch-new',
         'KBC_TOKEN': 'tok',
@@ -1133,10 +1152,9 @@ def test_update_existing_code_data_app_config_creates_secrets_when_missing() -> 
         existing,
         image_version='v1',
         auto_suspend_after_seconds=900,
-        secrets={'WORKSPACE_ID': 'wid', 'BRANCH_ID': 'b', 'KBC_TOKEN': 't', 'KBC_URL': 'u'},
+        secrets={'BRANCH_ID': 'b', 'KBC_TOKEN': 't', 'KBC_URL': 'u'},
     )
     assert new['parameters']['dataApp']['secrets'] == {
-        'WORKSPACE_ID': 'wid',
         'BRANCH_ID': 'b',
         'KBC_TOKEN': 't',
         'KBC_URL': 'u',

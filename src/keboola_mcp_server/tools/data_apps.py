@@ -676,8 +676,7 @@ async def modify_python_js_data_app(
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    secrets = _get_secrets(
-        workspace_id=str(await workspace_manager.get_workspace_id()),
+    secrets = _get_python_js_secrets(
         branch_id=str(await workspace_manager.get_branch_id()),
         storage_token=client.token,
         storage_api_url=client.storage_api_url,
@@ -751,6 +750,7 @@ async def modify_python_js_data_app(
             ),
             runtime=CodeDataAppConfig.Runtime(
                 image=CodeDataAppConfig.Runtime.Image(version=_HARDCODED_PYTHON_JS_IMAGE_VERSION),
+                workspace=CodeDataAppConfig.Runtime.Workspace(enabled=True),
             ),
             authorization=authorization_model,
         )
@@ -1341,3 +1341,16 @@ def _get_secrets(workspace_id: str, branch_id: str, storage_token: str, storage_
         SECRET_KBC_URL: storage_api_url,
     }
     return secrets
+
+
+def _get_python_js_secrets(branch_id: str, storage_token: str, storage_api_url: str) -> dict[str, Any]:
+    """
+    Generates runtime secrets for python-js data apps. WORKSPACE_ID is intentionally omitted —
+    python-js apps are created with `runtime.workspace.enabled = true`, so the platform
+    auto-provisions a per-app workspace and sets WORKSPACE_ID in the runtime env itself.
+    """
+    return {
+        SECRET_BRANCH_ID: branch_id,
+        SECRET_KBC_TOKEN: storage_token,
+        SECRET_KBC_URL: storage_api_url,
+    }
