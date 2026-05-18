@@ -2,16 +2,19 @@
 Flow models for Keboola MCP server.
 """
 
+import logging
 from datetime import datetime
-from typing import Any, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, ValidationError
 
 from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType, get_metadata_property
 from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.scheduler_model import SchedulesOutput
+
+LOG = logging.getLogger(__name__)
 
 # =============================================================================
 # RESPONSE MODELS
@@ -205,7 +208,15 @@ class FunctionCondition(BaseModel):
     """Function-based condition."""
 
     type: Literal['function'] = Field(description='Condition type')
-    function: Literal['COUNT', 'DATE'] = Field(description='Function type')
+    function: str = Field(
+        description=(
+            "Function name. Supported values: 'COUNT' (returns the number of elements in its single "
+            "array operand) and 'DATE' (returns the current date/time formatted via PHP "
+            "DateTime::format; takes one operand that resolves to a format string such as 'Y', 'm', "
+            "'d', 'H', 'i', 's', or 'U'). Typed as str rather than Literal so unknown server-side "
+            'values do not break flow listing; only the two values above are accepted at execution time.'
+        )
+    )
     operands: list['VariableSourceObject'] = Field(description='List of operand conditions')
 
 
@@ -262,9 +273,12 @@ class NotificationTaskConfiguration(BaseModel):
     message: Optional[str] = Field(default=None, description='Notification message')
 
 
-# Variable source object (limited subset of conditions)
-VariableSourceObject = Union[
-    ConstantCondition, PhaseCondition, TaskCondition, VariableCondition, FunctionCondition, ArrayCondition
+# Variable source object (limited subset of conditions). Each member has a unique `type`
+# literal, so we discriminate on it: pydantic dispatches directly to the matching model and
+# reports one targeted error instead of trying every member and producing a cascade.
+VariableSourceObject = Annotated[
+    Union[ConstantCondition, PhaseCondition, TaskCondition, VariableCondition, FunctionCondition, ArrayCondition],
+    Field(discriminator='type'),
 ]
 
 
@@ -277,7 +291,10 @@ class VariableTaskConfiguration(BaseModel):
     source: Optional[VariableSourceObject] = Field(default=None, description='Variable source')
 
 
-TaskConfiguration = Union[JobTaskConfiguration, NotificationTaskConfiguration, VariableTaskConfiguration]
+TaskConfiguration = Annotated[
+    Union[JobTaskConfiguration, NotificationTaskConfiguration, VariableTaskConfiguration],
+    Field(discriminator='type'),
+]
 
 
 # =============================================================================
@@ -340,6 +357,31 @@ class ConditionalFlowConfiguration(BaseModel):
     tasks: list[ConditionalFlowTask] = Field(description='List of tasks in the flow')
 
 
+_T = Union[ConditionalFlowPhase, ConditionalFlowTask]
+
+
+def _safe_validate(model_cls: type[_T], raw: dict[str, Any], flow_id: str, kind: str) -> _T:
+    """Validate a flow element; on failure log and fall back to ``model_construct``.
+
+    The READ path (``get_flows``) must keep returning data even when the backend ships a task
+    or phase shape the schema hasn't caught up to — silently dropping items would hide flows
+    from the agent. ``model_construct`` skips validation, so unknown variants pass through as
+    raw dicts on the typed field; this is safe for display/serialization but is intentionally
+    NOT used on the WRITE paths (``utils.get_flow_configuration``), which must remain strict.
+    """
+    try:
+        return model_cls.model_validate(raw)
+    except ValidationError as exc:
+        LOG.warning(
+            'Flow %s: %s %r failed strict validation, falling back to permissive parse: %s',
+            flow_id,
+            kind,
+            raw.get('id'),
+            exc,
+        )
+        return model_cls.model_construct(**raw)
+
+
 # =============================================================================
 # DOMAIN MODELS
 # =============================================================================
@@ -391,8 +433,14 @@ class Flow(BaseModel):
             tasks = [FlowTask.model_validate(t) for t in api_config.configuration.get('tasks', [])]
             config = FlowConfiguration(phases=phases, tasks=tasks)
         else:
-            phases = [ConditionalFlowPhase.model_validate(p) for p in api_config.configuration.get('phases', [])]
-            tasks = [ConditionalFlowTask.model_validate(p) for p in api_config.configuration.get('tasks', [])]
+            phases = [
+                _safe_validate(ConditionalFlowPhase, p, api_config.configuration_id, 'phase')
+                for p in api_config.configuration.get('phases', [])
+            ]
+            tasks = [
+                _safe_validate(ConditionalFlowTask, p, api_config.configuration_id, 'task')
+                for p in api_config.configuration.get('tasks', [])
+            ]
             config = ConditionalFlowConfiguration(phases=phases, tasks=tasks)
 
         return cls.model_construct(
