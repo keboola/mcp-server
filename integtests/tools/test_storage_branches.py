@@ -1,11 +1,13 @@
 """Integration tests for branched storage — validates deference mechanism for both old-style and storage-branches."""
 
+import csv
 import json
 import logging
 import os
 import time
 import uuid
 from dataclasses import dataclass
+from io import StringIO
 from typing import Any, Generator
 
 import httpx
@@ -19,6 +21,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import ServerRuntimeInfo, ServerState
 from keboola_mcp_server.tools.project import get_project_info
+from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
 from keboola_mcp_server.tools.storage.tools import get_buckets, get_tables
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -512,3 +515,83 @@ async def test_get_project_info_reports_default_branch(
     # Sanity: the default branch must not be the dev branch we created for this session.
     assert str(result.branch_id) != str(branch_project.branch_a_id)
     assert str(result.branch_id) != str(branch_project.branch_b_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('table_id', 'description'),
+    [
+        ('in.c-test_branch.test_table_branch', 'branch-only table created via transformation'),
+        ('in.c-test_bucket_01.test_table_01', 'production table (also has a branched version in Branch A)'),
+    ],
+    ids=['branch_only_table', 'production_table'],
+)
+async def test_query_data_from_dev_branch_reaches_both_kinds_of_tables(
+    branch_context: Context,
+    branch_project: BranchTestProject,
+    table_id: str,
+    description: str,
+) -> None:
+    """
+    From a dev-branch MCP context, `query_data` must successfully execute SELECT against
+    both a table that exists only in the branch and a table that exists in production.
+    Verifies the branch-aware workspace selection actually unblocks SQL on both kinds of
+    tables — and that legacy projects still work (production-branch workspace can also
+    reach branched schemas via the legacy FQN scheme).
+    """
+    tables_listing = await get_tables(branch_context, table_ids=[table_id])
+    assert len(tables_listing.tables) == 1, f'Expected exactly one table for {table_id}'
+    table = tables_listing.tables[0]
+    assert table.fully_qualified_name, f'{description}: table {table_id} has no FQN, cannot query'
+
+    sql_query = f'SELECT COUNT(*) AS row_count FROM {table.fully_qualified_name}'
+    result = await query_data(
+        sql_query=sql_query,
+        query_name=f'Row count for {table_id}',
+        ctx=branch_context,
+    )
+
+    assert isinstance(result, QueryDataOutput)
+    assert result.csv_data, f'{description}: query returned no CSV data'
+
+    # Sanity-check: COUNT(*) returns a numeric value. Specific row count varies by data
+    # (fixture writes 1 row to each branched table; the production source table has 2 rows).
+    csv_reader = csv.reader(StringIO(result.csv_data))
+    rows = list(csv_reader)
+    assert len(rows) == 2, f'{description}: COUNT query should return header + 1 data row, got {rows}'
+    count_value = rows[1][0]
+    assert count_value.isdigit(), f'{description}: expected numeric row count, got {count_value!r}'
+    assert int(count_value) >= 1, f'{description}: expected positive row count, got {count_value!r}'
+
+
+@pytest.mark.asyncio
+async def test_workspace_id_is_branch_aware(
+    branch_context: Context,
+    default_branch_context: Context,
+    branch_project: BranchTestProject,
+) -> None:
+    """
+    `workspace_id` must follow the branch-awareness decision table:
+
+    - storage-branches project: dev-branch context returns a DIFFERENT workspace than the default branch.
+    - legacy project: dev-branch context returns the SAME workspace as the default branch
+      (production-branch workspace shared by both).
+    """
+    dev_result = await get_project_info(branch_context)
+    default_result = await get_project_info(default_branch_context)
+
+    assert isinstance(dev_result.workspace_id, int)
+    assert dev_result.workspace_id > 0
+    assert isinstance(default_result.workspace_id, int)
+    assert default_result.workspace_id > 0
+
+    if branch_project.has_storage_branches:
+        assert dev_result.workspace_id != default_result.workspace_id, (
+            f'storage-branches project expected per-branch workspace, '
+            f'got the same id {dev_result.workspace_id} from both contexts'
+        )
+    else:
+        assert dev_result.workspace_id == default_result.workspace_id, (
+            f'legacy project expected shared production-branch workspace, '
+            f'got dev={dev_result.workspace_id} default={default_result.workspace_id}'
+        )

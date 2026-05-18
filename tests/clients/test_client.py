@@ -451,6 +451,36 @@ class TestKeboolaClient:
         assert client.metastore_client.raw_client.base_api_url == 'https://metastore.canary-orion.keboola.dev'
         assert client.metastore_client.raw_client.headers['X-StorageAPI-Token'] == 'sapi_token_456'
 
+    @pytest.mark.parametrize(
+        ('bearer_token', 'storage_token', 'expected_metastore_token'),
+        [
+            ('oauth_bearer_123', 'sapi_token_456', 'Bearer oauth_bearer_123'),
+            (None, 'sapi_token_456', 'sapi_token_456'),
+            ('', 'sapi_token_456', 'sapi_token_456'),
+        ],
+        ids=['with_bearer_token', 'without_bearer_token', 'empty_bearer_token'],
+    )
+    def test_metastore_client_token_selection(
+        self, bearer_token: str | None, storage_token: str, expected_metastore_token: str
+    ):
+        """Test MetastoreClient uses bearer token when available, falls back to storage token."""
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token=storage_token,
+            bearer_token=bearer_token,
+        )
+
+        metastore_headers = client.metastore_client.raw_client.headers
+
+        if expected_metastore_token.startswith('Bearer '):
+            assert 'Authorization' in metastore_headers
+            assert metastore_headers['Authorization'] == expected_metastore_token
+            assert 'X-StorageAPI-Token' not in metastore_headers
+        else:
+            assert 'X-StorageAPI-Token' in metastore_headers
+            assert metastore_headers['X-StorageAPI-Token'] == expected_metastore_token
+            assert 'Authorization' not in metastore_headers
+
 
 @pytest.mark.parametrize(
     ('metadata', 'key', 'provider', 'preferred_providers', 'default', 'expected'),

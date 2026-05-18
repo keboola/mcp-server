@@ -1,15 +1,23 @@
 from typing import Any
 
-from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID
+import pytest
+from pydantic import ValidationError
+
+from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.tools.flow.model import (
+    ConditionalFlowConfiguration,
     ConditionalFlowPhase,
+    ConditionalFlowTask,
     ConditionalFlowTransition,
     Flow,
     FlowConfiguration,
     FlowPhase,
     FlowSummary,
     FlowTask,
+    FunctionCondition,
+    JobTaskConfiguration,
+    VariableTaskConfiguration,
 )
 
 # --- Test Model Parsing ---
@@ -142,3 +150,133 @@ class TestConditionalFlowPhase:
         assert len(serialized_excluding_unset['next']) == 2
         assert serialized_excluding_unset['next'][0]['goto'] == 'phase-2'
         assert serialized_excluding_unset['next'][1]['goto'] is None
+
+
+class TestConditionalFlowValidationResilience:
+    """Regression tests for AI-3216 — `get_flows` should not crash on unknown variants.
+
+    The bug: a real conditional flow on stack `com-keboola-gcp-europe-west3` contained a
+    `variable` task whose `source.function` was `'YEAR'`. The strict `Literal['COUNT','DATE']`
+    on `FunctionCondition.function` failed, and the undiscriminated `TaskConfiguration` union
+    surfaced 18 cascading validation errors that aborted the entire `get_flows` response.
+    """
+
+    @pytest.mark.parametrize('function_name', ['COUNT', 'DATE', 'YEAR', 'MONTH', 'DAY_OF_WEEK'])
+    def test_function_condition_accepts_arbitrary_function_names(self, function_name: str):
+        """The `function` field is now permissive — the backend evolves independently of MCP."""
+        cond = FunctionCondition.model_validate(
+            {'type': 'function', 'function': function_name, 'operands': [{'type': 'const', 'value': 'U'}]}
+        )
+        assert cond.function == function_name
+
+    def test_variable_task_with_year_function_no_longer_raises(self):
+        """The exact shape from the Datadog alert in AI-3216 must parse without raising."""
+        raw_task = {
+            'id': 'task-1',
+            'name': 'compute year',
+            'phase': 'phase-1',
+            'task': {
+                'type': 'variable',
+                'name': 'current_year',
+                'source': {
+                    'type': 'function',
+                    'function': 'YEAR',
+                    'operands': [{'type': 'const', 'value': 'U'}],
+                },
+            },
+        }
+        task = ConditionalFlowTask.model_validate(raw_task)
+        assert isinstance(task.task, VariableTaskConfiguration)
+        assert isinstance(task.task.source, FunctionCondition)
+        assert task.task.source.function == 'YEAR'
+
+    def test_task_configuration_uses_discriminator(self):
+        """Discriminator on `type` collapses the 18-error cascade to a single targeted error.
+
+        Pre-fix: pydantic tried Job/Notification/Variable in turn and reported every literal
+        mismatch — 18 errors for one bad source value. Post-fix: pydantic dispatches by `type`,
+        so a `variable` task only triggers `VariableTaskConfiguration` validation.
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            ConditionalFlowTask.model_validate(
+                {
+                    'id': 'task-1',
+                    'name': 'broken',
+                    'phase': 'phase-1',
+                    'task': {'type': 'variable'},  # missing required `name`
+                }
+            )
+        errors = exc_info.value.errors()
+        # All errors should be scoped to the matched variant only.
+        assert all('VariableTaskConfiguration' in str(e.get('loc', ())) or e['loc'][-1] == 'name' for e in errors)
+        # Confirm no cascading errors about Job/Notification literals.
+        assert not any('JobTaskConfiguration' in str(e.get('loc', ())) for e in errors)
+        assert not any('NotificationTaskConfiguration' in str(e.get('loc', ())) for e in errors)
+
+    def test_unknown_task_type_falls_back_in_read_path(self, caplog: pytest.LogCaptureFixture):
+        """`Flow.from_api_response` must keep returning the flow even when a task type is unknown.
+
+        Pre-fix: one unknown task type took down the entire `get_flows` response. Post-fix:
+        `_safe_validate` logs and falls back to `model_construct` for that task while keeping
+        the rest of the flow intact.
+        """
+        raw = {
+            'id': '99',
+            'name': 'Flow with unknown task variant',
+            'description': '',
+            'version': 1,
+            'isDisabled': False,
+            'isDeleted': False,
+            'configuration': {
+                'phases': [{'id': 'p1', 'name': 'Phase 1', 'next': [{'id': 't1', 'goto': None}]}],
+                'tasks': [
+                    {
+                        'id': 'task-good',
+                        'name': 'good',
+                        'phase': 'p1',
+                        'task': {'type': 'job', 'componentId': 'keboola.ex-aws-s3', 'mode': 'run'},
+                    },
+                    {
+                        'id': 'task-bad',
+                        'name': 'bad',
+                        'phase': 'p1',
+                        'task': {'type': 'unknown-future-variant', 'foo': 'bar'},
+                    },
+                ],
+            },
+            'metadata': [],
+            'created': '2026-01-01T00:00:00+0000',
+        }
+        api_model = APIFlowResponse.model_validate(raw)
+        with caplog.at_level('WARNING'):
+            flow = Flow.from_api_response(api_config=api_model, flow_component_id=CONDITIONAL_FLOW_COMPONENT_ID)
+
+        assert isinstance(flow.configuration, ConditionalFlowConfiguration)
+        assert len(flow.configuration.tasks) == 2
+        good, bad = flow.configuration.tasks
+        assert isinstance(good.task, JobTaskConfiguration)
+        # Bad task survives as raw passthrough; agent still sees the entry instead of nothing.
+        assert bad.id == 'task-bad'
+        assert any('failed strict validation' in m for m in caplog.messages)
+
+    def test_unknown_task_type_still_strict_in_write_path(self):
+        """Write paths (`utils.get_flow_configuration`) must remain strict to reject agent garbage.
+
+        The fallback is intentionally scoped to `Flow.from_api_response` (the READ path). Agents
+        constructing flows should still get loud failures so they can correct themselves.
+        """
+        from keboola_mcp_server.tools.flow.utils import get_flow_configuration
+
+        with pytest.raises(ValidationError):
+            get_flow_configuration(
+                phases=[{'id': 'p1', 'name': 'Phase 1', 'next': [{'id': 't1', 'goto': None}]}],
+                tasks=[
+                    {
+                        'id': 'task-bad',
+                        'name': 'bad',
+                        'phase': 'p1',
+                        'task': {'type': 'unknown-future-variant'},
+                    }
+                ],
+                flow_type=CONDITIONAL_FLOW_COMPONENT_ID,
+            )

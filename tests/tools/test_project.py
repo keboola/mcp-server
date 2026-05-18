@@ -152,6 +152,7 @@ async def test_get_project_info(
     keboola_client.storage_client.branches_list = mocker.AsyncMock(return_value=[_DEFAULT_BRANCH, _DEV_BRANCH])
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
+    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=789)
 
     project_id = 'proj-123'
     base_url = 'https://connection.test.keboola.com'
@@ -171,6 +172,7 @@ async def test_get_project_info(
     assert result.organization_id == 'org-456'
     assert result.project_description == 'A test project.'
     assert result.sql_dialect == sql_dialect
+    assert result.workspace_id == 789
     assert result.links == links
     assert result.user_role == expected_user_role
     assert expected_fqn_example in result.llm_instruction
