@@ -200,7 +200,7 @@ class KeboolaClient:
         )
         self._metastore_client = MetastoreClient.create(
             root_url=metastore_api_url,
-            token=self._token,
+            token=bearer_or_sapi_token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
