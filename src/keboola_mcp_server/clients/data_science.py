@@ -159,6 +159,13 @@ class CodeDataAppConfig(BaseModel):
             'DSAPI apply its default behavior for python-js apps.'
         ),
     )
+    storage: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            'Optional Storage input/output mappings (validated against the storage JSON schema). '
+            'Omit when the app does not need Storage I/O.'
+        ),
+    )
 
 
 class AppSshKeyResponse(BaseModel):

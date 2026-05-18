@@ -25,6 +25,7 @@ from keboola_mcp_server.tools.components.utils import (
     set_cfg_update_metadata,
 )
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
+from keboola_mcp_server.tools.validation import ValidationContext, validate_storage_configuration_against_schema
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -587,6 +588,20 @@ async def modify_python_js_data_app(
             description='Number of seconds after which the running data app is automatically suspended.',
         ),
     ] = 900,
+    storage: Annotated[
+        Optional[dict[str, Any]],
+        Field(
+            description=(
+                'Complete storage configuration for the data app (input/output table mappings). '
+                'Validated against the storage JSON schema. Replaces the ENTIRE storage block when '
+                'updating an existing app. For data apps with Storage Access, declare output tables '
+                'with `unload_strategy: "direct-grant"` (in that case `source` is not required and '
+                'the workspace is granted direct SELECT/INSERT/UPDATE/DELETE/TRUNCATE on the destination '
+                'Storage table). Leave unset (None) to preserve the existing storage configuration; '
+                'pass an empty dict to explicitly clear it.'
+            ),
+        ),
+    ] = None,
     folder: Annotated[
         Optional[str],
         Field(description=folder_field_description('data app', 'data apps')),
@@ -676,6 +691,8 @@ async def modify_python_js_data_app(
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
+    validated_storage = _validate_data_app_storage(storage, configuration_id=configuration_id or None)
+
     secrets = _get_python_js_secrets(
         branch_id=str(await workspace_manager.get_branch_id()),
         storage_token=client.token,
@@ -691,6 +708,7 @@ async def modify_python_js_data_app(
             auto_suspend_after_seconds=auto_suspend_after_seconds,
             authentication_type=authentication_type,
             secrets=secrets,
+            storage=validated_storage,
         )
         await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
@@ -753,6 +771,7 @@ async def modify_python_js_data_app(
                 workspace=CodeDataAppConfig.Runtime.Workspace(enabled=True),
             ),
             authorization=authorization_model,
+            storage=validated_storage,
         )
         data_app_resp = await client.data_science_client.create_data_app(
             name=name,
@@ -866,12 +885,45 @@ async def register_python_js_data_app_ssh_key(
     )
 
 
+def _validate_data_app_storage(
+    storage: Optional[dict[str, Any]],
+    *,
+    configuration_id: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Validate a caller-provided storage block for a data app.
+
+    Returns the validated `storage` dict, or None when no storage was provided (caller
+    should preserve the existing storage configuration).
+
+    The storage component-type rules in `validate_root_storage_configuration` (writer / SQL
+    transformation special cases) don't apply to data apps — we just run the JSON-schema check.
+    """
+    if storage is None:
+        return None
+    # Accept both raw `storage` dict and pre-wrapped {'storage': storage}, mirroring the
+    # behavior of validate_root_storage_configuration.
+    storage_cfg = cast(dict[str, Any], storage.get('storage', storage)) if storage else {}
+    normalized = cast(dict[str, Any], {'storage': storage_cfg})
+    validation_context = ValidationContext(
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id=configuration_id,
+        scope='storage',
+    )
+    validated = validate_storage_configuration_against_schema(
+        normalized,
+        initial_message='The "storage" field is not valid.',
+        validation_context=validation_context,
+    )
+    return cast(dict[str, Any], validated['storage'])
+
+
 def _update_existing_code_data_app_config(
     existing_config: Mapping[str, Any],
     image_version: Optional[str],
     auto_suspend_after_seconds: int,
     authentication_type: AuthenticationType = 'default',
     secrets: Optional[dict[str, Any]] = None,
+    storage: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Apply requested updates to the existing python-js data app storage configuration.
 
@@ -880,6 +932,8 @@ def _update_existing_code_data_app_config(
     setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it.
     `secrets` are merged into the existing `parameters.dataApp.secrets` map without overwriting
     keys that are already present (mirrors the Streamlit update path).
+    `storage` replaces the entire `storage` block when provided (None preserves the existing one;
+    an empty dict is an explicit wipe).
     """
     new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
     new_config.setdefault('parameters', {})
@@ -897,6 +951,8 @@ def _update_existing_code_data_app_config(
             if key not in updated_secrets:
                 updated_secrets[key] = value
         data_app['secrets'] = updated_secrets
+    if storage is not None:
+        new_config['storage'] = storage
     return new_config
 
 

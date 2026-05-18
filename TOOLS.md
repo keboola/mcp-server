@@ -1989,6 +1989,19 @@ metadata. Source code changes are pushed via `git push` to the repo URL.
       "description": "Number of seconds after which the running data app is automatically suspended.",
       "type": "integer"
     },
+    "storage": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Complete storage configuration for the data app (input/output table mappings). Validated against the storage JSON schema. Replaces the ENTIRE storage block when updating an existing app. For data apps with Storage Access, declare output tables with `unload_strategy: \"direct-grant\"` (in that case `source` is not required and the workspace is granted direct SELECT/INSERT/UPDATE/DELETE/TRUNCATE on the destination Storage table). Leave unset (None) to preserve the existing storage configuration; pass an empty dict to explicitly clear it."
+    },
     "folder": {
       "anyOf": [
         {

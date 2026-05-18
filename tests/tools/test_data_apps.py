@@ -1055,6 +1055,131 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     }
 
 
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_passes_storage_through(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """Create path forwards a caller-supplied `storage` block (with direct-grant) into the DSAPI payload."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    app_response = _make_python_js_data_app_response()
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(url='git@managed.repo:org/app.git')
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    storage = {
+        'output': {
+            'tables': [
+                {'destination': 'in.c-ex-generic-v2.earthquake_events', 'unload_strategy': 'direct-grant'},
+            ],
+        },
+    }
+
+    _ = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='My App',
+        description='desc',
+        slug='my-app',
+        storage=storage,
+    )
+
+    serialized = keboola_client.data_science_client.create_data_app.await_args.kwargs['configuration'].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert serialized['storage'] == storage
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_update_replaces_storage(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """Update path: a non-empty `storage` argument replaces the entire stored storage block."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    existing_data_app = DataApp(
+        name='Old',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='2',
+        type='python-js',
+        configuration={
+            'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'old-slug'}},
+            'runtime': {'image': {'version': 'old-version'}},
+            'storage': {'input': {'tables': [{'source': 'in.c-main.stale', 'destination': 'stale.csv'}]}},
+        },
+        state='stopped',
+    )
+    updated_data_app = existing_data_app.model_copy(update={'config_version': '3', 'name': 'New'})
+
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(side_effect=[existing_data_app, updated_data_app]),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(url='git@managed.repo:org/app.git')
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    new_storage = {
+        'output': {
+            'tables': [
+                {'destination': 'in.c-ex-generic-v2.earthquake_events', 'unload_strategy': 'direct-grant'},
+            ],
+        },
+    }
+
+    await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='New',
+        description='new desc',
+        configuration_id='cfg-1',
+        auto_suspend_after_seconds=600,
+        storage=new_storage,
+    )
+
+    patch_kwargs = keboola_client.storage_client.configuration_update.await_args.kwargs
+    assert patch_kwargs['configuration']['storage'] == new_storage
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_storage_validation_rejects_missing_source(
+    mcp_context_client: Context,
+) -> None:
+    """An output table with neither `source` nor `unload_strategy='direct-grant'` must be rejected.
+
+    The `@tool_errors()` decorator wraps the underlying RecoverableValidationError into a
+    fastmcp ToolError before it surfaces to the caller.
+    """
+    from fastmcp.exceptions import ToolError
+
+    with pytest.raises(ToolError, match="'source' is a required property"):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='My App',
+            description='desc',
+            slug='my-app',
+            storage={'output': {'tables': [{'destination': 'in.c-ex.foo'}]}},
+        )
+
+
 def test_update_existing_code_data_app_config_keeps_image_when_not_provided() -> None:
     existing = {
         'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
@@ -1178,6 +1303,40 @@ def test_update_existing_code_data_app_config_no_auth_overwrites() -> None:
     assert new['authorization']['app_proxy']['auth_rules'] == [
         {'type': 'pathPrefix', 'value': '/', 'auth_required': False}
     ]
+
+
+@pytest.mark.parametrize(
+    ('passed_storage', 'expected_storage_key_present', 'expected_storage'),
+    [
+        # None preserves the existing storage block untouched
+        (None, True, {'input': {'tables': [{'source': 'in.c-main.kept', 'destination': 'kept.csv'}]}}),
+        # Empty dict is an explicit wipe
+        ({}, True, {}),
+        # Non-empty dict replaces the existing block wholesale
+        (
+            {'output': {'tables': [{'destination': 'in.c-main.new', 'unload_strategy': 'direct-grant'}]}},
+            True,
+            {'output': {'tables': [{'destination': 'in.c-main.new', 'unload_strategy': 'direct-grant'}]}},
+        ),
+    ],
+)
+def test_update_existing_code_data_app_config_storage_semantics(
+    passed_storage, expected_storage_key_present, expected_storage
+) -> None:
+    """`storage=None` preserves; `storage={}` wipes; a non-empty dict replaces wholesale."""
+    existing = {
+        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
+        'runtime': {'image': {'version': 'v1'}},
+        'storage': {'input': {'tables': [{'source': 'in.c-main.kept', 'destination': 'kept.csv'}]}},
+    }
+    new = _update_existing_code_data_app_config(
+        existing,
+        image_version='v1',
+        auto_suspend_after_seconds=900,
+        storage=passed_storage,
+    )
+    assert ('storage' in new) is expected_storage_key_present
+    assert new['storage'] == expected_storage
 
 
 # ===== Tests for deploy_data_app with mode and python-js =====
