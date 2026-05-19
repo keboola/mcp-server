@@ -146,7 +146,7 @@ EXPECTED:
 
 
 ══════════════════════════════════════════════════════════════════════════════
-SCENARIO 8 — Re-add variables to same transformation (reuse existing vars config)
+SCENARIO 8 — Re-add variables to same transformation (creates a fresh vars config)
 ══════════════════════════════════════════════════════════════════════════════
 PROMPT:
   Update "Variables Test Transformation": add variables again:

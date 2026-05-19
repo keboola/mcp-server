@@ -70,7 +70,7 @@ from keboola_mcp_server.tools.components.utils import (
     SNOWFLAKE_TRANSFORMATION_ID,
     VARIABLES_COMPONENT_ID,
     _apply_vars_to_parent_cfg,
-    _delete_linked_vars_config,
+    _resolve_linked_vars_config_id,
     add_ids,
     apply_configuration_variables,
     apply_folder_metadata,
@@ -866,8 +866,16 @@ async def update_sql_transformation(
     if delete:
         LOG.info(f'Deleting transformation "{configuration_id}" for component "{sql_transformation_id}".')
         detail = await client.storage_client.configuration_detail(sql_transformation_id, configuration_id)
-        await _delete_linked_vars_config(client, sql_transformation_id, configuration_id, parent=detail)
+        vars_id_to_delete = await _resolve_linked_vars_config_id(
+            client, sql_transformation_id, configuration_id, parent=detail
+        )
         await client.storage_client.configuration_delete(sql_transformation_id, configuration_id, skip_trash=True)
+        if vars_id_to_delete is not None:
+            await client.storage_client.configuration_delete(
+                component_id=VARIABLES_COMPONENT_ID,
+                configuration_id=vars_id_to_delete,
+                skip_trash=True,
+            )
         LOG.info(f'Deleted transformation "{configuration_id}" for component "{sql_transformation_id}".')
         return ConfigToolOutput(
             component_id=sql_transformation_id,
@@ -1532,8 +1540,16 @@ async def update_config(
         check_suitable('update_config', component_id)
         LOG.info(f'Deleting configuration "{configuration_id}" for component "{component_id}".')
         detail = await client.storage_client.configuration_detail(component_id, configuration_id)
-        await _delete_linked_vars_config(client, component_id, configuration_id, parent=detail)
+        vars_id_to_delete = await _resolve_linked_vars_config_id(
+            client, component_id, configuration_id, parent=detail
+        )
         await client.storage_client.configuration_delete(component_id, configuration_id, skip_trash=True)
+        if vars_id_to_delete is not None:
+            await client.storage_client.configuration_delete(
+                component_id=VARIABLES_COMPONENT_ID,
+                configuration_id=vars_id_to_delete,
+                skip_trash=True,
+            )
         LOG.info(f'Deleted configuration "{configuration_id}" for component "{component_id}".')
         return ConfigToolOutput(
             component_id=component_id,
