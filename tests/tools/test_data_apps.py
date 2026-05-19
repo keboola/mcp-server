@@ -907,7 +907,7 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
     assert serialized['parameters']['autoSuspendAfterSeconds'] == 300
     assert serialized['parameters']['dataApp']['slug'] == 'my-app'
-    assert serialized['runtime']['image']['version'] == 'dev-PAT-1772.4'
+    assert serialized['runtime']['image']['version'] == '1.6.0'
     # Created with the auto-workspace flag so the platform provisions a per-app workspace
     # and sets WORKSPACE_ID itself.
     assert serialized['runtime']['workspace'] == {'enabled': True}
@@ -1036,7 +1036,7 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     new_cfg = patch_kwargs['configuration']
     assert new_cfg['parameters']['autoSuspendAfterSeconds'] == 600
     # image version is always forced to the hardcoded value
-    assert new_cfg['runtime']['image']['version'] == 'dev-PAT-1772.4'
+    assert new_cfg['runtime']['image']['version'] == '1.6.0'
     # slug must remain untouched (immutable)
     assert new_cfg['parameters']['dataApp']['slug'] == 'old-slug'
     # Update does NOT backfill `runtime.workspace` — only the create path sets it.
