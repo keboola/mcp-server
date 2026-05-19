@@ -2634,6 +2634,10 @@ async def test_update_sql_transformation_delete(
     if has_linked_vars:
         assert len(vars_delete_calls) == 1
         assert vars_delete_calls[0].kwargs.get('configuration_id') == _VARS_CONFIG_ID
+        # Parent must be deleted before the vars config so a parent-delete failure leaves
+        # the transformation pointing at a still-valid variables_id.
+        delete_cids = [_cid(c) for c in all_deletes]
+        assert delete_cids.index(SNOWFLAKE_TRANSFORMATION_ID) < delete_cids.index(VARIABLES_COMPONENT_ID)
     else:
         assert not vars_delete_calls
 
@@ -2691,5 +2695,9 @@ async def test_update_config_delete(
     if has_linked_vars:
         assert len(vars_delete_calls) == 1
         assert vars_delete_calls[0].kwargs.get('configuration_id') == _VARS_CONFIG_ID
+        # Parent must be deleted before the vars config so a parent-delete failure leaves
+        # the configuration pointing at a still-valid variables_id.
+        delete_cids = [_cid(c) for c in all_deletes]
+        assert delete_cids.index(component_id) < delete_cids.index(VARIABLES_COMPONENT_ID)
     else:
         assert not vars_delete_calls

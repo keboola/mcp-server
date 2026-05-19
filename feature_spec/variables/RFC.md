@@ -93,7 +93,11 @@ Existing vars config resolution: the function first checks `parent_cfg['variable
 1. Resolve existing vars config (by `variables_id`, then by name).
 2. Create (POST) or update (PUT) it with the new definitions.
 3. If any `default_value` is present → create/update a `"Default Values"` row; otherwise clear it.
-4. Set `variables_id` (and `variables_values_id` if a Default Values row exists) on `parent_cfg`.
+4. Set `variables_id` on `parent_cfg`. Set `variables_values_id` only if at least one variable
+   has a non-`None` `default_value` (i.e. the Default Values row has content); otherwise drop
+   `variables_values_id` from `parent_cfg`. The Default Values row itself is kept (cleared to
+   `values=[]`) when defaults are removed, but the parent link is unset to reflect "no defaults
+   are in use".
 5. Return `(True, None)`.
 
 **Clear (empty list):**
