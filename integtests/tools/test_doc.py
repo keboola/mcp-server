@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from fastmcp import Context
 
@@ -5,7 +6,7 @@ from keboola_mcp_server.tools.doc import DocsAnswer, docs_query
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=False, reason='AI service may exceed read timeout in CI')
+@pytest.mark.xfail(raises=httpx.ReadTimeout, strict=False, reason='AI service may exceed read timeout in CI')
 async def test_docs_query(mcp_context: Context) -> None:
     """Tests that `docs_query` returns a valid `DocsAnswer` with text and source URLs."""
     query = 'What is Keboola Connection?'

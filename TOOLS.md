@@ -296,7 +296,7 @@ EXAMPLES:
         }
       ],
       "default": null,
-      "description": "Variable definitions to attach to this configuration. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value."
+      "description": "Variable definitions to attach to this configuration. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value. On creation, both `None` (omitted) and `[]` (empty list) mean \"do not attach variables\" \u2014 no `keboola.variables` config is created. To remove variables from an existing configuration, use `update_config` with `variables=[]`."
     }
   },
   "required": [
@@ -450,7 +450,7 @@ EXAMPLES:
         }
       ],
       "default": null,
-      "description": "Variable definitions to attach to this transformation. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value."
+      "description": "Variable definitions to attach to this transformation. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value. On creation, both `None` (omitted) and `[]` (empty list) mean \"do not attach variables\" \u2014 no `keboola.variables` config is created. To remove variables from an existing transformation, use `update_sql_transformation` with `variables=[]`."
     }
   },
   "required": [
