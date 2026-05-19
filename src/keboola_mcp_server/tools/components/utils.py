@@ -541,12 +541,16 @@ async def _delete_linked_vars_config(
     client: KeboolaClient,
     component_id: str,
     config_id: str,
+    parent: dict[str, Any] | None = None,
 ) -> None:
     """Deletes the keboola.variables config linked to a parent config without updating the parent.
 
-    Used when the parent itself is about to be deleted — no parent update is needed.
+    Used when the parent itself is about to be deleted — no parent update is needed. Callers that
+    have already fetched the parent detail should pass it via ``parent`` to avoid a redundant
+    ``configuration_detail`` round-trip.
     """
-    parent = await client.storage_client.configuration_detail(component_id, config_id)
+    if parent is None:
+        parent = await client.storage_client.configuration_detail(component_id, config_id)
     parent_cfg = dict(parent.get('configuration') or {})
     existing = await _find_vars_config(client, component_id, config_id, parent_cfg.get('variables_id'))
     if existing is not None:

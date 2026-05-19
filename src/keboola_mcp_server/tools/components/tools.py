@@ -428,7 +428,10 @@ async def create_sql_transformation(
         Field(
             description=(
                 'Variable definitions to attach to this transformation. '
-                'Each entry specifies a name, type ("string" or "vault"), and an optional default value.'
+                'Each entry specifies a name, type ("string" or "vault"), and an optional default value. '
+                'On creation, both `None` (omitted) and `[]` (empty list) mean "do not attach variables" — '
+                'no `keboola.variables` config is created. To remove variables from an existing transformation, '
+                'use `update_sql_transformation` with `variables=[]`.'
             ),
         ),
     ] = None,
@@ -863,7 +866,7 @@ async def update_sql_transformation(
     if delete:
         LOG.info(f'Deleting transformation "{configuration_id}" for component "{sql_transformation_id}".')
         detail = await client.storage_client.configuration_detail(sql_transformation_id, configuration_id)
-        await _delete_linked_vars_config(client, sql_transformation_id, configuration_id)
+        await _delete_linked_vars_config(client, sql_transformation_id, configuration_id, parent=detail)
         await client.storage_client.configuration_delete(sql_transformation_id, configuration_id, skip_trash=True)
         LOG.info(f'Deleted transformation "{configuration_id}" for component "{sql_transformation_id}".')
         return ConfigToolOutput(
@@ -1119,7 +1122,10 @@ async def create_config(
         Field(
             description=(
                 'Variable definitions to attach to this configuration. '
-                'Each entry specifies a name, type ("string" or "vault"), and an optional default value.'
+                'Each entry specifies a name, type ("string" or "vault"), and an optional default value. '
+                'On creation, both `None` (omitted) and `[]` (empty list) mean "do not attach variables" — '
+                'no `keboola.variables` config is created. To remove variables from an existing configuration, '
+                'use `update_config` with `variables=[]`.'
             ),
         ),
     ] = None,
@@ -1526,7 +1532,7 @@ async def update_config(
         check_suitable('update_config', component_id)
         LOG.info(f'Deleting configuration "{configuration_id}" for component "{component_id}".')
         detail = await client.storage_client.configuration_detail(component_id, configuration_id)
-        await _delete_linked_vars_config(client, component_id, configuration_id)
+        await _delete_linked_vars_config(client, component_id, configuration_id, parent=detail)
         await client.storage_client.configuration_delete(component_id, configuration_id, skip_trash=True)
         LOG.info(f'Deleted configuration "{configuration_id}" for component "{component_id}".')
         return ConfigToolOutput(
