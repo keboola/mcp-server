@@ -377,7 +377,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                 not in {
                     'modify_streamlit_data_app',
                     'modify_python_js_data_app',
-                    'register_python_js_data_app_ssh_key',
+                    'create_python_js_data_app_git_credential',
                     'get_data_apps',
                     'deploy_data_app',
                 }
@@ -449,7 +449,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         if tool.name in (
             'modify_streamlit_data_app',
             'modify_python_js_data_app',
-            'register_python_js_data_app_ssh_key',
+            'create_python_js_data_app_git_credential',
             'get_data_apps',
             'deploy_data_app',
         ):

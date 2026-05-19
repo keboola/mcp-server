@@ -7,8 +7,8 @@ import pytest
 
 from keboola_mcp_server.clients.data_science import (
     AppGitRepoResponse,
-    AppSshKeyResponse,
     CodeDataAppConfig,
+    CreatedGitCredentialResponse,
     DataScienceClient,
 )
 
@@ -184,65 +184,52 @@ async def test_deploy_data_app_payload_with_mode_and_optional_config_version(
     client.patch.assert_awaited_once_with(endpoint='apps/app-123', data=expected_payload)
 
 
+@pytest.mark.parametrize('permissions', ['readWrite', 'readOnly'])
 @pytest.mark.asyncio
-async def test_register_app_ssh_key_posts_to_expected_endpoint() -> None:
+async def test_create_app_git_credential_posts_to_expected_endpoint(permissions: str) -> None:
     client = DataScienceClient.create('https://api.example.com', token=None)
     client.post = AsyncMock(  # type: ignore[assignment]
         return_value={
-            'id': 'key-1',
-            'publicKey': 'ssh-ed25519 AAAA...',
-            'permissions': 'readWrite',
+            'id': 'cred-1',
+            'type': 'http_token',
+            'name': '',
+            'permissions': permissions,
+            'ownerAdminId': 'admin-1',
             'createdAt': '2026-05-13T00:00:00Z',
+            'secret': 'one-time-token-xyz',
         }
     )
 
-    result = await client.register_app_ssh_key('app-123', 'ssh-ed25519 AAAA...')
+    result = await client.create_app_git_credential('app-123', permissions=permissions)
 
-    assert isinstance(result, AppSshKeyResponse)
-    assert result.id == 'key-1'
-    assert result.permissions == 'readWrite'
+    assert isinstance(result, CreatedGitCredentialResponse)
+    assert result.id == 'cred-1'
+    assert result.type == 'http_token'
+    assert result.permissions == permissions
+    assert result.secret == 'one-time-token-xyz'
     client.post.assert_awaited_once_with(
-        endpoint='apps/app-123/git-repo/ssh-keys',
-        data={'publicKey': 'ssh-ed25519 AAAA...', 'permissions': 'readWrite'},
+        endpoint='apps/app-123/git-repo/credentials',
+        data={'type': 'http_token', 'permissions': permissions},
     )
 
 
 @pytest.mark.asyncio
-async def test_register_app_ssh_key_supports_readonly_permission() -> None:
+async def test_get_app_git_repo_returns_urls() -> None:
     client = DataScienceClient.create('https://api.example.com', token=None)
-    client.post = AsyncMock(  # type: ignore[assignment]
-        return_value={'id': 'k', 'publicKey': 'pk', 'permissions': 'readOnly'}
+    client.get = AsyncMock(  # type: ignore[assignment]
+        return_value={
+            'sshUrl': 'git@managed.repo:org/app.git',
+            'httpsUrl': 'https://managed.repo/org/app.git',
+            'isManagedGitRepo': True,
+        }
     )
-
-    _ = await client.register_app_ssh_key('app-1', 'pk', permissions='readOnly')
-
-    sent = client.post.await_args.kwargs['data']
-    assert sent['permissions'] == 'readOnly'
-
-
-@pytest.mark.asyncio
-async def test_register_app_ssh_key_accepts_response_without_public_key() -> None:
-    """The real DSAPI registration endpoint only returns {id, permissions} — public_key must be optional."""
-    client = DataScienceClient.create('https://api.example.com', token=None)
-    client.post = AsyncMock(return_value={'id': '2', 'permissions': 'readWrite'})  # type: ignore[assignment]
-
-    result = await client.register_app_ssh_key('app-1', 'ssh-ed25519 AAAA...')
-
-    assert isinstance(result, AppSshKeyResponse)
-    assert result.id == '2'
-    assert result.permissions == 'readWrite'
-    assert result.public_key is None
-
-
-@pytest.mark.asyncio
-async def test_get_app_git_repo_returns_url() -> None:
-    client = DataScienceClient.create('https://api.example.com', token=None)
-    client.get = AsyncMock(return_value={'url': 'git@managed.repo:org/app.git'})  # type: ignore[assignment]
 
     result = await client.get_app_git_repo('app-123')
 
     assert isinstance(result, AppGitRepoResponse)
-    assert result.url == 'git@managed.repo:org/app.git'
+    assert result.ssh_url == 'git@managed.repo:org/app.git'
+    assert result.https_url == 'https://managed.repo/org/app.git'
+    assert result.is_managed_git_repo is True
     client.get.assert_awaited_once_with(endpoint='apps/app-123/git-repo')
 
 

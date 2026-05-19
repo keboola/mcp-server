@@ -800,14 +800,14 @@ async def test_modify_streamlit_data_app_folder(
 
 from keboola_mcp_server.clients.data_science import (  # noqa: E402
     AppGitRepoResponse,
-    AppSshKeyResponse,
+    CreatedGitCredentialResponse,
 )
 from keboola_mcp_server.tools.data_apps import (  # noqa: E402
+    CreatedGitCredentialOutput,
     ModifiedPythonJsDataAppOutput,
-    RegisteredSshKeyOutput,
     _update_existing_code_data_app_config,
+    create_python_js_data_app_git_credential,
     modify_python_js_data_app,
-    register_python_js_data_app_ssh_key,
 )
 
 
@@ -879,8 +879,8 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     mcp_context_client: Context,
     workspace_manager,
 ) -> None:
-    """Create path: POST /apps with type=python-js + useManagedGitRepo, fetch repo URL. SSH-key
-    registration is now a separate tool — not exercised here."""
+    """Create path: POST /apps with type=python-js + useManagedGitRepo, fetch repo URL. Git
+    credential creation is now a separate tool — not exercised here."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
 
@@ -889,7 +889,11 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     app_response = _make_python_js_data_app_response()
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
     keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
-        return_value=AppGitRepoResponse(url='git@managed.repo:org/app.git')
+        return_value=AppGitRepoResponse(
+            ssh_url='git@managed.repo:org/app.git',
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
     )
 
     # avoid hitting Storage API for metadata helpers
@@ -906,8 +910,8 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
 
     assert isinstance(result, ModifiedPythonJsDataAppOutput)
     assert result.response == 'created'
-    assert result.repo_url == 'git@managed.repo:org/app.git'
-    assert result.data_app.repo_url == 'git@managed.repo:org/app.git'
+    assert result.repo_url == 'https://managed.repo/org/app.git'
+    assert result.data_app.repo_url == 'https://managed.repo/org/app.git'
     assert result.data_app.type == 'python-js'
 
     # Verify the create payload was python-js + managed repo
@@ -962,7 +966,11 @@ async def test_modify_python_js_data_app_create_authentication_type(
     app_response = _make_python_js_data_app_response()
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
     keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
-        return_value=AppGitRepoResponse(url='git@managed.repo:org/app.git')
+        return_value=AppGitRepoResponse(
+            ssh_url='git@managed.repo:org/app.git',
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
@@ -1021,7 +1029,11 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
-        return_value=AppGitRepoResponse(url='git@managed.repo:org/app.git')
+        return_value=AppGitRepoResponse(
+            ssh_url='git@managed.repo:org/app.git',
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
@@ -1070,7 +1082,11 @@ async def test_modify_python_js_data_app_create_passes_storage_through(
     app_response = _make_python_js_data_app_response()
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
     keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
-        return_value=AppGitRepoResponse(url='git@managed.repo:org/app.git')
+        return_value=AppGitRepoResponse(
+            ssh_url='git@managed.repo:org/app.git',
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
@@ -1133,7 +1149,11 @@ async def test_modify_python_js_data_app_update_replaces_storage(
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
-        return_value=AppGitRepoResponse(url='git@managed.repo:org/app.git')
+        return_value=AppGitRepoResponse(
+            ssh_url='git@managed.repo:org/app.git',
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
@@ -1431,7 +1451,7 @@ async def test_modify_python_js_data_app_create_with_existing_repo_url_skips_pro
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
 
-    existing_repo = 'git@managed.repo:org/shared.git'
+    existing_repo = 'https://managed.repo/org/shared.git'
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
         name='Prod App',
@@ -1460,7 +1480,7 @@ async def test_modify_python_js_data_app_create_with_existing_repo_url_skips_pro
             {
                 'name': 'A',
                 'description': '',
-                'existing_repo_url': 'git@managed:org/r.git',
+                'existing_repo_url': 'https://managed/org/r.git',
             },
             'slug is required',
         ),
@@ -1488,7 +1508,7 @@ async def test_modify_python_js_data_app_update_rejects_existing_repo_url(
             name='A',
             description='',
             configuration_id='cfg-1',
-            existing_repo_url='git@managed:org/r.git',
+            existing_repo_url='https://managed/org/r.git',
         )
 
 
@@ -1579,15 +1599,16 @@ async def test_deploy_data_app_streamlit_silently_ignores_branch_param(
     )
 
 
-# ===== Tests for register_python_js_data_app_ssh_key =====
+# ===== Tests for create_python_js_data_app_git_credential =====
 
 
 @pytest.mark.asyncio
-async def test_register_python_js_data_app_ssh_key_happy_path(
+async def test_create_python_js_data_app_git_credential_happy_path(
     mocker,
     mcp_context_client: Context,
 ) -> None:
-    """Resolves configuration_id → data_app_id via _fetch_data_app, then registers the SSH key."""
+    """Resolves configuration_id → data_app_id, mints an http_token credential, and embeds the
+    one-time secret into a ready-to-use HTTPS clone URL."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
 
@@ -1604,33 +1625,93 @@ async def test_register_python_js_data_app_ssh_key_happy_path(
         state='running',
     )
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=pyjs_app))
-    # Real DSAPI registration response omits publicKey; the tool echoes back the caller-supplied key.
-    keboola_client.data_science_client.register_app_ssh_key = mocker.AsyncMock(
-        return_value=AppSshKeyResponse(id='key-99', permissions='readWrite')
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(
+            ssh_url='git@managed.repo:org/app.git',
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
+    )
+    keboola_client.data_science_client.create_app_git_credential = mocker.AsyncMock(
+        return_value=CreatedGitCredentialResponse(
+            id='cred-99',
+            type='http_token',
+            name='',
+            permissions='readWrite',
+            secret='token-xyz',
+        )
     )
 
-    result = await register_python_js_data_app_ssh_key(
+    result = await create_python_js_data_app_git_credential(
         ctx=mcp_context_client,
         configuration_id='cfg-pyjs-1',
-        public_key='ssh-ed25519 ZZZZ',
     )
 
-    assert isinstance(result, RegisteredSshKeyOutput)
-    assert result.response == 'registered'
+    assert isinstance(result, CreatedGitCredentialOutput)
+    assert result.response == 'created'
     assert result.configuration_id == 'cfg-pyjs-1'
     assert result.data_app_id == 'app-pyjs-1'
-    assert result.ssh_key_id == 'key-99'
-    # Echoed from the input, not from the server response (which lacks publicKey).
-    assert result.public_key == 'ssh-ed25519 ZZZZ'
+    assert result.credential_id == 'cred-99'
+    assert result.secret == 'token-xyz'
+    assert result.git_clone_url == 'https://kai:token-xyz@managed.repo/org/app.git'
     assert result.permissions == 'readWrite'
 
-    keboola_client.data_science_client.register_app_ssh_key.assert_awaited_once_with(
-        data_app_id='app-pyjs-1', public_key='ssh-ed25519 ZZZZ'
+    keboola_client.data_science_client.create_app_git_credential.assert_awaited_once_with(
+        data_app_id='app-pyjs-1',
     )
 
 
 @pytest.mark.asyncio
-async def test_register_python_js_data_app_ssh_key_rejects_streamlit_app(
+async def test_create_python_js_data_app_git_credential_url_encodes_secret(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """Secrets containing URL-reserved characters must be percent-encoded in `git_clone_url`."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    pyjs_app = DataApp(
+        name='my-app',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-pyjs-1',
+        data_app_id='app-pyjs-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='python-js',
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'my-app'}}},
+        state='running',
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=pyjs_app))
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(
+            ssh_url=None,
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
+    )
+    keboola_client.data_science_client.create_app_git_credential = mocker.AsyncMock(
+        return_value=CreatedGitCredentialResponse(
+            id='cred-99',
+            type='http_token',
+            name='',
+            permissions='readWrite',
+            secret='ab/cd:ef@gh',
+        )
+    )
+
+    result = await create_python_js_data_app_git_credential(
+        ctx=mcp_context_client,
+        configuration_id='cfg-pyjs-1',
+    )
+
+    # Reserved characters in the secret (/, :, @) must be percent-encoded so the URL parses
+    # back to the original token when git authenticates.
+    assert result.git_clone_url == 'https://kai:ab%2Fcd%3Aef%40gh@managed.repo/org/app.git'
+
+
+@pytest.mark.asyncio
+async def test_create_python_js_data_app_git_credential_rejects_streamlit_app(
     mocker,
     mcp_context_client: Context,
 ) -> None:
@@ -1653,17 +1734,16 @@ async def test_register_python_js_data_app_ssh_key_rejects_streamlit_app(
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=streamlit_app))
 
     with pytest.raises(ValueError, match='only supports python-js data apps'):
-        await register_python_js_data_app_ssh_key(
+        await create_python_js_data_app_git_credential(
             ctx=mcp_context_client,
             configuration_id='cfg-streamlit-1',
-            public_key='ssh-ed25519 NOPE',
         )
 
-    keboola_client.data_science_client.register_app_ssh_key.assert_not_called()
+    keboola_client.data_science_client.create_app_git_credential.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_register_python_js_data_app_ssh_key_invalid_configuration_id(
+async def test_create_python_js_data_app_git_credential_invalid_configuration_id(
     mocker,
     mcp_context_client: Context,
 ) -> None:
@@ -1684,10 +1764,9 @@ async def test_register_python_js_data_app_ssh_key_invalid_configuration_id(
     )
 
     with pytest.raises(ValueError, match=f'Data app tools only support {DATA_APP_COMPONENT_ID} component'):
-        await register_python_js_data_app_ssh_key(
+        await create_python_js_data_app_git_credential(
             ctx=mcp_context_client,
             configuration_id='cfg-bogus',
-            public_key='ssh-ed25519 AAAA',
         )
 
-    keboola_client.data_science_client.register_app_ssh_key.assert_not_called()
+    keboola_client.data_science_client.create_app_git_credential.assert_not_called()
