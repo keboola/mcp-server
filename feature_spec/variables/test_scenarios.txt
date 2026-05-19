@@ -1,0 +1,280 @@
+Variables Feature — Local MCP Test Scenarios
+============================================
+
+These are concrete prompts to type into a Claude AI session connected to the local
+keboola-mcp-server. Run them in order — each scenario builds on or cleans up after
+the previous one. After each prompt, verify the "Expected" state described below it.
+
+SETUP
+-----
+Make sure the local MCP server is running (see CLAUDE.md for .mcp.json setup).
+All storage-side checks use `get_configs` with component_id="keboola.variables".
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 0 — Baseline: no variables configs exist yet
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  List all configurations for component "keboola.variables".
+
+EXPECTED:
+  - Empty list (or only pre-existing vars configs unrelated to our test).
+  - Note down the count — after the test suite this count must be the same.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 1 — Create SQL transformation WITH variables and a default value
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Create a new SQL transformation called "Variables Test Transformation".
+  Description: "Test transformation for variables feature".
+  Add a single SQL code block named "Query" with the query: SELECT '{{env}}' AS environment.
+  Attach two variables to this transformation:
+    - name="env", type="string", default_value="production"
+    - name="api_key", type="vault" (no default value)
+
+EXPECTED:
+  - Tool returns success=True and a version number (this must be the FINAL version
+    after variables were linked, not the version from the initial create call).
+  - A new "keboola.variables" config named
+    "Variables definition for keboola.snowflake-transformation/<new_config_id>"
+    appears when you list keboola.variables configs.
+  - That vars config has configuration.variables = [
+        {name: "env", type: "string"},
+        {name: "api_key", type: "vault"}
+    ]
+  - It has a row named "Default Values" with values=[{name: "env", value: "production"}].
+    (api_key has no default so it must NOT appear in the Default Values row.)
+  - The parent transformation config has variables_id set to the vars config ID.
+
+NOTE: Save the transformation configuration_id for use in later scenarios.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 2 — Inspect variables via get_configs
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Show me all configurations for component "keboola.variables".
+  For the one linked to my "Variables Test Transformation", show me:
+  - The variable definitions (names and types)
+  - The Default Values row content
+
+EXPECTED:
+  - One new vars config compared to baseline (Scenario 0).
+  - Variables: env (string), api_key (vault).
+  - Default Values row: env=production.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 3 — Inspect the parent transformation to confirm variables_id
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Get the configuration detail for my "Variables Test Transformation".
+  Does it have a variables_id field in its configuration JSON?
+  What is the value?
+
+EXPECTED:
+  - The transformation's configuration JSON contains "variables_id": "<vars_config_id>".
+  - The vars_config_id matches the ID of the vars config found in Scenario 2.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 4 — Update variables: replace all (new list, remove vault var)
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Update the "Variables Test Transformation" (use the configuration_id from Scenario 1).
+  Change the variables to:
+    - name="env", type="string", default_value="staging"
+    - name="region", type="string" (no default value)
+  Leave the SQL unchanged.
+
+EXPECTED:
+  - Tool returns success=True with a version that is higher than Scenario 1's version.
+  - The vars config now has variables = [{name: "env"}, {name: "region"}].
+    "api_key" is gone.
+  - Default Values row is UPDATED to values=[{name: "env", value: "staging"}].
+    "region" must NOT appear in Default Values (no default).
+  - The same vars config ID is reused (no duplicate created).
+  - The transformation still has the same variables_id.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 5 — Update variables: remove default from an existing variable
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Update "Variables Test Transformation" again.
+  Change variables to:
+    - name="env", type="string" (NO default value this time)
+    - name="region", type="string" (no default value)
+  Leave everything else unchanged.
+
+EXPECTED:
+  - Tool returns success=True.
+  - The vars config still has variables=[{name: "env"}, {name: "region"}].
+  - The Default Values row now has values=[] (empty — "env" default was cleared).
+    This verifies the fix for the "stale default values" bug: the row is updated
+    to empty rather than left with the old "staging" value.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 6 — Update with variables=None (no-op: leave variables unchanged)
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Update "Variables Test Transformation": change the description to
+  "Updated description, variables must be untouched".
+  Do NOT pass any variables parameter (leave it as None / omit it).
+
+EXPECTED:
+  - Tool returns success=True.
+  - The vars config is UNCHANGED: still has env and region.
+  - No new vars config is created.
+  - variables_id on the parent config is still set.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 7 — Remove all variables (variables=[])
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Update "Variables Test Transformation": remove all variables from it.
+  (Pass an empty variables list.)
+
+EXPECTED:
+  - Tool returns success=True.
+  - The vars config that was linked is DELETED from Storage (keboola.variables).
+  - The transformation config NO LONGER has a variables_id or variables_values_id field.
+  - Listing keboola.variables configs no longer shows this config.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 8 — Re-add variables to same transformation (creates a fresh vars config)
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Update "Variables Test Transformation": add variables again:
+    - name="env", type="string", default_value="dev"
+
+EXPECTED:
+  - Tool returns success=True.
+  - A NEW vars config is created (the previous one was deleted in S7, so there
+    is no existing config to reuse). Its name follows the convention:
+    "Variables definition for keboola.snowflake-transformation/<config_id>".
+  - vars config has variables=[{name: "env", type: "string"}].
+  - Default Values row has values=[{name: "env", value: "dev"}].
+  - The transformation's variables_id and variables_values_id are set again.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 9 — Clean up: remove variables, then delete transformation
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Update "Variables Test Transformation": remove all variables (empty list).
+  Then delete the "Variables Test Transformation" configuration.
+
+EXPECTED:
+  - After the update: variables_id and variables_values_id gone from the parent
+    config, vars config is DELETED from Storage.
+  - After delete: the transformation is gone.
+  - The keboola.variables count returns to baseline (no orphans left).
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 10 — Generic config (non-transformation): create_config with variables
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Create a new configuration for component "keboola.ex-generic-v2".
+  Name: "Variables Test Generic Config".
+  Description: "Testing variables on a generic config".
+  Parameters: {"baseUrl": "https://example.com"}.
+  Attach variables:
+    - name="token", type="vault" (no default — secrets never have defaults)
+    - name="page_size", type="string", default_value="100"
+
+EXPECTED:
+  - Tool returns success=True.
+  - A keboola.variables config named
+    "Variables definition for keboola.ex-generic-v2/<config_id>" is created.
+  - Variables: token (vault), page_size (string).
+  - Default Values row: [{name: "page_size", value: "100"}].
+    token must NOT appear in Default Values.
+  - The generic config's configuration JSON has variables_id set.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 11 — Generic config: update_config removes variables
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Update "Variables Test Generic Config": remove all variables.
+  Then delete the configuration.
+
+EXPECTED:
+  - After update: variables_id removed from the config, vars config is DELETED
+    from Storage (same behaviour as transformations — see Known Limitations #4).
+  - After delete: config is gone.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 12 — Edge case: clear variables on config that never had any
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  Create a new SQL transformation called "No-Vars Transformation".
+  A single block "Block" with query: SELECT 1 AS x.
+  Do NOT attach any variables.
+  Then immediately update it: pass an empty variables list (variables=[]).
+
+EXPECTED:
+  - Create returns success=True with no variables_id in the parent config.
+  - Update with variables=[] returns success=True.
+  - No keboola.variables config is created (nothing to clear).
+  - The tool does NOT error (idempotent no-op when no vars config exists).
+  Clean up: delete this transformation.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 13 — Edge case: create_sql_transformation variables=None vs variables=[]
+══════════════════════════════════════════════════════════════════════════════
+PROMPT (two separate creates):
+  A) Create transformation "Test-None-Vars", block "B" with SELECT 1, no variables parameter.
+  B) Create transformation "Test-Empty-Vars", block "B" with SELECT 1, variables=[].
+
+EXPECTED for both:
+  - success=True.
+  - No keboola.variables config created for either.
+  - No variables_id on either transformation.
+  Both are equivalent: None and [] both mean "skip" on create.
+  Clean up: delete both transformations.
+
+
+══════════════════════════════════════════════════════════════════════════════
+SCENARIO 14 — Final baseline check
+══════════════════════════════════════════════════════════════════════════════
+PROMPT:
+  List all configurations for component "keboola.variables".
+
+EXPECTED:
+  - Count is the same as Scenario 0 (all vars configs from this test run were
+    deleted when variables=[] was applied in S7, S9, S11).
+  - No test-related transformations or generic configs remain.
+
+
+══════════════════════════════════════════════════════════════════════════════
+KNOWN LIMITATIONS (out of scope per RFC)
+══════════════════════════════════════════════════════════════════════════════
+
+1. LISTING variables: there is no dedicated "list variables" tool. Use:
+     get_configs(component_id="keboola.variables")
+   This returns all vars configs in the project. To find the one linked to a
+   specific parent, look for the name pattern:
+     "Variables definition for {component_id}/{config_id}"
+   Or check the parent config's variables_id field.
+
+2. NAMED VALUE SETS: only the "Default Values" row is managed. Multiple named
+   value sets (e.g. "staging values", "prod values") are not supported —
+   you would need to create those manually via the Storage API.
+
+3. ROW-BASED COMPONENTS: variables cannot be attached via add_config_row or
+   update_config_row. Only root-level configs (create_config / update_config)
+   and SQL transformations are supported.
+
+4. VARS CONFIG LIFECYCLE: passing variables=[] deletes the linked keboola.variables
+   config from Storage entirely (it is not merely cleared or orphaned). If you
+   later re-add variables, a fresh vars config is created. To leave variables
+   unchanged, omit the parameter (pass None/null) instead of passing [].

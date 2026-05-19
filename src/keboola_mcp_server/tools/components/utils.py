@@ -51,6 +51,7 @@ from keboola_mcp_server.tools.components.model import (
     SimplifiedTfBlocks,
     TfParamUpdate,
     TransformationConfiguration,
+    VariableDefinition,
 )
 
 LOG = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ SNOWFLAKE_TRANSFORMATION_ID = 'keboola.snowflake-transformation'
 BIGQUERY_TRANSFORMATION_ID = 'keboola.google-bigquery-transformation'
 PYTHON_TRANSFORMATION_ID = 'keboola.python-transformation-v2'
 R_TRANSFORMATION_ID = 'keboola.r-transformation-v2'
+VARIABLES_COMPONENT_ID = 'keboola.variables'
 
 # Component IDs for which update_config actively manages folder metadata (set/clear/hint).
 # For all other components the folder parameter is accepted but silently skipped to avoid
@@ -504,6 +506,191 @@ async def clear_configuration_folder_metadata(client: KeboolaClient, component_i
             component_id,
             configuration_id,
         )
+
+
+def _variables_config_name(component_id: str, config_id: str) -> str:
+    return f'Variables definition for {component_id}/{config_id}'
+
+
+async def _find_vars_config(
+    client: KeboolaClient,
+    component_id: str,
+    config_id: str,
+    existing_vars_id: str | None,
+) -> dict[str, Any] | None:
+    """Resolves the existing keboola.variables config for a parent configuration.
+
+    Prefers the linked variables_id; falls back to a name search. After a name-based
+    match, re-fetches via configuration_detail to guarantee the rows field is present.
+    """
+    if existing_vars_id:
+        try:
+            return await client.storage_client.configuration_detail(VARIABLES_COMPONENT_ID, existing_vars_id)
+        except HTTPStatusError as e:
+            if e.response.status_code != 404:
+                raise
+    vars_name = _variables_config_name(component_id, config_id)
+    all_vars_configs = await client.storage_client.configuration_list(VARIABLES_COMPONENT_ID)
+    found = next((c for c in all_vars_configs if c.get('name') == vars_name), None)
+    if found is None:
+        return None
+    return await client.storage_client.configuration_detail(VARIABLES_COMPONENT_ID, str(found['id']))
+
+
+async def _resolve_linked_vars_config_id(
+    client: KeboolaClient,
+    component_id: str,
+    config_id: str,
+    parent: dict[str, Any] | None = None,
+) -> str | None:
+    """Returns the ID of the keboola.variables config linked to a parent config, or ``None``.
+
+    Used by delete flows that want to clean up the vars config *after* the parent has been
+    deleted — looking it up before parent deletion lets the caller delete the parent first, so
+    a parent-delete failure leaves the transformation pointing at a still-valid `variables_id`.
+
+    Callers that have already fetched the parent detail should pass it via ``parent`` to avoid
+    a redundant ``configuration_detail`` round-trip.
+    """
+    if parent is None:
+        parent = await client.storage_client.configuration_detail(component_id, config_id)
+    parent_cfg = dict(parent.get('configuration') or {})
+    existing = await _find_vars_config(client, component_id, config_id, parent_cfg.get('variables_id'))
+    return str(existing['id']) if existing is not None else None
+
+
+async def _apply_vars_to_parent_cfg(
+    client: KeboolaClient,
+    component_id: str,
+    config_id: str,
+    variables: list[VariableDefinition],
+    parent_cfg: dict[str, Any],
+) -> tuple[bool, str | None]:
+    """Manages the keboola.variables config for a parent and mutates parent_cfg with link fields.
+
+    Returns ``(changed, vars_config_id_to_delete)``:
+    - ``changed``: True if parent_cfg was modified.
+    - ``vars_config_id_to_delete``: ID of the keboola.variables config that the caller must
+      delete AFTER successfully writing parent_cfg to Storage.  Deleting before the parent
+      update risks leaving a stale ``variables_id`` reference if the update then fails.
+
+    Does NOT write parent_cfg to Storage and does NOT delete any config — both are the
+    caller's responsibility.
+    """
+    existing = await _find_vars_config(client, component_id, config_id, parent_cfg.get('variables_id'))
+
+    if not variables:
+        vars_config_id_to_delete: str | None = str(existing['id']) if existing is not None else None
+        changed = False
+        for key in ('variables_id', 'variables_values_id'):
+            if key in parent_cfg:
+                parent_cfg.pop(key)
+                changed = True
+        return changed, vars_config_id_to_delete
+
+    # Set path — create or update variables config.
+    var_defs = [{'name': v.name, 'type': v.type} for v in variables]
+    vars_configuration = {'variables': var_defs}
+    if existing is None:
+        created = await client.storage_client.configuration_create(
+            component_id=VARIABLES_COMPONENT_ID,
+            name=_variables_config_name(component_id, config_id),
+            description='',
+            configuration=vars_configuration,
+        )
+        vars_config_id = str(created['id'])
+    else:
+        vars_config_id = str(existing['id'])
+        await client.storage_client.configuration_update(
+            component_id=VARIABLES_COMPONENT_ID,
+            configuration_id=vars_config_id,
+            configuration=vars_configuration,
+            change_description='Update variable definitions',
+        )
+
+    defaults = [{'name': v.name, 'value': v.default_value} for v in variables if v.default_value is not None]
+    existing_rows = (existing or {}).get('rows') or []
+    default_row = next((r for r in existing_rows if r.get('name') == 'Default Values'), None)
+    default_values_row_id: str | None = None
+    if defaults:
+        row_cfg = {'values': defaults}
+        if default_row is None:
+            created_row = await client.storage_client.configuration_row_create(
+                component_id=VARIABLES_COMPONENT_ID,
+                config_id=vars_config_id,
+                name='Default Values',
+                description='',
+                configuration=row_cfg,
+            )
+            default_values_row_id = str(created_row['id'])
+        else:
+            default_values_row_id = str(default_row['id'])
+            await client.storage_client.configuration_row_update(
+                component_id=VARIABLES_COMPONENT_ID,
+                config_id=vars_config_id,
+                configuration_row_id=default_values_row_id,
+                configuration=row_cfg,
+                change_description='Update default variable values',
+            )
+    elif default_row is not None:
+        await client.storage_client.configuration_row_update(
+            component_id=VARIABLES_COMPONENT_ID,
+            config_id=vars_config_id,
+            configuration_row_id=str(default_row['id']),
+            configuration={'values': []},
+            change_description='Clear default variable values',
+        )
+
+    parent_cfg['variables_id'] = vars_config_id
+    if default_values_row_id is not None:
+        parent_cfg['variables_values_id'] = default_values_row_id
+    else:
+        parent_cfg.pop('variables_values_id', None)
+    return True, None
+
+
+async def apply_configuration_variables(
+    client: KeboolaClient,
+    component_id: str,
+    config_id: str,
+    variables: list[VariableDefinition],
+) -> dict[str, Any] | None:
+    """
+    Creates, updates, or clears the keboola.variables config linked to a parent configuration.
+
+    Resolves an existing variables config by the parent's variables_id first; falls back to
+    a name-based search so renames do not cause duplicate configs to be created.
+
+    - Non-empty list: creates or updates variable definitions, creates/updates a
+      "Default Values" row for any variable with a default_value, and patches
+      variables_id onto the parent config.
+    - Empty list: deletes the vars config (if found) and removes variables_id from the parent.
+
+    Returns the parent config update response if the parent was updated, None otherwise.
+    """
+    parent = await client.storage_client.configuration_detail(component_id, config_id)
+    parent_cfg = dict(parent.get('configuration') or {})
+    changed, vars_config_id_to_delete = await _apply_vars_to_parent_cfg(
+        client, component_id, config_id, variables, parent_cfg
+    )
+    if not changed and not vars_config_id_to_delete:
+        return None
+    change_description = 'Link variables' if variables else 'Unlink variables'
+    result = None
+    if changed:
+        result = await client.storage_client.configuration_update(
+            component_id=component_id,
+            configuration_id=config_id,
+            configuration=parent_cfg,
+            change_description=change_description,
+        )
+    if vars_config_id_to_delete:
+        await client.storage_client.configuration_delete(
+            component_id=VARIABLES_COMPONENT_ID,
+            configuration_id=vars_config_id_to_delete,
+            skip_trash=True,
+        )
+    return result
 
 
 async def apply_folder_metadata(
