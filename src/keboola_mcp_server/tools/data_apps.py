@@ -3,6 +3,7 @@ import importlib.resources as resources
 import logging
 import re
 from typing import Annotated, Any, Literal, Mapping, Optional, Sequence, Union, cast
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -52,7 +53,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
     )
     mcp.add_tool(
         FunctionTool.from_function(
-            register_python_js_data_app_ssh_key,
+            create_python_js_data_app_git_credential,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(destructiveHint=False),
         )
@@ -101,6 +102,12 @@ _DEFAULT_PACKAGES = ['pandas', 'httpx']
 # TODO: Remove this hardcoded image version once the platform sets it as the default for python-js apps.
 _HARDCODED_PYTHON_JS_IMAGE_VERSION = 'dev-PAT-1772.4'
 
+# Username embedded in the HTTPS clone URL alongside the one-time token returned by the
+# managed git-repo credentials endpoint. The git-service ignores the username portion of
+# basic auth — only the password (token) is checked — but a non-empty username is required
+# for `git clone` to accept the URL without prompting.
+_MANAGED_GIT_REPO_USERNAME = 'kai'
+
 INJECTED_BLOCK_RE = re.compile(
     r'(?P<before>.*?)#\s###\sINJECTED_CODE\s####.*?#\s###\sEND_OF_INJECTED_CODE\s####(?P<after>.*)',
     re.DOTALL,
@@ -138,7 +145,11 @@ class DataAppSummary(BaseModel):
     )
     repo_url: Optional[str] = Field(
         default=None,
-        description='SSH clone URL of the managed git repo. Only set for python-js data apps.',
+        description=(
+            'HTTPS clone URL of the managed git repo (without embedded credentials). '
+            'Only set for python-js data apps. Mint a token via '
+            '`create_python_js_data_app_git_credential` to authenticate.'
+        ),
     )
 
     @classmethod
@@ -199,7 +210,11 @@ class DataApp(BaseModel):
     )
     repo_url: Optional[str] = Field(
         default=None,
-        description='SSH clone URL of the managed git repo. Only set for python-js data apps.',
+        description=(
+            'HTTPS clone URL of the managed git repo (without embedded credentials). '
+            'Only set for python-js data apps. Mint a token via '
+            '`create_python_js_data_app_git_credential` to authenticate.'
+        ),
     )
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters, storage and authorization'
@@ -274,22 +289,35 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
     repo_url: Optional[str] = Field(
         default=None,
         description=(
-            'SSH clone URL of the managed git repo. Returned on create so the caller can clone the repo and push '
-            'initial source code. On update, populated when the repo info can be fetched.'
+            'HTTPS clone URL of the managed git repo (without embedded credentials). Returned on create so the '
+            'caller can clone the repo and push initial source code. On update, populated when the repo info can '
+            'be fetched. Mint a token via `create_python_js_data_app_git_credential` to authenticate.'
         ),
     )
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
 
-class RegisteredSshKeyOutput(BaseModel):
-    """Output for `register_python_js_data_app_ssh_key`."""
+class CreatedGitCredentialOutput(BaseModel):
+    """Output for `create_python_js_data_app_git_credential`."""
 
     response: str = Field(description='The response of the action performed.')
     configuration_id: str = Field(description='The Storage configuration ID of the python-js data app.')
-    data_app_id: str = Field(description='The ID of the data app the SSH key was registered on.')
-    ssh_key_id: str = Field(description='The ID of the registered SSH key.')
-    public_key: str = Field(description='The registered public key (echoed back).')
-    permissions: str = Field(description='The permissions of the key, e.g. "readWrite".')
+    data_app_id: str = Field(description='The ID of the data app the credential was created on.')
+    credential_id: str = Field(description='The ID of the created credential.')
+    git_clone_url: str = Field(
+        description=(
+            'Ready-to-use HTTPS clone URL with the one-time token embedded (format: '
+            '`https://kai:<secret>@<host>/<path>.git`). Pass directly to `git clone`.'
+        ),
+    )
+    secret: str = Field(
+        description=(
+            'One-time HTTPS token. Also embedded in `git_clone_url`. Surfaced separately so it can be plugged into '
+            'a `git credential` helper. **The platform does not return this value again** — store it if you need '
+            'to reuse it outside of `git_clone_url`.'
+        ),
+    )
+    permissions: str = Field(description='The permissions of the credential, e.g. "readWrite".')
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
 
@@ -614,46 +642,45 @@ async def modify_python_js_data_app(
     in the Keboola UI under their parent prod app in a "Drafts" section; the user discards them manually
     via a "Discard" button when no longer needed. The MCP server does not delete dev twins.
 
-    This tool only creates/updates the app configuration. SSH-key registration is a separate step
-    handled by `register_python_js_data_app_ssh_key` — call it after every successful create before
-    attempting any `git` operation against the returned `repo_url`.
+    This tool only creates/updates the app configuration. Git-credential creation is a separate step
+    handled by `create_python_js_data_app_git_credential` — call it after every successful create
+    before attempting any `git` operation against the returned `repo_url`. That tool mints a one-time
+    HTTPS token and returns a ready-to-use `git_clone_url` of the form
+    `https://kai:<secret>@<host>/<path>.git`.
 
     ## Create flow (new project bootstrap)
     No `configuration_id`, no `existing_repo_url`. `slug` is required.
     Steps:
-    1. LLM generates an SSH keypair locally:
-       `ssh-keygen -t ed25519 -N '' -f ~/.ssh/keboola-app-<slug>`.
-    2a. Call this tool with `slug`. Returns `(configuration_id=C1, repo_url=R)` for a temporary
-        dev iteration app and its fresh managed git repo.
-    2b. Call `register_python_js_data_app_ssh_key(configuration_id=C1, public_key=K)` to enable
-        git access on the new app.
-    3. Clone the repo with the matching private key
-       (`GIT_SSH_COMMAND="ssh -i ~/.ssh/keboola-app-<slug>" git clone <repo_url>`),
-       write the initial source code, commit, push to `main`.
+    1. Call this tool with `slug`. Returns `(configuration_id=C1, repo_url=R)` for a temporary
+       dev iteration app and its fresh managed git repo. `R` is the bare HTTPS URL (no credentials).
+    2. Call `create_python_js_data_app_git_credential(configuration_id=C1)` to mint an HTTPS token
+       and get back a `git_clone_url` with the token embedded.
+    3. Clone with `git clone <git_clone_url>`, write the initial source code, commit, push to `main`.
     4. `deploy_data_app(action='deploy', configuration_id=C1, mode='dev')` → preview URL. Iterate with
        the user against this dev app.
     5a. After the user approves, **call this tool again with `existing_repo_url=R`** plus the
         user-facing `slug` (typically without the iteration suffix) — this creates the **prod app**
         bound to the same repo. Returns `(configuration_id=C2, repo_url=R)`.
-    5b. Call `register_python_js_data_app_ssh_key(configuration_id=C2, public_key=K)` — SSH keys are
-        per-app, so the new prod app needs its own registration; the same public key works for both.
+    5b. Call `create_python_js_data_app_git_credential(configuration_id=C2)` — credentials are per-app,
+        so the new prod app needs its own. The original token still works for the dev iteration app.
     6. `deploy_data_app(action='deploy', configuration_id=C2)` (no `mode='dev'`) → prod URL. The
-       temporary dev iteration app from step 2a stays listed under the new prod app in the UI's
+       temporary dev iteration app from step 1 stays listed under the new prod app in the UI's
        "Drafts" section until the user discards it.
 
     ## Edit flow (modifying an existing prod app)
     Steps:
     1. `get_data_apps(configuration_ids=[<prod_id>])` to retrieve the prod app's `repo_url`.
-    2. Generate a fresh SSH keypair locally (per dev twin — keys are per-app).
-    3a. Call this tool with a temporary `slug` (e.g. `<prod-slug>-dev-<rand>` to stay unique) and
+    2a. Call this tool with a temporary `slug` (e.g. `<prod-slug>-dev-<rand>` to stay unique) and
         **`existing_repo_url=<prod repo_url>`** — creates the dev twin sharing the prod app's repo.
         Returns `(configuration_id=C3, repo_url=R)`.
-    3b. Call `register_python_js_data_app_ssh_key(configuration_id=C3, public_key=K2)` before cloning.
-    4. Clone the repo, `git checkout -b feature-x`, write changes, commit, push the branch.
-    5. `deploy_data_app(action='deploy', configuration_id=C3, mode='dev', branch='feature-x')` → preview
+    2b. Call `create_python_js_data_app_git_credential(configuration_id=C3)` to mint a token for the
+        dev twin before cloning.
+    3. Clone the repo with the returned `git_clone_url`, `git checkout -b feature-x`, write changes,
+       commit, push the branch.
+    4. `deploy_data_app(action='deploy', configuration_id=C3, mode='dev', branch='feature-x')` → preview
        URL serving that branch. Iterate with the user.
-    6. After approval, locally `git checkout main && git merge feature-x && git push`.
-    7. `deploy_data_app(action='deploy', configuration_id=<prod_id>)` — no `mode`, no `branch`. The prod
+    5. After approval, locally `git checkout main && git merge feature-x && git push`.
+    6. `deploy_data_app(action='deploy', configuration_id=<prod_id>)` — no `mode`, no `branch`. The prod
        app picks up the merged `main`. The dev twin stays listed under the prod app in the UI's "Drafts"
        section until the user discards it.
 
@@ -731,7 +758,7 @@ async def modify_python_js_data_app(
         repo_url: Optional[str] = None
         try:
             repo_resp = await client.data_science_client.get_app_git_repo(data_app.data_app_id)
-            repo_url = repo_resp.url
+            repo_url = repo_resp.https_url
         except Exception as exc:
             LOG.warning(f'Could not fetch git repo URL for app {data_app.data_app_id}: {exc}')
         links = links_manager.get_data_app_links(
@@ -785,7 +812,12 @@ async def modify_python_js_data_app(
             repo_url = existing_repo_url
         else:
             repo_resp = await client.data_science_client.get_app_git_repo(data_app_resp.id)
-            repo_url = repo_resp.url
+            if repo_resp.https_url is None:
+                raise ValueError(
+                    f'Data app {data_app_resp.id} reports no HTTPS clone URL despite having a managed git repo. '
+                    'This indicates a platform-side bug — retry or contact support.'
+                )
+            repo_url = repo_resp.https_url
         await set_cfg_creation_metadata(
             client=client,
             component_id=DATA_APP_COMPONENT_ID,
@@ -818,40 +850,39 @@ async def modify_python_js_data_app(
 
 
 @tool_errors()
-async def register_python_js_data_app_ssh_key(
+async def create_python_js_data_app_git_credential(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='Storage configuration ID of the python-js data app.')],
-    public_key: Annotated[
-        str,
-        Field(description='SSH public key contents (e.g. the contents of an `id_ed25519.pub` file).'),
-    ],
-) -> RegisteredSshKeyOutput:
-    """Registers an SSH public key on a python-js data app so the holder of the matching private key
-    can clone, pull, and push to the app's managed git repo.
+) -> CreatedGitCredentialOutput:
+    """Mints a one-time HTTPS token on a python-js data app so the caller can clone, pull, and push
+    to the app's managed git repo over HTTPS.
 
-    The data-science API accepts multiple keys per app, so calling this again with a fresh key does
-    **not** invalidate any keys already held by other clients.
+    Returns a ready-to-use `git_clone_url` of the form `https://kai:<secret>@<host>/<path>.git`
+    plus the raw `secret`. The token is returned **only** at creation — the platform cannot return
+    it again on any subsequent read. Stash the URL (or the secret) somewhere the LLM can reuse for
+    the rest of the session.
+
+    The data-science API accepts multiple credentials per app, so calling this again mints an
+    additional token without invalidating any tokens already held by other clients.
 
     ## When to call
 
     1. **Right after `modify_python_js_data_app` create** — the new app has a managed repo but no
-       authorized keys yet. The LLM generates a keypair locally
-       (`ssh-keygen -t ed25519 -N '' -f ~/.ssh/keboola-app-<slug>`) and calls this tool with the
-       new app's `configuration_id` to enable git access.
+       credentials yet. Call this tool with the new app's `configuration_id` to enable git access.
 
-    2. **Recovery when the private key is gone** (e.g., a fresh Kai sandbox continuing an old draft
-       — the previous sandbox's filesystem was wiped, taking the private key with it). If a `git
-       clone`/`pull`/`push` against a python-js app the LLM did not create in the current session
-       fails with `Permission denied (publickey)`, generate a fresh keypair locally and call this
-       tool with the same `configuration_id` and the new public key. Existing keys remain valid,
-       so other clients are not disrupted.
+    2. **Recovery when the cached token is gone** (e.g., a fresh Kai sandbox continuing an old draft
+       — the previous sandbox's filesystem was wiped, taking the cached `git_clone_url` with it).
+       If `git clone`/`pull`/`push` against a python-js app the LLM did not create in the current
+       session fails with `Authentication failed` (HTTP 401), call this tool with the same
+       `configuration_id` to mint a fresh token. Existing credentials remain valid, so other clients
+       are not disrupted.
 
     ## Constraints
     - Only python-js data apps have a managed git repo. Streamlit apps reject the call with a clear
       error.
     - Permissions are always `readWrite` — the LLM virtually always needs push access. The
-      data-science API supports read-only keys, but the tool does not expose that knob; revisit
-      once a real use case appears.
+      data-science API supports read-only credentials, but the tool does not expose that knob;
+      revisit once a real use case appears.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -859,30 +890,59 @@ async def register_python_js_data_app_ssh_key(
     data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
     if data_app.type != 'python-js':
         raise ValueError(
-            f'register_python_js_data_app_ssh_key only supports python-js data apps, but configuration '
+            f'create_python_js_data_app_git_credential only supports python-js data apps, but configuration '
             f'"{configuration_id}" is type "{data_app.type}".'
         )
 
-    ssh_key_resp = await client.data_science_client.register_app_ssh_key(
+    repo_resp = await client.data_science_client.get_app_git_repo(data_app.data_app_id)
+    if repo_resp.https_url is None:
+        raise ValueError(
+            f'Data app {data_app.data_app_id} reports no HTTPS clone URL despite being a python-js managed-repo '
+            f'app. This indicates a platform-side bug — retry or contact support.'
+        )
+
+    credential_resp = await client.data_science_client.create_app_git_credential(
         data_app_id=data_app.data_app_id,
-        public_key=public_key,
     )
+    if not credential_resp.secret:
+        raise ValueError(
+            f'Data app {data_app.data_app_id} credentials endpoint returned no `secret` for an http_token '
+            f'credential. This indicates a platform-side bug — retry or contact support.'
+        )
+
+    git_clone_url = _build_authenticated_clone_url(repo_resp.https_url, credential_resp.secret)
     links = links_manager.get_data_app_links(
         configuration_id=data_app.configuration_id,
         configuration_name=data_app.name,
         deployment_link=data_app.deployment_url,
         uses_basic_authentication=False,
     )
-    return RegisteredSshKeyOutput(
-        response='registered',
+    return CreatedGitCredentialOutput(
+        response='created',
         configuration_id=data_app.configuration_id,
         data_app_id=data_app.data_app_id,
-        ssh_key_id=ssh_key_resp.id,
-        # Echo the caller-supplied key — the DSAPI registration endpoint does not return it.
-        public_key=public_key,
-        permissions=ssh_key_resp.permissions,
+        credential_id=credential_resp.id,
+        git_clone_url=git_clone_url,
+        secret=credential_resp.secret,
+        permissions=credential_resp.permissions,
         links=links,
     )
+
+
+def _build_authenticated_clone_url(https_url: str, secret: str) -> str:
+    """Embed the hardcoded git-service username and the one-time `secret` into the bare HTTPS URL
+    so the LLM can pass it straight to `git clone`.
+    """
+    parts = urlsplit(https_url)
+    if not parts.scheme or not parts.netloc:
+        raise ValueError(f'Could not parse HTTPS clone URL: {https_url!r}')
+    # Strip any pre-existing userinfo (the GET /git-repo endpoint already strips credentials,
+    # but be defensive).
+    host = parts.hostname or ''
+    if parts.port is not None:
+        host = f'{host}:{parts.port}'
+    netloc = f'{_MANAGED_GIT_REPO_USERNAME}:{quote(secret, safe="")}@{host}'
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 def _validate_data_app_storage(

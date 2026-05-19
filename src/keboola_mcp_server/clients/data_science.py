@@ -168,25 +168,35 @@ class CodeDataAppConfig(BaseModel):
     )
 
 
-class AppSshKeyResponse(BaseModel):
-    """Response model for SSH key registration on a managed-git-repo data app."""
+class CreatedGitCredentialResponse(BaseModel):
+    """Response model for credential creation on a managed-git-repo data app.
+
+    Matches the `CreatedCredential` schema from sandboxes-service. For `http_token`
+    credentials the response includes a one-time `secret` that cannot be retrieved later.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
-    id: str = Field(description='The ID of the registered SSH key.')
-    public_key: str | None = Field(
-        validation_alias=AliasChoices('publicKey', 'public_key'),
+    id: str = Field(description='The ID of the created credential.')
+    type: str = Field(description='The credential type, e.g. "http_token" or "ssh_key".')
+    name: str = Field(default='', description='Caller-supplied display label (may be empty).')
+    permissions: str = Field(description='The permissions of the credential, e.g. "readWrite" or "readOnly".')
+    owner_admin_id: str | None = Field(
+        validation_alias=AliasChoices('ownerAdminId', 'owner_admin_id'),
         default=None,
-        description=(
-            'The registered public key. The DSAPI registration endpoint does not echo it back, so this is '
-            'typically only populated when the response comes from a list/get endpoint that includes it.'
-        ),
+        description='The admin ID that owns the credential.',
     )
-    permissions: str = Field(description='The permissions of the key, e.g. "readWrite" or "readOnly".')
     created_at: str | None = Field(
         validation_alias=AliasChoices('createdAt', 'created_at'),
         default=None,
-        description='The timestamp when the key was registered.',
+        description='The timestamp when the credential was created.',
+    )
+    secret: str | None = Field(
+        default=None,
+        description=(
+            'One-time secret returned only at creation for `http_token` credentials. '
+            'It cannot be retrieved by subsequent reads.'
+        ),
     )
 
 
@@ -195,7 +205,23 @@ class AppGitRepoResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    url: str = Field(description='The clone URL of the managed git repo (typically an SSH URL).')
+    ssh_url: str | None = Field(
+        validation_alias=AliasChoices('sshUrl', 'ssh_url'),
+        default=None,
+        description='SSH clone URL. `null` for externally configured HTTP(S) repositories.',
+    )
+    https_url: str | None = Field(
+        validation_alias=AliasChoices('httpsUrl', 'https_url'),
+        default=None,
+        description=(
+            'HTTPS clone URL (without embedded credentials). `null` for externally configured SSH repositories.'
+        ),
+    )
+    is_managed_git_repo: bool = Field(
+        validation_alias=AliasChoices('isManagedGitRepo', 'is_managed_git_repo'),
+        default=False,
+        description='Whether the repository is a managed git repository provisioned by the service.',
+    )
 
 
 class DataScienceClient(KeboolaServiceClient):
@@ -344,25 +370,24 @@ class DataScienceClient(KeboolaServiceClient):
         response = await self.post(endpoint='apps', data=data)
         return DataAppResponse.model_validate(response)
 
-    async def register_app_ssh_key(
+    async def create_app_git_credential(
         self,
         data_app_id: str,
-        public_key: str,
         *,
         permissions: str = 'readWrite',
-    ) -> AppSshKeyResponse:
+    ) -> CreatedGitCredentialResponse:
         """
-        Register an SSH public key on a managed-git-repo data app so the holder of the matching
-        private key can clone, pull, and push to the app's repo.
+        Create an HTTP-token credential on a managed-git-repo data app so the caller can clone,
+        pull, and push to the app's repo over HTTPS. The response includes a one-time `secret`
+        that is not returned by any subsequent read.
 
         :param data_app_id: The ID of the data app
-        :param public_key: The full public key contents (e.g. the contents of an `id_ed25519.pub` file).
         :param permissions: 'readWrite' (default) or 'readOnly'.
-        :return: The registered SSH key metadata.
+        :return: The created credential, including the one-time `secret`.
         """
-        data = {'publicKey': public_key, 'permissions': permissions}
-        response = await self.post(endpoint=f'apps/{data_app_id}/git-repo/ssh-keys', data=data)
-        return AppSshKeyResponse.model_validate(response)
+        data = {'type': 'http_token', 'permissions': permissions}
+        response = await self.post(endpoint=f'apps/{data_app_id}/git-repo/credentials', data=data)
+        return CreatedGitCredentialResponse.model_validate(response)
 
     async def get_app_git_repo(self, data_app_id: str) -> AppGitRepoResponse:
         """

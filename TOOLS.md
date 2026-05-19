@@ -38,14 +38,14 @@ name or description.
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
+- [create_python_js_data_app_git_credential](#create_python_js_data_app_git_credential): Mints a one-time HTTPS token on a python-js data app so the caller can clone, pull, and push
+to the app's managed git repo over HTTPS.
 - [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
 action and the configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
 - [modify_python_js_data_app](#modify_python_js_data_app): Creates or updates a python-js data app backed by a managed git repository.
 - [modify_streamlit_data_app](#modify_streamlit_data_app): Creates or updates a Streamlit data app.
-- [register_python_js_data_app_ssh_key](#register_python_js_data_app_ssh_key): Registers an SSH public key on a python-js data app so the holder of the matching private key
-can clone, pull, and push to the app's managed git repo.
 
 ### Project Tools
 - [get_project_info](#get_project_info): Retrieves structured information about the current project,
@@ -1708,6 +1708,63 @@ Example 4 - Update storage mappings:
 ---
 
 # Other Tools
+<a name="create_python_js_data_app_git_credential"></a>
+## create_python_js_data_app_git_credential
+**Annotations**: 
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Mints a one-time HTTPS token on a python-js data app so the caller can clone, pull, and push
+to the app's managed git repo over HTTPS.
+
+Returns a ready-to-use `git_clone_url` of the form `https://kai:<secret>@<host>/<path>.git`
+plus the raw `secret`. The token is returned **only** at creation — the platform cannot return
+it again on any subsequent read. Stash the URL (or the secret) somewhere the LLM can reuse for
+the rest of the session.
+
+The data-science API accepts multiple credentials per app, so calling this again mints an
+additional token without invalidating any tokens already held by other clients.
+
+## When to call
+
+1. **Right after `modify_python_js_data_app` create** — the new app has a managed repo but no
+   credentials yet. Call this tool with the new app's `configuration_id` to enable git access.
+
+2. **Recovery when the cached token is gone** (e.g., a fresh Kai sandbox continuing an old draft
+   — the previous sandbox's filesystem was wiped, taking the cached `git_clone_url` with it).
+   If `git clone`/`pull`/`push` against a python-js app the LLM did not create in the current
+   session fails with `Authentication failed` (HTTP 401), call this tool with the same
+   `configuration_id` to mint a fresh token. Existing credentials remain valid, so other clients
+   are not disrupted.
+
+## Constraints
+- Only python-js data apps have a managed git repo. Streamlit apps reject the call with a clear
+  error.
+- Permissions are always `readWrite` — the LLM virtually always needs push access. The
+  data-science API supports read-only credentials, but the tool does not expose that knob;
+  revisit once a real use case appears.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "configuration_id": {
+      "description": "Storage configuration ID of the python-js data app.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="deploy_data_app"></a>
 ## deploy_data_app
 **Annotations**: 
@@ -1862,46 +1919,45 @@ and one or more **dev twins** that share the same managed git repo for LLM itera
 in the Keboola UI under their parent prod app in a "Drafts" section; the user discards them manually
 via a "Discard" button when no longer needed. The MCP server does not delete dev twins.
 
-This tool only creates/updates the app configuration. SSH-key registration is a separate step
-handled by `register_python_js_data_app_ssh_key` — call it after every successful create before
-attempting any `git` operation against the returned `repo_url`.
+This tool only creates/updates the app configuration. Git-credential creation is a separate step
+handled by `create_python_js_data_app_git_credential` — call it after every successful create
+before attempting any `git` operation against the returned `repo_url`. That tool mints a one-time
+HTTPS token and returns a ready-to-use `git_clone_url` of the form
+`https://kai:<secret>@<host>/<path>.git`.
 
 ## Create flow (new project bootstrap)
 No `configuration_id`, no `existing_repo_url`. `slug` is required.
 Steps:
-1. LLM generates an SSH keypair locally:
-   `ssh-keygen -t ed25519 -N '' -f ~/.ssh/keboola-app-<slug>`.
-2a. Call this tool with `slug`. Returns `(configuration_id=C1, repo_url=R)` for a temporary
-    dev iteration app and its fresh managed git repo.
-2b. Call `register_python_js_data_app_ssh_key(configuration_id=C1, public_key=K)` to enable
-    git access on the new app.
-3. Clone the repo with the matching private key
-   (`GIT_SSH_COMMAND="ssh -i ~/.ssh/keboola-app-<slug>" git clone <repo_url>`),
-   write the initial source code, commit, push to `main`.
+1. Call this tool with `slug`. Returns `(configuration_id=C1, repo_url=R)` for a temporary
+   dev iteration app and its fresh managed git repo. `R` is the bare HTTPS URL (no credentials).
+2. Call `create_python_js_data_app_git_credential(configuration_id=C1)` to mint an HTTPS token
+   and get back a `git_clone_url` with the token embedded.
+3. Clone with `git clone <git_clone_url>`, write the initial source code, commit, push to `main`.
 4. `deploy_data_app(action='deploy', configuration_id=C1, mode='dev')` → preview URL. Iterate with
    the user against this dev app.
 5a. After the user approves, **call this tool again with `existing_repo_url=R`** plus the
     user-facing `slug` (typically without the iteration suffix) — this creates the **prod app**
     bound to the same repo. Returns `(configuration_id=C2, repo_url=R)`.
-5b. Call `register_python_js_data_app_ssh_key(configuration_id=C2, public_key=K)` — SSH keys are
-    per-app, so the new prod app needs its own registration; the same public key works for both.
+5b. Call `create_python_js_data_app_git_credential(configuration_id=C2)` — credentials are per-app,
+    so the new prod app needs its own. The original token still works for the dev iteration app.
 6. `deploy_data_app(action='deploy', configuration_id=C2)` (no `mode='dev'`) → prod URL. The
-   temporary dev iteration app from step 2a stays listed under the new prod app in the UI's
+   temporary dev iteration app from step 1 stays listed under the new prod app in the UI's
    "Drafts" section until the user discards it.
 
 ## Edit flow (modifying an existing prod app)
 Steps:
 1. `get_data_apps(configuration_ids=[<prod_id>])` to retrieve the prod app's `repo_url`.
-2. Generate a fresh SSH keypair locally (per dev twin — keys are per-app).
-3a. Call this tool with a temporary `slug` (e.g. `<prod-slug>-dev-<rand>` to stay unique) and
+2a. Call this tool with a temporary `slug` (e.g. `<prod-slug>-dev-<rand>` to stay unique) and
     **`existing_repo_url=<prod repo_url>`** — creates the dev twin sharing the prod app's repo.
     Returns `(configuration_id=C3, repo_url=R)`.
-3b. Call `register_python_js_data_app_ssh_key(configuration_id=C3, public_key=K2)` before cloning.
-4. Clone the repo, `git checkout -b feature-x`, write changes, commit, push the branch.
-5. `deploy_data_app(action='deploy', configuration_id=C3, mode='dev', branch='feature-x')` → preview
+2b. Call `create_python_js_data_app_git_credential(configuration_id=C3)` to mint a token for the
+    dev twin before cloning.
+3. Clone the repo with the returned `git_clone_url`, `git checkout -b feature-x`, write changes,
+   commit, push the branch.
+4. `deploy_data_app(action='deploy', configuration_id=C3, mode='dev', branch='feature-x')` → preview
    URL serving that branch. Iterate with the user.
-6. After approval, locally `git checkout main && git merge feature-x && git push`.
-7. `deploy_data_app(action='deploy', configuration_id=<prod_id>)` — no `mode`, no `branch`. The prod
+5. After approval, locally `git checkout main && git merge feature-x && git push`.
+6. `deploy_data_app(action='deploy', configuration_id=<prod_id>)` — no `mode`, no `branch`. The prod
    app picks up the merged `main`. The dev twin stays listed under the prod app in the UI's "Drafts"
    section until the user discards it.
 
@@ -2122,65 +2178,6 @@ SQL & DATA TYPE RULES:
     "source_code",
     "packages",
     "authentication_type"
-  ],
-  "type": "object"
-}
-```
-
----
-<a name="register_python_js_data_app_ssh_key"></a>
-## register_python_js_data_app_ssh_key
-**Annotations**: 
-
-**Tags**: `data-apps`
-
-**Description**:
-
-Registers an SSH public key on a python-js data app so the holder of the matching private key
-can clone, pull, and push to the app's managed git repo.
-
-The data-science API accepts multiple keys per app, so calling this again with a fresh key does
-**not** invalidate any keys already held by other clients.
-
-## When to call
-
-1. **Right after `modify_python_js_data_app` create** — the new app has a managed repo but no
-   authorized keys yet. The LLM generates a keypair locally
-   (`ssh-keygen -t ed25519 -N '' -f ~/.ssh/keboola-app-<slug>`) and calls this tool with the
-   new app's `configuration_id` to enable git access.
-
-2. **Recovery when the private key is gone** (e.g., a fresh Kai sandbox continuing an old draft
-   — the previous sandbox's filesystem was wiped, taking the private key with it). If a `git
-   clone`/`pull`/`push` against a python-js app the LLM did not create in the current session
-   fails with `Permission denied (publickey)`, generate a fresh keypair locally and call this
-   tool with the same `configuration_id` and the new public key. Existing keys remain valid,
-   so other clients are not disrupted.
-
-## Constraints
-- Only python-js data apps have a managed git repo. Streamlit apps reject the call with a clear
-  error.
-- Permissions are always `readWrite` — the LLM virtually always needs push access. The
-  data-science API supports read-only keys, but the tool does not expose that knob; revisit
-  once a real use case appears.
-
-
-**Input JSON Schema**:
-```json
-{
-  "additionalProperties": false,
-  "properties": {
-    "configuration_id": {
-      "description": "Storage configuration ID of the python-js data app.",
-      "type": "string"
-    },
-    "public_key": {
-      "description": "SSH public key contents (e.g. the contents of an `id_ed25519.pub` file).",
-      "type": "string"
-    }
-  },
-  "required": [
-    "configuration_id",
-    "public_key"
   ],
   "type": "object"
 }
