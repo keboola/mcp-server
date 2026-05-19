@@ -22,7 +22,6 @@ from keboola_mcp_server.tools.data_apps import (
     _fetch_data_app,
     _get_authorization,
     _get_data_app_slug,
-    _get_python_js_secrets,
     _get_query_function_code,
     _get_secrets,
     _inject_query_to_source_code,
@@ -400,21 +399,6 @@ def test_get_secrets():
         'KBC_TOKEN': 'kbc-token',
         'KBC_URL': 'https://connection.test.keboola.com',
     }
-
-
-def test_get_python_js_secrets():
-    """Python-js secrets omit WORKSPACE_ID — the platform sets it via runtime.workspace.enabled."""
-    secrets = _get_python_js_secrets(
-        branch_id='123',
-        storage_token='kbc-token',
-        storage_api_url='https://connection.test.keboola.com',
-    )
-    assert secrets == {
-        'BRANCH_ID': '123',
-        'KBC_TOKEN': 'kbc-token',
-        'KBC_URL': 'https://connection.test.keboola.com',
-    }
-    assert 'WORKSPACE_ID' not in secrets
 
 
 def test_update_existing_data_app_config_keeps_previous_properties_when_undefined():
@@ -883,6 +867,7 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     credential creation is now a separate tool — not exercised here."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
 
     workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
 
@@ -926,13 +911,9 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     # Created with the auto-workspace flag so the platform provisions a per-app workspace
     # and sets WORKSPACE_ID itself.
     assert serialized['runtime']['workspace'] == {'enabled': True}
-    # Runtime secrets are injected from the client/branch context so the app can call SAPI.
-    # WORKSPACE_ID is intentionally NOT in this dict — the platform sets it.
-    assert serialized['parameters']['dataApp']['secrets'] == {
-        'BRANCH_ID': 'branch-1',
-        'KBC_TOKEN': 'test-token',
-        'KBC_URL': 'https://connection.test.keboola.com',
-    }
+    # KBC_TOKEN / KBC_URL / BRANCH_ID are injected by the platform at runtime — the MCP must
+    # not bake them into the stored config.
+    assert 'secrets' not in serialized['parameters']['dataApp']
     # Default `authentication_type='default'` produces basic-auth on create (safe-by-default).
     assert serialized['authorization']['app_proxy']['auth_providers'] == [{'id': 'simpleAuth', 'type': 'password'}]
     assert serialized['authorization']['app_proxy']['auth_rules'] == [
@@ -960,6 +941,7 @@ async def test_modify_python_js_data_app_create_authentication_type(
     'default' and 'basic-auth' → password-protected; 'no-auth' → public."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
 
     workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
 
@@ -1002,6 +984,7 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
 ) -> None:
     """Update path: fetch storage config → merge updates → PATCH via configuration_update."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
 
     workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
 
@@ -1058,13 +1041,111 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     assert new_cfg['parameters']['dataApp']['slug'] == 'old-slug'
     # Update does NOT backfill `runtime.workspace` — only the create path sets it.
     assert 'workspace' not in new_cfg['runtime']
-    # Runtime secrets are injected from the branch/client context on update too.
-    # WORKSPACE_ID is not injected — the platform sets it via runtime.workspace.enabled (on create).
-    assert new_cfg['parameters']['dataApp']['secrets'] == {
-        'BRANCH_ID': 'branch-1',
-        'KBC_TOKEN': 'test-token',
-        'KBC_URL': 'https://connection.test.keboola.com',
-    }
+    # KBC_TOKEN / KBC_URL / BRANCH_ID are injected by the platform at runtime — the MCP must
+    # not write them back into the stored config on update either.
+    assert 'secrets' not in new_cfg['parameters']['dataApp']
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_without_workspace_feature(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """When the project lacks `data-apps-storage-workspace`, the create path omits
+    `runtime.workspace` and falls back to injecting WORKSPACE_ID via `parameters.dataApp.secrets`."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
+
+    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value='wid-legacy')
+
+    app_response = _make_python_js_data_app_response()
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(
+            ssh_url='git@managed.repo:org/app.git',
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    _ = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='My App',
+        description='desc',
+        slug='my-app',
+    )
+
+    serialized = keboola_client.data_science_client.create_data_app.await_args.kwargs['configuration'].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert 'workspace' not in serialized['runtime']
+    assert serialized['parameters']['dataApp']['secrets'] == {'WORKSPACE_ID': 'wid-legacy'}
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_update_injects_workspace_id_without_feature(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """When the project lacks `data-apps-storage-workspace`, the update path merges WORKSPACE_ID
+    into the existing secrets map without overwriting any keys already present."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
+
+    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value='wid-legacy')
+
+    existing_data_app = DataApp(
+        name='Old',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='2',
+        type='python-js',
+        configuration={
+            'parameters': {
+                'autoSuspendAfterSeconds': 900,
+                'dataApp': {'slug': 'old-slug', 'secrets': {'KEEP': 'x'}},
+            },
+            'runtime': {'image': {'version': 'old-version'}},
+        },
+        state='stopped',
+    )
+    updated_data_app = existing_data_app.model_copy(update={'config_version': '3'})
+
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(side_effect=[existing_data_app, updated_data_app]),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(
+            ssh_url='git@managed.repo:org/app.git',
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='Old',
+        description='desc',
+        configuration_id='cfg-1',
+        auto_suspend_after_seconds=600,
+    )
+
+    patch_kwargs = keboola_client.storage_client.configuration_update.await_args.kwargs
+    new_cfg = patch_kwargs['configuration']
+    assert new_cfg['parameters']['dataApp']['secrets'] == {'KEEP': 'x', 'WORKSPACE_ID': 'wid-legacy'}
 
 
 @pytest.mark.asyncio
@@ -1255,9 +1336,10 @@ def test_update_existing_code_data_app_config_basic_auth_overwrites() -> None:
     ]
 
 
-def test_update_existing_code_data_app_config_merges_secrets() -> None:
-    """Legacy configs may carry a WORKSPACE_ID secret from before runtime.workspace was used.
-    The merge must preserve it (and any other existing keys) while adding new keys passed in."""
+def test_update_existing_code_data_app_config_preserves_legacy_secrets() -> None:
+    """Legacy configs written by older MCP versions may carry a `secrets` block. We no longer
+    write secrets (platform injects KBC_TOKEN/KBC_URL/BRANCH_ID at runtime), but the deepcopy
+    of the existing config must leave any pre-existing keys untouched."""
     existing = {
         'parameters': {
             'autoSuspendAfterSeconds': 900,
@@ -1272,38 +1354,8 @@ def test_update_existing_code_data_app_config_merges_secrets() -> None:
         existing,
         image_version='v1',
         auto_suspend_after_seconds=900,
-        secrets={
-            'BRANCH_ID': 'branch-new',
-            'KBC_TOKEN': 'tok',
-            'KBC_URL': 'https://connection.test.keboola.com',
-        },
     )
-    # Legacy WORKSPACE_ID and other existing keys are preserved; new keys are appended.
-    assert new['parameters']['dataApp']['secrets'] == {
-        'WORKSPACE_ID': 'wid-legacy',
-        'KEEP': 'x',
-        'BRANCH_ID': 'branch-new',
-        'KBC_TOKEN': 'tok',
-        'KBC_URL': 'https://connection.test.keboola.com',
-    }
-
-
-def test_update_existing_code_data_app_config_creates_secrets_when_missing() -> None:
-    existing = {
-        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
-        'runtime': {'image': {'version': 'v1'}},
-    }
-    new = _update_existing_code_data_app_config(
-        existing,
-        image_version='v1',
-        auto_suspend_after_seconds=900,
-        secrets={'BRANCH_ID': 'b', 'KBC_TOKEN': 't', 'KBC_URL': 'u'},
-    )
-    assert new['parameters']['dataApp']['secrets'] == {
-        'BRANCH_ID': 'b',
-        'KBC_TOKEN': 't',
-        'KBC_URL': 'u',
-    }
+    assert new['parameters']['dataApp']['secrets'] == {'WORKSPACE_ID': 'wid-legacy', 'KEEP': 'x'}
 
 
 def test_update_existing_code_data_app_config_no_auth_overwrites() -> None:
