@@ -121,6 +121,11 @@ SECRET_BRANCH_ID = 'BRANCH_ID'
 SECRET_KBC_TOKEN = 'KBC_TOKEN'
 SECRET_KBC_URL = 'KBC_URL'
 
+# Project feature that opts python-js data apps into platform-managed per-app workspaces.
+# When enabled, the platform auto-provisions a workspace and injects WORKSPACE_ID at runtime.
+# When disabled, the MCP falls back to passing WORKSPACE_ID via parameters.dataApp.secrets.
+DATA_APPS_STORAGE_WORKSPACE_FEATURE = 'data-apps-storage-workspace'
+
 
 class DataAppSummary(BaseModel):
     """A summary of a data app used for sync operations."""
@@ -715,16 +720,17 @@ async def modify_python_js_data_app(
             raise ValueError('slug is required when creating a python-js data app.')
 
     client = KeboolaClient.from_state(ctx.session.state)
-    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
     validated_storage = _validate_data_app_storage(storage, configuration_id=configuration_id or None)
 
-    secrets = _get_python_js_secrets(
-        branch_id=str(await workspace_manager.get_branch_id()),
-        storage_token=client.token,
-        storage_api_url=client.storage_api_url,
-    )
+    # When the platform-managed workspace feature is off, the data app cannot rely on the
+    # platform to inject WORKSPACE_ID; fall back to passing it via parameters.dataApp.secrets.
+    has_storage_workspace = await client.has_feature(DATA_APPS_STORAGE_WORKSPACE_FEATURE)
+    legacy_secrets: Optional[dict[str, Any]] = None
+    if not has_storage_workspace:
+        workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+        legacy_secrets = {SECRET_WORKSPACE_ID: str(await workspace_manager.get_workspace_id())}
 
     if configuration_id:
         # Update existing python-js data app
@@ -734,7 +740,7 @@ async def modify_python_js_data_app(
             image_version=_HARDCODED_PYTHON_JS_IMAGE_VERSION,
             auto_suspend_after_seconds=auto_suspend_after_seconds,
             authentication_type=authentication_type,
-            secrets=secrets,
+            secrets=legacy_secrets,
             storage=validated_storage,
         )
         await client.storage_client.configuration_update(
@@ -791,11 +797,13 @@ async def modify_python_js_data_app(
         config = CodeDataAppConfig(
             parameters=CodeDataAppConfig.Parameters(
                 auto_suspend_after_seconds=auto_suspend_after_seconds,
-                data_app=CodeDataAppConfig.Parameters.DataApp(slug=slug, secrets=secrets),
+                data_app=CodeDataAppConfig.Parameters.DataApp(slug=slug, secrets=legacy_secrets),
             ),
             runtime=CodeDataAppConfig.Runtime(
                 image=CodeDataAppConfig.Runtime.Image(version=_HARDCODED_PYTHON_JS_IMAGE_VERSION),
-                workspace=CodeDataAppConfig.Runtime.Workspace(enabled=True),
+                workspace=(
+                    CodeDataAppConfig.Runtime.Workspace(enabled=True) if has_storage_workspace else None
+                ),
             ),
             authorization=authorization_model,
             storage=validated_storage,
@@ -991,7 +999,8 @@ def _update_existing_code_data_app_config(
     `authentication_type='default'` preserves the existing `authorization` block (including OIDC
     setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it.
     `secrets` are merged into the existing `parameters.dataApp.secrets` map without overwriting
-    keys that are already present (mirrors the Streamlit update path).
+    keys already present. Used on projects without the `data-apps-storage-workspace` feature to
+    inject WORKSPACE_ID; on projects with the feature, pass None.
     `storage` replaces the entire `storage` block when provided (None preserves the existing one;
     an empty dict is an explicit wipe).
     """
@@ -1457,16 +1466,3 @@ def _get_secrets(workspace_id: str, branch_id: str, storage_token: str, storage_
         SECRET_KBC_URL: storage_api_url,
     }
     return secrets
-
-
-def _get_python_js_secrets(branch_id: str, storage_token: str, storage_api_url: str) -> dict[str, Any]:
-    """
-    Generates runtime secrets for python-js data apps. WORKSPACE_ID is intentionally omitted —
-    python-js apps are created with `runtime.workspace.enabled = true`, so the platform
-    auto-provisions a per-app workspace and sets WORKSPACE_ID in the runtime env itself.
-    """
-    return {
-        SECRET_BRANCH_ID: branch_id,
-        SECRET_KBC_TOKEN: storage_token,
-        SECRET_KBC_URL: storage_api_url,
-    }

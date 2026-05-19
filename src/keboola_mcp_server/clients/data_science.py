@@ -111,9 +111,11 @@ class CodeDataAppConfig(BaseModel):
             slug: str = Field(description='The slug of the data app (used as URL subdomain).')
             secrets: dict[str, str] | None = Field(
                 description=(
-                    'Runtime secrets exposed to the data app as environment variables (e.g. KBC_TOKEN, '
-                    'KBC_URL, BRANCH_ID). Mirrors the Streamlit data-app secrets shape. WORKSPACE_ID is '
-                    'set by the platform itself when `runtime.workspace.enabled = true`.'
+                    'Runtime secrets exposed to the data app as environment variables. '
+                    'KBC_TOKEN/KBC_URL/BRANCH_ID are always injected by the platform and must not be '
+                    'set here. WORKSPACE_ID is set by the platform only when '
+                    '`runtime.workspace.enabled = true`; on projects without the '
+                    '`data-apps-storage-workspace` feature, WORKSPACE_ID must be passed here instead.'
                 ),
                 default=None,
             )
