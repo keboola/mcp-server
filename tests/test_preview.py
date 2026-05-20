@@ -751,8 +751,8 @@ class TestPreviewConfigDiff:
         assert result['isValid'] is False
         assert expected_error_fragment in str(result.get('validationErrors', ''))
 
-    def test_preview_modify_data_app_success(self, test_client: TestClient, mocker):
-        """Test successful preview of modify_data_app tool."""
+    def test_preview_modify_streamlit_data_app_success(self, test_client: TestClient, mocker):
+        """Test successful preview of modify_streamlit_data_app tool."""
         from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
 
         # Mock the data app configuration data
@@ -775,6 +775,8 @@ class TestPreviewConfigDiff:
 
         # Mock the KeboolaClient
         mock_client = mocker.AsyncMock(KeboolaClient)
+        mock_client.token = 'test-token'
+        mock_client.storage_api_url = 'https://connection.test.keboola.com'
 
         async def mock_config_detail(**kwargs):
             return copy.deepcopy(original_config_data)
@@ -837,7 +839,7 @@ class TestPreviewConfigDiff:
 
         # Request payload
         request_payload = {
-            'toolName': 'modify_data_app',
+            'toolName': 'modify_streamlit_data_app',
             'toolParams': {
                 'configuration_id': 'app-123',
                 'change_description': 'Update data app',
@@ -876,7 +878,14 @@ class TestPreviewConfigDiff:
                 'parameters': {
                     'dataApp': {
                         'slug': 'updated-data-app',
-                        'secrets': {'FOO': 'old', 'KEEP': 'x', 'BRANCH_ID': '456', 'WORKSPACE_ID': '123'},
+                        'secrets': {
+                            'FOO': 'old',
+                            'KEEP': 'x',
+                            'BRANCH_ID': '456',
+                            'WORKSPACE_ID': '123',
+                            'KBC_TOKEN': 'test-token',
+                            'KBC_URL': 'https://connection.test.keboola.com',
+                        },
                     },
                     'script': [],
                     'packages': ['httpx', 'pandas', 'streamlit'],

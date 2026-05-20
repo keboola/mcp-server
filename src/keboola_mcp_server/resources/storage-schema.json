@@ -600,10 +600,28 @@
                       },
                       "required": ["name"]
                     }
+                  },
+                  "unload_strategy": {
+                    "type": "string",
+                    "enum": ["copy", "direct-grant"],
+                    "description": "How data is unloaded to Storage. 'copy' (default) copies workspace tables into Storage after the job. 'direct-grant' grants the workspace SELECT/INSERT/UPDATE/DELETE/TRUNCATE privileges directly on the destination Storage table (used by data apps with Storage Access enabled). With 'direct-grant', the 'source' field is not required."
                   }
                 },
-                "required": ["destination", "source"],
+                "required": ["destination"],
                 "allOf": [
+                  {
+                    "if": {
+                      "not": {
+                        "properties": {
+                          "unload_strategy": { "const": "direct-grant" }
+                        },
+                        "required": ["unload_strategy"]
+                      }
+                    },
+                    "then": {
+                      "required": ["source"]
+                    }
+                  },
                   {
                     "if": {
                       "properties": {

@@ -1,8 +1,8 @@
 import logging
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Union, cast
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
 
@@ -95,6 +95,137 @@ class DataAppConfig(BaseModel):
     storage: dict[str, Any] = Field(description='The storage of the data app', default_factory=dict)
 
 
+class CodeDataAppConfig(BaseModel):
+    """
+    Config model for python-js (code) data apps backed by a managed git repository.
+
+    Unlike `DataAppConfig` (Streamlit), python-js apps don't embed source code in the config.
+    Code lives in the managed git repo; the config only carries deployment metadata
+    (slug, auto-suspend, runtime image version).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    class Parameters(BaseModel):
+        class DataApp(BaseModel):
+            slug: str = Field(description='The slug of the data app (used as URL subdomain).')
+            secrets: dict[str, str] | None = Field(
+                description=(
+                    'Runtime secrets exposed to the data app as environment variables. '
+                    'KBC_TOKEN/KBC_URL/BRANCH_ID are always injected by the platform and must not be '
+                    'set here. WORKSPACE_ID is set by the platform only when '
+                    '`runtime.workspace.enabled = true`; on projects without the '
+                    '`data-apps-storage-workspace` feature, WORKSPACE_ID must be passed here instead.'
+                ),
+                default=None,
+            )
+
+        auto_suspend_after_seconds: int = Field(
+            validation_alias=AliasChoices('autoSuspendAfterSeconds', 'auto_suspend_after_seconds'),
+            serialization_alias='autoSuspendAfterSeconds',
+            description='The number of seconds after which the running data app is automatically suspended.',
+        )
+        data_app: 'CodeDataAppConfig.Parameters.DataApp' = Field(
+            validation_alias=AliasChoices('dataApp', 'data_app'),
+            serialization_alias='dataApp',
+            description='The data app sub config.',
+        )
+
+    class Runtime(BaseModel):
+        class Image(BaseModel):
+            version: str = Field(description='The runtime image version tag.')
+
+        class Workspace(BaseModel):
+            enabled: bool = Field(
+                description=(
+                    'When true, the platform auto-provisions a workspace per data app and injects '
+                    'its WORKSPACE_ID into the runtime env.'
+                ),
+            )
+
+        image: 'CodeDataAppConfig.Runtime.Image' = Field(description='The runtime image.')
+        workspace: 'CodeDataAppConfig.Runtime.Workspace | None' = Field(
+            default=None,
+            description=(
+                'Optional workspace runtime config. Provide `{enabled: true}` to opt into '
+                'platform-managed per-app workspaces.'
+            ),
+        )
+
+    parameters: 'CodeDataAppConfig.Parameters' = Field(description='The parameters of the data app.')
+    runtime: 'CodeDataAppConfig.Runtime' = Field(description='The runtime configuration (image version, etc.).')
+    authorization: DataAppConfig.Authorization | None = Field(
+        default=None,
+        description=(
+            'Optional authorization block. Same shape as for Streamlit data apps. Omit (None) to let the '
+            'DSAPI apply its default behavior for python-js apps.'
+        ),
+    )
+    storage: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            'Optional Storage input/output mappings (validated against the storage JSON schema). '
+            'Omit when the app does not need Storage I/O.'
+        ),
+    )
+
+
+class CreatedGitCredentialResponse(BaseModel):
+    """Response model for credential creation on a managed-git-repo data app.
+
+    Matches the `CreatedCredential` schema from sandboxes-service. For `http_token`
+    credentials the response includes a one-time `secret` that cannot be retrieved later.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(description='The ID of the created credential.')
+    type: str = Field(description='The credential type, e.g. "http_token" or "ssh_key".')
+    name: str = Field(default='', description='Caller-supplied display label (may be empty).')
+    permissions: str = Field(description='The permissions of the credential, e.g. "readWrite" or "readOnly".')
+    owner_admin_id: str | None = Field(
+        validation_alias=AliasChoices('ownerAdminId', 'owner_admin_id'),
+        default=None,
+        description='The admin ID that owns the credential.',
+    )
+    created_at: str | None = Field(
+        validation_alias=AliasChoices('createdAt', 'created_at'),
+        default=None,
+        description='The timestamp when the credential was created.',
+    )
+    secret: str | None = Field(
+        default=None,
+        description=(
+            'One-time secret returned only at creation for `http_token` credentials. '
+            'It cannot be retrieved by subsequent reads.'
+        ),
+    )
+
+
+class AppGitRepoResponse(BaseModel):
+    """Response model for the managed git repo info of a data app."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    ssh_url: str | None = Field(
+        validation_alias=AliasChoices('sshUrl', 'ssh_url'),
+        default=None,
+        description='SSH clone URL. `null` for externally configured HTTP(S) repositories.',
+    )
+    https_url: str | None = Field(
+        validation_alias=AliasChoices('httpsUrl', 'https_url'),
+        default=None,
+        description=(
+            'HTTPS clone URL (without embedded credentials). `null` for externally configured SSH repositories.'
+        ),
+    )
+    is_managed_git_repo: bool = Field(
+        validation_alias=AliasChoices('isManagedGitRepo', 'is_managed_git_repo'),
+        default=False,
+        description='Whether the repository is a managed git repository provisioned by the service.',
+    )
+
+
 class DataScienceClient(KeboolaServiceClient):
 
     def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
@@ -149,8 +280,10 @@ class DataScienceClient(KeboolaServiceClient):
     async def deploy_data_app(
         self,
         data_app_id: str,
-        config_version: str,
+        config_version: str | None = None,
         *,
+        mode: str | None = None,
+        branch: str | None = None,
         restart_if_running: bool = True,
         update_dependencies: bool = False,
     ) -> DataAppResponse:
@@ -158,18 +291,28 @@ class DataScienceClient(KeboolaServiceClient):
         Deploy a data app by its ID.
 
         :param data_app_id: The ID of the data app
-        :param config_version: The version of the config to deploy
+        :param config_version: The version of the config to deploy. Required for Streamlit apps; omit for python-js
+                    apps backed by a managed git repo (they have no Storage configVersion).
+        :param mode: Deployment mode. Set to 'dev' to enable the in-platform preview for python-js apps.
+                    Leave None for Streamlit apps.
+        :param branch: Git branch to deploy from. Only meaningful for python-js apps in `mode='dev'`; when set,
+                    the dev twin deploys from this branch instead of `main`. Leave None for `main` / prod deploys.
         :param restart_if_running: Whether to restart the data app if it is already running
         :param update_dependencies: If set to `true`, latest package versions are installed during app startup,
                     instead of using frozen versions.
         :return: The data app
         """
-        data = {
+        data: dict[str, Any] = {
             'desiredState': 'running',
-            'configVersion': config_version,
             'restartIfRunning': restart_if_running,
             'updateDependencies': update_dependencies,
         }
+        if config_version is not None:
+            data['configVersion'] = config_version
+        if mode is not None:
+            data['mode'] = mode
+        if branch is not None:
+            data['branch'] = branch
         response = await self.patch(endpoint=f'apps/{data_app_id}', data=data)
         return DataAppResponse.model_validate(response)
 
@@ -195,24 +338,70 @@ class DataScienceClient(KeboolaServiceClient):
         self,
         name: str,
         description: str,
-        configuration: DataAppConfig,
+        configuration: Union['DataAppConfig', 'CodeDataAppConfig'],
+        *,
+        app_type: str = 'streamlit',
+        use_managed_git_repo: bool = False,
+        existing_repo_url: str | None = None,
     ) -> DataAppResponse:
         """
         Create a data app from a simplified config used in the MCP server.
+
         :param name: The name of the data app
         :param description: The description of the data app
         :param configuration: The simplified configuration of the data app
+        :param app_type: The data app type, e.g. 'streamlit' or 'python-js'. Defaults to 'streamlit'.
+        :param use_managed_git_repo: When True, the data-science API provisions a managed git repo for the app.
+                    Only meaningful for python-js apps.
+        :param existing_repo_url: When set, bind the new app to this existing managed git repo (no fresh
+                    provisioning). Use this to create a prod app sharing a dev app's repo, or a dev twin
+                    sharing an existing prod app's repo. Pair with `use_managed_git_repo=True`.
         :return: The data app
         """
-        data = {
+        data: dict[str, Any] = {
             'branchId': self._branch_id,
             'name': name,
-            'type': 'streamlit',
+            'type': app_type,
             'description': description,
             'config': configuration.model_dump(exclude_none=True, by_alias=True),
         }
+        if use_managed_git_repo:
+            data['useManagedGitRepo'] = True
+        if existing_repo_url is not None:
+            data['existingRepoUrl'] = existing_repo_url
         response = await self.post(endpoint='apps', data=data)
         return DataAppResponse.model_validate(response)
+
+    async def create_app_git_credential(
+        self,
+        data_app_id: str,
+        *,
+        permissions: str = 'readWrite',
+    ) -> CreatedGitCredentialResponse:
+        """
+        Create an HTTP-token credential on a managed-git-repo data app so the caller can clone,
+        pull, and push to the app's repo over HTTPS. The response includes a one-time `secret`
+        that is not returned by any subsequent read.
+
+        :param data_app_id: The ID of the data app
+        :param permissions: 'readWrite' (default) or 'readOnly'.
+        :return: The created credential, including the one-time `secret`.
+        """
+        data = {'type': 'http_token', 'permissions': permissions}
+        response = await self.post(endpoint=f'apps/{data_app_id}/git-repo/credentials', data=data)
+        return CreatedGitCredentialResponse.model_validate(response)
+
+    async def get_app_git_repo(self, data_app_id: str) -> AppGitRepoResponse:
+        """
+        Get the managed git repo info (clone URL) for a data app.
+
+        Only meaningful for python-js apps created with `use_managed_git_repo=True`.
+
+        :param data_app_id: The ID of the data app
+        :return: The git repo info, including the clone URL.
+        """
+        response = await self.get(endpoint=f'apps/{data_app_id}/git-repo')
+        return AppGitRepoResponse.model_validate(response)
 
     async def delete_data_app(self, data_app_id: str) -> None:
         """

@@ -3,6 +3,7 @@ import importlib.resources as resources
 import logging
 import re
 from typing import Annotated, Any, Literal, Mapping, Optional, Sequence, Union, cast
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -12,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient, get_metadata_property
-from keboola_mcp_server.clients.data_science import DataAppConfig, DataAppResponse
+from keboola_mcp_server.clients.data_science import CodeDataAppConfig, DataAppConfig, DataAppResponse
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
@@ -25,6 +26,7 @@ from keboola_mcp_server.tools.components.utils import (
     set_cfg_update_metadata,
 )
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
+from keboola_mcp_server.tools.validation import ValidationContext, validate_storage_configuration_against_schema
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -37,9 +39,23 @@ def add_data_app_tools(mcp: FastMCP) -> None:
 
     mcp.add_tool(
         FunctionTool.from_function(
-            modify_data_app,
+            modify_streamlit_data_app,
             tags={DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
             annotations=ToolAnnotations(destructiveHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            modify_python_js_data_app,
+            tags={DATA_APP_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_python_js_data_app_git_credential,
+            tags={DATA_APP_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=False),
         )
     )
     mcp.add_tool(
@@ -66,7 +82,7 @@ State = Literal['created', 'running', 'stopped', 'starting', 'stopping', 'restar
 # LLM agent can still understand the state of the data app even if it is different from the known states
 SafeState = Union[State, str]
 # Type of the data app
-Type = Literal['streamlit']
+Type = Literal['streamlit', 'python-js']
 # Accepts known types or any string preventing from validation errors when receiving unknown types from the API
 # LLM agent can still understand the type of the data app even if it is different from the known types
 SafeType = Union[Type, str]
@@ -83,6 +99,15 @@ _DEFAULT_STREAMLIT_THEME = (
 )
 _DEFAULT_PACKAGES = ['pandas', 'httpx']
 
+# TODO: Remove this hardcoded image version once the platform sets it as the default for python-js apps.
+_HARDCODED_PYTHON_JS_IMAGE_VERSION = '1.6.0'
+
+# Username embedded in the HTTPS clone URL alongside the one-time token returned by the
+# managed git-repo credentials endpoint. The git-service ignores the username portion of
+# basic auth — only the password (token) is checked — but a non-empty username is required
+# for `git clone` to accept the URL without prompting.
+_MANAGED_GIT_REPO_USERNAME = 'kai'
+
 INJECTED_BLOCK_RE = re.compile(
     r'(?P<before>.*?)#\s###\sINJECTED_CODE\s####.*?#\s###\sEND_OF_INJECTED_CODE\s####(?P<after>.*)',
     re.DOTALL,
@@ -93,6 +118,13 @@ AuthenticationType = Literal['no-auth', 'basic-auth', 'default']
 
 SECRET_WORKSPACE_ID = 'WORKSPACE_ID'
 SECRET_BRANCH_ID = 'BRANCH_ID'
+SECRET_KBC_TOKEN = 'KBC_TOKEN'
+SECRET_KBC_URL = 'KBC_URL'
+
+# Project feature that opts python-js data apps into platform-managed per-app workspaces.
+# When enabled, the platform auto-provisions a workspace and injects WORKSPACE_ID at runtime.
+# When disabled, the MCP falls back to passing WORKSPACE_ID via parameters.dataApp.secrets.
+DATA_APPS_STORAGE_WORKSPACE_FEATURE = 'data-apps-storage-workspace'
 
 
 class DataAppSummary(BaseModel):
@@ -115,6 +147,14 @@ class DataAppSummary(BaseModel):
     auto_suspend_after_seconds: Optional[int] = Field(
         description='The number of seconds after which the running data app is automatically suspended.',
         default=None,
+    )
+    repo_url: Optional[str] = Field(
+        default=None,
+        description=(
+            'HTTPS clone URL of the managed git repo (without embedded credentials). '
+            'Only set for python-js data apps. Mint a token via '
+            '`create_python_js_data_app_git_credential` to authenticate.'
+        ),
     )
 
     @classmethod
@@ -172,6 +212,14 @@ class DataApp(BaseModel):
     auto_suspend_after_seconds: Optional[int] = Field(
         description='The number of seconds after which the running data app is automatically suspended.',
         default=None,
+    )
+    repo_url: Optional[str] = Field(
+        default=None,
+        description=(
+            'HTTPS clone URL of the managed git repo (without embedded credentials). '
+            'Only set for python-js data apps. Mint a token via '
+            '`create_python_js_data_app_git_credential` to authenticate.'
+        ),
     )
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters, storage and authorization'
@@ -237,6 +285,47 @@ class ModifiedDataAppOutput(BaseModel):
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
 
+class ModifiedPythonJsDataAppOutput(BaseModel):
+    """Output for `modify_python_js_data_app`. Includes git repo URL on create."""
+
+    response: str = Field(description='The response of the action performed with potential additional information.')
+    change_summary: Optional[str] = Field(default=None, description='Additional notes or hints about the operation.')
+    data_app: DataAppSummary = Field(description='The data app.')
+    repo_url: Optional[str] = Field(
+        default=None,
+        description=(
+            'HTTPS clone URL of the managed git repo (without embedded credentials). Returned on create so the '
+            'caller can clone the repo and push initial source code. On update, populated when the repo info can '
+            'be fetched. Mint a token via `create_python_js_data_app_git_credential` to authenticate.'
+        ),
+    )
+    links: list[Link] = Field(description='Navigation links for the web interface.')
+
+
+class CreatedGitCredentialOutput(BaseModel):
+    """Output for `create_python_js_data_app_git_credential`."""
+
+    response: str = Field(description='The response of the action performed.')
+    configuration_id: str = Field(description='The Storage configuration ID of the python-js data app.')
+    data_app_id: str = Field(description='The ID of the data app the credential was created on.')
+    credential_id: str = Field(description='The ID of the created credential.')
+    git_clone_url: str = Field(
+        description=(
+            'Ready-to-use HTTPS clone URL with the one-time token embedded (format: '
+            '`https://kai:<secret>@<host>/<path>.git`). Pass directly to `git clone`.'
+        ),
+    )
+    secret: str = Field(
+        description=(
+            'One-time HTTPS token. Also embedded in `git_clone_url`. Surfaced separately so it can be plugged into '
+            'a `git credential` helper. **The platform does not return this value again** — store it if you need '
+            'to reuse it outside of `git_clone_url`.'
+        ),
+    )
+    permissions: str = Field(description='The permissions of the credential, e.g. "readWrite".')
+    links: list[Link] = Field(description='Navigation links for the web interface.')
+
+
 class DeploymentDataAppOutput(BaseModel):
     """Deployment data app output containing the action performed, links and deployment info."""
 
@@ -255,7 +344,7 @@ class GetDataAppsOutput(BaseModel):
 
 
 @tool_errors()
-async def modify_data_app(
+async def modify_streamlit_data_app(
     ctx: Context,
     name: Annotated[str, Field(description='Name of the data app (max ~50 chars to fit DNS label limit).')],
     description: Annotated[str, Field(description='Description of the data app.')],
@@ -328,11 +417,13 @@ async def modify_data_app(
     secrets = _get_secrets(
         workspace_id=str(workspace_id),
         branch_id=str(branch_id),
+        storage_token=client.token,
+        storage_api_url=client.storage_api_url,
     )
 
     if configuration_id:
         # Update existing data app
-        data_app, updated_config, _ = await modify_data_app_internal(
+        data_app, updated_config, _ = await modify_streamlit_data_app_internal(
             client=client,
             workspace_manager=workspace_manager,
             name=name,
@@ -359,7 +450,7 @@ async def modify_data_app(
             configuration_version=int(data_app.config_version),
         )
         folder_hint = await apply_folder_metadata(
-            client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_data_app'
+            client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_streamlit_data_app'
         )
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
@@ -394,7 +485,13 @@ async def modify_data_app(
             configuration_id=data_app_resp.config_id,
         )
         folder_hint = await apply_folder_metadata(
-            client, DATA_APP_COMPONENT_ID, data_app_resp.config_id, folder, 'data apps', 'modify_data_app', is_new=True
+            client,
+            DATA_APP_COMPONENT_ID,
+            data_app_resp.config_id,
+            folder,
+            'data apps',
+            'modify_streamlit_data_app',
+            is_new=True,
         )
         links = links_manager.get_data_app_links(
             configuration_id=data_app_resp.config_id,
@@ -410,7 +507,7 @@ async def modify_data_app(
         )
 
 
-async def modify_data_app_internal(
+async def modify_streamlit_data_app_internal(
     *,
     client: KeboolaClient,
     workspace_manager: WorkspaceManager,
@@ -426,6 +523,8 @@ async def modify_data_app_internal(
     secrets = _get_secrets(
         workspace_id=str(await workspace_manager.get_workspace_id()),
         branch_id=str(await workspace_manager.get_branch_id()),
+        storage_token=client.token,
+        storage_api_url=client.storage_api_url,
     )
     data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
     existing_config = data_app.configuration
@@ -472,6 +571,458 @@ async def modify_data_app_internal(
             )
 
     return data_app, updated_config, folder_preview
+
+
+@tool_errors()
+async def modify_python_js_data_app(
+    ctx: Context,
+    name: Annotated[str, Field(description='Name of the data app (max ~50 chars to fit DNS label limit).')],
+    description: Annotated[str, Field(description='Description of the data app.')],
+    configuration_id: Annotated[
+        str, Field(description='The ID of existing data app configuration when updating, otherwise empty string.')
+    ] = '',
+    change_description: Annotated[
+        str,
+        Field(description='The description of the change when updating (e.g. "Bump image"), otherwise empty string.'),
+    ] = '',
+    slug: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                'URL-safe slug for the data app (used as a subdomain). Required when creating; immutable after.'
+            ),
+        ),
+    ] = None,
+    existing_repo_url: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                'When set on create, the new data app is bound to this existing managed git repo (the URL '
+                'returned by `get_data_apps` on a sibling app) instead of provisioning a fresh repo. Use this '
+                "to create a prod app that shares its sibling dev app's repo (promote-to-prod), or to create "
+                "a dev twin that shares an existing prod app's repo (edit flow). Ignored when updating."
+            ),
+        ),
+    ] = None,
+    authentication_type: Annotated[
+        AuthenticationType,
+        Field(
+            description=(
+                'Authentication type. "no-auth" removes authentication completely, "basic-auth" secures the '
+                'data app via HTTP basic authentication, and "default" means: on create, apply basic auth '
+                '(safe default for new apps); on update, keep the existing authentication configuration '
+                '(including OIDC setups configured outside the MCP).'
+            ),
+        ),
+    ] = 'default',
+    auto_suspend_after_seconds: Annotated[
+        int,
+        Field(
+            description='Number of seconds after which the running data app is automatically suspended.',
+        ),
+    ] = 900,
+    storage: Annotated[
+        Optional[dict[str, Any]],
+        Field(
+            description=(
+                'Complete storage configuration for the data app (input/output table mappings). '
+                'Validated against the storage JSON schema. Replaces the ENTIRE storage block when '
+                'updating an existing app. For data apps with Storage Access, declare output tables '
+                'with `unload_strategy: "direct-grant"` (in that case `source` is not required and '
+                'the workspace is granted direct SELECT/INSERT/UPDATE/DELETE/TRUNCATE on the destination '
+                'Storage table). Leave unset (None) to preserve the existing storage configuration; '
+                'pass an empty dict to explicitly clear it.'
+            ),
+        ),
+    ] = None,
+    folder: Annotated[
+        Optional[str],
+        Field(description=folder_field_description('data app', 'data apps')),
+    ] = None,
+) -> ModifiedPythonJsDataAppOutput:
+    """Creates or updates a python-js data app backed by a managed git repository.
+
+    Two-app project model: every python-js project has a persistent **prod app** that users actually run,
+    and one or more **dev twins** that share the same managed git repo for LLM iteration. Dev twins appear
+    in the Keboola UI under their parent prod app in a "Drafts" section; the user discards them manually
+    via a "Discard" button when no longer needed. The MCP server does not delete dev twins.
+
+    This tool only creates/updates the app configuration. Git-credential creation is a separate step
+    handled by `create_python_js_data_app_git_credential` — call it after every successful create
+    before attempting any `git` operation against the returned `repo_url`. That tool mints a one-time
+    HTTPS token and returns a ready-to-use `git_clone_url` of the form
+    `https://kai:<secret>@<host>/<path>.git`.
+
+    ## Create flow (new project bootstrap)
+    No `configuration_id`, no `existing_repo_url`. `slug` is required.
+    Steps:
+    1. Call this tool with `slug`. Returns `(configuration_id=C1, repo_url=R)` for a temporary
+       dev iteration app and its fresh managed git repo. `R` is the bare HTTPS URL (no credentials).
+    2. Call `create_python_js_data_app_git_credential(configuration_id=C1)` to mint an HTTPS token
+       and get back a `git_clone_url` with the token embedded.
+    3. Clone with `git clone <git_clone_url>`, write the initial source code, commit, push to `main`.
+    4. `deploy_data_app(action='deploy', configuration_id=C1, mode='dev')` → preview URL. Iterate with
+       the user against this dev app.
+    5a. After the user approves, **call this tool again with `existing_repo_url=R`** plus the
+        user-facing `slug` (typically without the iteration suffix) — this creates the **prod app**
+        bound to the same repo. Returns `(configuration_id=C2, repo_url=R)`.
+    5b. Call `create_python_js_data_app_git_credential(configuration_id=C2)` — credentials are per-app,
+        so the new prod app needs its own. The original token still works for the dev iteration app.
+    6. `deploy_data_app(action='deploy', configuration_id=C2)` (no `mode='dev'`) → prod URL. The
+       temporary dev iteration app from step 1 stays listed under the new prod app in the UI's
+       "Drafts" section until the user discards it.
+
+    ## Edit flow (modifying an existing prod app)
+    Steps:
+    1. `get_data_apps(configuration_ids=[<prod_id>])` to retrieve the prod app's `repo_url`.
+    2a. Call this tool with a temporary `slug` (e.g. `<prod-slug>-dev-<rand>` to stay unique) and
+        **`existing_repo_url=<prod repo_url>`** — creates the dev twin sharing the prod app's repo.
+        Returns `(configuration_id=C3, repo_url=R)`.
+    2b. Call `create_python_js_data_app_git_credential(configuration_id=C3)` to mint a token for the
+        dev twin before cloning.
+    3. Clone the repo with the returned `git_clone_url`, `git checkout -b feature-x`, write changes,
+       commit, push the branch.
+    4. `deploy_data_app(action='deploy', configuration_id=C3, mode='dev', branch='feature-x')` → preview
+       URL serving that branch. Iterate with the user.
+    5. After approval, locally `git checkout main && git merge feature-x && git push`.
+    6. `deploy_data_app(action='deploy', configuration_id=<prod_id>)` — no `mode`, no `branch`. The prod
+       app picks up the merged `main`. The dev twin stays listed under the prod app in the UI's "Drafts"
+       section until the user discards it.
+
+    ## Update flow (modifying an existing app's deployment metadata)
+    When `configuration_id` is set: updates the Storage configuration (auto-suspend, name, description,
+    `authentication_type`). `slug` and `existing_repo_url` are rejected here — slug is immutable and the
+    repo binding is fixed at creation. Use `authentication_type='default'` to keep the existing auth
+    setup (including OIDC configured outside the MCP); pass `'no-auth'` or `'basic-auth'` to overwrite.
+    After updating, ALWAYS call `deploy_data_app(action='deploy', ...)` to restart the app so the changes
+    take effect.
+
+    ## Authentication
+    New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
+    explicitly to expose the app publicly. OIDC and other advanced auth setups are managed outside the
+    MCP — when updating such an app, leave `authentication_type='default'` to preserve them.
+
+    ## Slug constraint
+    Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). For dev twins in the edit flow,
+    append a short suffix (e.g. `-dev-abc123`) to keep slugs unique across the prod app and its twins.
+
+    ## Source code
+    Source code lives in the managed git repo, NOT in this tool's input. This tool only manages deployment
+    metadata. Source code changes are pushed via `git push` to the repo URL.
+    """
+    if configuration_id:
+        if slug:
+            raise ValueError('slug cannot be changed after the data app is created.')
+        if existing_repo_url:
+            raise ValueError('existing_repo_url is only valid on create.')
+    else:
+        if not slug:
+            raise ValueError('slug is required when creating a python-js data app.')
+
+    client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
+
+    validated_storage = _validate_data_app_storage(storage, configuration_id=configuration_id or None)
+
+    # When the platform-managed workspace feature is off, the data app cannot rely on the
+    # platform to inject WORKSPACE_ID; fall back to passing it via parameters.dataApp.secrets.
+    has_storage_workspace = await client.has_feature(DATA_APPS_STORAGE_WORKSPACE_FEATURE)
+    legacy_secrets: Optional[dict[str, Any]] = None
+    if not has_storage_workspace:
+        workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+        legacy_secrets = {SECRET_WORKSPACE_ID: str(await workspace_manager.get_workspace_id())}
+
+    if configuration_id:
+        # Update existing python-js data app
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        updated_config = _update_existing_code_data_app_config(
+            existing_config=data_app.configuration,
+            image_version=_HARDCODED_PYTHON_JS_IMAGE_VERSION,
+            auto_suspend_after_seconds=auto_suspend_after_seconds,
+            authentication_type=authentication_type,
+            secrets=legacy_secrets,
+            storage=validated_storage,
+        )
+        await client.storage_client.configuration_update(
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            configuration=updated_config,
+            change_description=change_description or 'Update python-js data app',
+            updated_name=name or data_app.name,
+            updated_description=description or data_app.description,
+        )
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        await set_cfg_update_metadata(
+            client=client,
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            configuration_version=int(data_app.config_version),
+        )
+        folder_hint = await apply_folder_metadata(
+            client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
+        )
+        repo_url: Optional[str] = None
+        try:
+            repo_resp = await client.data_science_client.get_app_git_repo(data_app.data_app_id)
+            repo_url = repo_resp.https_url
+        except Exception as exc:
+            LOG.warning(f'Could not fetch git repo URL for app {data_app.data_app_id}: {exc}')
+        links = links_manager.get_data_app_links(
+            configuration_id=data_app.configuration_id,
+            configuration_name=name or data_app.name,
+            deployment_link=data_app.deployment_url,
+            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
+        )
+        response = (
+            'updated (redeploy required to apply changes in the running app)'
+            if data_app.state in ('running', 'starting')
+            else 'updated'
+        )
+        data_app_summary = DataAppSummary.model_validate(data_app.model_dump())
+        data_app_summary.repo_url = repo_url
+        return ModifiedPythonJsDataAppOutput(
+            response=response,
+            change_summary=folder_hint,
+            data_app=data_app_summary,
+            repo_url=repo_url,
+            links=links,
+        )
+    else:
+        # Create new python-js data app
+        # Narrowed by the validation block at the top of this function.
+        assert slug is not None
+        # On create, treat 'default' as 'basic-auth' (safe-by-default) to match modify_streamlit_data_app.
+        uses_basic_auth = authentication_type in ('basic-auth', 'default')
+        authorization_model = DataAppConfig.Authorization.model_validate(_get_authorization(uses_basic_auth))
+        config = CodeDataAppConfig(
+            parameters=CodeDataAppConfig.Parameters(
+                auto_suspend_after_seconds=auto_suspend_after_seconds,
+                data_app=CodeDataAppConfig.Parameters.DataApp(slug=slug, secrets=legacy_secrets),
+            ),
+            runtime=CodeDataAppConfig.Runtime(
+                image=CodeDataAppConfig.Runtime.Image(version=_HARDCODED_PYTHON_JS_IMAGE_VERSION),
+                workspace=(
+                    CodeDataAppConfig.Runtime.Workspace(enabled=True) if has_storage_workspace else None
+                ),
+            ),
+            authorization=authorization_model,
+            storage=validated_storage,
+        )
+        data_app_resp = await client.data_science_client.create_data_app(
+            name=name,
+            description=description,
+            configuration=config,
+            app_type='python-js',
+            use_managed_git_repo=True,
+            existing_repo_url=existing_repo_url,
+        )
+        if existing_repo_url is not None:
+            repo_url = existing_repo_url
+        else:
+            repo_resp = await client.data_science_client.get_app_git_repo(data_app_resp.id)
+            if repo_resp.https_url is None:
+                raise ValueError(
+                    f'Data app {data_app_resp.id} reports no HTTPS clone URL despite having a managed git repo. '
+                    'This indicates a platform-side bug — retry or contact support.'
+                )
+            repo_url = repo_resp.https_url
+        await set_cfg_creation_metadata(
+            client=client,
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=data_app_resp.config_id,
+        )
+        folder_hint = await apply_folder_metadata(
+            client,
+            DATA_APP_COMPONENT_ID,
+            data_app_resp.config_id,
+            folder,
+            'data apps',
+            'modify_python_js_data_app',
+            is_new=True,
+        )
+        links = links_manager.get_data_app_links(
+            configuration_id=data_app_resp.config_id,
+            configuration_name=name,
+            deployment_link=data_app_resp.url,
+            uses_basic_authentication=uses_basic_auth,
+        )
+        data_app_summary = DataAppSummary.from_api_response(data_app_resp)
+        data_app_summary.repo_url = repo_url
+        return ModifiedPythonJsDataAppOutput(
+            response='created',
+            change_summary=folder_hint,
+            data_app=data_app_summary,
+            repo_url=repo_url,
+            links=links,
+        )
+
+
+@tool_errors()
+async def create_python_js_data_app_git_credential(
+    ctx: Context,
+    configuration_id: Annotated[str, Field(description='Storage configuration ID of the python-js data app.')],
+) -> CreatedGitCredentialOutput:
+    """Mints a one-time HTTPS token on a python-js data app so the caller can clone, pull, and push
+    to the app's managed git repo over HTTPS.
+
+    Returns a ready-to-use `git_clone_url` of the form `https://kai:<secret>@<host>/<path>.git`
+    plus the raw `secret`. The token is returned **only** at creation — the platform cannot return
+    it again on any subsequent read. Stash the URL (or the secret) somewhere the LLM can reuse for
+    the rest of the session.
+
+    The data-science API accepts multiple credentials per app, so calling this again mints an
+    additional token without invalidating any tokens already held by other clients.
+
+    ## When to call
+
+    1. **Right after `modify_python_js_data_app` create** — the new app has a managed repo but no
+       credentials yet. Call this tool with the new app's `configuration_id` to enable git access.
+
+    2. **Recovery when the cached token is gone** (e.g., a fresh Kai sandbox continuing an old draft
+       — the previous sandbox's filesystem was wiped, taking the cached `git_clone_url` with it).
+       If `git clone`/`pull`/`push` against a python-js app the LLM did not create in the current
+       session fails with `Authentication failed` (HTTP 401), call this tool with the same
+       `configuration_id` to mint a fresh token. Existing credentials remain valid, so other clients
+       are not disrupted.
+
+    ## Constraints
+    - Only python-js data apps have a managed git repo. Streamlit apps reject the call with a clear
+      error.
+    - Permissions are always `readWrite` — the LLM virtually always needs push access. The
+      data-science API supports read-only credentials, but the tool does not expose that knob;
+      revisit once a real use case appears.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    links_manager = await ProjectLinksManager.from_client(client)
+
+    data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+    if data_app.type != 'python-js':
+        raise ValueError(
+            f'create_python_js_data_app_git_credential only supports python-js data apps, but configuration '
+            f'"{configuration_id}" is type "{data_app.type}".'
+        )
+
+    repo_resp = await client.data_science_client.get_app_git_repo(data_app.data_app_id)
+    if repo_resp.https_url is None:
+        raise ValueError(
+            f'Data app {data_app.data_app_id} reports no HTTPS clone URL despite being a python-js managed-repo '
+            f'app. This indicates a platform-side bug — retry or contact support.'
+        )
+
+    credential_resp = await client.data_science_client.create_app_git_credential(
+        data_app_id=data_app.data_app_id,
+    )
+    if not credential_resp.secret:
+        raise ValueError(
+            f'Data app {data_app.data_app_id} credentials endpoint returned no `secret` for an http_token '
+            f'credential. This indicates a platform-side bug — retry or contact support.'
+        )
+
+    git_clone_url = _build_authenticated_clone_url(repo_resp.https_url, credential_resp.secret)
+    links = links_manager.get_data_app_links(
+        configuration_id=data_app.configuration_id,
+        configuration_name=data_app.name,
+        deployment_link=data_app.deployment_url,
+        uses_basic_authentication=False,
+    )
+    return CreatedGitCredentialOutput(
+        response='created',
+        configuration_id=data_app.configuration_id,
+        data_app_id=data_app.data_app_id,
+        credential_id=credential_resp.id,
+        git_clone_url=git_clone_url,
+        secret=credential_resp.secret,
+        permissions=credential_resp.permissions,
+        links=links,
+    )
+
+
+def _build_authenticated_clone_url(https_url: str, secret: str) -> str:
+    """Embed the hardcoded git-service username and the one-time `secret` into the bare HTTPS URL
+    so the LLM can pass it straight to `git clone`.
+    """
+    parts = urlsplit(https_url)
+    if not parts.scheme or not parts.netloc:
+        raise ValueError(f'Could not parse HTTPS clone URL: {https_url!r}')
+    # Strip any pre-existing userinfo (the GET /git-repo endpoint already strips credentials,
+    # but be defensive).
+    host = parts.hostname or ''
+    if parts.port is not None:
+        host = f'{host}:{parts.port}'
+    netloc = f'{_MANAGED_GIT_REPO_USERNAME}:{quote(secret, safe="")}@{host}'
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _validate_data_app_storage(
+    storage: Optional[dict[str, Any]],
+    *,
+    configuration_id: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Validate a caller-provided storage block for a data app.
+
+    Returns the validated `storage` dict, or None when no storage was provided (caller
+    should preserve the existing storage configuration).
+
+    The storage component-type rules in `validate_root_storage_configuration` (writer / SQL
+    transformation special cases) don't apply to data apps — we just run the JSON-schema check.
+    """
+    if storage is None:
+        return None
+    # Accept both raw `storage` dict and pre-wrapped {'storage': storage}, mirroring the
+    # behavior of validate_root_storage_configuration.
+    storage_cfg = cast(dict[str, Any], storage.get('storage', storage)) if storage else {}
+    normalized = cast(dict[str, Any], {'storage': storage_cfg})
+    validation_context = ValidationContext(
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id=configuration_id,
+        scope='storage',
+    )
+    validated = validate_storage_configuration_against_schema(
+        normalized,
+        initial_message='The "storage" field is not valid.',
+        validation_context=validation_context,
+    )
+    return cast(dict[str, Any], validated['storage'])
+
+
+def _update_existing_code_data_app_config(
+    existing_config: Mapping[str, Any],
+    image_version: Optional[str],
+    auto_suspend_after_seconds: int,
+    authentication_type: AuthenticationType = 'default',
+    secrets: Optional[dict[str, Any]] = None,
+    storage: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Apply requested updates to the existing python-js data app storage configuration.
+
+    Slug is intentionally not updated here (immutable post-create).
+    `authentication_type='default'` preserves the existing `authorization` block (including OIDC
+    setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it.
+    `secrets` are merged into the existing `parameters.dataApp.secrets` map without overwriting
+    keys already present. Used on projects without the `data-apps-storage-workspace` feature to
+    inject WORKSPACE_ID; on projects with the feature, pass None.
+    `storage` replaces the entire `storage` block when provided (None preserves the existing one;
+    an empty dict is an explicit wipe).
+    """
+    new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
+    new_config.setdefault('parameters', {})
+    new_config['parameters']['autoSuspendAfterSeconds'] = auto_suspend_after_seconds
+    if image_version:
+        runtime = new_config.setdefault('runtime', {})
+        image = runtime.setdefault('image', {})
+        image['version'] = image_version
+    if authentication_type != 'default':
+        new_config['authorization'] = _get_authorization(authentication_type == 'basic-auth')
+    if secrets:
+        data_app = new_config['parameters'].setdefault('dataApp', {})
+        updated_secrets = dict(data_app.get('secrets') or {})
+        for key, value in secrets.items():
+            if key not in updated_secrets:
+                updated_secrets[key] = value
+        data_app['secrets'] = updated_secrets
+    if storage is not None:
+        new_config['storage'] = storage
+    return new_config
 
 
 @tool_errors()
@@ -527,25 +1078,73 @@ async def deploy_data_app(
     ctx: Context,
     action: Annotated[Literal['deploy', 'stop'], Field(description='The action to perform.')],
     configuration_id: Annotated[str, Field(description='The ID of the data app configuration.')],
+    mode: Annotated[
+        Optional[Literal['dev', 'production']],
+        Field(
+            description=(
+                'Deployment mode. Set to "dev" to enable the in-platform preview for python-js data apps. '
+                'Leave None (default) for Streamlit apps and for production deploys.'
+            ),
+        ),
+    ] = None,
+    branch: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                'Git branch to deploy from. Only meaningful when `mode="dev"` for python-js apps backed by a '
+                'managed repo — the dev twin will deploy from this branch instead of `main`, enabling '
+                'branch-based preview during the edit flow. Leave None for prod deploys and for Streamlit apps.'
+            ),
+        ),
+    ] = None,
 ) -> DeploymentDataAppOutput:
-    """Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
-    and the configuration ID.
+    """Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
+    action and the configuration ID.
 
-    Considerations:
-    - Redeploying a data app takes some time, and the app temporarily may have status "stopped" during this process
-    because it needs to restart.
-    - After deployment, the deployment info includes the app URL and the latest logs to diagnose in-app errors.
+    ## Mode and branch (python-js apps)
+    - `mode='dev'` enables the in-platform preview for a python-js dev twin. Pair with `branch` to deploy a
+      specific git branch (edit flow); without `branch`, the dev twin deploys `main`.
+    - For prod redeploys (including after merging a feature branch into `main` during the edit flow), use
+      no `mode` and no `branch` — the prod app picks up the current `main`.
+    - python-js apps do NOT fetch a Storage `configVersion` for deployment (their source lives in git, not in
+      the Storage configuration); this is handled automatically.
+
+    ## Streamlit apps
+    `mode` and `branch` are silently ignored for Streamlit apps (which have no managed git repo).
+
+    ## Validation
+    `branch` is only meaningful with `mode='dev'`; setting `branch` without `mode='dev'` raises an error.
+
+    ## General considerations
+    - Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the
+      restart.
+    - After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
+      errors.
     """
+    if branch is not None and mode != 'dev':
+        raise ValueError('branch is only meaningful with mode="dev"')
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         if data_app.state == 'stopping':
             raise ValueError('Data app is currently "stopping", could not be started at the moment.')
-        config_version = await client.storage_client.configuration_version_latest(
-            DATA_APP_COMPONENT_ID, data_app.configuration_id
+        # python-js apps don't carry a Storage configVersion in the deploy payload; only Streamlit apps do.
+        if data_app.type == 'python-js':
+            config_version_arg: str | None = None
+            branch_arg: str | None = branch
+        else:
+            config_version = await client.storage_client.configuration_version_latest(
+                DATA_APP_COMPONENT_ID, data_app.configuration_id
+            )
+            config_version_arg = str(config_version)
+            branch_arg = None
+        _ = await client.data_science_client.deploy_data_app(
+            data_app.data_app_id,
+            config_version_arg,
+            mode=mode,
+            branch=branch_arg,
         )
-        _ = await client.data_science_client.deploy_data_app(data_app.data_app_id, str(config_version))
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         data_app = data_app.with_deployment_info(await _fetch_logs(client, data_app.data_app_id))
         links = links_manager.get_data_app_links(
@@ -667,7 +1266,7 @@ async def _fetch_data_app(
         api_config = ConfigurationAPIResponse.model_validate(
             raw_data_app_config | {'component_id': DATA_APP_COMPONENT_ID}
         )
-        return DataApp.from_api_responses(data_app_science, api_config)
+        return await _build_data_app_with_repo(client, data_app_science, api_config)
     elif configuration_id:
         raw_configuration = await client.storage_client.configuration_detail(
             component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
@@ -682,9 +1281,25 @@ async def _fetch_data_app(
                 f'Data app tools only support {DATA_APP_COMPONENT_ID} component, but the data app '
                 f'"{data_app_id}" has component_id "{data_app_science.component_id}".'
             )
-        return DataApp.from_api_responses(data_app_science, api_config)
+        return await _build_data_app_with_repo(client, data_app_science, api_config)
     else:
         raise ValueError('Either data_app_id or configuration_id must be provided.')
+
+
+async def _build_data_app_with_repo(
+    client: KeboolaClient,
+    data_app_science: DataAppResponse,
+    api_config: ConfigurationAPIResponse,
+) -> DataApp:
+    """Build a `DataApp` and, for python-js apps, attach the managed git repo URL."""
+    data_app = DataApp.from_api_responses(data_app_science, api_config)
+    if data_app_science.type == 'python-js':
+        try:
+            repo_resp = await client.data_science_client.get_app_git_repo(data_app_science.id)
+            data_app.repo_url = repo_resp.https_url
+        except Exception as exc:
+            LOG.warning(f'Could not fetch git repo URL for python-js app {data_app_science.id}: {exc}')
+    return data_app
 
 
 async def _fetch_data_app_details_task(
@@ -838,12 +1453,16 @@ def _inject_query_to_source_code(source_code: str, sql_dialect: str) -> str:
         return f'{query_function_code}\n\n{source_code.lstrip()}'
 
 
-def _get_secrets(workspace_id: str, branch_id: str) -> dict[str, Any]:
+def _get_secrets(workspace_id: str, branch_id: str, storage_token: str, storage_api_url: str) -> dict[str, Any]:
     """
-    Generates secrets for the data app for querying the tables in the given workspace QS or SAPI.
+    Generates secrets exposed to the data app as runtime environment variables. The injected
+    `query_data` helper (and python-js apps that call Storage/Query Service directly) reads
+    `BRANCH_ID`, `WORKSPACE_ID`, `KBC_TOKEN` and `KBC_URL` from the environment.
     """
     secrets: dict[str, Any] = {
         SECRET_WORKSPACE_ID: workspace_id,
         SECRET_BRANCH_ID: branch_id,
+        SECRET_KBC_TOKEN: storage_token,
+        SECRET_KBC_URL: storage_api_url,
     }
     return secrets
