@@ -1296,7 +1296,7 @@ async def _build_data_app_with_repo(
     if data_app_science.type == 'python-js':
         try:
             repo_resp = await client.data_science_client.get_app_git_repo(data_app_science.id)
-            data_app.repo_url = repo_resp.url
+            data_app.repo_url = repo_resp.https_url
         except Exception as exc:
             LOG.warning(f'Could not fetch git repo URL for python-js app {data_app_science.id}: {exc}')
     return data_app
