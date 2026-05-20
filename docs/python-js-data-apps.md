@@ -64,7 +64,7 @@ The flow is taught to the LLM exclusively through the tool docstrings; there is 
 
 ### Runtime image version
 
-The runtime image version is currently **hardcoded** in the MCP server (constant `_HARDCODED_PYTHON_JS_IMAGE_VERSION` in `src/keboola_mcp_server/tools/data_apps.py`, value `dev-PAT-1772.4`). The tool does not expose it as an argument. Remove the hardcoded constant and re-introduce the argument (or simply drop the field from the payload) once the platform sets a default image for python-js apps.
+The runtime image version is currently **hardcoded** in the MCP server (constant `_HARDCODED_PYTHON_JS_IMAGE_VERSION` in `src/keboola_mcp_server/tools/data_apps.py` — see the source for the current value). The tool does not expose it as an argument. Remove the hardcoded constant and re-introduce the argument (or simply drop the field from the payload) once the platform sets a default image for python-js apps.
 
 ### Per-app workspace
 
