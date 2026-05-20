@@ -70,7 +70,7 @@ The runtime image version is currently **hardcoded** in the MCP server (constant
 
 Newly created python-js apps carry `runtime.workspace.enabled = true` in their Storage configuration. The platform reads this flag and **auto-provisions a workspace per data app**, then injects its ID into the app's runtime as the `WORKSPACE_ID` environment variable. As a consequence:
 
-- The MCP server does **not** inject `WORKSPACE_ID` as an app secret for python-js apps (it still does for Streamlit, which has no auto-workspace feature). The other runtime secrets — `BRANCH_ID`, `KBC_TOKEN`, `KBC_URL` — are still injected by the MCP server.
+- The MCP server does **not** write `WORKSPACE_ID` (or `BRANCH_ID`, `KBC_TOKEN`, `KBC_URL`) into the stored python-js configuration. The platform side is responsible for surfacing those at runtime. The one exception is **legacy projects without the `data-apps-storage-workspace` feature**: there the MCP server falls back to writing `WORKSPACE_ID` into `parameters.dataApp.secrets` so the app still has a workspace ID to read. Streamlit apps still receive the full secret set (`WORKSPACE_ID`, `BRANCH_ID`, `KBC_TOKEN`, `KBC_URL`) from the MCP server because they have no auto-workspace feature.
 - The flag is hardcoded `true` on create; there is no tool argument to opt out.
 - This is a **create-only** behaviour. The update path does not backfill `runtime.workspace` on existing apps — apps created before this change continue to operate against whichever workspace was injected at their original create time.
 
