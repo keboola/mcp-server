@@ -1,7 +1,7 @@
 # Python-JS Data Apps: Dev-Twin Workflow
 
 **Linear**: [AI-3005](https://linear.app/keboola/issue/AI-3005)
-**Status**: Implemented in v1.62.0; HTTPS-credential switch landed in v1.63.0.
+**Status**: Implemented in v1.62.0 (initial python-js + dev-twin workflow and HTTPS-credential switch).
 
 ---
 
