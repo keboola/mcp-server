@@ -755,12 +755,7 @@ async def modify_python_js_data_app(
         folder_hint = await apply_folder_metadata(
             client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
         )
-        repo_url: Optional[str] = None
-        try:
-            repo_resp = await client.data_science_client.get_app_git_repo(data_app.data_app_id)
-            repo_url = repo_resp.https_url
-        except Exception as exc:
-            LOG.warning(f'Could not fetch git repo URL for app {data_app.data_app_id}: {exc}')
+        repo_url = data_app.repo_url
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=name or data_app.name,
