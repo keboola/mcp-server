@@ -1472,92 +1472,314 @@ async def test_deploy_data_app_streamlit_still_passes_config_version(
     )
 
 
-# ===== Tests for modify_python_js_data_app with existing_repo_url =====
+# ===== Tests for modify_python_js_data_app dev-twin create path =====
+
+
+def _make_python_js_parent_data_app(
+    *,
+    data_app_id: str = 'app-prod-1',
+    configuration_id: str = 'cfg-prod-1',
+    repo_url: str | None = 'https://managed.repo/org/prod.git',
+    type: str = 'python-js',
+) -> DataApp:
+    """Build a DataApp the way `_fetch_data_app` would when looking up the parent."""
+    return DataApp(
+        name='Prod App',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id=configuration_id,
+        data_app_id=data_app_id,
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type=type,
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'demo'}}},
+        state='running',
+        repo_url=repo_url,
+    )
 
 
 @pytest.mark.asyncio
-async def test_modify_python_js_data_app_create_with_existing_repo_url_skips_provisioning(
+async def test_modify_python_js_data_app_create_dev_twin_uses_external_git(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
 ) -> None:
-    """When existing_repo_url is set, the new app binds to the existing repo: no get_app_git_repo call,
-    and the existing URL is returned unchanged."""
+    """When `parent_configuration_id` is set, the new app is a dev twin: no managed repo of its own,
+    `parameters.dataApp.git` populated with the parent's repo URL + a freshly minted prod-app token,
+    and the config is encrypted before being sent to data-science."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-
-    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value='wid-1')
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
 
-    app_response = _make_python_js_data_app_response(data_app_id='app-prod-1', config_id='cfg-prod-1')
-    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
-    # If the code accidentally calls get_app_git_repo, fail loudly.
-    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
-        side_effect=AssertionError('Should not fetch git repo URL when existing_repo_url is provided')
+    parent_repo = 'https://managed.repo/org/prod.git'
+    parent_data_app_id = 'app-prod-1'
+    parent = _make_python_js_parent_data_app(
+        data_app_id=parent_data_app_id, configuration_id='cfg-prod-1', repo_url=parent_repo
     )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
+
+    keboola_client.data_science_client.create_app_git_credential = mocker.AsyncMock(
+        return_value=CreatedGitCredentialResponse(
+            id='cred-1', type='http_token', permissions='readWrite', secret='token-xyz'
+        )
+    )
+    twin_response = _make_python_js_data_app_response(data_app_id='app-dev-1', config_id='cfg-dev-1')
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=twin_response)
+    # The dev twin has no managed repo, so get_app_git_repo must NOT be called for it.
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        side_effect=AssertionError('Should not fetch a git repo URL for a dev twin')
+    )
+
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+
+    # Mock encryption: walk the dict and prefix `KBC::cipher::` onto any value whose key starts with '#'.
+    async def fake_encrypt(value, *, project_id=None, component_id=None, config_id=None):
+        def walk(node):
+            if isinstance(node, dict):
+                return {
+                    k: (f'KBC::cipher::{v}' if k.startswith('#') and isinstance(v, str) else walk(v))
+                    for k, v in node.items()
+                }
+            return node
+
+        return walk(value)
+
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=fake_encrypt)
 
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
 
-    existing_repo = 'https://managed.repo/org/shared.git'
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
-        name='Prod App',
-        description='prod twin sharing repo',
-        slug='demo',
-        existing_repo_url=existing_repo,
+        name='Dev Twin',
+        description='dev iteration twin',
+        slug='demo-dev-abc123',
+        parent_configuration_id='cfg-prod-1',
+        branch='iter-feat',
     )
 
     assert isinstance(result, ModifiedPythonJsDataAppOutput)
     assert result.response == 'created'
-    assert result.repo_url == existing_repo
-    assert result.data_app.repo_url == existing_repo
-    keboola_client.data_science_client.get_app_git_repo.assert_not_called()
-    # The DSAPI client must be told about the existing repo binding.
+    assert result.repo_url == parent_repo
+    assert result.branch == 'iter-feat'
+    assert result.git_clone_url is not None
+    assert result.git_clone_url.startswith('https://kai:token-xyz@managed.repo/')
+
+    # Credential was minted on the parent, not the new dev twin.
+    keboola_client.data_science_client.create_app_git_credential.assert_awaited_once_with(parent_data_app_id)
+
+    # create_data_app received use_managed_git_repo=False and the external-git block.
     create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
-    assert create_kwargs['existing_repo_url'] == existing_repo
-    assert create_kwargs['use_managed_git_repo'] is True
+    assert create_kwargs['app_type'] == 'python-js'
+    assert create_kwargs['use_managed_git_repo'] is False
+    serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
+    git_block = serialized['parameters']['dataApp']['git']
+    assert git_block == {
+        'repository': parent_repo,
+        'username': 'kai',
+        '#password': 'KBC::cipher::token-xyz',
+        'branch': 'iter-feat',
+    }
+
+    # Encryption was actually called (so `#password` is ciphertext on the wire).
+    keboola_client.encryption_client.encrypt.assert_awaited_once()
+    encrypt_kwargs = keboola_client.encryption_client.encrypt.await_args.kwargs
+    assert encrypt_kwargs['component_id'] == DATA_APP_COMPONENT_ID
+    assert encrypt_kwargs['project_id'] == 'proj-1'
+
+    # No managed-repo lookup happened on the dev twin.
+    keboola_client.data_science_client.get_app_git_repo.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_dev_twin_generates_branch_when_unspecified(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """Omitting `branch` triggers an auto-generated `iter-<6-hex>` name."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    parent = _make_python_js_parent_data_app()
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
+    keboola_client.data_science_client.create_app_git_credential = mocker.AsyncMock(
+        return_value=CreatedGitCredentialResponse(
+            id='cred-1', type='http_token', permissions='readWrite', secret='token-xyz'
+        )
+    )
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
+        return_value=_make_python_js_data_app_response()
+    )
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda v, **_: v)
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='Dev Twin',
+        description='dev iteration twin',
+        slug='demo-dev',
+        parent_configuration_id='cfg-prod-1',
+    )
+
+    assert result.branch is not None
+    import re
+
+    assert re.fullmatch(r'iter-[0-9a-f]{6}', result.branch), f'unexpected branch name {result.branch!r}'
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('missing_arg', 'kwargs', 'error_match'),
+    ('kwargs', 'error_match'),
     [
         (
-            'slug',
             {
                 'name': 'A',
                 'description': '',
-                'existing_repo_url': 'https://managed/org/r.git',
+                'parent_configuration_id': 'cfg-prod-1',
             },
             'slug is required',
         ),
     ],
 )
-async def test_modify_python_js_data_app_create_with_existing_repo_url_still_requires_slug(
+async def test_modify_python_js_data_app_create_dev_twin_still_requires_slug(
     mcp_context_client: Context,
-    missing_arg: str,
     kwargs: dict,
     error_match: str,
 ) -> None:
-    """`existing_repo_url` does not waive any required create-time argument."""
+    """`parent_configuration_id` does not waive any required create-time argument."""
     with pytest.raises(ValueError, match=error_match):
         await modify_python_js_data_app(ctx=mcp_context_client, **kwargs)
 
 
 @pytest.mark.asyncio
-async def test_modify_python_js_data_app_update_rejects_existing_repo_url(
+@pytest.mark.parametrize(
+    ('disallowed_arg', 'kwargs', 'error_match'),
+    [
+        (
+            'parent_configuration_id',
+            {
+                'name': 'A',
+                'description': '',
+                'configuration_id': 'cfg-1',
+                'parent_configuration_id': 'cfg-prod-1',
+            },
+            'parent_configuration_id is only valid when creating a dev twin',
+        ),
+        (
+            'branch',
+            {
+                'name': 'A',
+                'description': '',
+                'configuration_id': 'cfg-1',
+                'branch': 'iter-x',
+            },
+            'branch is only valid when creating a dev twin',
+        ),
+    ],
+)
+async def test_modify_python_js_data_app_update_rejects_dev_twin_args(
     mcp_context_client: Context,
+    disallowed_arg: str,
+    kwargs: dict,
+    error_match: str,
 ) -> None:
-    """The update path rejects `existing_repo_url` — repo binding is fixed at creation."""
-    with pytest.raises(ValueError, match='existing_repo_url is only valid on create'):
+    """The update path rejects dev-twin-only args (`parent_configuration_id`, `branch`)."""
+    with pytest.raises(ValueError, match=error_match):
+        await modify_python_js_data_app(ctx=mcp_context_client, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_dev_twin_rejects_when_parent_is_streamlit(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """A Streamlit `parent_configuration_id` is rejected — only python-js prods can parent a dev twin."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    streamlit_parent = _make_python_js_parent_data_app(type='streamlit', repo_url=None)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=streamlit_parent))
+
+    with pytest.raises(ValueError, match='only python-js prod apps can parent a dev twin'):
         await modify_python_js_data_app(
             ctx=mcp_context_client,
-            name='A',
+            name='Dev Twin',
             description='',
-            configuration_id='cfg-1',
-            existing_repo_url='https://managed/org/r.git',
+            slug='demo-dev',
+            parent_configuration_id='cfg-prod-1',
         )
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_dev_twin_rejects_when_parent_missing_repo_url(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """Defensive: parent's repo lookup returned no URL — surface a clear error."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    parent = _make_python_js_parent_data_app(repo_url=None)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
+
+    with pytest.raises(ValueError, match='has no managed git repo URL'):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='Dev Twin',
+            description='',
+            slug='demo-dev',
+            parent_configuration_id='cfg-prod-1',
+        )
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_prod_calls_get_app_git_repo_for_url(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """Prod creates always go through get_app_git_repo (no short-circuit branch)."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
+        return_value=_make_python_js_data_app_response()
+    )
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(
+            ssh_url=None,
+            https_url='https://managed.repo/org/prod.git',
+            is_managed_git_repo=True,
+        )
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    result = await modify_python_js_data_app(ctx=mcp_context_client, name='Prod', description='', slug='demo')
+
+    assert result.repo_url == 'https://managed.repo/org/prod.git'
+    keboola_client.data_science_client.get_app_git_repo.assert_awaited_once()
+    create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
+    assert create_kwargs['use_managed_git_repo'] is True
+    # No git block on prod create.
+    serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
+    assert 'git' not in serialized['parameters']['dataApp']
 
 
 # ===== Tests for deploy_data_app branch parameter =====

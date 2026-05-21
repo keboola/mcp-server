@@ -95,23 +95,19 @@ def _create_app_response(app_id: str = 'app-123', config_id: str = 'cfg-456') ->
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('app_type', 'use_managed_git_repo', 'existing_repo_url', 'expected_extra_payload'),
+    ('app_type', 'use_managed_git_repo', 'expected_extra_payload'),
     [
-        ('streamlit', False, None, {}),
-        ('python-js', True, None, {'useManagedGitRepo': True}),
-        ('python-js', False, None, {}),  # python-js without managed repo (unusual but allowed)
-        (
-            'python-js',
-            True,
-            'git@managed:org/repo.git',
-            {'useManagedGitRepo': True, 'existingRepoUrl': 'git@managed:org/repo.git'},
-        ),
+        ('streamlit', False, {}),
+        ('python-js', True, {'useManagedGitRepo': True}),
+        # Dev twin path: python-js app with an external-git binding lives inside the configuration
+        # body (`parameters.dataApp.git`), not as a top-level request field — so no extra payload
+        # keys are expected.
+        ('python-js', False, {}),
     ],
 )
 async def test_create_data_app_passes_type_and_managed_repo_flag(
     app_type: str,
     use_managed_git_repo: bool,
-    existing_repo_url: str | None,
     expected_extra_payload: dict,
 ) -> None:
     client = DataScienceClient.create('https://api.example.com', token=None, branch_id='br-1')
@@ -124,7 +120,6 @@ async def test_create_data_app_passes_type_and_managed_repo_flag(
         configuration=config,
         app_type=app_type,
         use_managed_git_repo=use_managed_git_repo,
-        existing_repo_url=existing_repo_url,
     )
 
     expected_payload = {

@@ -2,6 +2,7 @@ import copy
 import importlib.resources as resources
 import logging
 import re
+import secrets
 from typing import Annotated, Any, Literal, Mapping, Optional, Sequence, Union, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -107,6 +108,16 @@ _HARDCODED_PYTHON_JS_IMAGE_VERSION = '1.6.0'
 # basic auth — only the password (token) is checked — but a non-empty username is required
 # for `git clone` to accept the URL without prompting.
 _MANAGED_GIT_REPO_USERNAME = 'kai'
+
+# Prefix used to auto-generate iteration branch names for dev twins when the caller does
+# not supply one. Format: `iter-<6 hex chars>`, e.g. `iter-a3f9c1`.
+_DEV_TWIN_BRANCH_PREFIX = 'iter-'
+
+
+def _generate_dev_twin_branch_name() -> str:
+    """Generate a random iteration branch name for a python-js dev twin."""
+    return f'{_DEV_TWIN_BRANCH_PREFIX}{secrets.token_hex(3)}'
+
 
 INJECTED_BLOCK_RE = re.compile(
     r'(?P<before>.*?)#\s###\sINJECTED_CODE\s####.*?#\s###\sEND_OF_INJECTED_CODE\s####(?P<after>.*)',
@@ -298,7 +309,29 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
         description=(
             'HTTPS clone URL of the managed git repo (without embedded credentials). Returned on create so the '
             'caller can clone the repo and push initial source code. On update, populated when the repo info can '
-            'be fetched. Mint a token via `create_python_js_data_app_git_credential` to authenticate.'
+            "be fetched. On the dev-twin create path this is the **parent prod app's** managed repo URL — that "
+            'is the repo the agent should clone, branch, and push to. Mint a token via '
+            '`create_python_js_data_app_git_credential` to authenticate (or use `git_clone_url` returned by this '
+            'tool on the dev-twin path).'
+        ),
+    )
+    git_clone_url: Optional[str] = Field(
+        default=None,
+        description=(
+            'Ready-to-use authenticated HTTPS clone URL embedding the freshly-minted prod-app token (format: '
+            '`https://kai:<secret>@<host>/<path>.git`). Only populated on the **dev-twin create path** — the '
+            'token was minted on the parent prod app and is one-time, so it is surfaced here so the agent can '
+            'clone immediately without a separate `create_python_js_data_app_git_credential` call. None on prod '
+            'create and on update.'
+        ),
+    )
+    branch: Optional[str] = Field(
+        default=None,
+        description=(
+            'Iteration branch the dev twin is pinned to (set in `parameters.dataApp.git.branch`). Only populated '
+            'on the **dev-twin create path** — defaults to `iter-<6-hex>` when the caller does not pass a branch '
+            'name. The agent should `git checkout -b <branch>` and push code on this branch before calling '
+            '`deploy_data_app(mode="dev")`. None on prod create and on update.'
         ),
     )
     links: list[Link] = Field(description='Navigation links for the web interface.')
@@ -591,14 +624,26 @@ async def modify_python_js_data_app(
             ),
         ),
     ] = None,
-    existing_repo_url: Annotated[
+    parent_configuration_id: Annotated[
         Optional[str],
         Field(
             description=(
-                'When set on create, the new data app is bound to this existing managed git repo (the URL '
-                'returned by `get_data_apps` on a sibling app) instead of provisioning a fresh repo. Use this '
-                "to create a prod app that shares its sibling dev app's repo (promote-to-prod), or to create "
-                "a dev twin that shares an existing prod app's repo (edit flow). Ignored when updating."
+                'Storage configuration ID of the prod python-js data app this dev twin will iterate against. '
+                'When set on create, the new app is created as a **dev twin**: no managed repo is provisioned '
+                "for it; instead its `parameters.dataApp.git` block is populated to point at the prod app's "
+                'managed repo, with a freshly-minted prod-app HTTPS token and the chosen iteration branch. '
+                'Leave None on create to make a **prod app** (which gets its own managed repo). Rejected on '
+                'update.'
+            ),
+        ),
+    ] = None,
+    branch: Annotated[
+        Optional[str],
+        Field(
+            description=(
+                'Iteration branch for the dev twin to deploy from. Only valid on the dev-twin create path '
+                '(when `parent_configuration_id` is set). Defaults to `iter-<6-hex>` when unset. Must not '
+                'be `main` (reserved for the prod app). Rejected on prod create and on update.'
             ),
         ),
     ] = None,
@@ -638,62 +683,53 @@ async def modify_python_js_data_app(
         Field(description=folder_field_description('data app', 'data apps')),
     ] = None,
 ) -> ModifiedPythonJsDataAppOutput:
-    """Creates or updates a python-js data app backed by a managed git repository.
+    """Creates or updates a python-js data app.
 
-    Two-app project model: every python-js project has a persistent **prod app** that users actually run,
-    and one or more **dev twins** that share the same managed git repo for LLM iteration. Dev twins appear
-    in the Keboola UI under their parent prod app in a "Drafts" section; the user discards them manually
-    via a "Discard" button when no longer needed. The MCP server does not delete dev twins.
+    Two-app project model: every python-js project has a persistent **prod app** that owns the only
+    managed git repository for the project, and one or more **dev twins** that are *external-git* apps
+    pointing back at the prod app's managed repo for LLM iteration. Dev twins appear in the Keboola UI
+    under their parent prod app in a "Drafts" section; the user discards them manually via a "Discard"
+    button when no longer needed. The MCP server does not delete dev twins.
 
-    This tool only creates/updates the app configuration. Git-credential creation is a separate step
-    handled by `create_python_js_data_app_git_credential` — call it after every successful create
-    before attempting any `git` operation against the returned `repo_url`. That tool mints a one-time
-    HTTPS token and returns a ready-to-use `git_clone_url` of the form
-    `https://kai:<secret>@<host>/<path>.git`.
+    Why this ownership split (MVP, AI-3005): the data-science platform does not yet support sharing a
+    managed repo across apps. Until the platform-side drafts mechanism lands (AI-3240), the dev twin
+    is configured to clone the prod app's repo on every deploy by setting its
+    `parameters.dataApp.git = {repository, username, '#password', branch}`. The prod-side credential
+    is minted automatically inside this tool when creating a dev twin — the agent does NOT need to
+    call `create_python_js_data_app_git_credential` separately on a dev twin.
 
     ## Create flow (new project bootstrap)
-    No `configuration_id`, no `existing_repo_url`. `slug` is required.
+    No `configuration_id`, no `parent_configuration_id`. `slug` is required.
     Steps:
-    1. Call this tool with `slug`. Returns `(configuration_id=C1, repo_url=R)` for a temporary
-       dev iteration app and its fresh managed git repo. `R` is the bare HTTPS URL (no credentials).
-    2. Call `create_python_js_data_app_git_credential(configuration_id=C1)` to mint an HTTPS token
-       and get back a `git_clone_url` with the token embedded.
-    3. Clone with `git clone <git_clone_url>`, write the initial source code, commit, push to `main`.
-    4. `deploy_data_app(action='deploy', configuration_id=C1, mode='dev')` → preview URL. Iterate with
-       the user against this dev app.
-    5a. After the user approves, **call this tool again with `existing_repo_url=R`** plus the
-        user-facing `slug` (typically without the iteration suffix) — this creates the **prod app**
-        bound to the same repo. Returns `(configuration_id=C2, repo_url=R)`.
-    5b. Call `create_python_js_data_app_git_credential(configuration_id=C2)` — credentials are per-app,
-        so the new prod app needs its own. The original token still works for the dev iteration app.
-    6. `deploy_data_app(action='deploy', configuration_id=C2)` (no `mode='dev'`) → prod URL. The
-       temporary dev iteration app from step 1 stays listed under the new prod app in the UI's
+    1. Call this tool with `slug` (the user-facing name, e.g. `demo`). Creates the **prod app** with
+       its own managed git repo. Returns `(configuration_id=PROD, repo_url=R)`. `R` is the bare HTTPS
+       URL (no credentials).
+    2. Call this tool again with `slug` (e.g. `demo-dev-<rand>`) and `parent_configuration_id=PROD`.
+       Creates the **dev twin** as an external-git app pointing at `R` on a fresh iteration branch.
+       Returns `(configuration_id=DEV, repo_url=R, git_clone_url=U, branch=B)` — `U` has the
+       prod-issued token embedded so the agent can clone immediately, and `B` is the branch the
+       dev twin is pinned to (`iter-<6-hex>` if `branch` was not passed).
+    3. `git clone U`, `git checkout B`, write source, push.
+    4. `deploy_data_app(action='deploy', configuration_id=DEV, mode='dev')` → preview URL serving
+       branch `B`. Iterate with the user.
+    5. After approval, locally `git checkout main && git merge B && git push`.
+    6. `deploy_data_app(action='deploy', configuration_id=PROD)` — no `mode`, no `branch`. The prod
+       app picks up the merged `main`. The dev twin stays listed under the prod app in the UI's
        "Drafts" section until the user discards it.
 
     ## Edit flow (modifying an existing prod app)
-    Steps:
-    1. `get_data_apps(configuration_ids=[<prod_id>])` to retrieve the prod app's `repo_url`.
-    2a. Call this tool with a temporary `slug` (e.g. `<prod-slug>-dev-<rand>` to stay unique) and
-        **`existing_repo_url=<prod repo_url>`** — creates the dev twin sharing the prod app's repo.
-        Returns `(configuration_id=C3, repo_url=R)`.
-    2b. Call `create_python_js_data_app_git_credential(configuration_id=C3)` to mint a token for the
-        dev twin before cloning.
-    3. Clone the repo with the returned `git_clone_url`, `git checkout -b feature-x`, write changes,
-       commit, push the branch.
-    4. `deploy_data_app(action='deploy', configuration_id=C3, mode='dev', branch='feature-x')` → preview
-       URL serving that branch. Iterate with the user.
-    5. After approval, locally `git checkout main && git merge feature-x && git push`.
-    6. `deploy_data_app(action='deploy', configuration_id=<prod_id>)` — no `mode`, no `branch`. The prod
-       app picks up the merged `main`. The dev twin stays listed under the prod app in the UI's "Drafts"
-       section until the user discards it.
+    Same as steps 2–6 above. The agent already has the prod's `configuration_id`; it just calls
+    this tool with `parent_configuration_id=<prod>` and (optionally) `branch=<name>` to create the
+    dev twin. No `get_data_apps` pre-lookup is needed.
 
     ## Update flow (modifying an existing app's deployment metadata)
     When `configuration_id` is set: updates the Storage configuration (auto-suspend, name, description,
-    `authentication_type`). `slug` and `existing_repo_url` are rejected here — slug is immutable and the
-    repo binding is fixed at creation. Use `authentication_type='default'` to keep the existing auth
-    setup (including OIDC configured outside the MCP); pass `'no-auth'` or `'basic-auth'` to overwrite.
-    After updating, ALWAYS call `deploy_data_app(action='deploy', ...)` to restart the app so the changes
-    take effect.
+    `authentication_type`). `slug`, `parent_configuration_id`, and `branch` are all rejected here —
+    slug is immutable, the repo binding is fixed at creation, and the iteration branch only makes
+    sense at create time. Use `authentication_type='default'` to keep the existing auth setup
+    (including OIDC configured outside the MCP); pass `'no-auth'` or `'basic-auth'` to overwrite.
+    After updating, ALWAYS call `deploy_data_app(action='deploy', ...)` to restart the app so the
+    changes take effect.
 
     ## Authentication
     New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
@@ -701,21 +737,29 @@ async def modify_python_js_data_app(
     MCP — when updating such an app, leave `authentication_type='default'` to preserve them.
 
     ## Slug constraint
-    Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). For dev twins in the edit flow,
-    append a short suffix (e.g. `-dev-abc123`) to keep slugs unique across the prod app and its twins.
+    Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). For dev twins, append a
+    short suffix (e.g. `-dev-abc123`) to keep slugs unique across the prod app and its twins.
 
     ## Source code
-    Source code lives in the managed git repo, NOT in this tool's input. This tool only manages deployment
-    metadata. Source code changes are pushed via `git push` to the repo URL.
+    Source code lives in the managed git repo, NOT in this tool's input. This tool only manages
+    deployment metadata and the git binding. Source code changes are pushed via `git push` to the
+    prod app's repo URL (`repo_url` in this tool's output, embedded with credentials in
+    `git_clone_url` on the dev-twin create path).
     """
     if configuration_id:
         if slug:
             raise ValueError('slug cannot be changed after the data app is created.')
-        if existing_repo_url:
-            raise ValueError('existing_repo_url is only valid on create.')
+        if parent_configuration_id:
+            raise ValueError('parent_configuration_id is only valid when creating a dev twin ' '(no configuration_id).')
+        if branch:
+            raise ValueError('branch is only valid when creating a dev twin (no configuration_id).')
     else:
         if not slug:
             raise ValueError('slug is required when creating a python-js data app.')
+        if branch is not None and not parent_configuration_id:
+            raise ValueError(
+                'branch is only valid on the dev-twin create path ' '(pair it with parent_configuration_id).'
+            )
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -781,16 +825,54 @@ async def modify_python_js_data_app(
             links=links,
         )
     else:
-        # Create new python-js data app
+        # Create new python-js data app — either a prod app (own managed repo) or a dev twin
+        # (external-git binding pointing at the parent prod app's managed repo).
         # Narrowed by the validation block at the top of this function.
         assert slug is not None
         # On create, treat 'default' as 'basic-auth' (safe-by-default) to match modify_streamlit_data_app.
         uses_basic_auth = authentication_type in ('basic-auth', 'default')
         authorization_model = DataAppConfig.Authorization.model_validate(_get_authorization(uses_basic_auth))
+
+        git_clone_url: Optional[str] = None
+        twin_branch: Optional[str] = None
+        git_block: Optional[CodeDataAppConfig.Parameters.DataApp.Git] = None
+        if parent_configuration_id:
+            # Dev-twin create path: resolve the parent's repo + mint a parent-side credential, then
+            # serialize an external-git block into the dev twin's config.
+            parent = await _fetch_data_app(client, configuration_id=parent_configuration_id, data_app_id=None)
+            if parent.type != 'python-js':
+                raise ValueError(
+                    f'parent_configuration_id "{parent_configuration_id}" is type "{parent.type}", but only '
+                    f'python-js prod apps can parent a dev twin.'
+                )
+            if not parent.repo_url:
+                raise ValueError(
+                    f'Parent python-js data app "{parent_configuration_id}" has no managed git repo URL. '
+                    'This indicates a platform-side bug — retry or contact support.'
+                )
+            twin_branch = (branch or _generate_dev_twin_branch_name()).strip()
+            if not twin_branch or any(c.isspace() for c in twin_branch):
+                raise ValueError(f'branch "{branch}" is not a valid git branch name.')
+            if twin_branch == 'main':
+                raise ValueError('branch "main" is reserved for the prod app — pick a different iteration branch.')
+            cred = await client.data_science_client.create_app_git_credential(parent.data_app_id)
+            if not cred.secret:
+                raise ValueError(
+                    f'Parent data app {parent.data_app_id} credentials endpoint returned no `secret` for an '
+                    f'http_token credential. This indicates a platform-side bug — retry or contact support.'
+                )
+            git_block = CodeDataAppConfig.Parameters.DataApp.Git(
+                repository=parent.repo_url,
+                username=_MANAGED_GIT_REPO_USERNAME,
+                password=cred.secret,
+                branch=twin_branch,
+            )
+            git_clone_url = _build_authenticated_clone_url(parent.repo_url, cred.secret)
+
         config = CodeDataAppConfig(
             parameters=CodeDataAppConfig.Parameters(
                 auto_suspend_after_seconds=auto_suspend_after_seconds,
-                data_app=CodeDataAppConfig.Parameters.DataApp(slug=slug, secrets=legacy_secrets),
+                data_app=CodeDataAppConfig.Parameters.DataApp(slug=slug, secrets=legacy_secrets, git=git_block),
             ),
             runtime=CodeDataAppConfig.Runtime(
                 image=CodeDataAppConfig.Runtime.Image(version=_HARDCODED_PYTHON_JS_IMAGE_VERSION),
@@ -799,16 +881,29 @@ async def modify_python_js_data_app(
             authorization=authorization_model,
             storage=validated_storage,
         )
+        if git_block is not None:
+            # The git block's `#password` is plaintext at this point; the encryption service walks
+            # the dict and only encrypts keys starting with `#`, so everything else is untouched.
+            project_id = await client.storage_client.project_id()
+            config_payload = cast(dict[str, Any], config.model_dump(by_alias=True, exclude_none=True))
+            encrypted_payload = await client.encryption_client.encrypt(
+                config_payload,
+                component_id=DATA_APP_COMPONENT_ID,
+                project_id=project_id,
+            )
+            config = CodeDataAppConfig.model_validate(encrypted_payload)
         data_app_resp = await client.data_science_client.create_data_app(
             name=name,
             description=description,
             configuration=config,
             app_type='python-js',
-            use_managed_git_repo=True,
-            existing_repo_url=existing_repo_url,
+            # Dev twins bring their own external-git binding; only prod apps get a managed repo.
+            use_managed_git_repo=parent_configuration_id is None,
         )
-        if existing_repo_url is not None:
-            repo_url = existing_repo_url
+        if parent_configuration_id:
+            # Dev twin: the repo the agent must clone is the parent prod's managed repo.
+            assert git_block is not None
+            repo_url = git_block.repository
         else:
             repo_resp = await client.data_science_client.get_app_git_repo(data_app_resp.id)
             if repo_resp.https_url is None:
@@ -844,6 +939,8 @@ async def modify_python_js_data_app(
             change_summary=folder_hint,
             data_app=data_app_summary,
             repo_url=repo_url,
+            git_clone_url=git_clone_url,
+            branch=twin_branch,
             links=links,
         )
 

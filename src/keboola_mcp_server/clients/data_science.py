@@ -108,6 +108,40 @@ class CodeDataAppConfig(BaseModel):
 
     class Parameters(BaseModel):
         class DataApp(BaseModel):
+            class Git(BaseModel):
+                """External-git binding for a python-js dev twin.
+
+                When set, the data-science API treats the app as externally configured: it does NOT
+                provision a managed repo for it, and the data-app runtime clones the configured
+                `repository` (at `branch`) using `username`/`#password` as HTTPS basic auth on every
+                deploy.
+
+                MVP use case (AI-3005): a dev twin points at its parent prod app's managed repo,
+                with credentials minted on the prod app via `create_app_git_credential`.
+                """
+
+                model_config = ConfigDict(populate_by_name=True)
+
+                repository: str = Field(description='HTTPS clone URL of the upstream managed git repo.')
+                username: str = Field(
+                    description=(
+                        'Username for HTTPS basic auth. The git-service ignores this and only validates ' 'the token.'
+                    ),
+                )
+                password: str = Field(
+                    validation_alias=AliasChoices('#password', 'password'),
+                    serialization_alias='#password',
+                    description=(
+                        'Encrypted HTTPS token (KBC::ConfigSecureGKMS::...). Must be passed through '
+                        'EncryptionClient.encrypt before writing to Storage so the platform can '
+                        'decrypt it at runtime.'
+                    ),
+                )
+                branch: str | None = Field(
+                    default=None,
+                    description='Branch to deploy from. None defaults to the platform default ("main").',
+                )
+
             slug: str = Field(description='The slug of the data app (used as URL subdomain).')
             secrets: dict[str, str] | None = Field(
                 description=(
@@ -118,6 +152,14 @@ class CodeDataAppConfig(BaseModel):
                     '`data-apps-storage-workspace` feature, WORKSPACE_ID must be passed here instead.'
                 ),
                 default=None,
+            )
+            git: 'CodeDataAppConfig.Parameters.DataApp.Git | None' = Field(
+                default=None,
+                description=(
+                    "External-git binding. Set on dev twins to point at the parent prod app's "
+                    'managed repo + a fresh prod-issued credential + the iteration branch. Leave '
+                    'unset on prod apps (which own their own managed repo via `useManagedGitRepo`).'
+                ),
             )
 
         auto_suspend_after_seconds: int = Field(
@@ -342,7 +384,6 @@ class DataScienceClient(KeboolaServiceClient):
         *,
         app_type: str = 'streamlit',
         use_managed_git_repo: bool = False,
-        existing_repo_url: str | None = None,
     ) -> DataAppResponse:
         """
         Create a data app from a simplified config used in the MCP server.
@@ -352,10 +393,8 @@ class DataScienceClient(KeboolaServiceClient):
         :param configuration: The simplified configuration of the data app
         :param app_type: The data app type, e.g. 'streamlit' or 'python-js'. Defaults to 'streamlit'.
         :param use_managed_git_repo: When True, the data-science API provisions a managed git repo for the app.
-                    Only meaningful for python-js apps.
-        :param existing_repo_url: When set, bind the new app to this existing managed git repo (no fresh
-                    provisioning). Use this to create a prod app sharing a dev app's repo, or a dev twin
-                    sharing an existing prod app's repo. Pair with `use_managed_git_repo=True`.
+                    Only meaningful for python-js apps. Pass False on dev twins that bring their own
+                    external-git binding via `configuration.parameters.dataApp.git`.
         :return: The data app
         """
         data: dict[str, Any] = {
@@ -367,8 +406,6 @@ class DataScienceClient(KeboolaServiceClient):
         }
         if use_managed_git_repo:
             data['useManagedGitRepo'] = True
-        if existing_repo_url is not None:
-            data['existingRepoUrl'] = existing_repo_url
         response = await self.post(endpoint='apps', data=data)
         return DataAppResponse.model_validate(response)
 
