@@ -1,16 +1,18 @@
 import json
 from typing import Any
-from unittest.mock import call
+from unittest.mock import AsyncMock, call
 
 import httpx
 import pytest
 from mcp.server.fastmcp import Context
+from mcp.types import ProgressNotification
 from pydantic import TypeAdapter
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
 from keboola_mcp_server.workspace import (
+    JobSubmittedInfo,
     QueryResult,
     SqlSelectData,
     TableFqn,
@@ -82,6 +84,73 @@ async def test_query_data(
     assert isinstance(result, QueryDataOutput)
     assert result.query_name == query_name
     assert result.csv_data == expected_csv
+
+
+@pytest.mark.asyncio
+async def test_query_data_emits_progress_notification_with_job_id(mcp_context_client: Context, mocker):
+    """When the client supplied a progressToken in the original tools/call, query_data must surface
+    the backend job id to the client by sending a `notifications/progress` whose `params._meta`
+    carries `keboola.queryJobId`, the backend name, and the absolute cancel URL. Without this,
+    clients cannot cancel a long-running query out-of-band against Query Service directly.
+    """
+    info = JobSubmittedInfo(
+        job_id='job-xyz',
+        cancellation_url='https://query.keboola.com/api/v1/queries/job-xyz/cancel',
+        backend='snowflake',
+    )
+
+    async def fake_execute_query(sql_query, *, max_rows, max_chars, on_job_submitted=None):
+        if on_job_submitted is not None:
+            await on_job_submitted(info)
+        return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
+
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.execute_query.side_effect = fake_execute_query
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+    mcp_context_client.request_context.meta = mocker.MagicMock()
+    mcp_context_client.request_context.meta.progressToken = 'tkn-1'
+    mcp_context_client.send_notification = AsyncMock()
+
+    await query_data('select 1;', 'q', mcp_context_client)
+
+    mcp_context_client.send_notification.assert_awaited_once()
+    sent = mcp_context_client.send_notification.await_args.args[0]
+    assert isinstance(sent, ProgressNotification)
+    assert sent.params.progressToken == 'tkn-1'
+    # `_meta` round-trips through the on-wire JSON (alias) — assert the full payload shape so a
+    # spec-compliant client following the MCP progress notification format can read the handle.
+    on_wire = json.loads(sent.model_dump_json(by_alias=True, exclude_none=True))
+    assert on_wire['method'] == 'notifications/progress'
+    assert on_wire['params']['_meta'] == {
+        'keboola.queryJobId': 'job-xyz',
+        'keboola.backend': 'snowflake',
+        'keboola.cancellationUrl': 'https://query.keboola.com/api/v1/queries/job-xyz/cancel',
+    }
+
+
+@pytest.mark.asyncio
+async def test_query_data_skips_progress_when_no_token(mcp_context_client: Context, mocker):
+    """Per MCP spec, the server must only emit progress notifications when the client provided a
+    progressToken. Without one we must stay silent — sending unsolicited progress can break clients
+    that strictly validate the protocol."""
+
+    async def fake_execute_query(sql_query, *, max_rows, max_chars, on_job_submitted=None):
+        # The tool should not even hand us a callback when no token is set.
+        assert on_job_submitted is None
+        return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
+
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.execute_query.side_effect = fake_execute_query
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+    # empty_context fixture defaults meta to None, which is the "no progressToken" shape.
+    assert mcp_context_client.request_context.meta is None
+    mcp_context_client.send_notification = AsyncMock()
+
+    await query_data('select 1;', 'q', mcp_context_client)
+
+    mcp_context_client.send_notification.assert_not_called()
 
 
 class TestWorkspaceManagerSnowflake:

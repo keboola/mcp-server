@@ -5,17 +5,52 @@ from typing import Annotated
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
-from mcp.types import ToolAnnotations
+from mcp.types import ProgressNotification, ProgressNotificationParams, ProgressToken, ToolAnnotations
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.workspace import SqlSelectData, WorkspaceManager
+from keboola_mcp_server.workspace import JobSubmittedInfo, SqlSelectData, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
 SQL_TOOLS_TAG = 'sql'
 MAX_ROWS = 1_000
 MAX_CHARS = 50_000
+
+
+def _client_progress_token(ctx: Context) -> ProgressToken | None:
+    """Returns the progress token the client included in the original `tools/call`, or None.
+
+    Per MCP spec, a server may only send `notifications/progress` for a request when the client
+    explicitly provided a `progressToken` in that request's `_meta`. Tools that fall through here
+    without a token must stay silent — emitting unsolicited progress can confuse strict clients.
+    """
+    rc = ctx.request_context
+    if rc is None or rc.meta is None:
+        return None
+    return rc.meta.progressToken
+
+
+async def _emit_job_submitted_progress(ctx: Context, progress_token: ProgressToken, info: JobSubmittedInfo) -> None:
+    """Surfaces the backend job handle to the client so it can cancel out-of-band by POSTing to
+    `info.cancellation_url`. The structured data lives under `params._meta`; the human-readable
+    `message` is for clients that surface progress as text only and ignore `_meta`.
+    """
+    params = ProgressNotificationParams.model_validate(
+        {
+            'progressToken': progress_token,
+            'progress': 0,
+            'message': f'Submitted to {info.backend}',
+            '_meta': {
+                'keboola.queryJobId': info.job_id,
+                'keboola.backend': info.backend,
+                # `cancellation_url` may be None when a backend does not expose an out-of-band
+                # cancel endpoint; clients should treat the field as optional.
+                'keboola.cancellationUrl': info.cancellation_url,
+            },
+        }
+    )
+    await ctx.send_notification(ProgressNotification(method='notifications/progress', params=params))
 
 
 class QueryDataOutput(BaseModel):
@@ -95,7 +130,18 @@ async def query_data(
     * Ensure valid filtering by checking actual data values first
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    result = await workspace_manager.execute_query(sql_query, max_rows=MAX_ROWS, max_chars=MAX_CHARS)
+
+    progress_token = _client_progress_token(ctx)
+
+    async def _on_job_submitted(info: JobSubmittedInfo) -> None:
+        await _emit_job_submitted_progress(ctx, progress_token, info)
+
+    result = await workspace_manager.execute_query(
+        sql_query,
+        max_rows=MAX_ROWS,
+        max_chars=MAX_CHARS,
+        on_job_submitted=_on_job_submitted if progress_token is not None else None,
+    )
     LOG.info(' '.join(filter(None, [f'Query "{query_name}" executed successfully.', result.message])))
     if result.is_ok:
         if result.data:

@@ -4,7 +4,7 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, Literal, Mapping, Sequence, cast
+from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence, cast
 from urllib.parse import urlunparse
 
 import httpx
@@ -18,6 +18,27 @@ from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.tools.storage_helpers import has_storage_branches
 
 LOG = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class JobSubmittedInfo:
+    """Information surfaced to the tool layer the moment a backend job becomes addressable.
+
+    For Snowflake this fires immediately after Query Service returns a `queryJobId`. The
+    tool layer turns this into an MCP `notifications/progress` so clients (e.g. Kai,
+    Claude Code) can record the handle and use it to cancel out-of-band by POSTing to
+    `cancellation_url` themselves, regardless of which MCP replica the cancel lands on.
+    """
+
+    job_id: str
+    cancellation_url: str | None
+    backend: str
+
+
+# Async callback invoked exactly once per execute_query, immediately after the backend
+# returns a job handle. Callbacks are best-effort: any exception raised inside is suppressed
+# so a failed progress notification cannot abort the underlying query.
+JobSubmittedCallback = Callable[[JobSubmittedInfo], Awaitable[None]]
 
 
 def get_backend_path(table: Mapping[str, Any]) -> list[str] | None:
@@ -127,7 +148,12 @@ class _Workspace(abc.ABC):
 
     @abc.abstractmethod
     async def execute_query(
-        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
+        self,
+        sql_query: str,
+        *,
+        max_rows: int | None = None,
+        max_chars: int | None = None,
+        on_job_submitted: JobSubmittedCallback | None = None,
     ) -> QueryResult:
         """
         Runs a given SQL query.
@@ -135,6 +161,10 @@ class _Workspace(abc.ABC):
         :param sql_query: The SQL query to be executed.
         :param max_rows: The maximum number of rows to fetch from the query results. If None, no limit is applied.
         :param max_chars: The maximum number of chars to fetch from the query results. If None, no limit is applied.
+        :param on_job_submitted: Optional async callback invoked with the backend job id as soon as the job is
+            registered with the underlying engine (Snowflake/Query Service). Backends that do not expose a job
+            handle (BigQuery via SAPI workspace_query) ignore the callback. Exceptions inside the callback are
+            suppressed so a failed notification cannot abort the query.
         :return: The result of the executed query.
         """
         pass
@@ -245,7 +275,12 @@ class _SnowflakeWorkspace(_Workspace):
         )
 
     async def execute_query(
-        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
+        self,
+        sql_query: str,
+        *,
+        max_rows: int | None = None,
+        max_chars: int | None = None,
+        on_job_submitted: JobSubmittedCallback | None = None,
     ) -> QueryResult:
         if max_rows is not None and max_rows <= 0:
             raise ValueError('The "max_rows" must be a positive integer or None.')
@@ -257,6 +292,23 @@ class _SnowflakeWorkspace(_Workspace):
 
         ts_start = time.perf_counter()
         job_id = await self._qsclient.submit_job(statements=[sql_query], workspace_id=str(self.id))
+        if on_job_submitted is not None:
+            info = JobSubmittedInfo(
+                job_id=job_id,
+                cancellation_url=self._qsclient.build_cancel_url(job_id),
+                backend='snowflake',
+            )
+            # Best-effort: a failed progress notification must not kill the running query.
+            # CancelledError is `BaseException` since Python 3.8, so `except Exception` already
+            # lets it propagate on the supported Python (>=3.10). The explicit branch below
+            # documents intent and guards against a future refactor that might widen the catch
+            # to `BaseException` and silently swallow cancellation.
+            try:
+                await on_job_submitted(info)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                LOG.warning(f'on_job_submitted callback raised for job_id={job_id}: {exc!r} — continuing')
         while (job_status := await self._qsclient.get_job_status(job_id)) and job_status['status'] not in [
             'completed',
             'failed',
@@ -438,13 +490,22 @@ class _BigQueryWorkspace(_Workspace):
         )
 
     async def execute_query(
-        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
+        self,
+        sql_query: str,
+        *,
+        max_rows: int | None = None,
+        max_chars: int | None = None,
+        on_job_submitted: JobSubmittedCallback | None = None,
     ) -> QueryResult:
         if max_rows is not None and max_rows <= 0:
             raise ValueError('The "max_rows" must be a positive integer or None.')
         if max_chars is not None and max_chars <= 0:
             raise ValueError('The "max_chars" must be a positive integer or None.')
 
+        # BigQuery via SAPI workspace_query is a synchronous proxy without an exposed job handle,
+        # so there is no id to surface to the client. The callback is accepted for interface
+        # parity only and is intentionally not invoked.
+        _ = on_job_submitted
         resp = await self._client.storage_client.workspace_query(
             workspace_id=self.id,
             query=sql_query,
@@ -733,10 +794,20 @@ class WorkspaceManager:
             raise ValueError('Failed to initialize Keboola Workspace.')
 
     async def execute_query(
-        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
+        self,
+        sql_query: str,
+        *,
+        max_rows: int | None = None,
+        max_chars: int | None = None,
+        on_job_submitted: JobSubmittedCallback | None = None,
     ) -> QueryResult:
         workspace = await self._get_workspace()
-        return await workspace.execute_query(sql_query, max_rows=max_rows, max_chars=max_chars)
+        return await workspace.execute_query(
+            sql_query,
+            max_rows=max_rows,
+            max_chars=max_chars,
+            on_job_submitted=on_job_submitted,
+        )
 
     async def get_table_info(
         self, table: Mapping[str, Any], backend_path: list[str] | None = None

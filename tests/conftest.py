@@ -62,6 +62,10 @@ def empty_context(mocker) -> Context:
     ctx.client_id = None
     ctx.request_context = mocker.MagicMock(RequestContext)
     ctx.request_context.lifespan_context = ServerState(Config(), ServerRuntimeInfo(transport='stdio'))
+    # `meta` is an instance attribute of RequestContext (set in __init__), not a class attribute,
+    # so MagicMock(spec=RequestContext) doesn't expose it. Default it to None so tools that read
+    # the progressToken don't trip AttributeError; individual tests can override.
+    ctx.request_context.meta = None
     return ctx
 
 
