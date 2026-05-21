@@ -883,8 +883,6 @@ class TestPreviewConfigDiff:
                             'KEEP': 'x',
                             'BRANCH_ID': '456',
                             'WORKSPACE_ID': '123',
-                            'KBC_TOKEN': 'test-token',
-                            'KBC_URL': 'https://connection.test.keboola.com',
                         },
                     },
                     'script': [],
