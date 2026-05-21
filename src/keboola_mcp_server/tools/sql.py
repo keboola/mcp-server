@@ -5,7 +5,13 @@ from typing import Annotated
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
-from mcp.types import ProgressNotification, ProgressNotificationParams, ProgressToken, ToolAnnotations
+from mcp.types import (
+    ProgressNotification,
+    ProgressNotificationParams,
+    ProgressToken,
+    ServerNotification,
+    ToolAnnotations,
+)
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.errors import tool_errors
@@ -35,6 +41,15 @@ async def _emit_job_submitted_progress(ctx: Context, progress_token: ProgressTok
     """Surfaces the backend job handle to the client so it can cancel out-of-band by POSTing to
     `info.cancellation_url`. The structured data lives under `params._meta`; the human-readable
     `message` is for clients that surface progress as text only and ignore `_meta`.
+
+    We deliberately call the low-level `ctx.session.send_notification(...)` with
+    `related_request_id=ctx.request_id` instead of FastMCP's high-level `ctx.send_notification(...)`.
+    The MCP SDK's streamable_http message router (`mcp/server/streamable_http.py`, the
+    "Extract related_request_id from meta" branch) uses that field to pick which request's SSE
+    response stream receives the notification. Without it, notifications are addressed to
+    `GET_STREAM_KEY`, the standalone GET stream — which doesn't exist in `stateless_http=True`
+    mode (our deployment shape), so the notification is silently dropped and the client never
+    sees the job handle. `ctx.send_notification(...)` does NOT set this field, hence the bypass.
     """
     params = ProgressNotificationParams.model_validate(
         {
@@ -50,7 +65,23 @@ async def _emit_job_submitted_progress(ctx: Context, progress_token: ProgressTok
             },
         }
     )
-    await ctx.send_notification(ProgressNotification(method='notifications/progress', params=params))
+    notification = ProgressNotification(method='notifications/progress', params=params)
+    request_id = getattr(ctx, 'request_id', None)
+    if request_id is None:
+        # Without a request id we cannot route the notification — see the docstring above for why.
+        # Sending with `related_request_id=None` reproduces the bug we built this fix to prevent
+        # (silent drop onto GET_STREAM_KEY in stateless mode). Skip the emit and warn instead so
+        # the failure mode is at least visible in the logs; the query itself continues normally.
+        LOG.warning(
+            f'Skipping notifications/progress for job_id={info.job_id}: ctx.request_id is None — '
+            f'cannot route to originating SSE stream. Out-of-band cancellation will be unavailable.'
+        )
+        return
+    await ctx.session.send_notification(ServerNotification(notification), related_request_id=request_id)
+    LOG.info(
+        f'Emitted notifications/progress for job_id={info.job_id} '
+        f'related_request_id={request_id!r} backend={info.backend}'
+    )
 
 
 class QueryDataOutput(BaseModel):
@@ -159,4 +190,9 @@ async def query_data(
         return QueryDataOutput(query_name=query_name, csv_data=output.getvalue(), message=result.message)
 
     else:
+        # Surface cancellation cleanly: the workspace already produced a precise message
+        # ("Query was cancelled") for the cancel-by-client case, so don't wrap it in a
+        # generic "Failed to run SQL query, error: ..." prefix that hides what happened.
+        if result.message == 'Query was cancelled':
+            raise ValueError('Query was cancelled')
         raise ValueError(f'Failed to run SQL query, error: {result.message}')

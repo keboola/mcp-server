@@ -342,6 +342,18 @@ class _SnowflakeWorkspace(_Workspace):
                         f'The query may still be running on the server: job_id={job_id}'
                     )
 
+        # Short-circuit when the poll loop exited because the job was cancelled out-of-band
+        # (e.g. the user clicked STOP and the kai-agent backend POSTed
+        # `POST /api/v1/queries/{job_id}/cancel` directly to Query Service, or the in-flight
+        # request itself was aborted with notifications/cancelled). Going through the results
+        # fetch path here surfaces QS's generic "Job is still running or not completed yet"
+        # message, which is misleading — we already know the job reached a terminal CANCELLED
+        # state. Return a clear cancel result instead and skip the results fetch entirely.
+        terminal_status = job_status['status']
+        if terminal_status in ('canceled', 'cancelled'):
+            LOG.info(f'Query was cancelled (terminal status={terminal_status}): job_id={job_id}')
+            return QueryResult(status='error', data=None, message='Query was cancelled')
+
         statement_id = cast(list[JsonDict], job_status['statements'])[0]['id']
 
         # Fetch results with pagination

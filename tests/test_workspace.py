@@ -100,6 +100,36 @@ async def test_query_client_token_selection_with_branch_lookup():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('terminal_status', ['canceled', 'cancelled'])
+async def test_execute_query_returns_clear_message_when_job_cancelled(terminal_status: str):
+    """When the QS poll loop exits because the job reached a CANCELLED terminal state
+    (typically because kai-agent POSTed to Query Service's cancel endpoint after the user
+    clicked STOP), we must short-circuit the results-fetch and surface a precise
+    "Query was cancelled" message — not the generic "Job is still running or not completed
+    yet" that QS returns from get_job_results for non-completed jobs.
+
+    Both 'canceled' (US spelling, the QS canonical form) and 'cancelled' (UK spelling,
+    seen in the wild) are accepted as terminal-cancel statuses by the poll loop, so both
+    must take this fast path.
+    """
+    workspace, qs_mock = _make_snowflake_workspace_with_mocked_qs(job_id='job-cancel')
+    # Override the polling status so the loop exits via the cancelled branch.
+    qs_mock.get_job_status.return_value = {
+        'status': terminal_status,
+        'statements': [{'id': 'stmt-1'}],
+    }
+
+    result = await workspace.execute_query('SELECT SYSTEM$WAIT(300)')
+
+    assert result.is_error
+    assert result.data is None
+    assert result.message == 'Query was cancelled'
+    # The fast path must skip the results fetch entirely; no need to ask QS for rows
+    # we know don't exist.
+    qs_mock.get_job_results.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_workspace_creation_cleans_up_config_on_failure():
     """Test that WorkspaceManager._create_ws cleans up config when workspace creation fails."""
     mock_client = Mock(spec=KeboolaClient)
