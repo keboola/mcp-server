@@ -1785,10 +1785,12 @@ action and the configuration ID.
   the Storage configuration); this is handled automatically.
 
 ## Streamlit apps
-`mode` and `branch` are silently ignored for Streamlit apps (which have no managed git repo).
+Streamlit apps have no managed git repo, so `mode` and `branch` have no effect on the
+deployed app. `mode=None` is the expected call shape; don't pass `branch`.
 
 ## Validation
-`branch` is only meaningful with `mode='dev'`; setting `branch` without `mode='dev'` raises an error.
+`branch` is only meaningful with `mode='dev'`; setting `branch` without `mode='dev'` raises an
+error for any app type (Streamlit or python-js).
 
 ## General considerations
 - Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the
