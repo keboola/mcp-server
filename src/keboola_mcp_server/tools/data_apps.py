@@ -150,8 +150,12 @@ class DataAppSummary(BaseModel):
         default=None,
         description=(
             'HTTPS clone URL of the managed git repo (without embedded credentials). '
-            'Only set for python-js data apps. Mint a token via '
-            '`create_python_js_data_app_git_credential` to authenticate.'
+            'Only set for python-js data apps, and only populated by detail-style fetches '
+            '(`get_data_apps(configuration_ids=[...])`) and `modify_python_js_data_app` '
+            'responses. The inventory list path (`get_data_apps` without `configuration_ids`) '
+            'always leaves this `None` to keep the listing cheap — call the detail path to '
+            'retrieve the URL. Mint a token via `create_python_js_data_app_git_credential` '
+            'to authenticate.'
         ),
     )
 
@@ -790,9 +794,7 @@ async def modify_python_js_data_app(
             ),
             runtime=CodeDataAppConfig.Runtime(
                 image=CodeDataAppConfig.Runtime.Image(version=_HARDCODED_PYTHON_JS_IMAGE_VERSION),
-                workspace=(
-                    CodeDataAppConfig.Runtime.Workspace(enabled=True) if has_storage_workspace else None
-                ),
+                workspace=(CodeDataAppConfig.Runtime.Workspace(enabled=True) if has_storage_workspace else None),
             ),
             authorization=authorization_model,
             storage=validated_storage,
@@ -1034,6 +1036,10 @@ async def get_data_apps(
     - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
     - Data App detail contains configuration, metadata, source code, links, and deployment info along with the latest
     data app logs to investigate in-app errors. The logs may be updated after opening the data app URL.
+    - `repo_url` (managed git repo URL for python-js apps) is ONLY populated on the detail path
+      (when `configuration_ids` is provided). The inventory list always returns `repo_url=None`,
+      even for python-js apps with a managed repo — to retrieve the URL, call this tool again
+      with the target `configuration_ids`.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
