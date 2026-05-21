@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.61.3"
+version = "1.61.4"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -153,7 +153,6 @@ pass_env = [
     "INTEGTEST_STORAGE_TOKEN_PRJ2",
     "INTEGTEST_WORKSPACE_SCHEMA_PRJ2",
     "INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES",
-    "INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES",
     "INTEGTEST_LOCK_TTL_MINUTES",
     "INTEGTEST_LOCK_POLL_INTERVAL_SECONDS",
     "INTEGTEST_LOCK_MAX_WAIT_MINUTES",
