@@ -390,14 +390,10 @@ def test_get_secrets():
     secrets = _get_secrets(
         workspace_id='wid-1234',
         branch_id='123',
-        storage_token='kbc-token',
-        storage_api_url='https://connection.test.keboola.com',
     )
     assert secrets == {
         'WORKSPACE_ID': 'wid-1234',
         'BRANCH_ID': '123',
-        'KBC_TOKEN': 'kbc-token',
-        'KBC_URL': 'https://connection.test.keboola.com',
     }
 
 
