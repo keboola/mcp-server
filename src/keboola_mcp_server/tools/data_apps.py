@@ -118,8 +118,6 @@ AuthenticationType = Literal['no-auth', 'basic-auth', 'default']
 
 SECRET_WORKSPACE_ID = 'WORKSPACE_ID'
 SECRET_BRANCH_ID = 'BRANCH_ID'
-SECRET_KBC_TOKEN = 'KBC_TOKEN'
-SECRET_KBC_URL = 'KBC_URL'
 
 # Project feature that opts python-js data apps into platform-managed per-app workspaces.
 # When enabled, the platform auto-provisions a workspace and injects WORKSPACE_ID at runtime.
@@ -417,8 +415,6 @@ async def modify_streamlit_data_app(
     secrets = _get_secrets(
         workspace_id=str(workspace_id),
         branch_id=str(branch_id),
-        storage_token=client.token,
-        storage_api_url=client.storage_api_url,
     )
 
     if configuration_id:
@@ -523,8 +519,6 @@ async def modify_streamlit_data_app_internal(
     secrets = _get_secrets(
         workspace_id=str(await workspace_manager.get_workspace_id()),
         branch_id=str(await workspace_manager.get_branch_id()),
-        storage_token=client.token,
-        storage_api_url=client.storage_api_url,
     )
     data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
     existing_config = data_app.configuration
@@ -1453,16 +1447,12 @@ def _inject_query_to_source_code(source_code: str, sql_dialect: str) -> str:
         return f'{query_function_code}\n\n{source_code.lstrip()}'
 
 
-def _get_secrets(workspace_id: str, branch_id: str, storage_token: str, storage_api_url: str) -> dict[str, Any]:
+def _get_secrets(workspace_id: str, branch_id: str) -> dict[str, Any]:
     """
-    Generates secrets exposed to the data app as runtime environment variables. The injected
-    `query_data` helper (and python-js apps that call Storage/Query Service directly) reads
-    `BRANCH_ID`, `WORKSPACE_ID`, `KBC_TOKEN` and `KBC_URL` from the environment.
+    Generates secrets for the data app for querying the tables in the given workspace QS or SAPI.
     """
     secrets: dict[str, Any] = {
         SECRET_WORKSPACE_ID: workspace_id,
         SECRET_BRANCH_ID: branch_id,
-        SECRET_KBC_TOKEN: storage_token,
-        SECRET_KBC_URL: storage_api_url,
     }
     return secrets
