@@ -6,7 +6,7 @@ from httpx import HTTPStatusError, Request, Response
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
-from keboola_mcp_server.workspace import WorkspaceManager, _SnowflakeWorkspace
+from keboola_mcp_server.workspace import JobSubmittedInfo, WorkspaceManager, _SnowflakeWorkspace
 
 
 @pytest.mark.asyncio
@@ -201,6 +201,116 @@ async def test_workspace_manager_create_is_branch_aware(
         input_client.has_feature.assert_not_called()
     else:
         input_client.has_feature.assert_awaited_once()
+
+
+def _make_snowflake_workspace_with_mocked_qs(job_id: str = 'job-abc-123') -> tuple[_SnowflakeWorkspace, AsyncMock]:
+    """Builds a _SnowflakeWorkspace whose QueryServiceClient is fully mocked to run a one-row query end to end.
+
+    Returns (workspace, qs_mock) so tests can assert on the mock and access build_cancel_url's return value.
+    """
+    qs_mock = AsyncMock(spec=QueryServiceClient)
+    qs_mock.submit_job.return_value = job_id
+    qs_mock.get_job_status.return_value = {
+        'status': 'completed',
+        'statements': [{'id': 'stmt-1'}],
+    }
+    # `data` (not `rows`) matches the QS response shape that
+    # `_SnowflakeWorkspace.execute_query()` reads via `results.get('data', [])`.
+    # Keeping the mock aligned with production prevents regressions where the
+    # results-fetch path silently misses a renamed/missing field.
+    qs_mock.get_job_results.return_value = {
+        'status': 'completed',
+        'message': 'ok',
+        'numberOfRows': 1,
+        'columns': [{'name': 'col'}],
+        'data': [['v']],
+    }
+    qs_mock.build_cancel_url = Mock(return_value=f'https://query.keboola.com/api/v1/queries/{job_id}/cancel')
+
+    workspace = _SnowflakeWorkspace(workspace_id=1, schema='S', client=Mock(spec=KeboolaClient))
+    workspace._qsclient = qs_mock
+    return workspace, qs_mock
+
+
+@pytest.mark.asyncio
+async def test_execute_query_invokes_on_job_submitted_with_full_info():
+    """The callback fires exactly once, immediately after submit_job, carrying the cancel URL."""
+    workspace, qs_mock = _make_snowflake_workspace_with_mocked_qs(job_id='job-xyz')
+
+    received: list[JobSubmittedInfo] = []
+
+    async def callback(info: JobSubmittedInfo) -> None:
+        received.append(info)
+
+    await workspace.execute_query('SELECT 1', on_job_submitted=callback)
+
+    assert len(received) == 1
+    assert received[0] == JobSubmittedInfo(
+        job_id='job-xyz',
+        cancellation_url='https://query.keboola.com/api/v1/queries/job-xyz/cancel',
+        backend='snowflake',
+    )
+    qs_mock.build_cancel_url.assert_called_once_with('job-xyz')
+
+
+@pytest.mark.asyncio
+async def test_execute_query_without_callback_does_not_call_build_cancel_url():
+    """When no callback is supplied, the workspace must not waste a call to build_cancel_url."""
+    workspace, qs_mock = _make_snowflake_workspace_with_mocked_qs()
+
+    await workspace.execute_query('SELECT 1')
+
+    qs_mock.build_cancel_url.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_query_swallows_callback_exception_and_completes_query():
+    """A misbehaving callback (network failure when sending the notification, anything) must
+    never abort the underlying query. The query still completes and returns its result."""
+    workspace, qs_mock = _make_snowflake_workspace_with_mocked_qs()
+
+    async def boom(info: JobSubmittedInfo) -> None:
+        raise RuntimeError('progress send failed')
+
+    result = await workspace.execute_query('SELECT 1', on_job_submitted=boom)
+
+    # The query completed despite the callback error.
+    assert result.is_ok
+    qs_mock.get_job_results.assert_awaited()
+
+
+def test_build_cancel_url_uses_raw_client_base_api_url():
+    """build_cancel_url must produce an absolute URL clients can POST to without further assembly."""
+    qs = QueryServiceClient.create(
+        root_url='https://query.keboola.com',
+        branch_id='42',
+        token='Bearer t',
+    )
+    url = qs.build_cancel_url('job-1')
+    assert url == 'https://query.keboola.com/api/v1/queries/job-1/cancel'
+
+
+@pytest.mark.asyncio
+async def test_workspace_manager_execute_query_forwards_callback():
+    """WorkspaceManager.execute_query must plumb on_job_submitted through to the active workspace.
+
+    Without this, the tool-layer notification path is silently disabled for any consumer that goes
+    through the manager (which is everyone, in practice).
+    """
+    workspace, qs_mock = _make_snowflake_workspace_with_mocked_qs(job_id='job-fwd')
+
+    manager = WorkspaceManager(Mock(spec=KeboolaClient))
+    manager._workspace = workspace
+
+    received: list[JobSubmittedInfo] = []
+
+    async def callback(info: JobSubmittedInfo) -> None:
+        received.append(info)
+
+    await manager.execute_query('SELECT 1', on_job_submitted=callback)
+
+    assert len(received) == 1
+    assert received[0].job_id == 'job-fwd'
 
 
 @pytest.mark.asyncio
