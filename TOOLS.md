@@ -1875,6 +1875,10 @@ Considerations:
 - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
 - Data App detail contains configuration, metadata, source code, links, and deployment info along with the latest
 data app logs to investigate in-app errors. The logs may be updated after opening the data app URL.
+- `repo_url` (managed git repo URL for python-js apps) is ONLY populated on the detail path
+  (when `configuration_ids` is provided). The inventory list always returns `repo_url=None`,
+  even for python-js apps with a managed repo — to retrieve the URL, call this tool again
+  with the target `configuration_ids`.
 
 
 **Input JSON Schema**:
