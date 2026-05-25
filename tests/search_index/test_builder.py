@@ -129,6 +129,71 @@ async def test_build_index_atomically_replaces_existing(client, session, tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_build_index_fetches_bucket_list_once(client, session, tmp_path):
+    """Regression: previous builder called merged_bucket_list separately from
+    _populate_buckets and _populate_tables, doubling /buckets traffic."""
+    bucket_call_count = 0
+
+    async def counting_bucket_list(_client, **_kw):
+        nonlocal bucket_call_count
+        bucket_call_count += 1
+        return _BUCKETS
+
+    async def fake_table_list(_client, bucket_id, **_kw):
+        return _TABLES_BY_BUCKET[bucket_id]
+
+    with (
+        patch(
+            'keboola_mcp_server.search_index.builder.merged_bucket_list',
+            AsyncMock(side_effect=counting_bucket_list),
+        ),
+        patch(
+            'keboola_mcp_server.search_index.builder.merged_bucket_table_list',
+            AsyncMock(side_effect=fake_table_list),
+        ),
+    ):
+        await builder.build_index(session, client, root=tmp_path)
+
+    assert bucket_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_build_index_fetches_tables_in_parallel(client, session, tmp_path):
+    """Per-bucket table fetches must run concurrently, not sequentially."""
+    import asyncio
+    import time
+
+    async def fake_bucket_list(_client, **_kw):
+        return _BUCKETS
+
+    table_call_times: list[float] = []
+
+    async def slow_table_list(_client, bucket_id, **_kw):
+        table_call_times.append(time.monotonic())
+        await asyncio.sleep(0.05)
+        return _TABLES_BY_BUCKET[bucket_id]
+
+    with (
+        patch(
+            'keboola_mcp_server.search_index.builder.merged_bucket_list',
+            AsyncMock(side_effect=fake_bucket_list),
+        ),
+        patch(
+            'keboola_mcp_server.search_index.builder.merged_bucket_table_list',
+            AsyncMock(side_effect=slow_table_list),
+        ),
+    ):
+        t0 = time.monotonic()
+        await builder.build_index(session, client, root=tmp_path)
+        elapsed = time.monotonic() - t0
+
+    # Two buckets × 0.05s sequential would be ≥ 0.10s. Parallel should be ~0.05s.
+    assert elapsed < 0.09, f'tables were not fetched in parallel: elapsed={elapsed:.3f}s'
+    # Start times should be within a few ms of each other.
+    assert max(table_call_times) - min(table_call_times) < 0.01
+
+
+@pytest.mark.asyncio
 @pytest.mark.usefixtures('_patched_fetchers')
 async def test_build_index_records_description_from_metadata(client, session, tmp_path):
     db_path = await builder.build_index(session, client, root=tmp_path)

@@ -2,15 +2,16 @@
 
 Phase 2 scope: buckets and tables (with column names + column descriptions).
 Other ``kind`` values (configurations, flows, semantic objects) are added in
-later phases by adding new ``_populate_*`` functions and listing them in
-``_POPULATORS``.
+later phases by extending ``build_index``.
 """
 
+import asyncio
 import json
 import logging
 import sqlite3
 from pathlib import Path
 
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.search_index import storage
@@ -33,8 +34,8 @@ async def build_index(
 ) -> Path:
     """Build a fresh index for ``session`` and atomically publish it.
 
-    The build is written to ``<db>.tmp`` and renamed in place. A cross-process
-    file lock prevents two builders from racing on the same file.
+    Single ``merged_bucket_list`` round-trip; per-bucket ``tables`` calls fan out
+    concurrently. Output is written to ``<db>.tmp`` and atomically renamed.
     """
     db_path = storage.path_for(session, root=root)
     tmp_path = storage.tmp_path_for(db_path)
@@ -43,6 +44,9 @@ async def build_index(
 
     LOG.info('Building search index for project_id=%s at %s', session.project_id, db_path)
 
+    buckets = await merged_bucket_list(client)
+    table_lists = await _fetch_tables_for_buckets(client, buckets)
+
     with storage.file_lock(lock_path):
         if tmp_path.exists():
             tmp_path.unlink()
@@ -50,21 +54,38 @@ async def build_index(
         conn = sqlite3.connect(tmp_path)
         try:
             storage.init_schema(conn, session)
-            counts = {}
-            for kind, populate in _POPULATORS:
-                counts[kind] = await populate(conn, client, session)
+            bucket_count = _insert_bucket_rows(conn, buckets, session)
+            table_count = _insert_table_rows(conn, buckets, table_lists, session)
             conn.commit()
         finally:
             conn.close()
 
         storage.atomic_publish(tmp_path, db_path)
 
-    LOG.info('Search index built for project_id=%s: %s', session.project_id, counts)
+    LOG.info(
+        'Search index built for project_id=%s: %s',
+        session.project_id,
+        {'bucket': bucket_count, 'table': table_count},
+    )
     return db_path
 
 
-async def _populate_buckets(conn: sqlite3.Connection, client: KeboolaClient, session: VerifiedSession) -> int:
-    buckets = await merged_bucket_list(client)
+async def _fetch_tables_for_buckets(client: KeboolaClient, buckets: list[JsonDict]) -> list[list[JsonDict]]:
+    """Issue one ``tables`` request per bucket, in parallel."""
+    bucket_ids = [bucket.get('id') for bucket in buckets]
+    return await asyncio.gather(
+        *(
+            merged_bucket_table_list(client, bid, include=['columns', 'columnMetadata']) if bid else _empty_table_list()
+            for bid in bucket_ids
+        )
+    )
+
+
+async def _empty_table_list() -> list[JsonDict]:
+    return []
+
+
+def _insert_bucket_rows(conn: sqlite3.Connection, buckets: list[JsonDict], session: VerifiedSession) -> int:
     rows = []
     for bucket in buckets:
         bucket_id = bucket.get('id')
@@ -91,15 +112,17 @@ async def _populate_buckets(conn: sqlite3.Connection, client: KeboolaClient, ses
     return len(rows)
 
 
-async def _populate_tables(conn: sqlite3.Connection, client: KeboolaClient, session: VerifiedSession) -> int:
-    buckets = await merged_bucket_list(client)
-    total = 0
-    for bucket in buckets:
+def _insert_table_rows(
+    conn: sqlite3.Connection,
+    buckets: list[JsonDict],
+    table_lists: list[list[JsonDict]],
+    session: VerifiedSession,
+) -> int:
+    rows = []
+    for bucket, tables in zip(buckets, table_lists):
         bucket_id = bucket.get('id')
         if not bucket_id:
             continue
-        tables = await merged_bucket_table_list(client, bucket_id, include=['columns', 'columnMetadata'])
-        rows = []
         for table in tables:
             table_id = table.get('id')
             if not table_id:
@@ -133,13 +156,6 @@ async def _populate_tables(conn: sqlite3.Connection, client: KeboolaClient, sess
             )
             rows.append((session.project_id, 'table', table_id, name, description, content, metadata_json))
 
-        if rows:
-            conn.executemany(_INSERT_SQL, rows)
-            total += len(rows)
-    return total
-
-
-_POPULATORS: tuple[tuple[str, ...], ...] = (
-    ('bucket', _populate_buckets),
-    ('table', _populate_tables),
-)
+    if rows:
+        conn.executemany(_INSERT_SQL, rows)
+    return len(rows)
