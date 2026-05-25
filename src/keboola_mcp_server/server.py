@@ -35,7 +35,6 @@ from keboola_mcp_server.tools.jobs import add_job_tools
 from keboola_mcp_server.tools.oauth import add_oauth_tools
 from keboola_mcp_server.tools.project import add_project_tools
 from keboola_mcp_server.tools.search import add_search_tools
-from keboola_mcp_server.tools.search_index_admin import add_search_index_admin_tools
 from keboola_mcp_server.tools.semantic import add_semantic_tools
 from keboola_mcp_server.tools.sql import add_sql_tools
 from keboola_mcp_server.tools.storage import add_storage_tools
@@ -249,7 +248,6 @@ def create_server(
     add_oauth_tools(mcp)
     add_project_tools(mcp)
     add_search_tools(mcp)
-    add_search_index_admin_tools(mcp)
     add_semantic_tools(mcp)
     add_sql_tools(mcp)
     add_storage_tools(mcp)
