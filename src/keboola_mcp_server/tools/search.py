@@ -409,6 +409,9 @@ async def _search_indexed_buckets_and_tables(
     kinds: set[str],
 ) -> list[SearchHit]:
     """Run an FTS5 lookup and map the rows to SearchHit. Caller pre-filters by kind."""
+    import time
+
+    started_at = time.monotonic()
     indexed = await query_or_wait(
         verified,
         patterns=list(spec._clean_patterns),
@@ -419,6 +422,15 @@ async def _search_indexed_buckets_and_tables(
     for row in indexed:
         if hit := _indexed_to_search_hit(row):
             hits.append(hit)
+    duration_ms = (time.monotonic() - started_at) * 1000
+    LOG.info(
+        'search-index hit: project_id=%s kinds=%s patterns=%d hits=%d duration_ms=%.1f',
+        verified.project_id,
+        sorted(kinds),
+        len(spec._clean_patterns),
+        len(hits),
+        duration_ms,
+    )
     return hits
 
 

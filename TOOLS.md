@@ -38,6 +38,7 @@ name or description.
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
+- [compare_search_paths](#compare_search_paths): Diagnostic A/B test: run the FTS5 index path and the live API path for the same query in parallel.
 - [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
 and the configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
@@ -1707,6 +1708,57 @@ Example 4 - Update storage mappings:
 ---
 
 # Other Tools
+<a name="compare_search_paths"></a>
+## compare_search_paths
+**Annotations**: `read-only`
+
+**Tags**: `search-index-admin`
+
+**Description**:
+
+Diagnostic A/B test: run the FTS5 index path and the live API path for the same query in parallel.
+
+Use this to prove the index is serving queries and to measure the speedup on your project. Both paths
+should return overlapping object IDs; the index path should be substantially faster on non-trivial projects.
+Only ``bucket`` and ``table`` are supported (the kinds the Phase 2 index covers).
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "patterns": {
+      "description": "One or more literal patterns (OR-combined). Examples: [\"customer\"] or [\"sales\", \"revenue\"].",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "item_types": {
+      "default": [
+        "bucket",
+        "table"
+      ],
+      "description": "Subset of bucket/table to compare. Defaults to both. These are the only kinds Phase 2 indexes.",
+      "items": {
+        "enum": [
+          "bucket",
+          "table"
+        ],
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "patterns"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="deploy_data_app"></a>
 ## deploy_data_app
 **Annotations**: 

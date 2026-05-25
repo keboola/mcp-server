@@ -1,13 +1,16 @@
 """Debug tools for the per-project search index.
 
-Exposes ``get_search_index_status`` and ``rebuild_search_index`` so the index
-state is observable from the MCP client without server-side shell access.
+Exposes ``get_search_index_status``, ``rebuild_search_index`` and
+``compare_search_paths`` so the index is observable, operable, and verifiable
+from the MCP client without server-side shell access.
 """
 
+import asyncio
 import logging
 import sqlite3
+import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -18,6 +21,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.search_index import (
     VERIFIED_SESSION_STATE_KEY,
+    IndexUnavailable,
     VerifiedSession,
     build_index,
     is_stale,
@@ -43,6 +47,28 @@ class SearchIndexStatus(BaseModel):
     reason: str | None = Field(default=None, description='Reason why the index is unavailable, if applicable.')
 
 
+class SearchPathComparison(BaseModel):
+    enabled: bool = Field(description='Whether the search index is active for this session.')
+    project_id: str | None = Field(default=None, description='Verified project ID for the current token.')
+    patterns: list[str] = Field(description='Patterns that were compared.')
+    item_types: list[str] = Field(description='Kinds that were compared (bucket and/or table).')
+    index_duration_ms: float | None = Field(default=None, description='Wall-clock time the index path took.')
+    index_hit_count: int | None = Field(default=None, description='Hits returned by the FTS5 index.')
+    index_obj_ids_sample: list[str] = Field(
+        default_factory=list, description='Up to 10 object IDs from the indexed result set.'
+    )
+    live_duration_ms: float | None = Field(default=None, description='Wall-clock time the live API path took.')
+    live_hit_count: int | None = Field(default=None, description='Hits returned by the live Storage API path.')
+    live_obj_ids_sample: list[str] = Field(
+        default_factory=list, description='Up to 10 object IDs from the live result set.'
+    )
+    speedup: float | None = Field(
+        default=None, description='live_duration_ms / index_duration_ms (higher = index is faster).'
+    )
+    overlap_count: int | None = Field(default=None, description='Number of object IDs returned by both paths.')
+    reason: str | None = Field(default=None, description='If index path failed, the IndexUnavailable reason.')
+
+
 def add_search_index_admin_tools(mcp: FastMCP) -> None:
     """Register the index admin tools on the MCP server."""
     LOG.info(f'Adding tool {get_search_index_status.__name__} to the MCP server.')
@@ -59,6 +85,15 @@ def add_search_index_admin_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             rebuild_search_index,
             annotations=ToolAnnotations(destructiveHint=False),
+            tags={SEARCH_INDEX_ADMIN_TAG},
+        )
+    )
+
+    LOG.info(f'Adding tool {compare_search_paths.__name__} to the MCP server.')
+    mcp.add_tool(
+        FunctionTool.from_function(
+            compare_search_paths,
+            annotations=ToolAnnotations(readOnlyHint=True),
             tags={SEARCH_INDEX_ADMIN_TAG},
         )
     )
@@ -146,3 +181,95 @@ def _read_index_metadata(db_path) -> tuple[dict[str, Any], dict[str, Any]]:
     finally:
         conn.close()
     return counts, meta
+
+
+@tool_errors()
+async def compare_search_paths(
+    ctx: Context,
+    patterns: Annotated[
+        list[str],
+        Field(
+            description='One or more literal patterns (OR-combined). Examples: ["customer"] or ["sales", "revenue"].'
+        ),
+    ],
+    item_types: Annotated[
+        tuple[Literal['bucket', 'table'], ...],
+        Field(
+            description='Subset of bucket/table to compare. Defaults to both. These are the only kinds Phase 2 indexes.'
+        ),
+    ] = ('bucket', 'table'),
+) -> SearchPathComparison:
+    """Diagnostic A/B test: run the FTS5 index path and the live API path for the same query in parallel.
+
+    Use this to prove the index is serving queries and to measure the speedup on your project. Both paths
+    should return overlapping object IDs; the index path should be substantially faster on non-trivial projects.
+    Only ``bucket`` and ``table`` are supported (the kinds the Phase 2 index covers).
+    """
+    # Local imports to avoid circulars at module load.
+    from keboola_mcp_server.tools.search import (
+        SearchSpec,
+        _fetch_buckets,
+        _fetch_tables,
+        _search_indexed_buckets_and_tables,
+    )
+
+    verified: VerifiedSession | None = ctx.session.state.get(VERIFIED_SESSION_STATE_KEY)
+    if verified is None:
+        return SearchPathComparison(
+            enabled=False,
+            patterns=patterns,
+            item_types=list(item_types),
+            reason='No verified session attached. Feature flag disabled, branch is non-default, or verify failed.',
+        )
+
+    spec = SearchSpec(
+        patterns=patterns,
+        item_types=item_types,
+        pattern_mode='literal',
+        search_type='textual',
+    )
+    kinds = set(item_types)
+    client = KeboolaClient.from_state(ctx.session.state)
+
+    async def _timed_index() -> tuple[list, float, str | None]:
+        t0 = time.monotonic()
+        try:
+            hits = await _search_indexed_buckets_and_tables(verified, spec, kinds)
+            return hits, (time.monotonic() - t0) * 1000, None
+        except IndexUnavailable as e:
+            return [], (time.monotonic() - t0) * 1000, str(e)
+
+    async def _timed_live() -> tuple[list, float]:
+        t0 = time.monotonic()
+        hits: list = []
+        if 'bucket' in kinds:
+            hits.extend(await _fetch_buckets(client, spec))
+        if 'table' in kinds:
+            hits.extend(await _fetch_tables(client, spec))
+        return hits, (time.monotonic() - t0) * 1000
+
+    (index_hits, index_ms, index_err), (live_hits, live_ms) = await asyncio.gather(_timed_index(), _timed_live())
+
+    def _ids(hits: list) -> set[str]:
+        return {h.bucket_id or h.table_id for h in hits if (h.bucket_id or h.table_id)}
+
+    index_ids = _ids(index_hits)
+    live_ids = _ids(live_hits)
+    overlap = index_ids & live_ids
+    speedup = round(live_ms / index_ms, 2) if index_ms > 0 and index_err is None else None
+
+    return SearchPathComparison(
+        enabled=True,
+        project_id=verified.project_id,
+        patterns=list(patterns),
+        item_types=list(item_types),
+        index_duration_ms=round(index_ms, 1),
+        index_hit_count=len(index_hits),
+        index_obj_ids_sample=sorted(index_ids)[:10],
+        live_duration_ms=round(live_ms, 1),
+        live_hit_count=len(live_hits),
+        live_obj_ids_sample=sorted(live_ids)[:10],
+        speedup=speedup,
+        overlap_count=len(overlap),
+        reason=index_err,
+    )

@@ -41,6 +41,7 @@ class TestServer:
         tools = await server.list_tools(run_middleware=False)
         assert sorted(tool.name for tool in tools) == [
             'add_config_row',
+            'compare_search_paths',
             'create_conditional_flow',
             'create_config',
             'create_flow',
