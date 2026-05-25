@@ -382,19 +382,80 @@ def _check_column_match(table: JsonDict, cfg: SearchSpec) -> list[PatternMatch]:
     return []
 
 
-def _indexed_to_search_hit(indexed: IndexedHit) -> SearchHit | None:
-    """Hydrate a SearchHit from an FTS5 row. Returns None for unknown kinds."""
-    meta = indexed.metadata
-    common = {
-        'updated': meta.get('updated') or '',
-        'name': indexed.name or None,
-        'display_name': meta.get('display_name') or None,
-        'description': indexed.description or None,
+INDEXED_KINDS: frozenset[str] = frozenset(
+    {
+        'bucket',
+        'table',
+        'flow',
+        'transformation',
+        'configuration',
+        'configuration-row',
+        'data-app',
+        'workspace',
     }
+)
+
+_COMPONENT_DERIVED_KINDS: frozenset[str] = frozenset(
+    {'flow', 'transformation', 'configuration', 'configuration-row', 'data-app', 'workspace'}
+)
+
+
+def _indexed_to_search_hit(indexed: IndexedHit) -> SearchHit | None:
+    """Hydrate a SearchHit from an FTS5 row. Returns None for unknown or malformed kinds."""
+    meta = indexed.metadata
+    updated = meta.get('updated') or ''
+    name = indexed.name or None
+    display_name = meta.get('display_name') or None
+    description = indexed.description or None
+
     if indexed.kind == 'bucket':
-        return SearchHit(bucket_id=indexed.obj_id, item_type='bucket', **common)
+        return SearchHit(
+            bucket_id=indexed.obj_id,
+            item_type='bucket',
+            updated=updated,
+            name=name,
+            display_name=display_name,
+            description=description,
+        )
     if indexed.kind == 'table':
-        return SearchHit(table_id=indexed.obj_id, item_type='table', **common)
+        return SearchHit(
+            table_id=indexed.obj_id,
+            item_type='table',
+            updated=updated,
+            name=name,
+            display_name=display_name,
+            description=description,
+        )
+
+    component_id = meta.get('component_id')
+    configuration_id = meta.get('configuration_id')
+    if not component_id or not configuration_id:
+        return None
+
+    if indexed.kind == 'configuration-row':
+        row_id = meta.get('configuration_row_id')
+        if not row_id:
+            return None
+        return SearchHit(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            configuration_row_id=row_id,
+            item_type='configuration-row',
+            updated=updated,
+            name=name,
+            description=description,
+        )
+
+    if indexed.kind in _COMPONENT_DERIVED_KINDS:
+        return SearchHit(
+            component_id=component_id,
+            configuration_id=configuration_id,
+            item_type=indexed.kind,
+            updated=updated,
+            name=name,
+            description=description,
+        )
+
     return None
 
 
@@ -403,7 +464,7 @@ def _index_eligible(spec: SearchSpec, verified: VerifiedSession | None) -> bool:
     return verified is not None and spec.search_type == 'textual' and spec.pattern_mode == 'literal'
 
 
-async def _search_indexed_buckets_and_tables(
+async def _search_indexed_kinds(
     verified: VerifiedSession,
     spec: SearchSpec,
     kinds: set[str],
@@ -434,28 +495,24 @@ async def _search_indexed_buckets_and_tables(
     return hits
 
 
-async def _index_or_live_buckets_and_tables(
+async def _index_or_live(
     client: KeboolaClient,
     verified: VerifiedSession,
     spec: SearchSpec,
-    bucket_in_scope: bool,
-    table_in_scope: bool,
+    kinds: set[str],
 ) -> list[SearchHit]:
-    """Try the FTS5 index first, fall back to live API on any IndexUnavailable."""
-    kinds: set[str] = set()
-    if bucket_in_scope:
-        kinds.add('bucket')
-    if table_in_scope:
-        kinds.add('table')
+    """Try the FTS5 index for all ``kinds``; on IndexUnavailable, fall back kind-by-kind."""
     try:
-        return await _search_indexed_buckets_and_tables(verified, spec, kinds)
+        return await _search_indexed_kinds(verified, spec, kinds)
     except IndexUnavailable as e:
         LOG.info(f'Search index unavailable, falling back to live: {e}')
         results: list[SearchHit] = []
-        if bucket_in_scope:
+        if 'bucket' in kinds:
             results.extend(await _fetch_buckets(client, spec))
-        if table_in_scope:
+        if 'table' in kinds:
             results.extend(await _fetch_tables(client, spec))
+        if kinds & _COMPONENT_DERIVED_KINDS:
+            results.extend(await fetch_configurations(client, spec))
         return results
 
 
@@ -833,30 +890,22 @@ async def search(
     all_hits: list[SearchHit] = []
     client = KeboolaClient.from_state(ctx.session.state)
 
-    bucket_in_scope = not types_to_fetch or 'bucket' in types_to_fetch
-    table_in_scope = not types_to_fetch or 'table' in types_to_fetch
     verified: VerifiedSession | None = ctx.session.state.get(VERIFIED_SESSION_STATE_KEY)
 
-    if (bucket_in_scope or table_in_scope) and _index_eligible(spec, verified):
+    if _index_eligible(spec, verified):
         assert verified is not None  # narrowed by _index_eligible
-        tasks.append(_index_or_live_buckets_and_tables(client, verified, spec, bucket_in_scope, table_in_scope))
+        kinds_for_index = (types_to_fetch & INDEXED_KINDS) if types_to_fetch else set(INDEXED_KINDS)
+        if kinds_for_index:
+            tasks.append(_index_or_live(client, verified, spec, kinds_for_index))
     else:
+        bucket_in_scope = not types_to_fetch or 'bucket' in types_to_fetch
+        table_in_scope = not types_to_fetch or 'table' in types_to_fetch
         if bucket_in_scope:
             tasks.append(_fetch_buckets(client, spec))
         if table_in_scope:
             tasks.append(_fetch_tables(client, spec))
-
-    if not types_to_fetch:
-        tasks.append(fetch_configurations(client, spec))
-    elif types_to_fetch & {
-        'configuration',
-        'transformation',
-        'flow',
-        'configuration-row',
-        'workspace',
-        'data-app',
-    }:
-        tasks.append(fetch_configurations(client, spec))
+        if not types_to_fetch or (types_to_fetch & _COMPONENT_DERIVED_KINDS):
+            tasks.append(fetch_configurations(client, spec))
 
     # Gather all results
     results = await asyncio.gather(*tasks, return_exceptions=True)

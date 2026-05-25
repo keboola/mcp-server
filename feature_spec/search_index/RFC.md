@@ -107,12 +107,23 @@ CREATE TABLE meta (
 
 ### Phased rollout
 
-| Phase | Deliverable | Risk |
+| Phase | Deliverable | Status |
 | --- | --- | --- |
-| 1 | `search_index/` scaffolding: `types`, `verify`, `storage`, sanitization + path-traversal tests. No integration with tools | low |
-| 2 | `builder` + `query` + `lifecycle`. Index buckets and tables only. Wire `search` tool to use index for `bucket`/`table` item_types when `branch_id is None`; everything else stays live | low |
-| 3 | Extend builder to configurations, flows, transformations, data apps, semantic objects | medium (data volume) |
-| 4 | Remove live-API fallback for indexed object types; add circuit breaker + observability metrics | low |
+| 1 | `search_index/` scaffolding: `types`, `verify`, `storage`, sanitization + path-traversal tests | done |
+| 2 | `builder` + `query` + `lifecycle`. Index `bucket` and `table` kinds. Wire `search` tool to use index for those kinds when the branch is default | done |
+| 3 | Extend builder to index `flow`, `transformation`, `configuration`, `configuration-row`, `data-app`, `workspace`. After Phase 3, `search` with textual + literal mode is fully index-served for all indexed kinds | done |
+| 4 | Remove live-API fallback for indexed object types; add circuit breaker + observability metrics. Add semantic-object indexing for `search_semantic_context` (separate work item) | future |
+
+### Phase 3 schema additions
+
+Component-derived rows reuse the same FTS5 table; the kind discriminator separates them. Each row's ``obj_id`` is a synthetic, unique-within-index key, with the original Keboola IDs preserved in the ``metadata`` JSON for hydration into ``SearchHit``.
+
+| Kind | `obj_id` format | `metadata` JSON fields |
+| --- | --- | --- |
+| `configuration`, `transformation`, `flow`, `data-app`, `workspace` | `<component_id>:<configuration_id>` | `component_id`, `configuration_id`, `name`, `display_name`, `description`, `updated` |
+| `configuration-row` | `<component_id>:<configuration_id>:<row_id>` | `component_id`, `configuration_id`, `configuration_row_id`, `name`, `description`, `updated` |
+
+The kind classifier in ``builder._derive_component_kind`` matches ``tools/search.py::_fetch_configs`` so indexed and live results are interchangeable: same component → same kind in both paths.
 
 ## Scope
 

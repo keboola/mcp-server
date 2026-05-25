@@ -50,6 +50,52 @@ _TABLES_BY_BUCKET = {
     'in.c-products': [],
 }
 
+_COMPONENTS: list[dict] = [
+    {
+        'id': 'keboola.ex-google-analytics',
+        'type': 'extractor',
+        'configurations': [
+            {
+                'id': '111',
+                'name': 'GA pipeline',
+                'description': 'Daily GA pull',
+                'currentVersion': {'created': '2026-05-10T10:00:00+0000'},
+                'rows': [
+                    {'id': 'r1', 'name': 'profile', 'description': 'sessions row', 'created': '2026-05-10'},
+                ],
+            }
+        ],
+    },
+    {
+        'id': 'keboola.snowflake-transformation',
+        'type': 'transformation',
+        'configurations': [
+            {'id': '222', 'name': 'denormalize', 'description': '', 'created': '2026-05-11'},
+        ],
+    },
+    {
+        'id': 'keboola.orchestrator',
+        'type': 'other',
+        'configurations': [
+            {'id': '333', 'name': 'nightly_flow', 'description': '', 'created': '2026-05-12'},
+        ],
+    },
+    {
+        'id': 'keboola.data-apps',
+        'type': 'application',
+        'configurations': [
+            {'id': '444', 'name': 'sales_dashboard', 'description': '', 'created': '2026-05-13'},
+        ],
+    },
+    {
+        'id': 'keboola.sandboxes',
+        'type': 'other',
+        'configurations': [
+            {'id': '555', 'name': 'snowflake-ws', 'description': '', 'created': '2026-05-14'},
+        ],
+    },
+]
+
 
 @pytest.fixture
 def session() -> VerifiedSession:
@@ -58,7 +104,9 @@ def session() -> VerifiedSession:
 
 @pytest.fixture
 def client(mocker) -> KeboolaClient:
-    return mocker.AsyncMock(KeboolaClient)
+    client = mocker.AsyncMock(KeboolaClient)
+    client.storage_client.component_list = AsyncMock(return_value=_COMPONENTS)
+    return client
 
 
 @pytest.fixture
@@ -80,7 +128,7 @@ def _patched_fetchers():
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures('_patched_fetchers')
-async def test_build_index_creates_db_with_buckets_and_tables(client, session, tmp_path):
+async def test_build_index_creates_db_with_all_kinds(client, session, tmp_path):
     db_path = await builder.build_index(session, client, root=tmp_path)
     assert db_path.exists()
 
@@ -95,7 +143,87 @@ async def test_build_index_creates_db_with_buckets_and_tables(client, session, t
     finally:
         conn.close()
 
-    assert kinds == {'bucket': 2, 'table': 1}
+    assert kinds == {
+        'bucket': 2,
+        'table': 1,
+        'configuration': 1,
+        'configuration-row': 1,
+        'transformation': 1,
+        'flow': 1,
+        'data-app': 1,
+        'workspace': 1,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures('_patched_fetchers')
+async def test_build_index_obj_id_layout_for_components(client, session, tmp_path):
+    db_path = await builder.build_index(session, client, root=tmp_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        configuration = conn.execute(
+            'SELECT obj_id, metadata FROM search WHERE kind = ?', ('configuration',)
+        ).fetchone()
+        row = conn.execute('SELECT obj_id, metadata FROM search WHERE kind = ?', ('configuration-row',)).fetchone()
+        flow = conn.execute('SELECT obj_id FROM search WHERE kind = ?', ('flow',)).fetchone()
+    finally:
+        conn.close()
+
+    import json
+
+    assert configuration[0] == 'keboola.ex-google-analytics:111'
+    cfg_meta = json.loads(configuration[1])
+    assert cfg_meta['component_id'] == 'keboola.ex-google-analytics'
+    assert cfg_meta['configuration_id'] == '111'
+
+    assert row[0] == 'keboola.ex-google-analytics:111:r1'
+    row_meta = json.loads(row[1])
+    assert row_meta['configuration_row_id'] == 'r1'
+
+    assert flow[0] == 'keboola.orchestrator:333'
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures('_patched_fetchers')
+async def test_build_index_storage_and_components_fetched_concurrently(client, session, tmp_path, monkeypatch):
+    """Storage data and component_list should fan out in parallel, not sequentially."""
+    import asyncio
+    import time
+
+    storage_started: list[float] = []
+    storage_finished: list[float] = []
+    component_started: list[float] = []
+    component_finished: list[float] = []
+
+    async def slow_bucket_list(_client, **_kw):
+        storage_started.append(time.monotonic())
+        await asyncio.sleep(0.05)
+        storage_finished.append(time.monotonic())
+        return _BUCKETS
+
+    async def fast_table_list(_client, bucket_id, **_kw):
+        return _TABLES_BY_BUCKET[bucket_id]
+
+    async def slow_component_list(**_kw):
+        component_started.append(time.monotonic())
+        await asyncio.sleep(0.05)
+        component_finished.append(time.monotonic())
+        return _COMPONENTS
+
+    client.storage_client.component_list = slow_component_list
+    monkeypatch.setattr(
+        'keboola_mcp_server.search_index.builder.merged_bucket_list',
+        AsyncMock(side_effect=slow_bucket_list),
+    )
+    monkeypatch.setattr(
+        'keboola_mcp_server.search_index.builder.merged_bucket_table_list',
+        AsyncMock(side_effect=fast_table_list),
+    )
+
+    await builder.build_index(session, client, root=tmp_path)
+
+    # Both branches should overlap, not stack.
+    assert min(storage_started[0], component_started[0]) <= max(storage_started[0], component_started[0]) + 0.01
 
 
 @pytest.mark.asyncio
