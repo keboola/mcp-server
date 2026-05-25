@@ -59,12 +59,14 @@ class TestServer:
             'get_flows',
             'get_jobs',
             'get_project_info',
+            'get_search_index_status',
             'get_semantic_context',
             'get_semantic_schema',
             'get_tables',
             'modify_data_app',
             'modify_flow',
             'query_data',
+            'rebuild_search_index',
             'run_job',
             'run_sync_action',
             'search',
@@ -136,7 +138,7 @@ class TestServer:
                     missing_default.append(f'{tool.name}.{prop_name}')
 
         missing_properties.sort()
-        assert missing_properties == ['get_project_info']
+        assert missing_properties == ['get_project_info', 'get_search_index_status', 'rebuild_search_index']
         missing_type.sort()
         assert not missing_type, f'These tool params have no "type" info: {missing_type}'
         missing_default.sort()

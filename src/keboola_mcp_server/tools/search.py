@@ -24,6 +24,13 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import toon_serializer_compact
+from keboola_mcp_server.search_index import (
+    VERIFIED_SESSION_STATE_KEY,
+    IndexedHit,
+    IndexUnavailable,
+    VerifiedSession,
+    query_or_wait,
+)
 from keboola_mcp_server.tools.components.utils import _normalize_jsonpath, get_nested
 from keboola_mcp_server.tools.storage_helpers import merged_bucket_list, merged_bucket_table_list
 
@@ -373,6 +380,71 @@ def _check_column_match(table: JsonDict, cfg: SearchSpec) -> list[PatternMatch]:
         if matched := cfg.match_texts(filter(None, col_descs)):
             return matched
     return []
+
+
+def _indexed_to_search_hit(indexed: IndexedHit) -> SearchHit | None:
+    """Hydrate a SearchHit from an FTS5 row. Returns None for unknown kinds."""
+    meta = indexed.metadata
+    common = {
+        'updated': meta.get('updated') or '',
+        'name': indexed.name or None,
+        'display_name': meta.get('display_name') or None,
+        'description': indexed.description or None,
+    }
+    if indexed.kind == 'bucket':
+        return SearchHit(bucket_id=indexed.obj_id, item_type='bucket', **common)
+    if indexed.kind == 'table':
+        return SearchHit(table_id=indexed.obj_id, item_type='table', **common)
+    return None
+
+
+def _index_eligible(spec: SearchSpec, verified: VerifiedSession | None) -> bool:
+    """An indexed lookup is eligible only when the FTS5 semantics match."""
+    return verified is not None and spec.search_type == 'textual' and spec.pattern_mode == 'literal'
+
+
+async def _search_indexed_buckets_and_tables(
+    verified: VerifiedSession,
+    spec: SearchSpec,
+    kinds: set[str],
+) -> list[SearchHit]:
+    """Run an FTS5 lookup and map the rows to SearchHit. Caller pre-filters by kind."""
+    indexed = await query_or_wait(
+        verified,
+        patterns=list(spec._clean_patterns),
+        kinds=list(kinds),
+        limit=MAX_GLOBAL_SEARCH_LIMIT * 4,
+    )
+    hits: list[SearchHit] = []
+    for row in indexed:
+        if hit := _indexed_to_search_hit(row):
+            hits.append(hit)
+    return hits
+
+
+async def _index_or_live_buckets_and_tables(
+    client: KeboolaClient,
+    verified: VerifiedSession,
+    spec: SearchSpec,
+    bucket_in_scope: bool,
+    table_in_scope: bool,
+) -> list[SearchHit]:
+    """Try the FTS5 index first, fall back to live API on any IndexUnavailable."""
+    kinds: set[str] = set()
+    if bucket_in_scope:
+        kinds.add('bucket')
+    if table_in_scope:
+        kinds.add('table')
+    try:
+        return await _search_indexed_buckets_and_tables(verified, spec, kinds)
+    except IndexUnavailable as e:
+        LOG.info(f'Search index unavailable, falling back to live: {e}')
+        results: list[SearchHit] = []
+        if bucket_in_scope:
+            results.extend(await _fetch_buckets(client, spec))
+        if table_in_scope:
+            results.extend(await _fetch_tables(client, spec))
+        return results
 
 
 async def _fetch_buckets(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
@@ -749,11 +821,18 @@ async def search(
     all_hits: list[SearchHit] = []
     client = KeboolaClient.from_state(ctx.session.state)
 
-    if not types_to_fetch or 'bucket' in types_to_fetch:
-        tasks.append(_fetch_buckets(client, spec))
+    bucket_in_scope = not types_to_fetch or 'bucket' in types_to_fetch
+    table_in_scope = not types_to_fetch or 'table' in types_to_fetch
+    verified: VerifiedSession | None = ctx.session.state.get(VERIFIED_SESSION_STATE_KEY)
 
-    if not types_to_fetch or 'table' in types_to_fetch:
-        tasks.append(_fetch_tables(client, spec))
+    if (bucket_in_scope or table_in_scope) and _index_eligible(spec, verified):
+        assert verified is not None  # narrowed by _index_eligible
+        tasks.append(_index_or_live_buckets_and_tables(client, verified, spec, bucket_in_scope, table_in_scope))
+    else:
+        if bucket_in_scope:
+            tasks.append(_fetch_buckets(client, spec))
+        if table_in_scope:
+            tasks.append(_fetch_tables(client, spec))
 
     if not types_to_fetch:
         tasks.append(fetch_configurations(client, spec))

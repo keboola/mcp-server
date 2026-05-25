@@ -42,7 +42,9 @@ name or description.
 and the configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
+- [get_search_index_status](#get_search_index_status): Report the current session's search index status (path, freshness, row counts).
 - [modify_data_app](#modify_data_app): Creates or updates a Streamlit data app.
+- [rebuild_search_index](#rebuild_search_index): Force a synchronous rebuild of the current session's search index.
 
 ### Project Tools
 - [get_project_info](#get_project_info): Retrieves structured information about the current project,
@@ -1801,6 +1803,30 @@ data app logs to investigate in-app errors. The logs may be updated after openin
 ```
 
 ---
+<a name="get_search_index_status"></a>
+## get_search_index_status
+**Annotations**: `read-only`
+
+**Tags**: `search-index-admin`
+
+**Description**:
+
+Report the current session's search index status (path, freshness, row counts).
+
+Use this to confirm the index is being built and queried on your token. It is a
+diagnostic tool — it does not mutate any state.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object"
+}
+```
+
+---
 <a name="modify_data_app"></a>
 ## modify_data_app
 **Annotations**: `destructive`
@@ -1900,6 +1926,30 @@ SQL & DATA TYPE RULES:
     "packages",
     "authentication_type"
   ],
+  "type": "object"
+}
+```
+
+---
+<a name="rebuild_search_index"></a>
+## rebuild_search_index
+**Annotations**: 
+
+**Tags**: `search-index-admin`
+
+**Description**:
+
+Force a synchronous rebuild of the current session's search index.
+
+Use this when you want a fresh index immediately rather than waiting for the
+background refresh. The call returns the new index status after the rebuild.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {},
   "type": "object"
 }
 ```

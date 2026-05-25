@@ -8,6 +8,7 @@ and other utilities for the MCP server.
 import asyncio
 import dataclasses
 import logging
+import os
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, TypeVar
@@ -32,11 +33,23 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.oauth import ProxyAccessToken
+from keboola_mcp_server.search_index import (
+    VERIFIED_SESSION_STATE_KEY,
+    ensure_index_built,
+    verify_and_cache,
+)
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, SEMANTIC_TOOLS_TAG, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 CONVERSATION_ID = 'conversation_id'
+SEARCH_INDEX_ENABLED_ENV = 'KBC_SEARCH_INDEX_ENABLED'
+
+
+def _is_search_index_enabled() -> bool:
+    """Search index is on by default; set ``KBC_SEARCH_INDEX_ENABLED=false`` to disable."""
+    return os.environ.get(SEARCH_INDEX_ENABLED_ENV, '').lower() not in ('0', 'false', 'no', 'off')
+
 
 R = TypeVar('R')
 T = TypeVar('T')
@@ -278,6 +291,17 @@ class SessionStateMiddleware(fmw.Middleware):
         except Exception as e:
             LOG.error(f'Failed to initialize Storage API Workspace manager: {e}')
             raise
+
+        # Search index: verify token, attach VerifiedSession to state, schedule background build.
+        # Default-branch only — branched sessions fall through to the live search path.
+        # Any failure is swallowed: the index is a performance optimization, not a correctness requirement.
+        if _is_search_index_enabled() and config.branch_id is None:
+            try:
+                verified = await verify_and_cache(client.storage_client, config.storage_token)
+                state[VERIFIED_SESSION_STATE_KEY] = verified
+                await ensure_index_built(verified, client)
+            except Exception as e:
+                LOG.warning(f'Search index setup skipped: {e}')
 
         state[CONVERSATION_ID] = config.conversation_id
         return state
