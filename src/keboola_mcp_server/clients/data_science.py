@@ -161,6 +161,15 @@ class CodeDataAppConfig(BaseModel):
                     'unset on prod apps (which own their own managed repo via `useManagedGitRepo`).'
                 ),
             )
+            is_draft: bool | None = Field(
+                validation_alias=AliasChoices('isDraft', 'is_draft'),
+                serialization_alias='isDraft',
+                default=None,
+                description=(
+                    'When true, the UI hides this app from the main data-apps list. '
+                    'Set automatically on dev-twin creation (UT-4000).'
+                ),
+            )
 
         auto_suspend_after_seconds: int = Field(
             validation_alias=AliasChoices('autoSuspendAfterSeconds', 'auto_suspend_after_seconds'),

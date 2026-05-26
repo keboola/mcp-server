@@ -910,6 +910,8 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     # KBC_TOKEN / KBC_URL / BRANCH_ID are injected by the platform at runtime — the MCP must
     # not bake them into the stored config.
     assert 'secrets' not in serialized['parameters']['dataApp']
+    # Prod apps must NOT be marked as draft (UT-4000).
+    assert 'isDraft' not in serialized['parameters']['dataApp']
     # Default `authentication_type='default'` produces basic-auth on create (safe-by-default).
     assert serialized['authorization']['app_proxy']['auth_providers'] == [{'id': 'simpleAuth', 'type': 'password'}]
     assert serialized['authorization']['app_proxy']['auth_rules'] == [
@@ -1582,6 +1584,9 @@ async def test_modify_python_js_data_app_create_dev_twin_uses_external_git(
         '#password': 'KBC::cipher::token-xyz',
         'branch': 'iter-feat',
     }
+
+    # Dev twin is marked as draft so the UI hides it from the main data-apps list (UT-4000).
+    assert serialized['parameters']['dataApp']['isDraft'] is True
 
     # Encryption was actually called (so `#password` is ciphertext on the wire).
     keboola_client.encryption_client.encrypt.assert_awaited_once()
