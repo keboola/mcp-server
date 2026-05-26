@@ -872,7 +872,12 @@ async def modify_python_js_data_app(
         config = CodeDataAppConfig(
             parameters=CodeDataAppConfig.Parameters(
                 auto_suspend_after_seconds=auto_suspend_after_seconds,
-                data_app=CodeDataAppConfig.Parameters.DataApp(slug=slug, secrets=legacy_secrets, git=git_block),
+                data_app=CodeDataAppConfig.Parameters.DataApp(
+                    slug=slug,
+                    secrets=legacy_secrets,
+                    git=git_block,
+                    is_draft=True if parent_configuration_id is not None else None,
+                ),
             ),
             runtime=CodeDataAppConfig.Runtime(
                 image=CodeDataAppConfig.Runtime.Image(version=_HARDCODED_PYTHON_JS_IMAGE_VERSION),
