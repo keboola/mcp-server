@@ -101,7 +101,7 @@ _DEFAULT_STREAMLIT_THEME = (
 _DEFAULT_PACKAGES = ['pandas', 'httpx']
 
 # TODO: Remove this hardcoded image version once the platform sets it as the default for python-js apps.
-_HARDCODED_PYTHON_JS_IMAGE_VERSION = '1.6.0'
+_HARDCODED_PYTHON_JS_IMAGE_VERSION = '1.6.1'
 
 # Username embedded in the HTTPS clone URL alongside the one-time token returned by the
 # managed git-repo credentials endpoint. The git-service ignores the username portion of
