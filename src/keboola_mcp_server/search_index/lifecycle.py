@@ -68,6 +68,39 @@ async def ensure_index_built(
     task.add_done_callback(_on_done)
 
 
+async def list_index_rows(
+    session: VerifiedSession,
+    kinds: Iterable[str],
+    *,
+    root: Path | None = None,
+    cold_start_timeout: float = 60.0,
+) -> list[query.IndexedHit]:
+    """Return all indexed rows for ``kinds`` without an FTS5 match.
+
+    Used by config-based search; awaits a cold-start build the same way
+    ``query_or_wait`` does, and raises ``IndexUnavailable`` for the same reasons.
+    """
+    db_path = storage.path_for(session, root=root)
+    key = (session.project_id, session.token_hash)
+
+    async with _builds_lock:
+        state = _builds.get(key)
+
+    if state is not None and state.task is not None and not state.task.done():
+        if not db_path.exists():
+            try:
+                await asyncio.wait_for(asyncio.shield(state.task), timeout=cold_start_timeout)
+            except asyncio.TimeoutError as e:
+                raise IndexUnavailable('Cold-start build timed out') from e
+            except Exception as e:
+                raise IndexUnavailable(f'Cold-start build failed: {e}') from e
+
+    if not db_path.exists():
+        raise IndexUnavailable(f'No index file at {db_path}')
+
+    return query.list_by_kinds(db_path=db_path, project_id=session.project_id, kinds=kinds)
+
+
 async def query_or_wait(
     session: VerifiedSession,
     patterns: Sequence[str],

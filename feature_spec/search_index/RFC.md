@@ -113,7 +113,8 @@ CREATE TABLE meta (
 | 2 | `builder` + `query` + `lifecycle`. Index `bucket` and `table` kinds. Wire `search` tool to use index for those kinds when the branch is default | done |
 | 3 | Extend builder to index `flow`, `transformation`, `configuration`, `configuration-row`, `data-app`, `workspace`. After Phase 3, `search` with textual + literal mode is fully index-served for all indexed kinds | done |
 | 3.5 | Production hardening of the live ``fetch_configurations`` fallback path: fan out per-``component_type`` API calls via ``asyncio.gather`` so config-based search latency is bounded by the slowest single ``component_list`` round-trip, not their sum | done |
-| 4 | Remove live-API fallback for indexed object types; add circuit breaker + observability metrics | future |
+| 4 | Cache full ``configuration`` JSON bodies inside the index ``metadata`` column so ``search_type=config-based`` walks the cached body locally instead of issuing live ``component_list`` round-trips. Live fallback retained for ``IndexUnavailable`` / regex / dev-branch sessions | done |
+| 5 | Remove live-API fallback for indexed object types when the index is healthy; add circuit breaker + observability metrics | future |
 
 ### Phase 3 schema additions
 
@@ -158,6 +159,25 @@ Wall-clock cost of the live config-based fallback is now bounded by the slowest 
 - Risk that builds exceed the 30-minute TTL on very large projects, causing perpetual rebuilds.
 
 Decision (this RFC): keep the index lean. Phase 3.5 ships the parallel-fan-out fix only. A separate work item can revisit "deep config cache" as an opt-in feature with its own freshness contract.
+
+### Phase 4 — cache configuration bodies inside the index
+
+Field testing of Phase 3.5 surfaced the deeper problem: even with parallel fan-out, a single ``config-based`` query for ``patterns=["conditional_flow"] item_types=[]`` still re-fetched every ``component_list?componentType=…&include=configuration,rows`` payload — the exact same data the index build had already pulled minutes earlier. The trade-off discussed at the end of Phase 3.5 was reconsidered and the decision flipped: the data is already on the wire during build, the only cost is storing it.
+
+**Storage change.** ``builder._insert_component_rows`` now writes the full ``configuration`` body into each row's ``metadata`` JSON (and ditto for ``configuration-row`` entries, which carry their own row-level ``configuration``). No new API calls — the field is already present in the ``component_list`` response that Phase 3 introduced. Estimated DB growth on production project 22: 2.5 MB → 8–12 MB. Build time is unchanged (same response, more bytes serialized into SQLite).
+
+**Query change.** ``query.list_by_kinds`` returns every indexed row of a given kind without an FTS5 ``MATCH``; ``lifecycle.list_index_rows`` is the cold-start-aware wrapper. The new ``tools/search._config_based_search_via_index`` iterates those rows, applies ``spec.match_configuration_scopes`` to each stored body, and produces ``SearchHit`` objects with the same ``match_scopes`` shape as the live path.
+
+**Routing.** When a session is verified, the branch is default, and ``mode=literal``, the ``search`` tool now picks one of two index paths:
+
+- ``search_type=textual`` → FTS5 ``MATCH`` (Phase 3 path).
+- ``search_type=config-based`` → bucket/table fall through to FTS5 textual (they have no configuration body); component-derived kinds go through ``_config_based_search_via_index``.
+
+Live ``fetch_configurations`` remains the fallback for ``IndexUnavailable``, ``mode=regex``, and dev-branch sessions.
+
+**Observed impact on project 22:** ``patterns=["conditional_flow"] item_types=[] search_type="config-based"`` formerly issued five sequential ``component_list`` calls (~5 s); after Phase 3.5 the same call took ~750 ms across three parallel ``componentType`` requests; after Phase 4 it runs entirely against the on-disk index in roughly 50–200 ms — bounded by the JSONPath walk over ~1 400 rows in Python.
+
+**Defense in depth retained.** ``list_by_kinds`` filters by ``project_id`` in SQL even though the file is already segregated per ``(project_id, token_hash)``.
 
 ## Scope
 

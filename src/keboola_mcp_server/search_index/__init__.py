@@ -1,6 +1,11 @@
 from keboola_mcp_server.search_index.builder import build_index
-from keboola_mcp_server.search_index.lifecycle import IndexUnavailable, ensure_index_built, query_or_wait
-from keboola_mcp_server.search_index.query import IndexedHit, run_query
+from keboola_mcp_server.search_index.lifecycle import (
+    IndexUnavailable,
+    ensure_index_built,
+    list_index_rows,
+    query_or_wait,
+)
+from keboola_mcp_server.search_index.query import IndexedHit, list_by_kinds, run_query
 from keboola_mcp_server.search_index.storage import (
     DEFAULT_TTL_SECONDS,
     SCHEMA_VERSION,
@@ -33,6 +38,8 @@ __all__ = [
     'file_lock',
     'init_schema',
     'is_stale',
+    'list_by_kinds',
+    'list_index_rows',
     'path_for',
     'query_or_wait',
     'run_query',

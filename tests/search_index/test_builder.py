@@ -60,8 +60,18 @@ _COMPONENTS: list[dict] = [
                 'name': 'GA pipeline',
                 'description': 'Daily GA pull',
                 'currentVersion': {'created': '2026-05-10T10:00:00+0000'},
+                'configuration': {
+                    'parameters': {'profile_id': 'UA-12345', 'metrics': ['sessions', 'pageviews']},
+                    'storage': {'output': {'tables': [{'destination': 'in.c-ga.events'}]}},
+                },
                 'rows': [
-                    {'id': 'r1', 'name': 'profile', 'description': 'sessions row', 'created': '2026-05-10'},
+                    {
+                        'id': 'r1',
+                        'name': 'profile',
+                        'description': 'sessions row',
+                        'created': '2026-05-10',
+                        'configuration': {'parameters': {'metric': 'sessions'}},
+                    },
                 ],
             }
         ],
@@ -153,6 +163,37 @@ async def test_build_index_creates_db_with_all_kinds(client, session, tmp_path):
         'data-app': 1,
         'workspace': 1,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures('_patched_fetchers')
+async def test_build_index_stores_configuration_body_for_phase4(client, session, tmp_path):
+    """Phase 4: full ``configuration`` JSON body must be present in metadata so
+    config-based search can walk it locally without a live ``component_list`` call."""
+    import json
+
+    db_path = await builder.build_index(session, client, root=tmp_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        cfg_row = conn.execute(
+            'SELECT metadata FROM search WHERE kind = ? AND obj_id = ?',
+            ('configuration', 'keboola.ex-google-analytics:111'),
+        ).fetchone()
+        row_row = conn.execute(
+            'SELECT metadata FROM search WHERE kind = ? AND obj_id = ?',
+            ('configuration-row', 'keboola.ex-google-analytics:111:r1'),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    cfg_meta = json.loads(cfg_row[0])
+    assert cfg_meta['configuration'] == {
+        'parameters': {'profile_id': 'UA-12345', 'metrics': ['sessions', 'pageviews']},
+        'storage': {'output': {'tables': [{'destination': 'in.c-ga.events'}]}},
+    }
+
+    row_meta = json.loads(row_row[0])
+    assert row_meta['configuration'] == {'parameters': {'metric': 'sessions'}}
 
 
 @pytest.mark.asyncio

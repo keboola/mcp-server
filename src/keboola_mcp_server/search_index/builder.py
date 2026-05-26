@@ -182,6 +182,10 @@ def _insert_component_rows(
                     'updated': cfg_updated,
                     'component_id': component_id,
                     'configuration_id': config_id,
+                    # Full configuration body kept so config-based search can run against
+                    # the index instead of re-fetching /components live. The data is already
+                    # part of the component_list response we just used — no extra API cost.
+                    'configuration': config.get('configuration'),
                 }
             )
             rows.append((session.project_id, kind, obj_id, cfg_name, cfg_description, content, metadata_json))
@@ -206,6 +210,9 @@ def _insert_component_rows(
                         'component_id': component_id,
                         'configuration_id': config_id,
                         'configuration_row_id': row_id,
+                        # See parent configuration: row's own JSON body is stored so
+                        # config-based search can walk it locally.
+                        'configuration': row.get('configuration'),
                     }
                 )
                 rows.append(

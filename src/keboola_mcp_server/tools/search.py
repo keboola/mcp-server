@@ -29,6 +29,7 @@ from keboola_mcp_server.search_index import (
     IndexedHit,
     IndexUnavailable,
     VerifiedSession,
+    list_index_rows,
     query_or_wait,
 )
 from keboola_mcp_server.tools.components.utils import _normalize_jsonpath, get_nested
@@ -464,6 +465,16 @@ def _index_eligible(spec: SearchSpec, verified: VerifiedSession | None) -> bool:
     return verified is not None and spec.search_type == 'textual' and spec.pattern_mode == 'literal'
 
 
+def _config_based_index_eligible(spec: SearchSpec, verified: VerifiedSession | None) -> bool:
+    """Config-based path can use the index when the body walk is feasible.
+
+    Regex mode goes live (FTS5 stores the body but ``match_configuration_scopes``
+    treats ``literal`` patterns as escape-quoted strings; the regex path uses the
+    same engine but the rationale here is parity with the existing live behavior).
+    """
+    return verified is not None and spec.search_type == 'config-based' and spec.pattern_mode == 'literal'
+
+
 async def _search_indexed_kinds(
     verified: VerifiedSession,
     spec: SearchSpec,
@@ -514,6 +525,60 @@ async def _index_or_live(
         if kinds & _COMPONENT_DERIVED_KINDS:
             results.extend(await fetch_configurations(client, spec))
         return results
+
+
+async def _config_based_search_via_index(
+    verified: VerifiedSession,
+    spec: SearchSpec,
+    kinds: set[str],
+) -> list[SearchHit]:
+    """Run config-based search by walking ``configuration`` bodies stored in the index.
+
+    Reads every indexed row of the requested component-derived kinds, applies
+    ``spec.match_configuration_scopes`` to the stored ``configuration`` body, and
+    returns one ``SearchHit`` per match. Replaces N live ``component_list`` calls.
+    """
+    import time
+
+    started_at = time.monotonic()
+    indexed = await list_index_rows(verified, kinds)
+
+    hits: list[SearchHit] = []
+    for row in indexed:
+        config_body = row.metadata.get('configuration')
+        if config_body is None:
+            continue
+        matches = spec.match_configuration_scopes(config_body)
+        if not matches:
+            continue
+        hit = _indexed_to_search_hit(row)
+        if hit is not None:
+            hits.append(hit.set_matches(matches))
+
+    duration_ms = (time.monotonic() - started_at) * 1000
+    LOG.info(
+        'search-index hit (config-based): project_id=%s kinds=%s rows_scanned=%d hits=%d duration_ms=%.1f',
+        verified.project_id,
+        sorted(kinds),
+        len(indexed),
+        len(hits),
+        duration_ms,
+    )
+    return hits
+
+
+async def _config_based_index_or_live(
+    client: KeboolaClient,
+    verified: VerifiedSession,
+    spec: SearchSpec,
+    kinds: set[str],
+) -> list[SearchHit]:
+    """Try the index for config-based search; on IndexUnavailable, fall back to live."""
+    try:
+        return await _config_based_search_via_index(verified, spec, kinds)
+    except IndexUnavailable as e:
+        LOG.info(f'Search index unavailable for config-based, falling back to live: {e}')
+        return await fetch_configurations(client, spec)
 
 
 async def _fetch_buckets(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
@@ -904,6 +969,21 @@ async def search(
         kinds_for_index = (types_to_fetch & INDEXED_KINDS) if types_to_fetch else set(INDEXED_KINDS)
         if kinds_for_index:
             tasks.append(_index_or_live(client, verified, spec, kinds_for_index))
+    elif _config_based_index_eligible(spec, verified):
+        assert verified is not None  # narrowed by _config_based_index_eligible
+        # bucket/table have no configuration body; match their textual fields via FTS5.
+        # Component-derived kinds get the JSON-body walk against the cached configuration.
+        if types_to_fetch:
+            bucket_table_kinds = types_to_fetch & {'bucket', 'table'}
+            component_kinds = types_to_fetch & _COMPONENT_DERIVED_KINDS
+        else:
+            bucket_table_kinds = {'bucket', 'table'}
+            component_kinds = set(_COMPONENT_DERIVED_KINDS)
+
+        if bucket_table_kinds:
+            tasks.append(_index_or_live(client, verified, spec, bucket_table_kinds))
+        if component_kinds:
+            tasks.append(_config_based_index_or_live(client, verified, spec, component_kinds))
     else:
         bucket_in_scope = not types_to_fetch or 'bucket' in types_to_fetch
         table_in_scope = not types_to_fetch or 'table' in types_to_fetch

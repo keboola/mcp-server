@@ -76,6 +76,50 @@ def run_query(
     ]
 
 
+def list_by_kinds(
+    db_path: Path,
+    project_id: str,
+    kinds: Iterable[str],
+    limit: int = 100_000,
+) -> list[IndexedHit]:
+    """List all indexed rows for the given kinds without an FTS5 match filter.
+
+    Used by config-based search, which walks each row's stored ``configuration``
+    body in Python — FTS5 can't express JSONPath traversal. Project filter is
+    still applied as a defense-in-depth check on top of the per-token file path.
+    """
+    kind_list = [k for k in kinds if k]
+    if not kind_list:
+        return []
+
+    placeholders = ','.join(['?'] * len(kind_list))
+    sql = (
+        'SELECT kind, obj_id, name, description, metadata '
+        'FROM search '
+        f'WHERE project_id = ? AND kind IN ({placeholders}) '
+        'ORDER BY kind, obj_id LIMIT ?'
+    )
+    params: list[Any] = [project_id, *kind_list, limit]
+
+    uri = f'file:{db_path}?mode=ro'
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+    return [
+        IndexedHit(
+            kind=row[0],
+            obj_id=row[1],
+            name=row[2] or '',
+            description=row[3] or '',
+            metadata=json.loads(row[4]) if row[4] else {},
+        )
+        for row in rows
+    ]
+
+
 def _build_match_expression(patterns: Sequence[str]) -> str:
     parts = []
     for pattern in patterns:
