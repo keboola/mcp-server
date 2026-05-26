@@ -112,7 +112,8 @@ CREATE TABLE meta (
 | 1 | `search_index/` scaffolding: `types`, `verify`, `storage`, sanitization + path-traversal tests | done |
 | 2 | `builder` + `query` + `lifecycle`. Index `bucket` and `table` kinds. Wire `search` tool to use index for those kinds when the branch is default | done |
 | 3 | Extend builder to index `flow`, `transformation`, `configuration`, `configuration-row`, `data-app`, `workspace`. After Phase 3, `search` with textual + literal mode is fully index-served for all indexed kinds | done |
-| 4 | Remove live-API fallback for indexed object types; add circuit breaker + observability metrics. Add semantic-object indexing for `search_semantic_context` (separate work item) | future |
+| 3.5 | Production hardening of the live ``fetch_configurations`` fallback path: fan out per-``component_type`` API calls via ``asyncio.gather`` so config-based search latency is bounded by the slowest single ``component_list`` round-trip, not their sum | done |
+| 4 | Remove live-API fallback for indexed object types; add circuit breaker + observability metrics | future |
 
 ### Phase 3 schema additions
 
@@ -124,6 +125,39 @@ Component-derived rows reuse the same FTS5 table; the kind discriminator separat
 | `configuration-row` | `<component_id>:<configuration_id>:<row_id>` | `component_id`, `configuration_id`, `configuration_row_id`, `name`, `description`, `updated` |
 
 The kind classifier in ``builder._derive_component_kind`` matches ``tools/search.py::_fetch_configs`` so indexed and live results are interchangeable: same component → same kind in both paths.
+
+### Phase 3.5 — fan out live ``fetch_configurations`` (post-deploy observation)
+
+After Phase 3 shipped to canary, production logs on a medium-sized project (project 22: 164 buckets, 1 181 tables, 157 configurations, 341 transformations, 85 flows, 184 workspaces, 45 data-apps, 755 configuration-rows — 2 912 rows / 2.5 MB in the index) confirmed that:
+
+- All textual + literal searches were served from the FTS5 index in **1–13 ms** regardless of the requested ``item_types`` (bucket, table, configuration, transformation), exactly as designed.
+- ``search_type=config-based`` calls — which are explicitly excluded from the index because FTS5 cannot do JSONPath traversal over nested arrays — fell back to the live ``fetch_configurations`` path and showed two failure modes:
+
+| Observed call | Wall-clock | Root cause |
+|---|---|---|
+| ``patterns=["customer"] item_types=["configuration","transformation"] search_type="config-based"`` | ~5 s | Four ``component_list?componentType=…`` calls (extractor, writer, application, transformation) issued back-to-back |
+| ``patterns=["shopify"] item_types=["flow"] search_type="config-based" scopes=["tasks","phases"]`` | ~33 s | Single ``component_list?componentType=other`` call returning a large response, blocking the request |
+
+The first case is fixable in the MCP server; the second is server-side latency on the Keboola API and is out of scope for this RFC.
+
+**Fix.** ``fetch_configurations`` previously iterated ``spec._component_types`` in a sequential ``for`` loop. After Phase 3.5 the per–component-type fetches fan out concurrently:
+
+```python
+results = await asyncio.gather(
+    *(_collect_configs(client, spec, component_type=ct) for ct in spec._component_types)
+)
+return [hit for batch in results for hit in batch]
+```
+
+Wall-clock cost of the live config-based fallback is now bounded by the slowest single ``component_list`` round-trip rather than the sum of all of them. Estimated impact on the observed five-second call: ~4× speedup (≈1.2 s).
+
+**Why we did NOT extend the index to cache full configuration bodies.** Doing so would let ``search_type=config-based`` queries run locally against the FTS5 row's ``metadata`` JSON without hitting the live API at all — turning the 33 s call into milliseconds. The cost:
+
+- DB size on project 22 grows from ~2.5 MB to an estimated 10–15 MB (full ``configuration`` + ``rows`` payloads).
+- Build time grows from ~3–5 s to depend on response size of ``/components?include=configuration,rows`` (no extra round-trips — the API response already contains the bodies).
+- Risk that builds exceed the 30-minute TTL on very large projects, causing perpetual rebuilds.
+
+Decision (this RFC): keep the index lean. Phase 3.5 ships the parallel-fan-out fix only. A separate work item can revisit "deep config cache" as an opt-in feature with its own freshness contract.
 
 ## Scope
 

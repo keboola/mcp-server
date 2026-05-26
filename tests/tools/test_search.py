@@ -16,6 +16,7 @@ from keboola_mcp_server.tools.search import (
     SearchItemType,
     SearchSpec,
     SuggestedComponentOutput,
+    fetch_configurations,
     find_component_id,
     search,
 )
@@ -1185,3 +1186,51 @@ async def test_find_component_id(mocker: MockerFixture, mcp_context_client: Cont
         ),
     ]
     keboola_client.ai_service_client.suggest_component.assert_called_once_with(query)
+
+
+@pytest.mark.asyncio
+async def test_fetch_configurations_runs_component_lists_in_parallel(
+    mocker: MockerFixture, mcp_context_client: Context
+):
+    """Regression for AI-3236 Phase 3.5.
+
+    ``fetch_configurations`` previously iterated ``spec._component_types`` sequentially, so a
+    config-based search across {extractor, writer, application, transformation} took the sum of
+    four ``component_list`` round-trips. The fan-out via ``asyncio.gather`` must keep the
+    wall-clock cost close to a single round-trip.
+    """
+    import asyncio
+    import time
+
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+    started_at: list[tuple[str, float]] = []
+
+    async def slow_component_list(component_type, include=None):
+        started_at.append((component_type, time.monotonic()))
+        await asyncio.sleep(0.05)
+        return []
+
+    keboola_client.storage_client.component_list = mocker.AsyncMock(side_effect=slow_component_list)
+
+    spec = SearchSpec(
+        patterns=['anything'],
+        item_types=[
+            cast(SearchItemType, 'configuration'),
+            cast(SearchItemType, 'transformation'),
+        ],
+    )
+    # Force a multi-type fan-out: extractor + writer + application + transformation.
+    object.__setattr__(spec, '_component_types', ['extractor', 'writer', 'application', 'transformation'])
+
+    t0 = time.monotonic()
+    await fetch_configurations(keboola_client, spec)
+    elapsed = time.monotonic() - t0
+
+    # Sequential would be ≥ 4 × 0.05 = 0.20s; parallel should be ~0.05s.
+    assert elapsed < 0.12, f'fetch_configurations was not parallel: elapsed={elapsed:.3f}s'
+
+    # All four component_list calls must have started within ~10ms of each other.
+    start_times = [t for _, t in started_at]
+    assert max(start_times) - min(start_times) < 0.02
+    assert {ct for ct, _ in started_at} == {'extractor', 'writer', 'application', 'transformation'}

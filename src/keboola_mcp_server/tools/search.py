@@ -574,19 +574,26 @@ async def _fetch_tables(client: KeboolaClient, spec: SearchSpec) -> list[SearchH
 
 
 async def fetch_configurations(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
-    """Fetches and filters configurations and configuration rows from all component types."""
-    hits = []
+    """Fetches and filters configurations and configuration rows from all component types.
 
+    When ``spec._component_types`` covers multiple component types (e.g. extractor + writer
+    + application + transformation), each type triggers its own ``component_list`` API call.
+    These calls are issued concurrently with ``asyncio.gather`` so the wall-clock cost is the
+    slowest single call, not the sum of all of them. Each call still does its own JSON walk
+    in-process.
+    """
     if spec._component_types:
-        for component_type in spec._component_types:
-            async for hit in _fetch_configs(client, spec, component_type=component_type):
-                hits.append(hit)
+        results = await asyncio.gather(
+            *(_collect_configs(client, spec, component_type=ct) for ct in spec._component_types)
+        )
+        return [hit for batch in results for hit in batch]
 
-    else:
-        async for hit in _fetch_configs(client, spec, component_type=None):
-            hits.append(hit)
+    return await _collect_configs(client, spec, component_type=None)
 
-    return hits
+
+async def _collect_configs(client: KeboolaClient, spec: SearchSpec, component_type: str | None) -> list[SearchHit]:
+    """Materialise ``_fetch_configs`` into a list so it can be scheduled via ``asyncio.gather``."""
+    return [hit async for hit in _fetch_configs(client, spec, component_type=component_type)]
 
 
 async def _fetch_configs(
