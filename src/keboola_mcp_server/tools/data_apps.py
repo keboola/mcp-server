@@ -876,7 +876,7 @@ async def modify_python_js_data_app(
                     slug=slug,
                     secrets=legacy_secrets,
                     git=git_block,
-                    is_draft=True if parent_configuration_id else None,
+                    is_draft=True if parent_configuration_id is not None else None,
                 ),
             ),
             runtime=CodeDataAppConfig.Runtime(
