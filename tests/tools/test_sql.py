@@ -1,11 +1,9 @@
 import json
 from typing import Any
-from unittest.mock import call
+from unittest.mock import Mock, call
 
-import httpx
 import pytest
 from mcp.server.fastmcp import Context
-from pydantic import TypeAdapter
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
@@ -485,13 +483,14 @@ class TestWorkspaceManagerBigQuery:
         ],
     )
     async def test_get_table_fqn(
-        self, table: dict[str, Any], expected: TableFqn, keboola_client: KeboolaClient, context: Context
+        self, table: dict[str, Any], expected: TableFqn, keboola_client: KeboolaClient, context: Context, mocker
     ):
+        mocker.patch.object(QueryServiceClient, 'create', side_effect=AssertionError('no SQL should be issued'))
+
         m = WorkspaceManager.from_state(context.session.state)
         info = await m.get_table_info(table)
         assert info is not None
         assert info.fqn == expected
-        keboola_client.storage_client.workspace_query.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -508,12 +507,13 @@ class TestWorkspaceManagerBigQuery:
         ],
     )
     async def test_get_table_info_returns_none(
-        self, table: dict[str, Any], keboola_client: KeboolaClient, context: Context
+        self, table: dict[str, Any], keboola_client: KeboolaClient, context: Context, mocker
     ):
+        mocker.patch.object(QueryServiceClient, 'create', side_effect=AssertionError('no SQL should be issued'))
+
         m = WorkspaceManager.from_state(context.session.state)
         info = await m.get_table_info(table)
         assert info is None
-        keboola_client.storage_client.workspace_query.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -581,8 +581,25 @@ class TestWorkspaceManagerBigQuery:
         max_chars: int | None,
         keboola_client: KeboolaClient,
         context: Context,
+        mocker,
     ):
-        keboola_client.storage_client.workspace_query.return_value = TypeAdapter(QueryResult).dump_python(db_data)
+        # BigQuery now runs queries through the backend-agnostic Query Service, just like Snowflake.
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-1234'
+        qsclient.get_job_status.return_value = {
+            'status': 'completed',
+            'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
+        }
+        qsclient.get_job_results.return_value = {
+            'status': 'completed' if db_data.is_ok else 'failed',
+            'data': [list(row.values()) for row in db_data.data.rows] if db_data.data else [],
+            'columns': [{'name': col_name} for col_name in db_data.data.columns] if db_data.data else [],
+            'message': db_data.message,
+            'numberOfRows': len(db_data.data.rows) if db_data.data else None,
+        }
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
 
         if db_data.data is not None:
             expected = _truncate_data(db_data, max_rows, max_chars)
@@ -593,11 +610,40 @@ class TestWorkspaceManagerBigQuery:
         actual = await m.execute_query(query, max_rows=max_rows, max_chars=max_chars)
 
         assert actual == expected
-        keboola_client.storage_client.workspace_query.assert_called_once_with(
-            workspace_id=1234,
-            query=query,
-            timeout=httpx.Timeout(connect=5.0, read=_BigQueryWorkspace._QUERY_TIMEOUT, write=10.0, pool=5.0),
+
+        keboola_client.storage_client.branches_list.assert_called_once()
+        qsclient.submit_job.assert_called_once()
+        qsclient.get_job_status.assert_called_once_with('qs-job-1234')
+        qsclient.get_job_results.assert_called_once_with(
+            'qs-job-1234', 'qs-job-statement-1234', offset=0, limit=1000 if max_rows is None else max(max_rows, 100)
         )
+
+    @pytest.mark.parametrize(
+        ('raw_message', 'expected'),
+        [
+            # Query Service wraps BigQuery errors as a serialized error object; we extract `Message`.
+            (
+                '{Location: "query"; Message: "Syntax error: Unexpected identifier \\"INVALID\\" at [1:1]"; '
+                'Reason: "invalidQuery"}',
+                'Syntax error: Unexpected identifier "INVALID" at [1:1]',
+            ),
+            (
+                '{Location: ""; Message: "Access Denied: Table foo: User does not have permission to query '
+                'table foo, or perhaps it does not exist."; Reason: "accessDenied"}',
+                'Access Denied: Table foo: User does not have permission to query table foo, '
+                'or perhaps it does not exist.',
+            ),
+            # A plain message (no wrapper) is passed through unchanged.
+            ('400 Invalid SQL...', '400 Invalid SQL...'),
+            (None, None),
+        ],
+        ids=['syntax_error', 'access_denied', 'plain_message', 'none'],
+    )
+    def test_format_error_message_unwraps_bigquery_error(self, raw_message: str | None, expected: str | None):
+        workspace = _BigQueryWorkspace(
+            workspace_id=1234, dataset_id='workspace_1234', project_id='project_1234', client=Mock(spec=KeboolaClient)
+        )
+        assert workspace._format_error_message(raw_message) == expected
 
 
 class TestQueryCancellation:
