@@ -178,13 +178,19 @@ def workspace_schema(storage_api_token: str, storage_api_url: str) -> Generator[
     token_info = storage_client.tokens.verify()
     backend = token_info['owner'].get('defaultBackend')
     # Mirror the MCP server's own per-backend workspace login type (see WorkspaceManager._create_ws).
-    login_type = 'snowflake-person-sso' if backend == 'snowflake' else 'default'
+    if backend == 'snowflake':
+        login_type = 'snowflake-person-sso'
+    elif backend == 'bigquery':
+        login_type = 'default'
+    else:
+        raise RuntimeError(f'Unexpected project default backend: {backend!r} (expected snowflake or bigquery)')
 
     LOG.info(f'Creating a read-only {backend} workspace for the test session')
     workspace = storage_client.workspaces.create(
         backend=backend,
         login_type=login_type,
-        read_all_objects=True,  # read-only access to all storage objects
+        # kbcstorage maps read_all_objects to the readOnlyStorageAccess flag (read-only storage access).
+        read_all_objects=True,
     )
     workspace_id = workspace['id']
     schema = workspace['connection']['schema']

@@ -3,17 +3,44 @@ set -Eeuo pipefail
 
 CONTAINER_NAME="keboola-mcp-server-test-docker"
 IMAGE_NAME="keboola/mcp-server:ci"
+WORKSPACE_ID=""
 
 cleanup() {
     docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
     docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    if [ -n "$WORKSPACE_ID" ]; then
+        echo "Deleting workspace $WORKSPACE_ID..."
+        curl -s -X DELETE -H "X-StorageApi-Token: $STORAGE_API_TOKEN" \
+            "$STORAGE_API_URL/v2/storage/workspaces/$WORKSPACE_ID" >/dev/null 2>&1 || true
+    fi
 }
 trap cleanup EXIT
+
+# Create an ephemeral read-only workspace and set WORKSPACE_ID / WORKSPACE_SCHEMA.
+# The test no longer depends on a pre-provisioned workspace; it creates its own and
+# deletes it on exit (matching the integration-test setup).
+create_workspace() {
+    echo "Creating ephemeral read-only workspace..."
+    local resp
+    resp=$(curl -s -X POST \
+        -H "X-StorageApi-Token: $STORAGE_API_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"readOnlyStorageAccess": true}' \
+        "$STORAGE_API_URL/v2/storage/workspaces")
+    WORKSPACE_ID=$(echo "$resp" | jq -r '.id')
+    WORKSPACE_SCHEMA=$(echo "$resp" | jq -r '.connection.schema')
+    if [ -z "$WORKSPACE_ID" ] || [ "$WORKSPACE_ID" = "null" ]; then
+        echo "✗ Failed to create workspace: $resp"
+        exit 1
+    fi
+    echo "Created workspace $WORKSPACE_ID (schema $WORKSPACE_SCHEMA)"
+}
 
 main() {
     : "${STORAGE_API_TOKEN:?STORAGE_API_TOKEN is required}"
     : "${STORAGE_API_URL:?STORAGE_API_URL is required}"
-    : "${WORKSPACE_SCHEMA:?WORKSPACE_SCHEMA is required}"
+
+    create_workspace
 
     # Start container
     echo "Starting container..."
