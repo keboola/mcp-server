@@ -13,6 +13,7 @@ reason why we are having those tests.
 import logging
 from typing import cast
 
+import httpx
 import jsonschema
 import pytest
 
@@ -38,7 +39,13 @@ def _check_schema(schema: JsonDict, dummy_parameters: JsonDict) -> None:
 
 @pytest.mark.asyncio
 async def test_validate_parameters(keboola_client: KeboolaClient):
-    data = cast(JsonDict, await keboola_client.storage_client.get(''))  # get information about current storage stack
+    # Fetch the storage stack index directly to avoid the trailing-slash 301 that
+    # `storage_client.get('')` triggers on some stacks (it builds `<base>/`).
+    raw = keboola_client.storage_client.raw_client
+    async with httpx.AsyncClient(timeout=raw.timeout, transport=raw._create_transport()) as client:
+        response = await client.get(raw.base_api_url, headers=raw.headers)
+        response.raise_for_status()
+        data = cast(JsonDict, response.json())
     LOG.info(f'Fetched information: {data.keys()}')
     components = cast(list[JsonDict], data['components'])
     components.sort(key=lambda x: (x['type'], x['name']))  # sort by type and then by name

@@ -38,11 +38,14 @@ name or description.
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
-- [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
-and the configuration ID.
+- [create_python_js_data_app_git_credential](#create_python_js_data_app_git_credential): Mints a one-time HTTPS token on a python-js data app so the caller can clone, pull, and push
+to the app's managed git repo over HTTPS.
+- [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
+action and the configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
-- [modify_data_app](#modify_data_app): Creates or updates a Streamlit data app.
+- [modify_python_js_data_app](#modify_python_js_data_app): Creates or updates a python-js data app.
+- [modify_streamlit_data_app](#modify_streamlit_data_app): Creates or updates a Streamlit data app.
 
 ### Project Tools
 - [get_project_info](#get_project_info): Retrieves structured information about the current project,
@@ -1705,6 +1708,63 @@ Example 4 - Update storage mappings:
 ---
 
 # Other Tools
+<a name="create_python_js_data_app_git_credential"></a>
+## create_python_js_data_app_git_credential
+**Annotations**: 
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Mints a one-time HTTPS token on a python-js data app so the caller can clone, pull, and push
+to the app's managed git repo over HTTPS.
+
+Returns a ready-to-use `git_clone_url` of the form `https://kai:<secret>@<host>/<path>.git`
+plus the raw `secret`. The token is returned **only** at creation — the platform cannot return
+it again on any subsequent read. Stash the URL (or the secret) somewhere the LLM can reuse for
+the rest of the session.
+
+The data-science API accepts multiple credentials per app, so calling this again mints an
+additional token without invalidating any tokens already held by other clients.
+
+## When to call
+
+1. **Right after `modify_python_js_data_app` create** — the new app has a managed repo but no
+   credentials yet. Call this tool with the new app's `configuration_id` to enable git access.
+
+2. **Recovery when the cached token is gone** (e.g., a fresh Kai sandbox continuing an old draft
+   — the previous sandbox's filesystem was wiped, taking the cached `git_clone_url` with it).
+   If `git clone`/`pull`/`push` against a python-js app the LLM did not create in the current
+   session fails with `Authentication failed` (HTTP 401), call this tool with the same
+   `configuration_id` to mint a fresh token. Existing credentials remain valid, so other clients
+   are not disrupted.
+
+## Constraints
+- Only python-js data apps have a managed git repo. Streamlit apps reject the call with a clear
+  error.
+- Permissions are always `readWrite` — the LLM virtually always needs push access. The
+  data-science API supports read-only credentials, but the tool does not expose that knob;
+  revisit once a real use case appears.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "configuration_id": {
+      "description": "Storage configuration ID of the python-js data app.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="deploy_data_app"></a>
 ## deploy_data_app
 **Annotations**: 
@@ -1713,13 +1773,30 @@ Example 4 - Update storage mappings:
 
 **Description**:
 
-Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
-and the configuration ID.
+Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
+action and the configuration ID.
 
-Considerations:
-- Redeploying a data app takes some time, and the app temporarily may have status "stopped" during this process
-because it needs to restart.
-- After deployment, the deployment info includes the app URL and the latest logs to diagnose in-app errors.
+## Mode and branch (python-js apps)
+- `mode='dev'` enables the in-platform preview for a python-js dev twin. Pair with `branch` to deploy a
+  specific git branch (edit flow); without `branch`, the dev twin deploys `main`.
+- For prod redeploys (including after merging a feature branch into `main` during the edit flow), use
+  no `mode` and no `branch` — the prod app picks up the current `main`.
+- python-js apps do NOT fetch a Storage `configVersion` for deployment (their source lives in git, not in
+  the Storage configuration); this is handled automatically.
+
+## Streamlit apps
+Streamlit apps have no managed git repo, so `mode` and `branch` have no effect on the
+deployed app. `mode=None` is the expected call shape; don't pass `branch`.
+
+## Validation
+`branch` is only meaningful with `mode='dev'`; setting `branch` without `mode='dev'` raises an
+error for any app type (Streamlit or python-js).
+
+## General considerations
+- Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the
+  restart.
+- After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
+  errors.
 
 
 **Input JSON Schema**:
@@ -1738,6 +1815,34 @@ because it needs to restart.
     "configuration_id": {
       "description": "The ID of the data app configuration.",
       "type": "string"
+    },
+    "mode": {
+      "anyOf": [
+        {
+          "enum": [
+            "dev",
+            "production"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Deployment mode. Set to \"dev\" to enable the in-platform preview for python-js data apps. Leave None (default) for Streamlit apps and for production deploys."
+    },
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Git branch to deploy from. Only meaningful when `mode=\"dev\"` for python-js apps backed by a managed repo \u2014 the dev twin will deploy from this branch instead of `main`, enabling branch-based preview during the edit flow. Leave None for prod deploys and for Streamlit apps."
     }
   },
   "required": [
@@ -1770,6 +1875,10 @@ Considerations:
 - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
 - Data App detail contains configuration, metadata, source code, links, and deployment info along with the latest
 data app logs to investigate in-app errors. The logs may be updated after opening the data app URL.
+- `repo_url` (managed git repo URL for python-js apps) is ONLY populated on the detail path
+  (when `configuration_ids` is provided). The inventory list always returns `repo_url=None`,
+  even for python-js apps with a managed repo — to retrieve the URL, call this tool again
+  with the target `configuration_ids`.
 
 
 **Input JSON Schema**:
@@ -1801,8 +1910,189 @@ data app logs to investigate in-app errors. The logs may be updated after openin
 ```
 
 ---
-<a name="modify_data_app"></a>
-## modify_data_app
+<a name="modify_python_js_data_app"></a>
+## modify_python_js_data_app
+**Annotations**: `destructive`
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Creates or updates a python-js data app.
+
+Two-app project model: every python-js project has a persistent **prod app** that owns the only
+managed git repository for the project, and one or more **dev twins** that are *external-git* apps
+pointing back at the prod app's managed repo for LLM iteration. Dev twins appear in the Keboola UI
+under their parent prod app in a "Drafts" section; the user discards them manually via a "Discard"
+button when no longer needed. The MCP server does not delete dev twins.
+
+Why this ownership split (MVP, AI-3005): the data-science platform does not yet support sharing a
+managed repo across apps. Until the platform-side drafts mechanism lands (AI-3240), the dev twin
+is configured to clone the prod app's repo on every deploy by setting its
+`parameters.dataApp.git = {repository, username, '#password', branch}`. The prod-side credential
+is minted automatically inside this tool when creating a dev twin — the agent does NOT need to
+call `create_python_js_data_app_git_credential` separately on a dev twin.
+
+## Create flow (new project bootstrap)
+No `configuration_id`, no `parent_configuration_id`. `slug` is required.
+Steps:
+1. Call this tool with `slug` (the user-facing name, e.g. `demo`). Creates the **prod app** with
+   its own managed git repo. Returns `(configuration_id=PROD, repo_url=R)`. `R` is the bare HTTPS
+   URL (no credentials).
+2. Call this tool again with `slug` (e.g. `demo-dev-<rand>`) and `parent_configuration_id=PROD`.
+   Creates the **dev twin** as an external-git app pointing at `R` on a fresh iteration branch.
+   Returns `(configuration_id=DEV, repo_url=R, git_clone_url=U, branch=B)` — `U` has the
+   prod-issued token embedded so the agent can clone immediately, and `B` is the branch the
+   dev twin is pinned to (`iter-<6-hex>` if `branch` was not passed).
+3. `git clone U`, `git checkout B`, write source, push.
+4. `deploy_data_app(action='deploy', configuration_id=DEV, mode='dev')` → preview URL serving
+   branch `B`. Iterate with the user.
+5. After approval, locally `git checkout main && git merge B && git push`.
+6. `deploy_data_app(action='deploy', configuration_id=PROD)` — no `mode`, no `branch`. The prod
+   app picks up the merged `main`. The dev twin stays listed under the prod app in the UI's
+   "Drafts" section until the user discards it.
+
+## Edit flow (modifying an existing prod app)
+Same as steps 2–6 above. The agent already has the prod's `configuration_id`; it just calls
+this tool with `parent_configuration_id=<prod>` and (optionally) `branch=<name>` to create the
+dev twin. No `get_data_apps` pre-lookup is needed.
+
+## Update flow (modifying an existing app's deployment metadata)
+When `configuration_id` is set: updates the Storage configuration (auto-suspend, name, description,
+`authentication_type`). `slug`, `parent_configuration_id`, and `branch` are all rejected here —
+slug is immutable, the repo binding is fixed at creation, and the iteration branch only makes
+sense at create time. Use `authentication_type='default'` to keep the existing auth setup
+(including OIDC configured outside the MCP); pass `'no-auth'` or `'basic-auth'` to overwrite.
+After updating, ALWAYS call `deploy_data_app(action='deploy', ...)` to restart the app so the
+changes take effect.
+
+## Authentication
+New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
+explicitly to expose the app publicly. OIDC and other advanced auth setups are managed outside the
+MCP — when updating such an app, leave `authentication_type='default'` to preserve them.
+
+## Slug constraint
+Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). For dev twins, append a
+short suffix (e.g. `-dev-abc123`) to keep slugs unique across the prod app and its twins.
+
+## Source code
+Source code lives in the managed git repo, NOT in this tool's input. This tool only manages
+deployment metadata and the git binding. Source code changes are pushed via `git push` to the
+prod app's repo URL (`repo_url` in this tool's output, embedded with credentials in
+`git_clone_url` on the dev-twin create path).
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "description": "Name of the data app (max ~50 chars to fit DNS label limit).",
+      "type": "string"
+    },
+    "description": {
+      "description": "Description of the data app.",
+      "type": "string"
+    },
+    "configuration_id": {
+      "default": "",
+      "description": "The ID of existing data app configuration when updating, otherwise empty string.",
+      "type": "string"
+    },
+    "change_description": {
+      "default": "",
+      "description": "The description of the change when updating (e.g. \"Bump image\"), otherwise empty string.",
+      "type": "string"
+    },
+    "slug": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "URL-safe slug for the data app (used as a subdomain). Required when creating; immutable after."
+    },
+    "parent_configuration_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Storage configuration ID of the prod python-js data app this dev twin will iterate against. When set on create, the new app is created as a **dev twin**: no managed repo is provisioned for it; instead its `parameters.dataApp.git` block is populated to point at the prod app's managed repo, with a freshly-minted prod-app HTTPS token and the chosen iteration branch. Leave None on create to make a **prod app** (which gets its own managed repo). Rejected on update."
+    },
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Iteration branch for the dev twin to deploy from. Only valid on the dev-twin create path (when `parent_configuration_id` is set). Defaults to `iter-<6-hex>` when unset. Must not be `main` (reserved for the prod app). Rejected on prod create and on update."
+    },
+    "authentication_type": {
+      "default": "default",
+      "description": "Authentication type. \"no-auth\" removes authentication completely, \"basic-auth\" secures the data app via HTTP basic authentication, and \"default\" means: on create, apply basic auth (safe default for new apps); on update, keep the existing authentication configuration (including OIDC setups configured outside the MCP).",
+      "enum": [
+        "no-auth",
+        "basic-auth",
+        "default"
+      ],
+      "type": "string"
+    },
+    "auto_suspend_after_seconds": {
+      "default": 900,
+      "description": "Number of seconds after which the running data app is automatically suspended.",
+      "type": "integer"
+    },
+    "storage": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Complete storage configuration for the data app (input/output table mappings). Validated against the storage JSON schema. Replaces the ENTIRE storage block when updating an existing app. For data apps with Storage Access, declare output tables with `unload_strategy: \"direct-grant\"` (in that case `source` is not required and the workspace is granted direct SELECT/INSERT/UPDATE/DELETE/TRUNCATE on the destination Storage table). Leave unset (None) to preserve the existing storage configuration; pass an empty dict to explicitly clear it."
+    },
+    "folder": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Folder name to organize this data app in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose."
+    }
+  },
+  "required": [
+    "name",
+    "description"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="modify_streamlit_data_app"></a>
+## modify_streamlit_data_app
 **Annotations**: `destructive`
 
 **Tags**: `config-diff-preview, data-apps`

@@ -39,13 +39,15 @@ def test_load_schema(schema_name, expected_keywords):
         ('tests/resources/storage/storage_valid_3.json'),
         # 4. Input table with where_column and where_values, output table with schema
         ('tests/resources/storage/storage_valid_4.json'),
+        # 5. Output table with unload_strategy='direct-grant' and no 'source' (data apps with Storage Access)
+        ('tests/resources/storage/storage_valid_5.json'),
     ],
 )
 def test_validate_storage_valid(valid_storage_path: str):
     with open(valid_storage_path, 'r') as f:
         valid_storage = json.load(f)
     # returns the same valid storage no exception is raised
-    assert validation._validate_storage_configuration_against_schema(valid_storage) == valid_storage
+    assert validation.validate_storage_configuration_against_schema(valid_storage) == valid_storage
 
 
 @pytest.mark.parametrize(
@@ -78,7 +80,7 @@ def test_validate_storage_invalid(invalid_storage_path: str):
     with open(invalid_storage_path, 'r') as f:
         invalid_storage = json.load(f)
     with pytest.raises(validation.RecoverableValidationError) as exc_info:
-        validation._validate_storage_configuration_against_schema(
+        validation.validate_storage_configuration_against_schema(
             invalid_storage, initial_message='This is a test message'
         )
     err = exc_info.value
@@ -97,7 +99,7 @@ def test_validate_storage_invalid(invalid_storage_path: str):
 def test_validate_storage_output_format(input_storage, output_storage):
     """Test that storage configuration validation preserves the input format - whether the input contains a 'storage'
     key or not, the output will match the input structure exactly."""
-    result = validation._validate_storage_configuration_against_schema(input_storage)
+    result = validation.validate_storage_configuration_against_schema(input_storage)
     assert result == output_storage
 
 
