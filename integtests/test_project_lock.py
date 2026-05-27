@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import MagicMock, call
 
+import httpx
 import pytest
 
 from integtests.project_lock import (
@@ -332,84 +333,47 @@ def test_clean_project_deletes_configs(mocker):
 
 
 # ---------------------------------------------------------------------------
-# test_clean_project_keeps_sandboxes_config_matching_workspace_schema
+# test_clean_project_deletes_workspaces
 # ---------------------------------------------------------------------------
 
 
-def _get_side_effect_with_workspaces(workspaces: list[dict], components: list[dict]) -> Any:
-    """Returns a _get side_effect that routes by path suffix."""
+def test_clean_project_deletes_workspaces(mocker):
+    """clean_project deletes every workspace — none are persistent anymore."""
+    lock = _make_project_lock()
 
     def _get(path: str, **params: Any) -> list[dict]:
-        if path.endswith('/buckets'):
-            return []
         if path.endswith('/workspaces'):
-            return workspaces
-        return components
+            return [{'id': 9001}, {'id': 9002}]
+        return []
 
-    return _get
-
-
-@pytest.mark.parametrize(
-    ('workspace_schema', 'workspaces', 'expected_kept_config_id'),
-    [
-        # Workspace found — matching config is kept
-        (
-            'WORKSPACE_999',
-            [
-                {'configurationId': '777', 'connection': {'schema': 'WORKSPACE_999', 'backend': 'snowflake'}},
-                {'configurationId': '888', 'connection': {'schema': 'WORKSPACE_OTHER', 'backend': 'snowflake'}},
-            ],
-            '777',
-        ),
-        # No workspace with matching schema — all sandboxes configs deleted
-        (
-            'WORKSPACE_MISSING',
-            [
-                {'configurationId': '777', 'connection': {'schema': 'WORKSPACE_999', 'backend': 'snowflake'}},
-            ],
-            None,
-        ),
-        # No workspace_schema on the lock — all configs deleted
-        (
-            None,
-            [],
-            None,
-        ),
-    ],
-)
-def test_clean_project_keeps_sandboxes_config_matching_workspace_schema(
-    mocker,
-    workspace_schema: str | None,
-    workspaces: list[dict],
-    expected_kept_config_id: str | None,
-) -> None:
-    """clean_project skips the keboola.sandboxes config whose workspace matches workspace_schema."""
-    lock = _make_project_lock(workspace_schema=workspace_schema)
-
-    sandboxes_config_id_to_keep = '777'
-    components = [
-        {
-            'id': 'keboola.sandboxes',
-            'configurations': [{'id': sandboxes_config_id_to_keep}, {'id': '888'}],
-        }
-    ]
-
-    mocker.patch.object(
-        lock,
-        '_get',
-        side_effect=_get_side_effect_with_workspaces(workspaces, components),
-    )
+    mocker.patch.object(lock, '_get', side_effect=_get)
     delete_mock = mocker.patch.object(lock, '_delete')
 
     lock.clean_project()
 
-    config_delete_paths = [c.args[0] for c in delete_mock.call_args_list if 'configs' in c.args[0]]
-    kept_path = f'/v2/storage/components/keboola.sandboxes/configs/{sandboxes_config_id_to_keep}'
+    workspace_delete_paths = [c.args[0] for c in delete_mock.call_args_list if '/workspaces/' in c.args[0]]
+    assert '/v2/storage/workspaces/9001' in workspace_delete_paths
+    assert '/v2/storage/workspaces/9002' in workspace_delete_paths
 
-    if expected_kept_config_id == sandboxes_config_id_to_keep:
-        assert kept_path not in config_delete_paths, 'Integration test workspace config must not be deleted'
-    else:
-        assert config_delete_paths.count(kept_path) == 2, 'Config must be deleted twice when not matching'
+
+def test_clean_project_tolerates_workspace_delete_failure(mocker):
+    """A workspace already removed via its sandbox config must not abort cleanup."""
+    lock = _make_project_lock()
+
+    def _get(path: str, **params: Any) -> list[dict]:
+        if path.endswith('/workspaces'):
+            return [{'id': 9001}]
+        return []
+
+    mocker.patch.object(lock, '_get', side_effect=_get)
+    mocker.patch.object(
+        lock,
+        '_delete',
+        side_effect=httpx.HTTPStatusError('404', request=mocker.MagicMock(), response=mocker.MagicMock()),
+    )
+
+    # Should not raise.
+    lock.clean_project()
 
 
 # ---------------------------------------------------------------------------
@@ -512,14 +476,12 @@ def test_max_wait_exceeded_raises(mocker):
 def _make_endpoint(
     url: str = 'https://connection.keboola.com',
     token: str = 'test-token',
-    schema: str = 'WORKSPACE_TEST',
     project_id: str = 'proj-001',
     project_name: str = 'Test Project',
 ) -> ProjectEndpoint:
     return ProjectEndpoint(
         storage_api_url=url,
         storage_api_token=token,
-        workspace_schema=schema,
         project_id=project_id,
         project_name=project_name,
     )
@@ -904,12 +866,12 @@ def test_pool_release_delegates_to_lock(mocker):
 
 
 # ===========================================================================
-# workspace_schema tests
+# ProjectEndpoint / pool acquisition tests
 # ===========================================================================
 
 
 # ---------------------------------------------------------------------------
-# test_project_endpoint_stores_workspace_schema
+# test_project_endpoint_stores_all_fields
 # ---------------------------------------------------------------------------
 
 
@@ -918,13 +880,12 @@ def test_project_endpoint_stores_all_fields():
     ep = ProjectEndpoint(
         storage_api_url='https://connection.keboola.com',
         storage_api_token='my-token',
-        workspace_schema='WORKSPACE_12345',
         project_id='99',
         project_name='My Project',
         token_id='5',
         token_description='My test token',
     )
-    assert ep.workspace_schema == 'WORKSPACE_12345'
+    assert ep.storage_api_token == 'my-token'
     assert ep.project_id == '99'
     assert ep.project_name == 'My Project'
     assert ep.token_id == '5'
@@ -932,16 +893,16 @@ def test_project_endpoint_stores_all_fields():
 
 
 # ---------------------------------------------------------------------------
-# test_pool_acquired_project_carries_workspace_schema
+# test_pool_acquired_project_carries_endpoint
 # ---------------------------------------------------------------------------
 
 
-def test_pool_acquired_project_carries_workspace_schema(mocker):
-    """AcquiredProject.endpoint carries the workspace_schema of the acquired endpoint."""
-    endpoint = _make_endpoint(schema='WORKSPACE_SCHEMA_A')
+def test_pool_acquired_project_carries_endpoint(mocker):
+    """AcquiredProject.endpoint carries the acquired endpoint."""
+    endpoint = _make_endpoint(token='token-a')
     pool = _make_pool(endpoints=[endpoint])
 
-    lock_info = _make_lock_info('ws-schema-test-001')
+    lock_info = _make_lock_info('ws-endpoint-test-001')
     mock_lock = mocker.MagicMock()
     mock_lock._try_acquire_once.return_value = lock_info
     mocker.patch.object(pool, '_make_lock', return_value=mock_lock)
@@ -949,21 +910,22 @@ def test_pool_acquired_project_carries_workspace_schema(mocker):
 
     result = pool.acquire()
 
-    assert result.endpoint.workspace_schema == 'WORKSPACE_SCHEMA_A'
+    assert result.endpoint is endpoint
+    assert result.endpoint.storage_api_token == 'token-a'
 
 
 # ---------------------------------------------------------------------------
-# test_pool_selects_correct_schema_for_acquired_endpoint
+# test_pool_selects_correct_endpoint_when_acquired
 # ---------------------------------------------------------------------------
 
 
-def test_pool_selects_correct_schema_for_acquired_endpoint(mocker):
-    """When the second endpoint is acquired, its schema is returned, not the first's."""
-    endpoint1 = _make_endpoint(token='token-aaa', schema='SCHEMA_AAA')
-    endpoint2 = _make_endpoint(token='token-bbb', schema='SCHEMA_BBB')
+def test_pool_selects_correct_endpoint_when_acquired(mocker):
+    """When the second endpoint is acquired, that endpoint is returned, not the first's."""
+    endpoint1 = _make_endpoint(token='token-aaa')
+    endpoint2 = _make_endpoint(token='token-bbb')
     pool = _make_pool(endpoints=[endpoint1, endpoint2], poll_interval_seconds=30)
 
-    lock_info = _make_lock_info('ws-schema-second-001')
+    lock_info = _make_lock_info('ws-endpoint-second-001')
     mock_lock1 = mocker.MagicMock()
     mock_lock1._try_acquire_once.return_value = None
     mock_lock2 = mocker.MagicMock()
@@ -974,8 +936,8 @@ def test_pool_selects_correct_schema_for_acquired_endpoint(mocker):
 
     result = pool.acquire()
 
-    assert result.endpoint == endpoint2
-    assert result.endpoint.workspace_schema == 'SCHEMA_BBB'
+    assert result.endpoint is endpoint2
+    assert result.endpoint.storage_api_token == 'token-bbb'
 
 
 # ---------------------------------------------------------------------------
@@ -1039,12 +1001,10 @@ def test_verify_project_endpoint_happy_path(mocker):
     ep = verify_project_endpoint(
         storage_api_url='https://connection.keboola.com',
         storage_api_token='my-secret-token',
-        workspace_schema='WORKSPACE_99999',
     )
 
     assert ep.project_id == '42'
     assert ep.project_name == 'My CI Project'
-    assert ep.workspace_schema == 'WORKSPACE_99999'
     assert ep.storage_api_token == 'my-secret-token'
     assert ep.token_id == '7'
     assert ep.token_description == 'CI integration test token'
@@ -1059,8 +1019,6 @@ def test_verify_project_endpoint_happy_path(mocker):
 
 def test_verify_project_endpoint_bad_token_raises(mocker):
     """verify_project_endpoint propagates HTTPStatusError on a bad token."""
-    import httpx
-
     mock_resp = mocker.MagicMock()
     mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
         '401 Unauthorized', request=mocker.MagicMock(), response=mocker.MagicMock()
@@ -1075,7 +1033,6 @@ def test_verify_project_endpoint_bad_token_raises(mocker):
         verify_project_endpoint(
             storage_api_url='https://connection.keboola.com',
             storage_api_token='bad-token',
-            workspace_schema='WORKSPACE_00000',
         )
 
 

@@ -42,7 +42,6 @@ _project_info_printed: bool = False
 
 POOL_STORAGE_API_URL_ENV_VAR = 'INTEGTEST_POOL_STORAGE_API_URL'
 STORAGE_API_TOKENS_ENV_VAR = 'INTEGTEST_STORAGE_TOKENS'  # space-separated pool of tokens
-WORKSPACE_SCHEMAS_ENV_VAR = 'INTEGTEST_WORKSPACE_SCHEMAS'  # space-separated, same order as tokens
 # The second pair of token/schema for testing simultaneous access to two different projects.
 STORAGE_API_TOKEN_ENV_VAR_2 = 'INTEGTEST_STORAGE_TOKEN_PRJ2'
 WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
@@ -167,8 +166,37 @@ def mcp_config(storage_api_token: str, storage_api_url: str) -> Config:
 
 
 @pytest.fixture(scope='session')
-def workspace_schema(project_lock: AcquiredProject) -> str:
-    return project_lock.endpoint.workspace_schema
+def workspace_schema(storage_api_token: str, storage_api_url: str) -> Generator[str, Any, None]:
+    """
+    Create one read-only workspace for the whole test session and yield its schema.
+
+    The workspace is created once (session scope), reused across all tests, and deleted
+    on teardown.
+    """
+    # sync_storage_client is function-scoped; build a session-scoped client here.
+    storage_client = _sync_storage_client(storage_api_token, storage_api_url)
+    token_info = storage_client.tokens.verify()
+    backend = token_info['owner'].get('defaultBackend')
+    # Mirror the MCP server's own per-backend workspace login type (see WorkspaceManager._create_ws).
+    login_type = 'snowflake-person-sso' if backend == 'snowflake' else 'default'
+
+    LOG.info(f'Creating a read-only {backend} workspace for the test session')
+    workspace = storage_client.workspaces.create(
+        backend=backend,
+        login_type=login_type,
+        read_all_objects=True,  # read-only access to all storage objects
+    )
+    workspace_id = workspace['id']
+    schema = workspace['connection']['schema']
+    LOG.info(f'Created read-only workspace {workspace_id} (schema {schema})')
+    try:
+        yield schema
+    finally:
+        LOG.info(f'Deleting test-session workspace {workspace_id}')
+        try:
+            storage_client.workspaces.delete(workspace_id)
+        except Exception:
+            LOG.exception(f'Failed to delete test-session workspace {workspace_id}')
 
 
 @pytest.fixture(scope='session')
@@ -333,23 +361,7 @@ def _setup_pool(storage_api_url: str) -> tuple[ProjectPool, AcquiredProject]:
         )
     tokens = tokens_raw.split()
 
-    schemas_raw = os.getenv(WORKSPACE_SCHEMAS_ENV_VAR, '').strip()
-    if not schemas_raw:
-        raise RuntimeError(
-            f'{WORKSPACE_SCHEMAS_ENV_VAR} must be set to a non-empty space-separated list of workspace schemas'
-        )
-    schemas = schemas_raw.split()
-
-    if len(tokens) != len(schemas):
-        raise RuntimeError(
-            f'{STORAGE_API_TOKENS_ENV_VAR} has {len(tokens)} token(s) but '
-            f'{WORKSPACE_SCHEMAS_ENV_VAR} has {len(schemas)} schema(s) — '
-            f'they must have the same number of entries'
-        )
-
-    endpoints = []
-    for t, s in zip(tokens, schemas):
-        endpoints.append(verify_project_endpoint(storage_api_url, t, s))
+    endpoints = [verify_project_endpoint(storage_api_url, t) for t in tokens]
 
     pool = ProjectPool(
         endpoints=endpoints,
@@ -409,14 +421,12 @@ def project_lock(env_file_loaded: bool, storage_api_url: str) -> Generator[Acqui
     """
     Acquires a distributed lock on a Keboola test project via branch metadata.
 
-    Requires INTEGTEST_STORAGE_TOKENS and INTEGTEST_WORKSPACE_SCHEMAS to be set.
-    The tokens and schemas must be space-separated lists of equal length, one entry
-    per project in the pool. The Storage API URL is provided by the storage_api_url
-    fixture (INTEGTEST_POOL_STORAGE_API_URL).
+    Requires INTEGTEST_STORAGE_TOKENS to be set to a space-separated list of project
+    tokens, one per project in the pool. The Storage API URL is provided by the
+    storage_api_url fixture (INTEGTEST_POOL_STORAGE_API_URL).
 
     Yields AcquiredProject(endpoint, lock_info) so callers know which project was
-    selected. storage_api_token and workspace_schema fixtures read their values from
-    the acquired endpoint.
+    selected. The storage_api_token fixture reads its value from the acquired endpoint.
 
     The project lock is normally acquired eagerly in pytest_collection_finish before
     tests start. This fixture falls back to acquiring it lazily if that hook did not run.
