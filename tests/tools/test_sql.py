@@ -435,7 +435,7 @@ class TestWorkspaceManagerBigQuery:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('table', 'expected'),
+        ('table', 'expected', 'expected_identifier'),
         [
             (
                 # storage-branches: backendPath with branch-prefixed dataset name (1 element in BQ)
@@ -445,11 +445,12 @@ class TestWorkspaceManagerBigQuery:
                     'bucket': {'id': 'out.c-model', 'backendPath': ['35403_out_c_model']},
                 },
                 TableFqn(
-                    db_name='project_1234',
+                    db_name='',
                     schema_name='35403_out_c_model',
                     table_name='customers',
                     quote_char='`',
                 ),
+                '`35403_out_c_model`.`customers`',
             ),
             (
                 # production bucket — backendPath is single dataset name
@@ -459,11 +460,12 @@ class TestWorkspaceManagerBigQuery:
                     'bucket': {'id': 'in.c-shopify', 'backendPath': ['in_c_shopify']},
                 },
                 TableFqn(
-                    db_name='project_1234',
+                    db_name='',
                     schema_name='in_c_shopify',
                     table_name='orders',
                     quote_char='`',
                 ),
+                '`in_c_shopify`.`orders`',
             ),
             (
                 # linked (non-alias) bucket — data copied to destination dataset, queryable via backendPath FQN
@@ -474,16 +476,23 @@ class TestWorkspaceManagerBigQuery:
                     'sourceTable': {'project': {'id': '9999'}, 'id': 'in.c-abc.customers', 'isAlias': False},
                 },
                 TableFqn(
-                    db_name='project_1234',
+                    db_name='',
                     schema_name='in_c_abc',
                     table_name='customers',
                     quote_char='`',
                 ),
+                '`in_c_abc`.`customers`',
             ),
         ],
     )
     async def test_get_table_fqn(
-        self, table: dict[str, Any], expected: TableFqn, keboola_client: KeboolaClient, context: Context, mocker
+        self,
+        table: dict[str, Any],
+        expected: TableFqn,
+        expected_identifier: str,
+        keboola_client: KeboolaClient,
+        context: Context,
+        mocker,
     ):
         mocker.patch.object(QueryServiceClient, 'create', side_effect=AssertionError('no SQL should be issued'))
 
@@ -491,6 +500,8 @@ class TestWorkspaceManagerBigQuery:
         info = await m.get_table_info(table)
         assert info is not None
         assert info.fqn == expected
+        # BigQuery FQN has no project/database tier — just dataset.table.
+        assert info.fqn.identifier == expected_identifier
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

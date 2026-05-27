@@ -35,8 +35,10 @@ class TableFqn:
     """The properly quoted parts of a fully qualified table name."""
 
     # TODO: refactor this and probably use just a simple string
-    db_name: str  # project_id in a BigQuery
-    schema_name: str  # dataset in a BigQuery
+    # Snowflake FQNs are database.schema.table. BigQuery has no cross-project access, so the
+    # database tier is meaningless there — `db_name` is empty and the FQN is just dataset.table.
+    db_name: str  # database (Snowflake); empty for BigQuery
+    schema_name: str  # schema (Snowflake); dataset (BigQuery)
     table_name: str
     quote_char: str = ''
 
@@ -44,7 +46,9 @@ class TableFqn:
     def identifier(self) -> str:
         """Returns the properly quoted database identifier."""
         return '.'.join(
-            f'{self.quote_char}{n}{self.quote_char}' for n in [self.db_name, self.schema_name, self.table_name]
+            f'{self.quote_char}{n}{self.quote_char}'
+            for n in [self.db_name, self.schema_name, self.table_name]
+            if n
         )
 
     def __repr__(self) -> str:
@@ -428,13 +432,15 @@ class _BigQueryWorkspace(_Workspace):
             LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
             return None
 
-        # BigQuery backendPath[0] is the dataset name; normalize separators for BQ dataset naming
+        # BigQuery backendPath[0] is the dataset name; normalize separators for BQ dataset naming.
+        # BigQuery has no cross-project access, so the FQN is dataset.table with no project/database
+        # tier (db_name is left empty) — see editor-service SapiDataProvider::parseBackendPath.
         schema_name = bp[0].replace('.', '_').replace('-', '_')
         table_name = table['name']
 
         return DbTableInfo(
             id=table_id,
-            fqn=TableFqn(self._project_id, schema_name, table_name, quote_char='`'),
+            fqn=TableFqn(db_name='', schema_name=schema_name, table_name=table_name, quote_char='`'),
             columns={},
         )
 
