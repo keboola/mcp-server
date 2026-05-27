@@ -3,46 +3,19 @@ set -Eeuo pipefail
 
 CONTAINER_NAME="keboola-mcp-server-test-docker"
 IMAGE_NAME="keboola/mcp-server:ci"
-WORKSPACE_ID=""
 
 cleanup() {
     docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
     docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
-    if [ -n "$WORKSPACE_ID" ]; then
-        echo "Deleting workspace $WORKSPACE_ID..."
-        curl -s -X DELETE -H "X-StorageApi-Token: $STORAGE_API_TOKEN" \
-            "$STORAGE_API_URL/v2/storage/workspaces/$WORKSPACE_ID" >/dev/null 2>&1 || true
-    fi
 }
 trap cleanup EXIT
-
-# Create an ephemeral read-only workspace and set WORKSPACE_ID / WORKSPACE_SCHEMA.
-# The test no longer depends on a pre-provisioned workspace; it creates its own and
-# deletes it on exit (matching the integration-test setup).
-create_workspace() {
-    echo "Creating ephemeral read-only workspace..."
-    local resp
-    resp=$(curl -s -X POST \
-        -H "X-StorageApi-Token: $STORAGE_API_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d '{"readOnlyStorageAccess": true}' \
-        "$STORAGE_API_URL/v2/storage/workspaces")
-    WORKSPACE_ID=$(echo "$resp" | jq -r '.id')
-    WORKSPACE_SCHEMA=$(echo "$resp" | jq -r '.connection.schema')
-    if [ -z "$WORKSPACE_ID" ] || [ "$WORKSPACE_ID" = "null" ]; then
-        echo "✗ Failed to create workspace: $resp"
-        exit 1
-    fi
-    echo "Created workspace $WORKSPACE_ID (schema $WORKSPACE_SCHEMA)"
-}
 
 main() {
     : "${STORAGE_API_TOKEN:?STORAGE_API_TOKEN is required}"
     : "${STORAGE_API_URL:?STORAGE_API_URL is required}"
 
-    create_workspace
-
-    # Start container
+    # Start container. No --workspace-schema: the smoke test exercises get_buckets, which is a
+    # Storage-only tool and needs no workspace, so the server boots without one.
     echo "Starting container..."
     docker run -d \
         --name "$CONTAINER_NAME" \
@@ -51,7 +24,6 @@ main() {
         --transport http-compat \
         --api-url "$STORAGE_API_URL" \
         --storage-token "$STORAGE_API_TOKEN" \
-        --workspace-schema "$WORKSPACE_SCHEMA" \
         --host "0.0.0.0" \
         --port 8000 >/dev/null
 
@@ -88,24 +60,23 @@ main() {
                 response=$(curl -s -w "\n%{http_code}" -X POST \
                    -H "Content-Type: application/json" \
                    -H "Accept: application/json, text/event-stream" \
-                   -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_project_info", "arguments": {}}}' \
+                   -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_buckets", "arguments": {}}}' \
                    "http://localhost:8080/mcp" 2>/dev/null) || true
 
                 http_code=$(echo "$response" | tail -n1)
                 body=$(echo "$response" | sed '$d')
 
                 if [ "$http_code" = "200" ] && [ -n "$body" ]; then
-                    echo "✓ Tool call succeeded"
+                    # A successful tool call returns a JSON-RPC result without an error and
+                    # without the MCP tool-level isError flag.
+                    status=$(echo "$body" | grep "^data: " | head -1 | cut -c7- \
+                        | jq -r 'if .error then "rpc_error" elif .result.isError == true then "tool_error" elif .result then "ok" else "unknown" end' 2>/dev/null || true)
 
-                    project_id=$(echo "$body" | grep "^data: " | head -1 | cut -c7- \
-                        | jq -r '.result.content[0].text | fromjson | .project_id' 2>/dev/null || true)
-                    token_project_id=$(echo "$STORAGE_API_TOKEN" | cut -d- -f1)
-
-                    if [ -n "$project_id" ] && [ "$project_id" = "$token_project_id" ]; then
-                        echo "✓ Project ID test passed"
+                    if [ "$status" = "ok" ]; then
+                        echo "✓ get_buckets tool call succeeded"
                         exit 0
                     else
-                        echo "✗ Wrong project ID returned, expecting $token_project_id, got $project_id"
+                        echo "✗ get_buckets did not return a successful result ($status): $body"
                     fi
                 fi
             fi
