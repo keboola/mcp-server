@@ -61,13 +61,11 @@ jobs:
       - name: Run simple e2e test
         env:
           INTEGTEST_STORAGE_TOKENS: ${{ secrets.INTEGTEST_STORAGE_TOKENS }}
-          INTEGTEST_WORKSPACE_SCHEMAS: ${{ vars.INTEGTEST_WORKSPACE_SCHEMAS }}
           INTEGTEST_POOL_STORAGE_API_URL: ${{ vars.INTEGTEST_POOL_STORAGE_API_URL }}
         run: |
           set -euo pipefail
           STORAGE_API_TOKEN=$(echo "$INTEGTEST_STORAGE_TOKENS" | cut -d' ' -f1) \
           STORAGE_API_URL="$INTEGTEST_POOL_STORAGE_API_URL" \
-          WORKSPACE_SCHEMA=$(echo "$INTEGTEST_WORKSPACE_SCHEMAS" | cut -d' ' -f1) \
           ./tests/docker/ci.sh
 
       # Push multi-arch image (no load)
