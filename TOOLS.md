@@ -674,8 +674,7 @@ WORKFLOW:
           "type": "string"
         },
         "value": {
-          "description": "Value to append to the list",
-          "title": "Value"
+          "description": "Value to append to the list"
         }
       },
       "required": [
@@ -743,8 +742,7 @@ WORKFLOW:
           "type": "string"
         },
         "value": {
-          "description": "New value to set",
-          "title": "Value"
+          "description": "New value to set"
         }
       },
       "required": [
@@ -919,8 +917,7 @@ WORKFLOW:
           "type": "string"
         },
         "value": {
-          "description": "Value to append to the list",
-          "title": "Value"
+          "description": "Value to append to the list"
         }
       },
       "required": [
@@ -988,8 +985,7 @@ WORKFLOW:
           "type": "string"
         },
         "value": {
-          "description": "New value to set",
-          "title": "Value"
+          "description": "New value to set"
         }
       },
       "required": [
