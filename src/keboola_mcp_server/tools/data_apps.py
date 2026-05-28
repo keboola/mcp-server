@@ -1327,11 +1327,8 @@ def _update_existing_data_app_config(
 
     new_config['parameters']['dataApp']['secrets'] = updated_secrets
 
-    new_config['authorization'] = (
-        existing_config['authorization']
-        if authentication_type == 'default'
-        else _get_authorization(authentication_type == 'basic-auth')
-    )
+    if authentication_type != 'default':
+        new_config['authorization'] = _get_authorization(authentication_type == 'basic-auth')
     return new_config
 
 
