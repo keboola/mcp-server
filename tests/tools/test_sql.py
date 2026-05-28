@@ -400,6 +400,52 @@ class TestWorkspaceManagerSnowflake:
             ]
         )
 
+    @pytest.mark.asyncio
+    async def test_execute_query_max_chars_stops_on_first_rejection(
+        self, keboola_client: KeboolaClient, context: Context, mocker
+    ):
+        """
+        max_chars must yield a contiguous prefix across pages: once a row would exceed the
+        budget, pagination stops — later (smaller) rows that happen to fit must not sneak in.
+        """
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-1234'
+        qsclient.get_job_status.return_value = {
+            'status': 'completed',
+            'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
+        }
+        # Page 1: John (17 chars) fits, Joe (16 chars) does not (17+16=33 > 20) → pagination
+        # must stop here. The page 2 row (5 chars) would fit individually, but appending it
+        # would break the contiguous-prefix semantic and must not happen.
+        qsclient.get_job_results.side_effect = [
+            {
+                'status': 'completed',
+                'data': [[1, 'John', 'john@foo.com'], [2, 'Joe', 'joe@bar.com']],
+                'columns': [{'name': 'id'}, {'name': 'name'}, {'name': 'email'}],
+                'message': None,
+                'numberOfRows': 3,
+            },
+            {
+                'status': 'completed',
+                'data': [[3, 'X', 'x@y']],
+                'columns': [{'name': 'id'}, {'name': 'name'}, {'name': 'email'}],
+                'message': None,
+                'numberOfRows': 3,
+            },
+        ]
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(_SnowflakeWorkspace, '_PAGE_SIZE', 2)
+
+        m = WorkspaceManager.from_state(context.session.state)
+        actual = await m.execute_query('select id, name, email from user;', max_chars=20)
+
+        assert actual.data is not None
+        assert actual.data.rows == [{'id': 1, 'name': 'John', 'email': 'john@foo.com'}]
+        # Page 2 must not be fetched once page 1 hit the char budget.
+        qsclient.get_job_results.assert_called_once()
+
 
 class TestWorkspaceManagerBigQuery:
     @pytest.fixture

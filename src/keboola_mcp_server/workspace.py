@@ -285,6 +285,7 @@ class _Workspace(abc.ABC):
                 break
 
             page_data = page_data[:rows_to_fetch]
+            char_limit_reached = False
             if max_chars is not None:
                 for row in page_data:
                     chars = sum(len(str(v)) for v in row if v is not None)
@@ -292,6 +293,10 @@ class _Workspace(abc.ABC):
                         all_rows.append(row)
                         all_rows_chars += chars
                     else:
+                        # The first row that does not fit ends pagination so that the result
+                        # is a contiguous prefix; we must not skip this row and then append
+                        # later smaller rows that happen to fit.
+                        char_limit_reached = True
                         break
             else:
                 all_rows.extend(page_data)
@@ -302,7 +307,7 @@ class _Workspace(abc.ABC):
             if max_rows is not None and len(all_rows) >= max_rows:
                 break
 
-            if max_chars is not None and all_rows_chars >= max_chars:
+            if char_limit_reached or (max_chars is not None and all_rows_chars >= max_chars):
                 break
 
             offset += len(page_data)
