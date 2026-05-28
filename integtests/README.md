@@ -32,32 +32,12 @@ You need:
    no configurations) when a test session starts. The lock mechanism cleans up after each
    session, but if a session crashes, leftovers may remain and cause the next run to fail.
 
-2. **A workspace in each pool project** — each project needs a read-only Snowflake or
-   BigQuery workspace. This is required for `query_data` and FQN resolution tests.
+2. **One storage-branches project** — a project **with** the `storage-branches` feature,
+   used by `test_storage_branches.py`.
 
-3. **One storage-branches project** — a project **with** the `storage-branches` feature,
-   used by `test_storage_branches.py`. Does not need a workspace.
-
-### Creating a workspace and finding the schema
-
-Each pool project must have a workspace with read-only storage access. To create one:
-
-1. Open the project in the Keboola UI
-2. Go to **Transformations** and create a new workspace (Snowflake or BigQuery)
-3. Enable **Read-only Storage Access** on the workspace
-
-To find the workspace schema name (`WORKSPACE_XXXXXXXX`):
-
-- **From the UI**: Click **Connect** on the workspace — the schema is shown in the
-  connection details
-- **From SQL**: Open the SQL editor in the workspace and run `SHOW SCHEMAS;` — look for the
-  schema starting with `WORKSPACE_`
-- **From the API**:
-  ```bash
-  curl -s -H "X-StorageApi-Token: YOUR_TOKEN" \
-    "https://connection.YOUR-STACK.keboola.com/v2/storage/branch/default/workspaces" \
-    | python3 -c "import json,sys; [print(f'{w[\"id\"]}: {w[\"connection\"][\"schema\"]}') for w in json.load(sys.stdin)]"
-  ```
+The test session creates its own read-only workspace in the locked pool project and deletes
+it on teardown, so you do **not** need to pre-create a workspace — the project token alone is
+enough.
 
 ### `.env` file
 
@@ -67,7 +47,6 @@ Create a `.env` file in the project root:
 # Required — pool projects
 INTEGTEST_POOL_STORAGE_API_URL=https://connection.europe-west3.gcp.keboola.com
 INTEGTEST_STORAGE_TOKENS=<token-project-A> <token-project-B>
-INTEGTEST_WORKSPACE_SCHEMAS=<WORKSPACE_for_A> <WORKSPACE_for_B>
 
 # Required — branch storage tests (dedicated project, not in pool)
 INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES=<token-for-project-WITH-storage-branches>
@@ -76,11 +55,6 @@ INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES=<token-for-project-WITH-storage-branche
 INTEGTEST_STORAGE_TOKEN_PRJ2=<token>
 INTEGTEST_WORKSPACE_SCHEMA_PRJ2=<WORKSPACE_XXX>
 ```
-
-**Critical**: The order of `INTEGTEST_STORAGE_TOKENS` and `INTEGTEST_WORKSPACE_SCHEMAS`
-must match — the first token is paired with the first schema, the second with the second,
-etc. A mismatch causes the lock cleanup to delete the workspace (see
-[Workspace deletion pitfall](#workspace-deletion-pitfall) below).
 
 ### Running the tests
 
@@ -182,40 +156,12 @@ If the integration tests ever take close to
 60 minutes to complete, raise `INTEGTEST_LOCK_TTL_MINUTES` to roughly 2x the expected
 duration — otherwise a slow-but-healthy runner may have its lock stolen mid-run.
 
-### Workspace deletion pitfall
+### Workspaces
 
-During `clean_project`, the lock mechanism tries to **preserve** the workspace by matching
-the configured `WORKSPACE_SCHEMA` against the project's `keboola.sandboxes` configurations.
-If the schema matches, that sandbox config is kept; everything else is deleted.
-
-**If the schema does NOT match** (because the workspace was recreated, the `.env` is stale,
-or the token/schema order is wrong), `clean_project` **deletes ALL sandbox configs including
-the workspace itself**. This silently destroys the workspace, and subsequent tests that need
-it will fail with:
-
-```
-ValueError: No Keboola workspace found or the workspace has no read-only storage access
-```
-
-**Prevention**: Always verify your token/schema mapping is correct before running tests:
-
-```bash
-# Quick check — all should show ✓
-python -c "
-import os, httpx
-from dotenv import load_dotenv
-load_dotenv()
-tokens = os.getenv('INTEGTEST_STORAGE_TOKENS', '').split()
-schemas = os.getenv('INTEGTEST_WORKSPACE_SCHEMAS', '').split()
-url = os.getenv('INTEGTEST_POOL_STORAGE_API_URL', '')
-for t, s in zip(tokens, schemas):
-    info = httpx.get(f'{url}/v2/storage/tokens/verify', headers={'X-StorageApi-Token': t}).json()
-    name = f'{info[\"owner\"][\"name\"]} ({info[\"owner\"][\"id\"]})'
-    ws = httpx.get(f'{url}/v2/storage/branch/default/workspaces', headers={'X-StorageApi-Token': t}).json()
-    ok = '✓' if any(w['connection'].get('schema') == s for w in ws) else '✗ MISMATCH'
-    print(f'...{t[-4:]} | {name:>40} | {s:>22} | {ok}')
-"
-```
+Tests do not rely on a persistent workspace. Each session creates its own read-only
+workspace in the locked project (the `workspace_schema` fixture) and deletes it on teardown.
+`clean_project` deletes **all** workspaces (along with all buckets and configs), so any
+workspace leaked by a crashed run is wiped when the project is next acquired.
 
 ### Pool of projects
 
@@ -317,17 +263,14 @@ Authentication reuses the storage API token — no additional environment variab
 
 ## 4. Migrating from the Old Setup
 
-The old system used two single-value variables. Rename them in your `.env`:
+The pool is configured by `INTEGTEST_STORAGE_TOKENS` (space-separated project tokens).
+Earlier single-value (`INTEGTEST_STORAGE_TOKEN`) and per-project workspace-schema
+(`INTEGTEST_WORKSPACE_SCHEMA` / `INTEGTEST_WORKSPACE_SCHEMAS`) variables are no longer read —
+each session now creates its own read-only workspace, so no workspace schema is configured
+for the pool.
 
-| Old variable | New variable | Value |
-|---|---|---|
-| `INTEGTEST_STORAGE_TOKEN` | `INTEGTEST_STORAGE_TOKENS` | same token, no change |
-| `INTEGTEST_WORKSPACE_SCHEMA` | `INTEGTEST_WORKSPACE_SCHEMAS` | same schema, no change |
-
-The old names are no longer read. The session fails immediately at startup if either new
-variable is missing or empty.
-
-`INTEGTEST_STORAGE_TOKEN_PRJ2` and `INTEGTEST_WORKSPACE_SCHEMA_PRJ2` are unchanged.
+`INTEGTEST_STORAGE_TOKEN_PRJ2` and `INTEGTEST_WORKSPACE_SCHEMA_PRJ2` (the optional second
+project) are unchanged.
 
 ---
 
@@ -365,9 +308,8 @@ repository's GitHub Secrets/Variables:
 
 | Name | Kind | Purpose |
 |---|---|---|
-| `INTEGTEST_STORAGE_TOKENS` | Secret | Space-separated master tokens for all four pool projects (order must match `INTEGTEST_WORKSPACE_SCHEMAS`) |
+| `INTEGTEST_STORAGE_TOKENS` | Secret | Space-separated master tokens for all four pool projects |
 | `INTEGTEST_POOL_STORAGE_API_URL` | Variable | `https://connection.europe-west3.gcp.keboola.com` |
-| `INTEGTEST_WORKSPACE_SCHEMAS` | Variable | Space-separated Snowflake workspace schemas, one per project in the same order as the tokens |
 | `INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES` | Secret | Master token for a project **with** the `storage-branches` feature (used by `test_storage_branches.py`) |
 
 ### Concurrency

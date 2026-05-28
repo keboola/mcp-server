@@ -47,11 +47,10 @@ class LockInfo:
 
 @dataclass(frozen=True)
 class ProjectEndpoint:
-    """A Keboola project identified by its Storage API URL, token, workspace schema, and metadata."""
+    """A Keboola project identified by its Storage API URL, token, and metadata."""
 
     storage_api_url: str
     storage_api_token: str
-    workspace_schema: str
     project_id: str
     project_name: str
     token_id: str = ''
@@ -77,7 +76,6 @@ class AcquiredProject:
 def verify_project_endpoint(
     storage_api_url: str,
     storage_api_token: str,
-    workspace_schema: str,
 ) -> ProjectEndpoint:
     """
     Verify a Storage API token and return a fully populated ProjectEndpoint.
@@ -99,7 +97,6 @@ def verify_project_endpoint(
     return ProjectEndpoint(
         storage_api_url=storage_api_url,
         storage_api_token=storage_api_token,
-        workspace_schema=workspace_schema,
         project_id=project_id,
         project_name=project_name,
         token_id=token_id,
@@ -112,7 +109,6 @@ class ProjectLock:
         self,
         storage_api_url: str,
         storage_api_token: str,
-        workspace_schema: str | None = None,
         ttl_minutes: int = DEFAULT_TTL_MINUTES,
         poll_interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS,
         max_wait_minutes: int = DEFAULT_MAX_WAIT_MINUTES,
@@ -120,7 +116,6 @@ class ProjectLock:
     ) -> None:
         self._base_url = storage_api_url.rstrip('/')
         self._token = storage_api_token
-        self._workspace_schema = workspace_schema
         self._ttl_minutes = ttl_minutes
         self._poll_interval_seconds = poll_interval_seconds
         self._max_wait_minutes = max_wait_minutes
@@ -368,42 +363,14 @@ class ProjectLock:
                 except Exception as exc:
                     LOG.warning(f'[project_lock] Failed to delete orphaned .released entry {lock_id}: {exc}')
 
-    def _find_sandboxes_config_id_by_workspace_schema(self, workspace_schema: str) -> str | None:
-        """
-        Returns the configurationId of the keboola.sandboxes config whose workspace
-        has the given schema name, or None if not found.
-        """
-        try:
-            workspaces = self._get('/v2/storage/branch/default/workspaces')
-            for workspace in workspaces:
-                schema = workspace.get('connection', {}).get('schema')
-                if schema == workspace_schema:
-                    config_id = workspace.get('configurationId')
-                    if config_id is not None:
-                        return str(config_id)
-        except Exception as exc:
-            LOG.warning(f'[project_lock] Failed to look up workspace schema {workspace_schema!r}: {exc}')
-        return None
-
     def clean_project(self) -> None:
-        """Delete all buckets and component configurations from the project."""
-        LOG.info('[project_lock] Cleaning project (deleting all buckets and configs)')
+        """Delete all buckets, component configurations, and workspaces from the project.
 
-        # Find the keboola.sandboxes configuration to keep — the one whose workspace matches
-        # the integration test workspace schema.
-        sandboxes_config_to_keep: str | None = None
-        if self._workspace_schema:
-            sandboxes_config_to_keep = self._find_sandboxes_config_id_by_workspace_schema(self._workspace_schema)
-            if sandboxes_config_to_keep:
-                LOG.info(
-                    f'[project_lock] Will keep keboola.sandboxes config {sandboxes_config_to_keep} '
-                    f'(workspace schema: {self._workspace_schema})'
-                )
-            else:
-                LOG.warning(
-                    f'[project_lock] No workspace found for schema {self._workspace_schema!r}; '
-                    'all keboola.sandboxes configs will be deleted'
-                )
+        Integration tests no longer rely on a persistent workspace — each session creates its
+        own read-only workspace and deletes it on teardown — so cleaning wipes everything,
+        including any workspace leaked by a crashed run.
+        """
+        LOG.info('[project_lock] Cleaning project (deleting all buckets, configs and workspaces)')
 
         # Delete all buckets (force=True also removes tables inside them)
         buckets = self._get('/v2/storage/buckets')
@@ -418,15 +385,21 @@ class ProjectLock:
             comp_id = component['id']
             for cfg in component.get('configurations', []):
                 cfg_id = cfg['id']
-
-                if comp_id == 'keboola.sandboxes' and cfg_id == sandboxes_config_to_keep:
-                    LOG.info(f'[project_lock] Keeping keboola.sandboxes config {cfg_id} (integration test workspace)')
-                    continue
-
                 LOG.info(f'[project_lock] Deleting config {comp_id}/{cfg_id}')
                 # First delete moves to trash; second delete removes from trash
                 self._delete(f'/v2/storage/components/{comp_id}/configs/{cfg_id}')
                 self._delete(f'/v2/storage/components/{comp_id}/configs/{cfg_id}')
+
+        # Delete all workspaces (none are persistent anymore)
+        workspaces = self._get('/v2/storage/branch/default/workspaces')
+        for workspace in workspaces:
+            workspace_id = workspace['id']
+            LOG.info(f'[project_lock] Deleting workspace {workspace_id}')
+            try:
+                self._delete(f'/v2/storage/workspaces/{workspace_id}')
+            except httpx.HTTPStatusError as exc:
+                # A workspace backed by a sandbox config may already be gone after config deletion.
+                LOG.warning(f'[project_lock] Failed to delete workspace {workspace_id}: {exc}')
 
     @staticmethod
     def _runner_info() -> str:
@@ -543,7 +516,6 @@ class ProjectPool:
         return ProjectLock(
             storage_api_url=endpoint.storage_api_url,
             storage_api_token=endpoint.storage_api_token,
-            workspace_schema=endpoint.workspace_schema,
             ttl_minutes=self._ttl_minutes,
             poll_interval_seconds=self._poll_interval_seconds,
             max_wait_minutes=self._max_wait_minutes,
