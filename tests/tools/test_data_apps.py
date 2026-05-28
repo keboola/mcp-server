@@ -426,13 +426,64 @@ def test_update_existing_data_app_config_keeps_previous_properties_when_undefine
         sql_dialect='snowflake',
     )
 
-    assert new['authorization'] is existing_authorization
+    # Deepcopy makes it equal-but-not-identical.
+    assert new['authorization'] == existing_authorization
     assert new['parameters']['script'] == ['old']
     # verify the rest of the config is still updated
     assert new['parameters']['dataApp']['slug'] == 'old-slug'
     assert 'numpy' in new['parameters']['packages']
     assert 'httpx' in new['parameters']['packages']
     assert new['parameters']['dataApp']['secrets']['KEEP'] == 'secret'
+
+
+def test_update_existing_data_app_config_no_authorization_key():
+    """Existing configs that lack an `authorization` key must not crash when authentication_type='default'."""
+    existing = {
+        'parameters': {
+            'dataApp': {'slug': 'x', 'secrets': {}},
+            'script': ['old'],
+            'packages': [],
+        },
+    }
+    new = _update_existing_data_app_config(
+        existing_config=existing,
+        name='',
+        source_code='',
+        packages=[],
+        authentication_type='default',
+        secrets={},
+        sql_dialect='snowflake',
+    )
+    assert 'authorization' not in new
+
+
+def test_update_existing_data_app_config_basic_auth_overwrites_oidc():
+    """Explicit 'basic-auth' must replace an existing OIDC block."""
+    existing = {
+        'parameters': {
+            'dataApp': {'slug': 'x', 'secrets': {}},
+            'script': ['old'],
+            'packages': [],
+        },
+        'authorization': {
+            'app_proxy': {
+                'auth_providers': [{'id': 'oidc', 'type': 'oidc'}],
+                'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['oidc']}],
+            }
+        },
+    }
+    new = _update_existing_data_app_config(
+        existing_config=existing,
+        name='',
+        source_code='',
+        packages=[],
+        authentication_type='basic-auth',
+        secrets={},
+        sql_dialect='snowflake',
+    )
+    assert new['authorization']['app_proxy']['auth_rules'] == [
+        {'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}
+    ]
 
 
 def test_get_query_function_code_selects_snippets():
