@@ -1438,9 +1438,12 @@ async def delete_python_js_data_app_draft(
             'draft — treating as already removed.'
         )
 
+    # When a parent prod app is known, the links pivot to it. We don't have the parent's name here,
+    # so label it explicitly as the parent rather than reusing the (now-deleted) draft's name, which
+    # would mislabel a link that points at a different configuration.
     links = links_manager.get_data_app_links(
         configuration_id=parent_configuration_id or configuration_id,
-        configuration_name=data_app.name,
+        configuration_name='parent prod app' if parent_configuration_id else data_app.name,
         deployment_link=None,
         uses_basic_authentication=False,
     )

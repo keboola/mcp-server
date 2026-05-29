@@ -2421,6 +2421,12 @@ async def test_delete_python_js_data_app_draft_success(
         configuration_id='cfg-draft-1',
         skip_trash=False,
     )
+    # The config link pivots to the parent prod and is labelled as such — not with the draft's name,
+    # which would mislabel a link pointing at a different configuration.
+    config_link = next(link for link in result.links if 'Data App Configuration' in link.title)
+    assert 'data-apps/cfg-prod-1' in config_link.url
+    assert 'parent prod app' in config_link.title
+    assert draft.name not in config_link.title
 
 
 @pytest.mark.asyncio
