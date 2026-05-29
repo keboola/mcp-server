@@ -2060,6 +2060,34 @@ async def test_create_python_js_data_app_git_credential_rejects_streamlit_app(
 
 
 @pytest.mark.asyncio
+async def test_create_python_js_data_app_git_credential_rejects_draft(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """Drafts have no managed repo of their own — the tool must reject them early (before touching
+    get_app_git_repo) and point at the parent prod app, rather than falling through to the
+    misleading https_url=None 'platform bug' error."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    draft = _make_python_js_draft_data_app(
+        configuration_id='cfg-draft-1', data_app_id='app-draft-1', parent_configuration_id='cfg-prod-1'
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft))
+
+    with pytest.raises(ValueError, match=r'is a python-js \*\*draft\*\*') as excinfo:
+        await create_python_js_data_app_git_credential(
+            ctx=mcp_context_client,
+            configuration_id='cfg-draft-1',
+        )
+
+    # The error must steer the caller to the parent prod app, and no repo/credential calls happen.
+    assert 'parentConfigurationId="cfg-prod-1"' in str(excinfo.value)
+    keboola_client.data_science_client.get_app_git_repo.assert_not_called()
+    keboola_client.data_science_client.create_app_git_credential.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_create_python_js_data_app_git_credential_invalid_configuration_id(
     mocker,
     mcp_context_client: Context,
