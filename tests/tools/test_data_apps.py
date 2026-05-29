@@ -2155,12 +2155,17 @@ def _make_python_js_draft_data_app(
     )
 
 
-def _build_storage_config_entry(*, cfg_id: str, parent_configuration_id: str | None) -> dict:
-    """Mirror the shape returned by `storage_client.configuration_list` for python-js apps."""
+def _build_storage_config_entry(*, cfg_id: str, parent_configuration_id: str | None, is_draft: bool = True) -> dict:
+    """Mirror the shape returned by `storage_client.configuration_list` for python-js apps.
+
+    `is_draft=False` with a `parent_configuration_id` set models a misconfigured non-draft that
+    points at a prod but lacks the `isDraft` flag — it must NOT be surfaced as a draft.
+    """
     data_app_block: dict = {'slug': f'app-{cfg_id}'}
     if parent_configuration_id is not None:
-        data_app_block['isDraft'] = True
         data_app_block['parentConfigurationId'] = parent_configuration_id
+        if is_draft:
+            data_app_block['isDraft'] = True
     return {
         'id': cfg_id,
         'name': f'app-{cfg_id}',
@@ -2231,6 +2236,11 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
         _build_storage_config_entry(cfg_id=cfg_id, parent_configuration_id=prod_cfg_id) for cfg_id in draft_cfg_ids
     ]
     configs.append(foreign_cfg)
+    # A config that points at THIS prod but lacks `isDraft` is a misconfiguration, not a draft —
+    # it must be excluded (and never even fetched, or fake_fetch below would KeyError).
+    configs.append(
+        _build_storage_config_entry(cfg_id='cfg-non-draft-child', parent_configuration_id=prod_cfg_id, is_draft=False)
+    )
     # Also include the prod's own config (no parentConfigurationId) — must not be matched.
     configs.append(_build_storage_config_entry(cfg_id=prod_cfg_id, parent_configuration_id=None))
 
