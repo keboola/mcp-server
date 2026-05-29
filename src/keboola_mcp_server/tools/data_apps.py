@@ -1055,6 +1055,17 @@ async def create_python_js_data_app_git_credential(
             f'create_python_js_data_app_git_credential only supports python-js data apps, but configuration '
             f'"{configuration_id}" is type "{data_app.type}".'
         )
+    if _is_draft_config(data_app.configuration):
+        # Drafts have no managed repo of their own — they iterate against branches of the parent
+        # prod's repo. Reject early with an actionable message instead of letting get_app_git_repo
+        # return https_url=None below and raising a misleading "platform-side bug" error.
+        data_app_block = cast(Mapping[str, Any], data_app.configuration.get('parameters') or {}).get('dataApp') or {}
+        parent_cfg_id = data_app_block.get('parentConfigurationId')
+        hint = f' (parentConfigurationId="{parent_cfg_id}")' if isinstance(parent_cfg_id, str) else ''
+        raise ValueError(
+            f'Configuration "{configuration_id}" is a python-js **draft**, which has no managed git repo '
+            f'of its own. Mint credentials against the parent prod app instead{hint}.'
+        )
 
     repo_resp = await client.data_science_client.get_app_git_repo(data_app.data_app_id)
     if repo_resp.https_url is None:
