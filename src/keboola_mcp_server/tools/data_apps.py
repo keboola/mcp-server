@@ -900,6 +900,14 @@ async def modify_python_js_data_app(
                     f'parent_configuration_id "{parent_configuration_id}" is type "{parent.type}", but only '
                     f'python-js prod apps can parent a draft.'
                 )
+            if _is_draft_config(parent.configuration):
+                # A draft has no managed repo of its own and cannot parent another draft. Reject it
+                # explicitly instead of falling through to the misleading "no repo URL" error below.
+                raise ValueError(
+                    f'parent_configuration_id "{parent_configuration_id}" is itself a python-js **draft**, '
+                    "not a prod app. Drafts iterate against the prod app's repo and cannot parent another "
+                    "draft — pass the prod app's configuration_id (a draft's parentConfigurationId points to it)."
+                )
             if not parent.repo_url:
                 raise ValueError(
                     f'Parent python-js data app "{parent_configuration_id}" has no managed git repo URL. '
