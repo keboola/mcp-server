@@ -726,6 +726,11 @@ async def modify_python_js_data_app(
     branch-delete — is yours. MCP gives you authenticated clone URLs and manages configs/deploys;
     it never invokes git.
 
+    **The draft flow below is mandatory — never edit prod source directly.** Every source-code
+    change goes through a draft branch that the user previews and explicitly approves first. NEVER
+    push directly to `main`: `main` only ever advances by merging an approved draft branch, and
+    only after the user has approved that draft's preview.
+
     Three scenarios the agent has to distinguish:
 
     ## Scenario A — Create a brand-new data app
