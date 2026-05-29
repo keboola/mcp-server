@@ -1523,8 +1523,17 @@ def _make_python_js_parent_data_app(
     configuration_id: str = 'cfg-prod-1',
     repo_url: str | None = 'https://managed.repo/org/prod.git',
     type: str = 'python-js',
+    is_draft: bool = False,
 ) -> DataApp:
-    """Build a DataApp the way `_fetch_data_app` would when looking up the parent."""
+    """Build a DataApp the way `_fetch_data_app` would when looking up the parent.
+
+    `is_draft=True` models a caller mistakenly passing a draft as the parent — drafts cannot
+    parent another draft.
+    """
+    data_app_block: dict = {'slug': 'demo'}
+    if is_draft:
+        data_app_block['isDraft'] = True
+        data_app_block['parentConfigurationId'] = 'cfg-grandparent'
     return DataApp(
         name='Prod App',
         component_id=DATA_APP_COMPONENT_ID,
@@ -1534,7 +1543,7 @@ def _make_python_js_parent_data_app(
         branch_id='branch-1',
         config_version='1',
         type=type,
-        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'demo'}}},
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block}},
         state='running',
         repo_url=repo_url,
     )
@@ -1767,6 +1776,35 @@ async def test_modify_python_js_data_app_create_draft_rejects_when_parent_is_str
             slug='demo-draft',
             parent_configuration_id='cfg-prod-1',
         )
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_draft_rejects_when_parent_is_draft(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """A python-js *draft* parent is rejected with a clear message (not the misleading 'no repo URL'
+    error): drafts can't parent another draft, so no credential is minted."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    # A draft has no repo_url of its own; the guard must fire before the repo_url check below.
+    draft_parent = _make_python_js_parent_data_app(is_draft=True, repo_url=None)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft_parent))
+
+    with pytest.raises(ValueError, match=r'is itself a python-js \*\*draft\*\*'):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='Draft',
+            description='',
+            slug='demo-draft',
+            parent_configuration_id='cfg-prod-1',
+        )
+
+    keboola_client.data_science_client.create_app_git_credential.assert_not_called()
 
 
 @pytest.mark.asyncio
