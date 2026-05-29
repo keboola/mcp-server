@@ -1576,8 +1576,18 @@ async def _fetch_data_app_details_task(
 
 
 def _is_draft_config(configuration: Mapping[str, Any]) -> bool:
-    """True iff the data app's stored configuration carries `parameters.dataApp.isDraft = true`."""
-    return cast(Mapping[str, Any], configuration.get('parameters') or {}).get('dataApp', {}).get('isDraft') is True
+    """True iff the data app's stored configuration carries `parameters.dataApp.isDraft = true`.
+
+    Shape-safe: a malformed/corrupted config whose `parameters` or `dataApp` is not a mapping is
+    simply "not a draft" rather than an `AttributeError` (this helper runs in the detail-fetch path).
+    """
+    parameters = configuration.get('parameters')
+    if not isinstance(parameters, Mapping):
+        return False
+    data_app = parameters.get('dataApp')
+    if not isinstance(data_app, Mapping):
+        return False
+    return data_app.get('isDraft') is True
 
 
 async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: str) -> list[DataAppSummary]:
