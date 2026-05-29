@@ -1599,6 +1599,11 @@ async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: st
     draft_cfg_ids: list[str] = []
     for cfg in configs:
         cfg_body = cast(Mapping[str, Any], cfg.get('configuration') or {})
+        # A draft must satisfy BOTH halves of the contract: `isDraft=true` AND `parentConfigurationId`
+        # pointing at this prod. Checking only the parent pointer would surface a misconfigured
+        # non-draft (e.g. a clone that kept the pointer but lost the flag) as a draft.
+        if not _is_draft_config(cfg_body):
+            continue
         data_app_block = cast(Mapping[str, Any], cfg_body.get('parameters') or {}).get('dataApp') or {}
         if data_app_block.get('parentConfigurationId') == prod_configuration_id:
             cfg_id = cfg.get('id')
