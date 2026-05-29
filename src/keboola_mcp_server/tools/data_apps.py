@@ -1408,11 +1408,22 @@ async def delete_python_js_data_app_draft(
     parent_configuration_id: Optional[str] = parent_cfg_id if isinstance(parent_cfg_id, str) else None
 
     await client.data_science_client.delete_data_app(data_app.data_app_id)
-    await client.storage_client.configuration_delete(
-        component_id=DATA_APP_COMPONENT_ID,
-        configuration_id=configuration_id,
-        skip_trash=False,
-    )
+    # DSAPI delete may also remove the Storage config (its docstring says so, and removal can be
+    # eventually-consistent). Tolerate a 404 so the tool stays idempotent if the config is already
+    # gone; any other status is a real error and must propagate.
+    try:
+        await client.storage_client.configuration_delete(
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            skip_trash=False,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            raise
+        LOG.info(
+            f'Storage config "{configuration_id}" was already deleted (404) while tearing down the '
+            'draft — treating as already removed.'
+        )
 
     links = links_manager.get_data_app_links(
         configuration_id=parent_configuration_id or configuration_id,
