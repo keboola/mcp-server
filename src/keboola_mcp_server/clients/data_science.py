@@ -101,7 +101,7 @@ class CodeDataAppConfig(BaseModel):
 
     Unlike `DataAppConfig` (Streamlit), python-js apps don't embed source code in the config.
     Code lives in the managed git repo; the config only carries deployment metadata
-    (slug, auto-suspend, runtime image version).
+    (slug, auto-suspend, optional runtime overrides).
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -109,15 +109,15 @@ class CodeDataAppConfig(BaseModel):
     class Parameters(BaseModel):
         class DataApp(BaseModel):
             class Git(BaseModel):
-                """External-git binding for a python-js dev twin.
+                """External-git binding for a python-js draft data app.
 
                 When set, the data-science API treats the app as externally configured: it does NOT
                 provision a managed repo for it, and the data-app runtime clones the configured
                 `repository` (at `branch`) using `username`/`#password` as HTTPS basic auth on every
                 deploy.
 
-                MVP use case (AI-3005): a dev twin points at its parent prod app's managed repo,
-                with credentials minted on the prod app via `create_app_git_credential`.
+                Use case: a draft points at its parent prod app's managed repo, with credentials
+                minted on the prod app via `create_app_git_credential`.
                 """
 
                 model_config = ConfigDict(populate_by_name=True)
@@ -156,8 +156,8 @@ class CodeDataAppConfig(BaseModel):
             git: 'CodeDataAppConfig.Parameters.DataApp.Git | None' = Field(
                 default=None,
                 description=(
-                    "External-git binding. Set on dev twins to point at the parent prod app's "
-                    'managed repo + a fresh prod-issued credential + the iteration branch. Leave '
+                    "External-git binding. Set on drafts to point at the parent prod app's "
+                    'managed repo + a fresh prod-issued credential + the draft branch. Leave '
                     'unset on prod apps (which own their own managed repo via `useManagedGitRepo`).'
                 ),
             )
@@ -166,8 +166,17 @@ class CodeDataAppConfig(BaseModel):
                 serialization_alias='isDraft',
                 default=None,
                 description=(
-                    'When true, the UI hides this app from the main data-apps list. '
-                    'Set automatically on dev-twin creation (UT-4000).'
+                    'When true, the UI hides this app from the main data-apps list and lists it '
+                    'under its parent prod app instead. Set automatically on draft creation.'
+                ),
+            )
+            parent_configuration_id: str | None = Field(
+                validation_alias=AliasChoices('parentConfigurationId', 'parent_configuration_id'),
+                serialization_alias='parentConfigurationId',
+                default=None,
+                description=(
+                    'Storage configuration ID of the prod python-js data app this draft iterates against. '
+                    "Set automatically on draft creation. Used by get_data_apps to list a prod app's drafts."
                 ),
             )
 
@@ -194,7 +203,13 @@ class CodeDataAppConfig(BaseModel):
                 ),
             )
 
-        image: 'CodeDataAppConfig.Runtime.Image' = Field(description='The runtime image.')
+        image: 'CodeDataAppConfig.Runtime.Image | None' = Field(
+            default=None,
+            description=(
+                'Optional pin of the runtime image version. Omit to let the data-science platform '
+                'apply its default for python-js apps.'
+            ),
+        )
         workspace: 'CodeDataAppConfig.Runtime.Workspace | None' = Field(
             default=None,
             description=(
@@ -204,7 +219,13 @@ class CodeDataAppConfig(BaseModel):
         )
 
     parameters: 'CodeDataAppConfig.Parameters' = Field(description='The parameters of the data app.')
-    runtime: 'CodeDataAppConfig.Runtime' = Field(description='The runtime configuration (image version, etc.).')
+    runtime: 'CodeDataAppConfig.Runtime | None' = Field(
+        default=None,
+        description=(
+            'Optional runtime configuration block (image pin, per-app workspace, etc.). Omit '
+            'entirely when no runtime overrides are needed — the platform picks defaults.'
+        ),
+    )
     authorization: DataAppConfig.Authorization | None = Field(
         default=None,
         description=(
@@ -344,10 +365,12 @@ class DataScienceClient(KeboolaServiceClient):
         :param data_app_id: The ID of the data app
         :param config_version: The version of the config to deploy. Required for Streamlit apps; omit for python-js
                     apps backed by a managed git repo (they have no Storage configVersion).
-        :param mode: Deployment mode. Set to 'dev' to enable the in-platform preview for python-js apps.
-                    Leave None for Streamlit apps.
+        :param mode: Deployment mode. Set to 'dev' to deploy a python-js draft as a dev version
+                    (hot reload + auto-auth for iframe preview). Leave None for Streamlit apps and
+                    for prod deploys.
         :param branch: Git branch to deploy from. Only meaningful for python-js apps in `mode='dev'`; when set,
-                    the dev twin deploys from this branch instead of `main`. Leave None for `main` / prod deploys.
+                    the draft deploys from this branch instead of the branch pinned in its config.
+                    Leave None for prod deploys.
         :param restart_if_running: Whether to restart the data app if it is already running
         :param update_dependencies: If set to `true`, latest package versions are installed during app startup,
                     instead of using frozen versions.
@@ -402,7 +425,7 @@ class DataScienceClient(KeboolaServiceClient):
         :param configuration: The simplified configuration of the data app
         :param app_type: The data app type, e.g. 'streamlit' or 'python-js'. Defaults to 'streamlit'.
         :param use_managed_git_repo: When True, the data-science API provisions a managed git repo for the app.
-                    Only meaningful for python-js apps. Pass False on dev twins that bring their own
+                    Only meaningful for python-js apps. Pass False on drafts that bring their own
                     external-git binding via `configuration.parameters.dataApp.git`.
         :return: The data app
         """
