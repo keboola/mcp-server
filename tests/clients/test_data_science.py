@@ -156,7 +156,7 @@ async def test_create_data_app_defaults_to_streamlit_without_managed_repo_flag()
         (None, 'production', None, {'mode': 'production'}),
         (None, None, None, {}),  # bare deploy (python-js without explicit mode)
         ('5', 'dev', None, {'configVersion': '5', 'mode': 'dev'}),  # both
-        (None, 'dev', 'feature-x', {'mode': 'dev', 'branch': 'feature-x'}),  # python-js dev twin on a branch
+        (None, 'dev', 'feature-x', {'mode': 'dev', 'branch': 'feature-x'}),  # python-js draft on a branch
     ],
 )
 async def test_deploy_data_app_payload_with_mode_and_optional_config_version(
