@@ -836,6 +836,7 @@ from keboola_mcp_server.clients.data_science import (  # noqa: E402
 from keboola_mcp_server.tools.data_apps import (  # noqa: E402
     CreatedGitCredentialOutput,
     ModifiedPythonJsDataAppOutput,
+    _is_draft_config,
     _update_existing_code_data_app_config,
     create_python_js_data_app_git_credential,
     modify_python_js_data_app,
@@ -2168,6 +2169,35 @@ def _build_storage_config_entry(*, cfg_id: str, parent_configuration_id: str | N
         },
         'version': 1,
     }
+
+
+@pytest.mark.parametrize(
+    ('configuration', 'expected'),
+    [
+        ({'parameters': {'dataApp': {'isDraft': True}}}, True),
+        ({'parameters': {'dataApp': {'isDraft': False}}}, False),
+        ({'parameters': {'dataApp': {'slug': 'prod'}}}, False),
+        ({'parameters': {}}, False),
+        ({}, False),
+        # Malformed/corrupted shapes must be treated as "not a draft", never raise AttributeError.
+        ({'parameters': {'dataApp': 'corrupted'}}, False),
+        ({'parameters': 'corrupted'}, False),
+        ({'parameters': None}, False),
+    ],
+    ids=[
+        'is_draft',
+        'not_draft',
+        'no_flag',
+        'no_data_app',
+        'empty',
+        'data_app_not_mapping',
+        'parameters_not_mapping',
+        'parameters_none',
+    ],
+)
+def test_is_draft_config(configuration: dict, expected: bool) -> None:
+    """`_is_draft_config` is true only for `isDraft=true` and is shape-safe against malformed configs."""
+    assert _is_draft_config(configuration) is expected
 
 
 @pytest.mark.asyncio
