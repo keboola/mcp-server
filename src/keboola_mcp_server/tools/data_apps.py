@@ -251,6 +251,15 @@ class DataApp(BaseModel):
             'themselves and for non-python-js apps.'
         ),
     )
+    drafts_unavailable: int = Field(
+        default=0,
+        description=(
+            'Count of drafts that exist for this prod app but whose details could not be fetched on '
+            'this call (transient DSAPI failure — expired token, timeout, 5xx). A non-zero value means '
+            '`drafts` is INCOMPLETE: those drafts still exist and were NOT deleted, so do not treat '
+            'their absence as "no drafts" before a teardown decision. Retry to get the full list.'
+        ),
+    )
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
 
     @classmethod
@@ -1606,7 +1615,9 @@ async def _fetch_data_app_details_task(
         # — see Scenario C in `modify_python_js_data_app`. Skip for drafts themselves and for Streamlit
         # (neither has children).
         if data_app.type == 'python-js' and not _is_draft_config(data_app.configuration):
-            data_app.drafts = await _fetch_prod_drafts(client, prod_configuration_id=data_app.configuration_id)
+            data_app.drafts, data_app.drafts_unavailable = await _fetch_prod_drafts(
+                client, prod_configuration_id=data_app.configuration_id
+            )
         return data_app
     except Exception:
         LOG.exception(f'Failed to fetch data app by configuration ID: {configuration_id}')
@@ -1628,10 +1639,12 @@ def _is_draft_config(configuration: Mapping[str, Any]) -> bool:
     return data_app.get('isDraft') is True
 
 
-async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: str) -> list[DataAppSummary]:
+async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: str) -> tuple[list[DataAppSummary], int]:
     """List the drafts (configs with `parentConfigurationId == prod_configuration_id`) of a python-js
     prod app. Returns full `DataAppSummary` entries (one extra DSAPI fetch per draft, capped at
-    10 parallel). Drafts in trash are not returned by `configuration_list` and so do not appear here.
+    10 parallel) plus the count of drafts whose detail fetch transiently failed and were omitted —
+    so the caller can tell "temporarily unreachable" from "deleted". Drafts in trash are not returned
+    by `configuration_list` and so do not appear here.
     """
     configs = await client.storage_client.configuration_list(DATA_APP_COMPONENT_ID)
     draft_cfg_ids: list[str] = []
@@ -1649,7 +1662,7 @@ async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: st
                 draft_cfg_ids.append(cfg_id)
 
     if not draft_cfg_ids:
-        return []
+        return [], 0
 
     async def fetch_summary(cfg_id: str) -> DataAppSummary | None:
         try:
@@ -1662,7 +1675,8 @@ async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: st
         return summary
 
     results = await process_concurrently(draft_cfg_ids, fetch_summary, max_concurrency=10)
-    return [s for s in results if isinstance(s, DataAppSummary)]
+    drafts = [s for s in results if isinstance(s, DataAppSummary)]
+    return drafts, len(draft_cfg_ids) - len(drafts)
 
 
 async def _fetch_logs(client: KeboolaClient, data_app_id: str) -> list[str]:

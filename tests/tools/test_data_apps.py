@@ -2327,6 +2327,47 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     assert isinstance(detail, DataApp)
     returned_draft_ids = sorted(d.configuration_id for d in detail.drafts)
     assert returned_draft_ids == sorted(draft_cfg_ids)
+    # All drafts fetched successfully, so nothing was omitted.
+    assert detail.drafts_unavailable == 0
+
+
+@pytest.mark.asyncio
+async def test_get_data_apps_detail_for_prod_counts_unavailable_drafts(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """A transient DSAPI failure on one draft's detail fetch must NOT silently shrink the list:
+    the surviving draft is still returned and `drafts_unavailable` counts the omission so the
+    caller can tell "temporarily unreachable" from "deleted"."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    prod_cfg_id = 'cfg-prod-1'
+    prod = _make_python_js_prod_data_app(configuration_id=prod_cfg_id)
+    ok_cfg_id, failing_cfg_id = 'cfg-draft-ok', 'cfg-draft-fail'
+    ok_draft = _make_python_js_draft_data_app(
+        configuration_id=ok_cfg_id, data_app_id=f'app-{ok_cfg_id}', parent_configuration_id=prod_cfg_id
+    )
+    configs = [
+        _build_storage_config_entry(cfg_id=ok_cfg_id, parent_configuration_id=prod_cfg_id),
+        _build_storage_config_entry(cfg_id=failing_cfg_id, parent_configuration_id=prod_cfg_id),
+        _build_storage_config_entry(cfg_id=prod_cfg_id, parent_configuration_id=None),
+    ]
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=configs)
+
+    async def fake_fetch(client, *, configuration_id, data_app_id):
+        if configuration_id == prod_cfg_id:
+            return prod
+        if configuration_id == failing_cfg_id:
+            raise RuntimeError('transient DSAPI failure (timeout)')
+        return ok_draft
+
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', side_effect=fake_fetch)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+
+    result = await get_data_apps(ctx=mcp_context_client, configuration_ids=[prod_cfg_id])
+    detail = result.data_apps[0]
+    assert isinstance(detail, DataApp)
+    assert [d.configuration_id for d in detail.drafts] == [ok_cfg_id]
+    assert detail.drafts_unavailable == 1
 
 
 @pytest.mark.asyncio
