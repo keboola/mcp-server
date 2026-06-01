@@ -2,14 +2,14 @@ import abc
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from typing import Any, Literal, Mapping, Sequence, cast
 from urllib.parse import urlunparse
 
-import httpx
 from httpx import HTTPStatusError
-from pydantic import Field, TypeAdapter
+from pydantic import Field
 from pydantic.dataclasses import dataclass
 
 from keboola_mcp_server.clients.base import JsonDict
@@ -35,8 +35,10 @@ class TableFqn:
     """The properly quoted parts of a fully qualified table name."""
 
     # TODO: refactor this and probably use just a simple string
-    db_name: str  # project_id in a BigQuery
-    schema_name: str  # dataset in a BigQuery
+    # Snowflake FQNs are database.schema.table. BigQuery has no cross-project access, so the
+    # database tier is meaningless there — `db_name` is empty and the FQN is just dataset.table.
+    db_name: str  # database (Snowflake); empty for BigQuery
+    schema_name: str  # schema (Snowflake); dataset (BigQuery)
     table_name: str
     quote_char: str = ''
 
@@ -44,7 +46,9 @@ class TableFqn:
     def identifier(self) -> str:
         """Returns the properly quoted database identifier."""
         return '.'.join(
-            f'{self.quote_char}{n}{self.quote_char}' for n in [self.db_name, self.schema_name, self.table_name]
+            f'{self.quote_char}{n}{self.quote_char}'
+            for n in [self.db_name, self.schema_name, self.table_name]
+            if n
         )
 
     def __repr__(self) -> str:
@@ -102,9 +106,12 @@ class _Workspace(abc.ABC):
     _QUERY_TIMEOUT = 300.0  # 5 minutes
     _CANCELLATION_TIMEOUT = 30.0  # 30 seconds to wait for cancellation
     _SELECTED_ROWS_MSG = 'Returning {rows} of {total} selected rows.'
+    _PAGE_SIZE = 1_000
 
-    def __init__(self, workspace_id: int) -> None:
+    def __init__(self, workspace_id: int, client: KeboolaClient) -> None:
         self._workspace_id = workspace_id
+        self._client = client
+        self._qsclient: QueryServiceClient | None = None
 
     @property
     def id(self) -> int:
@@ -124,45 +131,6 @@ class _Workspace(abc.ABC):
     ) -> DbTableInfo | None:
         # TODO: use a pydantic class for the 'table' param
         pass
-
-    @abc.abstractmethod
-    async def execute_query(
-        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
-    ) -> QueryResult:
-        """
-        Runs a given SQL query.
-
-        :param sql_query: The SQL query to be executed.
-        :param max_rows: The maximum number of rows to fetch from the query results. If None, no limit is applied.
-        :param max_chars: The maximum number of chars to fetch from the query results. If None, no limit is applied.
-        :return: The result of the executed query.
-        """
-        pass
-
-    @abc.abstractmethod
-    async def get_branch_id(self) -> str:
-        """Returns the branch ID."""
-        pass
-
-    @classmethod
-    def _dump(cls, json_data: Mapping[str, Any]) -> str:
-        return json.dumps(json_data, ensure_ascii=False, separators=(',', ':'))
-
-
-class _SnowflakeWorkspace(_Workspace):
-    _PAGE_SIZE = 1_000
-
-    def __init__(self, workspace_id: int, schema: str, client: KeboolaClient):
-        super().__init__(workspace_id)
-        self._schema = schema  # default schema created for the workspace
-        self._client = client
-        self._qsclient: QueryServiceClient | None = None
-
-    def get_sql_dialect(self) -> str:
-        return 'Snowflake'
-
-    def get_quoted_name(self, name: str) -> str:
-        return f'"{name}"'  # wrap name in double quotes
 
     async def _cancel_job_with_timeout(self, job_id: str, reason: str) -> tuple[bool, bool]:
         """
@@ -215,38 +183,20 @@ class _SnowflakeWorkspace(_Workspace):
             LOG.exception(f'Unexpected error during query cancellation: job_id={job_id}')
             return (False, False)
 
-    async def get_table_info(
-        self, table: Mapping[str, Any], backend_path: list[str] | None = None
-    ) -> DbTableInfo | None:
-        table_id = table['id']
-
-        if source_table := table.get('sourceTable'):
-            # Cross-project linked table — prefer caller-supplied backend_path, fall back to sourceTable
-            bp = backend_path or get_backend_path(source_table)
-            if not bp or len(bp) < 2:
-                LOG.warning(f'No backendPath in sourceTable for {table_id}, cannot construct FQN')
-                return None
-            db_name = bp[0]
-            schema_name = bp[1]
-            table_name = source_table['id'].rsplit(sep='.', maxsplit=1)[1]
-        else:
-            bp = backend_path or get_backend_path(table)
-            if not bp or len(bp) < 2:
-                LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
-                return None
-            db_name = bp[0]
-            schema_name = bp[1]
-            table_name = table['name']
-
-        return DbTableInfo(
-            id=table_id,
-            fqn=TableFqn(db_name, schema_name, table_name, quote_char='"'),
-            columns={},
-        )
-
     async def execute_query(
         self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
     ) -> QueryResult:
+        """
+        Runs a given SQL query through the Query Service.
+
+        The Query Service is backend-agnostic; the SQL itself must follow the dialect of the
+        workspace backend (see :meth:`get_sql_dialect` / :meth:`get_quoted_name`).
+
+        :param sql_query: The SQL query to be executed.
+        :param max_rows: The maximum number of rows to fetch from the query results. If None, no limit is applied.
+        :param max_chars: The maximum number of chars to fetch from the query results. If None, no limit is applied.
+        :return: The result of the executed query.
+        """
         if max_rows is not None and max_rows <= 0:
             raise ValueError('The "max_rows" must be a positive integer or None.')
         if max_chars is not None and max_chars <= 0:
@@ -324,7 +274,7 @@ class _SnowflakeWorkspace(_Workspace):
                 total_query_rows = results.get('numberOfRows')
 
                 if status in ['failed', 'canceled', 'cancelled']:
-                    return QueryResult(status='error', data=None, message=message)
+                    return QueryResult(status='error', data=None, message=self._format_error_message(message))
                 elif status != 'completed':
                     raise ValueError(f'Unexpected query status: {status}')
 
@@ -335,6 +285,7 @@ class _SnowflakeWorkspace(_Workspace):
                 break
 
             page_data = page_data[:rows_to_fetch]
+            char_limit_reached = False
             if max_chars is not None:
                 for row in page_data:
                     chars = sum(len(str(v)) for v in row if v is not None)
@@ -342,6 +293,10 @@ class _SnowflakeWorkspace(_Workspace):
                         all_rows.append(row)
                         all_rows_chars += chars
                     else:
+                        # The first row that does not fit ends pagination so that the result
+                        # is a contiguous prefix; we must not skip this row and then append
+                        # later smaller rows that happen to fit.
+                        char_limit_reached = True
                         break
             else:
                 all_rows.extend(page_data)
@@ -352,7 +307,7 @@ class _SnowflakeWorkspace(_Workspace):
             if max_rows is not None and len(all_rows) >= max_rows:
                 break
 
-            if max_chars is not None and all_rows_chars >= max_chars:
+            if char_limit_reached or (max_chars is not None and all_rows_chars >= max_chars):
                 break
 
             offset += len(page_data)
@@ -401,15 +356,70 @@ class _SnowflakeWorkspace(_Workspace):
             headers=self._client.headers,
         )
 
+    def _format_error_message(self, message: str | None) -> str | None:
+        """
+        Normalizes a failed-query error message returned by the Query Service into a clean,
+        human-readable string. The base implementation passes the message through unchanged;
+        backends whose Query Service responses wrap the error may override this.
+        """
+        return message
+
+    @classmethod
+    def _dump(cls, json_data: Mapping[str, Any]) -> str:
+        return json.dumps(json_data, ensure_ascii=False, separators=(',', ':'))
+
+
+class _SnowflakeWorkspace(_Workspace):
+    def __init__(self, workspace_id: int, schema: str, client: KeboolaClient):
+        super().__init__(workspace_id, client)
+        self._schema = schema  # default schema created for the workspace
+
+    def get_sql_dialect(self) -> str:
+        return 'Snowflake'
+
+    def get_quoted_name(self, name: str) -> str:
+        return f'"{name}"'  # wrap name in double quotes
+
+    async def get_table_info(
+        self, table: Mapping[str, Any], backend_path: list[str] | None = None
+    ) -> DbTableInfo | None:
+        table_id = table['id']
+
+        if source_table := table.get('sourceTable'):
+            # Cross-project linked table — prefer caller-supplied backend_path, fall back to sourceTable
+            bp = backend_path or get_backend_path(source_table)
+            if not bp or len(bp) < 2:
+                LOG.warning(f'No backendPath in sourceTable for {table_id}, cannot construct FQN')
+                return None
+            db_name = bp[0]
+            schema_name = bp[1]
+            table_name = source_table['id'].rsplit(sep='.', maxsplit=1)[1]
+        else:
+            bp = backend_path or get_backend_path(table)
+            if not bp or len(bp) < 2:
+                LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
+                return None
+            db_name = bp[0]
+            schema_name = bp[1]
+            table_name = table['name']
+
+        return DbTableInfo(
+            id=table_id,
+            fqn=TableFqn(db_name, schema_name, table_name, quote_char='"'),
+            columns={},
+        )
+
 
 class _BigQueryWorkspace(_Workspace):
-    _BQ_FIELDS = {'_timestamp'}
+    # The Query Service surfaces BigQuery errors as a serialized error object, e.g.
+    #   {Location: "query"; Message: "Syntax error: Unexpected identifier ..."; Reason: "invalidQuery"}
+    # Extract the human-readable `Message: "..."` part so the error reads like Snowflake's plain text.
+    _BQ_ERROR_MESSAGE_RE = re.compile(r'Message:\s*"((?:[^"\\]|\\.)*)"')
 
     def __init__(self, workspace_id: int, dataset_id: str, project_id: str, client: KeboolaClient):
-        super().__init__(workspace_id)
+        super().__init__(workspace_id, client)
         self._dataset_id = dataset_id  # default dataset created for the workspace
         self._project_id = project_id
-        self._client = client
 
     def get_sql_dialect(self) -> str:
         return 'BigQuery'
@@ -427,56 +437,22 @@ class _BigQueryWorkspace(_Workspace):
             LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
             return None
 
-        # BigQuery backendPath[0] is the dataset name; normalize separators for BQ dataset naming
+        # BigQuery backendPath[0] is the dataset name; normalize separators for BQ dataset naming.
+        # BigQuery has no cross-project access, so the FQN is dataset.table with no project/database
+        # tier (db_name is left empty) — see editor-service SapiDataProvider::parseBackendPath.
         schema_name = bp[0].replace('.', '_').replace('-', '_')
         table_name = table['name']
 
         return DbTableInfo(
             id=table_id,
-            fqn=TableFqn(self._project_id, schema_name, table_name, quote_char='`'),
+            fqn=TableFqn(db_name='', schema_name=schema_name, table_name=table_name, quote_char='`'),
             columns={},
         )
 
-    async def execute_query(
-        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
-    ) -> QueryResult:
-        if max_rows is not None and max_rows <= 0:
-            raise ValueError('The "max_rows" must be a positive integer or None.')
-        if max_chars is not None and max_chars <= 0:
-            raise ValueError('The "max_chars" must be a positive integer or None.')
-
-        resp = await self._client.storage_client.workspace_query(
-            workspace_id=self.id,
-            query=sql_query,
-            timeout=httpx.Timeout(connect=5.0, read=self._QUERY_TIMEOUT, write=10.0, pool=5.0),
-        )
-        qr = cast(QueryResult, TypeAdapter(QueryResult).validate_python(resp))
-        if qr.data:
-            total_query_rows = len(qr.data.rows)
-            max_rows = max_rows or total_query_rows
-            if max_chars is not None:
-                rows: list[SqlSelectDataRow] = []
-                total_chars = 0
-                for row in qr.data.rows[:max_rows]:
-                    chars = sum(len(str(v)) for v in row.values() if v is not None)
-                    if total_chars + chars <= max_chars:
-                        rows.append(row)
-                        total_chars += chars
-            else:
-                rows = cast(list[SqlSelectDataRow], qr.data.rows[:max_rows])
-
-            qr = QueryResult(
-                status=qr.status,
-                data=SqlSelectData(columns=qr.data.columns, rows=rows),
-                message=' '.join(
-                    filter(None, [qr.message, self._SELECTED_ROWS_MSG.format(rows=len(rows), total=total_query_rows)])
-                ),
-            )
-
-        return qr
-
-    async def get_branch_id(self) -> str:
-        return self._client.branch_id or 'default'
+    def _format_error_message(self, message: str | None) -> str | None:
+        if message and (m := self._BQ_ERROR_MESSAGE_RE.search(message)):
+            return m.group(1).replace('\\"', '"')
+        return message
 
 
 @dataclass(frozen=True)
