@@ -393,12 +393,13 @@ class TestToolsFilteringMiddleware:
         keboola_client.branch_id = branch_id
         keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
 
-        tools = [
-            _tool('modify_streamlit_data_app'),
-            _tool('get_data_apps'),
-            _tool('deploy_data_app'),
-            _tool('other_tool'),
+        data_app_tools = [
+            'modify_streamlit_data_app',
+            'get_data_apps',
+            'deploy_data_app',
+            'delete_python_js_data_app_draft',
         ]
+        tools = [_tool(name) for name in data_app_tools] + [_tool('other_tool')]
 
         async def call_next(_):
             return tools
@@ -408,14 +409,11 @@ class TestToolsFilteringMiddleware:
         result = await middleware.on_list_tools(context, call_next)
 
         result_names = {t.name for t in result}
-        if expect_filtered:
-            assert 'modify_streamlit_data_app' not in result_names
-            assert 'get_data_apps' not in result_names
-            assert 'deploy_data_app' not in result_names
-        else:
-            assert 'modify_streamlit_data_app' in result_names
-            assert 'get_data_apps' in result_names
-            assert 'deploy_data_app' in result_names
+        for name in data_app_tools:
+            if expect_filtered:
+                assert name not in result_names
+            else:
+                assert name in result_names
         assert 'other_tool' in result_names
 
     @pytest.mark.asyncio
@@ -522,6 +520,13 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        'tool_name',
+        [
+            'modify_streamlit_data_app',
+            'delete_python_js_data_app_draft',
+        ],
+    )
+    @pytest.mark.parametrize(
         ('branch_id', 'expect_error'),
         [
             ('5678', True),
@@ -533,16 +538,15 @@ class TestToolsFilteringMiddleware:
         mcp_context_client,
         branch_id: str | None,
         expect_error: bool,
+        tool_name: str,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.branch_id = branch_id
         keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
 
-        tool = _tool('modify_streamlit_data_app')
+        tool = _tool(tool_name)
         mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
-        context = SimpleNamespace(
-            fastmcp_context=mcp_context_client, message=SimpleNamespace(name='modify_streamlit_data_app')
-        )
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool_name))
 
         expected = MagicMock()
 
