@@ -171,6 +171,7 @@ async def _assert_basic_setup(client: Client):
         'create_oauth_url',
         'create_python_js_data_app_git_credential',
         'create_sql_transformation',
+        'delete_python_js_data_app_draft',
         'deploy_data_app',
         'docs_query',
         'find_component_id',

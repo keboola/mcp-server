@@ -2,6 +2,7 @@ import sys
 from types import ModuleType
 from typing import Literal, cast
 
+import httpx
 import pytest
 from fastmcp import Context
 
@@ -836,6 +837,7 @@ from keboola_mcp_server.clients.data_science import (  # noqa: E402
 from keboola_mcp_server.tools.data_apps import (  # noqa: E402
     CreatedGitCredentialOutput,
     ModifiedPythonJsDataAppOutput,
+    _is_draft_config,
     _update_existing_code_data_app_config,
     create_python_js_data_app_git_credential,
     modify_python_js_data_app,
@@ -950,11 +952,12 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
     assert create_kwargs['app_type'] == 'python-js'
     assert create_kwargs['use_managed_git_repo'] is True
-    # Verify auto_suspend_after_seconds flows through and image_version is hardcoded
+    # Verify auto_suspend_after_seconds flows through and we don't pin runtime.image (the
+    # platform now picks a default for python-js apps).
     serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
     assert serialized['parameters']['autoSuspendAfterSeconds'] == 300
     assert serialized['parameters']['dataApp']['slug'] == 'my-app'
-    assert serialized['runtime']['image']['version'] == '1.6.1'
+    assert 'image' not in serialized.get('runtime', {})
     # Created with the auto-workspace flag so the platform provisions a per-app workspace
     # and sets WORKSPACE_ID itself.
     assert serialized['runtime']['workspace'] == {'enabled': True}
@@ -1084,8 +1087,9 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     patch_kwargs = keboola_client.storage_client.configuration_update.await_args.kwargs
     new_cfg = patch_kwargs['configuration']
     assert new_cfg['parameters']['autoSuspendAfterSeconds'] == 600
-    # image version is always forced to the hardcoded value
-    assert new_cfg['runtime']['image']['version'] == '1.6.1'
+    # The platform now picks a default image for python-js apps; the MCP must NOT overwrite a
+    # legacy image pin already in the config, but must NOT force it to any new value either.
+    assert new_cfg['runtime']['image']['version'] == 'old-version'
     # slug must remain untouched (immutable)
     assert new_cfg['parameters']['dataApp']['slug'] == 'old-slug'
     # Update does NOT backfill `runtime.workspace` — only the create path sets it.
@@ -1131,7 +1135,9 @@ async def test_modify_python_js_data_app_create_without_workspace_feature(
     serialized = keboola_client.data_science_client.create_data_app.await_args.kwargs['configuration'].model_dump(
         by_alias=True, exclude_none=True
     )
-    assert 'workspace' not in serialized['runtime']
+    # Without the workspace feature, the `runtime` block carries no fields the MCP wants to
+    # set (image is platform-default, workspace is off), so it's omitted entirely.
+    assert 'runtime' not in serialized
     assert serialized['parameters']['dataApp']['secrets'] == {'WORKSPACE_ID': 'wid-legacy'}
 
 
@@ -1330,25 +1336,19 @@ async def test_modify_python_js_data_app_storage_validation_rejects_missing_sour
         )
 
 
-def test_update_existing_code_data_app_config_keeps_image_when_not_provided() -> None:
+def test_update_existing_code_data_app_config_leaves_legacy_image_pin_alone() -> None:
+    """The MCP no longer manages `runtime.image.version` — the platform picks a default for
+    python-js apps. A legacy pin already in the stored config must survive the deepcopy
+    verbatim (we don't overwrite it, even though we also don't set it ourselves)."""
     existing = {
         'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
         'runtime': {'image': {'version': 'old'}},
     }
-    new = _update_existing_code_data_app_config(existing, image_version=None, auto_suspend_after_seconds=600)
+    new = _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=600)
     assert new['runtime']['image']['version'] == 'old'
     assert new['parameters']['autoSuspendAfterSeconds'] == 600
     # original must not be mutated
     assert existing['parameters']['autoSuspendAfterSeconds'] == 900
-
-
-def test_update_existing_code_data_app_config_replaces_image_version() -> None:
-    existing = {
-        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
-        'runtime': {'image': {'version': 'old'}},
-    }
-    new = _update_existing_code_data_app_config(existing, image_version='v2', auto_suspend_after_seconds=900)
-    assert new['runtime']['image']['version'] == 'v2'
 
 
 def test_update_existing_code_data_app_config_default_auth_preserves_existing() -> None:
@@ -1361,12 +1361,9 @@ def test_update_existing_code_data_app_config_default_auth_preserves_existing() 
     }
     existing = {
         'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
-        'runtime': {'image': {'version': 'v1'}},
         'authorization': existing_authorization,
     }
-    new = _update_existing_code_data_app_config(
-        existing, image_version='v1', auto_suspend_after_seconds=900, authentication_type='default'
-    )
+    new = _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=900, authentication_type='default')
     # Deepcopy makes it equal-but-not-identical.
     assert new['authorization'] == existing_authorization
 
@@ -1374,11 +1371,10 @@ def test_update_existing_code_data_app_config_default_auth_preserves_existing() 
 def test_update_existing_code_data_app_config_basic_auth_overwrites() -> None:
     existing = {
         'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
-        'runtime': {'image': {'version': 'v1'}},
         'authorization': {'app_proxy': {'auth_providers': [], 'auth_rules': []}},
     }
     new = _update_existing_code_data_app_config(
-        existing, image_version='v1', auto_suspend_after_seconds=900, authentication_type='basic-auth'
+        existing, auto_suspend_after_seconds=900, authentication_type='basic-auth'
     )
     assert new['authorization']['app_proxy']['auth_rules'] == [
         {'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}
@@ -1397,11 +1393,9 @@ def test_update_existing_code_data_app_config_preserves_legacy_secrets() -> None
                 'secrets': {'WORKSPACE_ID': 'wid-legacy', 'KEEP': 'x'},
             },
         },
-        'runtime': {'image': {'version': 'v1'}},
     }
     new = _update_existing_code_data_app_config(
         existing,
-        image_version='v1',
         auto_suspend_after_seconds=900,
     )
     assert new['parameters']['dataApp']['secrets'] == {'WORKSPACE_ID': 'wid-legacy', 'KEEP': 'x'}
@@ -1410,7 +1404,6 @@ def test_update_existing_code_data_app_config_preserves_legacy_secrets() -> None
 def test_update_existing_code_data_app_config_no_auth_overwrites() -> None:
     existing = {
         'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
-        'runtime': {'image': {'version': 'v1'}},
         'authorization': {
             'app_proxy': {
                 'auth_providers': [{'id': 'simpleAuth', 'type': 'password'}],
@@ -1418,9 +1411,7 @@ def test_update_existing_code_data_app_config_no_auth_overwrites() -> None:
             }
         },
     }
-    new = _update_existing_code_data_app_config(
-        existing, image_version='v1', auto_suspend_after_seconds=900, authentication_type='no-auth'
-    )
+    new = _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=900, authentication_type='no-auth')
     assert new['authorization']['app_proxy']['auth_rules'] == [
         {'type': 'pathPrefix', 'value': '/', 'auth_required': False}
     ]
@@ -1447,12 +1438,10 @@ def test_update_existing_code_data_app_config_storage_semantics(
     """`storage=None` preserves; `storage={}` wipes; a non-empty dict replaces wholesale."""
     existing = {
         'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
-        'runtime': {'image': {'version': 'v1'}},
         'storage': {'input': {'tables': [{'source': 'in.c-main.kept', 'destination': 'kept.csv'}]}},
     }
     new = _update_existing_code_data_app_config(
         existing,
-        image_version='v1',
         auto_suspend_after_seconds=900,
         storage=passed_storage,
     )
@@ -1525,7 +1514,7 @@ async def test_deploy_data_app_streamlit_still_passes_config_version(
     )
 
 
-# ===== Tests for modify_python_js_data_app dev-twin create path =====
+# ===== Tests for modify_python_js_data_app draft create path =====
 
 
 def _make_python_js_parent_data_app(
@@ -1534,8 +1523,17 @@ def _make_python_js_parent_data_app(
     configuration_id: str = 'cfg-prod-1',
     repo_url: str | None = 'https://managed.repo/org/prod.git',
     type: str = 'python-js',
+    is_draft: bool = False,
 ) -> DataApp:
-    """Build a DataApp the way `_fetch_data_app` would when looking up the parent."""
+    """Build a DataApp the way `_fetch_data_app` would when looking up the parent.
+
+    `is_draft=True` models a caller mistakenly passing a draft as the parent — drafts cannot
+    parent another draft.
+    """
+    data_app_block: dict = {'slug': 'demo'}
+    if is_draft:
+        data_app_block['isDraft'] = True
+        data_app_block['parentConfigurationId'] = 'cfg-grandparent'
     return DataApp(
         name='Prod App',
         component_id=DATA_APP_COMPONENT_ID,
@@ -1545,19 +1543,19 @@ def _make_python_js_parent_data_app(
         branch_id='branch-1',
         config_version='1',
         type=type,
-        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'demo'}}},
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block}},
         state='running',
         repo_url=repo_url,
     )
 
 
 @pytest.mark.asyncio
-async def test_modify_python_js_data_app_create_dev_twin_uses_external_git(
+async def test_modify_python_js_data_app_create_draft_uses_external_git(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
 ) -> None:
-    """When `parent_configuration_id` is set, the new app is a dev twin: no managed repo of its own,
+    """When `parent_configuration_id` is set, the new app is a draft: no managed repo of its own,
     `parameters.dataApp.git` populated with the parent's repo URL + a freshly minted prod-app token,
     and the config is encrypted before being sent to data-science."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
@@ -1579,9 +1577,9 @@ async def test_modify_python_js_data_app_create_dev_twin_uses_external_git(
     )
     twin_response = _make_python_js_data_app_response(data_app_id='app-dev-1', config_id='cfg-dev-1')
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=twin_response)
-    # The dev twin has no managed repo, so get_app_git_repo must NOT be called for it.
+    # The draft has no managed repo, so get_app_git_repo must NOT be called for it.
     keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
-        side_effect=AssertionError('Should not fetch a git repo URL for a dev twin')
+        side_effect=AssertionError('Should not fetch a git repo URL for a draft')
     )
 
     keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
@@ -1650,12 +1648,13 @@ async def test_modify_python_js_data_app_create_dev_twin_uses_external_git(
 
 
 @pytest.mark.asyncio
-async def test_modify_python_js_data_app_create_dev_twin_generates_branch_when_unspecified(
+async def test_modify_python_js_data_app_create_draft_defaults_branch_to_init(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
 ) -> None:
-    """Omitting `branch` triggers an auto-generated `iter-<6-hex>` name."""
+    """Omitting `branch` pins the draft to the literal `init` branch (sensible default for the very
+    first draft of a brand-new prod app — descriptive branches are agent-supplied on edits)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -1679,16 +1678,18 @@ async def test_modify_python_js_data_app_create_dev_twin_generates_branch_when_u
 
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
-        name='Dev Twin',
-        description='dev iteration twin',
-        slug='demo-dev',
+        name='Draft',
+        description='draft iteration',
+        slug='demo-draft',
         parent_configuration_id='cfg-prod-1',
     )
 
-    assert result.branch is not None
-    import re
-
-    assert re.fullmatch(r'iter-[0-9a-f]{6}', result.branch), f'unexpected branch name {result.branch!r}'
+    assert result.branch == 'init'
+    # And the stored config carries the same branch as the pin and the parent linkage.
+    create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
+    serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
+    assert serialized['parameters']['dataApp']['git']['branch'] == 'init'
+    assert serialized['parameters']['dataApp']['parentConfigurationId'] == 'cfg-prod-1'
 
 
 @pytest.mark.asyncio
@@ -1705,7 +1706,7 @@ async def test_modify_python_js_data_app_create_dev_twin_generates_branch_when_u
         ),
     ],
 )
-async def test_modify_python_js_data_app_create_dev_twin_still_requires_slug(
+async def test_modify_python_js_data_app_create_draft_still_requires_slug(
     mcp_context_client: Context,
     kwargs: dict,
     error_match: str,
@@ -1727,7 +1728,7 @@ async def test_modify_python_js_data_app_create_dev_twin_still_requires_slug(
                 'configuration_id': 'cfg-1',
                 'parent_configuration_id': 'cfg-prod-1',
             },
-            'parent_configuration_id is only valid when creating a dev twin',
+            'parent_configuration_id is only valid when creating a draft',
         ),
         (
             'branch',
@@ -1735,30 +1736,30 @@ async def test_modify_python_js_data_app_create_dev_twin_still_requires_slug(
                 'name': 'A',
                 'description': '',
                 'configuration_id': 'cfg-1',
-                'branch': 'iter-x',
+                'branch': 'add-revenue-filter',
             },
-            'branch is only valid when creating a dev twin',
+            'branch is only valid when creating a draft',
         ),
     ],
 )
-async def test_modify_python_js_data_app_update_rejects_dev_twin_args(
+async def test_modify_python_js_data_app_update_rejects_draft_args(
     mcp_context_client: Context,
     disallowed_arg: str,
     kwargs: dict,
     error_match: str,
 ) -> None:
-    """The update path rejects dev-twin-only args (`parent_configuration_id`, `branch`)."""
+    """The update path rejects draft-only args (`parent_configuration_id`, `branch`)."""
     with pytest.raises(ValueError, match=error_match):
         await modify_python_js_data_app(ctx=mcp_context_client, **kwargs)
 
 
 @pytest.mark.asyncio
-async def test_modify_python_js_data_app_create_dev_twin_rejects_when_parent_is_streamlit(
+async def test_modify_python_js_data_app_create_draft_rejects_when_parent_is_streamlit(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
 ) -> None:
-    """A Streamlit `parent_configuration_id` is rejected — only python-js prods can parent a dev twin."""
+    """A Streamlit `parent_configuration_id` is rejected — only python-js prods can parent a draft."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -1767,18 +1768,47 @@ async def test_modify_python_js_data_app_create_dev_twin_rejects_when_parent_is_
     streamlit_parent = _make_python_js_parent_data_app(type='streamlit', repo_url=None)
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=streamlit_parent))
 
-    with pytest.raises(ValueError, match='only python-js prod apps can parent a dev twin'):
+    with pytest.raises(ValueError, match='only python-js prod apps can parent a draft'):
         await modify_python_js_data_app(
             ctx=mcp_context_client,
-            name='Dev Twin',
+            name='Draft',
             description='',
-            slug='demo-dev',
+            slug='demo-draft',
             parent_configuration_id='cfg-prod-1',
         )
 
 
 @pytest.mark.asyncio
-async def test_modify_python_js_data_app_create_dev_twin_rejects_when_parent_missing_repo_url(
+async def test_modify_python_js_data_app_create_draft_rejects_when_parent_is_draft(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """A python-js *draft* parent is rejected with a clear message (not the misleading 'no repo URL'
+    error): drafts can't parent another draft, so no credential is minted."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    # A draft has no repo_url of its own; the guard must fire before the repo_url check below.
+    draft_parent = _make_python_js_parent_data_app(is_draft=True, repo_url=None)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft_parent))
+
+    with pytest.raises(ValueError, match=r'is itself a python-js \*\*draft\*\*'):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='Draft',
+            description='',
+            slug='demo-draft',
+            parent_configuration_id='cfg-prod-1',
+        )
+
+    keboola_client.data_science_client.create_app_git_credential.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_draft_rejects_when_parent_missing_repo_url(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
@@ -1846,7 +1876,7 @@ async def test_deploy_data_app_python_js_with_branch_forwards_to_client(
     mocker,
     mcp_context_client: Context,
 ) -> None:
-    """For python-js dev twins, `branch` must be forwarded to the underlying DSAPI deploy call."""
+    """For python-js drafts, `branch` must be forwarded to the underlying DSAPI deploy call."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
 
@@ -2069,6 +2099,34 @@ async def test_create_python_js_data_app_git_credential_rejects_streamlit_app(
 
 
 @pytest.mark.asyncio
+async def test_create_python_js_data_app_git_credential_rejects_draft(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """Drafts have no managed repo of their own — the tool must reject them early (before touching
+    get_app_git_repo) and point at the parent prod app, rather than falling through to the
+    misleading https_url=None 'platform bug' error."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    draft = _make_python_js_draft_data_app(
+        configuration_id='cfg-draft-1', data_app_id='app-draft-1', parent_configuration_id='cfg-prod-1'
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft))
+
+    with pytest.raises(ValueError, match=r'is a python-js \*\*draft\*\*') as excinfo:
+        await create_python_js_data_app_git_credential(
+            ctx=mcp_context_client,
+            configuration_id='cfg-draft-1',
+        )
+
+    # The error must steer the caller to the parent prod app, and no repo/credential calls happen.
+    assert 'parentConfigurationId="cfg-prod-1"' in str(excinfo.value)
+    keboola_client.data_science_client.get_app_git_repo.assert_not_called()
+    keboola_client.data_science_client.create_app_git_credential.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_create_python_js_data_app_git_credential_invalid_configuration_id(
     mocker,
     mcp_context_client: Context,
@@ -2096,3 +2154,413 @@ async def test_create_python_js_data_app_git_credential_invalid_configuration_id
         )
 
     keboola_client.data_science_client.create_app_git_credential.assert_not_called()
+
+
+# ===== Tests for get_data_apps drafts list (detail path, python-js prod) =====
+
+
+from keboola_mcp_server.tools.data_apps import (  # noqa: E402
+    DeletedDraftOutput,
+    delete_python_js_data_app_draft,
+)
+
+
+def _make_python_js_prod_data_app(
+    *,
+    configuration_id: str = 'cfg-prod-1',
+    data_app_id: str = 'app-prod-1',
+    repo_url: str | None = 'https://managed.repo/org/prod.git',
+    state: str = 'running',
+) -> DataApp:
+    """A python-js **prod** app — no `isDraft` flag, no `parentConfigurationId`."""
+    return DataApp(
+        name='Prod App',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id=configuration_id,
+        data_app_id=data_app_id,
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='python-js',
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'prod'}}},
+        state=state,
+        repo_url=repo_url,
+    )
+
+
+def _make_python_js_draft_data_app(
+    *,
+    configuration_id: str,
+    data_app_id: str,
+    parent_configuration_id: str,
+    branch: str = 'init',
+    state: str = 'created',
+) -> DataApp:
+    """A python-js **draft** app — `isDraft=true` and `parentConfigurationId` set."""
+    return DataApp(
+        name=f'Draft {configuration_id}',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id=configuration_id,
+        data_app_id=data_app_id,
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='python-js',
+        configuration={
+            'parameters': {
+                'autoSuspendAfterSeconds': 900,
+                'dataApp': {
+                    'slug': f'draft-{configuration_id}',
+                    'isDraft': True,
+                    'parentConfigurationId': parent_configuration_id,
+                    'git': {'repository': 'https://managed.repo/org/prod.git', 'branch': branch},
+                },
+            },
+        },
+        state=state,
+        repo_url=None,
+    )
+
+
+def _build_storage_config_entry(*, cfg_id: str, parent_configuration_id: str | None, is_draft: bool = True) -> dict:
+    """Mirror the shape returned by `storage_client.configuration_list` for python-js apps.
+
+    `is_draft=False` with a `parent_configuration_id` set models a misconfigured non-draft that
+    points at a prod but lacks the `isDraft` flag — it must NOT be surfaced as a draft.
+    """
+    data_app_block: dict = {'slug': f'app-{cfg_id}'}
+    if parent_configuration_id is not None:
+        data_app_block['parentConfigurationId'] = parent_configuration_id
+        if is_draft:
+            data_app_block['isDraft'] = True
+    return {
+        'id': cfg_id,
+        'name': f'app-{cfg_id}',
+        'configuration': {
+            'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block},
+        },
+        'version': 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ('configuration', 'expected'),
+    [
+        ({'parameters': {'dataApp': {'isDraft': True}}}, True),
+        ({'parameters': {'dataApp': {'isDraft': False}}}, False),
+        ({'parameters': {'dataApp': {'slug': 'prod'}}}, False),
+        ({'parameters': {}}, False),
+        ({}, False),
+        # Malformed/corrupted shapes must be treated as "not a draft", never raise AttributeError.
+        ({'parameters': {'dataApp': 'corrupted'}}, False),
+        ({'parameters': 'corrupted'}, False),
+        ({'parameters': None}, False),
+    ],
+    ids=[
+        'is_draft',
+        'not_draft',
+        'no_flag',
+        'no_data_app',
+        'empty',
+        'data_app_not_mapping',
+        'parameters_not_mapping',
+        'parameters_none',
+    ],
+)
+def test_is_draft_config(configuration: dict, expected: bool) -> None:
+    """`_is_draft_config` is true only for `isDraft=true` and is shape-safe against malformed configs."""
+    assert _is_draft_config(configuration) is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'n_drafts',
+    [0, 1, 3],
+    ids=['no_drafts', 'one_draft', 'three_drafts'],
+)
+async def test_get_data_apps_detail_for_prod_lists_drafts(
+    mocker,
+    mcp_context_client: Context,
+    n_drafts: int,
+) -> None:
+    """When fetching detail for a python-js prod, the response includes a `drafts: [...]` array
+    of every draft configured against it. Includes the 0-draft case to guard the empty path."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    prod_cfg_id = 'cfg-prod-1'
+    prod = _make_python_js_prod_data_app(configuration_id=prod_cfg_id)
+    draft_cfg_ids = [f'cfg-draft-{i}' for i in range(n_drafts)]
+    drafts = {
+        cfg_id: _make_python_js_draft_data_app(
+            configuration_id=cfg_id,
+            data_app_id=f'app-{cfg_id}',
+            parent_configuration_id=prod_cfg_id,
+        )
+        for cfg_id in draft_cfg_ids
+    }
+    # Throw in a config that's parented to a DIFFERENT prod to verify we filter properly.
+    foreign_cfg = _build_storage_config_entry(cfg_id='cfg-other-draft', parent_configuration_id='cfg-prod-other')
+    configs = [
+        _build_storage_config_entry(cfg_id=cfg_id, parent_configuration_id=prod_cfg_id) for cfg_id in draft_cfg_ids
+    ]
+    configs.append(foreign_cfg)
+    # A config that points at THIS prod but lacks `isDraft` is a misconfiguration, not a draft —
+    # it must be excluded (and never even fetched, or fake_fetch below would KeyError).
+    configs.append(
+        _build_storage_config_entry(cfg_id='cfg-non-draft-child', parent_configuration_id=prod_cfg_id, is_draft=False)
+    )
+    # Also include the prod's own config (no parentConfigurationId) — must not be matched.
+    configs.append(_build_storage_config_entry(cfg_id=prod_cfg_id, parent_configuration_id=None))
+
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=configs)
+
+    async def fake_fetch(client, *, configuration_id, data_app_id):
+        if configuration_id == prod_cfg_id:
+            return prod
+        return drafts[configuration_id]
+
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', side_effect=fake_fetch)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+
+    result = await get_data_apps(ctx=mcp_context_client, configuration_ids=[prod_cfg_id])
+    assert len(result.data_apps) == 1
+    detail = result.data_apps[0]
+    assert isinstance(detail, DataApp)
+    returned_draft_ids = sorted(d.configuration_id for d in detail.drafts)
+    assert returned_draft_ids == sorted(draft_cfg_ids)
+    # All drafts fetched successfully, so nothing was omitted.
+    assert detail.drafts_unavailable == 0
+
+
+@pytest.mark.asyncio
+async def test_get_data_apps_detail_for_prod_counts_unavailable_drafts(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """A transient DSAPI failure on one draft's detail fetch must NOT silently shrink the list:
+    the surviving draft is still returned and `drafts_unavailable` counts the omission so the
+    caller can tell "temporarily unreachable" from "deleted"."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    prod_cfg_id = 'cfg-prod-1'
+    prod = _make_python_js_prod_data_app(configuration_id=prod_cfg_id)
+    ok_cfg_id, failing_cfg_id = 'cfg-draft-ok', 'cfg-draft-fail'
+    ok_draft = _make_python_js_draft_data_app(
+        configuration_id=ok_cfg_id, data_app_id=f'app-{ok_cfg_id}', parent_configuration_id=prod_cfg_id
+    )
+    configs = [
+        _build_storage_config_entry(cfg_id=ok_cfg_id, parent_configuration_id=prod_cfg_id),
+        _build_storage_config_entry(cfg_id=failing_cfg_id, parent_configuration_id=prod_cfg_id),
+        _build_storage_config_entry(cfg_id=prod_cfg_id, parent_configuration_id=None),
+    ]
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=configs)
+
+    async def fake_fetch(client, *, configuration_id, data_app_id):
+        if configuration_id == prod_cfg_id:
+            return prod
+        if configuration_id == failing_cfg_id:
+            raise RuntimeError('transient DSAPI failure (timeout)')
+        return ok_draft
+
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', side_effect=fake_fetch)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+
+    result = await get_data_apps(ctx=mcp_context_client, configuration_ids=[prod_cfg_id])
+    detail = result.data_apps[0]
+    assert isinstance(detail, DataApp)
+    assert [d.configuration_id for d in detail.drafts] == [ok_cfg_id]
+    assert detail.drafts_unavailable == 1
+
+
+@pytest.mark.asyncio
+async def test_get_data_apps_detail_for_draft_returns_empty_drafts(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """Fetching detail for a draft must not recurse — its `drafts` array stays empty and the
+    cheap `configuration_list` lookup is skipped entirely."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    draft = _make_python_js_draft_data_app(
+        configuration_id='cfg-draft-1', data_app_id='app-draft-1', parent_configuration_id='cfg-prod-1'
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft))
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(
+        side_effect=AssertionError('Drafts must not trigger a drafts lookup')
+    )
+
+    result = await get_data_apps(ctx=mcp_context_client, configuration_ids=['cfg-draft-1'])
+    detail = result.data_apps[0]
+    assert isinstance(detail, DataApp)
+    assert detail.drafts == []
+    keboola_client.storage_client.configuration_list.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_data_apps_detail_for_streamlit_returns_empty_drafts(
+    mocker,
+    mcp_context_client: Context,
+    data_app: DataApp,
+) -> None:
+    """Streamlit apps have no draft concept — the detail path must not call `configuration_list`."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    data_app.type = 'streamlit'
+    data_app.configuration = {'parameters': {'dataApp': {'slug': 'sl'}}}
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(
+        side_effect=AssertionError('Streamlit apps must not trigger a drafts lookup')
+    )
+
+    result = await get_data_apps(ctx=mcp_context_client, configuration_ids=['cfg-streamlit-1'])
+    detail = result.data_apps[0]
+    assert isinstance(detail, DataApp)
+    assert detail.drafts == []
+    keboola_client.storage_client.configuration_list.assert_not_called()
+
+
+# ===== Tests for delete_python_js_data_app_draft =====
+
+
+def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
+    """Build an httpx.HTTPStatusError carrying the given status code, as the Storage client raises."""
+    request = httpx.Request('DELETE', 'https://connection.keboola.test/v2/storage/...')
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError(f'HTTP {status_code}', request=request, response=response)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'storage_delete_side_effect',
+    [None, _http_status_error(404)],
+    ids=['storage_config_present', 'storage_config_already_gone_404'],
+)
+async def test_delete_python_js_data_app_draft_success(
+    mocker,
+    mcp_context_client: Context,
+    storage_delete_side_effect,
+) -> None:
+    """Happy path: deletes the data app via DSAPI and the Storage config (with skip_trash=False),
+    and returns the parent configuration_id so the agent can pivot back. A 404 from the Storage
+    delete (DSAPI already removed the config) is tolerated — the tool stays idempotent."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    draft = _make_python_js_draft_data_app(
+        configuration_id='cfg-draft-1', data_app_id='app-draft-1', parent_configuration_id='cfg-prod-1'
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft))
+    keboola_client.data_science_client.delete_data_app = mocker.AsyncMock(return_value=None)
+    keboola_client.storage_client.configuration_delete = mocker.AsyncMock(side_effect=storage_delete_side_effect)
+
+    result = await delete_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-draft-1')
+
+    assert isinstance(result, DeletedDraftOutput)
+    assert result.response == 'deleted'
+    assert result.configuration_id == 'cfg-draft-1'
+    assert result.data_app_id == 'app-draft-1'
+    assert result.parent_configuration_id == 'cfg-prod-1'
+    keboola_client.data_science_client.delete_data_app.assert_awaited_once_with('app-draft-1')
+    keboola_client.storage_client.configuration_delete.assert_awaited_once_with(
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-draft-1',
+        skip_trash=False,
+    )
+    # The config link pivots to the parent prod and is labelled as such — not with the draft's name,
+    # which would mislabel a link pointing at a different configuration.
+    config_link = next(link for link in result.links if 'Data App Configuration' in link.title)
+    assert 'data-apps/cfg-prod-1' in config_link.url
+    assert 'parent prod app' in config_link.title
+    assert draft.name not in config_link.title
+
+
+@pytest.mark.asyncio
+async def test_delete_python_js_data_app_draft_propagates_non_404_storage_error(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """Only 404 (already gone) is tolerated — any other Storage delete failure must propagate so a
+    real error is not silently swallowed."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    draft = _make_python_js_draft_data_app(
+        configuration_id='cfg-draft-1', data_app_id='app-draft-1', parent_configuration_id='cfg-prod-1'
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft))
+    keboola_client.data_science_client.delete_data_app = mocker.AsyncMock(return_value=None)
+    keboola_client.storage_client.configuration_delete = mocker.AsyncMock(side_effect=_http_status_error(500))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await delete_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-draft-1')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('configuration', 'error_match'),
+    [
+        (
+            {'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'prod'}}},
+            'is a python-js .*prod.* app, not a draft',
+        ),
+        (
+            {'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'prod', 'isDraft': False}}},
+            'is a python-js .*prod.* app, not a draft',
+        ),
+    ],
+    ids=['no_isDraft_key', 'isDraft_false'],
+)
+async def test_delete_python_js_data_app_draft_refuses_prod(
+    mocker,
+    mcp_context_client: Context,
+    configuration: dict,
+    error_match: str,
+) -> None:
+    """Refusing to delete prod apps is the single safety check — both shapes (missing flag or
+    explicit `false`) must be rejected, and neither delete endpoint must be called."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    prod = DataApp(
+        name='Prod',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-prod-1',
+        data_app_id='app-prod-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='python-js',
+        configuration=configuration,
+        state='running',
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
+    keboola_client.data_science_client.delete_data_app = mocker.AsyncMock()
+    keboola_client.storage_client.configuration_delete = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match=error_match):
+        await delete_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-prod-1')
+
+    keboola_client.data_science_client.delete_data_app.assert_not_called()
+    keboola_client.storage_client.configuration_delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_python_js_data_app_draft_refuses_streamlit(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    """Streamlit apps have no draft concept — the tool must refuse and never call delete."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    streamlit_app = DataApp(
+        name='SL',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-sl-1',
+        data_app_id='app-sl-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='streamlit',
+        configuration={'parameters': {'dataApp': {'slug': 'sl'}}},
+        state='running',
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=streamlit_app))
+    keboola_client.data_science_client.delete_data_app = mocker.AsyncMock()
+    keboola_client.storage_client.configuration_delete = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match='only supports python-js data apps'):
+        await delete_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-sl-1')
+
+    keboola_client.data_science_client.delete_data_app.assert_not_called()
+    keboola_client.storage_client.configuration_delete.assert_not_called()
