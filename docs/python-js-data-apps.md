@@ -3,7 +3,6 @@
 **Linear**: [AI-3286](https://linear.app/keboola/issue/AI-3286)
 (supersedes the MVP shipped in v1.63.0 under [AI-3005](https://linear.app/keboola/issue/AI-3005))
 **Status**: shipped in v1.64.0.
-**Long-term tracker (platform-side drafts)**: [AI-3240](https://linear.app/keboola/issue/AI-3240)
 
 ---
 
@@ -50,7 +49,7 @@ Drafts are surfaced in the Keboola UI under their parent prod app. They are also
 
 ## Why prod owns the repo
 
-The data-science platform does not yet support sharing a managed repo across apps (`existingRepoUrl` on `POST /apps` is silently dropped; every app gets a fresh managed repo). Until the platform-side drafts mechanism lands ([AI-3240](https://linear.app/keboola/issue/AI-3240)), we **flip the ownership**: the prod app is the canonical managed-repo owner, and each draft is an *external-git* app whose `parameters.dataApp.git` block tells the data-app runtime to clone the prod repo on deploy. The prod-side credential is minted by the MCP server when creating the draft (the platform accepts unlimited per-app credentials, so this is non-destructive).
+The data-science platform does not yet support sharing a managed repo across apps (`existingRepoUrl` on `POST /apps` is silently dropped; every app gets a fresh managed repo). Until the platform gains native draft support, we **flip the ownership**: the prod app is the canonical managed-repo owner, and each draft is an *external-git* app whose `parameters.dataApp.git` block tells the data-app runtime to clone the prod repo on deploy. The prod-side credential is minted by the MCP server when creating the draft (the platform accepts unlimited per-app credentials, so this is non-destructive).
 
 ---
 
@@ -90,7 +89,7 @@ The platform supports multiple credentials per app, so minting a fresh credentia
 
 - A new credential is minted on the parent **prod** app every time a draft is created. The prod-side credential is encrypted into the draft's `parameters.dataApp.git.#password`.
 - **Deleting a draft via `delete_python_js_data_app_draft` does NOT revoke that credential.** The MCP surface has no list/delete-credential affordance; rotation is the user's job via the Keboola UI. (DSAPI does support `DELETE /apps/{id}/git-repo/credentials/{credentialId}`, but the MCP server does not store the credential ID on the draft to make targeted revocation possible.)
-- Because the platform accepts unlimited per-app credentials and ignores stale ones for auth purposes, accumulated drafts produce stale-but-harmless credentials on the prod app over time. Treat this as a known trade-off until the platform-side drafts feature lands ([AI-3240](https://linear.app/keboola/issue/AI-3240)).
+- Because the platform accepts unlimited per-app credentials and ignores stale ones for auth purposes, accumulated drafts produce stale-but-harmless credentials on the prod app over time. Treat this as a known trade-off until the platform gains native draft support.
 
 ---
 
@@ -433,4 +432,4 @@ The dev-twin terminology is gone. Internally, "dev twin" → "draft"; in the wir
 | Cleanup affordance | UI "Discard" button only | `delete_python_js_data_app_draft` MCP tool |
 | Tool docs | `docs/python-js-data-apps.md` v1.63 | this file |
 
-For background on why the platform behaves this way and the long-term fix, see [AI-3240](https://linear.app/keboola/issue/AI-3240).
+For background on why the platform behaves this way, see the **Why prod owns the repo** section above.
