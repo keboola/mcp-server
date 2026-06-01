@@ -89,6 +89,17 @@ line_length = 120
 multi_line_output = 3
 use_parentheses = true
 
+[tool.uv]
+# Dependency cooldown (supply-chain hardening): never resolve a package version
+# published within the last 7 days. Freshly published malicious releases are
+# typically detected and yanked within hours to a few days, so a 7-day buffer
+# removes most of that attack window before a version can reach our lock file.
+# This is a resolution-time filter — it applies whenever `uv lock` regenerates
+# the lock; CI installs with `uv sync --frozen` and is unaffected.
+# Temporarily relax this (e.g. `--exclude-newer` on the CLI) when an urgent
+# security fix needs to be picked up before the window elapses.
+exclude-newer = "7 days"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/keboola_mcp_server"]
 
