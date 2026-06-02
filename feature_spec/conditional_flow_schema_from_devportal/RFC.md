@@ -9,6 +9,14 @@ Conditional Flows (`keboola.flow`) are gaining a new **Variables** capability, d
 the `keboola.flow` JSON schema **in the Developer Portal** (tracked by the AJDA-2351 blocker — not in
 this repo).
 
+> **Relationship to `keboola.variables`:** flow variables are *not* implemented via the
+> `keboola.variables` component. They are defined inline in the `keboola.flow` configuration. However,
+> they can be used to **override component-level variables**, which *are* implemented with
+> `keboola.variables`. See
+> [How variables reach component jobs](https://help.keboola.com/flows/#how-variables-reach-component-jobs).
+> No `keboola.variables` integration is required on the MCP side — fetching the updated `keboola.flow`
+> schema is sufficient to surface and validate the new flow-variables fields.
+
 The MCP server, however, ships a **static, bundled copy** of that schema at
 `src/keboola_mcp_server/resources/conditional-flow-schema.json`. It is read synchronously in two places:
 
@@ -119,6 +127,12 @@ condition types / capabilities.
 - `integtests/tools/flow/test_tools.py`: call `get_flow_schema(flow_type="keboola.flow")` against a
   real stack with conditional flows enabled; assert a non-empty schema is returned (proving it comes
   from the Developer Portal). A create/validate conditional-flow test exercises the path end to end.
+- **Update the existing conditional-flow integration tests** to cover the new **variables** fields,
+  driven by the live `docs/components/keboola.flow` schema. The existing CF create/update/validate
+  integration scenarios should be extended with flow-variable definitions (and a task that consumes /
+  overrides a variable) so they exercise the new schema fields rather than only the pre-variables
+  shape. This keeps the integration suite aligned with whatever the Developer-Portal schema currently
+  advertises once AJDA-2351 lands.
 
 **Manual E2E** (local `.mcp.json` per `CLAUDE.md`)
 1. Point at a stack with `keboola.flow` enabled; reload the server.
