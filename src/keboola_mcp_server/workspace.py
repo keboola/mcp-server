@@ -46,9 +46,7 @@ class TableFqn:
     def identifier(self) -> str:
         """Returns the properly quoted database identifier."""
         return '.'.join(
-            f'{self.quote_char}{n}{self.quote_char}'
-            for n in [self.db_name, self.schema_name, self.table_name]
-            if n
+            f'{self.quote_char}{n}{self.quote_char}' for n in [self.db_name, self.schema_name, self.table_name] if n
         )
 
     def __repr__(self) -> str:

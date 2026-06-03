@@ -6,6 +6,12 @@ from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, cast
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.clients.base import JsonDict, KeboolaServiceClient, RawKeboolaClient
+from keboola_mcp_server.clients.encryption import (
+    REDACTED_SECRET_VALUE,
+    EncryptionClient,
+    is_encrypted_value,
+    iter_secret_items,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -282,15 +288,24 @@ class CreateConfigurationAPIResponse(BaseModel):
 
 class AsyncStorageClient(KeboolaServiceClient):
 
-    def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
+    def __init__(
+        self,
+        raw_client: RawKeboolaClient,
+        branch_id: str | None = None,
+        encryption_client: EncryptionClient | None = None,
+    ) -> None:
         """
         Creates an AsyncStorageClient from a RawKeboolaClient and a branch id.
 
         :param raw_client: The raw client to use
         :param branch_id: The id of the Keboola project branch to work on
+        :param encryption_client: The encryption service client used to encrypt '#'-prefixed secret values
+            before they are written to the Storage API. If None, writing a configuration that contains
+            plaintext secrets raises an error (fail-closed).
         """
         super().__init__(raw_client=raw_client)
         self._branch_id: str = branch_id or 'default'
+        self._encryption_client = encryption_client
 
     @classmethod
     def create(
@@ -302,6 +317,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         branch_id: str | None = None,
         headers: dict[str, Any] | None = None,
         readonly: bool | None = None,
+        encryption_client: EncryptionClient | None = None,
     ) -> 'AsyncStorageClient':
         """
         Creates an AsyncStorageClient from a Keboola Storage API token.
@@ -312,6 +328,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param branch_id: The id of the Keboola project branch to work on
         :param headers: Additional headers for the requests
         :param readonly: If True, the client will only use HTTP GET, HEAD operations.
+        :param encryption_client: The encryption service client used to encrypt '#'-prefixed secret values
+            before they are written to the Storage API.
         :return: A new instance of AsyncStorageClient
         """
         return cls(
@@ -322,7 +340,45 @@ class AsyncStorageClient(KeboolaServiceClient):
                 readonly=readonly,
             ),
             branch_id=branch_id,
+            encryption_client=encryption_client,
         )
+
+    async def _encrypt_secrets(self, component_id: str, configuration: dict[str, Any]) -> dict[str, Any]:
+        """
+        Encrypts plaintext '#'-prefixed secret values in the configuration using the Encryption API
+        before the configuration is written to the Storage API. The Storage API does not encrypt
+        '#'-values server-side, so without this step the secrets would be stored in plaintext.
+
+        Fail-closed: if the configuration contains plaintext secrets and they cannot be encrypted,
+        this raises an error rather than letting the plaintext be stored.
+
+        :param component_id: The id of the component the configuration belongs to.
+        :param configuration: The configuration definition as a dictionary.
+        :return: The configuration with all '#'-prefixed values encrypted.
+        """
+        plaintext_keys = [key for key, value in iter_secret_items(configuration) if not is_encrypted_value(value)]
+        if not plaintext_keys:
+            return configuration
+
+        redacted_keys = [key for key, value in iter_secret_items(configuration) if value == REDACTED_SECRET_VALUE]
+        if redacted_keys:
+            raise ValueError(
+                f'The configuration contains redacted secret values for keys: {sorted(set(redacted_keys))}. '
+                f'These are placeholders returned on configuration reads, not the actual secret values. '
+                f'Either leave the existing secret values untouched or ask the user to provide new ones.'
+            )
+
+        if self._encryption_client is None:
+            raise ValueError(
+                f'The configuration contains plaintext secret values for keys: {sorted(set(plaintext_keys))}, '
+                f'but no encryption client is available. Refusing to store secrets in plaintext.'
+            )
+
+        project_id = await self.project_id()
+        encrypted = await self._encryption_client.encrypt(
+            configuration, component_id=component_id, project_id=project_id
+        )
+        return cast(dict[str, Any], encrypted)
 
     async def branches_list(self) -> list[JsonDict]:
         """
@@ -505,7 +561,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         payload = {
             'name': name,
             'description': description,
-            'configuration': configuration,
+            'configuration': await self._encrypt_secrets(component_id, configuration),
         }
         return cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
 
@@ -646,7 +702,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
 
         payload: dict[str, Any] = {
-            'configuration': configuration,
+            'configuration': await self._encrypt_secrets(component_id, configuration),
             'changeDescription': change_description,
         }
         if updated_name:
@@ -681,7 +737,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         payload = {
             'name': name,
             'description': description,
-            'configuration': configuration,
+            'configuration': await self._encrypt_secrets(component_id, configuration),
         }
 
         return cast(
@@ -720,7 +776,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
 
         payload: dict[str, Any] = {
-            'configuration': configuration,
+            'configuration': await self._encrypt_secrets(component_id, configuration),
             'changeDescription': change_description,
         }
         if updated_name:

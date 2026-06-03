@@ -12,6 +12,7 @@ from keboola_mcp_server.clients.client import (
     ORCHESTRATOR_COMPONENT_ID,
     KeboolaClient,
 )
+from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.components.api_models import ConfigurationAPIResponse
@@ -562,6 +563,53 @@ def test_configuration_row_rejects_non_empty_list_processors(invalid_processors:
             component_id='keboola.ex-aws-s3',
             configuration_id='123',
         )
+
+
+def test_configuration_root_redacts_plaintext_secrets() -> None:
+    """Plaintext '#'-values are masked on reads while 'KBC::' ciphers pass through unchanged."""
+    api_config = ConfigurationAPIResponse.model_validate(
+        {
+            'componentId': 'keboola.ex-aws-s3',
+            'id': '123',
+            'name': 'My Config',
+            'version': 1,
+            'configuration': {
+                'parameters': {'user': 'admin', '#password': 'plain-secret', '#token': 'KBC::ProjectSecure::abcd'},
+                'processors': {'after': [{'definition': {'component': 'x'}, 'parameters': {'#key': 'plain'}}]},
+            },
+            'metadata': [],
+        }
+    )
+    root = ConfigurationRoot.from_api_response(api_config)
+    assert root.parameters == {
+        'user': 'admin',
+        '#password': REDACTED_SECRET_VALUE,
+        '#token': 'KBC::ProjectSecure::abcd',
+    }
+    assert root.processors == {
+        'after': [{'definition': {'component': 'x'}, 'parameters': {'#key': REDACTED_SECRET_VALUE}}]
+    }
+
+
+def test_configuration_row_redacts_plaintext_secrets() -> None:
+    """Plaintext '#'-values in row parameters are masked on reads."""
+    row = ConfigurationRow.from_api_row_data(
+        row_data={
+            'id': 'row-1',
+            'name': 'Row 1',
+            'version': 1,
+            'configuration': {
+                'parameters': {'#api_key': 'plain-secret', '#token': 'KBC::ProjectSecure::abcd', 'period': 'daily'}
+            },
+        },
+        component_id='keboola.ex-aws-s3',
+        configuration_id='123',
+    )
+    assert row.parameters == {
+        '#api_key': REDACTED_SECRET_VALUE,
+        '#token': 'KBC::ProjectSecure::abcd',
+        'period': 'daily',
+    }
 
 
 @pytest.mark.parametrize(

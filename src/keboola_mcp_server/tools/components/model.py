@@ -40,6 +40,7 @@ from typing import Annotated, Any, Literal, Optional, Sequence, Union, get_args
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 from keboola_mcp_server.clients.client import get_metadata_property
+from keboola_mcp_server.clients.encryption import redact_secrets
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ComponentType, ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
@@ -266,9 +267,11 @@ class ConfigurationRoot(BaseModel):
             is_disabled=api_config.is_disabled,
             is_deleted=api_config.is_deleted,
             folder=get_metadata_property(api_config.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
-            parameters=api_config.configuration.get('parameters', {}),
+            # Plaintext '#'-prefixed secret values are redacted so that they never reach the model's context.
+            # 'KBC::' ciphers are kept as they are opaque.
+            parameters=redact_secrets(api_config.configuration.get('parameters', {})),
             storage=api_config.configuration.get('storage'),
-            processors=api_config.configuration.get('processors'),
+            processors=redact_secrets(api_config.configuration.get('processors')),
             configuration_metadata=api_config.metadata,
         )
 
@@ -336,9 +339,10 @@ class ConfigurationRow(BaseModel):
             version=row_data['version'],
             is_disabled=row_data.get('isDisabled', False),
             is_deleted=row_data.get('isDeleted', False),
-            parameters=row_data.get('configuration', {}).get('parameters', {}),
+            # Plaintext '#'-prefixed secret values are redacted so that they never reach the model's context.
+            parameters=redact_secrets(row_data.get('configuration', {}).get('parameters', {})),
             storage=row_data.get('configuration', {}).get('storage'),
-            processors=row_data.get('configuration', {}).get('processors'),
+            processors=redact_secrets(row_data.get('configuration', {}).get('processors')),
             configuration_metadata=row_data.get('configuration', {}).get('metadata', []),
         )
 
