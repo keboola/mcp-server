@@ -164,12 +164,17 @@ class KeboolaClient:
 
         # Initialize clients for individual services
         bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
+        # The encryption service does not require an authorization header, so we pass None as the token
+        self._encryption_client = EncryptionClient.create(
+            root_url=encryption_api_url, token=None, headers=self._headers
+        )
         self._storage_client = AsyncStorageClient.create(
             root_url=self._storage_api_url,
             token=bearer_or_sapi_token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
+            encryption_client=self._encryption_client,
         )
         self._jobs_queue_client = JobsQueueClient.create(
             root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._headers, readonly=readonly
@@ -183,10 +188,6 @@ class KeboolaClient:
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
-        )
-        # The encryption service does not require an authorization header, so we pass None as the token
-        self._encryption_client = EncryptionClient.create(
-            root_url=encryption_api_url, token=None, headers=self._headers
         )
         self._scheduler_client = SchedulerClient.create(
             root_url=scheduler_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
