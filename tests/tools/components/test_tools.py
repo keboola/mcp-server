@@ -53,6 +53,7 @@ from keboola_mcp_server.tools.components.tools import (
     add_config_row,
     create_config,
     create_sql_transformation,
+    delete_config,
     get_components,
     get_config_examples,
     get_configs,
@@ -1926,6 +1927,24 @@ async def test_update_config_folder_skipped_for_extractor(
             SNOWFLAKE_TRANSFORMATION_ID,
             'Use `create_sql_transformation` / `update_sql_transformation` instead.',
         ),
+        (
+            delete_config,
+            {'configuration_id': 'foo'},
+            DATA_APP_COMPONENT_ID,
+            'Use the data applications tools.',
+        ),
+        (
+            delete_config,
+            {'configuration_id': 'foo'},
+            CONDITIONAL_FLOW_COMPONENT_ID,
+            'Use the flows tools.',
+        ),
+        (
+            delete_config,
+            {'configuration_id': 'foo'},
+            ORCHESTRATOR_COMPONENT_ID,
+            'Use the flows tools.',
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -2754,3 +2773,50 @@ async def test_update_config_variables(
         assert vars_delete_calls
         assert not vars_update_calls
         assert 'variables_id' not in main_cfg
+
+
+@pytest.mark.parametrize(
+    'component_id',
+    ['keboola.ex-generic-v2', SNOWFLAKE_TRANSFORMATION_ID],
+    ids=['generic-config', 'sql-transformation'],
+)
+@pytest.mark.asyncio
+async def test_delete_config(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    component_id: str,
+) -> None:
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    configuration_id = 'config-to-delete'
+    detail = {
+        'id': configuration_id,
+        'name': 'Config To Delete',
+        'description': 'A configuration to be deleted',
+        'version': 7,
+    }
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=detail)
+    keboola_client.storage_client.configuration_delete = mocker.AsyncMock(return_value=None)
+
+    result = await delete_config(
+        ctx=context,
+        component_id=component_id,
+        configuration_id=configuration_id,
+    )
+
+    assert result.success is True
+    assert result.component_id == component_id
+    assert result.configuration_id == configuration_id
+    assert result.description == detail['description']
+    assert result.version == detail['version']
+    assert result.links == []
+    assert 'moved to the trash' in (result.change_summary or '')
+
+    keboola_client.storage_client.configuration_detail.assert_called_once_with(
+        component_id=component_id, configuration_id=configuration_id
+    )
+    # The configuration must go to the trash (recoverable) — skip_trash must not be enabled.
+    keboola_client.storage_client.configuration_delete.assert_called_once_with(
+        component_id=component_id, configuration_id=configuration_id
+    )

@@ -1105,3 +1105,22 @@ def check_suitable(tool_name: str, component_id: str) -> None:
     """
     if message := _UNSUITABLE_COMPONENTS_MESSAGES.get(component_id):
         raise ValueError(f'The "{tool_name}" tool cannot be used with {component_id} component. {message}')
+
+
+# Unlike _UNSUITABLE_COMPONENTS_MESSAGES, SQL transformations are deletable via delete_config —
+# there is no dedicated transformation-delete tool. Flows and data apps stay excluded because
+# they have lifecycle state beyond the configuration (orchestration phases, deployments).
+_UNDELETABLE_COMPONENTS_MESSAGES: Mapping[str, str] = {
+    DATA_APP_COMPONENT_ID: 'Use the data applications tools.',
+    CONDITIONAL_FLOW_COMPONENT_ID: 'Use the flows tools.',
+    ORCHESTRATOR_COMPONENT_ID: 'Use the flows tools.',
+}
+
+
+def check_deletable(tool_name: str, component_id: str) -> None:
+    """
+    Checks if a configuration of the given component can be deleted by the general delete tool.
+    :raises ValueError: If the component's configurations are managed by special tools.
+    """
+    if message := _UNDELETABLE_COMPONENTS_MESSAGES.get(component_id):
+        raise ValueError(f'The "{tool_name}" tool cannot be used with {component_id} component. {message}')

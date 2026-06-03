@@ -16,6 +16,7 @@ component-related operations in the MCP server.
 ### Configuration Management
 - `create_config`: Create new root component configurations
 - `update_config`: Update existing root configurations
+- `delete_config`: Delete configurations (moves them to the trash)
 - `add_config_row`: Add new configuration rows to existing configurations
 - `update_config_row`: Update existing configuration rows
 
@@ -77,6 +78,7 @@ from keboola_mcp_server.tools.components.utils import (
     apply_configuration_variables,
     apply_folder_metadata,
     build_folder_hint,
+    check_deletable,
     check_suitable,
     clear_configuration_folder_metadata,
     create_transformation_configuration,
@@ -153,6 +155,13 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
             update_config,
             tags={COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
             annotations=ToolAnnotations(destructiveHint=True),
+        )
+    )
+    mcp.add_tool(
+        FunctionTool.from_function(
+            delete_config,
+            tags={COMPONENT_TOOLS_TAG},
+            annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False),
         )
     )
     mcp.add_tool(
@@ -1653,6 +1662,60 @@ async def update_config_internal(
         configuration_payload['parameters'] = parameters_cfg
 
     return current_config, configuration_payload
+
+
+@tool_errors()
+async def delete_config(
+    ctx: Context,
+    component_id: Annotated[str, Field(description='The ID of the component the configuration belongs to.')],
+    configuration_id: Annotated[str, Field(description='The ID of the configuration to delete.')],
+) -> ConfigToolOutput:
+    """
+    Deletes a component configuration by moving it to the project trash.
+
+    The configuration is NOT removed permanently — it is moved to the trash and can be restored
+    from the Keboola UI (Settings → Trash) until the trash is emptied.
+
+    WHEN TO USE:
+    - Removing a configuration that is no longer needed
+    - Cleaning up test or experimental configurations
+    - SQL transformations (keboola.snowflake-transformation, keboola.google-bigquery-transformation)
+      are deleted with this tool too — there is no separate transformation delete tool
+
+    WHEN NOT TO USE:
+    - `keboola.orchestrator` / `keboola.flow` → use flows tools
+    - `keboola.data-apps` → use data applications tools
+
+    IMPORTANT CONSIDERATIONS:
+    - Related configurations are NOT deleted: anything referencing this configuration
+      (e.g. a linked `keboola.variables` configuration or flow tasks pointing at it)
+      is left in place and may become orphaned.
+    - Always confirm with the user before deleting a configuration they did not
+      explicitly ask to delete.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    check_deletable('delete_config', component_id)
+
+    LOG.info(f'Deleting configuration "{configuration_id}" of component "{component_id}".')
+    detail = await client.storage_client.configuration_detail(
+        component_id=component_id, configuration_id=configuration_id
+    )
+    await client.storage_client.configuration_delete(component_id=component_id, configuration_id=configuration_id)
+    LOG.info(f'Deleted configuration "{configuration_id}" of component "{component_id}" (moved to trash).')
+
+    return ConfigToolOutput(
+        component_id=component_id,
+        configuration_id=configuration_id,
+        description=detail.get('description') or '',
+        version=detail.get('version', 0),
+        timestamp=datetime.now(timezone.utc),
+        success=True,
+        links=[],
+        change_summary=(
+            f'Configuration "{detail.get("name") or configuration_id}" was moved to the trash. '
+            'It can be restored from the Keboola UI.'
+        ),
+    )
 
 
 @tool_errors()

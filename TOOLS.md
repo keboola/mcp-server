@@ -9,6 +9,7 @@ component ID, configuration JSON, and description.
 - [create_config](#create_config): Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 - [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
 description, and a list of created table names.
+- [delete_config](#delete_config): Deletes a component configuration by moving it to the project trash.
 - [get_components](#get_components): Retrieves detailed information about one or more components by their IDs.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
 - [get_configs](#get_configs): Retrieves component configurations in the project with optional filtering.
@@ -553,6 +554,60 @@ EXAMPLES:
     "name",
     "description",
     "sql_code_blocks"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="delete_config"></a>
+## delete_config
+**Annotations**: `destructive`
+
+**Tags**: `components`
+
+**Description**:
+
+Deletes a component configuration by moving it to the project trash.
+
+The configuration is NOT removed permanently — it is moved to the trash and can be restored
+from the Keboola UI (Settings → Trash) until the trash is emptied.
+
+WHEN TO USE:
+- Removing a configuration that is no longer needed
+- Cleaning up test or experimental configurations
+- SQL transformations (keboola.snowflake-transformation, keboola.google-bigquery-transformation)
+  are deleted with this tool too — there is no separate transformation delete tool
+
+WHEN NOT TO USE:
+- `keboola.orchestrator` / `keboola.flow` → use flows tools
+- `keboola.data-apps` → use data applications tools
+
+IMPORTANT CONSIDERATIONS:
+- Related configurations are NOT deleted: anything referencing this configuration
+  (e.g. a linked `keboola.variables` configuration or flow tasks pointing at it)
+  is left in place and may become orphaned.
+- Always confirm with the user before deleting a configuration they did not
+  explicitly ask to delete.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "component_id": {
+      "description": "The ID of the component the configuration belongs to.",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The ID of the configuration to delete.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "component_id",
+    "configuration_id"
   ],
   "type": "object"
 }
