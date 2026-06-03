@@ -167,12 +167,13 @@ SCENARIO 9 — Clean up: remove variables, then delete transformation
 ══════════════════════════════════════════════════════════════════════════════
 PROMPT:
   Update "Variables Test Transformation": remove all variables (empty list).
-  Then delete the "Variables Test Transformation" configuration.
+  Then delete the "Variables Test Transformation" configuration manually in the
+  Keboola UI (MCP delete support is a separate PR — see Known Limitations #5).
 
 EXPECTED:
   - After the update: variables_id and variables_values_id gone from the parent
     config, vars config is DELETED from Storage.
-  - After delete: the transformation is gone.
+  - After manual delete: the transformation is gone.
   - The keboola.variables count returns to baseline (no orphans left).
 
 
@@ -203,12 +204,12 @@ SCENARIO 11 — Generic config: update_config removes variables
 ══════════════════════════════════════════════════════════════════════════════
 PROMPT:
   Update "Variables Test Generic Config": remove all variables.
-  Then delete the configuration.
+  Then delete the configuration manually in the Keboola UI.
 
 EXPECTED:
   - After update: variables_id removed from the config, vars config is DELETED
     from Storage (same behaviour as transformations — see Known Limitations #4).
-  - After delete: config is gone.
+  - After manual delete: config is gone.
 
 
 ══════════════════════════════════════════════════════════════════════════════
@@ -225,7 +226,7 @@ EXPECTED:
   - Update with variables=[] returns success=True.
   - No keboola.variables config is created (nothing to clear).
   - The tool does NOT error (idempotent no-op when no vars config exists).
-  Clean up: delete this transformation.
+  Clean up: delete this transformation manually in the Keboola UI.
 
 
 ══════════════════════════════════════════════════════════════════════════════
@@ -240,7 +241,7 @@ EXPECTED for both:
   - No keboola.variables config created for either.
   - No variables_id on either transformation.
   Both are equivalent: None and [] both mean "skip" on create.
-  Clean up: delete both transformations.
+  Clean up: delete both transformations manually in the Keboola UI.
 
 
 ══════════════════════════════════════════════════════════════════════════════
@@ -278,3 +279,7 @@ KNOWN LIMITATIONS (out of scope per RFC)
    config from Storage entirely (it is not merely cleared or orphaned). If you
    later re-add variables, a fresh vars config is created. To leave variables
    unchanged, omit the parameter (pass None/null) instead of passing [].
+
+5. DELETING CONFIGURATIONS: there is no MCP delete capability in this PR — it was
+   split into a separate PR per review feedback. Clean-up steps in these scenarios
+   must be done manually in the Keboola UI until that PR lands.

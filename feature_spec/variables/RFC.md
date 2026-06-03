@@ -69,10 +69,8 @@ that create or update configurations:
 |---|---|---|
 | `create_sql_transformation` | `variables: Optional[list[VariableDefinition]] = None` | Attach variables at creation; `None`/`[]` = skip |
 | `update_sql_transformation` | `variables: Optional[list[VariableDefinition]] = None` | `None` = leave unchanged; `[]` = remove all; list = replace all |
-| `update_sql_transformation` | `delete: bool = False` | `True` = permanently delete transformation + any linked vars config |
 | `create_config` | `variables: Optional[list[VariableDefinition]] = None` | Same as create_sql_transformation |
 | `update_config` | `variables: Optional[list[VariableDefinition]] = None` | Same as update_sql_transformation |
-| `update_config` | `delete: bool = False` | `True` = permanently delete configuration + any linked vars config |
 
 ### `VariableDefinition` model
 
@@ -129,16 +127,15 @@ because the user explicitly requested it (unlike folder metadata, which is cosme
   `apply_configuration_variables()` in `utils.py`
 - `variables` parameter on `create_sql_transformation`, `update_sql_transformation`,
   `create_config`, `update_config`
-- `delete` parameter on `update_sql_transformation` and `update_config`
 - `variables_values_id` set on the parent config pointing to the "Default Values" row
-- Unit tests: create with vars, update/set, update/clear, no-op (None), default values row,
-  delete with and without linked vars config
+- Unit tests: create with vars, update/set, update/clear, no-op (None), default values row
 - Version bump `1.60.0` → `1.62.0` (new feature → minor; 1.61.0 was taken by an earlier patch)
 - `TOOLS.md` regeneration
 
 **Out of scope:**
 - Dedicated get/list variables tool — use `get_configs('keboola.variables')` for inspection
 - Variables on row-based components (`add_config_row` / `update_config_row`)
+- Deleting configurations/transformations — split into a separate PR (per review on PR #498)
 
 ## Verification
 
@@ -150,5 +147,3 @@ because the user explicitly requested it (unlike folder metadata, which is cosme
    - `update_sql_transformation(..., variables=[])` → vars config **deleted** from Storage;
      `variables_id` removed from parent.
    - `update_sql_transformation(..., variables=None)` → existing variables untouched.
-   - `update_sql_transformation(..., delete=True)` → linked vars config deleted first, then
-     transformation deleted; result carries real `version`/`description` from pre-deletion state.

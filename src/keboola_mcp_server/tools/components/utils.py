@@ -537,28 +537,6 @@ async def _find_vars_config(
     return await client.storage_client.configuration_detail(VARIABLES_COMPONENT_ID, str(found['id']))
 
 
-async def _resolve_linked_vars_config_id(
-    client: KeboolaClient,
-    component_id: str,
-    config_id: str,
-    parent: dict[str, Any] | None = None,
-) -> str | None:
-    """Returns the ID of the keboola.variables config linked to a parent config, or ``None``.
-
-    Used by delete flows that want to clean up the vars config *after* the parent has been
-    deleted — looking it up before parent deletion lets the caller delete the parent first, so
-    a parent-delete failure leaves the transformation pointing at a still-valid `variables_id`.
-
-    Callers that have already fetched the parent detail should pass it via ``parent`` to avoid
-    a redundant ``configuration_detail`` round-trip.
-    """
-    if parent is None:
-        parent = await client.storage_client.configuration_detail(component_id, config_id)
-    parent_cfg = dict(parent.get('configuration') or {})
-    existing = await _find_vars_config(client, component_id, config_id, parent_cfg.get('variables_id'))
-    return str(existing['id']) if existing is not None else None
-
-
 async def _apply_vars_to_parent_cfg(
     client: KeboolaClient,
     component_id: str,

@@ -15,7 +15,7 @@ component-related operations in the MCP server.
 
 ### Configuration Management
 - `create_config`: Create new root component configurations
-- `update_config`: Update or delete existing root configurations (delete=True to remove)
+- `update_config`: Update existing root configurations
 - `add_config_row`: Add new configuration rows to existing configurations
 - `update_config_row`: Update existing configuration rows
 
@@ -70,7 +70,6 @@ from keboola_mcp_server.tools.components.utils import (
     SNOWFLAKE_TRANSFORMATION_ID,
     VARIABLES_COMPONENT_ID,
     _apply_vars_to_parent_cfg,
-    _resolve_linked_vars_config_id,
     add_ids,
     apply_configuration_variables,
     apply_folder_metadata,
@@ -659,20 +658,10 @@ async def update_sql_transformation(
             ),
         ),
     ] = None,
-    delete: Annotated[
-        bool,
-        Field(
-            description=(
-                'If True, permanently deletes the transformation instead of updating it. '
-                'Any linked variables are automatically removed before deletion. '
-                'WARNING: This action is irreversible.'
-            ),
-        ),
-    ] = False,
 ) -> ConfigToolOutput:
     """
     Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
-    name or description. Can also delete the transformation by passing delete=True.
+    name or description.
 
     This tool allows PARTIAL parameter updates for transformation SQL blocks and code - you only need to provide
     the operations you want to perform. All other fields will remain unchanged.
@@ -683,7 +672,6 @@ async def update_sql_transformation(
     - Updating transformation block or code block names
     - Changing input/output table mappings for the transformation
     - Updating the transformation name or description
-    - Deleting a transformation (delete=True)
     - Any combination of the above
 
     PREREQUISITES:
@@ -862,30 +850,6 @@ async def update_sql_transformation(
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
-
-    if delete:
-        LOG.info(f'Deleting transformation "{configuration_id}" for component "{sql_transformation_id}".')
-        detail = await client.storage_client.configuration_detail(sql_transformation_id, configuration_id)
-        vars_id_to_delete = await _resolve_linked_vars_config_id(
-            client, sql_transformation_id, configuration_id, parent=detail
-        )
-        await client.storage_client.configuration_delete(sql_transformation_id, configuration_id, skip_trash=True)
-        if vars_id_to_delete is not None:
-            await client.storage_client.configuration_delete(
-                component_id=VARIABLES_COMPONENT_ID,
-                configuration_id=vars_id_to_delete,
-                skip_trash=True,
-            )
-        LOG.info(f'Deleted transformation "{configuration_id}" for component "{sql_transformation_id}".')
-        return ConfigToolOutput(
-            component_id=sql_transformation_id,
-            configuration_id=configuration_id,
-            description=detail.get('description', ''),
-            version=detail.get('version', 0),
-            timestamp=datetime.now(timezone.utc),
-            success=True,
-            links=[],
-        )
 
     links_manager = await ProjectLinksManager.from_client(client)
 
@@ -1484,20 +1448,9 @@ async def update_config(
             ),
         ),
     ] = None,
-    delete: Annotated[
-        bool,
-        Field(
-            description=(
-                'If True, permanently deletes the configuration instead of updating it. '
-                'Any linked variables are automatically removed before deletion. '
-                'WARNING: This action is irreversible.'
-            ),
-        ),
-    ] = False,
 ) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
-    Can also delete the configuration by passing delete=True.
 
     This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
     All other fields will remain unchanged.
@@ -1507,7 +1460,6 @@ async def update_config(
     - Modifying configuration parameters (credentials, settings, API keys, etc.)
     - Updating storage mappings (input/output tables or files)
     - Changing configuration name or description
-    - Deleting a configuration (delete=True)
     - Any combination of the above
 
     WHEN NOT TO USE:
@@ -1535,31 +1487,6 @@ async def update_config(
     4. Call update_config with only the fields to change
     """
     client = KeboolaClient.from_state(ctx.session.state)
-
-    if delete:
-        check_suitable('update_config', component_id)
-        LOG.info(f'Deleting configuration "{configuration_id}" for component "{component_id}".')
-        detail = await client.storage_client.configuration_detail(component_id, configuration_id)
-        vars_id_to_delete = await _resolve_linked_vars_config_id(
-            client, component_id, configuration_id, parent=detail
-        )
-        await client.storage_client.configuration_delete(component_id, configuration_id, skip_trash=True)
-        if vars_id_to_delete is not None:
-            await client.storage_client.configuration_delete(
-                component_id=VARIABLES_COMPONENT_ID,
-                configuration_id=vars_id_to_delete,
-                skip_trash=True,
-            )
-        LOG.info(f'Deleted configuration "{configuration_id}" for component "{component_id}".')
-        return ConfigToolOutput(
-            component_id=component_id,
-            configuration_id=configuration_id,
-            description=detail.get('description', ''),
-            version=detail.get('version', 0),
-            timestamp=datetime.now(timezone.utc),
-            success=True,
-            links=[],
-        )
 
     links_manager = await ProjectLinksManager.from_client(client)
 

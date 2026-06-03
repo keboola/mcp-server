@@ -724,7 +724,6 @@ WHEN TO USE:
 **Description**:
 
 Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
-Can also delete the configuration by passing delete=True.
 
 This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
 All other fields will remain unchanged.
@@ -734,7 +733,6 @@ WHEN TO USE:
 - Modifying configuration parameters (credentials, settings, API keys, etc.)
 - Updating storage mappings (input/output tables or files)
 - Changing configuration name or description
-- Deleting a configuration (delete=True)
 - Any combination of the above
 
 WHEN NOT TO USE:
@@ -995,11 +993,6 @@ WORKFLOW:
       ],
       "default": null,
       "description": "Variable definitions for this configuration. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged."
-    },
-    "delete": {
-      "default": false,
-      "description": "If True, permanently deletes the configuration instead of updating it. Any linked variables are automatically removed before deletion. WARNING: This action is irreversible.",
-      "type": "boolean"
     }
   },
   "required": [
@@ -1269,7 +1262,7 @@ WORKFLOW:
 **Description**:
 
 Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
-name or description. Can also delete the transformation by passing delete=True.
+name or description.
 
 This tool allows PARTIAL parameter updates for transformation SQL blocks and code - you only need to provide
 the operations you want to perform. All other fields will remain unchanged.
@@ -1280,7 +1273,6 @@ WHEN TO USE:
 - Updating transformation block or code block names
 - Changing input/output table mappings for the transformation
 - Updating the transformation name or description
-- Deleting a transformation (delete=True)
 - Any combination of the above
 
 PREREQUISITES:
@@ -1899,11 +1891,6 @@ Example 4 - Update storage mappings:
       ],
       "default": null,
       "description": "Variable definitions for this transformation. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged."
-    },
-    "delete": {
-      "default": false,
-      "description": "If True, permanently deletes the transformation instead of updating it. Any linked variables are automatically removed before deletion. WARNING: This action is irreversible.",
-      "type": "boolean"
     }
   },
   "required": [
