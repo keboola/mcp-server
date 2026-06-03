@@ -20,6 +20,28 @@ The rules in this file (git workflow, versioning, venv setup) complement `CONTRI
 - **Every PR must include a `pyproject.toml` version bump** — bump before merging; see [Versioning](#versioning) for the rules
 - **Never use `git push --force`** or rebase commits that have already been pushed - use merge commits instead to avoid rewriting history for others
 
+## Mapping a Docker Image Tag to a Version
+
+Production/canary images on Docker Hub (`keboola/mcp-server`) are tagged `production-<full-git-sha>` (or `canary-orion-<sha>`, etc.). To resolve a tag to a release version and check whether it's the latest deployed image, don't guess — run:
+
+```bash
+# 1. Which commit + version is in the image? (sha = part after "production-")
+git fetch origin main
+git log --oneline -1 <sha>
+git show <sha>:pyproject.toml | grep -m1 '^version'
+
+# 2. Is anything newer already merged to main but not in the image?
+git log --oneline <sha>..origin/main
+
+# 3. Is it the latest production image on Docker Hub? (tags sorted newest-first)
+curl -s "https://hub.docker.com/v2/repositories/keboola/mcp-server/tags/?page_size=20&name=production" |
+  python3 -c "import sys,json; [print(t['name'], t['last_updated']) for t in json.load(sys.stdin)['results']]"
+```
+
+Notes:
+- The remote default branch is **`main`** (a local clone may have a stale `master` ref — always fetch and compare against `origin/main`).
+- The image version is whatever `pyproject.toml` said **at that commit**; the latest production tag can lag behind `main` HEAD (merged but not yet deployed).
+
 ## Testing
 - **All tox checks must pass before pushing** — CI runs the same checks (pytest, black, flake8, check-tools-docs) and will fail the build if any of them fail
 - **Use tox** for final testing - it runs pytest, black (formatting), flake8 (linter), and check-tools-docs (verifies TOOLS.md is up-to-date)
