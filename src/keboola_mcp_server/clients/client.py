@@ -12,7 +12,7 @@ from keboola_mcp_server.clients.encryption import EncryptionClient
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
 from keboola_mcp_server.clients.metastore import MetastoreClient
 from keboola_mcp_server.clients.scheduler import SchedulerClient
-from keboola_mcp_server.clients.storage import AsyncStorageClient
+from keboola_mcp_server.clients.storage import AsyncStorageClient, JsonDict
 from keboola_mcp_server.clients.sync_actions import SyncActionsClient
 
 LOG = logging.getLogger(__name__)
@@ -147,6 +147,9 @@ class KeboolaClient:
         self._branch_id = branch_id
         self._headers = dict(headers) if headers else None
         self._features_cache: set[str] | None = None
+        # Session-scoped cache of flow configuration schemas keyed by flow type (component id).
+        # Mirrors _features_cache: fetched once per session so it is never stale across runs.
+        self._flow_schema_cache: dict[str, JsonDict] = {}
 
         sapi_url_parsed = urlparse(storage_api_url)
         if not sapi_url_parsed.hostname or not sapi_url_parsed.hostname.startswith('connection.'):
@@ -242,6 +245,14 @@ class KeboolaClient:
             owner = token_info.get('owner', {})
             self._features_cache = set(owner.get('features', []) if isinstance(owner, dict) else [])
         return feature in self._features_cache
+
+    def get_cached_flow_schema(self, flow_type: str) -> JsonDict | None:
+        """Return the cached configuration schema for the given flow type, or None if not cached."""
+        return self._flow_schema_cache.get(flow_type)
+
+    def cache_flow_schema(self, flow_type: str, schema: JsonDict) -> None:
+        """Cache the configuration schema for the given flow type for the rest of the session."""
+        self._flow_schema_cache[flow_type] = schema
 
     @property
     def headers(self) -> dict[str, Any] | None:
