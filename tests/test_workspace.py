@@ -7,6 +7,7 @@ from httpx import HTTPStatusError, Request, Response
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
+from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.workspace import JobSubmittedInfo, WorkspaceManager, _SnowflakeWorkspace
 
 
@@ -363,6 +364,124 @@ async def test_workspace_manager_execute_query_forwards_callback():
 
     assert len(received) == 1
     assert received[0].job_id == 'job-fwd'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('readonly', [None, True])
+async def test_workspace_creation_sends_step_up_header(tmp_path, readonly):
+    """
+    When a Kubernetes SA token path is configured (deployed MCP server), workspace
+    provisioning must run with a Storage client that keeps the user's own token AND
+    sends the X-Kubernetes-Authorization step-up header, so Connection can waive the
+    permissions a read-only token lacks. No privileged token is ever minted. The
+    client-side read-only guard of the user's Storage client must be propagated to
+    the step-up client — the step-up widens server-side permissions only.
+    """
+    token_file = tmp_path / 'token'
+    token_file.write_text('sa-jwt\n')
+
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_client.token = 'user-token'
+    mock_client.storage_api_url = 'https://connection.keboola.com'
+    mock_client.headers = {'User-Agent': 'test'}
+    mock_storage_client = AsyncMock()
+    mock_storage_client.raw_client.readonly = readonly
+    mock_client.storage_client = mock_storage_client
+    mock_storage_client.verify_token.return_value = {'owner': {'id': 123, 'defaultBackend': 'snowflake'}}
+
+    mock_writer = AsyncMock()
+    mock_writer.configuration_create.return_value = {'id': 'test-config-123', 'name': 'test'}
+    mock_writer.workspace_create_for_config.return_value = {'id': 42}
+
+    manager = WorkspaceManager(mock_client, kubernetes_token_path=str(token_file))
+    # Stop the flow right after the provisioning calls we want to assert on.
+    manager._find_ws_by_id = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    mock_storage_client.job_detail.return_value = {'status': 'success', 'results': {'id': 42}}
+
+    with patch.object(AsyncStorageClient, 'create', return_value=mock_writer) as mock_create:
+        await manager._create_ws()
+
+    # The provisioning client keeps the user's token and adds the step-up header ...
+    mock_create.assert_called_once_with(
+        root_url='https://connection.keboola.com',
+        token='user-token',
+        branch_id=None,
+        headers={'User-Agent': 'test', 'X-Kubernetes-Authorization': 'Bearer sa-jwt'},
+        readonly=readonly,
+    )
+    # ... and all provisioning writes went through the step-up client, not the plain one.
+    mock_writer.configuration_create.assert_awaited_once()
+    mock_writer.workspace_create_for_config.assert_awaited_once()
+    mock_storage_client.configuration_create.assert_not_called()
+    mock_storage_client.workspace_create_for_config.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_provisioning_client_falls_back_to_user_client():
+    """Without a Kubernetes token path the provisioning client is the user's own Storage client."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+
+    manager = WorkspaceManager(mock_client)
+
+    assert await manager._provisioning_storage_client() is mock_storage_client
+
+
+@pytest.mark.asyncio
+async def test_provisioning_client_is_cached_per_manager(tmp_path):
+    """The step-up provisioning client is reused so the token file is read at most once per flow."""
+    token_file = tmp_path / 'token'
+    token_file.write_text('sa-jwt')
+
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_client.token = 'user-token'
+    mock_client.storage_api_url = 'https://connection.keboola.com'
+    mock_client.headers = None
+
+    manager = WorkspaceManager(mock_client, kubernetes_token_path=str(token_file))
+
+    with patch.object(AsyncStorageClient, 'create', return_value=AsyncMock()) as mock_create:
+        first = await manager._provisioning_storage_client()
+        second = await manager._provisioning_storage_client()
+
+    assert first is second
+    mock_create.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_provisioning_client_fails_loudly_on_empty_token_file(tmp_path):
+    """An empty projected token file must fail loudly, not silently drop the step-up header."""
+    token_file = tmp_path / 'token'
+    token_file.write_text('  \n')
+
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_client.token = 'user-token'
+    mock_client.storage_api_url = 'https://connection.keboola.com'
+    mock_client.headers = None
+
+    manager = WorkspaceManager(mock_client, kubernetes_token_path=str(token_file))
+
+    with pytest.raises(ValueError, match='token file is empty'):
+        await manager._provisioning_storage_client()
+
+
+@pytest.mark.asyncio
+async def test_provisioning_client_fails_loudly_on_missing_token_file(tmp_path):
+    """A missing projected token file must fail loudly, not silently drop the step-up header."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_client.token = 'user-token'
+    mock_client.storage_api_url = 'https://connection.keboola.com'
+    mock_client.headers = None
+
+    manager = WorkspaceManager(mock_client, kubernetes_token_path=str(tmp_path / 'missing'))
+
+    with pytest.raises(FileNotFoundError):
+        await manager._provisioning_storage_client()
 
 
 @pytest.mark.asyncio
