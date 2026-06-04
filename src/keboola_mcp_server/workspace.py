@@ -5,6 +5,7 @@ import logging
 import re
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence, cast
 from urllib.parse import urlunparse
 
@@ -15,6 +16,7 @@ from pydantic.dataclasses import dataclass
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
+from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.tools.storage_helpers import has_storage_branches
 
 LOG = logging.getLogger(__name__)
@@ -532,7 +534,12 @@ class WorkspaceManager:
         return instance
 
     @classmethod
-    async def create(cls, client: KeboolaClient, workspace_schema: str | None = None) -> 'WorkspaceManager':
+    async def create(
+        cls,
+        client: KeboolaClient,
+        workspace_schema: str | None = None,
+        kubernetes_token_path: str | None = None,
+    ) -> 'WorkspaceManager':
         # On projects with the `storage-branches` feature, each dev branch needs its own
         # workspace so the agent's queries (FQN paths, `query_data`) see that branch's
         # table versions. The workspace ID is stored under the same metadata key but in
@@ -542,11 +549,16 @@ class WorkspaceManager:
         # `has_storage_branches` already requires `branch_id is not None`, so the default
         # branch always takes the prod-client path.
         if await has_storage_branches(client):
-            return cls(client, workspace_schema)
+            return cls(client, workspace_schema, kubernetes_token_path=kubernetes_token_path)
         prod_client = await client.with_branch_id(None)
-        return cls(prod_client, workspace_schema)
+        return cls(prod_client, workspace_schema, kubernetes_token_path=kubernetes_token_path)
 
-    def __init__(self, client: KeboolaClient, workspace_schema: str | None = None):
+    def __init__(
+        self,
+        client: KeboolaClient,
+        workspace_schema: str | None = None,
+        kubernetes_token_path: str | None = None,
+    ):
         """
         Initializes the WorkspaceManager.
 
@@ -555,11 +567,60 @@ class WorkspaceManager:
             client; on a `storage-branches` project bound to a dev branch this is the
             dev-branch client (see :meth:`create`).
         :param workspace_schema: The schema of the workspace to use.
+        :param kubernetes_token_path: Optional path to the projected Kubernetes
+            ServiceAccount token. When set, workspace provisioning requests carry the
+            JWT as the X-Kubernetes-Authorization step-up header alongside the user's
+            own token, so Connection can waive permissions the user's token lacks
+            (e.g. read-only users).
         """
         self._client = client
         self._workspace_schema = workspace_schema
+        self._kubernetes_token_path = kubernetes_token_path
+        self._provisioning_client: AsyncStorageClient | None = None
         self._workspace: _Workspace | None = None
         self._table_info_cache: dict[str, DbTableInfo] = {}
+
+    async def _provisioning_storage_client(self, token_info: JsonDict | None = None) -> AsyncStorageClient:
+        """
+        Returns the Storage client used for workspace provisioning (configuration and
+        workspace creation, branch metadata update).
+
+        When a Kubernetes ServiceAccount token path is configured (Keboola-deployed MCP
+        server), the provisioning client keeps the user's own Storage token and
+        additionally sends the projected SA JWT as the X-Kubernetes-Authorization
+        step-up header — Connection waives permissions the user's token lacks when the
+        ServiceAccount is authorized for workspace provisioning. No privileged token
+        is ever minted; the audit trail stays on the user's token.
+        Otherwise the user's own Storage client is used unchanged.
+
+        The step-up client is cached for this manager's lifetime — provisioning happens
+        at most once per manager, well within the projected token's rotation window.
+        The token file is read here (per provisioning flow), so kubelet rotation needs
+        no restarts.
+        """
+        del token_info  # kept for signature stability of existing call sites
+        if not self._kubernetes_token_path:
+            return self._client.storage_client
+        if self._provisioning_client is not None:
+            return self._provisioning_client
+
+        jwt = Path(self._kubernetes_token_path).read_text().strip()
+        if not jwt:
+            raise ValueError(f'Kubernetes ServiceAccount token file is empty: {self._kubernetes_token_path}')
+
+        headers = dict(self._client.headers or {})
+        headers['X-Kubernetes-Authorization'] = f'Bearer {jwt}'
+        self._provisioning_client = AsyncStorageClient.create(
+            root_url=self._client.storage_api_url,
+            token=self._client.token,
+            branch_id=self._client.branch_id,
+            headers=headers,
+            # Propagate the read-only guard of the user's Storage client; the step-up
+            # header widens server-side permissions, never the client-side write guard.
+            readonly=self._client.storage_client.raw_client.readonly,
+        )
+        LOG.info('Workspace provisioning will send the Kubernetes step-up header.')
+        return self._provisioning_client
 
     async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
         """Finds the workspace info by its schema."""
@@ -629,9 +690,11 @@ class WorkspaceManager:
         else:
             raise ValueError(f'Unexpected default backend: {default_backend}')
 
+        writer = await self._provisioning_storage_client(token_info)
+
         component_id = self.MCP_WORKSPACE_COMPONENT_ID
         config_name = f'mcp-workspace-{uuid.uuid4().hex[:8]}'
-        config_resp = await self._client.storage_client.configuration_create(
+        config_resp = await writer.configuration_create(
             component_id=component_id,
             name=config_name,
             description='Auto-created by MCP server for workspace billing.',
@@ -640,7 +703,7 @@ class WorkspaceManager:
         config_id = str(config_resp['id'])
 
         try:
-            resp = await self._client.storage_client.workspace_create_for_config(
+            resp = await writer.workspace_create_for_config(
                 component_id=component_id,
                 config_id=config_id,
                 login_type=login_type,
@@ -650,7 +713,7 @@ class WorkspaceManager:
             )
         except Exception:
             try:
-                await self._client.storage_client.configuration_delete(component_id, config_id)
+                await writer.configuration_delete(component_id, config_id)
             except Exception as cleanup_err:
                 LOG.warning(
                     f'Failed to clean up configuration {component_id}/{config_id} '
@@ -747,7 +810,10 @@ class WorkspaceManager:
         if info := await self._create_ws():
             # All tokens share the same read-only workspace
             # Race conditions during initialization are acceptable (last-write-wins)
-            meta = await self._client.storage_client.branch_metadata_update({self.MCP_META_KEY: info.id})
+            # The metadata write needs the same elevated permissions as the workspace
+            # creation itself (read-only user tokens cannot write branch metadata).
+            writer = await self._provisioning_storage_client()
+            meta = await writer.branch_metadata_update({self.MCP_META_KEY: info.id})
             LOG.info(f'Set metadata in the default branch: {meta}')
             # use the newly created workspace
             self._workspace = self._init_workspace(info)
