@@ -80,9 +80,9 @@ async def resolve_flow_schema(client: KeboolaClient, flow_type: FlowType) -> Jso
     return schema
 
 
-def get_schema_as_markdown(flow_type: FlowType) -> str:
+async def get_schema_as_markdown(client: KeboolaClient, flow_type: FlowType) -> str:
     """Return the flow schema as a markdown formatted string."""
-    schema = _load_schema(flow_type=flow_type)
+    schema = await resolve_flow_schema(client, flow_type)
     return f'```json\n{json.dumps(schema, indent=2)}\n```'
 
 

@@ -147,7 +147,8 @@ async def get_flow_schema(
         )
 
     LOG.info(f'Returning flow configuration schema for flow type: {flow_type}')
-    return get_schema_as_markdown(flow_type=flow_type)
+    client = KeboolaClient.from_state(ctx.session.state)
+    return await get_schema_as_markdown(client, flow_type)
 
 
 @tool_errors()

@@ -822,17 +822,25 @@ class TestGetFlowSchemaTool:
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
+        conditional_flow_schema: dict,
     ):
-        """Test getting schema for conditional flow type when conditional flows are enabled."""
+        """Conditional schema is sourced live (mocked) when conditional flows are enabled."""
         mock_project_info = mocker.Mock()
         mock_project_info.conditional_flows = True
         mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
 
+        component = mocker.Mock()
+        component.configuration_schema = conditional_flow_schema
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(return_value=component),
+        )
+
         result = await get_flow_schema(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
 
         assert isinstance(result, str)
-        assert '```json' in result
-        assert 'keboola.flow' in result or 'conditional' in result.lower()
+        assert result.startswith('```json\n')
+        assert result.endswith('\n```')
         assert 'next' in result
 
     @pytest.mark.asyncio
