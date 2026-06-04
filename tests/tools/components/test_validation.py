@@ -6,7 +6,7 @@ from typing import Optional
 import jsonschema
 import pytest
 
-from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, JsonDict
 from keboola_mcp_server.tools import validation
 from keboola_mcp_server.tools.components.model import Component
@@ -829,3 +829,42 @@ def test_validate_parameters_root_real_scenario(
         with pytest.raises(validation.RecoverableValidationError) as exception:
             validation.validate_root_parameters_configuration(modified_input_parameters, component, 'test oops')
         assert 'test oops' in str(exception.value)
+
+
+def test_validate_conditional_flow_with_explicit_schema():
+    """A conditional flow validates against an explicitly provided schema."""
+    with open('tests/tools/flow/fixtures/conditional_flow_schema.json', 'r') as f:
+        schema = json.load(f)
+    valid_flow = {
+        'phases': [
+            {
+                'id': 'p1',
+                'name': 'Phase 1',
+                'next': [{'id': 't1', 'name': 'End', 'goto': None}],
+            },
+        ],
+        'tasks': [
+            {
+                'id': 'task1',
+                'name': 'Notify',
+                'phase': 'p1',
+                'task': {
+                    'type': 'notification',
+                    'title': 'Done',
+                    'recipients': [{'channel': 'email', 'address': 'ops@example.com'}],
+                },
+            }
+        ],
+    }
+    result = validation.validate_flow_configuration_against_schema(
+        valid_flow, flow_type=CONDITIONAL_FLOW_COMPONENT_ID, schema=schema
+    )
+    assert result == valid_flow
+
+
+def test_validate_flow_conditional_without_schema_raises():
+    """Conditional flow without an explicit schema is a programming error (no bundled fallback)."""
+    with pytest.raises(ValueError, match='No schema provided for flow type'):
+        validation.validate_flow_configuration_against_schema(
+            {'phases': [], 'tasks': []}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID
+        )
