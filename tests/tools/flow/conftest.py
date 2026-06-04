@@ -1,6 +1,10 @@
+import json
+from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
+
+from keboola_mcp_server.clients.storage import JsonDict
 
 
 @pytest.fixture
@@ -92,3 +96,11 @@ def sample_tasks() -> List[Dict[str, Any]]:
             'task': {'componentId': 'keboola.wr-google-bigquery-v2', 'configId': '11111'},
         },
     ]
+
+
+@pytest.fixture
+def conditional_flow_schema() -> JsonDict:
+    """Representative offline keboola.flow configuration schema for conditional-flow tests."""
+    fixture_path = Path(__file__).parent / 'fixtures' / 'conditional_flow_schema.json'
+    with fixture_path.open('r', encoding='utf-8') as f:
+        return json.load(f)
