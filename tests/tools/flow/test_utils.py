@@ -1,7 +1,7 @@
 from typing import Any
 
 import pytest
-from httpx import HTTPStatusError, Request, Response
+from httpx import ConnectError, HTTPStatusError, Request, Response
 
 from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.tools.flow.utils import (
@@ -617,6 +617,19 @@ class TestResolveFlowSchema:
             request=Request('GET', 'https://ai.keboola.com'),
             response=Response(500),
         )
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(side_effect=error),
+        )
+
+        with pytest.raises(ValueError, match='Could not retrieve the conditional flow'):
+            await resolve_flow_schema(client, CONDITIONAL_FLOW_COMPONENT_ID)
+
+    @pytest.mark.asyncio
+    async def test_raises_on_fetch_network_error(self, mocker):
+        client = mocker.Mock()
+        client.get_cached_flow_schema.return_value = None
+        error = ConnectError('connection refused', request=Request('GET', 'https://ai.keboola.com'))
         mocker.patch(
             'keboola_mcp_server.tools.flow.utils.fetch_component',
             mocker.AsyncMock(side_effect=error),

@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from importlib import resources
 from typing import Any, Mapping, Sequence
 
-from httpx import HTTPStatusError
+from httpx import HTTPError
 
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
@@ -68,7 +68,9 @@ async def resolve_flow_schema(client: KeboolaClient, flow_type: FlowType) -> Jso
     )
     try:
         component = await fetch_component(client, CONDITIONAL_FLOW_COMPONENT_ID)
-    except HTTPStatusError as e:
+    except HTTPError as e:
+        # Covers both non-404 HTTPStatusError (re-raised by fetch_component) and transport/network
+        # errors (httpx.RequestError: connect/timeout) so the agent always gets the recoverable message.
         raise ValueError(failure_message) from e
 
     schema = component.configuration_schema
