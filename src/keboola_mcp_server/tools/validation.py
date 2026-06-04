@@ -35,7 +35,6 @@ RESOURCES = 'keboola_mcp_server.resources'
 class ConfigurationSchemaResources(str, Enum):
     STORAGE = 'storage-schema.json'
     LEGACY_FLOW = 'flow-schema.json'
-    FLOW = 'conditional-flow-schema.json'
 
 
 @dataclass(frozen=True)

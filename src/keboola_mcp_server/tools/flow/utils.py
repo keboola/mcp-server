@@ -31,7 +31,6 @@ LOG = logging.getLogger(__name__)
 
 RESOURCES = 'keboola_mcp_server.resources'
 FLOW_SCHEMAS: Mapping[FlowType, str] = {
-    CONDITIONAL_FLOW_COMPONENT_ID: 'conditional-flow-schema.json',
     ORCHESTRATOR_COMPONENT_ID: 'flow-schema.json',
 }
 
