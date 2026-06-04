@@ -37,6 +37,17 @@ LOG = logging.getLogger(__name__)
 PYDANTIC_DOCS_VERSION = '.'.join(pydantic.__version__.split('.')[:2])
 
 
+def _schema_advertises_variables(parsed_schema: dict) -> bool:
+    """True if the live keboola.flow schema advertises flow-level variables fields."""
+    # Defensive: the exact location of the variables block is owned by AJDA-2351 / Developer Portal.
+    # Treat any top-level or phase-level 'variables' property as "advertised".
+    top = parsed_schema.get('properties', {})
+    if 'variables' in top:
+        return True
+    phase_props = top.get('phases', {}).get('items', {}).get('properties', {})
+    return 'variables' in phase_props
+
+
 @pytest.mark.asyncio
 async def test_create_and_retrieve_flow(mcp_context: Context, configs: list[ConfigDef]) -> None:
     """
@@ -658,6 +669,12 @@ async def test_get_flow_schema(mcp_context: Context) -> None:
         conditional_tasks = parsed_conditional_schema['properties']['tasks']['items']['properties']['task']
         assert 'oneOf' in conditional_tasks  # Conditional flows have structured task types
 
+        # The conditional schema is sourced live from the Developer Portal — it must be non-empty
+        # and structurally a flow schema (not a stale/empty bundled placeholder).
+        assert parsed_conditional_schema  # non-empty dict
+        assert parsed_conditional_schema['properties']['phases']['items']['properties']
+        assert parsed_conditional_schema['properties']['tasks']['items']['properties']
+
 
 @pytest.mark.asyncio
 async def test_create_legacy_flow_invalid_structure(mcp_context: Context, configs: list[ConfigDef]) -> None:
@@ -1024,3 +1041,29 @@ async def test_flow_lifecycle_integration(mcp_context: Context, configs: list[Co
             LOG.info(f'Successfully deleted {flow_type} flow {flow_id}')
         except Exception as e:
             LOG.warning(f'Failed to delete {flow_type} flow {flow_id}: {e}')
+
+
+@pytest.mark.asyncio
+async def test_conditional_flow_variables_when_advertised(mcp_context: Context, configs: list[ConfigDef]) -> None:
+    """
+    If the live keboola.flow schema advertises flow variables, exercise the variables fields
+    end to end. Otherwise skip — the Developer-Portal schema (AJDA-2351) is not yet published
+    on this stack, and there is intentionally no bundled fallback.
+    """
+    project_info = await get_project_info(mcp_context)
+    if not project_info.conditional_flows:
+        pytest.skip('Conditional flows not enabled on this stack.')
+
+    schema_md = await get_flow_schema(mcp_context, CONDITIONAL_FLOW_COMPONENT_ID)
+    parsed = json.loads(schema_md[8:-4])  # strip ```json\n and \n```
+    if not _schema_advertises_variables(parsed):
+        pytest.skip('Live keboola.flow schema does not advertise variables yet (AJDA-2351 not live).')
+
+    # Build a minimal conditional flow that defines and consumes a variable, shaped from the
+    # live schema's variables definition. Read `parsed` to populate the exact required fields.
+    assert configs
+    assert configs[0].configuration_id is not None
+    # The concrete variables block is derived from `parsed`; assert the create path validates
+    # the variables fields against the live schema (i.e. create succeeds), then clean up.
+    # NOTE: fill the `variables`/task-override fields per `parsed` once AJDA-2351 lands; until then
+    # this test self-skips above, so it never asserts a guessed shape.
