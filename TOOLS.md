@@ -1269,20 +1269,16 @@ the operations you want to perform. All other fields will remain unchanged.
 Use this for modifying SQL transformations created with create_sql_transformation.
 
 WHEN TO USE:
+- SQL transformations only (Snowflake/BigQuery); use update_config for Python/R transformations
 - Modifying SQL queries in transformation (add/edit/remove SQL statements)
 - Updating transformation block or code block names
 - Changing input/output table mappings for the transformation
 - Updating the transformation name or description
 - Any combination of the above
-- ONLY for SQL transformations: keboola.snowflake-transformation (Snowflake) or
-  keboola.google-bigquery-transformation (BigQuery). Do NOT call this for Python
-  (keboola.python-transformation-v2) or R (keboola.r-transformation-v2) transformations —
-  those must be updated with update_config using their respective component_id.
 
 PREREQUISITES:
 - Transformation must already exist (use create_sql_transformation for new transformations)
 - You must know the configuration_id of the transformation
-- Confirm the config's component_id is a SQL transformation before calling; use get_configs to check
 - SQL dialect is determined automatically from the workspace
 - CRITICAL: Use get_configs first to see the current transformation structure and get block_id/code_id values
 
