@@ -280,7 +280,7 @@ async def create_conditional_flow(
     flow_type = CONDITIONAL_FLOW_COMPONENT_ID
     flow_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
 
-    LOG.info(f'Creating new enhanced conditional flow: {name} (type: {flow_type})')
+    LOG.info(f'Creating flow: {name} (type: {flow_type})')
     client = KeboolaClient.from_state(ctx.session.state)
 
     # Validate flow structure to catch semantic errors in the structure
