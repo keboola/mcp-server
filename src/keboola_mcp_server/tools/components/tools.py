@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Optional, Sequence, cast
 
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import FunctionTool
 from httpx import HTTPStatusError
 from mcp.types import ToolAnnotations
@@ -668,6 +669,7 @@ async def update_sql_transformation(
     Use this for modifying SQL transformations created with create_sql_transformation.
 
     WHEN TO USE:
+    - SQL transformations only (Snowflake/BigQuery); use update_config for Python/R transformations
     - Modifying SQL queries in transformation (add/edit/remove SQL statements)
     - Updating transformation block or code block names
     - Changing input/output table mappings for the transformation
@@ -981,9 +983,19 @@ async def update_sql_transformation_internal(
 ) -> tuple[JsonDict, JsonDict, str, dict | None]:
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
-    config_details = await client.storage_client.configuration_detail(
-        component_id=sql_transformation_id, configuration_id=configuration_id
-    )
+    try:
+        config_details = await client.storage_client.configuration_detail(
+            component_id=sql_transformation_id, configuration_id=configuration_id
+        )
+    except HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise ToolError(
+                f"Configuration '{configuration_id}' was not found under SQL transformation component "
+                f"'{sql_transformation_id}'. If this is a Python or R transformation, use 'update_config' "
+                f"with component_id 'keboola.python-transformation-v2' or 'keboola.r-transformation-v2' "
+                f"instead of 'update_sql_transformation'."
+            ) from e
+        raise
     api_component = await fetch_component(client=client, component_id=sql_transformation_id)
     transformation = Component.from_api_response(api_component)
 

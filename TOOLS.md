@@ -1269,6 +1269,7 @@ the operations you want to perform. All other fields will remain unchanged.
 Use this for modifying SQL transformations created with create_sql_transformation.
 
 WHEN TO USE:
+- SQL transformations only (Snowflake/BigQuery); use update_config for Python/R transformations
 - Modifying SQL queries in transformation (add/edit/remove SQL statements)
 - Updating transformation block or code block names
 - Changing input/output table mappings for the transformation

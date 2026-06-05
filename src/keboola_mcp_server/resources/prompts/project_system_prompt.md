@@ -38,6 +38,9 @@ However, even though Python and R transformations allow you to write code in the
 integrations with external systems that download or push data, manipulate remote systems, or require user parameters as
 input.
 
+When updating an existing transformation, check its `component_id` first (`get_configs`): use `update_sql_transformation`
+only for SQL transformations; update Python and R transformations with `update_config`.
+
 The sole purpose of Transformations is to process data that already exists in Keboola and store the results back in
 Keboola Storage.
 
