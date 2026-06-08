@@ -251,8 +251,15 @@ class TestCreateFlowTool:
         mocker: MockerFixture,
         mcp_context_client: Context,
         mock_conditional_flow_create_update: Dict[str, Any],
+        conditional_flow_schema: dict,
     ):
         """Test conditional flow creation."""
+        component = mocker.Mock()
+        component.configuration_schema = conditional_flow_schema
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(return_value=component),
+        )
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.storage_client.configuration_create = mocker.AsyncMock(
             return_value=mock_conditional_flow_create_update
@@ -343,8 +350,15 @@ class TestUpdateFlowTool:
         mocker: MockerFixture,
         mcp_context_client: Context,
         mock_conditional_flow_create_update: Dict[str, Any],
+        conditional_flow_schema: dict,
     ):
         """Test conditional flow update with enhanced conditions."""
+        component = mocker.Mock()
+        component.configuration_schema = conditional_flow_schema
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(return_value=component),
+        )
         mock_project_info = mocker.Mock()
         mock_project_info.conditional_flows = True
 
@@ -822,17 +836,25 @@ class TestGetFlowSchemaTool:
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
+        conditional_flow_schema: dict,
     ):
-        """Test getting schema for conditional flow type when conditional flows are enabled."""
+        """Conditional schema is sourced live (mocked) when conditional flows are enabled."""
         mock_project_info = mocker.Mock()
         mock_project_info.conditional_flows = True
         mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', return_value=mock_project_info)
 
+        component = mocker.Mock()
+        component.configuration_schema = conditional_flow_schema
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(return_value=component),
+        )
+
         result = await get_flow_schema(ctx=mcp_context_client, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
 
         assert isinstance(result, str)
-        assert '```json' in result
-        assert 'keboola.flow' in result or 'conditional' in result.lower()
+        assert result.startswith('```json\n')
+        assert result.endswith('\n```')
         assert 'next' in result
 
     @pytest.mark.asyncio
@@ -1101,6 +1123,7 @@ async def test_create_conditional_flow_folder(
     mocker: MockerFixture,
     mcp_context_client: Context,
     mock_conditional_flow_create_update: dict[str, Any],
+    conditional_flow_schema: dict,
     folder: str,
     flow_count: int,
     flow_folders: list[str],
@@ -1108,6 +1131,12 @@ async def test_create_conditional_flow_folder(
     expect_hint: bool,
 ) -> None:
     """Test folder metadata and change_summary hint for create_conditional_flow."""
+    component = mocker.Mock()
+    component.configuration_schema = conditional_flow_schema
+    mocker.patch(
+        'keboola_mcp_server.tools.flow.utils.fetch_component',
+        mocker.AsyncMock(return_value=component),
+    )
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(
         return_value=mock_conditional_flow_create_update

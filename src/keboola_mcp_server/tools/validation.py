@@ -35,7 +35,6 @@ RESOURCES = 'keboola_mcp_server.resources'
 class ConfigurationSchemaResources(str, Enum):
     STORAGE = 'storage-schema.json'
     LEGACY_FLOW = 'flow-schema.json'
-    FLOW = 'conditional-flow-schema.json'
 
 
 @dataclass(frozen=True)
@@ -303,22 +302,28 @@ def _validate_parameters_configuration_against_schema(
 def validate_flow_configuration_against_schema(
     flow: JsonDict,
     flow_type: FlowType,
+    schema: Optional[JsonDict] = None,
     initial_message: Optional[str] = None,
     validation_context: ValidationContext | None = None,
 ) -> JsonDict:
     """
     Validate the flow configuration using jsonschema.
     :flow: json data to validate
-    :flow_type: the type of flow schema to validate against (legacy flow or conditional flow)
+    :flow_type: selects the bundled schema only when ``schema`` is None; it must then be
+                ORCHESTRATOR_COMPONENT_ID (legacy). When ``schema`` is provided, that schema is
+                authoritative and ``flow_type`` is not used for schema selection.
+    :schema: explicit schema to validate against; required for conditional flows (resolved live).
+             When None, only the bundled legacy orchestrator schema is available.
     :initial_message: initial message to include in the error message
     :returns: The validated flow configuration
     """
-    schema_type = (
-        ConfigurationSchemaResources.LEGACY_FLOW
-        if flow_type == ORCHESTRATOR_COMPONENT_ID
-        else ConfigurationSchemaResources.FLOW
-    )
-    schema = _load_schema(schema_type)
+    if schema is None:
+        if flow_type != ORCHESTRATOR_COMPONENT_ID:
+            raise ValueError(
+                f'No schema provided for flow type "{flow_type}". The conditional flow schema must be '
+                f'resolved from the Developer Portal via resolve_flow_schema() and passed explicitly.'
+            )
+        schema = _load_schema(ConfigurationSchemaResources.LEGACY_FLOW)
     _validate_json_against_schema(
         json_data=flow,
         schema=schema,

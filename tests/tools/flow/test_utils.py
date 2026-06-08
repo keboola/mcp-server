@@ -1,6 +1,7 @@
 from typing import Any
 
 import pytest
+from httpx import ConnectError, HTTPStatusError, Request, Response
 
 from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.tools.flow.utils import (
@@ -9,6 +10,7 @@ from keboola_mcp_server.tools.flow.utils import (
     ensure_legacy_phase_ids,
     ensure_legacy_task_ids,
     get_flow_configuration,
+    resolve_flow_schema,
     validate_flow_structure,
 )
 
@@ -557,3 +559,89 @@ class TestReachableIds:
 
         assert result == expected
         assert visited == expected_visited
+
+
+class TestResolveFlowSchema:
+    """Tests for resolve_flow_schema."""
+
+    @pytest.mark.asyncio
+    async def test_returns_live_schema_for_conditional(self, mocker, conditional_flow_schema):
+        client = mocker.Mock()
+        client.get_cached_flow_schema.return_value = None
+        component = mocker.Mock()
+        component.configuration_schema = conditional_flow_schema
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(return_value=component),
+        )
+
+        result = await resolve_flow_schema(client, CONDITIONAL_FLOW_COMPONENT_ID)
+
+        assert result == conditional_flow_schema
+        client.cache_flow_schema.assert_called_once_with(CONDITIONAL_FLOW_COMPONENT_ID, conditional_flow_schema)
+
+    @pytest.mark.asyncio
+    async def test_uses_cache_and_does_not_refetch(self, mocker, conditional_flow_schema):
+        client = mocker.Mock()
+        client.get_cached_flow_schema.return_value = conditional_flow_schema
+        fetch = mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(),
+        )
+
+        result = await resolve_flow_schema(client, CONDITIONAL_FLOW_COMPONENT_ID)
+
+        assert result == conditional_flow_schema
+        fetch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_raises_on_empty_schema(self, mocker):
+        client = mocker.Mock()
+        client.get_cached_flow_schema.return_value = None
+        component = mocker.Mock()
+        component.configuration_schema = None
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(return_value=component),
+        )
+
+        with pytest.raises(ValueError, match='Could not retrieve the conditional flow'):
+            await resolve_flow_schema(client, CONDITIONAL_FLOW_COMPONENT_ID)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'error',
+        [
+            # non-404 HTTP status error re-raised by fetch_component
+            HTTPStatusError('boom', request=Request('GET', 'https://ai.keboola.com'), response=Response(500)),
+            # transport/network error
+            ConnectError('connection refused', request=Request('GET', 'https://ai.keboola.com')),
+            # unexpected non-HTTP failure (e.g. a malformed AI Service payload failing model validation)
+            RuntimeError('unexpected AI Service payload'),
+        ],
+        ids=['http_status_error', 'network_error', 'unexpected_error'],
+    )
+    async def test_raises_recoverable_error_on_fetch_failure(self, mocker, error):
+        client = mocker.Mock()
+        client.get_cached_flow_schema.return_value = None
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(side_effect=error),
+        )
+
+        with pytest.raises(ValueError, match='Could not retrieve the conditional flow'):
+            await resolve_flow_schema(client, CONDITIONAL_FLOW_COMPONENT_ID)
+
+    @pytest.mark.asyncio
+    async def test_returns_bundled_schema_for_legacy(self, mocker):
+        client = mocker.Mock()
+        fetch = mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(),
+        )
+
+        result = await resolve_flow_schema(client, ORCHESTRATOR_COMPONENT_ID)
+
+        assert result['properties']['phases']['items']['properties']  # bundled legacy schema
+        assert 'dependsOn' in result['properties']['phases']['items']['properties']
+        fetch.assert_not_called()

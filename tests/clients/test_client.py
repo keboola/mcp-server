@@ -482,6 +482,19 @@ class TestKeboolaClient:
             assert 'Authorization' not in metastore_headers
 
 
+def test_flow_schema_cache_roundtrip():
+    client = KeboolaClient(
+        storage_api_url='https://connection.keboola.com',
+        storage_api_token='dummy-token',
+    )
+    assert client.get_cached_flow_schema('keboola.flow') is None
+    schema = {'type': 'object'}
+    client.cache_flow_schema('keboola.flow', schema)
+    assert client.get_cached_flow_schema('keboola.flow') is schema
+    # other flow types are independent
+    assert client.get_cached_flow_schema('keboola.orchestrator') is None
+
+
 @pytest.mark.parametrize(
     ('metadata', 'key', 'provider', 'preferred_providers', 'default', 'expected'),
     [
