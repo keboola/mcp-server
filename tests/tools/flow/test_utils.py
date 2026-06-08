@@ -609,27 +609,21 @@ class TestResolveFlowSchema:
             await resolve_flow_schema(client, CONDITIONAL_FLOW_COMPONENT_ID)
 
     @pytest.mark.asyncio
-    async def test_raises_on_fetch_http_error(self, mocker):
+    @pytest.mark.parametrize(
+        'error',
+        [
+            # non-404 HTTP status error re-raised by fetch_component
+            HTTPStatusError('boom', request=Request('GET', 'https://ai.keboola.com'), response=Response(500)),
+            # transport/network error
+            ConnectError('connection refused', request=Request('GET', 'https://ai.keboola.com')),
+            # unexpected non-HTTP failure (e.g. a malformed AI Service payload failing model validation)
+            RuntimeError('unexpected AI Service payload'),
+        ],
+        ids=['http_status_error', 'network_error', 'unexpected_error'],
+    )
+    async def test_raises_recoverable_error_on_fetch_failure(self, mocker, error):
         client = mocker.Mock()
         client.get_cached_flow_schema.return_value = None
-        error = HTTPStatusError(
-            'boom',
-            request=Request('GET', 'https://ai.keboola.com'),
-            response=Response(500),
-        )
-        mocker.patch(
-            'keboola_mcp_server.tools.flow.utils.fetch_component',
-            mocker.AsyncMock(side_effect=error),
-        )
-
-        with pytest.raises(ValueError, match='Could not retrieve the conditional flow'):
-            await resolve_flow_schema(client, CONDITIONAL_FLOW_COMPONENT_ID)
-
-    @pytest.mark.asyncio
-    async def test_raises_on_fetch_network_error(self, mocker):
-        client = mocker.Mock()
-        client.get_cached_flow_schema.return_value = None
-        error = ConnectError('connection refused', request=Request('GET', 'https://ai.keboola.com'))
         mocker.patch(
             'keboola_mcp_server.tools.flow.utils.fetch_component',
             mocker.AsyncMock(side_effect=error),
