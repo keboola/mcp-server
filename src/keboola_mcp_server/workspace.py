@@ -441,27 +441,24 @@ class _SnowflakeWorkspace(_Workspace):
     ) -> DbTableInfo | None:
         table_id = table['id']
 
-        if source_table := table.get('sourceTable'):
-            # Cross-project linked table — prefer caller-supplied backend_path, fall back to sourceTable
-            bp = backend_path or get_backend_path(source_table)
-            if not bp or len(bp) < 2:
-                LOG.warning(f'No backendPath in sourceTable for {table_id}, cannot construct FQN')
-                return None
-            db_name = bp[0]
-            schema_name = bp[1]
+        # Prefer the table's own bucket backendPath. For a linked bucket — including a materialized
+        # alias shared from another project — the backendPath already resolves to the shared database
+        # and schema where the table physically lives, so the resulting FQN is directly queryable from
+        # this workspace. Only fall back to the source table's backendPath when the linked table itself
+        # carries none of its own.
+        bp = backend_path or get_backend_path(table)
+        table_name = table['name']
+        if (not bp or len(bp) < 2) and (source_table := table.get('sourceTable')):
+            bp = get_backend_path(source_table)
             table_name = source_table['id'].rsplit(sep='.', maxsplit=1)[1]
-        else:
-            bp = backend_path or get_backend_path(table)
-            if not bp or len(bp) < 2:
-                LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
-                return None
-            db_name = bp[0]
-            schema_name = bp[1]
-            table_name = table['name']
+
+        if not bp or len(bp) < 2:
+            LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
+            return None
 
         return DbTableInfo(
             id=table_id,
-            fqn=TableFqn(db_name, schema_name, table_name, quote_char='"'),
+            fqn=TableFqn(bp[0], bp[1], table_name, quote_char='"'),
             columns={},
         )
 
@@ -487,6 +484,12 @@ class _BigQueryWorkspace(_Workspace):
         self, table: Mapping[str, Any], backend_path: list[str] | None = None
     ) -> DbTableInfo | None:
         table_id = table['id']
+
+        # BigQuery has no cross-project data sharing: a table that is an alias in its source project
+        # (sourceTable.isAlias) is not materialized into this project's dataset and cannot be queried
+        # from this workspace. Materialized aliases are a Snowflake-only capability.
+        if table.get('sourceTable', {}).get('isAlias'):
+            return None
 
         bp = backend_path or get_backend_path(table)
         if not bp:
@@ -783,10 +786,8 @@ class WorkspaceManager:
     async def get_table_info(
         self, table: Mapping[str, Any], backend_path: list[str] | None = None
     ) -> DbTableInfo | None:
-        # Alias tables (isAlias=true in the source project) are not queryable from any workspace backend
-        if table.get('sourceTable', {}).get('isAlias'):
-            return None
-
+        # Whether an alias table is queryable depends on the backend (Snowflake materializes aliases
+        # from linked buckets, BigQuery does not), so each workspace implementation makes that call.
         table_id = table['id']
         if table_id in self._table_info_cache:
             return self._table_info_cache[table_id]
