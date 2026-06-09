@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType, get_metadata_property
 from keboola_mcp_server.clients.storage import APIFlowResponse
@@ -146,21 +146,16 @@ class TaskCondition(BaseModel):
 
     type: Literal['task'] = Field(description='Condition type')
     task: str = Field(description='ID of the task to evaluate, or "*" when used with phase operators')
-    value: Literal[
-        'taskId',
-        'phaseId',
-        'status',
-        'job.id',
-        'job.componentId',
-        'job.configId',
-        'job.status',
-        'job.result',
-        'job.startTime',
-        'job.endTime',
-        'job.duration',
-        'job.result.output.tables',
-        'job.result.message',
-    ] = Field(description='Property path to retrieve from the task context')
+    value: str = Field(
+        description=(
+            'Property path or JMESPath expression to retrieve from the task context. Common simple '
+            "paths: 'taskId', 'phaseId', 'status', 'job.id', 'job.componentId', 'job.configId', "
+            "'job.status', 'job.result', 'job.startTime', 'job.endTime', 'job.duration', "
+            "'job.result.output.tables', 'job.result.message'. JMESPath expressions over the job "
+            'result are also supported, for example: '
+            "sum(job.result.output.tables[].metrics[?name=='importedRowsCount'][].value)"
+        )
+    )
 
 
 class PhaseCondition(BaseModel):
@@ -248,6 +243,10 @@ ConditionObject = Union[
 class JobTaskConfiguration(BaseModel):
     """Job task configuration."""
 
+    # Forward-compat: keep fields the live keboola.flow schema may add (and that we don't model yet)
+    # instead of silently dropping them on the model_dump round-trip in get_flow_configuration().
+    model_config = ConfigDict(extra='allow')
+
     type: Literal['job'] = Field(description='Task type')
     component_id: str = Field(description='Component ID', alias='componentId')
     config_id: Optional[str] = Field(default=None, description='Configuration ID', alias='configId')
@@ -255,6 +254,11 @@ class JobTaskConfiguration(BaseModel):
     mode: Literal['run'] = Field(description='Execution mode')
     delay: Optional[Union[str, int]] = Field(default=None, description='Initial delay in seconds')
     retry: Optional[RetryConfiguration] = Field(default=None, description='Retry configuration')
+    variable_overrides: Optional[list[str]] = Field(
+        default=None,
+        description='Names of flow variables to pass into this job as variable overrides',
+        alias='variableOverrides',
+    )
 
 
 class NotificationRecipient(BaseModel):
@@ -266,6 +270,8 @@ class NotificationRecipient(BaseModel):
 
 class NotificationTaskConfiguration(BaseModel):
     """Notification task configuration."""
+
+    model_config = ConfigDict(extra='allow')
 
     type: Literal['notification'] = Field(description='Task type')
     recipients: list[NotificationRecipient] = Field(description='List of notification recipients', min_length=1)
@@ -284,6 +290,8 @@ VariableSourceObject = Annotated[
 
 class VariableTaskConfiguration(BaseModel):
     """Variable task configuration."""
+
+    model_config = ConfigDict(extra='allow')
 
     type: Literal['variable'] = Field(description='Task type')
     name: str = Field(description='Variable name')

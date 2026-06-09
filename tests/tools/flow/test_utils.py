@@ -645,3 +645,104 @@ class TestResolveFlowSchema:
         assert result['properties']['phases']['items']['properties']  # bundled legacy schema
         assert 'dependsOn' in result['properties']['phases']['items']['properties']
         fetch.assert_not_called()
+
+
+# --- Conditional flow variables (variableOverrides + JMESPath) round-trip ---
+
+# JMESPath expression over a prior job's result; not one of the legacy enumerated `value` paths.
+_JMESPATH_VALUE = "sum(job.result.output.tables[].metrics[?name=='importedRowsCount'][].value)"
+
+
+def _variables_flow() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """A conditional flow that sets a flow variable from a JMESPath over a job result, consumes it via
+    `variableOverrides`, and branches on a JMESPath-driven condition (mirrors a real CF-variables flow)."""
+    phases = [
+        {
+            'id': 'extract',
+            'name': 'Extract',
+            'next': [
+                {
+                    'id': 'cond',
+                    'name': 'Has rows',
+                    'condition': {
+                        'type': 'operator',
+                        'operator': 'GREATER_THAN',
+                        'operands': [
+                            {'type': 'task', 'task': 'extract_task', 'value': _JMESPATH_VALUE},
+                            {'type': 'const', 'value': 0},
+                        ],
+                    },
+                    'goto': 'transform',
+                },
+                {'id': 'cond_default', 'goto': 'transform'},
+            ],
+        },
+        {'id': 'transform', 'name': 'Transform', 'next': [{'id': 'end', 'goto': None}]},
+    ]
+    tasks = [
+        {
+            'id': 'extract_task',
+            'name': 'Extract',
+            'phase': 'extract',
+            'task': {'type': 'job', 'mode': 'run', 'componentId': 'keboola.ex-google-drive', 'configId': '123'},
+        },
+        {
+            'id': 'set_var',
+            'name': 'importedRowsSum',
+            'phase': 'transform',
+            'task': {
+                'type': 'variable',
+                'name': 'importedRowsSum',
+                'source': {'type': 'task', 'task': 'extract_task', 'value': _JMESPATH_VALUE},
+            },
+        },
+        {
+            'id': 'use_var',
+            'name': 'Transform',
+            'phase': 'transform',
+            'task': {
+                'type': 'job',
+                'mode': 'run',
+                'componentId': 'keboola.snowflake-transformation',
+                'configId': 'abc',
+                'variableOverrides': ['importedRowsSum'],
+            },
+        },
+    ]
+    return phases, tasks
+
+
+class TestConditionalFlowVariablesRoundTrip:
+    """get_flow_configuration must faithfully carry the CF-variables fields the live schema allows."""
+
+    def test_variable_overrides_preserved_on_job_task(self):
+        phases, tasks = _variables_flow()
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        job_task = next(t for t in cfg['tasks'] if t['id'] == 'use_var')['task']
+        assert job_task['variableOverrides'] == ['importedRowsSum']
+
+    def test_jmespath_value_preserved_in_variable_source(self):
+        phases, tasks = _variables_flow()
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        var_task = next(t for t in cfg['tasks'] if t['id'] == 'set_var')['task']
+        assert var_task['source']['value'] == _JMESPATH_VALUE
+
+    def test_jmespath_value_preserved_in_phase_condition(self):
+        phases, tasks = _variables_flow()
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        condition = cfg['phases'][0]['next'][0]['condition']
+        assert condition['operands'][0]['value'] == _JMESPATH_VALUE
+
+    def test_validate_flow_structure_accepts_variables_flow(self):
+        phases, tasks = _variables_flow()
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        # Should not raise.
+        validate_flow_structure(cfg, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_unknown_future_job_field_is_preserved(self):
+        """extra='allow' keeps fields the live schema may add instead of silently dropping them."""
+        phases, tasks = _variables_flow()
+        tasks[0]['task']['someFutureField'] = {'k': 'v'}
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        extract_task = next(t for t in cfg['tasks'] if t['id'] == 'extract_task')['task']
+        assert extract_task['someFutureField'] == {'k': 'v'}
