@@ -271,6 +271,7 @@ class NotificationRecipient(BaseModel):
 class NotificationTaskConfiguration(BaseModel):
     """Notification task configuration."""
 
+    # Forward-compat: keep unmodeled fields the live keboola.flow schema may add (see JobTaskConfiguration).
     model_config = ConfigDict(extra='allow')
 
     type: Literal['notification'] = Field(description='Task type')
@@ -291,6 +292,7 @@ VariableSourceObject = Annotated[
 class VariableTaskConfiguration(BaseModel):
     """Variable task configuration."""
 
+    # Forward-compat: keep unmodeled fields the live keboola.flow schema may add (see JobTaskConfiguration).
     model_config = ConfigDict(extra='allow')
 
     type: Literal['variable'] = Field(description='Task type')

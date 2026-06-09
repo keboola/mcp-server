@@ -4,6 +4,8 @@ import pytest
 from httpx import ConnectError, HTTPStatusError, Request, Response
 
 from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.clients.storage import APIFlowResponse
+from keboola_mcp_server.tools.flow.model import Flow
 from keboola_mcp_server.tools.flow.utils import (
     _check_legacy_circular_dependencies,
     _reachable_ids,
@@ -746,3 +748,24 @@ class TestConditionalFlowVariablesRoundTrip:
         cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
         extract_task = next(t for t in cfg['tasks'] if t['id'] == 'extract_task')['task']
         assert extract_task['someFutureField'] == {'k': 'v'}
+
+    def test_read_path_preserves_variables_via_from_api_response(self):
+        """The READ/display path (Flow.from_api_response, used by get_flows) must also carry the
+        variables fields — it routes through the same conditional-flow models as the write path."""
+        phases, tasks = _variables_flow()
+        api_config = APIFlowResponse.model_validate(
+            {
+                'id': 'flow-1',
+                'name': 'Variables flow',
+                'version': 1,
+                'configuration': {'phases': phases, 'tasks': tasks},
+            }
+        )
+
+        flow = Flow.from_api_response(api_config=api_config, flow_component_id=CONDITIONAL_FLOW_COMPONENT_ID)
+
+        job_task = next(t for t in flow.configuration.tasks if t.id == 'use_var')
+        assert job_task.task.variable_overrides == ['importedRowsSum']
+        var_task = next(t for t in flow.configuration.tasks if t.id == 'set_var')
+        assert var_task.task.source.value == _JMESPATH_VALUE
+        assert flow.configuration.phases[0].next[0].condition.operands[0].value == _JMESPATH_VALUE
