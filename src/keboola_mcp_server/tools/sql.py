@@ -5,17 +5,91 @@ from typing import Annotated
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
-from mcp.types import ToolAnnotations
+from mcp.types import (
+    ProgressNotification,
+    ProgressNotificationParams,
+    ProgressToken,
+    ServerNotification,
+    ToolAnnotations,
+)
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.workspace import SqlSelectData, WorkspaceManager
+from keboola_mcp_server.workspace import JobSubmittedInfo, SqlSelectData, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
 SQL_TOOLS_TAG = 'sql'
 MAX_ROWS = 1_000
 MAX_CHARS = 50_000
+
+
+def _client_progress_token(ctx: Context) -> ProgressToken | None:
+    """Returns the progress token the client included in the original `tools/call`, or None.
+
+    Per MCP spec, a server may only send `notifications/progress` for a request when the client
+    explicitly provided a `progressToken` in that request's `_meta`. Tools that fall through here
+    without a token must stay silent — emitting unsolicited progress can confuse strict clients.
+    """
+    rc = ctx.request_context
+    if rc is None or rc.meta is None:
+        return None
+    # The MCP spec allows `_meta` to omit `progressToken`. The typed `RequestParams.Meta`
+    # always carries the attribute (default None), but transports that surface `_meta` as a
+    # plain mapping would not — so look it up defensively rather than assume the attribute.
+    return getattr(rc.meta, 'progressToken', None)
+
+
+async def _emit_job_submitted_progress(ctx: Context, progress_token: ProgressToken, info: JobSubmittedInfo) -> None:
+    """Surfaces the backend job handle to the client so it can cancel out-of-band by POSTing to
+    `info.cancellation_url`. The structured data lives under `params._meta`; the human-readable
+    `message` is for clients that surface progress as text only and ignore `_meta`.
+
+    We deliberately call the low-level `ctx.session.send_notification(...)` with
+    `related_request_id=ctx.request_id` instead of FastMCP's high-level `ctx.send_notification(...)`.
+    The MCP SDK's streamable_http message router (`mcp/server/streamable_http.py`, the
+    "Extract related_request_id from meta" branch) uses that field to pick which request's SSE
+    response stream receives the notification. Without it, notifications are addressed to
+    `GET_STREAM_KEY`, the standalone GET stream — which doesn't exist in `stateless_http=True`
+    mode (our deployment shape), so the notification is silently dropped and the client never
+    sees the job handle. `ctx.send_notification(...)` does NOT set this field, hence the bypass.
+    """
+    params = ProgressNotificationParams.model_validate(
+        {
+            'progressToken': progress_token,
+            'progress': 0,
+            'message': f'Submitted to {info.backend}',
+            '_meta': {
+                'keboola.queryJobId': info.job_id,
+                'keboola.backend': info.backend,
+                # `cancellation_url` may be None when a backend does not expose an out-of-band
+                # cancel endpoint; clients should treat the field as optional.
+                'keboola.cancellationUrl': info.cancellation_url,
+            },
+        }
+    )
+    notification = ProgressNotification(method='notifications/progress', params=params)
+    # `ctx.request_id` is a property that RAISES RuntimeError when `request_context` is None —
+    # `getattr(ctx, 'request_id', None)` would NOT catch that (its default only suppresses
+    # AttributeError). Read the request id off `request_context` directly so a missing context
+    # yields None and we hit the graceful-skip branch below instead of raising.
+    rc = ctx.request_context
+    request_id = str(rc.request_id) if rc is not None and rc.request_id is not None else None
+    if request_id is None:
+        # Without a request id we cannot route the notification — see the docstring above for why.
+        # Sending with `related_request_id=None` reproduces the bug we built this fix to prevent
+        # (silent drop onto GET_STREAM_KEY in stateless mode). Skip the emit and warn instead so
+        # the failure mode is at least visible in the logs; the query itself continues normally.
+        LOG.warning(
+            f'Skipping notifications/progress for job_id={info.job_id}: request id is unavailable — '
+            f'cannot route to originating SSE stream. Out-of-band cancellation will be unavailable.'
+        )
+        return
+    await ctx.session.send_notification(ServerNotification(notification), related_request_id=request_id)
+    LOG.info(
+        f'Emitted notifications/progress for job_id={info.job_id} '
+        f'related_request_id={request_id!r} backend={info.backend}'
+    )
 
 
 class QueryDataOutput(BaseModel):
@@ -95,9 +169,20 @@ async def query_data(
     * Ensure valid filtering by checking actual data values first
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    result = await workspace_manager.execute_query(sql_query, max_rows=MAX_ROWS, max_chars=MAX_CHARS)
-    LOG.info(' '.join(filter(None, [f'Query "{query_name}" executed successfully.', result.message])))
+
+    progress_token = _client_progress_token(ctx)
+
+    async def _on_job_submitted(info: JobSubmittedInfo) -> None:
+        await _emit_job_submitted_progress(ctx, progress_token, info)
+
+    result = await workspace_manager.execute_query(
+        sql_query,
+        max_rows=MAX_ROWS,
+        max_chars=MAX_CHARS,
+        on_job_submitted=_on_job_submitted if progress_token is not None else None,
+    )
     if result.is_ok:
+        LOG.info(' '.join(filter(None, [f'Query "{query_name}" executed successfully.', result.message])))
         if result.data:
             data = result.data
         else:
@@ -113,4 +198,12 @@ async def query_data(
         return QueryDataOutput(query_name=query_name, csv_data=output.getvalue(), message=result.message)
 
     else:
+        # Surface cancellation cleanly: the workspace already produced a precise message
+        # ("Query was cancelled") for the cancel-by-client case, so don't wrap it in a
+        # generic "Failed to run SQL query, error: ..." prefix that hides what happened.
+        # A client-initiated cancel is expected, so log it at INFO; genuine failures at WARNING.
+        if result.message == 'Query was cancelled':
+            LOG.info(f'Query "{query_name}" was cancelled.')
+            raise ValueError('Query was cancelled')
+        LOG.warning(' '.join(filter(None, [f'Query "{query_name}" failed.', result.message])))
         raise ValueError(f'Failed to run SQL query, error: {result.message}')

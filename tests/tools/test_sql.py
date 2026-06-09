@@ -1,14 +1,16 @@
 import json
 from typing import Any
-from unittest.mock import Mock, call
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from mcp.server.fastmcp import Context
+from mcp.types import ProgressNotification
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
 from keboola_mcp_server.workspace import (
+    JobSubmittedInfo,
     QueryResult,
     SqlSelectData,
     TableFqn,
@@ -80,6 +82,127 @@ async def test_query_data(
     assert isinstance(result, QueryDataOutput)
     assert result.query_name == query_name
     assert result.csv_data == expected_csv
+
+
+@pytest.mark.asyncio
+async def test_query_data_emits_progress_notification_with_job_id(mcp_context_client: Context, mocker):
+    """When the client supplied a progressToken in the original tools/call, query_data must surface
+    the backend job id to the client by sending a `notifications/progress` whose `params._meta`
+    carries `keboola.queryJobId`, the backend name, and the absolute cancel URL. Without this,
+    clients cannot cancel a long-running query out-of-band against Query Service directly.
+    """
+    info = JobSubmittedInfo(
+        job_id='job-xyz',
+        cancellation_url='https://query.keboola.com/api/v1/queries/job-xyz/cancel',
+        backend='snowflake',
+    )
+
+    async def fake_execute_query(sql_query, *, max_rows, max_chars, on_job_submitted=None):
+        if on_job_submitted is not None:
+            await on_job_submitted(info)
+        return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
+
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.execute_query.side_effect = fake_execute_query
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+    mcp_context_client.request_context.meta = mocker.MagicMock()
+    mcp_context_client.request_context.meta.progressToken = 'tkn-1'
+    mcp_context_client.request_context.request_id = 'req-99'
+    mcp_context_client.session.send_notification = AsyncMock()
+
+    await query_data('select 1;', 'q', mcp_context_client)
+
+    # We bypass FastMCP's ctx.send_notification() because it does not set
+    # `related_request_id` -- and without that, the streamable_http router (mcp/server/
+    # streamable_http.py:~1004) cannot route the notification to the originating
+    # tools/call SSE stream in stateless_http mode. The notification gets silently
+    # dropped onto GET_STREAM_KEY. Call the low-level session API with the request id
+    # so the notification reaches the correct response stream.
+    mcp_context_client.session.send_notification.assert_awaited_once()
+    call_args = mcp_context_client.session.send_notification.await_args
+    sent = call_args.args[0]
+    assert (
+        call_args.kwargs.get('related_request_id') == 'req-99'
+    ), f'related_request_id missing or wrong: {call_args.kwargs!r}'
+    # The wrapper is ServerNotification(root=ProgressNotification(...)); both .root and
+    # the wrapper's model_dump should expose the progress notification shape.
+    progress = sent.root if hasattr(sent, 'root') else sent
+    assert isinstance(progress, ProgressNotification)
+    assert progress.params.progressToken == 'tkn-1'
+    on_wire = json.loads(progress.model_dump_json(by_alias=True, exclude_none=True))
+    assert on_wire['method'] == 'notifications/progress'
+    assert on_wire['params']['_meta'] == {
+        'keboola.queryJobId': 'job-xyz',
+        'keboola.backend': 'snowflake',
+        'keboola.cancellationUrl': 'https://query.keboola.com/api/v1/queries/job-xyz/cancel',
+    }
+
+
+@pytest.mark.asyncio
+async def test_query_data_skips_progress_when_no_token(mcp_context_client: Context, mocker):
+    """Per MCP spec, the server must only emit progress notifications when the client provided a
+    progressToken. Without one we must stay silent — sending unsolicited progress can break clients
+    that strictly validate the protocol."""
+
+    async def fake_execute_query(sql_query, *, max_rows, max_chars, on_job_submitted=None):
+        # The tool should not even hand us a callback when no token is set.
+        assert on_job_submitted is None
+        return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
+
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.execute_query.side_effect = fake_execute_query
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+    # empty_context fixture defaults meta to None, which is the "no progressToken" shape.
+    assert mcp_context_client.request_context.meta is None
+    mcp_context_client.session.send_notification = AsyncMock()
+
+    await query_data('select 1;', 'q', mcp_context_client)
+
+    mcp_context_client.session.send_notification.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_query_data_skips_progress_when_request_id_missing(mcp_context_client: Context, mocker, caplog):
+    """If the request id is unavailable, the streamable_http router has no way to attach the
+    notification to the originating tools/call SSE stream — it would silently fall through to
+    GET_STREAM_KEY (which doesn't exist in stateless_http) and be dropped. The notification
+    emitter must detect this and skip emitting, logging a warning so the failure mode is visible
+    instead of swallowed. The underlying query still completes normally.
+
+    Note we null out `request_context.request_id` (not the `ctx.request_id` property, which raises
+    RuntimeError when the context is missing) — that is the field the emitter actually reads.
+    """
+    info = JobSubmittedInfo(job_id='job-no-rid', cancellation_url='https://q/cancel', backend='snowflake')
+
+    async def fake_execute_query(sql_query, *, max_rows, max_chars, on_job_submitted=None):
+        if on_job_submitted is not None:
+            await on_job_submitted(info)
+        return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
+
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.execute_query.side_effect = fake_execute_query
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+    mcp_context_client.request_context.meta = mocker.MagicMock()
+    mcp_context_client.request_context.meta.progressToken = 'tkn-1'
+    mcp_context_client.request_context.request_id = None  # the case under test
+    mcp_context_client.session.send_notification = AsyncMock()
+
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger='keboola_mcp_server.tools.sql'):
+        result = await query_data('select 1;', 'q', mcp_context_client)
+
+    # Query itself completes normally — guarding the notification must not abort the call.
+    assert isinstance(result, QueryDataOutput)
+    # No notification was sent (would have been dropped on GET_STREAM_KEY anyway).
+    mcp_context_client.session.send_notification.assert_not_called()
+    # The warning must mention the job id so the operator can correlate against Snowflake.
+    assert any(
+        'job-no-rid' in r.getMessage() and 'request id is unavailable' in r.getMessage() for r in caplog.records
+    ), f'expected warning mentioning job_id and request id; got: {[r.getMessage() for r in caplog.records]}'
 
 
 class TestWorkspaceManagerSnowflake:
