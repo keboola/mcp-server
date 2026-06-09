@@ -34,7 +34,10 @@ def _client_progress_token(ctx: Context) -> ProgressToken | None:
     rc = ctx.request_context
     if rc is None or rc.meta is None:
         return None
-    return rc.meta.progressToken
+    # The MCP spec allows `_meta` to omit `progressToken`. The typed `RequestParams.Meta`
+    # always carries the attribute (default None), but transports that surface `_meta` as a
+    # plain mapping would not — so look it up defensively rather than assume the attribute.
+    return getattr(rc.meta, 'progressToken', None)
 
 
 async def _emit_job_submitted_progress(ctx: Context, progress_token: ProgressToken, info: JobSubmittedInfo) -> None:
@@ -66,14 +69,19 @@ async def _emit_job_submitted_progress(ctx: Context, progress_token: ProgressTok
         }
     )
     notification = ProgressNotification(method='notifications/progress', params=params)
-    request_id = getattr(ctx, 'request_id', None)
+    # `ctx.request_id` is a property that RAISES RuntimeError when `request_context` is None —
+    # `getattr(ctx, 'request_id', None)` would NOT catch that (its default only suppresses
+    # AttributeError). Read the request id off `request_context` directly so a missing context
+    # yields None and we hit the graceful-skip branch below instead of raising.
+    rc = ctx.request_context
+    request_id = str(rc.request_id) if rc is not None and rc.request_id is not None else None
     if request_id is None:
         # Without a request id we cannot route the notification — see the docstring above for why.
         # Sending with `related_request_id=None` reproduces the bug we built this fix to prevent
         # (silent drop onto GET_STREAM_KEY in stateless mode). Skip the emit and warn instead so
         # the failure mode is at least visible in the logs; the query itself continues normally.
         LOG.warning(
-            f'Skipping notifications/progress for job_id={info.job_id}: ctx.request_id is None — '
+            f'Skipping notifications/progress for job_id={info.job_id}: request id is unavailable — '
             f'cannot route to originating SSE stream. Out-of-band cancellation will be unavailable.'
         )
         return
@@ -173,8 +181,8 @@ async def query_data(
         max_chars=MAX_CHARS,
         on_job_submitted=_on_job_submitted if progress_token is not None else None,
     )
-    LOG.info(' '.join(filter(None, [f'Query "{query_name}" executed successfully.', result.message])))
     if result.is_ok:
+        LOG.info(' '.join(filter(None, [f'Query "{query_name}" executed successfully.', result.message])))
         if result.data:
             data = result.data
         else:
@@ -193,6 +201,9 @@ async def query_data(
         # Surface cancellation cleanly: the workspace already produced a precise message
         # ("Query was cancelled") for the cancel-by-client case, so don't wrap it in a
         # generic "Failed to run SQL query, error: ..." prefix that hides what happened.
+        # A client-initiated cancel is expected, so log it at INFO; genuine failures at WARNING.
         if result.message == 'Query was cancelled':
+            LOG.info(f'Query "{query_name}" was cancelled.')
             raise ValueError('Query was cancelled')
+        LOG.warning(' '.join(filter(None, [f'Query "{query_name}" failed.', result.message])))
         raise ValueError(f'Failed to run SQL query, error: {result.message}')

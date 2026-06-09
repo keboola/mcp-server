@@ -108,7 +108,7 @@ async def test_query_data_emits_progress_notification_with_job_id(mcp_context_cl
 
     mcp_context_client.request_context.meta = mocker.MagicMock()
     mcp_context_client.request_context.meta.progressToken = 'tkn-1'
-    mcp_context_client.request_id = 'req-99'
+    mcp_context_client.request_context.request_id = 'req-99'
     mcp_context_client.session.send_notification = AsyncMock()
 
     await query_data('select 1;', 'q', mcp_context_client)
@@ -165,11 +165,14 @@ async def test_query_data_skips_progress_when_no_token(mcp_context_client: Conte
 
 @pytest.mark.asyncio
 async def test_query_data_skips_progress_when_request_id_missing(mcp_context_client: Context, mocker, caplog):
-    """If `ctx.request_id` is unavailable, the streamable_http router has no way to attach the
+    """If the request id is unavailable, the streamable_http router has no way to attach the
     notification to the originating tools/call SSE stream — it would silently fall through to
     GET_STREAM_KEY (which doesn't exist in stateless_http) and be dropped. The notification
     emitter must detect this and skip emitting, logging a warning so the failure mode is visible
     instead of swallowed. The underlying query still completes normally.
+
+    Note we null out `request_context.request_id` (not the `ctx.request_id` property, which raises
+    RuntimeError when the context is missing) — that is the field the emitter actually reads.
     """
     info = JobSubmittedInfo(job_id='job-no-rid', cancellation_url='https://q/cancel', backend='snowflake')
 
@@ -184,7 +187,7 @@ async def test_query_data_skips_progress_when_request_id_missing(mcp_context_cli
 
     mcp_context_client.request_context.meta = mocker.MagicMock()
     mcp_context_client.request_context.meta.progressToken = 'tkn-1'
-    mcp_context_client.request_id = None  # the case under test
+    mcp_context_client.request_context.request_id = None  # the case under test
     mcp_context_client.session.send_notification = AsyncMock()
 
     import logging
@@ -198,8 +201,8 @@ async def test_query_data_skips_progress_when_request_id_missing(mcp_context_cli
     mcp_context_client.session.send_notification.assert_not_called()
     # The warning must mention the job id so the operator can correlate against Snowflake.
     assert any(
-        'job-no-rid' in r.getMessage() and 'request_id is None' in r.getMessage() for r in caplog.records
-    ), f'expected warning mentioning job_id and request_id; got: {[r.getMessage() for r in caplog.records]}'
+        'job-no-rid' in r.getMessage() and 'request id is unavailable' in r.getMessage() for r in caplog.records
+    ), f'expected warning mentioning job_id and request id; got: {[r.getMessage() for r in caplog.records]}'
 
 
 class TestWorkspaceManagerSnowflake:
