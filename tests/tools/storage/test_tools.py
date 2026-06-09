@@ -958,7 +958,7 @@ async def test_get_table(
 
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_table_info = mocker.AsyncMock(
-        side_effect=lambda sapi_table, backend_path=None: DbTableInfo(
+        side_effect=lambda sapi_table: DbTableInfo(
             id=sapi_table['id'],
             fqn=TableFqn(
                 db_name='SAPI_TEST',
@@ -1986,7 +1986,7 @@ async def test_get_table_storage_branches(mocker: MockerFixture, mcp_context_cli
 
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_table_info = mocker.AsyncMock(
-        side_effect=lambda sapi_table, backend_path=None: DbTableInfo(
+        side_effect=lambda sapi_table: DbTableInfo(
             id=sapi_table['id'],
             fqn=TableFqn(db_name='SAPI_TEST', schema_name=sapi_table['id'].rsplit('.', 1)[0], table_name='customers'),
             columns={
