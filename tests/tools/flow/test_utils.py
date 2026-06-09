@@ -749,6 +749,14 @@ class TestConditionalFlowVariablesRoundTrip:
         extract_task = next(t for t in cfg['tasks'] if t['id'] == 'extract_task')['task']
         assert extract_task['someFutureField'] == {'k': 'v'}
 
+    def test_unknown_future_condition_field_is_preserved(self):
+        """extra='allow' applies to condition nodes too (not just task configs) via BaseExtraModel."""
+        phases, tasks = _variables_flow()
+        phases[0]['next'][0]['condition']['someFutureField'] = 'keep-me'
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        condition = cfg['phases'][0]['next'][0]['condition']
+        assert condition['someFutureField'] == 'keep-me'
+
     def test_read_path_preserves_variables_via_from_api_response(self):
         """The READ/display path (Flow.from_api_response, used by get_flows) must also carry the
         variables fields — it routes through the same conditional-flow models as the write path."""
