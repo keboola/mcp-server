@@ -3,7 +3,7 @@
 > **Status:** Implemented in its own PR (follow-up to AJDA-2810, which shipped in #564). The model
 > changes and tests described below are delivered alongside this RFC.
 
-Linear: _TBD_ — CF variables: support `variableOverrides` and JMESPath values in MCP flow models
+Linear: [AJDA-2860 — CF variables: support `variableOverrides` and JMESPath values in MCP flow](https://linear.app/keboola/issue/AJDA-2860/cf-variables-support-variableoverrides-and-jmespath-values-in-mcp-flow)
 (parent: AJDA-2290 · project: Conditional Flows · related: AJDA-2810, AJDA-2351)
 
 ## Problem
