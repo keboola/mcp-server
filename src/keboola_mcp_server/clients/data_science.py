@@ -355,7 +355,6 @@ class DataScienceClient(KeboolaServiceClient):
         config_version: str | None = None,
         *,
         mode: str | None = None,
-        branch: str | None = None,
         restart_if_running: bool = True,
         update_dependencies: bool = False,
     ) -> DataAppResponse:
@@ -368,9 +367,6 @@ class DataScienceClient(KeboolaServiceClient):
         :param mode: Deployment mode. Set to 'dev' to deploy a python-js draft as a dev version
                     (hot reload + auto-auth for iframe preview). Leave None for Streamlit apps and
                     for prod deploys.
-        :param branch: Git branch to deploy from. Only meaningful for python-js apps in `mode='dev'`; when set,
-                    the draft deploys from this branch instead of the branch pinned in its config.
-                    Leave None for prod deploys.
         :param restart_if_running: Whether to restart the data app if it is already running
         :param update_dependencies: If set to `true`, latest package versions are installed during app startup,
                     instead of using frozen versions.
@@ -385,8 +381,6 @@ class DataScienceClient(KeboolaServiceClient):
             data['configVersion'] = config_version
         if mode is not None:
             data['mode'] = mode
-        if branch is not None:
-            data['branch'] = branch
         response = await self.patch(endpoint=f'apps/{data_app_id}', data=data)
         return DataAppResponse.model_validate(response)
 

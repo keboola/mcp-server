@@ -1488,7 +1488,7 @@ async def test_deploy_data_app_python_js_skips_storage_config_version_and_passes
         mode='dev',
     )
 
-    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-1', None, mode='dev', branch=None)
+    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-1', None, mode='dev')
     keboola_client.storage_client.configuration_version_latest.assert_not_called()
 
 
@@ -1509,9 +1509,7 @@ async def test_deploy_data_app_streamlit_still_passes_config_version(
 
     _ = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-streamlit')
 
-    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with(
-        data_app.data_app_id, '7', mode=None, branch=None
-    )
+    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with(data_app.data_app_id, '7', mode=None)
 
 
 # ===== Tests for modify_python_js_data_app draft create path =====
@@ -1866,93 +1864,6 @@ async def test_modify_python_js_data_app_create_prod_calls_get_app_git_repo_for_
     # No git block on prod create.
     serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
     assert 'git' not in serialized['parameters']['dataApp']
-
-
-# ===== Tests for deploy_data_app branch parameter =====
-
-
-@pytest.mark.asyncio
-async def test_deploy_data_app_python_js_with_branch_forwards_to_client(
-    mocker,
-    mcp_context_client: Context,
-) -> None:
-    """For python-js drafts, `branch` must be forwarded to the underlying DSAPI deploy call."""
-    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.data_science_client = mocker.AsyncMock()
-
-    pyjs_app = DataApp(
-        name='twin',
-        component_id=DATA_APP_COMPONENT_ID,
-        configuration_id='cfg-twin',
-        data_app_id='app-twin',
-        project_id='proj-1',
-        branch_id='branch-1',
-        config_version='1',
-        type='python-js',
-        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'demo-dev'}}},
-        state='stopped',
-    )
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=pyjs_app))
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
-
-    _ = await deploy_data_app(
-        ctx=mcp_context_client,
-        action='deploy',
-        configuration_id='cfg-twin',
-        mode='dev',
-        branch='feature-x',
-    )
-
-    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with(
-        'app-twin', None, mode='dev', branch='feature-x'
-    )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('bad_mode', [None, 'production'])
-async def test_deploy_data_app_branch_without_dev_mode_rejected(
-    mcp_context_client: Context,
-    bad_mode,
-) -> None:
-    """`branch` is only meaningful with mode='dev' — anything else must raise."""
-    with pytest.raises(ValueError, match='branch is only meaningful with mode="dev"'):
-        await deploy_data_app(
-            ctx=mcp_context_client,
-            action='deploy',
-            configuration_id='cfg-1',
-            mode=bad_mode,
-            branch='feature-x',
-        )
-
-
-@pytest.mark.asyncio
-async def test_deploy_data_app_streamlit_silently_ignores_branch_param(
-    mocker,
-    mcp_context_client: Context,
-    data_app: DataApp,
-) -> None:
-    """Streamlit apps don't carry a branch on deploy — the `branch` arg is dropped silently."""
-    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.data_science_client = mocker.AsyncMock()
-    data_app.state = 'stopped'
-    data_app.type = 'streamlit'
-    data_app.configuration = {'authorization': {'app_proxy': {'auth_providers': [], 'auth_rules': []}}}
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
-    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=7)
-
-    # Streamlit only allows mode='dev' to legitimately pass branch through, but on Streamlit it's a no-op.
-    _ = await deploy_data_app(
-        ctx=mcp_context_client,
-        action='deploy',
-        configuration_id='cfg-streamlit',
-        mode='dev',
-        branch='ignored-on-streamlit',
-    )
-
-    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with(
-        data_app.data_app_id, '7', mode='dev', branch=None
-    )
 
 
 # ===== Tests for create_python_js_data_app_git_credential =====
