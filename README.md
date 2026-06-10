@@ -484,6 +484,22 @@ When you make changes to any tool descriptions (docstrings in tool functions), y
 uv run python -m src.keboola_mcp_server.generate_tool_docs
 ```
 
+### Releasing
+
+We do **not** cut a release for every merged PR. Work lands on the trunk (`main`)
+continuously, and we release periodically once changes have been re-tested together —
+this avoids breaking working setups for users.
+
+A release is made by pushing **one or two git tags**:
+
+- `vX.Y.Z` — the MCP server release (always)
+- `agent-vX.Y.Z` — the In Platform Agent release (only when the agent is being released too)
+
+Either tag triggers `release.yml` CI, which builds and publishes the Docker image. KaiBench
+runs only on production `vX.Y.Z` tags (not `agent-vX.Y.Z`, and not `-dev.` prereleases). Use
+the `release-notes` skill — it prepares the release notes and draft PR and walks through
+tagging both `vX.Y.Z` and `agent-vX.Y.Z`.
+
 ## Support and Feedback
 
 **⭐ The primary way to get help, report bugs, or request features is by [opening an issue on GitHub](https://github.com/keboola/mcp-server/issues/new). ⭐**
