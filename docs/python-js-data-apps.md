@@ -199,7 +199,7 @@ Step 7: delete_python_js_data_app_draft(
 Key invariants:
 
 - The prod app's `configuration_id` is **never** modified in this flow — only its underlying git `main` is updated and the app is redeployed.
-- The draft's pinned branch is set in its `parameters.dataApp.git.branch` at create time. Passing `branch` to `deploy_data_app(mode='dev')` lets the agent override that pin for an ad-hoc preview, but normally it is not needed because the draft's config already points at the correct branch.
+- The draft's pinned branch is set in its `parameters.dataApp.git.branch` at create time. There is no deploy-time override — `deploy_data_app(mode='dev')` always deploys the pinned branch.
 - Slugs must be unique across the prod and its drafts — append a short suffix (e.g. `-draft-abc123`).
 
 ---
@@ -299,12 +299,6 @@ Always call against the **prod** app's configuration ID — the draft has no man
 - **Type**: `Optional[Literal['dev', 'production']]`
 - **Semantics**: `mode='dev'` deploys the target as a **dev version of the data app** — the runtime uses a development `setup.sh` (hot reload), and the data-app proxy enables an auto-auth path so an iframe preview can render without a manual login. Only meaningful on drafts (python-js apps with `isDraft=true`). For prod redeploys, omit `mode`.
 
-### `deploy_data_app(branch=...)`
-
-- **Type**: `Optional[str]`
-- **When valid**: only with `mode='dev'`. Raises `ValueError` otherwise.
-- **Semantics**: for python-js apps, overrides the branch the draft deploys from for this single deploy. Without `branch`, the draft deploys whatever branch is pinned in its `parameters.dataApp.git.branch`. Silently ignored for Streamlit apps (which have no managed git repo).
-
 ### `create_python_js_data_app_git_credential(configuration_id=...)`
 
 - **`configuration_id`** (`str`, required): Storage configuration ID of an existing python-js **prod** app (i.e. one with a managed repo). The tool resolves it to the underlying `data_app_id` and rejects Streamlit apps with a clear error. Drafts also reject — always mint against prod.
@@ -355,7 +349,7 @@ The tool surface maps to the underlying APIs as follows. Confirm field names wit
 |---|---|---|
 | Prod create (default) | `POST /apps` | `useManagedGitRepo: true`. No `parameters.dataApp.git` block. |
 | `parent_configuration_id` (draft) | `POST /apps` | `useManagedGitRepo` omitted/false. `configuration.parameters.dataApp.git = {repository, username, '#password' (encrypted via EncryptionClient), branch}`. Also writes `isDraft: true` and `parentConfigurationId: <prod cfg id>`. |
-| `deploy_data_app(branch=...)` | `PATCH /apps/{id}` | `branch` (alongside `desiredState: 'running'`, `mode: 'dev'`) |
+| `deploy_data_app(mode='dev')` | `PATCH /apps/{id}` | `mode: 'dev'` (alongside `desiredState: 'running'`). The deployed branch is whatever the draft's config pins — there is no deploy-time branch field. |
 | `create_python_js_data_app_git_credential` | `POST /apps/{id}/git-repo/credentials` | Request: `{type: 'http_token', permissions: 'readWrite'}`. Response: `{id, type, permissions, secret, ...}`. The one-time `secret` is what we embed (with `kai` as username) into `git_clone_url`. |
 | (clone URL lookup) | `GET /apps/{id}/git-repo` | Response: `{sshUrl, httpsUrl, isManagedGitRepo}`. The MCP server uses `httpsUrl` only. |
 | auto-workspace flag (hardcoded `true` on create) | `POST /apps` | `configuration.runtime.workspace.enabled` |
@@ -402,7 +396,7 @@ Against `data-science.canary-orion.keboola.dev`:
 - [ ] Given an existing `PROD` with a draft `DRAFT3` pinned to branch `wip-add-chart`, `get_data_apps(configuration_ids=[PROD])` returns `drafts: [...]` with `DRAFT3` and its branch visible.
 - [ ] `create_python_js_data_app_git_credential(configuration_id=PROD)` returns a fresh `git_clone_url`.
 - [ ] `git clone`, `git checkout wip-add-chart`, push another commit.
-- [ ] `deploy_data_app(configuration_id=DRAFT3, mode='dev')` deploys the branch as a dev version (no `branch=` override needed — the draft's config pins it).
+- [ ] `deploy_data_app(configuration_id=DRAFT3, mode='dev')` deploys the branch as a dev version (the draft's config pins the branch).
 
 **Lost-token recovery flow**
 

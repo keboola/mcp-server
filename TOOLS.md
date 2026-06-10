@@ -2035,26 +2035,21 @@ action and the configuration ID.
 **MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
 branch-delete — is yours. This tool only triggers deploys against existing git state.
 
-## Mode and branch (python-js apps)
+## Mode (python-js apps)
 - `mode='dev'` deploys the target as a **dev version of the data app** — the runtime uses a
   development `setup.sh` (hot reload) and the data-app proxy enables an auto-auth path so an
   iframe preview can render without a manual login. Only meaningful on **draft** configs
   (python-js apps with `isDraft=true`).
-- For prod redeploys (including after merging a draft's branch into `main`), use no `mode` and
-  no `branch` — the prod app picks up the current `main`.
-- The optional `branch=` argument overrides the branch the draft deploys from for this single
-  deploy. Normally unnecessary — drafts have their draft branch pinned in
-  `parameters.dataApp.git.branch` at create time.
+- For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
+  the prod app picks up the current `main`.
+- The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
+  there is no deploy-time override.
 - python-js apps do NOT fetch a Storage `configVersion` for deployment (their source lives in
   git, not in the Storage configuration); this is handled automatically.
 
 ## Streamlit apps
-Streamlit apps have no managed git repo, so `mode` and `branch` have no effect on the
-deployed app. `mode=None` is the expected call shape; don't pass `branch`.
-
-## Validation
-`branch` is only meaningful with `mode='dev'`; setting `branch` without `mode='dev'` raises an
-error for any app type (Streamlit or python-js).
+Streamlit apps have no managed git repo, so `mode` has no effect on the deployed app.
+`mode=None` is the expected call shape.
 
 ## General considerations
 - Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the
@@ -2095,18 +2090,6 @@ error for any app type (Streamlit or python-js).
       ],
       "default": null,
       "description": "Deployment mode. Set to \"dev\" to deploy a python-js draft as a **dev version of the data app** \u2014 the runtime uses a development `setup.sh` (hot reload), and the data-app proxy enables an auto-auth path so an iframe preview can render without a manual login. Only meaningful on **draft** configs (python-js apps with `isDraft=true`). Leave None (default) for prod redeploys and for Streamlit apps."
-    },
-    "branch": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Git branch to deploy from. Only meaningful when `mode=\"dev\"` for python-js drafts. Normally unnecessary \u2014 drafts have their branch pinned in `parameters.dataApp.git.branch` at create time; this argument overrides that pin for this single deploy (escape hatch). Leave None for prod deploys and for Streamlit apps."
     }
   },
   "required": [
@@ -2256,7 +2239,7 @@ draft handle.
    Drafts have no managed repo of their own — always mint against PROD.
 3. YOU: `git clone U`; `git checkout <draft's pinned branch>`; resume work; `git push`.
 4. `deploy_data_app(action='deploy', configuration_id=<DRAFT>, mode='dev')` → preview URL.
-   The draft's branch is already pinned in its config, no override needed.
+   The draft's branch is already pinned in its config.
 5–7. Same promote/cleanup sequence as Scenario A steps 5–7.
 
 ## Argument rules

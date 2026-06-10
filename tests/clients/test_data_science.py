@@ -149,26 +149,24 @@ async def test_create_data_app_defaults_to_streamlit_without_managed_repo_flag()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('config_version', 'mode', 'branch', 'expected_extra'),
+    ('config_version', 'mode', 'expected_extra'),
     [
-        ('42', None, None, {'configVersion': '42'}),  # Streamlit
-        (None, 'dev', None, {'mode': 'dev'}),  # python-js dev preview from main
-        (None, 'production', None, {'mode': 'production'}),
-        (None, None, None, {}),  # bare deploy (python-js without explicit mode)
-        ('5', 'dev', None, {'configVersion': '5', 'mode': 'dev'}),  # both
-        (None, 'dev', 'feature-x', {'mode': 'dev', 'branch': 'feature-x'}),  # python-js draft on a branch
+        ('42', None, {'configVersion': '42'}),  # Streamlit
+        (None, 'dev', {'mode': 'dev'}),  # python-js dev preview
+        (None, 'production', {'mode': 'production'}),
+        (None, None, {}),  # bare deploy (python-js without explicit mode)
+        ('5', 'dev', {'configVersion': '5', 'mode': 'dev'}),  # both
     ],
 )
 async def test_deploy_data_app_payload_with_mode_and_optional_config_version(
     config_version: str | None,
     mode: str | None,
-    branch: str | None,
     expected_extra: dict,
 ) -> None:
     client = DataScienceClient.create('https://api.example.com', token=None)
     client.patch = AsyncMock(return_value=_create_app_response())  # type: ignore[assignment]
 
-    _ = await client.deploy_data_app('app-123', config_version, mode=mode, branch=branch)
+    _ = await client.deploy_data_app('app-123', config_version, mode=mode)
 
     expected_payload = {
         'desiredState': 'running',

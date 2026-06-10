@@ -788,7 +788,7 @@ async def modify_python_js_data_app(
        Drafts have no managed repo of their own — always mint against PROD.
     3. YOU: `git clone U`; `git checkout <draft's pinned branch>`; resume work; `git push`.
     4. `deploy_data_app(action='deploy', configuration_id=<DRAFT>, mode='dev')` → preview URL.
-       The draft's branch is already pinned in its config, no override needed.
+       The draft's branch is already pinned in its config.
     5–7. Same promote/cleanup sequence as Scenario A steps 5–7.
 
     ## Argument rules
@@ -1284,17 +1284,6 @@ async def deploy_data_app(
             ),
         ),
     ] = None,
-    branch: Annotated[
-        Optional[str],
-        Field(
-            description=(
-                'Git branch to deploy from. Only meaningful when `mode="dev"` for python-js drafts. '
-                'Normally unnecessary — drafts have their branch pinned in `parameters.dataApp.git.branch` '
-                'at create time; this argument overrides that pin for this single deploy (escape hatch). '
-                'Leave None for prod deploys and for Streamlit apps.'
-            ),
-        ),
-    ] = None,
 ) -> DeploymentDataAppOutput:
     """Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
     action and the configuration ID.
@@ -1302,26 +1291,21 @@ async def deploy_data_app(
     **MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
     branch-delete — is yours. This tool only triggers deploys against existing git state.
 
-    ## Mode and branch (python-js apps)
+    ## Mode (python-js apps)
     - `mode='dev'` deploys the target as a **dev version of the data app** — the runtime uses a
       development `setup.sh` (hot reload) and the data-app proxy enables an auto-auth path so an
       iframe preview can render without a manual login. Only meaningful on **draft** configs
       (python-js apps with `isDraft=true`).
-    - For prod redeploys (including after merging a draft's branch into `main`), use no `mode` and
-      no `branch` — the prod app picks up the current `main`.
-    - The optional `branch=` argument overrides the branch the draft deploys from for this single
-      deploy. Normally unnecessary — drafts have their draft branch pinned in
-      `parameters.dataApp.git.branch` at create time.
+    - For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
+      the prod app picks up the current `main`.
+    - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
+      there is no deploy-time override.
     - python-js apps do NOT fetch a Storage `configVersion` for deployment (their source lives in
       git, not in the Storage configuration); this is handled automatically.
 
     ## Streamlit apps
-    Streamlit apps have no managed git repo, so `mode` and `branch` have no effect on the
-    deployed app. `mode=None` is the expected call shape; don't pass `branch`.
-
-    ## Validation
-    `branch` is only meaningful with `mode='dev'`; setting `branch` without `mode='dev'` raises an
-    error for any app type (Streamlit or python-js).
+    Streamlit apps have no managed git repo, so `mode` has no effect on the deployed app.
+    `mode=None` is the expected call shape.
 
     ## General considerations
     - Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the
@@ -1329,8 +1313,6 @@ async def deploy_data_app(
     - After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
       errors.
     """
-    if branch is not None and mode != 'dev':
-        raise ValueError('branch is only meaningful with mode="dev"')
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     if action == 'deploy':
@@ -1340,18 +1322,15 @@ async def deploy_data_app(
         # python-js apps don't carry a Storage configVersion in the deploy payload; only Streamlit apps do.
         if data_app.type == 'python-js':
             config_version_arg: str | None = None
-            branch_arg: str | None = branch
         else:
             config_version = await client.storage_client.configuration_version_latest(
                 DATA_APP_COMPONENT_ID, data_app.configuration_id
             )
             config_version_arg = str(config_version)
-            branch_arg = None
         _ = await client.data_science_client.deploy_data_app(
             data_app.data_app_id,
             config_version_arg,
             mode=mode,
-            branch=branch_arg,
         )
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         data_app = data_app.with_deployment_info(await _fetch_logs(client, data_app.data_app_id))
