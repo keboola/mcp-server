@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, FlowType, get_metadata_property
 from keboola_mcp_server.clients.storage import APIFlowResponse
@@ -110,21 +110,33 @@ class FlowConfiguration(BaseModel):
 # =============================================================================
 
 
-class RetryStrategyParams(BaseModel):
+class BaseExtraModel(BaseModel):
+    """Base for conditional-flow configuration nodes (conditions, tasks, phases, transitions, retry).
+
+    Uses ``extra='allow'`` so fields the live ``keboola.flow`` schema may add — and that we do not
+    model yet — pass through the model round-trip (``get_flow_configuration`` on the write path,
+    ``Flow.from_api_response`` on the read path) instead of being silently dropped. Validation
+    against the live schema remains the authoritative gate; this only prevents lossy serialization.
+    """
+
+    model_config = ConfigDict(extra='allow')
+
+
+class RetryStrategyParams(BaseExtraModel):
     """Retry strategy parameters configuration."""
 
     max_retries: int = Field(default=3, description='Maximum number of retry attempts', alias='maxRetries')
     delay: int = Field(default=10, description='Delay in seconds between retry attempts')
 
 
-class RetryOnCondition(BaseModel):
+class RetryOnCondition(BaseExtraModel):
     """Retry condition configuration."""
 
     type: Literal['errorMessageContains', 'errorMessageExact'] = Field(description='Type of retry condition')
     value: str = Field(description='Value to match for retry condition')
 
 
-class RetryConfiguration(BaseModel):
+class RetryConfiguration(BaseExtraModel):
     """Retry configuration for tasks and phases."""
 
     strategy: Literal['linear'] = Field(default='linear', description='Retry strategy')
@@ -141,29 +153,24 @@ class RetryConfiguration(BaseModel):
 # =============================================================================
 
 
-class TaskCondition(BaseModel):
+class TaskCondition(BaseExtraModel):
     """Task-based condition for flow transitions."""
 
     type: Literal['task'] = Field(description='Condition type')
     task: str = Field(description='ID of the task to evaluate, or "*" when used with phase operators')
-    value: Literal[
-        'taskId',
-        'phaseId',
-        'status',
-        'job.id',
-        'job.componentId',
-        'job.configId',
-        'job.status',
-        'job.result',
-        'job.startTime',
-        'job.endTime',
-        'job.duration',
-        'job.result.output.tables',
-        'job.result.message',
-    ] = Field(description='Property path to retrieve from the task context')
+    value: str = Field(
+        description=(
+            'Property path or JMESPath expression to retrieve from the task context. Common simple '
+            "paths: 'taskId', 'phaseId', 'status', 'job.id', 'job.componentId', 'job.configId', "
+            "'job.status', 'job.result', 'job.startTime', 'job.endTime', 'job.duration', "
+            "'job.result.output.tables', 'job.result.message'. JMESPath expressions over the job "
+            'result are also supported, for example: '
+            "sum(job.result.output.tables[].metrics[?name=='importedRowsCount'][].value)"
+        )
+    )
 
 
-class PhaseCondition(BaseModel):
+class PhaseCondition(BaseExtraModel):
     """Phase-based condition for flow transitions."""
 
     type: Literal['phase'] = Field(description='Condition type')
@@ -171,21 +178,21 @@ class PhaseCondition(BaseModel):
     value: Literal['phaseId', 'status'] = Field(description='Property to retrieve from the phase')
 
 
-class ConstantCondition(BaseModel):
+class ConstantCondition(BaseExtraModel):
     """Constant value condition."""
 
     type: Literal['const', 'constant'] = Field(description='Condition type')
     value: Union[str, int, bool, list] = Field(description='Constant value')
 
 
-class VariableCondition(BaseModel):
+class VariableCondition(BaseExtraModel):
     """Variable-based condition."""
 
     type: Literal['variable'] = Field(description='Condition type')
     value: str = Field(description='The name of the variable to evaluate')
 
 
-class OperatorCondition(BaseModel):
+class OperatorCondition(BaseExtraModel):
     """Operator-based condition with operands."""
 
     type: Literal['operator'] = Field(description='Condition type')
@@ -195,7 +202,7 @@ class OperatorCondition(BaseModel):
     operands: list['ConditionObject'] = Field(description='List of operand conditions')
 
 
-class PhaseOperatorCondition(BaseModel):
+class PhaseOperatorCondition(BaseExtraModel):
     """Phase-specific operator condition."""
 
     type: Literal['operator'] = Field(description='Condition type')
@@ -204,7 +211,7 @@ class PhaseOperatorCondition(BaseModel):
     operands: list['OperatorCondition'] = Field(description='List of operand conditions')
 
 
-class FunctionCondition(BaseModel):
+class FunctionCondition(BaseExtraModel):
     """Function-based condition."""
 
     type: Literal['function'] = Field(description='Condition type')
@@ -220,7 +227,7 @@ class FunctionCondition(BaseModel):
     operands: list['VariableSourceObject'] = Field(description='List of operand conditions')
 
 
-class ArrayCondition(BaseModel):
+class ArrayCondition(BaseExtraModel):
     """Array-based condition."""
 
     type: Literal['array'] = Field(description='Condition type')
@@ -245,7 +252,7 @@ ConditionObject = Union[
 # =============================================================================
 
 
-class JobTaskConfiguration(BaseModel):
+class JobTaskConfiguration(BaseExtraModel):
     """Job task configuration."""
 
     type: Literal['job'] = Field(description='Task type')
@@ -255,16 +262,21 @@ class JobTaskConfiguration(BaseModel):
     mode: Literal['run'] = Field(description='Execution mode')
     delay: Optional[Union[str, int]] = Field(default=None, description='Initial delay in seconds')
     retry: Optional[RetryConfiguration] = Field(default=None, description='Retry configuration')
+    variable_overrides: Optional[list[str]] = Field(
+        default=None,
+        description='Names of flow variables to pass into this job as variable overrides',
+        alias='variableOverrides',
+    )
 
 
-class NotificationRecipient(BaseModel):
+class NotificationRecipient(BaseExtraModel):
     """Notification recipient configuration."""
 
     channel: Literal['email', 'webhook'] = Field(description='Channel type')
     address: str = Field(description='Recipient address (email or webhook URL)')
 
 
-class NotificationTaskConfiguration(BaseModel):
+class NotificationTaskConfiguration(BaseExtraModel):
     """Notification task configuration."""
 
     type: Literal['notification'] = Field(description='Task type')
@@ -282,7 +294,7 @@ VariableSourceObject = Annotated[
 ]
 
 
-class VariableTaskConfiguration(BaseModel):
+class VariableTaskConfiguration(BaseExtraModel):
     """Variable task configuration."""
 
     type: Literal['variable'] = Field(description='Task type')
@@ -302,7 +314,7 @@ TaskConfiguration = Annotated[
 # =============================================================================
 
 
-class ConditionalFlowTransition(BaseModel):
+class ConditionalFlowTransition(BaseExtraModel):
     """Transition model with structured conditions."""
 
     id: str = Field(description='Unique identifier of the transition')
@@ -311,7 +323,7 @@ class ConditionalFlowTransition(BaseModel):
     goto: str | None = Field(description='Target phase ID to transition to, or null to end the flow')
 
 
-class ConditionalFlowTask(BaseModel):
+class ConditionalFlowTask(BaseExtraModel):
     """Task model with structured configuration."""
 
     id: str = Field(description='Unique identifier of the task (must be string)')
@@ -321,7 +333,7 @@ class ConditionalFlowTask(BaseModel):
     task: TaskConfiguration = Field(description='Structured task configuration')
 
 
-class ConditionalFlowPhase(BaseModel):
+class ConditionalFlowPhase(BaseExtraModel):
     """Phase model with structured retry configuration."""
 
     id: str = Field(description='Unique identifier of the phase (must be string)')
@@ -350,7 +362,7 @@ class ConditionalFlowPhase(BaseModel):
         return data
 
 
-class ConditionalFlowConfiguration(BaseModel):
+class ConditionalFlowConfiguration(BaseExtraModel):
     """Represents a complete legacy flow configuration."""
 
     phases: list[ConditionalFlowPhase] = Field(description='List of phases in the flow')
