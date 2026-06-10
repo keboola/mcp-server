@@ -4,6 +4,7 @@ import httpx
 import pytest
 import toon_format
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from integtests.conftest import BucketDef, ConfigDef, TableDef
 from keboola_mcp_server.tools.search import SearchHit, SuggestedComponentOutput
@@ -83,13 +84,21 @@ async def test_search_end_to_end(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(raises=httpx.ReadTimeout, strict=False, reason='AI service may exceed read timeout in CI')
 async def test_find_component_id(mcp_client: Client):
     """Tests that `find_component_id` returns relevant component IDs for a query."""
     query = 'generic extractor - extract data from many APIs'
     generic_extractor_id = 'ex-generic-v2'
 
-    full_result = await mcp_client.call_tool('find_component_id', {'query': query})
+    try:
+        full_result = await mcp_client.call_tool('find_component_id', {'query': query})
+    except (httpx.ReadTimeout, ToolError) as e:
+        # The AI service backing `find_component_id` can exceed its read timeout in CI. The timeout
+        # surfaces either as a raw httpx.ReadTimeout or, when it round-trips through the MCP tool, as
+        # a ToolError carrying an "...timed out..." message. Tolerate only that timeout signature; any
+        # other ToolError is a real failure and must propagate.
+        if isinstance(e, httpx.ReadTimeout) or 'timed out' in str(e).lower():
+            pytest.xfail(f'AI service exceeded read timeout in CI: {e}')
+        raise
 
     assert full_result.structured_content is not None
     result = full_result.structured_content['result']
