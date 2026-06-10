@@ -2,7 +2,6 @@ import sys
 from types import ModuleType
 from typing import Literal, cast
 
-import httpx
 import pytest
 from fastmcp import Context
 
@@ -2331,34 +2330,21 @@ async def test_get_data_apps_detail_for_streamlit_returns_empty_drafts(
 # ===== Tests for delete_python_js_data_app_draft =====
 
 
-def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
-    """Build an httpx.HTTPStatusError carrying the given status code, as the Storage client raises."""
-    request = httpx.Request('DELETE', 'https://connection.keboola.test/v2/storage/...')
-    response = httpx.Response(status_code, request=request)
-    return httpx.HTTPStatusError(f'HTTP {status_code}', request=request, response=response)
-
-
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    'storage_delete_side_effect',
-    [None, _http_status_error(404)],
-    ids=['storage_config_present', 'storage_config_already_gone_404'],
-)
 async def test_delete_python_js_data_app_draft_success(
     mocker,
     mcp_context_client: Context,
-    storage_delete_side_effect,
 ) -> None:
-    """Happy path: deletes the data app via DSAPI and the Storage config (with skip_trash=False),
-    and returns the parent configuration_id so the agent can pivot back. A 404 from the Storage
-    delete (DSAPI already removed the config) is tolerated — the tool stays idempotent."""
+    """Happy path: deletes the data app via DSAPI only and returns the parent configuration_id so
+    the agent can pivot back. The Storage config must NOT be deleted by the tool — DSAPI already
+    moves it to the trash, and a second delete would purge it from the trash permanently."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     draft = _make_python_js_draft_data_app(
         configuration_id='cfg-draft-1', data_app_id='app-draft-1', parent_configuration_id='cfg-prod-1'
     )
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft))
     keboola_client.data_science_client.delete_data_app = mocker.AsyncMock(return_value=None)
-    keboola_client.storage_client.configuration_delete = mocker.AsyncMock(side_effect=storage_delete_side_effect)
+    keboola_client.storage_client.configuration_delete = mocker.AsyncMock()
 
     result = await delete_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-draft-1')
 
@@ -2368,36 +2354,13 @@ async def test_delete_python_js_data_app_draft_success(
     assert result.data_app_id == 'app-draft-1'
     assert result.parent_configuration_id == 'cfg-prod-1'
     keboola_client.data_science_client.delete_data_app.assert_awaited_once_with('app-draft-1')
-    keboola_client.storage_client.configuration_delete.assert_awaited_once_with(
-        component_id=DATA_APP_COMPONENT_ID,
-        configuration_id='cfg-draft-1',
-        skip_trash=False,
-    )
+    keboola_client.storage_client.configuration_delete.assert_not_called()
     # The config link pivots to the parent prod and is labelled as such — not with the draft's name,
     # which would mislabel a link pointing at a different configuration.
     config_link = next(link for link in result.links if 'Data App Configuration' in link.title)
     assert 'data-apps/cfg-prod-1' in config_link.url
     assert 'parent prod app' in config_link.title
     assert draft.name not in config_link.title
-
-
-@pytest.mark.asyncio
-async def test_delete_python_js_data_app_draft_propagates_non_404_storage_error(
-    mocker,
-    mcp_context_client: Context,
-) -> None:
-    """Only 404 (already gone) is tolerated — any other Storage delete failure must propagate so a
-    real error is not silently swallowed."""
-    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    draft = _make_python_js_draft_data_app(
-        configuration_id='cfg-draft-1', data_app_id='app-draft-1', parent_configuration_id='cfg-prod-1'
-    )
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=draft))
-    keboola_client.data_science_client.delete_data_app = mocker.AsyncMock(return_value=None)
-    keboola_client.storage_client.configuration_delete = mocker.AsyncMock(side_effect=_http_status_error(500))
-
-    with pytest.raises(httpx.HTTPStatusError):
-        await delete_python_js_data_app_draft(ctx=mcp_context_client, configuration_id='cfg-draft-1')
 
 
 @pytest.mark.asyncio

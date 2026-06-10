@@ -1408,23 +1408,10 @@ async def delete_python_js_data_app_draft(
     parent_cfg_id = data_app_block.get('parentConfigurationId')
     parent_configuration_id: Optional[str] = parent_cfg_id if isinstance(parent_cfg_id, str) else None
 
+    # DSAPI deletes the data app and moves its Storage config to the trash. Don't delete the config
+    # via Storage API on top of that — deleting an already-trashed config purges it from the trash
+    # (even with skip_trash=False), making the draft unrestorable.
     await client.data_science_client.delete_data_app(data_app.data_app_id)
-    # DSAPI delete may also remove the Storage config (its docstring says so, and removal can be
-    # eventually-consistent). Tolerate a 404 so the tool stays idempotent if the config is already
-    # gone; any other status is a real error and must propagate.
-    try:
-        await client.storage_client.configuration_delete(
-            component_id=DATA_APP_COMPONENT_ID,
-            configuration_id=configuration_id,
-            skip_trash=False,
-        )
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code != 404:
-            raise
-        LOG.info(
-            f'Storage config "{configuration_id}" was already deleted (404) while tearing down the '
-            'draft — treating as already removed.'
-        )
 
     # When a parent prod app is known, the links pivot to it. We don't have the parent's name here,
     # so label it explicitly as the parent rather than reusing the (now-deleted) draft's name, which
