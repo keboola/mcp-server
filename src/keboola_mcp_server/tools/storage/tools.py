@@ -8,7 +8,7 @@ from typing import Annotated, Any, Iterable, Literal, Sequence, cast
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
-from pydantic import AliasChoices, BaseModel, Field, field_serializer, model_validator
+from pydantic import AliasChoices, BaseModel, Field, SerializeAsAny, field_serializer, model_validator
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
@@ -286,7 +286,16 @@ class TableColumnInfo(BaseModel):
     description: str | None = Field(default=None, description='Description of the column.')
 
 
-class TableDetail(BaseModel):
+class TableSummary(BaseModel):
+    """Listing-level view of a table.
+
+    Carries only the fields available when enumerating tables in a bucket (no warehouse
+    round-trip). Notably it does NOT declare ``fully_qualified_name`` or ``columns`` — those
+    require fetching a single table's detail. Emitting a ``null`` FQN here would be misleading
+    (per the query_data queryability rule, ``null`` means "not queryable"), so the field is
+    simply absent from summaries. See ``TableDetail`` for the full per-table view.
+    """
+
     id: str = Field(description='Unique identifier for the table.')
     name: str = Field(description='Name of the table.')
     display_name: str = Field(
@@ -315,49 +324,14 @@ class TableDetail(BaseModel):
         validation_alias=AliasChoices('dataSizeBytes', 'data_size_bytes', 'data-size-bytes'),
         serialization_alias='dataSizeBytes',
     )
-    columns: list[TableColumnInfo] | None = Field(
-        default=None,
-        description='List of column information including database identifiers.',
-    )
-    fully_qualified_name: str | None = Field(
-        default=None,
-        description='Fully qualified name of the table.',
-        validation_alias=AliasChoices('fullyQualifiedName', 'fully_qualified_name', 'fully-qualified-name'),
-        serialization_alias='fullyQualifiedName',
-    )
     links: list[Link] | None = Field(default=None, description='The links relevant to the table.')
     source_project: str | None = Field(
         default=None, description='The source Keboola project of the linked table, None otherwise.'
-    )
-    used_by: list[ComponentUsageReference] | None = Field(
-        default=None, description='The components / transformations that use the table.'
-    )
-    created_by: ComponentUsageReference | None = Field(
-        default=None, description='Configuration that created the table (component/config ID and timestamp).'
-    )
-    last_updated_by: ComponentUsageReference | None = Field(
-        default=None, description='Configuration that last updated the table (component/config ID and timestamp).'
     )
 
     # these are internal fields not meant to be exposed to LLMs
     branch_id: str | None = Field(default=None, exclude=True, description='The ID of the branch the bucket belongs to.')
     prod_id: str = Field(default='', exclude=True, description='The ID of the production branch bucket.')
-
-    def with_lineage_metadata(self, values: dict[str, Any]) -> 'TableDetail':
-        metadata = values.get('metadata', [])
-        if not metadata or not isinstance(metadata, list):
-            return self
-        last_updated_by = get_last_updated_by(metadata)
-        return self.model_copy(
-            update={
-                'created_by': get_created_by(metadata),
-                'last_updated_by': last_updated_by,
-                'updated': _max_timestamp(
-                    self.updated,
-                    last_updated_by.timestamp if last_updated_by else None,
-                ),
-            }
-        )
 
     @model_validator(mode='before')
     @classmethod
@@ -402,20 +376,68 @@ class TableDetail(BaseModel):
         return values
 
     @field_serializer('primary_key')
-    # Serialize the primary key as a string so the whole TableDetail is serialized
+    # Serialize the primary key as a string so the whole table is serialized
     # as tabular data in Toon format.
     def serialize_primary_key(self, primary_key: list[str] | None) -> str | None:
         return '|'.join(primary_key) if primary_key else None
 
 
+class TableDetail(TableSummary):
+    """Full per-table view returned when fetching a specific table by ID.
+
+    Extends ``TableSummary`` with the fields that require a dedicated table-detail fetch
+    (and, for the FQN, resolving the warehouse backend path): column definitions, the fully
+    qualified database name, usage references, and create/update lineage.
+    """
+
+    columns: list[TableColumnInfo] | None = Field(
+        default=None,
+        description='List of column information including database identifiers.',
+    )
+    fully_qualified_name: str | None = Field(
+        default=None,
+        description='Fully qualified name of the table.',
+        validation_alias=AliasChoices('fullyQualifiedName', 'fully_qualified_name', 'fully-qualified-name'),
+        serialization_alias='fullyQualifiedName',
+    )
+    used_by: list[ComponentUsageReference] | None = Field(
+        default=None, description='The components / transformations that use the table.'
+    )
+    created_by: ComponentUsageReference | None = Field(
+        default=None, description='Configuration that created the table (component/config ID and timestamp).'
+    )
+    last_updated_by: ComponentUsageReference | None = Field(
+        default=None, description='Configuration that last updated the table (component/config ID and timestamp).'
+    )
+
+    def with_lineage_metadata(self, values: dict[str, Any]) -> 'TableDetail':
+        metadata = values.get('metadata', [])
+        if not metadata or not isinstance(metadata, list):
+            return self
+        last_updated_by = get_last_updated_by(metadata)
+        return self.model_copy(
+            update={
+                'created_by': get_created_by(metadata),
+                'last_updated_by': last_updated_by,
+                'updated': _max_timestamp(
+                    self.updated,
+                    last_updated_by.timestamp if last_updated_by else None,
+                ),
+            }
+        )
+
+
 class GetTablesOutput(BaseModel):
-    tables: list[TableDetail] = Field(description='List of tables.')
+    # SerializeAsAny so detail instances serialize with their full field set (columns,
+    # fullyQualifiedName, ...) while summaries (from bucket listing) serialize as the
+    # TableSummary subset — omitting fully_qualified_name rather than emitting it as null.
+    tables: list[SerializeAsAny[TableSummary]] = Field(description='List of tables.')
     links: list[Link] = Field(description='Links relevant to the table listing.')
     tables_not_found: list[str] | None = Field(default=None, description='List of table IDs that were not found.')
 
     def pack_links(self) -> 'GetTablesOutput':
-        """Move links from particular TableDetail objects to GetTablesOutput object to optimize TOON serialization."""
-        tables: list[TableDetail] = []
+        """Move links from particular table objects to GetTablesOutput object to optimize TOON serialization."""
+        tables: list[TableDetail | TableSummary] = []
         links: set[Link] = set()
         for table in self.tables:
             links.update(table.links or [])
@@ -677,7 +699,7 @@ async def get_tables(
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
 
-    tables_by_id: dict[str, TableDetail] = {}
+    tables_by_id: dict[str, TableDetail | TableSummary] = {}
     missing_ids: list[str] = []
 
     if bucket_ids:
@@ -713,13 +735,15 @@ async def get_tables(
                 ['storage.input', 'storage.output'],
             )
             # Initialize the used_by list for all tables to avoid None values which could confuse the model.
-            for table_id in tables_by_id.keys():
-                tables_by_id[table_id].used_by = []
+            # Usage only applies to full table details; summaries (from bucket listing) carry no used_by.
+            for table in tables_by_id.values():
+                if isinstance(table, TableDetail):
+                    table.used_by = []
             for id_usage in usage_by_ids:
                 table_id = prod_ids_to_ids.get(id_usage.target_id)
-                if table_id:
-                    tables_by_id[table_id].used_by = id_usage.usage_references
-                else:
+                if table_id and isinstance(table := tables_by_id[table_id], TableDetail):
+                    table.used_by = id_usage.usage_references
+                elif not table_id:
                     LOG.error(f'Target ID has changed during searching for usage: prod_id={id_usage.target_id}.')
 
     return GetTablesOutput(
@@ -827,10 +851,15 @@ async def _list_tables(
     bucket_ids: Sequence[str],
     client: KeboolaClient,
     links_manager: ProjectLinksManager,
-) -> Iterable[TableDetail]:
-    """Retrieves all tables in a specific bucket with their basic information."""
+) -> Iterable[TableSummary]:
+    """Retrieves all tables in a specific bucket with their basic (summary) information.
+
+    Listing does not resolve the warehouse FQN or column details, so this returns
+    ``TableSummary`` objects, which omit ``fully_qualified_name`` and ``columns`` rather than
+    emitting them as null. Fetch a specific table by ID (``_get_table``) for the full detail.
+    """
     has_sb = await has_storage_branches(client)
-    tables_by_prod_id: dict[str, TableDetail] = {}
+    tables_by_prod_id: dict[str, TableSummary] = {}
     sapi_includes = ['metadata', 'columnMetadata', 'sourceMetadata', 'sourceColumnMetadata']
 
     for bucket_id in bucket_ids:
@@ -842,7 +871,7 @@ async def _list_tables(
             )
             for raw in raw_table_data:
                 table_name = cast(str, raw.get('name', ''))
-                table = TableDetail.model_validate(
+                table = TableSummary.model_validate(
                     raw | {'links': [links_manager.get_table_detail_link(prod_bucket.id, table_name)]}
                 )
                 assert table.id == table.prod_id, f'Table ID mismatch: {table.id} != {table.prod_id}'
@@ -854,7 +883,7 @@ async def _list_tables(
                 dev_bucket.id, include=sapi_includes, branch_id=dev_branch_id
             )
             for raw in raw_table_data:
-                table = TableDetail.model_validate(raw)
+                table = TableSummary.model_validate(raw)
                 tables_by_prod_id[table.prod_id] = table.model_copy(
                     update={
                         'id': table.prod_id,
