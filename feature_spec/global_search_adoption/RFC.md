@@ -168,6 +168,37 @@ These must be stated in the tool docstring so agents adapt:
 In exchange: single-digit API calls per search, server-side pagination, true total
 counts, and results independent of project size.
 
+### Validation prompt samples
+
+Concrete user prompts to verify the routing manually (local MCP / canary). The "Gap #"
+column references the regression list above where applicable.
+
+**Prompts that MUST use global search (textual, server-side):**
+
+| Sample prompt | Expected `search` call | What it proves |
+| --- | --- | --- |
+| "Find all tables with 'customer' in the name" | `patterns=["customer"], item_types=["table"]` | name search hits `global-search` with `types=[table]`, single-digit API calls |
+| "Search for the sales transformation" | `patterns=["sales"], item_types=["transformation"]` | `transformation` type mapping |
+| "Find the flow named 'Daily ETL'" | `patterns=["Daily ETL"], item_types=["flow"]` | flow re-typing by component ID (orchestrator / conditional flow) |
+| "Find the data app called 'Churn dashboard'" | `patterns=["Churn dashboard"], item_types=["data-app"]` | `configuration` over-fetch + client-side narrowing to `data-app` |
+| "Find items named 'daily report' or 'weekly summary'" | `patterns=["daily report", "weekly summary"]` | one request per pattern, OR-merge + dedupe |
+| "Is there a bucket called 'marketing'?" | `patterns=["marketing"], item_types=["bucket"]` | bucket type mapping |
+| (on a dev branch) "Find the table 'orders_final'" where it exists only in production | `patterns=["orders_final"], item_types=["table"]` | zero hits in current branch → automatic all-branches retry; hit carries `branch_id`/`branch_name`, response `branch_scope="all-branches"` |
+
+**Prompts that must NOT use global search (config-based, legacy fallback or other tools):**
+
+| Sample prompt | Expected routing | Gap # |
+| --- | --- | --- |
+| "Find transformations referencing table in.c-prod.customers" | `search_type="config-based"` (client-side enumeration of configurations) | 1-like: config JSON content is not indexed |
+| "Which flows use configuration ID 01k9cz233cvd1rga3zzx40g8qj?" | `search_type="config-based"`, `scopes=["tasks", "phases"]` | config JSON content |
+| "Where is my_bucket used in input or output mappings?" | `search_type="config-based"`, `scopes=["storage.input", "storage.output"]` | config JSON content |
+| "Find tables that have an 'email' column" | `get_tables` (column listing), NOT textual search | 2 |
+| "Find tables whose description mentions GDPR" | `get_tables` + descriptions (or future `tables_search` by metadata); textual search will NOT match | 1, 2 |
+| "Find items matching regex 'daily.*report'" | textual + `mode="regex"` → tool error; agent retries with literal patterns or config-based regex | 3 |
+| "Show me table in.c-main.orders" | exact ID → `get_tables` directly, no search at all | 4 |
+| "I need a Salesforce extractor" | `find_component_id` (AI service suggestion), not `search` | — |
+| Any textual search in a project without the `global-search` feature | same `search` call, legacy client-side enumeration path (transparent fallback) | — |
+
 ## Resolution Strategy
 
 ### `clients/storage.py`
