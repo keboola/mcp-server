@@ -3,10 +3,11 @@ import json
 import logging
 import re
 from collections import defaultdict
-from typing import Annotated, Any, AsyncGenerator, Iterable, Literal, Mapping, Sequence
+from typing import Annotated, Any, AsyncGenerator, Iterable, Literal, Mapping, Sequence, cast
 
 import jsonpath_ng
 from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import FunctionTool
 from jsonpath_ng.jsonpath import JSONPath
 from mcp.types import ToolAnnotations
@@ -20,6 +21,8 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
     get_metadata_property,
 )
+from keboola_mcp_server.clients.storage import GlobalSearchResponse
+from keboola_mcp_server.clients.storage import ItemType as ApiItemType
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
@@ -70,8 +73,30 @@ SEARCH_ITEM_TYPE_TO_COMPONENT_TYPES: Mapping[SearchItemType, Sequence[str]] = {
     'workspace': ['other'],
 }
 
+GLOBAL_SEARCH_FEATURE = 'global-search'
+WORKSPACE_COMPONENT_ID = 'keboola.sandboxes'
+
+# Maps the tool's item types to the API types requested from the global-search endpoint. Some tool
+# types (data-app, flow, workspace) exist server-side as 'configuration' items distinguished only
+# by their component ID, so 'configuration' is over-fetched and narrowed client-side after re-typing.
+SEARCH_ITEM_TYPE_TO_API_TYPES: Mapping[SearchItemType, Sequence[ApiItemType]] = {
+    'bucket': ('bucket',),
+    'table': ('table',),
+    'transformation': ('transformation',),
+    'configuration': ('configuration',),
+    'configuration-row': ('configuration-row',),
+    'component': ('configuration', 'configuration-row'),
+    'flow': ('flow', 'configuration'),
+    'data-app': ('configuration',),
+    'workspace': ('workspace', 'configuration'),
+    'shared-code': ('shared-code',),
+    'rows': ('rows',),
+    'state': ('state',),
+}
+
 SearchType = Literal['textual', 'config-based']
 SearchPatternMode = Literal['regex', 'literal']
+SearchBranchScope = Literal['current-branch', 'all-branches']
 
 
 def add_search_tools(mcp: FastMCP) -> None:
@@ -113,11 +138,20 @@ class SearchHit(BaseModel):
     configuration_row_id: str | None = Field(default=None, description='The ID of the configuration row.')
 
     item_type: SearchItemType = Field(description='The type of the item (e.g. table, bucket, configuration, etc.).')
-    updated: str = Field(description='The date and time the item was created in ISO 8601 format.')
+    updated: str = Field(
+        description='The date and time the item was last updated (or created, when the update time is not '
+        'available) in ISO 8601 format.'
+    )
 
     name: str | None = Field(default=None, description='Name of the item.')
     display_name: str | None = Field(default=None, description='Display name of the item.')
     description: str | None = Field(default=None, description='Description of the item.')
+    branch_id: str | None = Field(
+        default=None, description='ID of the branch the item belongs to, when reported by the search backend.'
+    )
+    branch_name: str | None = Field(
+        default=None, description='Name of the branch the item belongs to, when reported by the search backend.'
+    )
     matches: list[PatternMatch] = Field(
         default_factory=list,
         description='Most specific JSONPath scopes with grouped matched patterns (config-based search only).',
@@ -173,6 +207,28 @@ class SearchHit(BaseModel):
             PatternMatch(scope=scope, patterns=list(patterns_by_scope[scope])) for scope in most_specific_scopes
         ]
         return self
+
+
+class SearchOutput(BaseModel):
+    """Paginated search results with total counts."""
+
+    hits: list[SearchHit] = Field(description='The matching items (paginated).')
+    total: int = Field(
+        description='Approximate total number of matching items before pagination; treat it as an upper bound on '
+        'the items reachable via pagination. With multiple patterns, an item matching more than one pattern is '
+        'counted once per pattern; for textual search the count may also include items later removed by client-side '
+        'type narrowing (e.g. configurations re-typed to data-apps/flows/workspaces).'
+    )
+    by_type: dict[str, int] = Field(
+        default_factory=dict,
+        description='Number of matching items per item type (before pagination and client-side narrowing).',
+    )
+    branch_scope: SearchBranchScope = Field(
+        default='current-branch',
+        description="Branch scope the hits come from. 'all-branches' means nothing was found in the current "
+        "branch context and the search was widened to the whole project; check each hit's branch_id/branch_name "
+        'to see where it lives.',
+    )
 
 
 class SearchSpec(BaseModel):
@@ -474,7 +530,7 @@ async def _fetch_configs(
             item_type: SearchItemType = 'transformation'
             if not allowed_transformations:
                 continue
-        elif component_id == 'keboola.sandboxes':
+        elif component_id == WORKSPACE_COMPONENT_ID:
             item_type: SearchItemType = 'workspace'
             if not allowed_workspaces:
                 continue
@@ -550,6 +606,149 @@ async def _fetch_configs(
                         ).set_matches(matches)
 
 
+def _api_types_for(item_types: Sequence[SearchItemType]) -> list[ApiItemType]:
+    """Maps the tool's item types to a deduplicated list of API types for the global-search endpoint."""
+    api_types: list[ApiItemType] = []
+    for item_type in item_types:
+        for api_type in SEARCH_ITEM_TYPE_TO_API_TYPES.get(item_type, ()):
+            if api_type not in api_types:
+                api_types.append(api_type)
+    return api_types
+
+
+def _retype_configuration(component_id: str | None) -> SearchItemType:
+    """Maps a 'configuration' global-search item to the tool's more specific item type by its component."""
+    if component_id in (ORCHESTRATOR_COMPONENT_ID, CONDITIONAL_FLOW_COMPONENT_ID):
+        return 'flow'
+    if component_id == DATA_APP_COMPONENT_ID:
+        return 'data-app'
+    if component_id == WORKSPACE_COMPONENT_ID:
+        return 'workspace'
+    return 'configuration'
+
+
+def _global_search_hit(item: GlobalSearchResponse.Item) -> SearchHit | None:
+    """Maps a global-search item to a SearchHit; returns None for items that cannot be mapped."""
+    common: dict[str, Any] = {
+        'updated': item.created.isoformat(),
+        'name': item.name,
+        'branch_id': item.branch_id,
+        'branch_name': item.branch_name,
+    }
+
+    if item.type == 'bucket':
+        return SearchHit(bucket_id=item.id, item_type='bucket', **common)
+
+    if item.type == 'table':
+        bucket = item.full_path.get('bucket')
+        bucket_id = str(bucket['id']) if isinstance(bucket, dict) and bucket.get('id') else None
+        return SearchHit(table_id=item.id, bucket_id=bucket_id, item_type='table', **common)
+
+    if item.type in ('configuration-row', 'rows'):
+        configuration = item.full_path.get('configuration')
+        configuration_id = (
+            str(configuration['id']) if isinstance(configuration, dict) and configuration.get('id') else None
+        )
+        if not (item.component_id and configuration_id):
+            LOG.warning(f'Skipping global-search row hit with no parent configuration in fullPath: {item.id}')
+            return None
+        return SearchHit(
+            component_id=item.component_id,
+            configuration_id=configuration_id,
+            configuration_row_id=item.id,
+            item_type='configuration-row',
+            **common,
+        )
+
+    # The remaining types (configuration, transformation, flow, workspace, shared-code, state) are all
+    # configuration-like items whose id is the configuration ID.
+    component_id = item.component_id or (WORKSPACE_COMPONENT_ID if item.type == 'workspace' else None)
+    if not component_id:
+        LOG.warning(f'Skipping global-search hit with no component id: {item.type} {item.id}')
+        return None
+    item_type = _retype_configuration(component_id) if item.type == 'configuration' else cast(SearchItemType, item.type)
+    return SearchHit(component_id=component_id, configuration_id=item.id, item_type=item_type, **common)
+
+
+async def _global_textual_search(
+    client: KeboolaClient,
+    spec: SearchSpec,
+    limit: int,
+    offset: int,
+) -> SearchOutput:
+    """
+    Searches item names server-side via the SAPI global-search endpoint, scoped to the current project.
+
+    Runs one request per pattern (patterns are OR-ed, mirroring the legacy behavior) against the current
+    branch context first; when nothing is found, widens the search to the whole project (all branches).
+    """
+    api_types = _api_types_for(spec.item_types)
+    # 'rows' hits are reported as 'configuration-row' and 'component' expands to configuration (rows);
+    # normalize the requested types accordingly for the client-side narrowing.
+    requested_types = {'configuration-row' if t == 'rows' else t for t in spec.item_types if t != 'component'}
+
+    # The 'configuration' API type is lossy: a single server-side 'configuration' item may re-type to
+    # configuration/data-app/flow/workspace, so when the caller filters by type the server can fill a page
+    # with items that are dropped during client-side narrowing, under-filling the page. Over-fetch up to the
+    # server max in that case so the narrowed page is more likely to reach `limit`. Deep pagination (large
+    # offset) remains approximate because the server paginates in un-narrowed space.
+    needs_overfetch = bool(requested_types) and 'configuration' in api_types
+    fetch_limit = MAX_GLOBAL_SEARCH_LIMIT if needs_overfetch else limit
+
+    async def query(branch_scope: Literal['current', 'all']) -> list[GlobalSearchResponse]:
+        return list(
+            await asyncio.gather(
+                *(
+                    client.storage_client.global_search(
+                        query=pattern, types=api_types, limit=fetch_limit, offset=offset, branch_scope=branch_scope
+                    )
+                    for pattern in spec.patterns
+                )
+            )
+        )
+
+    def collect(responses: list[GlobalSearchResponse]) -> list[SearchHit]:
+        hits_by_key: dict[tuple[str, str], SearchHit] = {}
+        for response in responses:
+            for item in response.items:
+                if (hit := _global_search_hit(item)) is None:
+                    continue
+                if requested_types and hit.item_type not in requested_types:
+                    continue
+                hits_by_key.setdefault((item.type, item.id), hit)
+        return list(hits_by_key.values())
+
+    branch_scope: Literal['current', 'all'] = 'current'
+    responses = await query(branch_scope)
+    hits = collect(responses)
+    if not hits and offset == 0:
+        # Nothing in the current branch context — widen to the whole project so that items living
+        # in other branches can be discovered. Hits carry branch_id/branch_name for attribution.
+        branch_scope = 'all'
+        responses = await query(branch_scope)
+        hits = collect(responses)
+
+    hits.sort(
+        key=lambda x: (
+            x.updated,
+            x.bucket_id or x.table_id or x.component_id or x.configuration_id or x.configuration_row_id,
+        ),
+        reverse=True,
+    )
+
+    by_type: dict[str, int] = defaultdict(int)
+    for response in responses:
+        for type_name, count in response.by_type.items():
+            by_type[type_name] += count
+
+    return SearchOutput(
+        hits=hits[:limit],
+        total=sum(response.all for response in responses),
+        by_type=dict(by_type),
+        branch_scope='current-branch' if branch_scope == 'current' else 'all-branches',
+    )
+
+
 @tool_errors()
 async def search(
     ctx: Context,
@@ -592,7 +791,7 @@ async def search(
         SearchPatternMode,
         Field(
             description='How to interpret patterns: "regex" for regular expressions or "literal" for exact text '
-            '(default: "literal").'
+            '(default: "literal"). Regex is only supported for config-based search.'
         ),
     ] = 'literal',
     limit: Annotated[
@@ -603,7 +802,7 @@ async def search(
         ),
     ] = DEFAULT_GLOBAL_SEARCH_LIMIT,
     offset: Annotated[int, Field(description='Number of matching items to skip for pagination (default: 0).')] = 0,
-) -> list[SearchHit]:
+) -> SearchOutput:
     """
     Searches for Keboola items (tables, buckets, components, configurations, transformations, flows, data-apps, etc.)
     in the current project and returns matching ID + metadata.
@@ -611,8 +810,9 @@ async def search(
     This tool supports two complementary search types:
 
     1) textual
-    - Searches item metadata fields by matching patterns against id, name, displayName, and description.
-    - For tables, also searches column names and column descriptions.
+    - Searches items by name, server-side (fast, independent of project size).
+    - Prefers the current branch context; when nothing is found there, automatically widens the search to all
+    branches of the project — such hits carry `branch_id`/`branch_name` so you can tell where they live.
 
     2) config-based
     - Searches item configurations (JSON objects) by matching patterns against the configuration values ​​converted
@@ -639,13 +839,16 @@ async def search(
 
     HOW IT WORKS:
     - Supports two types:
-      - search_type="textual": matches against id, name, displayName, and description, for tables also column names
-      and column descriptions
+      - search_type="textual": searches item names server-side; names only — descriptions, column names and
+      configuration contents are NOT searched (use config-based search for configuration contents)
       - search_type="config-based": matches inside configuration JSON objects, optionally narrowed by JSON path `scopes`
     - case-insensitive search
-    - mode for pattern search: `literal` (default) or `regex`
+    - mode for pattern search: `literal` (default); `regex` is supported for config-based search only
     - Multiple patterns work as OR condition - matches items containing ANY of the patterns
-    - Each result includes the item's ID, name, creation date, and relevant metadata
+    - Each result includes the item's ID, name, creation date, and relevant metadata; the response also carries
+    `total` and `by_type` counts and the `branch_scope` the hits come from
+    - textual search prefers the current branch; on zero hits it automatically retries across all branches of the
+    project and marks the response with branch_scope="all-branches"
     - scopes (config-based) narrow matching to specific JSONPath areas within configurations; matching is performed
     against the stringified JSON node content in those areas.
     - config-based always returns all matched paths per item in `match_scopes` (including matched patterns)
@@ -653,9 +856,11 @@ async def search(
     IMPORTANT:
     - Always use this tool when the user mentions a name but you don't have the exact ID
     - The search returns IDs that you can use with other tools (e.g., get_tables, get_configs, get_flows)
-    - Results are ordered by update time. The most recently updated items are returned first.
-    - Fill `item_types` to make the search more efficient when you know the item type; scanning buckets and tables can
-    be expensive
+    - Results are ordered by the `updated` field, most recent first. `updated` is the item's last update time
+    when available, or its creation time otherwise (textual/global-search hits expose only the creation time).
+    - Textual search matches names only, with fuzzy full-text matching (typo/similarity tolerant; no regex). To find
+    items by description or by table column, use get_tables or config-based search; to find items by configuration
+    content, use config-based search.
     - For exact ID lookups, use specific tools like get_tables, get_configs, get_flows instead
     - Use specific `scopes` only when you know the config structure (schema or real example); otherwise run config-based
     search without scopes.
@@ -666,23 +871,19 @@ async def search(
     1) textual search examples:
     - user_input: "Find all tables with 'customer' in the name"
         → patterns=["customer"], item_types=["table"]
-        → Returns all tables whose id, name, displayName, or description contains "customer"
-
-    - user_input: "Find tables with 'email' column"
-        → patterns=["email"], item_types=["table"]
-        → Returns all tables that have a column named "email" or with "email" in column description
+        → Returns all tables whose name matches "customer"
 
     - user_input: "Search for the sales transformation"
         → patterns=["sales"], item_types=["transformation"]
-        → Returns transformations with "sales" in any searchable field
+        → Returns transformations with "sales" in the name
 
     - user_input: "Find items named 'daily report' or 'weekly summary'"
-        → patterns=["daily.*report", "weekly.*summary"], item_types=[], mode="regex"
+        → patterns=["daily report", "weekly summary"], item_types=[]
         → Returns all items matching any of these patterns
 
     - user_input: "Show me all configurations related to Google Analytics"
-        → patterns=["google.*analytics"], item_types=["configuration"], mode="regex"
-        → Returns configurations with matching patterns
+        → patterns=["google analytics"], item_types=["configuration"]
+        → Returns configurations with matching names
 
     2) config-based search examples:
     - user_input: "Find transformations/configs/components referencing table in.c-prod.customers"
@@ -741,13 +942,48 @@ async def search(
         )
         limit = DEFAULT_GLOBAL_SEARCH_LIMIT
 
+    client = KeboolaClient.from_state(ctx.session.state)
+
+    if search_type == 'textual' and await client.storage_client.is_enabled(GLOBAL_SEARCH_FEATURE):
+        if mode == 'regex':
+            raise ToolError(
+                'Regex patterns are not supported for textual search. Use literal patterns, or use '
+                'search_type="config-based" for regex matching inside configurations.'
+            )
+        output = await _global_textual_search(client, spec, limit=limit, offset=offset)
+    else:
+        # Projects without the global-search feature fall back to the legacy client-side enumeration;
+        # config-based search has no server-side equivalent and always runs client-side.
+        output = await _enumeration_search(client, spec, limit=limit, offset=offset)
+
+    # Get links for the hits
+    links_manager = await ProjectLinksManager.from_client(client)
+    for hit in output.hits:
+        hit.links.extend(
+            links_manager.get_links(
+                bucket_id=hit.bucket_id,
+                table_id=hit.table_id,
+                component_id=hit.component_id,
+                configuration_id=hit.configuration_id,
+                name=hit.name,
+            )
+        )
+
+    return output
+
+
+async def _enumeration_search(client: KeboolaClient, spec: SearchSpec, limit: int, offset: int) -> SearchOutput:
+    """
+    Searches by enumerating the project's items client-side. Used for config-based search (which has no
+    server-side equivalent) and as the legacy fallback for textual search in projects without the
+    global-search feature.
+    """
     # Determine which types to fetch
     types_to_fetch = set(spec.item_types) if spec.item_types else set()
 
     # Fetch items concurrently based on requested types
     tasks = []
     all_hits: list[SearchHit] = []
-    client = KeboolaClient.from_state(ctx.session.state)
 
     if not types_to_fetch or 'bucket' in types_to_fetch:
         tasks.append(_fetch_buckets(client, spec))
@@ -787,23 +1023,17 @@ async def search(
         ),
         reverse=True,
     )
-    paginated_hits = all_hits[offset : offset + limit]
 
-    # Get links for the hits
-    links_manager = await ProjectLinksManager.from_client(client)
-    for hit in paginated_hits:
-        hit.links.extend(
-            links_manager.get_links(
-                bucket_id=hit.bucket_id,
-                table_id=hit.table_id,
-                component_id=hit.component_id,
-                configuration_id=hit.configuration_id,
-                name=hit.name,
-            )
-        )
+    by_type: dict[str, int] = defaultdict(int)
+    for hit in all_hits:
+        by_type[hit.item_type] += 1
 
-    # TODO: Should we report the total number of hits?
-    return paginated_hits
+    return SearchOutput(
+        hits=all_hits[offset : offset + limit],
+        total=len(all_hits),
+        by_type=dict(by_type),
+        branch_scope='current-branch',
+    )
 
 
 class SuggestedComponentOutput(BaseModel):
