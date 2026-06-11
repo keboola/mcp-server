@@ -8,12 +8,14 @@ from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.ai_service import ComponentSuggestionResponse, SuggestedComponent
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.clients.storage import GlobalSearchResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.search import (
     SearchHit,
     SearchItemType,
+    SearchOutput,
     SearchSpec,
     SuggestedComponentOutput,
     find_component_id,
@@ -25,10 +27,11 @@ class TestSearch:
     """Test cases for the search tool function."""
 
     @pytest.fixture(autouse=True)
-    def _mock_has_feature(self, mocker: MockerFixture, mcp_context_client: Context):
-        """Disable storage-branches feature for all search tests (no dual-fetch needed)."""
+    def _mock_features(self, mocker: MockerFixture, mcp_context_client: Context):
+        """Disable storage-branches (no dual-fetch) and global-search (legacy textual path) features."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
         keboola_client.has_feature = mocker.AsyncMock(return_value=False)
+        keboola_client.storage_client.is_enabled = mocker.AsyncMock(return_value=False)
 
     @pytest.mark.asyncio
     async def test_search_no_patterns(self, mcp_context_client: Context):
@@ -94,8 +97,10 @@ class TestSearch:
             offset=0,
         )
 
-        assert isinstance(result, list)
-        assert result == [
+        assert isinstance(result, SearchOutput)
+        assert result.total == 2
+        assert result.branch_scope == 'current-branch'
+        assert result.hits == [
             SearchHit(
                 component_id='keboola.ex-db-mysql',
                 configuration_id='test-config',
@@ -157,8 +162,7 @@ class TestSearch:
             mode='regex',
         )
 
-        assert isinstance(result, list)
-        assert result == [
+        assert result.hits == [
             SearchHit(
                 bucket_id='in.c-customer-data',
                 item_type='bucket',
@@ -203,11 +207,11 @@ class TestSearch:
         # Call without specifying limit, offset, or item_types
         result = await search(ctx=mcp_context_client, patterns=['test'])
 
-        assert isinstance(result, list)
         # Should return exactly 50 items (default limit), not all 60
-        assert len(result) == 50, f'Expected default limit of 50, got {len(result)}'
+        assert len(result.hits) == 50, f'Expected default limit of 50, got {len(result.hits)}'
+        assert result.total == 60
         # The first item should be the most recently updated
-        assert result[0].bucket_id == 'in.c-test-bucket-059'
+        assert result.hits[0].bucket_id == 'in.c-test-bucket-059'
 
     @pytest.mark.asyncio
     async def test_search_limit_out_of_range(self, mocker: MockerFixture, mcp_context_client: Context):
@@ -234,19 +238,16 @@ class TestSearch:
 
         # Test with limit too high (> MAX_GLOBAL_SEARCH_LIMIT = 100)
         result = await search(ctx=mcp_context_client, patterns=['test'], limit=200)
-        assert isinstance(result, list)
         # Should be overridden to DEFAULT_GLOBAL_SEARCH_LIMIT = 50
-        assert len(result) == 50, f'Expected limit to be overridden to 50, got {len(result)}'
+        assert len(result.hits) == 50, f'Expected limit to be overridden to 50, got {len(result.hits)}'
 
         # Test with limit too low (<= 0)
         result = await search(ctx=mcp_context_client, patterns=['test'], limit=0)
-        assert isinstance(result, list)
-        assert len(result) == 50, f'Expected limit to be overridden to 50, got {len(result)}'
+        assert len(result.hits) == 50, f'Expected limit to be overridden to 50, got {len(result.hits)}'
 
         # Test with negative limit
         result = await search(ctx=mcp_context_client, patterns=['test'], limit=-5)
-        assert isinstance(result, list)
-        assert len(result) == 50, f'Expected limit to be overridden to 50, got {len(result)}'
+        assert len(result.hits) == 50, f'Expected limit to be overridden to 50, got {len(result.hits)}'
 
     @pytest.mark.asyncio
     async def test_search_negative_offset(self, mocker: MockerFixture, mcp_context_client: Context):
@@ -273,11 +274,10 @@ class TestSearch:
 
         # Test with negative offset
         result = await search(ctx=mcp_context_client, patterns=['test'], offset=-10, limit=5)
-        assert isinstance(result, list)
         # Should be overridden to offset=0, returning first 5 items
-        assert len(result) == 5
+        assert len(result.hits) == 5
         # First item should be the most recently updated (bucket-009)
-        assert result[0].bucket_id == 'in.c-test-bucket-009'
+        assert result.hits[0].bucket_id == 'in.c-test-bucket-009'
 
         # Verify it matches the result with offset=0
         result_with_zero_offset = await search(ctx=mcp_context_client, patterns=['test'], offset=0, limit=5)
@@ -303,7 +303,7 @@ class TestSearch:
 
         # Test pagination
         result = await search(ctx=mcp_context_client, patterns=['test'], limit=2, offset=0)
-        assert result == [
+        assert result.hits == [
             SearchHit(
                 bucket_id='in.c-bucket-10',
                 item_type='bucket',
@@ -333,7 +333,7 @@ class TestSearch:
         ]
 
         result = await search(ctx=mcp_context_client, patterns=['test'], limit=1, offset=2)
-        assert result == [
+        assert result.hits == [
             SearchHit(
                 bucket_id='in.c-bucket-8',
                 item_type='bucket',
@@ -374,8 +374,7 @@ class TestSearch:
 
         result = await search(ctx=mcp_context_client, patterns=['test'], item_types=(cast(SearchItemType, 'bucket'),))
 
-        assert isinstance(result, list)
-        assert result == [
+        assert result.hits == [
             SearchHit(
                 bucket_id='in.c-my-bucket',
                 item_type='bucket',
@@ -465,8 +464,7 @@ class TestSearch:
 
         result = await search(ctx=mcp_context_client, patterns=['test'], limit=20, offset=0)
 
-        assert isinstance(result, list)
-        assert result == [
+        assert result.hits == [
             SearchHit(
                 component_id='keboola.ex-db-mysql',
                 configuration_id='test-config-b',
@@ -697,10 +695,9 @@ class TestSearch:
             ctx=mcp_context_client, patterns=[search_pattern], item_types=(cast(SearchItemType, 'table'),)
         )
 
-        assert isinstance(result, list)
-        assert len(result) == expected_count
+        assert len(result.hits) == expected_count
         if expected_count > 0:
-            assert result[0].table_id == expected_first_table_id
+            assert result.hits[0].table_id == expected_first_table_id
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -914,7 +911,7 @@ class TestSearch:
                     key=lambda x: x['scope'] or '',
                 ),
             )
-            for hit in result
+            for hit in result.hits
         ]
         normalized_expected = [
             (
@@ -927,6 +924,293 @@ class TestSearch:
             for config_id, matches in expected_hits
         ]
         assert normalized_actual == normalized_expected
+
+
+def _global_search_item(
+    item_id: str,
+    name: str,
+    item_type: str,
+    *,
+    component_id: str | None = None,
+    full_path: dict[str, Any] | None = None,
+    created: str = '2024-01-01T00:00:00+00:00',
+) -> JsonDict:
+    return {
+        'id': item_id,
+        'name': name,
+        'type': item_type,
+        'fullPath': full_path or {},
+        'componentId': component_id,
+        'organizationId': 1,
+        'projectId': 69420,
+        'projectName': 'Test Project',
+        'created': created,
+    }
+
+
+def _global_search_response(*items: JsonDict) -> GlobalSearchResponse:
+    by_type: dict[str, int] = {}
+    for item in items:
+        item_type = cast(str, item['type'])
+        by_type[item_type] = by_type.get(item_type, 0) + 1
+    return GlobalSearchResponse.model_validate(
+        {'all': len(items), 'items': list(items), 'byType': by_type, 'byProject': {'69420': 'Test Project'}}
+    )
+
+
+class TestGlobalTextualSearch:
+    """Test cases for the textual search backed by the SAPI global-search endpoint."""
+
+    @pytest.fixture(autouse=True)
+    def _enable_global_search(self, mocker: MockerFixture, mcp_context_client: Context):
+        """Enable the global-search feature so that textual search uses the server-side endpoint."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.is_enabled = mocker.AsyncMock(return_value=True)
+
+    @pytest.mark.asyncio
+    async def test_search_maps_global_search_items(self, mocker: MockerFixture, mcp_context_client: Context):
+        """Items are mapped to SearchHits with IDs, branch info, re-typed flows and links."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        project_id = await keboola_client.storage_client.project_id()
+
+        response = _global_search_response(
+            _global_search_item(
+                'in.c-test-bucket.users',
+                'users',
+                'table',
+                full_path={'bucket': {'id': 'in.c-test-bucket'}, 'branch': {'id': 7, 'name': 'Main'}},
+                created='2024-01-03T00:00:00+00:00',
+            ),
+            _global_search_item(
+                'cfg-1',
+                'Test MySQL Config',
+                'configuration',
+                component_id='keboola.ex-db-mysql',
+                created='2024-01-02T00:00:00+00:00',
+            ),
+            _global_search_item(
+                'flow-1',
+                'My Flow',
+                'configuration',
+                component_id='keboola.orchestrator',
+                created='2024-01-01T00:00:00+00:00',
+            ),
+        )
+        keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=response)
+
+        result = await search(ctx=mcp_context_client, patterns=['test'])
+
+        keboola_client.storage_client.global_search.assert_called_once_with(
+            query='test', types=[], limit=50, offset=0, branch_scope='current'
+        )
+        assert isinstance(result, SearchOutput)
+        assert result.branch_scope == 'current-branch'
+        assert result.total == 3
+        assert result.by_type == {'table': 1, 'configuration': 2}
+        assert result.hits == [
+            SearchHit(
+                table_id='in.c-test-bucket.users',
+                bucket_id='in.c-test-bucket',
+                item_type='table',
+                updated='2024-01-03T00:00:00+00:00',
+                name='users',
+                branch_id='7',
+                branch_name='Main',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Table: users',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/storage/in.c-test-bucket/table/users'
+                        ),
+                    )
+                ],
+            ),
+            SearchHit(
+                component_id='keboola.ex-db-mysql',
+                configuration_id='cfg-1',
+                item_type='configuration',
+                updated='2024-01-02T00:00:00+00:00',
+                name='Test MySQL Config',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Configuration: Test MySQL Config',
+                        url=(
+                            f'https://connection.test.keboola.com/admin/projects/{project_id}'
+                            '/components/keboola.ex-db-mysql/cfg-1'
+                        ),
+                    )
+                ],
+            ),
+            SearchHit(
+                component_id='keboola.orchestrator',
+                configuration_id='flow-1',
+                item_type='flow',
+                updated='2024-01-01T00:00:00+00:00',
+                name='My Flow',
+                links=[
+                    Link(
+                        type='ui-detail',
+                        title='Flow: My Flow',
+                        url=(f'https://connection.test.keboola.com/admin/projects/{project_id}' '/flows/flow-1'),
+                    )
+                ],
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_search_widens_to_all_branches_on_zero_hits(self, mocker: MockerFixture, mcp_context_client: Context):
+        """When the current branch context has no hits, the search retries across all branches."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        dev_branch_hit = _global_search_response(
+            _global_search_item(
+                'in.c-dev-bucket.users',
+                'users',
+                'table',
+                full_path={'branch': {'id': 123, 'name': 'my-dev-branch'}},
+            ),
+        )
+        keboola_client.storage_client.global_search = mocker.AsyncMock(
+            side_effect=[_global_search_response(), dev_branch_hit]
+        )
+
+        result = await search(ctx=mcp_context_client, patterns=['users'], item_types=('table',))
+
+        assert keboola_client.storage_client.global_search.call_args_list == [
+            call(query='users', types=['table'], limit=50, offset=0, branch_scope='current'),
+            call(query='users', types=['table'], limit=50, offset=0, branch_scope='all'),
+        ]
+        assert result.branch_scope == 'all-branches'
+        assert len(result.hits) == 1
+        assert result.hits[0].table_id == 'in.c-dev-bucket.users'
+        assert result.hits[0].branch_id == '123'
+        assert result.hits[0].branch_name == 'my-dev-branch'
+
+    @pytest.mark.asyncio
+    async def test_search_does_not_widen_when_paginating(self, mocker: MockerFixture, mcp_context_client: Context):
+        """An empty page with non-zero offset must not trigger the all-branches retry."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=_global_search_response())
+
+        result = await search(ctx=mcp_context_client, patterns=['users'], offset=10)
+
+        keboola_client.storage_client.global_search.assert_called_once_with(
+            query='users', types=[], limit=50, offset=10, branch_scope='current'
+        )
+        assert result.hits == []
+        assert result.branch_scope == 'current-branch'
+
+    @pytest.mark.asyncio
+    async def test_search_multiple_patterns_merge_and_dedupe(self, mocker: MockerFixture, mcp_context_client: Context):
+        """Each pattern issues its own request; results are OR-merged and deduplicated by item."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        shared_item = _global_search_item('cfg-1', 'Shared Config', 'configuration', component_id='keboola.ex-db-mysql')
+        unique_item = _global_search_item('cfg-2', 'Unique Config', 'configuration', component_id='keboola.ex-db-mysql')
+        keboola_client.storage_client.global_search = mocker.AsyncMock(
+            side_effect=[
+                _global_search_response(shared_item, unique_item),
+                _global_search_response(shared_item),
+            ]
+        )
+
+        result = await search(ctx=mcp_context_client, patterns=['shared', 'config'])
+
+        assert keboola_client.storage_client.global_search.call_count == 2
+        assert sorted(hit.configuration_id for hit in result.hits) == ['cfg-1', 'cfg-2']
+        # The shared item is counted once per pattern in the server-side totals.
+        assert result.total == 3
+
+    @pytest.mark.asyncio
+    async def test_search_data_app_narrowing(self, mocker: MockerFixture, mcp_context_client: Context):
+        """Searching for data-apps over-fetches configurations and narrows them by component ID."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        response = _global_search_response(
+            _global_search_item('app-1', 'My Data App', 'configuration', component_id=DATA_APP_COMPONENT_ID),
+            _global_search_item('cfg-1', 'Regular Config', 'configuration', component_id='keboola.ex-db-mysql'),
+        )
+        keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=response)
+
+        result = await search(ctx=mcp_context_client, patterns=['app'], item_types=('data-app',))
+
+        # Narrowing 'configuration' to data-apps is lossy, so the page is over-fetched up to the server max
+        # to avoid under-filling once the non-matching configurations are dropped client-side.
+        keboola_client.storage_client.global_search.assert_called_once_with(
+            query='app', types=['configuration'], limit=100, offset=0, branch_scope='current'
+        )
+        assert len(result.hits) == 1
+        assert result.hits[0].configuration_id == 'app-1'
+        assert result.hits[0].item_type == 'data-app'
+
+    @pytest.mark.asyncio
+    async def test_search_overfetch_fills_page_after_narrowing(
+        self, mocker: MockerFixture, mcp_context_client: Context
+    ):
+        """A small user limit still over-fetches to the server max, then caps the narrowed page to that limit.
+
+        Regular configurations preceding the data-apps would under-fill the page if the user limit were sent
+        verbatim; over-fetching ensures the page reaches the requested limit when enough data-apps exist.
+        """
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        items = [
+            _global_search_item('cfg-1', 'Regular One', 'configuration', component_id='keboola.ex-db-mysql'),
+            _global_search_item('cfg-2', 'Regular Two', 'configuration', component_id='keboola.ex-db-mysql'),
+            _global_search_item('app-1', 'Data App One', 'configuration', component_id=DATA_APP_COMPONENT_ID),
+            _global_search_item('app-2', 'Data App Two', 'configuration', component_id=DATA_APP_COMPONENT_ID),
+            _global_search_item('app-3', 'Data App Three', 'configuration', component_id=DATA_APP_COMPONENT_ID),
+        ]
+        keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=_global_search_response(*items))
+
+        result = await search(ctx=mcp_context_client, patterns=['app'], item_types=('data-app',), limit=2)
+
+        # The user limit (2) is below the server max, so the request over-fetches up to 100...
+        keboola_client.storage_client.global_search.assert_called_once_with(
+            query='app', types=['configuration'], limit=100, offset=0, branch_scope='current'
+        )
+        # ...and the narrowed page is capped to the user limit, containing only data-apps.
+        assert len(result.hits) == 2
+        assert all(hit.item_type == 'data-app' for hit in result.hits)
+
+    @pytest.mark.asyncio
+    async def test_search_configuration_row_mapping(self, mocker: MockerFixture, mcp_context_client: Context):
+        """Row hits resolve their parent configuration from fullPath; unresolvable rows are skipped."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        response = _global_search_response(
+            _global_search_item(
+                'row-1',
+                'My Row',
+                'configuration-row',
+                component_id='keboola.ex-db-mysql',
+                full_path={'configuration': {'id': 'cfg-1', 'name': 'Parent Config'}},
+            ),
+            _global_search_item('row-2', 'Orphan Row', 'configuration-row', component_id='keboola.ex-db-mysql'),
+        )
+        keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=response)
+
+        result = await search(ctx=mcp_context_client, patterns=['row'], item_types=('configuration-row',))
+
+        assert len(result.hits) == 1
+        assert result.hits[0] == SearchHit(
+            component_id='keboola.ex-db-mysql',
+            configuration_id='cfg-1',
+            configuration_row_id='row-1',
+            item_type='configuration-row',
+            updated='2024-01-01T00:00:00+00:00',
+            name='My Row',
+            links=result.hits[0].links,
+        )
+
+    @pytest.mark.asyncio
+    async def test_search_regex_mode_rejected(self, mocker: MockerFixture, mcp_context_client: Context):
+        """Regex patterns are not supported by the server-side textual search."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.global_search = mocker.AsyncMock()
+
+        with pytest.raises(ToolError, match='Regex patterns are not supported for textual search'):
+            await search(ctx=mcp_context_client, patterns=['customer.*'], mode='regex')
+
+        keboola_client.storage_client.global_search.assert_not_called()
 
 
 @pytest.mark.parametrize(
