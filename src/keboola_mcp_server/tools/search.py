@@ -790,8 +790,9 @@ async def search(
     mode: Annotated[
         SearchPatternMode,
         Field(
-            description='How to interpret patterns: "regex" for regular expressions or "literal" for exact text '
-            '(default: "literal"). Regex is only supported for config-based search.'
+            description='How to interpret patterns. Applies to config-based search only: "regex" for regular '
+            'expressions or "literal" for exact text (default: "literal"). Ignored by textual search, which is '
+            'always a full-text (fuzzy) query and rejects "regex".'
         ),
     ] = 'literal',
     limit: Annotated[
@@ -811,6 +812,8 @@ async def search(
 
     1) textual
     - Searches items by name, server-side (fast, independent of project size).
+    - Full-text (fuzzy) matching: tokenized and typo/similarity tolerant — pass the name as the user said it; do
+    NOT "fix" spelling or build regex. It is NOT substring matching and does NOT support regex.
     - Prefers the current branch context; when nothing is found there, automatically widens the search to all
     branches of the project — such hits carry `branch_id`/`branch_name` so you can tell where they live.
 
@@ -839,11 +842,13 @@ async def search(
 
     HOW IT WORKS:
     - Supports two types:
-      - search_type="textual": searches item names server-side; names only — descriptions, column names and
-      configuration contents are NOT searched (use config-based search for configuration contents)
+      - search_type="textual": full-text (fuzzy) name search, server-side. Names only — descriptions, column names
+      and configuration contents are NOT searched (use config-based search for configuration contents). Matching is
+      tokenized and typo/similarity tolerant, so approximate names still match; it is not substring matching.
       - search_type="config-based": matches inside configuration JSON objects, optionally narrowed by JSON path `scopes`
     - case-insensitive search
-    - mode for pattern search: `literal` (default); `regex` is supported for config-based search only
+    - mode for pattern search: applies to config-based only — `literal` (default) or `regex`. Textual search ignores
+      `mode` (always full-text) and rejects `regex`.
     - Multiple patterns work as OR condition - matches items containing ANY of the patterns
     - Each result includes the item's ID, name, creation date, and relevant metadata; the response also carries
     `total` and `by_type` counts and the `branch_scope` the hits come from
@@ -947,8 +952,9 @@ async def search(
     if search_type == 'textual' and await client.storage_client.is_enabled(GLOBAL_SEARCH_FEATURE):
         if mode == 'regex':
             raise ToolError(
-                'Regex patterns are not supported for textual search. Use literal patterns, or use '
-                'search_type="config-based" for regex matching inside configurations.'
+                'Regex patterns are not supported for textual search — it is a full-text (fuzzy) name search. '
+                'Pass the plain name as the pattern, or use search_type="config-based" for regex matching inside '
+                'configurations.'
             )
         output = await _global_textual_search(client, spec, limit=limit, offset=offset)
     else:

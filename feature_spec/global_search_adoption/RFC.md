@@ -165,8 +165,15 @@ These must be stated in the tool docstring so agents adapt:
    for `in.c-prod.customers` may not hit by ID. Mitigation: docstring directs exact-ID
    lookups to `get_*` tools (it already does).
 
+Note that global search is **full-text**, not literal substring matching:
+it is tokenized, case-insensitive and typo/similarity tolerant. This is an upside
+(approximate names still match — "marketng" finds "marketing"), but it means the
+`mode` parameter has **no effect on textual search** (it is honored only for
+config-based search), and exact-substring expectations do not hold. The docstring tells
+agents to pass the plain name and not to pre-correct spelling or build regex.
+
 In exchange: single-digit API calls per search, server-side pagination, true total
-counts, and results independent of project size.
+counts, fuzzy/typo-tolerant matching, and results independent of project size.
 
 ### Validation prompt samples
 
@@ -183,6 +190,7 @@ column references the regression list above where applicable.
 | "Find the data app called 'Churn dashboard'" | `patterns=["Churn dashboard"], item_types=["data-app"]` | `configuration` over-fetch + client-side narrowing to `data-app` |
 | "Find items named 'daily report' or 'weekly summary'" | `patterns=["daily report", "weekly summary"]` | one request per pattern, OR-merge + dedupe |
 | "Is there a bucket called 'marketing'?" | `patterns=["marketing"], item_types=["bucket"]` | bucket type mapping |
+| "Find the bucket 'marketng'" (typo) | `patterns=["marketng"], item_types=["bucket"]` | fuzzy full-text matching still finds "marketing" — proves textual search is full-text, not substring |
 | (on a dev branch) "Find the table 'orders_final'" where it exists only in production | `patterns=["orders_final"], item_types=["table"]` | zero hits in current branch → automatic all-branches retry; hit carries `branch_id`/`branch_name`, response `branch_scope="all-branches"` |
 
 **Prompts that must NOT use global search (config-based, legacy fallback or other tools):**
@@ -315,8 +323,11 @@ Manual verification (local MCP via `.mcp.json`):
 1. **Index coverage:** does global search match `displayName` and ID substrings, or
    names only? Determines the final wording of the "accepted regressions" docstring
    section. (Verify empirically against a real stack.)
-2. **Match style:** prefix vs. substring vs. tokenized full-text — affects guidance on
-   multi-word patterns in the docstring.
+2. **Match style:** ~~prefix vs. substring vs. tokenized full-text~~ — **resolved:**
+   global search is tokenized full-text, typo/similarity tolerant (not substring, not
+   regex). The docstring and `mode` parameter reflect this; `mode` is honored only for
+   config-based search. Still worth confirming the exact fuzziness / multi-word (AND vs
+   OR within a single pattern) behavior empirically.
 3. **`types` support:** confirm `rows`/`state`/`shared-code` behave as expected when
    requested explicitly (they are in `ItemType` but not in the tool's
    `SearchItemType` mapping today).
