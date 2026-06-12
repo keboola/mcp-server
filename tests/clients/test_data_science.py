@@ -7,6 +7,7 @@ import pytest
 
 from keboola_mcp_server.clients.data_science import (
     AppGitRepoResponse,
+    AppRunResponse,
     CodeDataAppConfig,
     CreatedGitCredentialResponse,
     DataScienceClient,
@@ -237,3 +238,50 @@ def test_code_data_app_config_serializes_to_expected_shape() -> None:
         },
         'runtime': {'image': {'version': 'dev-1.0.0'}},
     }
+
+
+@pytest.mark.asyncio
+async def test_list_app_runs_gets_expected_endpoint_and_parses_failure_reason() -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.get = AsyncMock(  # type: ignore[assignment]
+        return_value=[
+            {
+                'id': 'run-2',
+                'appId': 'app-123',
+                'state': 'failed',
+                'createdAt': '2026-06-12T10:36:20+00:00',
+                'startedAt': None,
+                'stoppedAt': '2026-06-12T10:36:21+00:00',
+                'startupLogs': None,
+                'failureReason': {
+                    'reason': 'ConfigDecryptionFailed',
+                    'message': 'failed to decrypt key "#API_KEY"',
+                },
+                'mode': 'prod',
+            },
+            {
+                'id': 'run-1',
+                'appId': 'app-123',
+                'state': 'finished',
+                'createdAt': '2026-06-12T09:00:00+00:00',
+                'startedAt': '2026-06-12T09:00:05+00:00',
+                'stoppedAt': '2026-06-12T09:30:00+00:00',
+                'startupLogs': 'booting\nready',
+                'failureReason': None,
+                'mode': 'prod',
+            },
+        ]
+    )
+
+    runs = await client.list_app_runs('app-123', limit=2)
+
+    client.get.assert_awaited_once_with(endpoint='apps/app-123/runs', params={'limit': 2, 'offset': 0})
+    assert len(runs) == 2
+    assert all(isinstance(run, AppRunResponse) for run in runs)
+    assert runs[0].state == 'failed'
+    assert runs[0].started_at is None
+    assert runs[0].failure_reason is not None
+    assert runs[0].failure_reason.reason == 'ConfigDecryptionFailed'
+    assert runs[0].failure_reason.message == 'failed to decrypt key "#API_KEY"'
+    assert runs[1].failure_reason is None
+    assert runs[1].startup_logs == 'booting\nready'
