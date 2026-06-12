@@ -2493,7 +2493,7 @@ def test_app_run_info_truncates_long_logs_and_message() -> None:
     )
     # The error tail is what matters: keep the LAST lines/chars, marking message truncation with an ellipsis.
     assert info.startup_logs == [f'line-{i}' for i in range(100 - _APP_RUN_LOG_LINES, 100)]
-    assert len(info.failure_message) == _APP_RUN_MESSAGE_LIMIT + 1
+    assert len(info.failure_message) == _APP_RUN_MESSAGE_LIMIT
     assert info.failure_message.startswith('…')
 
 

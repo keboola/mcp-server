@@ -222,10 +222,10 @@ class AppRunInfo(BaseModel):
 
     @classmethod
     def from_api_response(cls, run: AppRunResponse) -> 'AppRunInfo':
-        startup_logs = (run.startup_logs or '').strip().split('\n')[-_APP_RUN_LOG_LINES:]
+        startup_logs = (run.startup_logs or '').strip().rsplit('\n', _APP_RUN_LOG_LINES)[-_APP_RUN_LOG_LINES:]
         failure_message = run.failure_reason.message if run.failure_reason else None
         if failure_message and len(failure_message) > _APP_RUN_MESSAGE_LIMIT:
-            failure_message = '…' + failure_message[-_APP_RUN_MESSAGE_LIMIT:]
+            failure_message = '…' + failure_message[-(_APP_RUN_MESSAGE_LIMIT - 1):]
         return cls(
             state=run.state,
             created_at=run.created_at,
