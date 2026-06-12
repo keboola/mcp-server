@@ -3,10 +3,9 @@ import contextlib
 import csv
 import logging
 from io import StringIO
-from typing import Annotated
+from typing import Annotated, Awaitable
 
 from fastmcp import Context, FastMCP
-from fastmcp.server.dependencies import get_http_request
 from fastmcp.tools import FunctionTool
 from mcp.types import (
     ProgressNotification,
@@ -16,9 +15,11 @@ from mcp.types import (
     ToolAnnotations,
 )
 from pydantic import BaseModel, Field
+from starlette.requests import Request
 
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.workspace import JobSubmittedInfo, SqlSelectData, WorkspaceManager
+from keboola_mcp_server.mcp import get_http_request_or_none
+from keboola_mcp_server.workspace import JobSubmittedInfo, QueryResult, SqlSelectData, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -26,12 +27,12 @@ SQL_TOOLS_TAG = 'sql'
 MAX_ROWS = 1_000
 MAX_CHARS = 50_000
 # How often to check whether the HTTP client has disconnected during a long query.
-# Mirrors the 1 s job-poll cadence in `_SnowflakeWorkspace.execute_query`.
+# Mirrors the 1 s job-poll cadence in `_Workspace.execute_query`.
 _DISCONNECT_POLL_INTERVAL = 1.0
 
 
-async def _watch_for_http_disconnect(poll_interval: float = _DISCONNECT_POLL_INTERVAL) -> None:
-    """Return when the underlying HTTP request is torn down, or block forever otherwise.
+async def _watch_for_http_disconnect(request: Request, poll_interval: float | None = None) -> None:
+    """Return when the underlying HTTP `request` is torn down.
 
     In stateless streamable-HTTP mode (`stateless_http=True` in `cli.py`), the MCP
     `notifications/cancelled` payload arrives on a fresh transport instance and cannot
@@ -41,27 +42,102 @@ async def _watch_for_http_disconnect(poll_interval: float = _DISCONNECT_POLL_INT
     hit "stop" in Kai, lost network) and trigger the same cancellation path we
     already have for SDK-driven cancels.
 
-    Returns silently when disconnect is detected. Blocks forever if there is no HTTP
-    request bound (e.g. stdio transport, background workers) — in that case the caller
-    will only stop on normal task completion or its own cancellation.
+    Only started when there is an HTTP request bound (see `query_data`); on stdio /
+    background workers there is nothing to watch, so the caller skips the race entirely.
 
     Any error from `is_disconnected()` is treated as "still connected" so a transient
     ASGI hiccup never cancels an otherwise-working query.
-    """
-    try:
-        request = get_http_request()
-    except RuntimeError:
-        # No HTTP request context — never fire (e.g. stdio transport).
-        await asyncio.Event().wait()
-        return  # unreachable; satisfies the type checker
 
+    `poll_interval` is resolved at call time (not bound as a default) so tests can
+    patch `_DISCONNECT_POLL_INTERVAL` and have it take effect here.
+    """
+    interval = poll_interval if poll_interval is not None else _DISCONNECT_POLL_INTERVAL
     while True:
         try:
             if await request.is_disconnected():
                 return
         except Exception:
             LOG.debug('HTTP is_disconnected() check failed; treating as still-connected', exc_info=True)
-        await asyncio.sleep(poll_interval)
+        await asyncio.sleep(interval)
+
+
+async def _drain(*tasks: asyncio.Task) -> None:
+    """Cancel and drain `tasks` under a shield so their cancellation cleanup — notably the
+    backend `cancel_job` in `_Workspace.execute_query` — finishes even when `query_data` is
+    itself being torn down.
+
+    The shield protects the in-flight cleanup, but the `await` here is deliberately NOT
+    protected: if `query_data` is cancelled at this boundary, the `CancelledError` propagates
+    out (the caller's cancellation must win — we must not go on to return a result or raise a
+    synthetic error as if nothing happened) while the drain runs to completion in the background.
+    """
+    await asyncio.shield(asyncio.gather(*(_cancel_and_drain(t) for t in tasks)))
+
+
+async def _execute_watching_disconnect(
+    query_coro: Awaitable[QueryResult], request: Request, query_name: str
+) -> QueryResult:
+    """Run `query_coro`, cancelling it — and thus the backend job, via `execute_query`'s
+    `CancelledError` handler — if the HTTP client disconnects first.
+
+    Returns the query result when the query wins the race. Raises `ValueError('Query was
+    cancelled')` if the client disconnected (or the disconnect watcher itself failed) before the
+    query finished: a plain `ValueError` keeps the cancelled call on the normal `@tool_errors`
+    path, so it is logged as an error (not a success) and the client still gets a response — a
+    raised `CancelledError` would be a `BaseException` that bypasses the decorator entirely.
+    """
+    query_task = asyncio.create_task(query_coro)
+    disconnect_task = asyncio.create_task(_watch_for_http_disconnect(request))
+    try:
+        done, _pending = await asyncio.wait([query_task, disconnect_task], return_when=asyncio.FIRST_COMPLETED)
+    except BaseException:
+        # `query_data` itself was cancelled (e.g. SDK-driven MCP cancellation on a non-stateless
+        # transport). Drain both tasks so `execute_query`'s CancelledError handler runs long enough
+        # to propagate `cancel_job` and neither task leaks as pending; suppress the drain's own
+        # CancelledError so the original exception propagates via `raise`.
+        with contextlib.suppress(asyncio.CancelledError):
+            await _drain(query_task, disconnect_task)
+        raise
+
+    if query_task in done:
+        # The query won; the watcher is still pending, so drain it.
+        await _drain(disconnect_task)
+        return query_task.result()
+
+    # The watcher won: either the client disconnected, or the watcher itself raised. Cancel the
+    # query either way, but keep the log honest so a watcher bug isn't disguised as a disconnect.
+    watcher_exc = disconnect_task.exception()
+    if watcher_exc is not None:
+        LOG.warning(
+            f'HTTP disconnect watcher for query_data "{query_name}" failed; cancelling underlying query',
+            exc_info=watcher_exc,
+        )
+    else:
+        LOG.info(f'HTTP client disconnected during query_data "{query_name}"; cancelling underlying query')
+    await _drain(query_task)
+    raise ValueError('Query was cancelled')
+
+
+async def _cancel_and_drain(task: asyncio.Task) -> None:
+    """Cancel a task and await its unwind, suppressing the resulting error.
+
+    Draining (rather than fire-and-forget `task.cancel()`) lets any shielded
+    cleanup the task runs on cancellation — notably the backend `cancel_job` in
+    `_Workspace.execute_query` — finish before we move on. `KeyboardInterrupt` /
+    `SystemExit` are intentionally NOT suppressed.
+
+    Only the expected `CancelledError` is swallowed. Any other exception raised
+    while the task unwinds is a real bug in the cancellation cleanup path (e.g. the
+    shielded backend cancel) — log it with a traceback rather than silently dropping
+    it, but still don't re-raise so draining stays best-effort.
+    """
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        LOG.warning('Unexpected error while draining cancelled task', exc_info=True)
 
 
 def _client_progress_token(ctx: Context) -> ProgressToken | None:
@@ -215,43 +291,20 @@ async def query_data(
     async def _on_job_submitted(info: JobSubmittedInfo) -> None:
         await _emit_job_submitted_progress(ctx, progress_token, info)
 
-    # Race the query against the HTTP client disconnecting. If the client gives up
-    # before the query finishes (Kai kills the sandbox SDK process on STOP, which drops
-    # the proxied tools/call socket), cancelling `query_task` triggers the CancelledError
-    # branch inside `_Workspace.execute_query`, which fires `cancel_job` on the backend
-    # so the scan stops. Needed because in stateless HTTP mode the MCP cancel
-    # notification cannot reach this running request — see `_watch_for_http_disconnect`.
-    query_task = asyncio.create_task(
-        workspace_manager.execute_query(
-            sql_query,
-            max_rows=MAX_ROWS,
-            max_chars=MAX_CHARS,
-            on_job_submitted=_on_job_submitted if progress_token is not None else None,
-        )
+    query_coro = workspace_manager.execute_query(
+        sql_query,
+        max_rows=MAX_ROWS,
+        max_chars=MAX_CHARS,
+        on_job_submitted=_on_job_submitted if progress_token is not None else None,
     )
-    disconnect_task = asyncio.create_task(_watch_for_http_disconnect())
-    try:
-        done, _pending = await asyncio.wait(
-            [query_task, disconnect_task],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-    except BaseException:
-        query_task.cancel()
-        disconnect_task.cancel()
-        raise
-
-    if query_task not in done:
-        LOG.info(f'HTTP client disconnected during query_data "{query_name}"; cancelling underlying query')
-        query_task.cancel()
-        with contextlib.suppress(BaseException):
-            await query_task
-        raise asyncio.CancelledError(f'HTTP client disconnected during query_data "{query_name}"')
-
-    disconnect_task.cancel()
-    with contextlib.suppress(BaseException):
-        await disconnect_task
-
-    result = query_task.result()
+    # The disconnect race only buys us anything on the HTTP path, where the client can actually
+    # drop the socket (Kai kills the sandbox SDK process on STOP). With no HTTP request bound
+    # (stdio / background workers) nothing can disconnect, so run the query directly.
+    request = get_http_request_or_none()
+    if request is None:
+        result = await query_coro
+    else:
+        result = await _execute_watching_disconnect(query_coro, request, query_name)
     if result.is_ok:
         LOG.info(' '.join(filter(None, [f'Query "{query_name}" executed successfully.', result.message])))
         if result.data:

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call
@@ -1160,19 +1161,96 @@ class TestQueryCancellation:
         fake_request = MagicMock()
         disconnect_states = iter([False, True])
         fake_request.is_disconnected = AsyncMock(side_effect=lambda: next(disconnect_states))
-        mocker.patch('keboola_mcp_server.tools.sql.get_http_request', return_value=fake_request)
+        mocker.patch('keboola_mcp_server.tools.sql.get_http_request_or_none', return_value=fake_request)
         # Speed the poll up so the test doesn't have to wait a full second.
         mocker.patch('keboola_mcp_server.tools.sql._DISCONNECT_POLL_INTERVAL', 0.01)
 
-        with pytest.raises(asyncio.CancelledError):
+        # A disconnect surfaces as a plain ValueError (not CancelledError) so it stays on the
+        # `@tool_errors` path — logged as an error, not a success, and a response reaches the client.
+        with pytest.raises(ValueError, match='Query was cancelled'):
             await query_data('SELECT 1', 'test', mcp_context_client)
 
         manager.execute_query.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_query_data_logs_when_disconnect_watcher_raises(
+        self, mcp_context_client: Context, mocker, caplog
+    ) -> None:
+        """If the disconnect watcher finishes with an exception (rather than returning on a
+        detected disconnect), `query_data` must still cancel the query and surface the watcher
+        error in the logs — never leak a "Task exception was never retrieved" warning."""
+
+        async def never_returns(*_a, **_kw):
+            await asyncio.Event().wait()
+
+        manager = AsyncMock(WorkspaceManager)
+        manager.execute_query.side_effect = never_returns
+        mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+        async def boom(*_a, **_kw):
+            raise RuntimeError('watcher blew up')
+
+        # An HTTP request must be bound for the watcher race to run at all.
+        mocker.patch('keboola_mcp_server.tools.sql.get_http_request_or_none', return_value=MagicMock())
+        mocker.patch('keboola_mcp_server.tools.sql._watch_for_http_disconnect', side_effect=boom)
+
+        with caplog.at_level('WARNING'), pytest.raises(ValueError, match='Query was cancelled'):
+            await query_data('SELECT 1', 'test', mcp_context_client)
+
+        manager.execute_query.assert_called_once()
+        assert any('disconnect watcher' in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_query_data_propagates_cancel_during_post_query_drain(
+        self, mcp_context_client: Context, mocker
+    ) -> None:
+        """If `query_data` is cancelled while draining the disconnect watcher after the query
+        completed, the `CancelledError` must propagate (not be swallowed by `_cancel_and_drain`
+        and cause a result to be returned), while the shielded drain still runs to completion."""
+        manager = AsyncMock(WorkspaceManager)
+        manager.execute_query.return_value = QueryResult(
+            status='ok',
+            data=SqlSelectData(columns=['a'], rows=[{'a': 1}]),
+            message=None,
+        )
+        mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+        # HTTP mode with a request that never disconnects: the query wins the race, leaving the
+        # disconnect watcher as the pending task drained once the query completes.
+        fake_request = MagicMock()
+        fake_request.is_disconnected = AsyncMock(return_value=False)
+        mocker.patch('keboola_mcp_server.tools.sql.get_http_request_or_none', return_value=fake_request)
+
+        drain_started = asyncio.Event()
+        drain_finished = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_drain(task: asyncio.Task) -> None:
+            task.cancel()
+            drain_started.set()
+            await release.wait()
+            # Mirror the real `_cancel_and_drain`: actually await the cancelled task so it does
+            # not linger as a pending task and emit "Task exception was never retrieved" warnings.
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            drain_finished.set()
+
+        mocker.patch('keboola_mcp_server.tools.sql._cancel_and_drain', side_effect=slow_drain)
+
+        task = asyncio.create_task(query_data('SELECT 1', 'test', mcp_context_client))
+        # Wait until query_data reaches the shielded post-query drain, then cancel it there.
+        await asyncio.wait_for(drain_started.wait(), timeout=1.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The shield kept the drain alive: let it complete and confirm it finished despite the
+        # outer cancellation that already propagated out of query_data.
+        release.set()
+        await asyncio.wait_for(drain_finished.wait(), timeout=1.0)
+
+    @pytest.mark.asyncio
     async def test_query_data_no_disconnect_watcher_in_stdio_mode(self, mcp_context_client: Context, mocker) -> None:
-        """When there is no HTTP request bound (stdio transport), the watcher must
-        block forever and the query must complete normally."""
+        """When there is no HTTP request bound (stdio transport), the disconnect race is skipped
+        entirely and the query runs directly to completion."""
         manager = AsyncMock(WorkspaceManager)
         manager.execute_query.return_value = QueryResult(
             status='ok',
@@ -1181,10 +1259,7 @@ class TestQueryCancellation:
         )
         mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
 
-        mocker.patch(
-            'keboola_mcp_server.tools.sql.get_http_request',
-            side_effect=RuntimeError('No active HTTP request found.'),
-        )
+        mocker.patch('keboola_mcp_server.tools.sql.get_http_request_or_none', return_value=None)
 
         result = await query_data('SELECT 1', 'test', mcp_context_client)
         assert isinstance(result, QueryDataOutput)
@@ -1196,9 +1271,8 @@ class TestQueryCancellation:
         fake_request = MagicMock()
         # First call errors (still treated as connected); second call signals disconnect.
         fake_request.is_disconnected = AsyncMock(side_effect=[RuntimeError('asgi hiccup'), True])
-        mocker.patch('keboola_mcp_server.tools.sql.get_http_request', return_value=fake_request)
 
-        await asyncio.wait_for(_watch_for_http_disconnect(poll_interval=0.01), timeout=1.0)
+        await asyncio.wait_for(_watch_for_http_disconnect(fake_request, poll_interval=0.01), timeout=1.0)
         assert fake_request.is_disconnected.await_count == 2
 
     @pytest.mark.asyncio
