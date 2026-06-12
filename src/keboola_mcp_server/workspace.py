@@ -145,9 +145,7 @@ class _Workspace(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def get_table_info(
-        self, table: Mapping[str, Any], backend_path: list[str] | None = None
-    ) -> DbTableInfo | None:
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         # TODO: use a pydantic class for the 'table' param
         pass
 
@@ -436,32 +434,21 @@ class _SnowflakeWorkspace(_Workspace):
     def get_quoted_name(self, name: str) -> str:
         return f'"{name}"'  # wrap name in double quotes
 
-    async def get_table_info(
-        self, table: Mapping[str, Any], backend_path: list[str] | None = None
-    ) -> DbTableInfo | None:
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']
 
-        if source_table := table.get('sourceTable'):
-            # Cross-project linked table — prefer caller-supplied backend_path, fall back to sourceTable
-            bp = backend_path or get_backend_path(source_table)
-            if not bp or len(bp) < 2:
-                LOG.warning(f'No backendPath in sourceTable for {table_id}, cannot construct FQN')
-                return None
-            db_name = bp[0]
-            schema_name = bp[1]
-            table_name = source_table['id'].rsplit(sep='.', maxsplit=1)[1]
-        else:
-            bp = backend_path or get_backend_path(table)
-            if not bp or len(bp) < 2:
-                LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
-                return None
-            db_name = bp[0]
-            schema_name = bp[1]
-            table_name = table['name']
+        # The table's own bucket backendPath resolves to the database + schema where the table
+        # physically lives. For a linked bucket — including a materialized alias shared from another
+        # project — Storage propagates that backendPath onto the linked table itself, so the FQN is
+        # directly queryable from this workspace.
+        bp = get_backend_path(table)
+        if not bp or len(bp) < 2:
+            LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
+            return None
 
         return DbTableInfo(
             id=table_id,
-            fqn=TableFqn(db_name, schema_name, table_name, quote_char='"'),
+            fqn=TableFqn(bp[0], bp[1], table['name'], quote_char='"'),
             columns={},
         )
 
@@ -483,12 +470,16 @@ class _BigQueryWorkspace(_Workspace):
     def get_quoted_name(self, name: str) -> str:
         return f'`{name}`'  # wrap name in back tick
 
-    async def get_table_info(
-        self, table: Mapping[str, Any], backend_path: list[str] | None = None
-    ) -> DbTableInfo | None:
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']
 
-        bp = backend_path or get_backend_path(table)
+        # BigQuery has no cross-project data sharing: a table that is an alias in its source project
+        # (sourceTable.isAlias) is not materialized into this project's dataset and cannot be queried
+        # from this workspace. Materialized aliases are a Snowflake-only capability.
+        if table.get('sourceTable', {}).get('isAlias'):
+            return None
+
+        bp = get_backend_path(table)
         if not bp:
             LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
             return None
@@ -780,19 +771,15 @@ class WorkspaceManager:
             on_job_submitted=on_job_submitted,
         )
 
-    async def get_table_info(
-        self, table: Mapping[str, Any], backend_path: list[str] | None = None
-    ) -> DbTableInfo | None:
-        # Alias tables (isAlias=true in the source project) are not queryable from any workspace backend
-        if table.get('sourceTable', {}).get('isAlias'):
-            return None
-
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
+        # Whether an alias table is queryable depends on the backend (Snowflake materializes aliases
+        # from linked buckets, BigQuery does not), so each workspace implementation makes that call.
         table_id = table['id']
         if table_id in self._table_info_cache:
             return self._table_info_cache[table_id]
 
         workspace = await self._get_workspace()
-        if info := await workspace.get_table_info(table, backend_path=backend_path):
+        if info := await workspace.get_table_info(table):
             self._table_info_cache[table_id] = info
 
         return info
