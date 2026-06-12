@@ -7,19 +7,23 @@ from fastmcp import Context
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
-from keboola_mcp_server.clients.data_science import DataAppResponse
+from keboola_mcp_server.clients.data_science import AppRunResponse, DataAppResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
+    _APP_RUN_LOG_LINES,
+    _APP_RUN_MESSAGE_LIMIT,
     _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
     _STORAGE_QUERY_DATA_FUNCTION_CODE,
     MAX_DNS_LABEL_LENGTH,
+    AppRunInfo,
     DataApp,
     DataAppSlugTooLongError,
     DataAppSummary,
     ModifiedDataAppOutput,
     _build_data_app_config,
     _fetch_data_app,
+    _fetch_latest_run,
     _get_authorization,
     _get_data_app_slug,
     _get_query_function_code,
@@ -2438,3 +2442,110 @@ async def test_delete_python_js_data_app_draft_refuses_streamlit(
 
     keboola_client.data_science_client.delete_data_app.assert_not_called()
     keboola_client.storage_client.configuration_delete.assert_not_called()
+
+
+def _make_failed_app_run(**overrides) -> AppRunResponse:
+    payload = {
+        'id': 'run-1',
+        'appId': 'app-prod-1',
+        'state': 'failed',
+        'createdAt': '2026-06-12T10:36:20+00:00',
+        'startedAt': None,
+        'stoppedAt': '2026-06-12T10:36:21+00:00',
+        'startupLogs': None,
+        'failureReason': {
+            'reason': 'ConfigDecryptionFailed',
+            'message': 'failed to decrypt key "#API_KEY"',
+        },
+        'mode': 'prod',
+    }
+    payload.update(overrides)
+    return AppRunResponse.model_validate(payload)
+
+
+def test_app_run_info_flattens_failure_reason() -> None:
+    info = AppRunInfo.from_api_response(_make_failed_app_run())
+    assert info.state == 'failed'
+    assert info.created_at == '2026-06-12T10:36:20+00:00'
+    assert info.stopped_at == '2026-06-12T10:36:21+00:00'
+    assert info.failure_reason == 'ConfigDecryptionFailed'
+    assert info.failure_message == 'failed to decrypt key "#API_KEY"'
+    assert info.startup_logs == []
+
+
+def test_app_run_info_handles_successful_run_without_failure_reason() -> None:
+    info = AppRunInfo.from_api_response(
+        _make_failed_app_run(state='finished', failureReason=None, startupLogs='booting\nready')
+    )
+    assert info.failure_reason is None
+    assert info.failure_message is None
+    assert info.startup_logs == ['booting', 'ready']
+
+
+def test_app_run_info_truncates_long_logs_and_message() -> None:
+    long_logs = '\n'.join(f'line-{i}' for i in range(100))
+    long_message = 'x' * (_APP_RUN_MESSAGE_LIMIT + 1000)
+    info = AppRunInfo.from_api_response(
+        _make_failed_app_run(
+            startupLogs=long_logs,
+            failureReason={'reason': 'StartupProbeFailed', 'message': long_message},
+        )
+    )
+    # The error tail is what matters: keep the LAST lines/chars, marking message truncation with an ellipsis.
+    assert info.startup_logs == [f'line-{i}' for i in range(100 - _APP_RUN_LOG_LINES, 100)]
+    assert len(info.failure_message) == _APP_RUN_MESSAGE_LIMIT + 1
+    assert info.failure_message.startswith('…')
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_run_returns_newest_run_info(mocker, mcp_context_client: Context) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client.list_app_runs = mocker.AsyncMock(return_value=[_make_failed_app_run()])
+
+    info = await _fetch_latest_run(keboola_client, 'app-prod-1')
+
+    keboola_client.data_science_client.list_app_runs.assert_awaited_once_with('app-prod-1', limit=1)
+    assert info is not None
+    assert info.failure_reason == 'ConfigDecryptionFailed'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('list_app_runs_behavior', ['empty', 'raises'])
+async def test_fetch_latest_run_degrades_to_none(
+    mocker, mcp_context_client: Context, list_app_runs_behavior: str
+) -> None:
+    """Diagnostics must not break the detail fetch: no runs (brand-new app) and a failing runs
+    endpoint (older DSAPI) both surface as `None` rather than an error."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    if list_app_runs_behavior == 'empty':
+        mock = mocker.AsyncMock(return_value=[])
+    else:
+        mock = mocker.AsyncMock(side_effect=RuntimeError('404 Not Found'))
+    keboola_client.data_science_client.list_app_runs = mock
+
+    assert await _fetch_latest_run(keboola_client, 'app-prod-1') is None
+
+
+@pytest.mark.asyncio
+async def test_get_data_apps_detail_includes_last_run_failure(mocker, mcp_context_client: Context) -> None:
+    """The detail path must surface the latest AppRun's failure so agents can diagnose apps whose
+    setup-phase failures (e.g. invalid secrets) produce no container logs at all."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    prod_cfg_id = 'cfg-prod-1'
+    prod = _make_python_js_prod_data_app(configuration_id=prod_cfg_id, state='stopped')
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=[])
+    keboola_client.data_science_client.list_app_runs = mocker.AsyncMock(return_value=[_make_failed_app_run()])
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
+
+    result = await get_data_apps(ctx=mcp_context_client, configuration_ids=[prod_cfg_id])
+
+    assert len(result.data_apps) == 1
+    detail = result.data_apps[0]
+    assert isinstance(detail, DataApp)
+    assert detail.deployment_info is not None
+    last_run = detail.deployment_info.last_run
+    assert last_run is not None
+    assert last_run.state == 'failed'
+    assert last_run.failure_reason == 'ConfigDecryptionFailed'
+    assert last_run.failure_message == 'failed to decrypt key "#API_KEY"'
