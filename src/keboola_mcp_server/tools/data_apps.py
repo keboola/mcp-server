@@ -216,7 +216,7 @@ class AppRunInfo(BaseModel):
         description='Detailed explanation of the failure, when the platform provides one.', default=None
     )
     startup_logs: list[str] = Field(
-        description='The last lines of the run\'s startup (entrypoint) log, when available.',
+        description="The last lines of the run's startup (entrypoint) log, when available.",
         default_factory=list,
     )
 
