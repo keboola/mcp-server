@@ -252,20 +252,17 @@ class TestWorkspaceManagerSnowflake:
                 TableFqn(db_name='db_xyz', schema_name='in.c-foo', table_name='bar', quote_char='"'),
             ),
             (
-                # table out.c-baz.bam exported from project 1234
-                # and imported as table in.c-foo.bar in some other project (isAlias=False = regular shared table)
-                # db_name comes from sourceTable.bucket.backendPath[0] — no SQL needed
+                # linked (non-alias) table shared from project 153: Storage propagates the linked
+                # bucket's backendPath onto the table itself, so db_name/schema come from the table's
+                # own bucket.backendPath and the table name from the linked table.
                 {
-                    'id': 'in.c-foo.bar',
-                    'name': 'bar',
-                    'sourceTable': {
-                        'project': {'id': '1234'},
-                        'id': 'out.c-baz.bam',
-                        'isAlias': False,
-                        'bucket': {'id': 'out.c-baz', 'backendPath': ['sapi_1234', 'out.c-baz']},
-                    },
+                    'id': 'in.c-acc.ccc',
+                    'name': 'ccc',
+                    'isAlias': True,
+                    'bucket': {'id': 'in.c-acc', 'backendPath': ['KBC_EUW3_153', 'out.c-acc']},
+                    'sourceTable': {'id': 'out.c-acc.ccc', 'project': {'id': 153}, 'isAlias': False},
                 },
-                TableFqn(db_name='sapi_1234', schema_name='out.c-baz', table_name='bam', quote_char='"'),
+                TableFqn(db_name='KBC_EUW3_153', schema_name='out.c-acc', table_name='ccc', quote_char='"'),
             ),
             (
                 # storage-branches: backendPath present → db_name from backendPath[0]
@@ -286,6 +283,30 @@ class TestWorkspaceManagerSnowflake:
                     'bucket': {'id': 'in.c-shopify', 'backendPath': ['KBC_USE4_3047', 'in.c-shopify']},
                 },
                 TableFqn(db_name='KBC_USE4_3047', schema_name='in.c-shopify', table_name='orders', quote_char='"'),
+            ),
+            (
+                # materialized alias from a linked bucket: the source table is an alias in the source
+                # project (sourceTable.isAlias=True), but with materialized aliases enabled it is
+                # physically present in the shared database. The table's own bucket.backendPath resolves
+                # to that shared db+schema, so the FQN is queryable — db_name/schema from backendPath,
+                # table name from the linked table itself.
+                {
+                    'id': 'in.c-acc.sample_customers_alias',
+                    'name': 'sample_customers_alias',
+                    'isAlias': True,
+                    'bucket': {'id': 'in.c-acc', 'backendPath': ['KBC_EUW3_153', 'out.c-acc']},
+                    'sourceTable': {
+                        'id': 'out.c-acc.sample_customers_alias',
+                        'project': {'id': 153},
+                        'isAlias': True,
+                    },
+                },
+                TableFqn(
+                    db_name='KBC_EUW3_153',
+                    schema_name='out.c-acc',
+                    table_name='sample_customers_alias',
+                    quote_char='"',
+                ),
             ),
         ],
     )
@@ -311,13 +332,13 @@ class TestWorkspaceManagerSnowflake:
         [
             # no backendPath — returns None without any SQL
             {'id': 'in.c-foo.bar', 'name': 'bar'},
-            # alias table (sourceTable.isAlias=True) — blocked at WorkspaceManager level, no SQL
+            # linked alias table without its own bucket.backendPath — not reachable, no FQN
             {
                 'id': 'in.c-foo.bar',
                 'name': 'bar',
                 'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
             },
-            # linked non-alias table — no backendPath in sourceTable → cannot construct FQN
+            # linked non-alias table without its own bucket.backendPath — not reachable, no FQN
             {
                 'id': 'in.c-foo.bar',
                 'name': 'bar',
@@ -678,10 +699,12 @@ class TestWorkspaceManagerBigQuery:
         [
             # no backendPath — returns None without any SQL
             {'id': 'in.c-foo.bar', 'name': 'bar'},
-            # alias linked table (sourceTable.isAlias=True) — blocked at WorkspaceManager level, no SQL
+            # alias linked table (sourceTable.isAlias=True) — BigQuery has no cross-project sharing and
+            # does not materialize aliases, so it is never queryable even when a backendPath is present
             {
                 'id': 'in.c-foo.bar',
                 'name': 'bar',
+                'bucket': {'id': 'in.c-foo', 'backendPath': ['in_c_foo']},
                 'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
             },
         ],

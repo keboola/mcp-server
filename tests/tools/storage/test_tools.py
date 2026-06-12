@@ -22,6 +22,7 @@ from keboola_mcp_server.tools.storage.tools import (
     GetTablesOutput,
     TableColumnInfo,
     TableDetail,
+    TableSummary,
     UpdateDescriptionsOutput,
     get_buckets,
     get_tables,
@@ -958,7 +959,7 @@ async def test_get_table(
 
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_table_info = mocker.AsyncMock(
-        side_effect=lambda sapi_table, backend_path=None: DbTableInfo(
+        side_effect=lambda sapi_table: DbTableInfo(
             id=sapi_table['id'],
             fqn=TableFqn(
                 db_name='SAPI_TEST',
@@ -1020,7 +1021,7 @@ async def test_get_table(
             None,
             'in.c-foo',
             [
-                TableDetail(
+                TableSummary(
                     id='in.c-foo.users',
                     name='users',
                     display_name='All system users.',
@@ -1037,7 +1038,7 @@ async def test_get_table(
                         )
                     ],
                 ),
-                TableDetail(
+                TableSummary(
                     id='in.c-foo.emails',
                     name='emails',
                     display_name='All user emails.',
@@ -1061,7 +1062,7 @@ async def test_get_table(
             '1246948',  # development branch
             'in.c-foo',
             [
-                TableDetail(
+                TableSummary(
                     id='in.c-foo.users',
                     name='users',
                     display_name='All system users.',
@@ -1080,7 +1081,7 @@ async def test_get_table(
                     ],
                 ),
                 # in.c-foo.emails comes from in.c-1246948-foo bucket
-                TableDetail(
+                TableSummary(
                     id='in.c-foo.emails',
                     name='emails',
                     display_name='All user emails.',
@@ -1098,7 +1099,7 @@ async def test_get_table(
                         )
                     ],
                 ),
-                TableDetail(
+                TableSummary(
                     id='in.c-foo.assets',
                     name='assets',
                     display_name='Company assets.',
@@ -1124,7 +1125,7 @@ async def test_get_table(
 async def test_get_tables(
     branch_id: str | None,
     bucket_id: str,
-    expected_tables: list[TableDetail],
+    expected_tables: list[TableSummary],
     mocker: MockerFixture,
     mcp_context_client: Context,
 ) -> None:
@@ -1143,6 +1144,15 @@ async def test_get_tables(
         tables=expected_tables, links=[links_manager.get_bucket_dashboard_link()]
     ).pack_links()
     assert result == expected_result
+
+    # Listing returns summaries that never resolve the warehouse FQN, so the field must be
+    # absent from the (structured) output entirely — not emitted as a misleading `null`, which
+    # the query_data queryability rule would read as "not queryable".
+    for table, dumped in zip(result.tables, result.model_dump(by_alias=True)['tables']):
+        assert isinstance(table, TableSummary)
+        assert not isinstance(table, TableDetail)
+        assert 'fullyQualifiedName' not in dumped
+        assert 'columns' not in dumped
 
     sapi_includes = ['metadata', 'columnMetadata', 'sourceMetadata', 'sourceColumnMetadata']
     if branch_id:
@@ -1986,7 +1996,7 @@ async def test_get_table_storage_branches(mocker: MockerFixture, mcp_context_cli
 
     workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
     workspace_manager.get_table_info = mocker.AsyncMock(
-        side_effect=lambda sapi_table, backend_path=None: DbTableInfo(
+        side_effect=lambda sapi_table: DbTableInfo(
             id=sapi_table['id'],
             fqn=TableFqn(db_name='SAPI_TEST', schema_name=sapi_table['id'].rsplit('.', 1)[0], table_name='customers'),
             columns={

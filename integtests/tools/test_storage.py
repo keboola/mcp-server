@@ -15,6 +15,7 @@ from keboola_mcp_server.tools.storage.tools import (
     GetBucketsOutput,
     GetTablesOutput,
     TableDetail,
+    TableSummary,
     UpdateDescriptionsOutput,
     get_buckets,
     get_tables,
@@ -109,15 +110,21 @@ async def test_get_tables(mcp_context: Context, tables: list[TableDef], buckets:
         result = await get_tables(mcp_context, [bucket.bucket_id])
 
         assert isinstance(result, GetTablesOutput)
-        for table in result.tables:
-            assert isinstance(table, TableDetail)
+        # Listing returns summaries that never resolve the warehouse FQN, so the field must be
+        # absent from the (structured) output entirely — not emitted as a misleading `null`, which
+        # the query_data queryability rule would read as "not queryable".
+        for table, dumped in zip(result.tables, result.model_dump(by_alias=True)['tables']):
+            assert isinstance(table, TableSummary)
+            assert not isinstance(table, TableDetail)
+            assert 'fullyQualifiedName' not in dumped
+            assert 'columns' not in dumped
 
         # Verify the count matches expected tables for this bucket
         expected_tables = tables_by_bucket.get(bucket.bucket_id, [])
         assert len(result.tables) == len(expected_tables)
 
         # Verify table IDs match
-        result_table_ids = {table.id for table in cast(list[TableDetail], result.tables)}
+        result_table_ids = {table.id for table in cast(list[TableSummary], result.tables)}
         expected_table_ids = {table_def.table_id for table_def in expected_tables}
         assert result_table_ids == expected_table_ids
 
