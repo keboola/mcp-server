@@ -298,6 +298,64 @@ class AppGitRepoResponse(BaseModel):
     )
 
 
+class AppRunFailureReason(BaseModel):
+    """Machine-readable failure info attached by the platform to an unsuccessful AppRun."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    reason: str | None = Field(
+        default=None,
+        description=(
+            'Machine-readable code identifying the kind of failure, '
+            'e.g. "ConfigDecryptionFailed" or "StartupProbeFailed".'
+        ),
+    )
+    message: str | None = Field(default=None, description='Human-readable explanation of the failure.')
+
+
+class AppRunResponse(BaseModel):
+    """Response model for a single AppRun — one deployment attempt of a data app."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(description='The ID of the app run.')
+    app_id: str | None = Field(
+        validation_alias=AliasChoices('appId', 'app_id'),
+        default=None,
+        description='The ID of the data app this run belongs to.',
+    )
+    state: str = Field(description='The state of the run: "starting", "running", "finished" or "failed".')
+    created_at: str | None = Field(
+        validation_alias=AliasChoices('createdAt', 'created_at'),
+        default=None,
+        description='The timestamp when the run was created.',
+    )
+    started_at: str | None = Field(
+        validation_alias=AliasChoices('startedAt', 'started_at'),
+        default=None,
+        description='The timestamp when the app became ready, or `null` if it never started.',
+    )
+    stopped_at: str | None = Field(
+        validation_alias=AliasChoices('stoppedAt', 'stopped_at'),
+        default=None,
+        description='The timestamp when the run stopped, or `null` while it is still active.',
+    )
+    startup_logs: str | None = Field(
+        validation_alias=AliasChoices('startupLogs', 'startup_logs'),
+        default=None,
+        description='Output of the startup phase (entrypoint log), when available.',
+    )
+    failure_reason: AppRunFailureReason | None = Field(
+        validation_alias=AliasChoices('failureReason', 'failure_reason'),
+        default=None,
+        description=(
+            'Why the run was not successful. Populated by the platform for failed runs, including '
+            'setup-phase failures (e.g. invalid secrets) that produce no container logs.'
+        ),
+    )
+    mode: str | None = Field(default=None, description='The mode of the run, e.g. "prod" or "dev".')
+
+
 class DataScienceClient(KeboolaServiceClient):
 
     def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
@@ -465,6 +523,19 @@ class DataScienceClient(KeboolaServiceClient):
         """
         response = await self.get(endpoint=f'apps/{data_app_id}/git-repo')
         return AppGitRepoResponse.model_validate(response)
+
+    async def list_app_runs(self, data_app_id: str, *, limit: int = 5, offset: int = 0) -> list[AppRunResponse]:
+        """
+        List runs (deployment attempts) of a data app, newest first.
+
+        :param data_app_id: The ID of the data app
+        :param limit: Maximum number of runs to return
+        :param offset: Number of runs to skip
+        :return: The app runs, including `failure_reason` for unsuccessful ones.
+        """
+        response = await self.get(endpoint=f'apps/{data_app_id}/runs', params={'limit': limit, 'offset': offset})
+        assert isinstance(response, list)
+        return [AppRunResponse.model_validate(run) for run in response]
 
     async def delete_data_app(self, data_app_id: str) -> None:
         """

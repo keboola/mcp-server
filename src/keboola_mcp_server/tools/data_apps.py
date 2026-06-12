@@ -13,7 +13,12 @@ from pydantic import BaseModel, Field
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient, get_metadata_property
-from keboola_mcp_server.clients.data_science import CodeDataAppConfig, DataAppConfig, DataAppResponse
+from keboola_mcp_server.clients.data_science import (
+    AppRunResponse,
+    CodeDataAppConfig,
+    DataAppConfig,
+    DataAppResponse,
+)
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
@@ -118,6 +123,12 @@ _MANAGED_GIT_REPO_USERNAME = 'kai'
 # will see the error from its own `git push` or from `deploy_data_app`.
 _DEFAULT_DRAFT_BRANCH = 'init'
 
+# How much of an AppRun's diagnostics is surfaced in tool output. `failure_message` can embed the
+# entire startup log (StartupProbeFailed duplicates it verbatim), so both are trimmed to keep the
+# tool output bounded while preserving the error tail, which is where the actionable line lives.
+_APP_RUN_LOG_LINES = 30
+_APP_RUN_MESSAGE_LIMIT = 3000
+
 
 INJECTED_BLOCK_RE = re.compile(
     r'(?P<before>.*?)#\s###\sINJECTED_CODE\s####.*?#\s###\sEND_OF_INJECTED_CODE\s####(?P<after>.*)',
@@ -186,6 +197,45 @@ class DataAppSummary(BaseModel):
         )
 
 
+class AppRunInfo(BaseModel):
+    """Outcome of a single deployment attempt (AppRun) of a data app."""
+
+    state: str = Field(description='The state of the run: "starting", "running", "finished" or "failed".')
+    created_at: Optional[str] = Field(description='The timestamp when the run was created.', default=None)
+    stopped_at: Optional[str] = Field(
+        description='The timestamp when the run stopped, or `null` while it is still active.', default=None
+    )
+    failure_reason: Optional[str] = Field(
+        description=(
+            'Machine-readable code identifying why the run failed, e.g. "ConfigDecryptionFailed" '
+            'or "StartupProbeFailed". `null` for successful runs.'
+        ),
+        default=None,
+    )
+    failure_message: Optional[str] = Field(
+        description='Detailed explanation of the failure, when the platform provides one.', default=None
+    )
+    startup_logs: list[str] = Field(
+        description='The last lines of the run\'s startup (entrypoint) log, when available.',
+        default_factory=list,
+    )
+
+    @classmethod
+    def from_api_response(cls, run: AppRunResponse) -> 'AppRunInfo':
+        startup_logs = (run.startup_logs or '').strip().split('\n')[-_APP_RUN_LOG_LINES:]
+        failure_message = run.failure_reason.message if run.failure_reason else None
+        if failure_message and len(failure_message) > _APP_RUN_MESSAGE_LIMIT:
+            failure_message = '…' + failure_message[-_APP_RUN_MESSAGE_LIMIT:]
+        return cls(
+            state=run.state,
+            created_at=run.created_at,
+            stopped_at=run.stopped_at,
+            failure_reason=run.failure_reason.reason if run.failure_reason else None,
+            failure_message=failure_message,
+            startup_logs=[line for line in startup_logs if line],
+        )
+
+
 class DeploymentInfo(BaseModel):
     """Deployment information of a data app."""
 
@@ -200,6 +250,15 @@ class DeploymentInfo(BaseModel):
     )
     logs: list[str] = Field(
         description='The latest 20 log lines reported in the data app deployment.', default_factory=list
+    )
+    last_run: Optional[AppRunInfo] = Field(
+        description=(
+            'The most recent deployment attempt (AppRun). When the app failed to start, its '
+            '`failure_reason`/`failure_message` explain why — including setup-phase failures '
+            '(e.g. invalid secrets) that happen before the container starts and so produce no '
+            'container logs at all. Check this FIRST when diagnosing an app that does not start.'
+        ),
+        default=None,
     )
 
 
@@ -291,10 +350,11 @@ class DataApp(BaseModel):
         self.links = links
         return self
 
-    def with_deployment_info(self, logs: list[str]) -> 'DataApp':
+    def with_deployment_info(self, logs: list[str], last_run: Optional[AppRunInfo] = None) -> 'DataApp':
         """Adds deployment info to the data app.
 
         :param logs: The logs of the data app deployment.
+        :param last_run: The most recent deployment attempt (AppRun), when available.
         :return: The data app with the deployment info.
         """
         self.deployment_info = DeploymentInfo(
@@ -302,6 +362,7 @@ class DataApp(BaseModel):
             state=self.state,
             url=self.deployment_url or 'deployment link not available yet',
             logs=logs,
+            last_run=last_run,
         )
         return self
 
@@ -1229,6 +1290,10 @@ async def get_data_apps(
     - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
     - Data App detail contains configuration, metadata, source code, links, and deployment info along with the latest
     data app logs to investigate in-app errors. The logs may be updated after opening the data app URL.
+    - `deployment_info.last_run` carries the outcome of the most recent deployment attempt. For an app
+      that fails to start, check its `failure_reason`/`failure_message` FIRST — they cover setup-phase
+      failures (e.g. invalid secrets, git clone errors, failing setup scripts) that happen before the
+      container starts and therefore never appear in the regular logs.
     - `repo_url` (managed git repo URL for python-js apps) is ONLY populated on the detail path
       (when `configuration_ids` is provided). The inventory list always returns `repo_url=None`,
       even for python-js apps with a managed repo — to retrieve the URL, call this tool again
@@ -1333,7 +1398,10 @@ async def deploy_data_app(
             mode=mode,
         )
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        data_app = data_app.with_deployment_info(await _fetch_logs(client, data_app.data_app_id))
+        data_app = data_app.with_deployment_info(
+            await _fetch_logs(client, data_app.data_app_id),
+            last_run=await _fetch_latest_run(client, data_app.data_app_id),
+        )
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
@@ -1576,7 +1644,8 @@ async def _fetch_data_app_details_task(
             uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
         )
         logs = await _fetch_logs(client, data_app.data_app_id)
-        data_app = data_app.with_links(links).with_deployment_info(logs)
+        last_run = await _fetch_latest_run(client, data_app.data_app_id)
+        data_app = data_app.with_links(links).with_deployment_info(logs, last_run=last_run)
         # Drafts of a python-js prod are surfaced inline so the agent can find them in one round-trip
         # — see Scenario C in `modify_python_js_data_app`. Skip for drafts themselves and for Streamlit
         # (neither has children).
@@ -1654,6 +1723,22 @@ async def _fetch_logs(client: KeboolaClient, data_app_id: str) -> list[str]:
     except httpx.HTTPStatusError:
         # The data app is not running, return empty list
         return []
+
+
+async def _fetch_latest_run(client: KeboolaClient, data_app_id: str) -> Optional[AppRunInfo]:
+    """Fetches the most recent run (deployment attempt) of a data app, or None when there is none.
+
+    Diagnostics must not break the detail fetch: any error (e.g. an older DSAPI without the
+    runs endpoint) is logged and reported as "no run info" rather than raised.
+    """
+    try:
+        runs = await client.data_science_client.list_app_runs(data_app_id, limit=1)
+        if not runs:
+            return None
+        return AppRunInfo.from_api_response(runs[0])
+    except Exception:
+        LOG.exception(f'Failed to fetch app runs for data app: {data_app_id}')
+        return None
 
 
 def _get_authorization(auth_with_password: bool) -> dict[str, Any]:
