@@ -18,7 +18,7 @@ The rules in this file (git workflow, versioning, venv setup) complement `CONTRI
 - When working on a Linear task, **check the current branch first** (`git branch`). If not already on the correct task branch, create one before making any changes: `git checkout -b AI-XXXX-short-description`
 - When creating PRs, use the template at `.github/pull_request_template.md`
 - **Every PR must include a `pyproject.toml` version bump** — bump before merging; see [Versioning](#versioning) for the rules
-- **Never use `git push --force`** or rebase commits that have already been pushed - use merge commits instead to avoid rewriting history for others
+- **Prefer rebasing onto `main`** to keep a linear history. Rebasing your own feature/PR branch and force-pushing the result is allowed and expected — always use `git push --force-with-lease` (never a bare `git push --force`) so you never clobber commits someone else pushed. Do not rebase a branch that others are actively committing to.
 
 ## Mapping a Docker Image Tag to a Version
 
@@ -124,6 +124,19 @@ server always reflecting your latest code changes:
 - After bumping, always sync the lock file: `uv lock`
 - Commit the version bump and `uv.lock` change together (can be a separate commit or bundled with
   the main feature commit).
+
+## Releasing
+
+- We **do not release every version**. Changes land on the trunk (`main`) continuously; we
+  release periodically once the accumulated changes have been re-tested together, so we don't
+  break working setups for users.
+- A release is one or two git tags pushed to `origin`:
+  - `vX.Y.Z` — MCP server release (always)
+  - `agent-vX.Y.Z` — In Platform Agent release (only when releasing the agent as well)
+- Either tag triggers `release.yml` CI (builds/publishes the Docker image). KaiBench runs only on
+  production `vX.Y.Z` tags — not `agent-vX.Y.Z`, and not `-dev.` prereleases.
+- Use the **`release-notes` skill** to prepare a release — it generates the release notes, opens
+  the draft `release/vX.Y.Z` PR, and walks through tagging both `vX.Y.Z` and `agent-vX.Y.Z`.
 
 ## Security Considerations
 - When whitelisting domains in OAuth, prefer **explicit domain lists over regex patterns**
