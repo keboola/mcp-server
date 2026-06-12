@@ -128,6 +128,12 @@ class TestSimpleOAuthProvider:
             (AnyUrl('https://connection.keboola.com/oauth/callback'), True),
             (AnyUrl('https://keboola.com/callback'), False),  # requires subdomain
             (AnyUrl('https://keboola.dev/callback'), False),  # requires subdomain
+            # Data-app 'hub' subdomains are user-deployable and must be rejected (RISK-76)
+            (AnyUrl('https://my-app.hub.keboola.com/callback'), False),
+            (AnyUrl('https://my-app.hub.north-europe.azure.keboola.com/callback'), False),
+            (AnyUrl('https://my-app.hub.keboola.dev/callback'), False),
+            (AnyUrl('https://hub.keboola.com/callback'), False),  # the hub root itself
+            (AnyUrl('https://my-app.hub.us-east4.gcp.keboola.com/callback'), False),
             # ChatGPT (subdomain optional)
             (AnyUrl('https://chatgpt.com'), True),
             (AnyUrl('https://foo.chatgpt.com/bar'), True),
