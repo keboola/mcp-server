@@ -872,9 +872,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         branch_scope: Literal['current', 'all'] = 'current',
     ) -> GlobalSearchResponse:
         """
-        Searches for items in the storage. It allows you to search for entities by name across all projects within an
-        organization, even those you do not have direct access to. The search is conducted only through entity names to
-        ensure confidentiality. The search is always restricted to the current project.
+        Searches for items in the storage by name. The search is conducted only through entity names to ensure
+        confidentiality. The request is always scoped to the current project via `projectIds[]`.
 
         :param query: The query to search for.
         :param limit: The maximum number of items to return.
