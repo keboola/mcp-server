@@ -3485,14 +3485,14 @@ This tool supports two complementary search types:
 
 1) textual
 - Searches items by name, server-side (fast, independent of project size).
-- Full-text (fuzzy) matching: tokenized and typo/similarity tolerant — pass the name as the user said it; do
-NOT "fix" spelling or build regex. It is NOT substring matching and does NOT support regex.
+- Full-text (fuzzy) matching: tokenized and typo/similarity tolerant — pass the name as the user said it;
+  do NOT "fix" spelling or build regex. It is NOT substring matching and does NOT support regex.
 - Prefers the current branch context; when nothing is found there, automatically widens the search to all
-branches of the project — such hits carry `branch_id`/`branch_name` so you can tell where they live.
+  branches of the project — such hits carry `branch_id`/`branch_name` so you can tell where they live.
 
 2) config-based
 - Searches item configurations (JSON objects) by matching patterns against the configuration values ​​converted
-to a string, optionally narrowed by JSON path `scopes`.
+  to a string, optionally narrowed by JSON path `scopes`.
 - Returns also `match_scopes` with JSON paths and matched patterns per scope.
 
 THIS IS THE PRIMARY DISCOVERY TOOL. Always use it BEFORE any get_* tool when you need to find items
@@ -3516,19 +3516,19 @@ data-apps, flows, or transformations
 HOW IT WORKS:
 - Supports two types:
   - search_type="textual": full-text (fuzzy) name search, server-side. Names only — descriptions, column names
-  and configuration contents are NOT searched (use config-based search for configuration contents). Matching is
-  tokenized and typo/similarity tolerant, so approximate names still match; it is not substring matching.
+    and configuration contents are NOT searched (use config-based search for configuration contents). Matching
+    is tokenized and typo/similarity tolerant, so approximate names still match; it is not substring matching.
   - search_type="config-based": matches inside configuration JSON objects, optionally narrowed by JSON path `scopes`
 - case-insensitive search
 - mode for pattern search: applies to config-based only — `literal` (default) or `regex`. Textual search ignores
   `mode` (always full-text) and rejects `regex`.
 - Multiple patterns work as OR condition - matches items containing ANY of the patterns
 - Each result includes the item's ID, name, creation date, and relevant metadata; the response also carries
-`total` and `by_type` counts and the `branch_scope` the hits come from
+  `total` and `by_type` counts and the `branch_scope` the hits come from
 - textual search prefers the current branch; on zero hits it automatically retries across all branches of the
-project and marks the response with branch_scope="all-branches"
+  project and marks the response with branch_scope="all-branches"
 - scopes (config-based) narrow matching to specific JSONPath areas within configurations; matching is performed
-against the stringified JSON node content in those areas.
+  against the stringified JSON node content in those areas.
 - config-based always returns all matched paths per item in `match_scopes` (including matched patterns)
 
 IMPORTANT:
