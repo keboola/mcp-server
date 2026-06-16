@@ -3535,13 +3535,13 @@ IMPORTANT:
 - Always use this tool when the user mentions a name but you don't have the exact ID
 - The search returns IDs that you can use with other tools (e.g., get_tables, get_configs, get_flows)
 - Results are ordered by the `updated` field, most recent first. `updated` is the item's last update time
-when available, or its creation time otherwise (textual/global-search hits expose only the creation time).
+  when available, or its creation time otherwise (textual/global-search hits expose only the creation time).
 - Textual search matches names only, with fuzzy full-text matching (typo/similarity tolerant; no regex). To find
-items by description or by table column, use get_tables or config-based search; to find items by configuration
-content, use config-based search.
+  items by description or by table column, use get_tables or config-based search; to find items by configuration
+  content, use config-based search.
 - For exact ID lookups, use specific tools like get_tables, get_configs, get_flows instead
 - Use specific `scopes` only when you know the config structure (schema or real example); otherwise run config-based
-search without scopes.
+  search without scopes.
 - Use find_component_id and get_configs tools to find configurations related to a specific component
 - If results are too numerous or empty, ask the user to refine their query rather than enumerating all items.
 

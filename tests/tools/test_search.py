@@ -137,6 +137,47 @@ class TestSearch:
         ]
 
     @pytest.mark.asyncio
+    async def test_enumeration_filters_to_requested_item_types(
+        self, mocker: MockerFixture, mcp_context_client: Context
+    ):
+        """The legacy enumeration path must not leak configuration hits when only configuration-row is requested."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+        keboola_client.storage_client.bucket_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.bucket_table_list = mocker.AsyncMock(return_value=[])
+        keboola_client.storage_client.workspace_list = mocker.AsyncMock(return_value=[])
+
+        def component_list_side_effect(component_type, include=None):
+            if component_type == 'extractor':
+                return [
+                    {
+                        'id': 'keboola.ex-db-mysql',
+                        'name': 'MySQL Extractor',
+                        'configurations': [
+                            {
+                                'id': 'test-config',
+                                'name': 'test config',
+                                'created': '2024-01-02T00:00:00Z',
+                                'rows': [{'id': 'test-row', 'name': 'test row', 'created': '2024-01-03T00:00:00Z'}],
+                            }
+                        ],
+                    }
+                ]
+            return []
+
+        keboola_client.storage_client.component_list = mocker.AsyncMock(side_effect=component_list_side_effect)
+
+        result = await search(
+            ctx=mcp_context_client,
+            patterns=['test'],
+            item_types=(cast(SearchItemType, 'configuration-row'),),
+        )
+
+        assert {hit.item_type for hit in result.hits} == {'configuration-row'}
+        assert result.total == 1
+        assert result.by_type == {'configuration-row': 1}
+
+    @pytest.mark.asyncio
     async def test_search_with_regex_pattern(self, mocker: MockerFixture, mcp_context_client: Context):
         """Test search with regex patterns."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
