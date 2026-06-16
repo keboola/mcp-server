@@ -3609,7 +3609,7 @@ scopes=["storage"]
   "additionalProperties": false,
   "properties": {
     "patterns": {
-      "description": "One or more search patterns to match against item ID, name, display name, description, or configuration JSON objects. Case-insensitive by default. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"my_bucket\"]. Do not use empty strings or empty lists.",
+      "description": "One or more search patterns. For textual search they match item names (server-side, tokenized full-text); for config-based search they match the configuration JSON content. Case-insensitive by default. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"my_bucket\"]. Do not use empty strings or empty lists.",
       "items": {
         "type": "string"
       },

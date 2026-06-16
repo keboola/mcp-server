@@ -755,9 +755,9 @@ async def search(
     patterns: Annotated[
         list[str],
         Field(
-            description='One or more search patterns to match against item ID, name, display name, description, '
-            'or configuration JSON objects. Case-insensitive by default. '
-            'Examples: ["customer"], ["sales", "revenue"], ["my_bucket"]. '
+            description='One or more search patterns. For textual search they match item names (server-side, '
+            'tokenized full-text); for config-based search they match the configuration JSON content. '
+            'Case-insensitive by default. Examples: ["customer"], ["sales", "revenue"], ["my_bucket"]. '
             'Do not use empty strings or empty lists.'
         ),
     ],
@@ -961,8 +961,8 @@ async def search(
         # with a safety net: fall back to client-side enumeration on any error, or when it finds nothing.
         try:
             output = await _global_textual_search(client, spec, limit=limit, offset=offset)
-        except Exception as exc:
-            LOG.warning(f'Global search failed ({exc!r}); falling back to client-side enumeration.')
+        except Exception:
+            LOG.warning('Global search failed; falling back to client-side enumeration.', exc_info=True)
             output = await _enumeration_search(client, spec, limit=limit, offset=offset)
         else:
             if not output.hits and offset == 0:
