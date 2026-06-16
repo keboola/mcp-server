@@ -792,7 +792,7 @@ async def search(
         Field(
             description='How to interpret patterns. Applies to config-based search only: "regex" for regular '
             'expressions or "literal" for exact text (default: "literal"). Ignored by textual search, which is '
-            'always a full-text (fuzzy) query and rejects "regex".'
+            'always a tokenized full-text name query (not typo-corrected) and rejects "regex".'
         ),
     ] = 'literal',
     limit: Annotated[
@@ -812,8 +812,8 @@ async def search(
 
     1) textual
     - Searches items by name, server-side (fast, independent of project size).
-    - Full-text (fuzzy) matching: tokenized and typo/similarity tolerant — pass the name as the user said it;
-      do NOT "fix" spelling or build regex. It is NOT substring matching and does NOT support regex.
+    - Tokenized full-text name matching, case- and diacritics-insensitive. Pass the plain name; do NOT build
+      regex (rejected). It is NOT typo-corrected — misspellings may not match.
     - Prefers the current branch context; when nothing is found there, automatically widens the search to all
       branches of the project — such hits carry `branch_id`/`branch_name` so you can tell where they live.
 
@@ -842,9 +842,9 @@ async def search(
 
     HOW IT WORKS:
     - Supports two types:
-      - search_type="textual": full-text (fuzzy) name search, server-side. Names only — descriptions, column names
-        and configuration contents are NOT searched (use config-based search for configuration contents). Matching
-        is tokenized and typo/similarity tolerant, so approximate names still match; it is not substring matching.
+      - search_type="textual": tokenized full-text name search, server-side. Names only — descriptions, column
+        names, IDs and configuration contents are NOT searched (use config-based search for configuration contents,
+        or get_tables for columns). Matching is case- and diacritics-insensitive but NOT typo-corrected.
       - search_type="config-based": matches inside configuration JSON objects, optionally narrowed by JSON path `scopes`
     - case-insensitive search
     - mode for pattern search: applies to config-based only — `literal` (default) or `regex`. Textual search ignores
@@ -863,9 +863,9 @@ async def search(
     - The search returns IDs that you can use with other tools (e.g., get_tables, get_configs, get_flows)
     - Results are ordered by the `updated` field, most recent first. `updated` is the item's last update time
       when available, or its creation time otherwise (textual/global-search hits expose only the creation time).
-    - Textual search matches names only, with fuzzy full-text matching (typo/similarity tolerant; no regex). To find
-      items by description or by table column, use get_tables or config-based search; to find items by configuration
-      content, use config-based search.
+    - Textual search matches names only, with tokenized full-text matching (case/diacritics-insensitive; not
+      typo-corrected; no regex). It may not return every item the legacy enumeration did. To find items by
+      description or by table column, use get_tables; to find items by configuration content, use config-based search.
     - For exact ID lookups, use specific tools like get_tables, get_configs, get_flows instead
     - Use specific `scopes` only when you know the config structure (schema or real example); otherwise run config-based
       search without scopes.
@@ -952,13 +952,24 @@ async def search(
     if search_type == 'textual' and await client.storage_client.is_enabled(GLOBAL_SEARCH_FEATURE):
         if mode == 'regex':
             raise ToolError(
-                'Regex patterns are not supported for textual search — it is a full-text (fuzzy) name search. '
+                'Regex patterns are not supported for textual search — it is a tokenized full-text name search. '
                 'Pass the plain name as the pattern, or use search_type="config-based" for regex matching inside '
                 'configurations.'
             )
-        output = await _global_textual_search(client, spec, limit=limit, offset=offset)
+        # The global-search feature flag does not guarantee the project's index is populated (the bulk
+        # backfill is asynchronous) and the endpoint can fail transiently, so global search is a fast path
+        # with a safety net: fall back to client-side enumeration on any error, or when it finds nothing.
+        try:
+            output = await _global_textual_search(client, spec, limit=limit, offset=offset)
+        except Exception as exc:
+            LOG.warning(f'Global search failed ({exc!r}); falling back to client-side enumeration.')
+            output = await _enumeration_search(client, spec, limit=limit, offset=offset)
+        else:
+            if not output.hits and offset == 0:
+                LOG.info('Global search returned no hits; falling back to client-side enumeration.')
+                output = await _enumeration_search(client, spec, limit=limit, offset=offset)
     else:
-        # Projects without the global-search feature fall back to the legacy client-side enumeration;
+        # Projects without the global-search feature use the legacy client-side enumeration;
         # config-based search has no server-side equivalent and always runs client-side.
         output = await _enumeration_search(client, spec, limit=limit, offset=offset)
 
