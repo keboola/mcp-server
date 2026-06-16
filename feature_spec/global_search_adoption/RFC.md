@@ -336,3 +336,124 @@ Manual verification (local MCP via `.mcp.json`):
    (`KBC.description`) as a follow-up.
 5. **Multi-pattern + offset:** with >1 patterns, offset-based pagination over a merged
    list is approximate. Acceptable, or should multi-pattern searches cap at one page?
+
+---
+
+# Benchmark results & landing plan (AI-3236)
+
+> Added 2026-06-16 while picking up [AI-3236](https://linear.app/keboola/issue/AI-3236/search-is-very-slow)
+> ("Search is very slow"). AI-3236's direction became *"try a global-search tool; if it's
+> good enough, drop it in as a 1:1 replacement"* — i.e. **benchmark this PR (#579) and decide.**
+> This section records that benchmark and the resulting changes. Numbers were produced by driving
+> the **real** code paths (`tools.search._fetch_*` for the old path, `clients.storage.global_search`
+> for the new path) against two real projects on the `canary-orion` stack.
+
+## Method
+
+- **Old path:** real `_fetch_buckets` / `_fetch_tables` / `fetch_configurations`, gathered exactly
+  as `search()` does. **New path:** real `AsyncStorageClient.global_search` (1 GET + a cached
+  token verify). API calls counted by wrapping the storage client's `get`.
+- **Latency:** old = p50 of 3 runs, new = p50 of 5 runs, caches warmed first.
+- **Recall:** corpus enumerated once; old hits = literal case-insensitive substring (the tool's
+  `literal` mode) compared **by item name** (global search is name-only); "id/col-only" counts old
+  hits that matched **only** via id or column names — things global search structurally cannot return.
+- **Projects:** `21` "Ascend Customer Data" — 103 buckets, 2 223 indexed items, **indexed**;
+  `198` — 7 buckets, 155 items, `global-search` feature **on but index empty** (backfill not yet run).
+
+## Speed (pattern `"customer"`)
+
+| Project | Scenario | Old p50 | Old API calls | New p50 | New API calls | Speedup |
+| --- | --- | --- | --- | --- | --- | --- |
+| 21 (large) | `item_types=["table"]` | **21.9 s** | 104 | **0.32 s** | 1 (+verify) | **~69×** |
+| 21 (large) | `item_types=[]` (all) | **21.0 s** | 106 | **0.29 s** | 1 (+verify) | **~72×** |
+| 21 (large) | `item_types=["transformation"]` | 0.22 s | 1 | 0.30 s | 1 (+verify) | 0.7× |
+| 198 (small) | `item_types=["table"]` | 2.08 s | 8 | 0.36 s | 1 (+verify) | ~5.8× |
+| 198 (small) | `item_types=[]` (all) | 2.10 s | 10 | 0.42 s | 1 (+verify) | ~5.1× |
+| 198 (small) | `item_types=["transformation"]` | 0.19 s | 1 | 0.35 s | 1 (+verify) | 0.5× |
+
+Findings: the win is **bucket/table & all-type** search, and it **scales with project size**
+(7 buckets → ~6×, 103 buckets → ~70×) because the old path fires `1 + N(buckets)` sequential
+table-list calls. "All types" ≈ "table only" because the three fetchers run concurrently and the
+table loop dominates. For a **single component type** (e.g. `transformation`) the old path is one
+`component_list` call and is already competitive — global search is *not* a win there (and could be
+slower on config-heavy projects where that one call returns large config bodies).
+
+## Recall / parity (project 21, `item_types=[]`, by name)
+
+| Query | Note | Old by-name | Old id/col-only (GS can't) | GS total | both | old-only | new-only |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `customer` | common token | 46 | **140** | 110 | 40 | 6 | 14 |
+| `shifts` | common token | 16 | 1 | 18 | 14 | 2 | 1 |
+| `when-i-work` | hyphenated name | 7 | 54 | 330 | 1 | 6 | 74 |
+| `ustome` | mid-word of "customer" | 46 | 140 | 79 | 41 | 5 | 2 |
+| `custommer` | typo for "customer" | 0 | 0 | 0 | 0 | 0 | 0 |
+| `c-305224` | id fragment (not a name) | 1 | 4 | 567 | 0 | 1 | 79 |
+
+Findings:
+- **Name-only is a real recall loss.** Searching `customer` surfaced **~140 items via id/column
+  matches** the old path returns but global search cannot (tables whose *columns* are about
+  customers, ids containing the token). Confirms accepted regressions #2 (columns) and #4 (id),
+  now quantified.
+- **Result sets diverge even on names** (e.g. `customer`: 40 shared, 6 old-only, 14 new-only) — not
+  a clean 1:1.
+- **Matching semantics are nuanced and not what the RFC's Open-Question #2 currently claims.**
+  Empirically global search matched a **mid-word fragment** (`ustome` → 79) but **not a 1-edit typo**
+  (`custommer` → 0), and an **id fragment exploded** (`c-305224` → 567 via the numeric token). So it
+  behaves like substring/n-gram-on-token containment, **not** edit-distance typo tolerance. → The
+  "typo/similarity tolerant" wording in Open Question #2 should be corrected; the docstring must not
+  promise typo tolerance.
+
+## Robustness
+
+- **Intermittent 5xx:** `query="raw"` returned **HTTP 500** once, then `all=18` on retry. Global
+  search can fail transiently → the tool must fall back on **errors**, not only on zero hits.
+- **Short queries** mostly fine (`in`→212, `out`→36, `a`→374; `stg`/`abc`→0 are valid empties).
+- **Not-indexed project (198):** every query → `all=0` despite 13 real `customer` matches and the
+  `global-search` feature being **on**. Backfill had still not landed > ~30 min after enabling
+  `global-search-backend`.
+
+## Verdict
+
+**Adopt global search as a fast path — but it is NOT a strict 1:1 replacement, so the enumeration
+path must stay as a safety net.** Huge, size-scaling speedup for the slow cases (table/all-types:
+~70× on a large project) at the cost of: name-only recall (loses the sizable id/column-match
+surface), divergent/nuanced matching, intermittent 5xx, and silent emptiness on
+indexed-but-not-yet-backfilled projects.
+
+## Required changes layered on this PR (#579)
+
+1. **Fallback on zero-hits *and* on error**, not only on missing feature. Current gate
+   ([`search.py:952`](../../src/keboola_mcp_server/tools/search.py)) is `is_enabled('global-search')`
+   → global path, else enumeration, with an all-branches retry but **no fallback when the indexed
+   project returns 0 or the endpoint 5xxes**. Add: after the all-branches retry, if still zero hits
+   **or** the call raised, fall back to `_enumeration_search`. (Optional: once a project returns ≥1
+   hit in a session, mark it "indexed" and trust later zero-hits to avoid enumeration cost on
+   genuinely-empty searches.)
+2. **Do NOT gate on `global-search-backend`.** Empirically the backend flag is not a reliable
+   signal: project 21 was fully indexed while the flag read *absent*, and 198 has the flag *present*
+   but returns nothing (backfill lag). Behaviour (zero-hit/error fallback) is the only reliable
+   signal; see DMD-772 below.
+3. **Correct Open Question #2 + the docstring:** matching is name-only, substring/n-gram-ish,
+   **not** typo-tolerant; no id/column/description matching. Tell the agent to pass plain names and
+   route column/description/id lookups to `get_*` / config-based search.
+4. **Defer removing the legacy enumeration path** until global search is GA on all stacks. Platform
+   side ([DMD-4](https://linear.app/keboola/issue/DMD-4)) is still pre-GA: substring support
+   ([DMD-207](https://linear.app/keboola/issue/DMD-207)) is an open GA-gating question;
+   all-stack migration ([DMD-43](https://linear.app/keboola/issue/DMD-43)) is on hold; new projects
+   don't get the feature by default ([DMD-41](https://linear.app/keboola/issue/DMD-41)); and a known
+   open bug ([DMD-772](https://linear.app/keboola/issue/DMD-772)) makes some **production** items
+   findable only under branch scope — exactly what the all-branches retry + enumeration fallback cover.
+
+## Landing checklist (unblock #579)
+
+1. **Rebase onto `main`** (`--force-with-lease`) — PR is currently `CONFLICTING`.
+2. **Fix the integration-test precondition**, not the search code: CI fails at
+   [`conftest.py:324`](../../integtests/conftest.py) — *"Expecting empty Keboola project 2728, but
+   found 2 buckets"* — across `test_errors.py`, `test_search.py`, storage-events tests alike (a dirty
+   shared CI project, **not** a global-search defect). Clean project 2728 / harden fixture cleanup,
+   then confirm the search integ tests pass (allowing for global-search eventual consistency — search
+   a pre-existing fixture item or add a bounded retry).
+3. **Review comments are already resolved** (the 18 Copilot threads each have a `Fixed ✅` reply in
+   `7d90f8b1`/`daca4fab`/`e52aa1b1`); the PR needs an **approving review**, not rework.
+4. Implement changes #1–#3 above, regenerate `TOOLS.md` (`tox -e check-tools-docs`), keep the
+   version bump (1.70.0) + `uv.lock`, mark #579 ready, attach these tables, merge → AI-3236 closes.
