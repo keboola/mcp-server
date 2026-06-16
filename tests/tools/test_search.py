@@ -1144,6 +1144,53 @@ class TestGlobalTextualSearch:
         assert result.branch_scope == 'current-branch'
 
     @pytest.mark.asyncio
+    async def test_search_falls_back_to_enumeration_on_zero_hits(
+        self, mocker: MockerFixture, mcp_context_client: Context
+    ):
+        """Zero hits (even after the all-branches retry) means the index may not be back-filled —
+        fall back to client-side enumeration so we never silently return nothing."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.global_search = mocker.AsyncMock(return_value=_global_search_response())
+        fallback = SearchOutput(
+            hits=[SearchHit(table_id='in.c-main.users', item_type='table', updated='', name='users')],
+            total=1,
+            by_type={'table': 1},
+            branch_scope='current-branch',
+        )
+        enum_mock = mocker.patch(
+            'keboola_mcp_server.tools.search._enumeration_search',
+            new=mocker.AsyncMock(return_value=fallback),
+        )
+
+        result = await search(ctx=mcp_context_client, patterns=['users'], item_types=('table',))
+
+        enum_mock.assert_awaited_once()
+        assert [h.table_id for h in result.hits] == ['in.c-main.users']
+
+    @pytest.mark.asyncio
+    async def test_search_falls_back_to_enumeration_on_error(self, mocker: MockerFixture, mcp_context_client: Context):
+        """A failing global-search request (e.g. a transient 5xx) falls back to enumeration."""
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.global_search = mocker.AsyncMock(
+            side_effect=RuntimeError('global-search exploded')
+        )
+        fallback = SearchOutput(
+            hits=[SearchHit(table_id='in.c-main.users', item_type='table', updated='', name='users')],
+            total=1,
+            by_type={'table': 1},
+            branch_scope='current-branch',
+        )
+        enum_mock = mocker.patch(
+            'keboola_mcp_server.tools.search._enumeration_search',
+            new=mocker.AsyncMock(return_value=fallback),
+        )
+
+        result = await search(ctx=mcp_context_client, patterns=['users'], item_types=('table',))
+
+        enum_mock.assert_awaited_once()
+        assert [h.table_id for h in result.hits] == ['in.c-main.users']
+
+    @pytest.mark.asyncio
     async def test_search_multiple_patterns_merge_and_dedupe(self, mocker: MockerFixture, mcp_context_client: Context):
         """Each pattern issues its own request; results are OR-merged and deduplicated by item."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
