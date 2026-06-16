@@ -22,7 +22,7 @@ The rules in this file (git workflow, versioning, venv setup) complement `CONTRI
 
 ## Mapping a Docker Image Tag to a Version
 
-Production/canary images on Docker Hub (`keboola/mcp-server`) are tagged `production-<full-git-sha>` (or `canary-orion-<sha>`, etc.). To resolve a tag to a release version and check whether it's the latest deployed image, don't guess — run:
+Images on Docker Hub (`keboola/mcp-server`) are tagged `production-<full-git-sha>` (or `canary-orion-<sha>`, `dev-<sha>`, etc.) depending on which git tag triggered the build — see [Releasing](#releasing) for the tag → stack mapping. To resolve a tag to a release version and check whether it's the latest deployed image, don't guess — run:
 
 ```bash
 # 1. Which commit + version is in the image? (sha = part after "production-")
@@ -134,7 +134,21 @@ server always reflecting your latest code changes:
   - `vX.Y.Z` — MCP server release (always)
   - `agent-vX.Y.Z` — In Platform Agent release (only when releasing the agent as well)
 - Either tag triggers `release.yml` CI (builds/publishes the Docker image). KaiBench runs only on
-  production `vX.Y.Z` tags — not `agent-vX.Y.Z`, and not `-dev.` prereleases.
+  production `vX.Y.Z` tags — not `agent-vX.Y.Z`, and not the canary/dev tags below.
+- `release.yml` maps git tags to image tags and deployment stacks as follows:
+
+  | Git tag pushed | Image tag built | Helm chart | Deployed to |
+  |---|---|---|---|
+  | `vX.Y.Z` | `production-<sha>` (+ `latest`) | `mcp-server` | production stacks |
+  | `agent-vX.Y.Z` | `production-<sha>` | `mcp-server-agent` | production stacks |
+  | `canary-orion-vX.Y.Z-dev.N` | `canary-orion-<sha>` | `mcp-server` | canary-orion stacks |
+  | `canary-orion-agent-vX.Y.Z-dev.N` | `canary-orion-<sha>` | `mcp-server-agent` | canary-orion stacks |
+  | `dev-vX.Y.Z-dev.N` | `dev-<sha>` | `mcp-server` | testing stacks |
+  | `dev-agent-vX.Y.Z-dev.N` | `dev-<sha>` | `mcp-server-agent` | testing stacks |
+
+  The stack routing (which physical stacks a `canary-orion-`/`dev-`/`production-` image tag lands on)
+  is configured on the `keboola/kbc-stacks` side; this repo only builds the image and triggers the
+  tag update.
 - Use the **`release-notes` skill** to prepare a release — it generates the release notes, opens
   the draft `release/vX.Y.Z` PR, and walks through tagging both `vX.Y.Z` and `agent-vX.Y.Z`.
 
