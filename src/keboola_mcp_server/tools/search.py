@@ -862,13 +862,13 @@ async def search(
     - Always use this tool when the user mentions a name but you don't have the exact ID
     - The search returns IDs that you can use with other tools (e.g., get_tables, get_configs, get_flows)
     - Results are ordered by the `updated` field, most recent first. `updated` is the item's last update time
-    when available, or its creation time otherwise (textual/global-search hits expose only the creation time).
+      when available, or its creation time otherwise (textual/global-search hits expose only the creation time).
     - Textual search matches names only, with fuzzy full-text matching (typo/similarity tolerant; no regex). To find
-    items by description or by table column, use get_tables or config-based search; to find items by configuration
-    content, use config-based search.
+      items by description or by table column, use get_tables or config-based search; to find items by configuration
+      content, use config-based search.
     - For exact ID lookups, use specific tools like get_tables, get_configs, get_flows instead
     - Use specific `scopes` only when you know the config structure (schema or real example); otherwise run config-based
-    search without scopes.
+      search without scopes.
     - Use find_component_id and get_configs tools to find configurations related to a specific component
     - If results are too numerous or empty, ask the user to refine their query rather than enumerating all items.
 
@@ -1020,6 +1020,11 @@ async def _enumeration_search(client: KeboolaClient, spec: SearchSpec, limit: in
             continue
         else:
             all_hits.extend(result)
+
+    # The configuration endpoint returns every config type at once, so narrow to the requested types to match
+    # the global-search path (e.g. item_types=['configuration-row'] must not leak 'configuration' hits).
+    if types_to_fetch:
+        all_hits = [hit for hit in all_hits if hit.item_type in types_to_fetch]
 
     # TODO: Should we sort by the item type too?
     all_hits.sort(
