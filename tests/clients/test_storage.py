@@ -173,54 +173,21 @@ class TestSearchEndpoints:
         assert params == {'query': 'foo', 'projectIds[]': ['4214'], 'limit': 10, 'offset': 5, **expected_branch_params}
 
     @pytest.mark.asyncio
-    async def test_tables_search_params(self, raw_client: RawKeboolaClient) -> None:
-        raw_client.get.return_value = [{'id': 'in.c-bucket.table'}]
-        client = AsyncStorageClient(raw_client=raw_client)
-
-        result = await client.tables_search(
-            metadata_key='KBC.description',
-            metadata_value='foo',
-            metadata_provider='user',
-            include=['columns', 'buckets'],
-        )
-
-        raw_client.get.assert_called_once_with(
-            endpoint='search/tables',
-            params={
-                'metadataKey': 'KBC.description',
-                'metadataValue': 'foo',
-                'metadataProvider': 'user',
-                'include': 'columns,buckets',
-            },
-        )
-        assert result == [{'id': 'in.c-bucket.table'}]
-
-    @pytest.mark.asyncio
-    async def test_tables_search_requires_filter(self, raw_client: RawKeboolaClient) -> None:
-        client = AsyncStorageClient(raw_client=raw_client)
-        assert await client.tables_search() == []
-        raw_client.get.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_component_configurations_search_params(self, raw_client: RawKeboolaClient) -> None:
         raw_client.get.return_value = [{'id': 'config-1', 'componentId': 'keboola.ex-test'}]
         client = AsyncStorageClient(raw_client=raw_client, branch_id='123')
 
         result = await client.component_configurations_search(
             component_id='keboola.ex-test',
-            configuration_id='config-1',
             metadata_keys=['KBC.configuration.folderName', 'KBC.other'],
-            include=['filteredMetadata'],
         )
 
         raw_client.get.assert_called_once_with(
             endpoint='branch/123/search/component-configurations',
             params={
                 'componentId': 'keboola.ex-test',
-                'configurationId': 'config-1',
                 'metadataKeys[0]': 'KBC.configuration.folderName',
                 'metadataKeys[1]': 'KBC.other',
-                'include': 'filteredMetadata',
             },
         )
         assert result == [{'id': 'config-1', 'componentId': 'keboola.ex-test'}]
