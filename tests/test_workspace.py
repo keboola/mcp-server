@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 from urllib.parse import urlparse
 
@@ -309,6 +310,27 @@ async def test_execute_query_swallows_callback_exception_and_completes_query():
     qs_mock.get_job_results.assert_awaited()
 
 
+@pytest.mark.asyncio
+async def test_execute_query_cancels_backend_when_cancelled_during_callback():
+    """If the in-flight task is cancelled while awaiting `on_job_submitted` (the job is already
+    submitted by then), the backend job must still be cancelled rather than left running."""
+    workspace, qs_mock = _make_snowflake_workspace_with_mocked_qs(job_id='job-cb-cancel')
+    # Make QS report the job as cancelled so `_cancel_job_with_timeout` confirms immediately.
+    qs_mock.get_job_status.return_value = {'status': 'cancelled', 'statements': [{'id': 'stmt-1'}]}
+
+    async def cancel_during_callback(info: JobSubmittedInfo) -> None:
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await workspace.execute_query('SELECT 1', on_job_submitted=cancel_during_callback)
+
+    # The backend cancel must have been issued for the already-submitted job.
+    qs_mock.cancel_job.assert_awaited_once()
+    assert qs_mock.cancel_job.await_args.args[0] == 'job-cb-cancel'
+    # The cancellation short-circuits before any results fetch.
+    qs_mock.get_job_results.assert_not_awaited()
+
+
 def test_build_cancel_url_uses_raw_client_base_api_url():
     """build_cancel_url must produce an absolute URL clients can POST to without further assembly."""
     qs = QueryServiceClient.create(
@@ -360,3 +382,67 @@ async def test_workspace_manager_create_skips_feature_lookup_on_default_branch()
     await WorkspaceManager.create(input_client)
 
     input_client.has_feature.assert_not_called()
+
+
+def _make_cancel_test_workspace(*, cancel_job_side_effect=None) -> tuple[_SnowflakeWorkspace, AsyncMock, dict]:
+    """Build a `_SnowflakeWorkspace` whose `_qsclient` simulates a long-running query.
+
+    The mocked `get_job_status` returns ``running`` until `cancel_job` is invoked,
+    after which it returns ``canceled`` (mimicking Query Service confirming the cancel).
+    The ``state`` dict lets the caller inspect whether cancellation was issued.
+    """
+    workspace = _SnowflakeWorkspace(workspace_id=1, schema='test_schema', client=Mock(spec=KeboolaClient))
+    mock_qs = AsyncMock(spec=QueryServiceClient)
+    workspace._qsclient = mock_qs
+
+    mock_qs.submit_job.return_value = 'job-abc-123'
+
+    state = {'cancelled': False}
+
+    async def get_status(job_id: str):
+        return {'status': 'canceled' if state['cancelled'] else 'running'}
+
+    async def default_cancel(job_id: str, reason: str):
+        state['cancelled'] = True
+        return {}
+
+    mock_qs.get_job_status.side_effect = get_status
+    mock_qs.cancel_job.side_effect = cancel_job_side_effect or default_cancel
+    return workspace, mock_qs, state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('cancel_job_side_effect_factory', 'expect_cancel_call'),
+    [
+        (None, True),
+        (
+            lambda: HTTPStatusError(
+                'cancel failed',
+                request=Mock(spec=Request),
+                response=Mock(spec=Response, status_code=500, text='boom'),
+            ),
+            True,
+        ),
+    ],
+    ids=['backend_cancel_succeeds', 'backend_cancel_fails'],
+)
+async def test_execute_query_cancellation_propagates_to_backend(
+    cancel_job_side_effect_factory, expect_cancel_call: bool
+):
+    """Client cancellation (MCP `notifications/cancelled`) must trigger `cancel_job` on
+    the Snowflake side. If the backend cancel itself fails, the original CancelledError
+    must still propagate so the SDK can finalize the request cleanly."""
+    side_effect = cancel_job_side_effect_factory() if cancel_job_side_effect_factory else None
+    workspace, mock_qs, _state = _make_cancel_test_workspace(cancel_job_side_effect=side_effect)
+
+    task = asyncio.create_task(workspace.execute_query('SELECT 1'))
+    # Yield to let the task enter the poll loop and issue at least one get_job_status.
+    await asyncio.sleep(0.05)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    if expect_cancel_call:
+        mock_qs.cancel_job.assert_called_once_with('job-abc-123', reason='Client cancelled the request')
