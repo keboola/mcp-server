@@ -29,7 +29,7 @@ jobs:
       version: ${{ steps.get_package_version.outputs.version }}
       wheel_artifact_id: ${{ steps.wheel_artifact_upload.outputs.artifact-id }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
@@ -64,7 +64,7 @@ jobs:
       - name: Upload coverage to Codecov
         # run this step only for push events or pull requests from the same repo
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: codecov/codecov-action@v6.0.1
+        uses: codecov/codecov-action@v7.0.0
         with:
           file: ./coverage.xml
           fail_ci_if_error: false  # Codecov upload is best-effort — transient service outages should not block CI
@@ -110,7 +110,7 @@ jobs:
       # This ensures tests run sequentially, not in parallel
       max-parallel: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
@@ -169,7 +169,7 @@ jobs:
           path: dist/
 
       - name: Publish package
-        uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
@@ -186,7 +186,7 @@ jobs:
       needs.build.outputs.tag == format('v{0}', needs.build.outputs.version)
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Prepare server.json
         run: |
