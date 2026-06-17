@@ -551,8 +551,14 @@ async def modify_streamlit_data_app(
     )
 
     if configuration_id:
-        # Update existing data app
-        data_app, updated_config, _ = await modify_streamlit_data_app_internal(
+        # Update existing data app.
+        #
+        # `configuration_update` below is the ONLY step allowed to fail the whole tool: if it raises, nothing
+        # was committed and a ToolError truthfully reports the failure. Everything after it merely enriches the
+        # response (re-fetch, metadata, folder, links) and must NEVER turn a committed write into a reported
+        # failure -- otherwise the agent, seeing an error, retries and re-applies the change, producing the
+        # v27->v29 double-write that deployed broken code (AJDA-2852). Hence the best-effort block below.
+        data_app_pre, updated_config, _ = await modify_streamlit_data_app_internal(
             client=client,
             workspace_manager=workspace_manager,
             name=name,
@@ -563,43 +569,64 @@ async def modify_streamlit_data_app(
             configuration_id=configuration_id,
             change_description=change_description,
         )
-        await client.storage_client.configuration_update(
+        update_resp = await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=configuration_id,
             configuration=updated_config,
             change_description=change_description or 'Change Data App',
-            updated_name=name or data_app.name,
-            updated_description=description or data_app.description,
+            updated_name=name or data_app_pre.name,
+            updated_description=description or data_app_pre.description,
         )
-        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        await set_cfg_update_metadata(
-            client=client,
-            component_id=DATA_APP_COMPONENT_ID,
-            configuration_id=configuration_id,
-            configuration_version=int(data_app.config_version),
-        )
-        folder_hint = await apply_folder_metadata(
-            client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_streamlit_data_app'
-        )
-        links = links_manager.get_data_app_links(
-            configuration_id=data_app.configuration_id,
-            configuration_name=name,
-            deployment_link=data_app.deployment_url,
-            uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
-        )
-        response = (
-            'updated (redeploy required to apply changes in the running app)'
-            if data_app.state in ('running', 'starting')
-            else 'updated'
-        )
-        return ModifiedDataAppOutput(
-            response=response,
-            change_summary=folder_hint,
-            data_app=DataAppSummary.model_validate(data_app.model_dump()),
-            links=links,
-        )
+        # --- write committed past this point; response building is strictly best-effort ---
+        # The new version comes straight from the PUT response, so it is known even if the re-fetch below fails.
+        new_version = str(update_resp.get('version') or '')
+        try:
+            await set_cfg_update_metadata(
+                client=client,
+                component_id=DATA_APP_COMPONENT_ID,
+                configuration_id=configuration_id,
+                configuration_version=int(new_version) if new_version.isdigit() else int(data_app_pre.config_version),
+            )
+            folder_hint = await apply_folder_metadata(
+                client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_streamlit_data_app'
+            )
+            data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+            links = links_manager.get_data_app_links(
+                configuration_id=data_app.configuration_id,
+                configuration_name=name,
+                deployment_link=data_app.deployment_url,
+                uses_basic_authentication=_uses_basic_authentication(data_app.configuration.get('authorization') or {}),
+            )
+            response = (
+                'updated (redeploy required to apply changes in the running app)'
+                if data_app.state in ('running', 'starting')
+                else 'updated'
+            )
+            return ModifiedDataAppOutput(
+                response=response,
+                change_summary=folder_hint,
+                data_app=DataAppSummary.model_validate(data_app.model_dump()),
+                links=links,
+            )
+        except Exception as exc:
+            LOG.exception(
+                'Data app configuration %s was updated (version %s) but building the response failed; '
+                'returning a partial success so the change is not retried.',
+                configuration_id,
+                new_version or '?',
+            )
+            return _partial_update_output(
+                data_app_pre=data_app_pre,
+                links_manager=links_manager,
+                configuration_id=configuration_id,
+                name=name,
+                new_version=new_version,
+                error=exc,
+            )
     else:
-        # Create new data app
+        # Create new data app. As with the update path, `create_data_app` is the committing write; the
+        # metadata/folder/links steps after it are best-effort and must not fail the tool once the app exists,
+        # so a failed retry cannot create a duplicate app (AJDA-2852).
         config = _build_data_app_config(name, source_code, packages, authentication_type, secrets, sql_dialect)
         config = await client.encryption_client.encrypt(
             config, component_id=DATA_APP_COMPONENT_ID, project_id=project_id
@@ -608,32 +635,48 @@ async def modify_streamlit_data_app(
         data_app_resp = await client.data_science_client.create_data_app(
             name, description, configuration=validated_config
         )
-        await set_cfg_creation_metadata(
-            client=client,
-            component_id=DATA_APP_COMPONENT_ID,
-            configuration_id=data_app_resp.config_id,
-        )
-        folder_hint = await apply_folder_metadata(
-            client,
-            DATA_APP_COMPONENT_ID,
-            data_app_resp.config_id,
-            folder,
-            'data apps',
-            'modify_streamlit_data_app',
-            is_new=True,
-        )
-        links = links_manager.get_data_app_links(
-            configuration_id=data_app_resp.config_id,
-            configuration_name=name,
-            deployment_link=data_app_resp.url,
-            uses_basic_authentication=_uses_basic_authentication(validated_config.authorization),
-        )
-        return ModifiedDataAppOutput(
-            response='created',
-            change_summary=folder_hint,
-            data_app=DataAppSummary.from_api_response(data_app_resp),
-            links=links,
-        )
+        # --- app created past this point; response building is strictly best-effort ---
+        try:
+            await set_cfg_creation_metadata(
+                client=client,
+                component_id=DATA_APP_COMPONENT_ID,
+                configuration_id=data_app_resp.config_id,
+            )
+            folder_hint = await apply_folder_metadata(
+                client,
+                DATA_APP_COMPONENT_ID,
+                data_app_resp.config_id,
+                folder,
+                'data apps',
+                'modify_streamlit_data_app',
+                is_new=True,
+            )
+            links = links_manager.get_data_app_links(
+                configuration_id=data_app_resp.config_id,
+                configuration_name=name,
+                deployment_link=data_app_resp.url,
+                uses_basic_authentication=_uses_basic_authentication(validated_config.authorization),
+            )
+            return ModifiedDataAppOutput(
+                response='created',
+                change_summary=folder_hint,
+                data_app=DataAppSummary.from_api_response(data_app_resp),
+                links=links,
+            )
+        except Exception as exc:
+            LOG.exception(
+                'Data app %s was created (configuration %s) but building the response failed; '
+                'returning a partial success so creation is not retried.',
+                data_app_resp.id,
+                data_app_resp.config_id,
+            )
+            return _partial_create_output(
+                data_app_resp=data_app_resp,
+                links_manager=links_manager,
+                validated_config=validated_config,
+                name=name,
+                error=exc,
+            )
 
 
 async def modify_streamlit_data_app_internal(
@@ -698,6 +741,115 @@ async def modify_streamlit_data_app_internal(
             )
 
     return data_app, updated_config, folder_preview
+
+
+def _partial_update_output(
+    *,
+    data_app_pre: DataApp,
+    links_manager: ProjectLinksManager,
+    configuration_id: str,
+    name: str,
+    new_version: str,
+    error: Exception,
+) -> ModifiedDataAppOutput:
+    """Build a truthful partial-success response after a committed Streamlit update whose response building failed.
+
+    The configuration write already landed, so this MUST NOT raise -- it is built entirely from the pre-update
+    data app (fetched before the write) plus the new version from the update response. The ``change_summary``
+    tells the agent the change IS applied and must not be retried, preventing the duplicate-write loop.
+    """
+    try:
+        summary = DataAppSummary.model_validate(data_app_pre.model_dump())
+        summary.config_version = new_version or summary.config_version
+    except Exception:
+        # Defensive: this helper must never raise (the write already committed). SafeState/SafeType accept any
+        # string, so building from the pre-update primitives cannot fail even if the schema is later tightened.
+        summary = DataAppSummary(
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            data_app_id=getattr(data_app_pre, 'data_app_id', '') or '',
+            project_id=getattr(data_app_pre, 'project_id', '') or '',
+            branch_id=getattr(data_app_pre, 'branch_id', '') or '',
+            config_version=new_version or getattr(data_app_pre, 'config_version', '') or '',
+            state=getattr(data_app_pre, 'state', 'unknown') or 'unknown',
+            type=getattr(data_app_pre, 'type', 'streamlit') or 'streamlit',
+        )
+    try:
+        links = links_manager.get_data_app_links(
+            configuration_id=configuration_id,
+            configuration_name=name or data_app_pre.name,
+            deployment_link=data_app_pre.deployment_url,
+            uses_basic_authentication=_uses_basic_authentication(data_app_pre.configuration.get('authorization') or {}),
+        )
+    except Exception:
+        links = []
+    # Mirror the success-path wording: the redeploy hint only applies to a running/starting app. The pre-update
+    # state is a faithful proxy here -- a config write does not change deployment state on its own.
+    response = (
+        'updated (redeploy required to apply changes in the running app)'
+        if data_app_pre.state in ('running', 'starting')
+        else 'updated'
+    )
+    return ModifiedDataAppOutput(
+        response=response,
+        change_summary=(
+            f'The configuration WAS updated (version {new_version or "unknown"}), but loading the full app '
+            f'details failed, so this response is partial: {error}. Do NOT retry the update -- the change is '
+            f'already applied. Call deploy_data_app to apply it to the running app.'
+        ),
+        data_app=summary,
+        links=links,
+    )
+
+
+def _partial_create_output(
+    *,
+    data_app_resp: DataAppResponse,
+    links_manager: ProjectLinksManager,
+    validated_config: DataAppConfig,
+    name: str,
+    error: Exception,
+) -> ModifiedDataAppOutput:
+    """Build a truthful partial-success response after a committed Streamlit create whose response building failed.
+
+    The app already exists, so this MUST NOT raise -- it is built from the create response the API already
+    returned. The ``change_summary`` tells the agent the app IS created and must not be retried, preventing a
+    duplicate app.
+    """
+    try:
+        summary = DataAppSummary.from_api_response(data_app_resp)
+    except Exception:
+        # Defensive: this helper must never raise (the app already exists). SafeState/SafeType accept any
+        # string, so building from the create-response primitives cannot fail even if the schema is tightened.
+        summary = DataAppSummary(
+            component_id=getattr(data_app_resp, 'component_id', DATA_APP_COMPONENT_ID) or DATA_APP_COMPONENT_ID,
+            configuration_id=getattr(data_app_resp, 'config_id', '') or '',
+            data_app_id=getattr(data_app_resp, 'id', '') or '',
+            project_id=getattr(data_app_resp, 'project_id', '') or '',
+            branch_id=getattr(data_app_resp, 'branch_id', '') or '',
+            config_version=getattr(data_app_resp, 'config_version', '') or '',
+            state=getattr(data_app_resp, 'state', 'unknown') or 'unknown',
+            type=getattr(data_app_resp, 'type', 'streamlit') or 'streamlit',
+        )
+    try:
+        links = links_manager.get_data_app_links(
+            configuration_id=data_app_resp.config_id,
+            configuration_name=name,
+            deployment_link=data_app_resp.url,
+            uses_basic_authentication=_uses_basic_authentication(validated_config.authorization),
+        )
+    except Exception:
+        links = []
+    return ModifiedDataAppOutput(
+        response='created',
+        change_summary=(
+            f'The data app WAS created (configuration {data_app_resp.config_id}), but building the full response '
+            f'failed, so this response is partial: {error}. Do NOT retry creation -- it would create a duplicate. '
+            f'Call deploy_data_app to start the app.'
+        ),
+        data_app=summary,
+        links=links,
+    )
 
 
 @tool_errors()

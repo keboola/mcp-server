@@ -830,6 +830,168 @@ async def test_modify_streamlit_data_app_folder(
         assert result.change_summary is None
 
 
+@pytest.mark.parametrize(
+    ('configuration_id', 'fail_at', 'state', 'expected_response'),
+    [
+        # Update: failure at the re-fetch step, running app keeps the "redeploy required" hint.
+        ('cfg-1', '_fetch_data_app', 'running', 'updated (redeploy required to apply changes in the running app)'),
+        # Update: failure at the FIRST post-write step (metadata) on a stopped app -> still partial, no redeploy hint.
+        ('cfg-1', 'set_cfg_update_metadata', 'stopped', 'updated'),
+        # Create: failure at a post-write step.
+        ('', 'set_cfg_creation_metadata', None, 'created'),
+    ],
+    ids=['update_refetch_running', 'update_metadata_stopped', 'create_metadata'],
+)
+@pytest.mark.asyncio
+async def test_modify_streamlit_data_app_partial_success_when_response_building_fails(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+    configuration_id: str,
+    fail_at: str,
+    state: str | None,
+    expected_response: str,
+) -> None:
+    """Regression for AJDA-2852: when the API write commits but a post-write response-building step raises,
+    the tool must return a truthful partial success (not a ToolError) so the agent does not retry and
+    double-apply the change. Parametrized over which post-write step fails to prove the partial path is reached
+    regardless of failure point, and that the response wording still reflects the app state."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=1)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='snowflake')
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='default')
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+
+    encrypted_config = {
+        'parameters': {'script': ['SELECT 1']},
+        'storage': {},
+        'authorization': {'app_proxy': {'auth_providers': [], 'auth_rules': []}},
+    }
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = mocker.AsyncMock(return_value=encrypted_config)
+
+    boom = RuntimeError('boom while building response')
+
+    if configuration_id:
+        existing_data_app = DataApp(
+            name='My App',
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id=configuration_id,
+            data_app_id='app-1',
+            project_id='proj-1',
+            branch_id='default',
+            config_version='27',
+            type='streamlit',
+            auto_suspend_after_seconds=900,
+            configuration=encrypted_config,
+            state=state,
+        )
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps.modify_streamlit_data_app_internal',
+            mocker.AsyncMock(return_value=(existing_data_app, encrypted_config, None)),
+        )
+        # The write commits and returns the new version...
+        keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={'version': 28})
+        # ...but a post-write enrichment step blows up.
+        mocker.patch(f'keboola_mcp_server.tools.data_apps.{fail_at}', side_effect=boom)
+        committing_mock = keboola_client.storage_client.configuration_update
+    else:
+        mocker.patch(
+            'keboola_mcp_server.tools.data_apps.DataAppConfig.model_validate',
+            return_value=mocker.MagicMock(authorization={'app_proxy': {'auth_providers': [], 'auth_rules': []}}),
+        )
+        keboola_client.data_science_client = mocker.AsyncMock()
+        keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
+            return_value=_make_data_app_response(config_id='new-cfg-1')
+        )
+        # The app is created, but a post-write enrichment step blows up.
+        mocker.patch(f'keboola_mcp_server.tools.data_apps.{fail_at}', side_effect=boom)
+        committing_mock = keboola_client.data_science_client.create_data_app
+
+    # Must NOT raise (no ToolError) even though a post-write step failed.
+    result = await modify_streamlit_data_app(
+        ctx=mcp_context_client,
+        name='My App',
+        description='desc',
+        source_code='import streamlit as st\n{QUERY_DATA_FUNCTION}\nst.write("hello")',
+        packages=['pandas'],
+        authentication_type='no-auth',
+        configuration_id=configuration_id,
+        change_description='test',
+    )
+
+    assert isinstance(result, ModifiedDataAppOutput)
+    # The committing write happened exactly once and is never retried within the call.
+    committing_mock.assert_awaited_once()
+    assert result.change_summary is not None
+    # The response truthfully reports the change landed and warns against retrying.
+    assert 'do not retry' in result.change_summary.lower()
+    # Response wording mirrors the success path (redeploy hint only for running/starting apps).
+    assert result.response == expected_response
+    if configuration_id:
+        assert 'WAS updated' in result.change_summary
+        # New version surfaced from the write response despite the failed re-fetch.
+        assert '28' in result.change_summary
+        assert result.data_app.config_version == '28'
+    else:
+        assert 'WAS created' in result.change_summary
+
+
+@pytest.mark.asyncio
+async def test_partial_output_helpers_never_raise_when_summary_construction_fails(mocker) -> None:
+    """The partial-output helpers promise 'MUST NOT raise' even if the primary DataAppSummary construction
+    fails -- they must fall back to a summary built from primitives instead of letting a committed write
+    surface as a ToolError (AJDA-2852)."""
+    from keboola_mcp_server.tools.data_apps import _partial_create_output, _partial_update_output
+
+    links_manager = mocker.MagicMock()
+    links_manager.get_data_app_links.return_value = []
+
+    # --- update helper: force the primary model_validate to raise ---
+    data_app_pre = DataApp(
+        name='My App',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='default',
+        config_version='27',
+        type='streamlit',
+        configuration={'authorization': {}},
+        state='running',
+    )
+    mocker.patch.object(DataAppSummary, 'model_validate', side_effect=RuntimeError('validate boom'))
+    update_out = _partial_update_output(
+        data_app_pre=data_app_pre,
+        links_manager=links_manager,
+        configuration_id='cfg-1',
+        name='My App',
+        new_version='28',
+        error=RuntimeError('enrichment boom'),
+    )
+    assert isinstance(update_out, ModifiedDataAppOutput)
+    assert update_out.data_app.configuration_id == 'cfg-1'
+    assert update_out.data_app.data_app_id == 'app-1'
+    assert update_out.data_app.config_version == '28'  # falls back to the new version from the write response
+    assert update_out.response == 'updated (redeploy required to apply changes in the running app)'
+
+    # --- create helper: force the primary from_api_response to raise ---
+    data_app_resp = _make_data_app_response(config_id='new-cfg-1', data_app_id='app-2')
+    mocker.patch.object(DataAppSummary, 'from_api_response', side_effect=RuntimeError('from_api boom'))
+    create_out = _partial_create_output(
+        data_app_resp=data_app_resp,
+        links_manager=links_manager,
+        validated_config=mocker.MagicMock(authorization={}),
+        name='My App',
+        error=RuntimeError('enrichment boom'),
+    )
+    assert isinstance(create_out, ModifiedDataAppOutput)
+    assert create_out.data_app.configuration_id == 'new-cfg-1'
+    assert create_out.data_app.data_app_id == 'app-2'
+    assert 'WAS created' in (create_out.change_summary or '')
+
+
 # ===== Tests for modify_python_js_data_app =====
 
 
