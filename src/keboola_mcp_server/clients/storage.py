@@ -630,33 +630,25 @@ class AsyncStorageClient(KeboolaServiceClient):
     async def component_configurations_search(
         self,
         component_id: str | None = None,
-        configuration_id: str | None = None,
         metadata_keys: list[str] | None = None,
-        include: list[str] | None = None,
     ) -> list[JsonDict]:
         """
-        Searches component configurations by component, configuration and metadata keys.
+        Searches component configurations by component and metadata keys.
         All filters are applied server-side by the SAPI search endpoint.
 
         :param component_id: Optional component ID to filter results.
-        :param configuration_id: Optional configuration ID to filter results.
         :param metadata_keys: List of metadata keys to filter by — returns only configurations
             that have at least one of the specified metadata keys set.
-        :param include: Additional fields to include in the response (e.g. 'filteredMetadata').
         :return: List of matching configurations as dictionaries.
         """
-        if not (component_id or configuration_id or metadata_keys):
+        if not (component_id or metadata_keys):
             return []
         endpoint = f'branch/{self._branch_id}/search/component-configurations'
         params: dict[str, Any] = {}
         if component_id:
             params['componentId'] = component_id
-        if configuration_id:
-            params['configurationId'] = configuration_id
         for i, key in enumerate(metadata_keys or []):
             params[f'metadataKeys[{i}]'] = key
-        if include:
-            params['include'] = ','.join(include)
         return cast(list[JsonDict], await self.get(endpoint=endpoint, params=params))
 
     async def configuration_metadata_get(self, component_id: str, configuration_id: str) -> list[JsonDict]:
@@ -959,36 +951,6 @@ class AsyncStorageClient(KeboolaServiceClient):
             payload['columnsMetadata'] = columns_metadata
 
         return cast(JsonDict, await self.post(endpoint=f'tables/{table_id}/metadata', data=payload))
-
-    async def tables_search(
-        self,
-        metadata_key: str | None = None,
-        metadata_value: str | None = None,
-        metadata_provider: str | None = None,
-        include: list[str] | None = None,
-    ) -> list[JsonDict]:
-        """
-        Searches tables by their metadata using the SAPI search endpoint. All filters are exact-match
-        and applied server-side; at least one of the metadata filters must be provided.
-
-        :param metadata_key: The metadata key to filter by (e.g. 'KBC.description').
-        :param metadata_value: The metadata value to filter by.
-        :param metadata_provider: The provider of the metadata (e.g. 'user').
-        :param include: Additional fields to include in the response (e.g. 'columns').
-        :return: List of matching tables as dictionaries.
-        """
-        if not (metadata_key or metadata_value or metadata_provider):
-            return []
-        params: dict[str, Any] = {}
-        if metadata_key:
-            params['metadataKey'] = metadata_key
-        if metadata_value:
-            params['metadataValue'] = metadata_value
-        if metadata_provider:
-            params['metadataProvider'] = metadata_provider
-        if include:
-            params['include'] = ','.join(include)
-        return cast(list[JsonDict], await self.get(endpoint='search/tables', params=params))
 
     # TODO: no branch support
     async def trigger_event(
