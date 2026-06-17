@@ -108,9 +108,12 @@ async def _execute_watching_disconnect(
     # query either way, but keep the log honest so a watcher bug isn't disguised as a disconnect.
     watcher_exc = disconnect_task.exception()
     if watcher_exc is not None:
+        # Pass an explicit (type, exc, tb) tuple: stdlib logging treats a truthy non-tuple
+        # `exc_info` as True and falls back to sys.exc_info(), which is empty here, so the
+        # watcher's traceback would otherwise be lost.
         LOG.warning(
             f'HTTP disconnect watcher for query_data "{query_name}" failed; cancelling underlying query',
-            exc_info=watcher_exc,
+            exc_info=(type(watcher_exc), watcher_exc, watcher_exc.__traceback__),
         )
     else:
         LOG.info(f'HTTP client disconnected during query_data "{query_name}"; cancelling underlying query')
