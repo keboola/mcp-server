@@ -307,6 +307,30 @@ def _sync_storage_client(storage_api_token: str, storage_api_url: str) -> SyncSt
     return client
 
 
+def _purge_leftovers(storage_client: SyncStorageClient, project_id: str) -> None:
+    """Remove leftover buckets and ex-generic-v2 configs from a shared pool project before setup.
+
+    Integration tests run against a shared pool of projects acquired per run. A previous session that
+    was cancelled (e.g. a new push/rebase cancelled the in-flight CI run) or timed out before its
+    teardown leaves the project dirty. Without this, the empty-project assertion below would fail
+    *before* `yield`, so the cleanup that runs *after* `yield` never executes and the project stays
+    dirty for every later run that acquires it. Purging here lets the pool self-heal instead.
+    """
+    leftover_buckets = storage_client.buckets.list()
+    leftover_configs = storage_client.configurations.list(component_id='ex-generic-v2')
+    if leftover_buckets or leftover_configs:
+        LOG.warning(
+            f'Project {project_id} was not clean at setup: {len(leftover_buckets)} bucket(s), '
+            f'{len(leftover_configs)} ex-generic-v2 config(s) — likely an interrupted prior run. Purging.'
+        )
+    for bucket in leftover_buckets:
+        storage_client.buckets.delete(bucket['id'], force=True)
+    for config in leftover_configs:
+        # Double delete because the first delete only moves the configuration to the trash.
+        storage_client.configurations.delete('ex-generic-v2', config['id'])
+        storage_client.configurations.delete('ex-generic-v2', config['id'])
+
+
 @pytest.fixture(scope='session')
 def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str) -> Generator[ProjectDef, Any, None]:
     """
@@ -319,27 +343,17 @@ def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
 
-    current_buckets = storage_client.buckets.list()
-    if current_buckets:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_buckets)} buckets')
+    # Self-heal a dirty pool project left behind by an interrupted prior run (see _purge_leftovers)
+    # instead of failing — failing here would skip the post-`yield` cleanup and wedge the project.
+    _purge_leftovers(storage_client, project_id)
 
     buckets = _create_buckets(storage_client)
-
-    current_tables = storage_client.tables.list()
-    if current_tables:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_tables)} tables')
-
     tables = _create_tables(storage_client)
-
-    current_configs = storage_client.configurations.list(component_id='ex-generic-v2')
-    if current_configs:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_configs)} configs')
-
     configs = _create_configs(storage_client)
 
-    if 'global-search' in token_info['owner'].get('fetaures', []):
+    if 'global-search' in token_info['owner'].get('features', []):
         # Give the global search time to catch up on the changes done in the testing project.
-        # See https://help.keboola.com/management/global-search/#limitations for moe info.
+        # See https://help.keboola.com/management/global-search/#limitations for more info.
         time.sleep(10)
 
     LOG.info(f'Test setup for project {project_id} complete')
