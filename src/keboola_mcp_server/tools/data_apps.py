@@ -579,14 +579,20 @@ async def modify_streamlit_data_app(
         )
         # --- write committed past this point; response building is strictly best-effort ---
         # The new version comes straight from the PUT response, so it is known even if the re-fetch below fails.
-        new_version = str(update_resp.get('version') or '')
+        # Read it defensively: this runs after the committing write and must not raise (a non-dict response would
+        # otherwise turn the committed write into a ToolError -- the very failure mode this block guards against).
+        new_version = str(update_resp.get('version') or '') if isinstance(update_resp, dict) else ''
         try:
-            await set_cfg_update_metadata(
-                client=client,
-                component_id=DATA_APP_COMPONENT_ID,
-                configuration_id=configuration_id,
-                configuration_version=int(new_version) if new_version.isdigit() else int(data_app_pre.config_version),
-            )
+            # Only stamp the UPDATED_BY_MCP version when the new version is actually known. Falling back to the
+            # pre-update version would record a misleading version (the write did increment it), so skip the
+            # metadata write when the response carried no numeric version.
+            if new_version.isdigit():
+                await set_cfg_update_metadata(
+                    client=client,
+                    component_id=DATA_APP_COMPONENT_ID,
+                    configuration_id=configuration_id,
+                    configuration_version=int(new_version),
+                )
             folder_hint = await apply_folder_metadata(
                 client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_streamlit_data_app'
             )
@@ -608,7 +614,7 @@ async def modify_streamlit_data_app(
                 data_app=DataAppSummary.model_validate(data_app.model_dump()),
                 links=links,
             )
-        except Exception as exc:
+        except Exception:
             LOG.exception(
                 'Data app configuration %s was updated (version %s) but building the response failed; '
                 'returning a partial success so the change is not retried.',
@@ -621,7 +627,6 @@ async def modify_streamlit_data_app(
                 configuration_id=configuration_id,
                 name=name,
                 new_version=new_version,
-                error=exc,
             )
     else:
         # Create new data app. As with the update path, `create_data_app` is the committing write; the
@@ -663,7 +668,7 @@ async def modify_streamlit_data_app(
                 data_app=DataAppSummary.from_api_response(data_app_resp),
                 links=links,
             )
-        except Exception as exc:
+        except Exception:
             LOG.exception(
                 'Data app %s was created (configuration %s) but building the response failed; '
                 'returning a partial success so creation is not retried.',
@@ -675,7 +680,6 @@ async def modify_streamlit_data_app(
                 links_manager=links_manager,
                 validated_config=validated_config,
                 name=name,
-                error=exc,
             )
 
 
@@ -750,13 +754,14 @@ def _partial_update_output(
     configuration_id: str,
     name: str,
     new_version: str,
-    error: Exception,
 ) -> ModifiedDataAppOutput:
     """Build a truthful partial-success response after a committed Streamlit update whose response building failed.
 
     The configuration write already landed, so this MUST NOT raise -- it is built entirely from the pre-update
     data app (fetched before the write) plus the new version from the update response. The ``change_summary``
-    tells the agent the change IS applied and must not be retried, preventing the duplicate-write loop.
+    tells the agent the change IS applied and must not be retried, preventing the duplicate-write loop. The
+    underlying exception is intentionally not surfaced to the caller (it is logged at the call site) -- the
+    agent-facing message stays stable and free of internal detail.
     """
     try:
         summary = DataAppSummary.model_validate(data_app_pre.model_dump())
@@ -794,8 +799,8 @@ def _partial_update_output(
         response=response,
         change_summary=(
             f'The configuration WAS updated (version {new_version or "unknown"}), but loading the full app '
-            f'details failed, so this response is partial: {error}. Do NOT retry the update -- the change is '
-            f'already applied. Call deploy_data_app to apply it to the running app.'
+            f'details failed, so this response is partial. Do NOT retry the update -- the change is already '
+            f'applied. Call deploy_data_app to apply it to the running app.'
         ),
         data_app=summary,
         links=links,
@@ -808,13 +813,13 @@ def _partial_create_output(
     links_manager: ProjectLinksManager,
     validated_config: DataAppConfig,
     name: str,
-    error: Exception,
 ) -> ModifiedDataAppOutput:
     """Build a truthful partial-success response after a committed Streamlit create whose response building failed.
 
     The app already exists, so this MUST NOT raise -- it is built from the create response the API already
     returned. The ``change_summary`` tells the agent the app IS created and must not be retried, preventing a
-    duplicate app.
+    duplicate app. The underlying exception is intentionally not surfaced to the caller (it is logged at the
+    call site) -- the agent-facing message stays stable and free of internal detail.
     """
     try:
         summary = DataAppSummary.from_api_response(data_app_resp)
@@ -844,7 +849,7 @@ def _partial_create_output(
         response='created',
         change_summary=(
             f'The data app WAS created (configuration {data_app_resp.config_id}), but building the full response '
-            f'failed, so this response is partial: {error}. Do NOT retry creation -- it would create a duplicate. '
+            f'failed, so this response is partial. Do NOT retry creation -- it would create a duplicate. '
             f'Call deploy_data_app to start the app.'
         ),
         data_app=summary,
