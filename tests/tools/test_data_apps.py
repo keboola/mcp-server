@@ -968,7 +968,6 @@ async def test_partial_output_helpers_never_raise_when_summary_construction_fail
         configuration_id='cfg-1',
         name='My App',
         new_version='28',
-        error=RuntimeError('enrichment boom'),
     )
     assert isinstance(update_out, ModifiedDataAppOutput)
     assert update_out.data_app.configuration_id == 'cfg-1'
@@ -984,12 +983,76 @@ async def test_partial_output_helpers_never_raise_when_summary_construction_fail
         links_manager=links_manager,
         validated_config=mocker.MagicMock(authorization={}),
         name='My App',
-        error=RuntimeError('enrichment boom'),
     )
     assert isinstance(create_out, ModifiedDataAppOutput)
     assert create_out.data_app.configuration_id == 'new-cfg-1'
     assert create_out.data_app.data_app_id == 'app-2'
     assert 'WAS created' in (create_out.change_summary or '')
+
+
+@pytest.mark.asyncio
+async def test_modify_streamlit_data_app_update_skips_metadata_when_version_missing(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """When the update response carries no numeric version, set_cfg_update_metadata must be SKIPPED rather than
+    stamped with the (now-stale) pre-update version, which would record a misleading UPDATED_BY_MCP version
+    (review hardening on AJDA-2852). The tool still returns a normal success."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=1)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='snowflake')
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='default')
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+
+    encrypted_config = {
+        'parameters': {'script': ['SELECT 1']},
+        'storage': {},
+        'authorization': {'app_proxy': {'auth_providers': [], 'auth_rules': []}},
+    }
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = mocker.AsyncMock(return_value=encrypted_config)
+
+    existing_data_app = DataApp(
+        name='My App',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='default',
+        config_version='27',
+        type='streamlit',
+        auto_suspend_after_seconds=900,
+        configuration=encrypted_config,
+        state='stopped',
+    )
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps.modify_streamlit_data_app_internal',
+        mocker.AsyncMock(return_value=(existing_data_app, encrypted_config, None)),
+    )
+    # Committing write succeeds but the response carries no version.
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    # Let the rest of the (best-effort) response building succeed.
+    set_meta = mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=existing_data_app))
+
+    result = await modify_streamlit_data_app(
+        ctx=mcp_context_client,
+        name='My App',
+        description='desc',
+        source_code='import streamlit as st\n{QUERY_DATA_FUNCTION}\nst.write("hello")',
+        packages=['pandas'],
+        authentication_type='no-auth',
+        configuration_id='cfg-1',
+        change_description='test',
+    )
+
+    assert isinstance(result, ModifiedDataAppOutput)
+    assert result.response == 'updated'
+    # The misleading pre-update-version stamp must NOT happen when the new version is unknown.
+    set_meta.assert_not_awaited()
 
 
 # ===== Tests for modify_python_js_data_app =====
