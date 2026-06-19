@@ -481,6 +481,41 @@ class TestKeboolaClient:
             assert metastore_headers['X-StorageAPI-Token'] == expected_metastore_token
             assert 'Authorization' not in metastore_headers
 
+    @pytest.mark.parametrize(
+        ('bearer_token', 'storage_token', 'expected_data_science_token'),
+        [
+            ('oauth_bearer_123', 'sapi_token_456', 'Bearer oauth_bearer_123'),
+            (None, 'sapi_token_456', 'sapi_token_456'),
+            ('', 'sapi_token_456', 'sapi_token_456'),
+        ],
+        ids=['with_bearer_token', 'without_bearer_token', 'empty_bearer_token'],
+    )
+    def test_data_science_client_token_selection(
+        self, bearer_token: str | None, storage_token: str, expected_data_science_token: str
+    ):
+        """DataScienceClient uses the bearer token when available, falls back to the storage token.
+
+        The sandboxes-service git-repo credential endpoints require an admin-context token
+        (CanManageAppRepoCredentials -> isAdminToken()); the OAuth bearer token carries it while the
+        minted SAPI token does not (AI-3398).
+        """
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token=storage_token,
+            bearer_token=bearer_token,
+        )
+
+        data_science_headers = client.data_science_client.raw_client.headers
+
+        if expected_data_science_token.startswith('Bearer '):
+            assert 'Authorization' in data_science_headers
+            assert data_science_headers['Authorization'] == expected_data_science_token
+            assert 'X-StorageAPI-Token' not in data_science_headers
+        else:
+            assert 'X-StorageAPI-Token' in data_science_headers
+            assert data_science_headers['X-StorageAPI-Token'] == expected_data_science_token
+            assert 'Authorization' not in data_science_headers
+
 
 def test_flow_schema_cache_roundtrip():
     client = KeboolaClient(
