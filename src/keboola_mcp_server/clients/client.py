@@ -185,9 +185,14 @@ class KeboolaClient:
         self._ai_service_client = AIServiceClient.create(
             root_url=ai_service_api_url, token=self._token, headers=self._headers, readonly=readonly
         )
+        # Data-science (sandboxes-service) git-repo credential endpoints require an admin-context
+        # token (CanManageAppRepoCredentials -> StorageApiToken::isAdminToken()). The OAuth bearer
+        # token carries admin context; the SAPI token minted for OAuth sessions does not. Pass the
+        # bearer token when available so credential minting works for OAuth clients (falls back to
+        # the SAPI token otherwise). See AI-3398.
         self._data_science_client = DataScienceClient.create(
             root_url=data_science_api_url,
-            token=self._token,
+            token=bearer_or_sapi_token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
