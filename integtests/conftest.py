@@ -167,7 +167,7 @@ def mcp_config(storage_api_token: str, storage_api_url: str) -> Config:
 
 
 @pytest.fixture(scope='session')
-def workspace_schema(_clean_project: str, storage_api_token: str, storage_api_url: str) -> Generator[str, Any, None]:
+def workspace_schema(_clean_project: None, storage_api_token: str, storage_api_url: str) -> Generator[str, Any, None]:
     """
     Create one read-only workspace for the whole test session and yield its schema.
 
@@ -386,18 +386,20 @@ def _purge_project(storage_client: SyncStorageClient, storage_api_url: str, proj
 
 
 @pytest.fixture(scope='session')
-def _clean_project(storage_api_token: str, storage_api_url: str) -> str:
+def _clean_project(storage_api_token: str, storage_api_url: str) -> None:
     """Reset the acquired pool project before any other fixture creates resources, so an interrupted
-    prior run can't wedge the shared pool. Other session fixtures depend on this to order it first."""
+    prior run can't wedge the shared pool. Other session fixtures depend on this to order it first.
+
+    Side-effect only (no return value), so the leading underscore is kept per pytest-style PT005.
+    """
     storage_client = _sync_storage_client(storage_api_token, storage_api_url)
     project_id: str = storage_client.tokens.verify()['owner']['id']
     _purge_project(storage_client, storage_api_url, project_id)
-    return project_id
 
 
 @pytest.fixture(scope='session')
 def keboola_project(
-    _clean_project: str, env_init: bool, storage_api_token: str, storage_api_url: str
+    _clean_project: None, env_init: bool, storage_api_token: str, storage_api_url: str
 ) -> Generator[ProjectDef, Any, None]:
     """
     Sets up a Keboola project with items needed for integration tests,
