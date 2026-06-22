@@ -1178,15 +1178,28 @@ async def test_get_tables(
 @pytest.mark.parametrize(
     ('raw_data', 'expected_description'),
     [
-        # direct description field takes priority over all metadata
+        # AI-3423: curated KBC metadata wins over the stale legacy `description` field
         (
             {
-                'description': 'Direct desc',
+                'description': 'Bucket created by Transformation API',
                 'metadata': [
                     {'key': 'KBC.sharedDescription', 'value': 'Shared desc'},
                     {'key': 'KBC.description', 'value': 'Meta desc'},
                 ],
             },
+            'Shared desc',
+        ),
+        # KBC.description wins over the legacy `description` field (no sharedDescription)
+        (
+            {
+                'description': 'Bucket created by Transformation API',
+                'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
+            },
+            'Meta desc',
+        ),
+        # legacy `description` field used only when no KBC metadata is present
+        (
+            {'description': 'Direct desc', 'metadata': []},
             'Direct desc',
         ),
         # KBC.sharedDescription is preferred over KBC.description
@@ -1232,13 +1245,18 @@ def test_bucket_detail_description_fallback(raw_data: dict[str, Any], expected_d
 @pytest.mark.parametrize(
     ('raw_data', 'expected_description'),
     [
-        # direct description field takes priority
+        # AI-3423: curated KBC.description wins over the stale legacy `description` field
         (
             {
-                'description': 'Direct desc',
+                'description': 'Table created by Transformation API',
                 'metadata': [{'key': 'KBC.description', 'value': 'Meta desc'}],
                 'sourceTable': {'metadata': [{'key': 'KBC.description', 'value': 'Source desc'}]},
             },
+            'Meta desc',
+        ),
+        # legacy `description` field used only when no KBC metadata is present
+        (
+            {'description': 'Direct desc', 'metadata': []},
             'Direct desc',
         ),
         # own KBC.description is preferred over sourceTable metadata

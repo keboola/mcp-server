@@ -213,12 +213,15 @@ class BucketDetail(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
-        description = values.get('description')
+        # KBC metadata holds the curated, user-editable description (update_descriptions writes here).
+        # The legacy top-level `description` field is auto-generated (e.g. "Bucket created by
+        # Transformation API") and stale for linked/shared buckets, so metadata must take precedence.
         metadata = values.get('metadata', [])
-        if not description:
-            description = get_metadata_property(metadata, MetadataField.SHARED_DESCRIPTION)
-        if not description:
-            description = get_metadata_property(metadata, MetadataField.DESCRIPTION)
+        description = (
+            get_metadata_property(metadata, MetadataField.SHARED_DESCRIPTION)
+            or get_metadata_property(metadata, MetadataField.DESCRIPTION)
+            or values.get('description')
+        )
         values['description'] = description or None
         return values
 
@@ -346,13 +349,13 @@ class TableSummary(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_description(cls, values: dict[str, Any]) -> dict[str, Any]:
-        description = values.get('description')
-        if not description:
-            metadata = values.get('metadata', [])
-            description = get_metadata_property(metadata, MetadataField.DESCRIPTION)
-        if not description:
-            metadata = get_nested(values, 'sourceTable.metadata', default=[])
-            description = get_metadata_property(metadata, MetadataField.DESCRIPTION)
+        # KBC.description metadata holds the curated, user-editable description and must win over the
+        # legacy top-level `description` field, which is auto-generated and stale for linked tables.
+        description = (
+            get_metadata_property(values.get('metadata', []), MetadataField.DESCRIPTION)
+            or get_metadata_property(get_nested(values, 'sourceTable.metadata', default=[]), MetadataField.DESCRIPTION)
+            or values.get('description')
+        )
         values['description'] = description or None
         return values
 
