@@ -60,10 +60,10 @@ jobs:
 
     steps:
       - name: Checkout MCP server
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.3
 
       - name: Checkout KaiBench
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.3
         with:
           repository: keboola-rnd/KaiBench
           token: ${{ secrets.KAIBENCH_REPO_TOKEN }}
