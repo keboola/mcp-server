@@ -225,7 +225,7 @@ class AppRunInfo(BaseModel):
         startup_logs = (run.startup_logs or '').strip().rsplit('\n', _APP_RUN_LOG_LINES)[-_APP_RUN_LOG_LINES:]
         failure_message = run.failure_reason.message if run.failure_reason else None
         if failure_message and len(failure_message) > _APP_RUN_MESSAGE_LIMIT:
-            failure_message = '…' + failure_message[-(_APP_RUN_MESSAGE_LIMIT - 1):]
+            failure_message = '…' + failure_message[-(_APP_RUN_MESSAGE_LIMIT - 1) :]
         return cls(
             state=run.state,
             created_at=run.created_at,
@@ -1176,7 +1176,9 @@ async def modify_python_js_data_app(
                 else None
             ),
             authorization=authorization_model,
-            storage=validated_storage,
+            # An empty (or all-empty) storage block prunes to `{}`; omit it entirely rather than
+            # persisting an empty object that the backend would store as `[]` (AI-3135).
+            storage=validated_storage or None,
         )
         if git_block is not None:
             # The git block's `#password` is plaintext at this point; the encryption service walks
@@ -1358,6 +1360,47 @@ def _build_authenticated_clone_url(https_url: str, secret: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
+def _prune_empty_storage_objects(value: Any) -> Any:
+    """Recursively drop empty-object (``{}``) values from a data-app ``storage`` block.
+
+    The Keboola backend (PHP/SAPI) cannot tell an empty JSON object from an empty array and
+    serializes ``{}`` as ``[]``. The UI's Input/Output Mapping editor (Writable Tables) then
+    silently refuses to add or save entries when ``storage`` — or one of its ``input``/``output``
+    containers — is an array instead of an object (AI-3135). We therefore never persist an empty
+    object inside the storage block; the platform recreates a correctly shaped one when the user
+    adds the first mapping. Empty *arrays* (e.g. the canonical ``{"output": {"tables": []}}``) are
+    intentionally preserved.
+    """
+    if isinstance(value, dict):
+        pruned: dict[str, Any] = {}
+        for key, sub_value in value.items():
+            pruned_sub = _prune_empty_storage_objects(sub_value)
+            if isinstance(pruned_sub, dict) and not pruned_sub:
+                continue
+            pruned[key] = pruned_sub
+        return pruned
+    if isinstance(value, list):
+        return [_prune_empty_storage_objects(item) for item in value]
+    return value
+
+
+def _normalize_config_storage(config: dict[str, Any]) -> None:
+    """Normalize the ``storage`` block of a data-app config dict in place before persisting.
+
+    Drops empty mapping containers and removes the ``storage`` key entirely when it carries no
+    mappings (or is a non-object leftover such as ``[]``), so the broken array shape that breaks
+    the Writable Tables editor is never written or left behind (AI-3135).
+    """
+    if 'storage' not in config:
+        return
+    storage = config['storage']
+    pruned = _prune_empty_storage_objects(storage) if isinstance(storage, dict) else None
+    if pruned:
+        config['storage'] = pruned
+    else:
+        config.pop('storage', None)
+
+
 def _validate_data_app_storage(
     storage: Optional[dict[str, Any]],
     *,
@@ -1387,7 +1430,10 @@ def _validate_data_app_storage(
         initial_message='The "storage" field is not valid.',
         validation_context=validation_context,
     )
-    return cast(dict[str, Any], validated['storage'])
+    # Strip empty mapping containers so we never persist an empty object that the backend would
+    # serialize as `[]`, which silently breaks the Writable Tables editor (AI-3135). An all-empty
+    # block prunes down to `{}` (treated as a wipe by the callers).
+    return cast(dict[str, Any], _prune_empty_storage_objects(validated['storage']))
 
 
 def _update_existing_code_data_app_config(
@@ -1408,7 +1454,9 @@ def _update_existing_code_data_app_config(
     keys already present. Used on projects without the `data-apps-storage-workspace` feature to
     inject WORKSPACE_ID; on projects with the feature, pass None.
     `storage` replaces the entire `storage` block when provided (None preserves the existing one;
-    an empty dict is an explicit wipe).
+    an empty dict — or one that prunes down to nothing — is an explicit wipe that removes the
+    `storage` key entirely). Whatever storage ends up in the config is normalized so empty mapping
+    containers never persist as `[]` and break the Writable Tables editor (AI-3135).
     """
     new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
     new_config.setdefault('parameters', {})
@@ -1424,6 +1472,7 @@ def _update_existing_code_data_app_config(
         data_app['secrets'] = updated_secrets
     if storage is not None:
         new_config['storage'] = storage
+    _normalize_config_storage(new_config)
     return new_config
 
 
@@ -1715,6 +1764,9 @@ def _update_existing_data_app_config(
 
     if authentication_type != 'default':
         new_config['authorization'] = _get_authorization(authentication_type == 'basic-auth')
+    # Clean up any empty/array-shaped storage left behind by earlier MCP/CLI/KAI writes so the
+    # Writable Tables editor keeps working after a re-save (AI-3135).
+    _normalize_config_storage(new_config)
     return new_config
 
 
