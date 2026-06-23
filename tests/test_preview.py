@@ -889,7 +889,8 @@ class TestPreviewConfigDiff:
                     'packages': ['httpx', 'pandas', 'streamlit'],
                 },
                 'authorization': {},
-                'storage': {},
+                # The empty `storage: {}` from the original config is pruned on re-save so it is
+                # never persisted as `[]` (which breaks the Writable Tables editor, AI-3135).
             },
         }
         # check the script

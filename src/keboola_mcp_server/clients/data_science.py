@@ -92,7 +92,10 @@ class DataAppConfig(BaseModel):
 
     parameters: Parameters = Field(description='The parameters of the data app')
     authorization: Authorization = Field(description='The authorization of the data app')
-    storage: dict[str, Any] = Field(description='The storage of the data app', default_factory=dict)
+    # Optional with a None default so an app without storage mappings omits the key entirely. An
+    # empty object would be serialized as `[]` by the backend and break the Writable Tables editor
+    # (AI-3135); see `_prune_empty_storage_objects` in tools/data_apps.py.
+    storage: dict[str, Any] | None = Field(description='The storage of the data app', default=None)
 
 
 class CodeDataAppConfig(BaseModel):

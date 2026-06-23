@@ -7,7 +7,7 @@ from fastmcp import Context
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
-from keboola_mcp_server.clients.data_science import AppRunResponse, DataAppResponse
+from keboola_mcp_server.clients.data_science import AppRunResponse, DataAppConfig, DataAppResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
@@ -29,6 +29,7 @@ from keboola_mcp_server.tools.data_apps import (
     _get_query_function_code,
     _get_secrets,
     _inject_query_to_source_code,
+    _prune_empty_storage_objects,
     _update_existing_data_app_config,
     _uses_basic_authentication,
     deploy_data_app,
@@ -320,6 +321,43 @@ def test_build_data_app_config_merges_defaults_and_secrets():
     assert config['authorization'] == _get_authorization(True)
 
 
+@pytest.mark.parametrize(
+    ('block', 'expected'),
+    [
+        # An empty storage block collapses to empty so the caller omits the `storage` key.
+        ({}, {}),
+        # Empty `input`/`output` objects are dropped — PHP would serialize them as `[]` and the
+        # mapping editor (Writable Tables) then silently fails to add entries (AI-3135).
+        ({'input': {}, 'output': {}}, {}),
+        # The canonical empty state uses empty *arrays*, which must be preserved verbatim.
+        ({'output': {'tables': []}}, {'output': {'tables': []}}),
+        # Mixed: drop the empty `input`, keep the populated `output`.
+        (
+            {
+                'input': {},
+                'output': {'tables': [{'destination': 'in.c-main.t', 'unload_strategy': 'direct-grant'}]},
+            },
+            {'output': {'tables': [{'destination': 'in.c-main.t', 'unload_strategy': 'direct-grant'}]}},
+        ),
+        # Nested empty objects inside a table entry are pruned; scalars and arrays survive.
+        (
+            {'output': {'tables': [{'destination': 'in.c-main.t', 'table_metadata': {}}]}},
+            {'output': {'tables': [{'destination': 'in.c-main.t'}]}},
+        ),
+    ],
+)
+def test_prune_empty_storage_objects(block, expected) -> None:
+    """Empty objects are stripped (they collapse to `[]` server-side); empty arrays are kept."""
+    assert _prune_empty_storage_objects(block) == expected
+
+
+def test_build_data_app_config_create_omits_empty_storage() -> None:
+    """Streamlit create must not persist an empty `storage` object (it becomes `[]` server-side, AI-3135)."""
+    config = _build_data_app_config('My App', "print('hi')", [], 'no-auth', {}, 'snowflake')
+    serialized = DataAppConfig.model_validate(config).model_dump(by_alias=True, exclude_none=True)
+    assert 'storage' not in serialized
+
+
 def test_update_existing_data_app_config():
     existing = {
         'parameters': {
@@ -438,6 +476,45 @@ def test_update_existing_data_app_config_keeps_previous_properties_when_undefine
     assert 'numpy' in new['parameters']['packages']
     assert 'httpx' in new['parameters']['packages']
     assert new['parameters']['dataApp']['secrets']['KEEP'] == 'secret'
+
+
+@pytest.mark.parametrize(
+    ('existing_storage', 'storage_key_present', 'expected_storage'),
+    [
+        # Leftover empty object (serialized as `[]` server-side) is removed on re-save (AI-3135).
+        ({}, False, None),
+        # Leftover array-shaped storage is removed.
+        ([], False, None),
+        # Empty `input`/`output` containers are pruned away to nothing -> key removed.
+        ({'input': {}, 'output': {}}, False, None),
+        # A valid storage block is preserved untouched.
+        (
+            {'output': {'tables': [{'destination': 'in.c-main.t', 'unload_strategy': 'direct-grant'}]}},
+            True,
+            {'output': {'tables': [{'destination': 'in.c-main.t', 'unload_strategy': 'direct-grant'}]}},
+        ),
+    ],
+)
+def test_update_existing_data_app_config_normalizes_storage(
+    existing_storage, storage_key_present, expected_storage
+) -> None:
+    """Streamlit re-save repairs a broken/empty leftover `storage` shape instead of preserving it."""
+    existing = {
+        'parameters': {'dataApp': {'slug': 'x', 'secrets': {}}, 'script': ['old'], 'packages': []},
+        'storage': existing_storage,
+    }
+    new = _update_existing_data_app_config(
+        existing_config=existing,
+        name='',
+        source_code='',
+        packages=[],
+        authentication_type='default',
+        secrets={},
+        sql_dialect='snowflake',
+    )
+    assert ('storage' in new) is storage_key_present
+    if storage_key_present:
+        assert new['storage'] == expected_storage
 
 
 def test_update_existing_data_app_config_no_authorization_key():
@@ -1477,6 +1554,46 @@ async def test_modify_python_js_data_app_create_passes_storage_through(
     assert serialized['storage'] == storage
 
 
+@pytest.mark.parametrize('passed_storage', [{}, {'input': {}, 'output': {}}], ids=['empty', 'all_empty_objects'])
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_omits_empty_storage(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+    passed_storage,
+) -> None:
+    """Create path never persists an empty `storage` block (it collapses to `[]` server-side, AI-3135)."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    app_response = _make_python_js_data_app_response()
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(
+            ssh_url='git@managed.repo:org/app.git',
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    _ = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='My App',
+        description='desc',
+        slug='my-app',
+        storage=passed_storage,
+    )
+
+    serialized = keboola_client.data_science_client.create_data_app.await_args.kwargs['configuration'].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert 'storage' not in serialized
+
+
 @pytest.mark.asyncio
 async def test_modify_python_js_data_app_update_replaces_storage(
     mocker,
@@ -1650,11 +1767,23 @@ def test_update_existing_code_data_app_config_no_auth_overwrites() -> None:
     [
         # None preserves the existing storage block untouched
         (None, True, {'input': {'tables': [{'source': 'in.c-main.kept', 'destination': 'kept.csv'}]}}),
-        # Empty dict is an explicit wipe
-        ({}, True, {}),
-        # Non-empty dict replaces the existing block wholesale
+        # Empty dict is an explicit wipe — the `storage` key is removed entirely (never persisted as
+        # `{}`, which the backend collapses to `[]` and breaks the mapping editor, AI-3135).
+        ({}, False, None),
+        # A block that prunes down to nothing (only empty objects) is treated like a wipe.
+        ({'input': {}, 'output': {}}, False, None),
+        # Non-empty dict replaces the existing block wholesale.
         (
             {'output': {'tables': [{'destination': 'in.c-main.new', 'unload_strategy': 'direct-grant'}]}},
+            True,
+            {'output': {'tables': [{'destination': 'in.c-main.new', 'unload_strategy': 'direct-grant'}]}},
+        ),
+        # Empty mapping containers are pruned from an otherwise-populated block.
+        (
+            {
+                'input': {},
+                'output': {'tables': [{'destination': 'in.c-main.new', 'unload_strategy': 'direct-grant'}]},
+            },
             True,
             {'output': {'tables': [{'destination': 'in.c-main.new', 'unload_strategy': 'direct-grant'}]}},
         ),
@@ -1663,7 +1792,8 @@ def test_update_existing_code_data_app_config_no_auth_overwrites() -> None:
 def test_update_existing_code_data_app_config_storage_semantics(
     passed_storage, expected_storage_key_present, expected_storage
 ) -> None:
-    """`storage=None` preserves; `storage={}` wipes; a non-empty dict replaces wholesale."""
+    """`storage=None` preserves; an empty/all-empty block wipes (removes the key); a non-empty dict
+    replaces wholesale (with empty mapping containers pruned)."""
     existing = {
         'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
         'storage': {'input': {'tables': [{'source': 'in.c-main.kept', 'destination': 'kept.csv'}]}},
@@ -1674,7 +1804,8 @@ def test_update_existing_code_data_app_config_storage_semantics(
         storage=passed_storage,
     )
     assert ('storage' in new) is expected_storage_key_present
-    assert new['storage'] == expected_storage
+    if expected_storage_key_present:
+        assert new['storage'] == expected_storage
 
 
 # ===== Tests for deploy_data_app with mode and python-js =====
