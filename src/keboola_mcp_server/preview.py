@@ -9,6 +9,7 @@ from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, field_validato
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
 from keboola_mcp_server.clients import KeboolaClient
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, get_metadata_property
 from keboola_mcp_server.config import MetadataField
@@ -258,6 +259,23 @@ def _prepare_mutator(
 
 async def preview_config_diff(rq: Request) -> Response:
     preview_rq = PreviewConfigDiffRq.model_validate(await rq.json())
+
+    # This route is a raw Starlette route outside the FastMCP middleware chain, so the tool
+    # authorization that ToolAuthorizationMiddleware applies to MCP tool calls does not run here.
+    # Enforce the same X-Allowed-Tools / X-Disallowed-Tools / X-Read-Only-Mode headers explicitly
+    # so a restricted client cannot drive the mutator-preview path for a tool it cannot call.
+    allowed, disallowed, read_only_mode = ToolAuthorizationMiddleware._get_authorization_config(rq)
+    read_only_tools = getattr(rq.app.state, 'mcp_read_only_tools', set())
+    if (
+        (disallowed and preview_rq.tool_name in disallowed)
+        or (allowed is not None and preview_rq.tool_name not in allowed)
+        or (read_only_mode and preview_rq.tool_name not in read_only_tools)
+    ):
+        LOG.info(f'[preview_config_diff] Tool authorization denied: {preview_rq.tool_name}')
+        return JSONResponse(
+            status_code=403,
+            content={'message': f'The tool "{preview_rq.tool_name}" is not authorized for this client.'},
+        )
 
     LOG.info(f'[preview_config_diff] {preview_rq}')
     LOG.info(f'[preview_config_diff] rq.app={rq.app}')

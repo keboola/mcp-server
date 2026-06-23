@@ -21,6 +21,7 @@ from fastmcp.server import middleware as fmw
 from fastmcp.server.middleware import CallNext, MiddlewareContext
 from fastmcp.tools import Tool
 from mcp import types as mt
+from starlette.requests import Request
 
 from keboola_mcp_server.mcp import get_http_request_or_none, is_read_only_tool
 
@@ -42,7 +43,9 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
     """
 
     @staticmethod
-    def _get_authorization_config() -> tuple[set[str] | None, set[str] | None, bool]:
+    def _get_authorization_config(
+        http_rq: Request | None = None,
+    ) -> tuple[set[str] | None, set[str] | None, bool]:
         """
         Determines the authorization configuration for the current request based on HTTP headers.
 
@@ -50,8 +53,13 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         - allowed_tools: Set of allowed tool names, or None if all tools are allowed
         - disallowed_tools: Set of tool names to exclude, or None if no tools are explicitly disallowed
         - read_only_mode: Whether X-Read-Only-Mode header is enabled
+
+        :param http_rq: Explicit request to read headers from. Falls back to the FastMCP request
+            context when omitted. Raw Starlette routes (e.g. /preview/configuration) must pass it
+            explicitly because the FastMCP request contextvar is not populated for them.
         """
-        http_rq = get_http_request_or_none()
+        if http_rq is None:
+            http_rq = get_http_request_or_none()
         if not http_rq:
             # No HTTP request means no authorization headers are present, so we do not apply any filters.
             return None, None, False

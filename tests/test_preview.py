@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 from keboola_mcp_server import cli
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.mcp import ServerState, is_read_only_tool
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.utils import get_nested, set_nested_value
@@ -30,9 +30,9 @@ async def starlette_app() -> Starlette:
 
     app = Starlette(exception_handlers=cli._exception_handlers)
     app.state.server_state = server_state
-    app.state.mcp_tools_input_schema = {
-        tool.name: tool.parameters for tool in await mcp_server.list_tools(run_middleware=False)
-    }
+    _tools = await mcp_server.list_tools(run_middleware=False)
+    app.state.mcp_tools_input_schema = {tool.name: tool.parameters for tool in _tools}
+    app.state.mcp_read_only_tools = {tool.name for tool in _tools if is_read_only_tool(tool)}
 
     app.add_route('/preview/configuration', preview_config_diff, methods=['POST'])
 
@@ -48,6 +48,62 @@ def test_client(starlette_app: Starlette) -> Generator[TestClient, None, None]:
 
 class TestPreviewConfigDiff:
     """Tests for the POST /preview/configuration endpoint."""
+
+    @pytest.mark.parametrize(
+        ('headers', 'expected_status'),
+        [
+            # No authorization headers -> allowed (reaches the mutator path).
+            ({}, 200),
+            # Tool explicitly allowed.
+            ({'X-Allowed-Tools': 'update_config,get_tables'}, 200),
+            # Tool not in the allow-list -> denied.
+            ({'X-Allowed-Tools': 'get_tables,get_buckets'}, 403),
+            # Tool explicitly disallowed -> denied.
+            ({'X-Disallowed-Tools': 'update_config'}, 403),
+            # Read-only mode denies a mutator preview.
+            ({'X-Read-Only-Mode': 'true'}, 403),
+        ],
+    )
+    def test_preview_tool_authorization(self, test_client: TestClient, mocker, headers, expected_status):
+        """The preview endpoint enforces the same tool-authorization headers as the MCP middleware."""
+        from keboola_mcp_server.clients.storage import ComponentAPIResponse
+
+        async def mock_fetch_component(**kwargs):
+            return ComponentAPIResponse.model_validate(
+                {
+                    'id': 'keboola.ex-test',
+                    'name': 'Test Extractor',
+                    'type': 'extractor',
+                    'configurationSchema': {},
+                    'component_flags': [],
+                }
+            )
+
+        mocker.patch(
+            'keboola_mcp_server.tools.components.tools.fetch_component',
+            side_effect=mock_fetch_component,
+        )
+        mock_client = mocker.AsyncMock(KeboolaClient)
+
+        async def mock_config_detail(**kwargs):
+            return {'id': 'config-123', 'name': 'C', 'configuration': {'parameters': {}}}
+
+        mock_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_config_detail)
+        mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
+
+        request_payload = {
+            'toolName': 'update_config',
+            'toolParams': {
+                'component_id': 'keboola.ex-test',
+                'configuration_id': 'config-123',
+                'change_description': 'Test change',
+            },
+        }
+
+        response = test_client.post('/preview/configuration', json=request_payload, headers=headers)
+        assert response.status_code == expected_status
+        if expected_status == 403:
+            assert 'not authorized' in response.json()['message']
 
     def test_preview_update_config_success(self, test_client: TestClient, mocker):
         """Test successful preview of update_config tool."""
