@@ -29,6 +29,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -246,6 +247,38 @@ class SessionStateMiddleware(fmw.Middleware):
         return config
 
     @classmethod
+    async def _exchange_programmatic_token(cls, config: Config) -> str:
+        """
+        Exchanges a programmatic token (kbc_at_/kbc_pat_) for the project's legacy Storage token.
+
+        The resolver is reached only on the deployed MCP server, which has a projected
+        ServiceAccount token at ``KBC_KUBERNETES_TOKEN_PATH`` (read from the process
+        environment only, never from per-request config). A project id is required because
+        a programmatic token is not project-bound.
+        """
+        kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
+        if not kubernetes_token_path:
+            raise ValueError(
+                'Received a Keboola programmatic token (kbc_at_/kbc_pat_) but KBC_KUBERNETES_TOKEN_PATH '
+                'is not configured. Programmatic-token exchange is available only on the deployed MCP server.'
+            )
+        if not config.project_id:
+            raise ValueError(
+                'A project id is required to exchange a programmatic token. '
+                'Set the KBC_PROJECT_ID env var or the X-KBC-ProjectId header.'
+            )
+        try:
+            project_id = int(config.project_id)
+        except (TypeError, ValueError):
+            raise ValueError(f'Invalid project id for programmatic-token exchange: {config.project_id!r}')
+
+        resolver = StorageTokenResolver(
+            storage_api_url=config.storage_api_url,
+            kubernetes_token_path=kubernetes_token_path,
+        )
+        return await resolver.resolve(subject_token=config.storage_token, project_id=project_id)
+
+    @classmethod
     async def create_session_state(
         cls,
         config: Config,
@@ -269,10 +302,18 @@ class SessionStateMiddleware(fmw.Middleware):
             if not config.storage_api_url:
                 raise ValueError('Storage API URL is not provided.')
 
+            storage_token = config.storage_token
+            bearer_token = config.bearer_token
+            if is_programmatic_token(storage_token):
+                # A Keboola programmatic token (kbc_at_/kbc_pat_) is not a Storage token; exchange
+                # it for the project's legacy Storage token and use that downstream unchanged.
+                storage_token = await cls._exchange_programmatic_token(config)
+                bearer_token = None
+
             client = await KeboolaClient(
                 storage_api_url=config.storage_api_url,
-                storage_api_token=config.storage_token,
-                bearer_token=config.bearer_token,
+                storage_api_token=storage_token,
+                bearer_token=bearer_token,
                 headers=cls._get_headers(runtime_info),
                 readonly=readonly,
             ).with_branch_id(config.branch_id)

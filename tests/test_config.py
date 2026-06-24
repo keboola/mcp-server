@@ -83,7 +83,7 @@ class TestConfig:
             "Config(storage_api_url=None, storage_token='****', branch_id=None, workspace_schema=None, "
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
-            'jwt_secret=None, bearer_token=None, conversation_id=None)'
+            'jwt_secret=None, bearer_token=None, conversation_id=None, project_id=None)'
         )
 
     @pytest.mark.parametrize(

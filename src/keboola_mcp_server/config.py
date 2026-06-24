@@ -42,6 +42,12 @@ class Config:
     """The access-token issued by Keboola OAuth server to be sent in 'Authorization: Bearer <access-token>' header."""
     conversation_id: Optional[str] = None
     """The ID of the ongoing conversation with the MCP server. This is supplied only by the HTTP header."""
+    project_id: Optional[str] = field(default=None, metadata={'aliases': ['kbc_project_id']})
+    """Project id used to scope a programmatic-token (kbc_at_/kbc_pat_) exchange.
+
+    Maps the `X-KBC-ProjectId` HTTP header (via the alias) and the `KBC_PROJECT_ID` env var.
+    Only consulted when the inbound Storage token is a Keboola programmatic token; the legacy
+    project-bound Storage token derives its project from the token itself."""
 
     def __post_init__(self) -> None:
         for f in dataclasses.fields(self):

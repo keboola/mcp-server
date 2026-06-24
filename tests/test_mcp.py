@@ -718,3 +718,46 @@ class TestSessionStateMiddleware:
         assert result is expected_result
         assert len(captured_configs) == 1
         assert captured_configs[0].branch_id == expected_branch_id
+
+
+class TestProgrammaticTokenExchange:
+    """SessionStateMiddleware exchanges programmatic tokens via the auth-bridge resolver (PSGO-261)."""
+
+    @pytest.mark.asyncio
+    async def test_missing_kubernetes_token_path_raises(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_pat_abc', project_id='1')
+        with pytest.raises(ValueError, match='KBC_KUBERNETES_TOKEN_PATH'):
+            await SessionStateMiddleware._exchange_programmatic_token(config)
+
+    @pytest.mark.asyncio
+    async def test_missing_project_id_raises(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_pat_abc')
+        with pytest.raises(ValueError, match='project id is required'):
+            await SessionStateMiddleware._exchange_programmatic_token(config)
+
+    @pytest.mark.asyncio
+    async def test_invalid_project_id_raises(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(
+            storage_api_url='https://connection.keboola.com', storage_token='kbc_pat_abc', project_id='not-an-int'
+        )
+        with pytest.raises(ValueError, match='Invalid project id'):
+            await SessionStateMiddleware._exchange_programmatic_token(config)
+
+    @pytest.mark.asyncio
+    async def test_happy_path_calls_resolver(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc', project_id='42')
+
+        resolver = MagicMock()
+        resolver.resolve = AsyncMock(return_value='legacy-storage-token')
+        with patch('keboola_mcp_server.mcp.StorageTokenResolver', return_value=resolver) as resolver_cls:
+            token = await SessionStateMiddleware._exchange_programmatic_token(config)
+
+        assert token == 'legacy-storage-token'
+        resolver_cls.assert_called_once_with(
+            storage_api_url='https://connection.keboola.com', kubernetes_token_path='/var/run/secrets/token'
+        )
+        resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
