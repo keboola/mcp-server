@@ -3,11 +3,13 @@
 import argparse
 import asyncio
 import contextlib
+import dataclasses
 import json
 import logging.config
 import os
 import pathlib
 import sys
+import time
 import traceback
 
 import pydantic
@@ -57,6 +59,18 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
     parser.add_argument('--log-config', type=pathlib.Path, metavar='PATH', help='Logging config file.')
 
+    subparsers = parser.add_subparsers(dest='command')
+    login_parser = subparsers.add_parser(
+        'login',
+        help='Authenticate the local MCP server via a browser PKCE login and store the leased tokens.',
+    )
+    login_parser.add_argument(
+        '--api-url',
+        metavar='URL',
+        help='Keboola Storage API URL (e.g. https://connection.<REGION>.keboola.com). '
+        'Falls back to KBC_STORAGE_API_URL.',
+    )
+
     return parser.parse_args(args)
 
 
@@ -98,6 +112,18 @@ _exception_handlers = {
 }
 
 
+async def _run_login(api_url: str | None) -> None:
+    """Runs the interactive browser PKCE login and stores the leased tokens."""
+    from keboola_mcp_server.auth_login import perform_login
+
+    storage_api_url = api_url or os.environ.get('KBC_STORAGE_API_URL')
+    if not storage_api_url:
+        raise RuntimeError('A Storage API URL is required for login: pass --api-url or set KBC_STORAGE_API_URL.')
+    tokens = await perform_login(storage_api_url)
+    remaining = max(0, int(tokens.expires_at - time.time()))
+    print(f'\n✓ Session stored for {storage_api_url} (access token expires in ~{remaining}s).')
+
+
 async def run_server(args: list[str] | None = None) -> None:
     """Runs the MCP server in async mode."""
     parsed_args = parse_args(args)
@@ -124,6 +150,10 @@ async def run_server(args: list[str] | None = None) -> None:
             stream=sys.stderr,
         )
 
+    if parsed_args.command == 'login':
+        await _run_login(getattr(parsed_args, 'api_url', None))
+        return
+
     # Create config from the CLI arguments
     config = Config(
         storage_api_url=parsed_args.api_url,
@@ -134,6 +164,15 @@ async def run_server(args: list[str] | None = None) -> None:
     try:
         # Create and run the server
         if parsed_args.transport == 'stdio':
+            # Local/stdio needs only the stack URL: with no token configured, use the tokens
+            # leased by a prior browser `login` (refreshing them as needed).
+            config = config.replace_by(os.environ)
+            if not config.storage_token and config.storage_api_url:
+                from keboola_mcp_server.auth_login import get_access_token
+
+                access_token = await get_access_token(config.storage_api_url)
+                config = dataclasses.replace(config, storage_token=access_token)
+
             runtime_config = ServerRuntimeInfo(transport=parsed_args.transport)
             keboola_mcp_server: FastMCP = create_server(config, runtime_info=runtime_config)
             if config.oauth_client_id or config.oauth_client_secret:
