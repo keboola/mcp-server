@@ -90,20 +90,40 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         return allowed_tools, disallowed_tools, read_only_mode
 
     @staticmethod
+    def _is_tool_name_authorized(
+        tool_name: str,
+        is_read_only: bool,
+        allowed_tools: set[str] | None,
+        disallowed_tools: set[str] | None,
+        read_only_mode: bool,
+    ) -> bool:
+        """
+        Header-based (X-Allowed-Tools / X-Disallowed-Tools / X-Read-Only-Mode) authorization decision
+        for a single tool identified by name.
+
+        This is the single source of truth for the header-based gating. :meth:`_is_tool_authorized`
+        uses it for the MCP middleware path; the raw ``/preview/configuration`` Starlette route reuses
+        it (see ``preview.py``) so the preview path enforces exactly the same rules.
+        """
+        # First check if tool is in disallowed list (if any disallow filter is configured)
+        if disallowed_tools and tool_name in disallowed_tools:
+            return False
+        # Check read-only mode - only allow tools with readOnlyHint=True
+        if read_only_mode and not is_read_only:
+            return False
+        # Then check if tool is in allowed list (if specified)
+        if allowed_tools is not None and tool_name not in allowed_tools:
+            return False
+        return True
+
+    @staticmethod
     def _is_tool_authorized(
         tool: Tool, allowed_tools: set[str] | None, disallowed_tools: set[str] | None, read_only_mode: bool
     ) -> bool:
         """Check if a tool is authorized based on allowed/disallowed sets and read-only mode."""
-        # First check if tool is in disallowed list (if any disallow filter is configured)
-        if disallowed_tools and tool.name in disallowed_tools:
-            return False
-        # Check read-only mode - only allow tools with readOnlyHint=True
-        if read_only_mode and not is_read_only_tool(tool):
-            return False
-        # Then check if tool is in allowed list (if specified)
-        if allowed_tools is not None and tool.name not in allowed_tools:
-            return False
-        return True
+        return ToolAuthorizationMiddleware._is_tool_name_authorized(
+            tool.name, is_read_only_tool(tool), allowed_tools, disallowed_tools, read_only_mode
+        )
 
     async def on_list_tools(
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]

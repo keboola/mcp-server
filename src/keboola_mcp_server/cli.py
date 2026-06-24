@@ -19,7 +19,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ForwardSlashMiddleware, is_read_only_tool
+from keboola_mcp_server.mcp import ForwardSlashMiddleware, is_read_only_tool, is_semantic_tool
 from keboola_mcp_server.server import CustomRoutes, create_server
 
 LOG = logging.getLogger(__name__)
@@ -188,8 +188,10 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             assert isinstance(mcp_server, FastMCP)
             _tools = await mcp_server.list_tools(run_middleware=False)
             app.state.mcp_tools_input_schema = {tool.name: tool.parameters for tool in _tools}
-            # Used by the /preview/configuration authorization check to enforce X-Read-Only-Mode.
+            # Used by the /preview/configuration authorization check to enforce X-Read-Only-Mode
+            # and the ToolsFilteringMiddleware-parity gating (read-only role, semantic feature).
             app.state.mcp_read_only_tools = {tool.name for tool in _tools if is_read_only_tool(tool)}
+            app.state.mcp_semantic_tools = {tool.name for tool in _tools if is_semantic_tool(tool)}
 
             config = uvicorn.Config(
                 app,
