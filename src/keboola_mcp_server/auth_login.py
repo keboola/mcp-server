@@ -132,6 +132,20 @@ def _read_store() -> dict:
         return {}
 
 
+def _write_store(store: dict) -> None:
+    """Writes the credential store with restrictive permissions, never widening them.
+
+    The file is created 0600 atomically (no world-readable window between create and
+    chmod) and its parent directory 0700.
+    """
+    _CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(_CREDENTIALS_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        json.dump(store, f, indent=2)
+    # O_CREAT honors the mode only when creating; chmod covers a pre-existing file.
+    _CREDENTIALS_PATH.chmod(0o600)
+
+
 def load_tokens(storage_api_url: str) -> TokenSet | None:
     entry = _read_store().get(_store_key(storage_api_url))
     if not entry:
@@ -140,12 +154,9 @@ def load_tokens(storage_api_url: str) -> TokenSet | None:
 
 
 def save_tokens(storage_api_url: str, tokens: TokenSet) -> None:
-    _CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     store = _read_store()
     store[_store_key(storage_api_url)] = asdict(tokens)
-    # Write restrictively: create as 0600 and chmod in case it already existed.
-    _CREDENTIALS_PATH.write_text(json.dumps(store, indent=2))
-    _CREDENTIALS_PATH.chmod(0o600)
+    _write_store(store)
 
 
 async def get_access_token(
@@ -178,8 +189,7 @@ async def get_access_token(
 def _forget(storage_api_url: str) -> None:
     store = _read_store()
     if store.pop(_store_key(storage_api_url), None) is not None:
-        _CREDENTIALS_PATH.write_text(json.dumps(store, indent=2))
-        _CREDENTIALS_PATH.chmod(0o600)
+        _write_store(store)
 
 
 # --- interactive browser login (not unit-tested; exercises a real browser + loopback) ---
