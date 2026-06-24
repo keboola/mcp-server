@@ -162,9 +162,18 @@ The resulting `accessToken` is then the subject token for the Part A resolver ex
 
 ---
 
+## Architecture: hybrid (Option C) — see brainstorm.md
+
+Two token paths, one per environment:
+- **Deployed mcp-server (in-k8s):** detect `kbc_at_*`/`kbc_pat_*`, exchange via the resolver using the projected SA JWT → legacy Storage token → used for all downstream clients (Part A; PSGO-261 AC).
+- **Local stdio:** PKCE `login` (stack URL only) leases a whole-stack session token, stored + auto-refreshed; MCP **forwards the bearer** + `X-KBC-ProjectId` downstream and the services exchange (no SA token exists locally).
+
+OAuth is **not** removed (the MCP protocol needs it for HTTP transport). The OAuth→PAT exchange is a **separate PR**; until it lands, the public mcp-server keeps its current OAuth→SAPI-mint path (interim divergence, stated intentionally).
+
 ## Decisions
 
-1. **`project_id`** — resolved per request/session from a middleware session→project mapping driven by user/query filtering, not a single static value. v1 ships the `Config` plumbing + header/env fallback; the mapping and token-scoping tooling (progressively tighter PATs scoped on top of the session) is a follow-up.
+1. **`project_id` is explicit session state (D2)** — not derived from the token (a whole-stack PAT has no implicit project; today `StorageClient.project_id()` reads `tokens/verify`, which only works for project-bound legacy tokens). Default from CLI/env (`KBC_PROJECT_ID`) or HTTP `X-KBC-ProjectId`; a new chat may start full-scope and narrow via a **select-project tool** (mirrors the `get_project_info` discovery pattern). Storage-touching tools require a selected project when none is set (clear error, no silent wrong-project resolution).
+1b. **No minting; whole-stack on-disk credential (D1)** — login does not mint a project-scoped PAT. The stored credential is the whole-stack session token; scope narrowing is runtime-only session state. Mitigations: mode-600 file, refresh rotation, never logged.
 2. **`clientId` for PKCE** — use the demo value `keboola-cli-demo` for now, configurable via `KBC_PKCE_CLIENT_ID` (blank-tolerant, injectable as a secret later); swap the real MCP client id when allocated.
 3. **Refresh token** — treated as an opaque string (no prefix assumptions).
 4. **SA token path env var** — align with the workspace step-up var (`b971146f`) and the Go services' `*_KUBERNETES_TOKEN_PATH` convention; share one file-read helper.
