@@ -304,17 +304,26 @@ class SessionStateMiddleware(fmw.Middleware):
 
             storage_token = config.storage_token
             bearer_token = config.bearer_token
+            extra_headers: dict[str, Any] = {}
             if is_programmatic_token(storage_token):
-                # A Keboola programmatic token (kbc_at_/kbc_pat_) is not a Storage token; exchange
-                # it for the project's legacy Storage token and use that downstream unchanged.
-                storage_token = await cls._exchange_programmatic_token(config)
-                bearer_token = None
+                if os.environ.get('KBC_KUBERNETES_TOKEN_PATH'):
+                    # Deployed: exchange the programmatic token (kbc_at_/kbc_pat_) for the project's
+                    # legacy Storage token via the auth-bridge resolver, then use it downstream unchanged.
+                    storage_token = await cls._exchange_programmatic_token(config)
+                    bearer_token = None
+                else:
+                    # Local: no projected SA token to reach the resolver. Forward the programmatic token
+                    # downstream as a Bearer and let PAT-aware services exchange it; name the target
+                    # project when one has been selected.
+                    bearer_token = storage_token
+                    if config.project_id:
+                        extra_headers['X-KBC-ProjectId'] = config.project_id
 
             client = await KeboolaClient(
                 storage_api_url=config.storage_api_url,
                 storage_api_token=storage_token,
                 bearer_token=bearer_token,
-                headers=cls._get_headers(runtime_info),
+                headers={**cls._get_headers(runtime_info), **extra_headers},
                 readonly=readonly,
             ).with_branch_id(config.branch_id)
 
