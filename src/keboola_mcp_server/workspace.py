@@ -5,7 +5,6 @@ import logging
 import re
 import time
 import uuid
-from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence, cast
 from urllib.parse import urlunparse
 
@@ -621,25 +620,9 @@ class WorkspaceManager:
         """
         if not self._kubernetes_token_path:
             return self._client.storage_client
-        if self._provisioning_client is not None:
-            return self._provisioning_client
-
-        jwt = Path(self._kubernetes_token_path).read_text().strip()
-        if not jwt:
-            raise ValueError(f'Kubernetes ServiceAccount token file is empty: {self._kubernetes_token_path}')
-
-        headers = dict(self._client.headers or {})
-        headers['X-Kubernetes-Authorization'] = f'Bearer {jwt}'
-        self._provisioning_client = AsyncStorageClient.create(
-            root_url=self._client.storage_api_url,
-            token=self._client.token,
-            branch_id=self._client.branch_id,
-            headers=headers,
-            # Propagate the read-only guard of the user's Storage client; the step-up
-            # header widens server-side permissions, never the client-side write guard.
-            readonly=self._client.storage_client.raw_client.readonly,
-        )
-        LOG.info('Workspace provisioning will send the Kubernetes step-up header.')
+        if self._provisioning_client is None:
+            self._provisioning_client = self._client.step_up_storage_client(self._kubernetes_token_path)
+            LOG.info('Workspace provisioning will send the Kubernetes step-up header.')
         return self._provisioning_client
 
     async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
