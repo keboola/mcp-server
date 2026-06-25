@@ -565,3 +565,48 @@ async def test_execute_query_cancellation_propagates_to_backend(
 
     if expect_cancel_call:
         mock_qs.cancel_job.assert_called_once_with('job-abc-123', reason='Client cancelled the request')
+
+
+def _wsp(ws_id: int, component: str, readonly: bool) -> dict:
+    """Minimal SAPI workspace-list item (shape per the GET /workspaces payload)."""
+    return {
+        'id': ws_id,
+        'component': component,
+        'connection': {'backend': 'snowflake', 'schema': f'WORKSPACE_{ws_id}'},
+        'readOnlyStorageAccess': readonly,
+    }
+
+
+@pytest.mark.asyncio
+async def test_find_ws_in_branch_matches_mcp_component_readonly():
+    """_find_ws_in_branch returns the read-only workspace under the MCP component,
+    skipping other components and non-read-only workspaces — no branch-metadata read."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_storage_client.workspace_list.return_value = [
+        _wsp(1, 'keboola.snowflake-transformation', True),  # wrong component
+        _wsp(2, WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID, False),  # not read-only
+        _wsp(3, WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID, True),  # the match
+    ]
+
+    manager = WorkspaceManager(mock_client)
+    info = await manager._find_ws_in_branch()
+
+    assert info is not None
+    assert info.id == 3
+    mock_storage_client.branch_metadata_get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_ws_in_branch_returns_none_when_no_mcp_workspace():
+    mock_client = Mock(spec=KeboolaClient)
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_storage_client.workspace_list.return_value = [
+        _wsp(1, 'keboola.snowflake-transformation', True),
+        _wsp(2, WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID, False),
+    ]
+
+    manager = WorkspaceManager(mock_client)
+    assert await manager._find_ws_in_branch() is None

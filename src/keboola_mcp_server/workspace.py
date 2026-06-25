@@ -546,7 +546,6 @@ class _WspInfo:
 
 class WorkspaceManager:
     STATE_KEY = 'workspace_manager'
-    MCP_META_KEY = 'KBC.McpServer.v2.workspaceId'
     MCP_WORKSPACE_COMPONENT_ID = 'keboola.mcp-server-tool'
 
     @classmethod
@@ -602,10 +601,10 @@ class WorkspaceManager:
         self._workspace: _Workspace | None = None
         self._table_info_cache: dict[str, DbTableInfo] = {}
 
-    async def _provisioning_storage_client(self, token_info: JsonDict | None = None) -> AsyncStorageClient:
+    async def _provisioning_storage_client(self) -> AsyncStorageClient:
         """
         Returns the Storage client used for workspace provisioning (configuration and
-        workspace creation, branch metadata update).
+        workspace creation).
 
         When a Kubernetes ServiceAccount token path is configured (Keboola-deployed MCP
         server), the provisioning client keeps the user's own Storage token and
@@ -620,7 +619,6 @@ class WorkspaceManager:
         The token file is read here (per provisioning flow), so kubelet rotation needs
         no restarts.
         """
-        del token_info  # kept for signature stability of existing call sites
         if not self._kubernetes_token_path:
             return self._client.storage_client
         if self._provisioning_client is not None:
@@ -675,14 +673,21 @@ class WorkspaceManager:
                 raise e
 
     async def _find_ws_in_branch(self) -> _WspInfo | None:
-        """Finds the workspace info in the current branch."""
+        """Finds the shared read-only MCP workspace in the current branch.
 
-        meta_key = self.MCP_META_KEY
-        metadata = await self._client.storage_client.branch_metadata_get()
-        for m in metadata:
-            if m.get('key') == meta_key and (raw_value := m.get('value')):
-                if (info := await self._find_ws_by_id(raw_value)) and info.readonly:
-                    return info
+        The MCP server creates its workspace under the MCP_WORKSPACE_COMPONENT_ID
+        component, so it is rediscovered by listing workspaces and matching that
+        component (plus read-only storage access). This needs only the read-only
+        `workspace_list` endpoint — no branch-metadata pointer, and therefore no
+        elevated metadata write that a read-only user's token would be denied.
+        """
+        for sapi_wsp_info in await self._client.storage_client.workspace_list():
+            assert isinstance(sapi_wsp_info, dict)
+            if sapi_wsp_info.get('component') != self.MCP_WORKSPACE_COMPONENT_ID:
+                continue
+            info = _WspInfo.from_sapi_info(sapi_wsp_info)
+            if info.id and info.backend and info.schema and info.readonly:
+                return info
 
         return None
 
@@ -712,7 +717,7 @@ class WorkspaceManager:
         else:
             raise ValueError(f'Unexpected default backend: {default_backend}')
 
-        writer = await self._provisioning_storage_client(token_info)
+        writer = await self._provisioning_storage_client()
 
         component_id = self.MCP_WORKSPACE_COMPONENT_ID
         config_name = f'mcp-workspace-{uuid.uuid4().hex[:8]}'
@@ -827,17 +832,14 @@ class WorkspaceManager:
             self._workspace = self._init_workspace(info)
             return self._workspace
 
-        # create a new workspace and note its ID to the branch
+        # create a new workspace under the MCP component
         LOG.info('Creating workspace in the default branch.')
         if info := await self._create_ws():
-            # All tokens share the same read-only workspace
-            # Race conditions during initialization are acceptable (last-write-wins)
-            # The metadata write needs the same elevated permissions as the workspace
-            # creation itself (read-only user tokens cannot write branch metadata).
-            writer = await self._provisioning_storage_client()
-            meta = await writer.branch_metadata_update({self.MCP_META_KEY: info.id})
-            LOG.info(f'Set metadata in the default branch: {meta}')
-            # use the newly created workspace
+            # All tokens share the same read-only workspace, rediscovered by its
+            # component id (see _find_ws_in_branch) — no branch-metadata pointer is
+            # written, so no elevated metadata write is needed. Concurrent first-use
+            # may create more than one workspace; that is acceptable, _find_ws_in_branch
+            # returns the first match on the next lookup.
             self._workspace = self._init_workspace(info)
             return self._workspace
         else:
