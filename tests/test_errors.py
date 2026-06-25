@@ -422,3 +422,44 @@ async def test_large_argument_value_is_truncated_in_event(mcp_context_client: Co
     assert 'truncated' in decoded
     expected_length = len(json.dumps(json.dumps(large_value, ensure_ascii=False), ensure_ascii=False).encode('utf-8'))
     assert str(expected_length) in decoded
+
+
+@pytest.mark.asyncio
+async def test_event_uses_step_up_client_when_k8s_token_configured(
+    tmp_path, monkeypatch, mocker, mcp_context_client: Context
+):
+    """On the deployed server (KBC_KUBERNETES_TOKEN_PATH set) the storage event must be emitted
+    through the Kubernetes step-up client so a read-only user's token is not denied (403)."""
+    token_file = tmp_path / 'token'
+    token_file.write_text('sa-jwt')
+    monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', str(token_file))
+
+    client = KeboolaClient.from_state(mcp_context_client.session.state)
+    step_up_client = mocker.AsyncMock()
+    client.step_up_storage_client = mocker.Mock(return_value=step_up_client)
+
+    @tool_errors()
+    async def foo(_ctx: Context):
+        pass
+
+    await foo(mcp_context_client)
+
+    client.step_up_storage_client.assert_called_once_with(str(token_file))
+    step_up_client.trigger_event.assert_awaited_once()
+    client.storage_client.trigger_event.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_event_uses_plain_client_without_k8s_token(monkeypatch, mcp_context_client: Context):
+    """Without KBC_KUBERNETES_TOKEN_PATH (local / normal use) events keep using the user's own client."""
+    monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+
+    @tool_errors()
+    async def foo(_ctx: Context):
+        pass
+
+    await foo(mcp_context_client)
+
+    client = KeboolaClient.from_state(mcp_context_client.session.state)
+    client.storage_client.trigger_event.assert_called_once()
+    client.step_up_storage_client.assert_not_called()
