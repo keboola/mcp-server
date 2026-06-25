@@ -12,7 +12,6 @@ from typing import Any, Generator
 
 import pytest
 import pytest_asyncio
-import requests
 from dotenv import load_dotenv
 from fastmcp import Client, Context, FastMCP
 from kbcstorage.client import Client as SyncStorageClient
@@ -333,7 +332,7 @@ def _guard_dedicated_test_project(storage_client: SyncStorageClient, project_id:
         )
 
 
-def _purge_project(storage_client: SyncStorageClient, storage_api_url: str, project_id: str) -> None:
+def _purge_project(storage_client: SyncStorageClient, project_id: str) -> None:
     """Reset a dedicated integtest project to a clean state.
 
     Integration tests run against a shared pool of projects acquired per run. A prior session that
@@ -351,20 +350,20 @@ def _purge_project(storage_client: SyncStorageClient, storage_api_url: str, proj
         if w.get('creatorToken', {}).get('description') not in _STATIC_WORKSPACE_CREATORS
     ]
     components = storage_client.components.list(include=['configuration'])
-    branch_meta = [
-        m for m in storage_client.branches.metadata('default') if m.get('key') == WorkspaceManager.MCP_META_KEY
-    ]
 
-    if buckets or workspaces or any(c.get('configurations') for c in components) or branch_meta:
+    if buckets or workspaces or any(c.get('configurations') for c in components):
         LOG.warning(
             f'Project {project_id} was not clean: {len(buckets)} bucket(s), {len(workspaces)} workspace(s), '
-            f'{sum(len(c.get("configurations", [])) for c in components)} config(s), '
-            f'{len(branch_meta)} workspace-metadata entr(ies) — likely an interrupted prior run. Purging.'
+            f'{sum(len(c.get("configurations", [])) for c in components)} config(s) '
+            '— likely an interrupted prior run. Purging.'
         )
 
     for bucket in buckets:
         storage_client.buckets.delete(bucket['id'], force=True)
 
+    # MCP workspaces (incl. the shared read-only one created under keboola.mcp-server-tool) are
+    # returned here and removed along with any other leftover workspace. The MCP server no longer
+    # stamps a branch-metadata pointer, so there is nothing to clean up in branch metadata.
     for workspace in workspaces:
         storage_client.workspaces.delete(workspace['id'])
 
@@ -374,15 +373,6 @@ def _purge_project(storage_client: SyncStorageClient, storage_api_url: str, proj
             # Double delete because the first delete only moves the configuration to the trash.
             storage_client.configurations.delete(component_id, config['id'])
             storage_client.configurations.delete(component_id, config['id'])
-
-    # kbcstorage exposes no branch-metadata delete; the MCP WorkspaceManager stamps MCP_META_KEY on
-    # the default branch when it creates a workspace, so remove leftovers with a raw request.
-    for meta in branch_meta:
-        resp = requests.delete(
-            f'{storage_api_url.rstrip("/")}/v2/storage/branch/default/metadata/{meta["id"]}',
-            headers={'X-StorageApi-Token': storage_client.token},
-        )
-        resp.raise_for_status()
 
 
 @pytest.fixture(scope='session')
@@ -394,7 +384,7 @@ def _clean_project(storage_api_token: str, storage_api_url: str) -> None:
     """
     storage_client = _sync_storage_client(storage_api_token, storage_api_url)
     project_id: str = storage_client.tokens.verify()['owner']['id']
-    _purge_project(storage_client, storage_api_url, project_id)
+    _purge_project(storage_client, project_id)
 
 
 @pytest.fixture(scope='session')
