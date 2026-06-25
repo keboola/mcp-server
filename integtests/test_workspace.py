@@ -20,17 +20,11 @@ async def dynamic_manager(
     storage_client = sync_storage_client
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
+    component_id = WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID
 
-    def _get_workspace_meta() -> list[Mapping[str, Any]]:
-        metadata: list[Mapping[str, Any]] = []
-        for m in storage_client.branches.metadata('default'):
-            if m.get('key') == WorkspaceManager.MCP_META_KEY:
-                metadata.append(m)
-        return metadata
-
-    metas = _get_workspace_meta()
-    if metas:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {metas} in the default branch')
+    def _mcp_workspaces() -> list[Mapping[str, Any]]:
+        """MCP workspaces, discovered by their component id (no branch-metadata pointer)."""
+        return [w for w in storage_client.workspaces.list() if w.get('component') == component_id]
 
     workspaces = storage_client.workspaces.list()
     # ignore the static workspaces
@@ -50,7 +44,6 @@ async def dynamic_manager(
             f'{[{"id": w["id"], "name": w["name"]} for w in workspaces]}'
         )
 
-    component_id = WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID
     existing_configs = list(storage_client.configurations.list(component_id=component_id))
     if existing_configs:
         pytest.fail(
@@ -61,24 +54,16 @@ async def dynamic_manager(
     yield await WorkspaceManager.create(keboola_client)
 
     LOG.info(f'Cleaning up workspaces in Keboola project with ID={project_id}')
-    metas = _get_workspace_meta()
-    if len(metas) > 1:
-        LOG.info(f'Multiple metadata entries found: {metas}')
-    for meta in metas:
+    # The MCP server no longer stamps a branch-metadata pointer; its workspaces are discovered
+    # (and cleaned up) by their component id.
+    for ws in _mcp_workspaces():
         try:
-            storage_client.workspaces.delete(meta['value'])
-            LOG.info(f'Deleted workspaces: {meta["value"]}')
+            storage_client.workspaces.delete(ws['id'])
+            LOG.info(f'Deleted workspace: {ws["id"]}')
         except requests.HTTPError:
-            LOG.exception(f'Failed to delete workspace {meta["value"]}')
-        try:
-            url = storage_client.branches.base_url.rstrip('/')
-            storage_client.branches._delete(f'{url}/branch/default/metadata/{meta["id"]}')
-            LOG.info(f'Deleted workspaces metadata: {meta["id"]}')
-        except requests.HTTPError as e:
-            LOG.exception(f'Failed to delete workspace metadata {meta["id"]}: {e}')
+            LOG.exception(f'Failed to delete workspace {ws["id"]}')
 
     # Clean up configurations created under the MCP workspace component
-    component_id = WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID
     try:
         configs = storage_client.configurations.list(component_id=component_id)
         for cfg in configs:
