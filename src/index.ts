@@ -2,11 +2,15 @@ import { parseArgs } from 'node:util';
 
 import { Config } from '@/config';
 import { createServer } from '@/server';
+import { startHttp } from '@/transports/http';
 import { startStdio } from '@/transports/stdio';
 
+// 'http-compat' is an alias for 'streamable-http' kept for backwards compatibility.
 type Transport = 'stdio' | 'streamable-http' | 'http-compat';
 
-const parseCliConfig = (): { transport: Transport; config: Config } => {
+type ParsedCli = { transport: Transport; config: Config; host: string; port: number };
+
+const parseCliConfig = (): ParsedCli => {
   const { values } = parseArgs({
     options: {
       transport: { type: 'string', default: 'stdio' },
@@ -29,23 +33,27 @@ const parseCliConfig = (): { transport: Transport; config: Config } => {
     workspaceSchema: values['workspace-schema'],
   });
 
-  return { transport, config };
+  return {
+    transport,
+    config,
+    host: values.host ?? 'localhost',
+    port: Number(values.port ?? '8000'),
+  };
 };
 
 const main = async (): Promise<void> => {
-  const { transport, config } = parseCliConfig();
-  const server = createServer(config);
+  const { transport, config, host, port } = parseCliConfig();
 
   if (transport === 'stdio') {
     if (config.oauthClientId || config.oauthClientSecret) {
       throw new Error('OAuth authorization can only be used with HTTP-based transports.');
     }
-    await startStdio(server);
+    await startStdio(createServer(config));
     return;
   }
 
-  // ponytail: HTTP/streamable-http transport lands in Phase 1 (Hono app).
-  throw new Error(`Transport "${transport}" is not implemented yet.`);
+  // 'streamable-http' and its 'http-compat' alias both serve the Hono app.
+  startHttp(config, host, port);
 };
 
 main().catch((error: unknown) => {
