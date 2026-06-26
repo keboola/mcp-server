@@ -17,10 +17,11 @@ const connect = async (headers?: Record<string, string>) => {
   return client;
 };
 
+// Returns the TOON-encoded tool output text.
 const callServerInfo = async (client: Awaited<ReturnType<typeof connect>>) => {
   const result = await client.callTool({ name: 'get_server_info', arguments: {} });
   const content = result.content as { type: string; text: string }[];
-  return JSON.parse(content[0]!.text) as { name: string; branchId: string | null };
+  return content[0]!.text;
 };
 
 describe('streamable-http transport', () => {
@@ -50,13 +51,13 @@ describe('streamable-http transport', () => {
 
   it('uses the base config when no headers override it', async () => {
     const client = await connect();
-    expect((await callServerInfo(client)).branchId).toBe('999');
+    expect(await callServerInfo(client)).toContain('branchId: "999"');
     await client.close();
   });
 
   it('layers X- headers over the base config per request', async () => {
     const client = await connect({ 'X-Branch-Id': '123', 'X-StorageApiToken': 'tok' });
-    expect((await callServerInfo(client)).branchId).toBe('123');
+    expect(await callServerInfo(client)).toContain('branchId: "123"');
     await client.close();
   });
 });

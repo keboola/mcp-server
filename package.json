@@ -52,6 +52,7 @@
     "@hono/node-server": "^1.19.14",
     "@keboola/api-client": "^5.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@toon-format/toon": "^2.3.0",
     "hono": "^4.12.27",
     "pino": "^9.14.0",
     "zod": "^4.3.6"

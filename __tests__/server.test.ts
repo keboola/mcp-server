@@ -30,11 +30,10 @@ describe('MCP server', () => {
     const client = await connect(new Config({ branchId: '123' }));
     const result = await client.callTool({ name: 'get_server_info', arguments: {} });
 
+    // Output is TOON, not JSON: a flat object renders as `key: value` lines.
     const content = result.content as { type: string; text: string }[];
-    const first = content[0];
-    expect(first).toBeDefined();
-    const payload = JSON.parse(first!.text) as { name: string; branchId: string | null };
-    expect(payload.name).toBe(SERVER_NAME);
-    expect(payload.branchId).toBe('123');
+    const text = content[0]!.text;
+    expect(text).toContain(`name: ${SERVER_NAME}`);
+    expect(text).toContain('branchId: "123"');
   });
 });
