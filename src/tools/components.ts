@@ -1,12 +1,118 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+import { redactSecrets } from '@/clients/encryption';
 import { createKeboolaClients, createLinksManager, type KeboolaClients } from '@/clients/keboola';
 import { RawHttpError } from '@/clients/raw';
 import type { Config } from '@/config';
+import { ALL_COMPONENT_TYPES, type ComponentType, MetadataField } from '@/constants';
+import type { Link } from '@/links';
 import { registerTool } from '@/mcp/tool';
 
 // Ported from tools/components/tools.py.
+
+type RawConfig = Record<string, unknown>;
+type MetadataItem = { key?: string; value?: string };
+
+const metadataProperty = (metadata: MetadataItem[] | undefined, key: string): string | undefined =>
+  (metadata ?? []).find((item) => item.key === key)?.value;
+
+/** Configuration root/row summary (list mode) — port of ConfigSummary.from_api_response. */
+const toConfigSummary = (raw: RawConfig, componentId: string, links: Link[]) => {
+  const metadata = (raw.metadata as MetadataItem[]) ?? [];
+  const rows = (raw.rows as RawConfig[]) ?? null;
+  return {
+    configuration_root: {
+      component_id: componentId,
+      configuration_id: String(raw.id ?? ''),
+      name: raw.name ?? '',
+      description: raw.description ?? null,
+      is_disabled: raw.isDisabled ?? false,
+      is_deleted: raw.isDeleted ?? false,
+      folder: metadataProperty(metadata, MetadataField.CONFIGURATION_FOLDER_NAME) ?? '',
+    },
+    configuration_rows: rows
+      ? rows.map((row) => ({
+          component_id: componentId,
+          configuration_id: String(raw.id ?? ''),
+          row_configuration_id: String(row.id ?? ''),
+          name: row.name ?? '',
+          description: row.description ?? null,
+          is_disabled: row.isDisabled ?? false,
+          is_deleted: row.isDeleted ?? false,
+        }))
+      : null,
+    links,
+  };
+};
+
+/**
+ * Full configuration root/rows (detail mode) — port of Configuration.from_api_response.
+ * NOTE: transformation parameter *simplification* (Snowflake/BigQuery) is deferred until
+ * create_sql_transformation lands (needs the inverse); transformations return raw params.
+ */
+const toConfiguration = (
+  raw: RawConfig,
+  componentId: string,
+  component: unknown,
+  links: Link[],
+) => {
+  const metadata = (raw.metadata as MetadataItem[]) ?? [];
+  const cfg = (raw.configuration as Record<string, unknown>) ?? {};
+  const rows = (raw.rows as RawConfig[]) ?? null;
+  return {
+    configuration_root: {
+      component_id: componentId,
+      configuration_id: String(raw.id ?? ''),
+      name: raw.name ?? '',
+      description: raw.description ?? null,
+      version: raw.version ?? 0,
+      is_disabled: raw.isDisabled ?? false,
+      is_deleted: raw.isDeleted ?? false,
+      folder: metadataProperty(metadata, MetadataField.CONFIGURATION_FOLDER_NAME) ?? '',
+      parameters: redactSecrets(cfg.parameters ?? {}),
+      storage: cfg.storage ?? null,
+      processors: redactSecrets(cfg.processors ?? null),
+      variables_id: cfg.variables_id ?? null,
+      variables_values_id: cfg.variables_values_id ?? null,
+      variables: cfg.variables ?? null,
+      configuration_metadata: metadata,
+    },
+    configuration_rows: rows
+      ? rows.map((row) => {
+          const rowCfg = (row.configuration as Record<string, unknown>) ?? {};
+          return {
+            component_id: componentId,
+            configuration_id: String(raw.id ?? ''),
+            configuration_row_id: String(row.id ?? ''),
+            name: row.name ?? '',
+            description: row.description ?? null,
+            version: row.version ?? 0,
+            is_disabled: row.isDisabled ?? false,
+            is_deleted: row.isDeleted ?? false,
+            parameters: redactSecrets(rowCfg.parameters ?? {}),
+            storage: rowCfg.storage ?? null,
+            processors: redactSecrets(rowCfg.processors ?? null),
+            values: rowCfg.values ?? null,
+            configuration_metadata: (rowCfg.metadata as unknown) ?? [],
+          };
+        })
+      : null,
+    component,
+    links,
+  };
+};
+
+const toComponentSummary = (raw: RawComponent) => {
+  const flags = (pick<string[]>(raw, 'flags', 'componentFlags') ?? []) as string[];
+  return {
+    component_id: pick<string>(raw, 'id', 'componentId', 'component_id') ?? '',
+    component_name: pick<string>(raw, 'name', 'componentName', 'component_name') ?? '',
+    component_type: pick<string>(raw, 'type', 'componentType', 'component_type') ?? '',
+    capabilities: capabilitiesFromFlags(flags),
+    links: [] as Link[],
+  };
+};
 
 const jsonBlock = (label: string, index: number, example: unknown): string =>
   `${index}. ${label}:\n\`\`\`json\n${JSON.stringify(example, null, 2)}\n\`\`\`\n\n`;
@@ -204,6 +310,99 @@ export const registerComponentTools = (server: McpServer, config: Config): void 
       if (config.branchId) payload.branchId = config.branchId;
 
       return clients.rawSyncActions.post<unknown>('actions', { body: payload });
+    },
+  });
+
+  registerTool(server, {
+    name: 'get_configs',
+    title: 'Get configs',
+    description: 'Retrieves component configurations in the project with optional filtering.',
+    annotations: { readOnlyHint: true },
+    inputSchema: {
+      component_types: z
+        .array(z.enum(ALL_COMPONENT_TYPES))
+        .default([])
+        .describe(
+          'Filter by component types; empty = all. Ignored when configs/component_ids given.',
+        ),
+      component_ids: z
+        .array(z.string())
+        .default([])
+        .describe('Filter by specific component IDs. Ignored when configs is given.'),
+      configs: z
+        .array(z.object({ component_id: z.string(), configuration_id: z.string() }))
+        .default([])
+        .describe('Specific configs to retrieve full details for (grouped by component).'),
+    },
+    handler: async ({ component_types, component_ids, configs }) => {
+      const clients = createKeboolaClients(config);
+      const links = await createLinksManager(config, clients);
+      const branch = clients.branchId;
+
+      // Case 1: full details for specific configs.
+      if (configs.length > 0) {
+        const fetched = await Promise.all(
+          configs.map(async ({ component_id, configuration_id }) => {
+            const raw = await clients.rawStorage.get<RawConfig>(
+              `branch/${branch}/components/${component_id}/configs/${configuration_id}`,
+            );
+            const component = toComponentSummary(await fetchComponent(clients, component_id));
+            const cfgLinks = links.getConfigurationLinks(
+              component_id,
+              configuration_id,
+              String(raw.name ?? ''),
+            );
+            return toConfiguration(raw, component_id, component, cfgLinks);
+          }),
+        );
+        return { configs: fetched };
+      }
+
+      // Case 2/3: list summaries grouped by component.
+      const componentsWithConfigs: unknown[] = [];
+
+      const buildGroup = async (rawComponent: RawComponent, rawConfigs: RawConfig[]) => {
+        const componentId = (pick<string>(rawComponent, 'id', 'componentId') ?? '') as string;
+        const component = toComponentSummary(rawComponent);
+        component.links = [links.getConfigDashboardLink(componentId, component.component_name)];
+        const configSummaries = rawConfigs.map((raw) =>
+          toConfigSummary(raw, componentId, [
+            links.getComponentConfigLink(componentId, String(raw.id ?? ''), String(raw.name ?? '')),
+          ]),
+        );
+        componentsWithConfigs.push({ component, configs: configSummaries });
+      };
+
+      if (component_ids.length > 0) {
+        for (const componentId of component_ids) {
+          const rawConfigs = await clients.rawStorage.get<RawConfig[]>(
+            `branch/${branch}/components/${componentId}/configs`,
+          );
+          const rawComponent = await clients.rawStorage.get<RawComponent>(
+            `branch/${branch}/components/${componentId}`,
+          );
+          await buildGroup(rawComponent, rawConfigs);
+        }
+      } else {
+        const types: readonly ComponentType[] =
+          component_types.length > 0 ? component_types : ALL_COMPONENT_TYPES;
+        for (const componentType of types) {
+          const rawComponents = await clients.rawStorage.get<RawComponent[]>(
+            `branch/${branch}/components`,
+            {
+              params: { componentType, include: 'configuration' },
+            },
+          );
+          for (const rawComponent of rawComponents) {
+            await buildGroup(rawComponent, (rawComponent.configurations as RawConfig[]) ?? []);
+          }
+        }
+      }
+
+      return {
+        components_with_configs: componentsWithConfigs,
+        links: [links.getUsedComponentsLink(), links.getTransformationsDashboardLink()],
+      };
     },
   });
 };

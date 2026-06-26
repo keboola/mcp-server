@@ -105,6 +105,69 @@ describe('get_components', () => {
   });
 });
 
+describe('get_configs', () => {
+  it('lists configs by component id grouped under the component', async () => {
+    server.use(
+      verify(),
+      http.get('https://connection.test/*', ({ request }) => {
+        const { pathname } = new URL(request.url);
+        if (pathname.endsWith('/tokens/verify')) return HttpResponse.json({ owner: { id: '42' } });
+        if (pathname.endsWith('/components/keboola.ex-db-mysql/configs')) {
+          return HttpResponse.json([{ id: '100', name: 'My DB', isDisabled: false }]);
+        }
+        if (pathname.endsWith('/components/keboola.ex-db-mysql')) {
+          return HttpResponse.json({
+            id: 'keboola.ex-db-mysql',
+            name: 'MySQL',
+            type: 'extractor',
+            flags: [],
+          });
+        }
+        return undefined;
+      }),
+    );
+
+    const { text } = await callTool('get_configs', { component_ids: ['keboola.ex-db-mysql'] });
+    expect(text).toContain('My DB');
+    expect(text).toContain('MySQL');
+  });
+
+  it('returns full details with redacted secrets for specific configs', async () => {
+    server.use(
+      verify(),
+      http.get('https://ai.test/*', () => new HttpResponse(null, { status: 404 })),
+      http.get('https://connection.test/*', ({ request }) => {
+        const { pathname } = new URL(request.url);
+        if (pathname.endsWith('/tokens/verify')) return HttpResponse.json({ owner: { id: '42' } });
+        if (pathname.endsWith('/configs/100')) {
+          return HttpResponse.json({
+            id: '100',
+            name: 'My DB',
+            version: 3,
+            configuration: { parameters: { host: 'db', '#password': 'plaintext' } },
+          });
+        }
+        if (pathname.endsWith('/components/keboola.ex-db-mysql')) {
+          return HttpResponse.json({
+            id: 'keboola.ex-db-mysql',
+            name: 'MySQL',
+            type: 'extractor',
+            flags: [],
+          });
+        }
+        return undefined;
+      }),
+    );
+
+    const { text } = await callTool('get_configs', {
+      configs: [{ component_id: 'keboola.ex-db-mysql', configuration_id: '100' }],
+    });
+    expect(text).toContain('[REDACTED]');
+    expect(text).not.toContain('plaintext');
+    expect(text).toContain('host');
+  });
+});
+
 describe('run_sync_action', () => {
   it('merges row config over root and posts to the sync-actions endpoint', async () => {
     let actionBody: { configData?: Record<string, unknown>; action?: string } | undefined;
