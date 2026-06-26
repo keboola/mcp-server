@@ -7,6 +7,7 @@ import { registerDocTools } from '@/tools/doc';
 import { registerJobTools } from '@/tools/jobs';
 import { registerOAuthTools } from '@/tools/oauth';
 import { registerProjectTools } from '@/tools/project';
+import { registerSearchTools } from '@/tools/search';
 import { registerStorageTools } from '@/tools/storage';
 
 // Reading package.json at build time would need JSON import assertions; keep a
@@ -44,6 +45,7 @@ export const createServer = (config: Config): McpServer => {
   registerOAuthTools(server, config);
   registerComponentTools(server, config);
   registerDocTools(server, config);
+  registerSearchTools(server, config);
 
   return server;
 };
