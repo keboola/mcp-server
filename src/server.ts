@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import type { Config } from '@/config';
 import { registerTool } from '@/mcp/tool';
+import { registerProjectTools } from '@/tools/project';
 
 // Reading package.json at build time would need JSON import assertions; keep a
 // constant and bump alongside package.json until the build wiring lands.
@@ -31,6 +32,8 @@ export const createServer = (config: Config): McpServer => {
       hasStorageToken: Boolean(config.storageToken),
     }),
   });
+
+  registerProjectTools(server, config);
 
   return server;
 };

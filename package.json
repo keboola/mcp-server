@@ -61,6 +61,7 @@
     "@keboola/oxlint-config": "^0.1.2",
     "@keboola/tsconfig": "^0.1.1",
     "@types/node": "^24.0.0",
+    "msw": "^2.14.6",
     "oxfmt": "^0.44.0",
     "oxlint": "^1.56.0",
     "tsup": "^8.5.1",

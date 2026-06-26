@@ -17,6 +17,12 @@ export type KeboolaClients = {
   storage: ReturnType<typeof createStorageClient>;
   queue: ReturnType<typeof createQueueClient>;
   metastore: ReturnType<typeof createMetastoreClient>;
+  /**
+   * Effective branch id for branch-scoped endpoints. `'default'` is the Storage
+   * API's alias for the production branch (matches Python's `branch_id or 'default'`),
+   * so no default-branch lookup is needed.
+   */
+  branchId: string;
 };
 
 export const createKeboolaClients = (config: Config): KeboolaClients => {
@@ -36,5 +42,6 @@ export const createKeboolaClients = (config: Config): KeboolaClients => {
     storage: createStorageClient({ baseUrl: urls.storage, token, middlewares: [] }),
     queue: createQueueClient({ baseUrl: urls.queue, token, middlewares: [] }),
     metastore: createMetastoreClient({ baseUrl: urls.metastore, token, middlewares: [] }),
+    branchId: config.branchId ?? 'default',
   };
 };
