@@ -115,3 +115,69 @@ describe('get_jobs', () => {
     expect(text).not.toContain('starting');
   });
 });
+
+describe('run_job', () => {
+  const runJob = async (args: Record<string, unknown>, capture: (body: unknown) => void) => {
+    server.use(
+      verifyHandler(),
+      http.post('https://queue.test/*', async ({ request }) => {
+        capture(await request.json());
+        return HttpResponse.json({
+          id: '500',
+          status: 'created',
+          component: args.component_id,
+          config: args.configuration_id,
+          url: 'https://job/500',
+        });
+      }),
+    );
+    const client = await connect();
+    const result = await client.callTool({ name: 'run_job', arguments: args });
+    expect(result.isError).toBeFalsy();
+    const text = (result.content as { text: string }[])[0]!.text;
+    await client.close();
+    return text;
+  };
+
+  it('creates a job with mode=run and returns its details + link', async () => {
+    let body: Record<string, unknown> = {};
+    const text = await runJob(
+      { component_id: 'keboola.ex-aws-s3', configuration_id: 'c1' },
+      (b) => {
+        body = b as Record<string, unknown>;
+      },
+    );
+    expect(body).toMatchObject({ component: 'keboola.ex-aws-s3', config: 'c1', mode: 'run' });
+    expect(body.branchId).toBeUndefined(); // production: no branchId in payload
+    expect(text).toContain('https://job/500');
+    expect(text).toContain('/queue/500');
+  });
+
+  it('passes config row ids and the branch id on a development branch', async () => {
+    let body: Record<string, unknown> = {};
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await createServer(config.replaceBy({ branchId: '789' })).connect(serverT);
+    const client = new Client({ name: 't', version: '0' });
+    await client.connect(clientT);
+    server.use(
+      verifyHandler(),
+      http.post('https://queue.test/*', async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          id: '501',
+          status: 'created',
+          component: 'x',
+          config: 'c',
+          url: 'u',
+        });
+      }),
+    );
+    await client.callTool({
+      name: 'run_job',
+      arguments: { component_id: 'x', configuration_id: 'c', configuration_row_ids: ['r1', 'r2'] },
+    });
+    expect(body.branchId).toBe('789');
+    expect(body.configRowIds).toEqual(['r1', 'r2']);
+    await client.close();
+  });
+});

@@ -25,6 +25,8 @@ export type KeboolaClients = {
    * metadata). Mirrors the Python `KeboolaClient.storage_client` raw access.
    */
   rawStorage: RawClient;
+  /** Raw Queue API client (for endpoints not in api-client, e.g. job creation). */
+  rawQueue: RawClient;
   /**
    * Effective branch id for branch-scoped endpoints. `'default'` is the Storage
    * API's alias for the production branch (matches Python's `branch_id or 'default'`),
@@ -54,6 +56,7 @@ export const createKeboolaClients = (config: Config): KeboolaClients => {
     queue: createQueueClient({ baseUrl: urls.queue, token, middlewares: [] }),
     metastore: createMetastoreClient({ baseUrl: urls.metastore, token, middlewares: [] }),
     rawStorage: createRawClient({ baseUrl: `${urls.storage}/v2/storage`, token: storageToken }),
+    rawQueue: createRawClient({ baseUrl: urls.queue, token }),
     branchId: config.branchId ?? 'default',
   };
 };

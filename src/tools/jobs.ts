@@ -152,9 +152,10 @@ export const registerJobTools = (server: McpServer, config: Config): void => {
         return { jobs };
       }
 
-      // MODE 2: list summaries with optional filtering.
+      // MODE 2: list summaries with optional filtering. Queue uses the raw branch id
+      // (omitted on production) — not the storage `default` alias.
       const query: Record<string, unknown> = {
-        branchId: clients.branchId,
+        branchId: config.branchId,
         componentId: args.component_id,
         configId: args.config_id,
         status: args.status ? [args.status] : undefined,
@@ -174,6 +175,42 @@ export const registerJobTools = (server: McpServer, config: Config): void => {
         jobs: (items as RawJob[]).map(toJobListItem),
         links: [linksManager.getJobsDashboardLink()],
       };
+    },
+  });
+
+  registerTool(server, {
+    name: 'run_job',
+    title: 'Run job',
+    description: 'Starts a new job for a given component or transformation.',
+    annotations: { destructiveHint: true },
+    inputSchema: {
+      component_id: z
+        .string()
+        .describe('The ID of the component or transformation to start a job for.'),
+      configuration_id: z.string().describe('The ID of the configuration to start a job for.'),
+      configuration_row_ids: z
+        .array(z.string())
+        .optional()
+        .describe('Optional configuration row IDs to run; if omitted, all rows are executed.'),
+    },
+    handler: async (args) => {
+      const clients = createKeboolaClients(config);
+
+      const payload: Record<string, unknown> = {
+        component: args.component_id,
+        config: args.configuration_id,
+        mode: 'run',
+      };
+      if (config.branchId) payload.branchId = config.branchId;
+      if (args.configuration_row_ids?.length) payload.configRowIds = args.configuration_row_ids;
+
+      const raw = await clients.rawQueue.post<RawJob>('jobs', { body: payload });
+      const linksManager = await createLinksManager(config, clients);
+      const job = toJobDetail(raw, linksManager.getJobLinks(String(raw.id ?? '')));
+      logger.info(
+        `Started a new job with id: ${job.id} for component ${args.component_id} and configuration ${args.configuration_id}.`,
+      );
+      return job;
     },
   });
 };
