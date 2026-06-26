@@ -104,3 +104,52 @@ describe('get_components', () => {
     expect(text).toContain('Private');
   });
 });
+
+describe('run_sync_action', () => {
+  it('merges row config over root and posts to the sync-actions endpoint', async () => {
+    let actionBody: { configData?: Record<string, unknown>; action?: string } | undefined;
+    server.use(
+      http.get('https://connection.test/*', ({ request }) => {
+        const { pathname } = new URL(request.url);
+        if (pathname.endsWith('/configs/cfg/rows/r1')) {
+          return HttpResponse.json({
+            configuration: { parameters: { row: 1 }, storage: { input: 'r' } },
+          });
+        }
+        if (pathname.endsWith('/configs/cfg')) {
+          return HttpResponse.json({
+            configuration: {
+              parameters: { base: 1 },
+              storage: {},
+              authorization: { oauth_api: { id: 'a' } },
+            },
+          });
+        }
+        return undefined;
+      }),
+      http.post('https://sync-actions.test/*', async ({ request }) => {
+        expect(new URL(request.url).pathname).toBe('/actions');
+        actionBody = (await request.json()) as {
+          configData?: Record<string, unknown>;
+          action?: string;
+        };
+        return HttpResponse.json({ status: 'success', tables: [] });
+      }),
+    );
+
+    const { text } = await callTool('run_sync_action', {
+      action_name: 'getTables',
+      component_id: 'keboola.ex-db-mysql',
+      configuration_id: 'cfg',
+      configuration_row_id: 'r1',
+    });
+
+    expect(actionBody?.action).toBe('getTables');
+    // row parameters merged on top of root; authorization carried from root.
+    expect(actionBody?.configData).toMatchObject({
+      parameters: { base: 1, row: 1 },
+      authorization: { oauth_api: { id: 'a' } },
+    });
+    expect(text).toContain('success');
+  });
+});

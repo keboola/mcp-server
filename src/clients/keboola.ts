@@ -29,6 +29,8 @@ export type KeboolaClients = {
   rawQueue: RawClient;
   /** Raw AI service client (docs/components, docs/question, suggest/component). */
   rawAi: RawClient;
+  /** Raw Sync Actions service client (POST actions). */
+  rawSyncActions: RawClient;
   /**
    * Effective branch id for branch-scoped endpoints. `'default'` is the Storage
    * API's alias for the production branch (matches Python's `branch_id or 'default'`),
@@ -60,6 +62,7 @@ export const createKeboolaClients = (config: Config): KeboolaClients => {
     rawStorage: createRawClient({ baseUrl: `${urls.storage}/v2/storage`, token: storageToken }),
     rawQueue: createRawClient({ baseUrl: urls.queue, token }),
     rawAi: createRawClient({ baseUrl: urls.ai, token }),
+    rawSyncActions: createRawClient({ baseUrl: urls.syncActions, token }),
     branchId: config.branchId ?? 'default',
   };
 };

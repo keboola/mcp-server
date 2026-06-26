@@ -145,4 +145,65 @@ export const registerComponentTools = (server: McpServer, config: Config): void 
       return { components, links: [linksManager.getUsedComponentsLink()] };
     },
   });
+
+  registerTool(server, {
+    name: 'run_sync_action',
+    title: 'Run sync action',
+    description:
+      'Executes a synchronous action for a component configuration or a component row configuration.',
+    inputSchema: {
+      action_name: z
+        .string()
+        .describe('The sync action to execute (e.g., "testConnection", "getTables").'),
+      component_id: z.string().describe('The ID of the component (e.g., "keboola.ex-db-mysql").'),
+      configuration_id: z
+        .string()
+        .describe('The ID of the configuration to use for the sync action.'),
+      configuration_row_id: z
+        .string()
+        .nullish()
+        .describe(
+          'Optional row ID; row parameters/storage are shallow-merged on top of root config.',
+        ),
+    },
+    handler: async ({ action_name, component_id, configuration_id, configuration_row_id }) => {
+      const clients = createKeboolaClients(config);
+      const base = `branch/${clients.branchId}/components/${component_id}/configs/${configuration_id}`;
+
+      const configDetail = await clients.rawStorage.get<{
+        configuration?: Record<string, unknown>;
+      }>(base);
+      const root = configDetail.configuration ?? {};
+      let parameters = (root.parameters as Record<string, unknown>) ?? {};
+      let storage = (root.storage as Record<string, unknown>) ?? {};
+      // runtime/authorization live only on the root config (docker-runner contract).
+      const runtime = (root.runtime as Record<string, unknown>) ?? {};
+      const authorization = (root.authorization as Record<string, unknown>) ?? {};
+
+      if (configuration_row_id) {
+        const rowDetail = await clients.rawStorage.get<{ configuration?: Record<string, unknown> }>(
+          `${base}/rows/${configuration_row_id}`,
+        );
+        const rowConfig = rowDetail.configuration ?? {};
+        parameters = {
+          ...parameters,
+          ...((rowConfig.parameters as Record<string, unknown>) ?? {}),
+        };
+        storage = { ...storage, ...((rowConfig.storage as Record<string, unknown>) ?? {}) };
+      }
+
+      const configData: Record<string, unknown> = { parameters, storage };
+      if (Object.keys(runtime).length > 0) configData.runtime = runtime;
+      if (Object.keys(authorization).length > 0) configData.authorization = authorization;
+
+      const payload: Record<string, unknown> = {
+        configData,
+        componentId: component_id,
+        action: action_name,
+      };
+      if (config.branchId) payload.branchId = config.branchId;
+
+      return clients.rawSyncActions.post<unknown>('actions', { body: payload });
+    },
+  });
 };
