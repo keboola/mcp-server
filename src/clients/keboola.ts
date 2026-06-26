@@ -4,6 +4,7 @@ import { createStorageClient } from '@keboola/api-client/storage';
 
 import type { Config } from '@/config';
 import { ProjectLinksManager } from '@/links';
+import { createRawClient, type RawClient } from './raw';
 import { deriveServiceUrls } from './urls';
 
 /**
@@ -18,6 +19,12 @@ export type KeboolaClients = {
   storage: ReturnType<typeof createStorageClient>;
   queue: ReturnType<typeof createQueueClient>;
   metastore: ReturnType<typeof createMetastoreClient>;
+  /**
+   * Raw Storage API client rooted at `<storage>/v2/storage`, for endpoints where
+   * api-client's typed methods diverge from the exact SAPI calls (e.g. table+column
+   * metadata). Mirrors the Python `KeboolaClient.storage_client` raw access.
+   */
+  rawStorage: RawClient;
   /**
    * Effective branch id for branch-scoped endpoints. `'default'` is the Storage
    * API's alias for the production branch (matches Python's `branch_id or 'default'`),
@@ -36,6 +43,9 @@ export const createKeboolaClients = (config: Config): KeboolaClients => {
 
   const urls = deriveServiceUrls(config.storageApiUrl);
   const token = config.storageToken;
+  // Storage endpoints accept the OAuth bearer token in preference to the SAPI token
+  // (matches Python's `bearer_or_sapi_token`).
+  const storageToken = config.bearerToken ? `Bearer ${config.bearerToken}` : token;
 
   // ponytail: SAPI token via X-StorageApi-Token (the common path). OAuth bearer
   // token handling is layered in with the OAuth provider (Plan §5).
@@ -43,6 +53,7 @@ export const createKeboolaClients = (config: Config): KeboolaClients => {
     storage: createStorageClient({ baseUrl: urls.storage, token, middlewares: [] }),
     queue: createQueueClient({ baseUrl: urls.queue, token, middlewares: [] }),
     metastore: createMetastoreClient({ baseUrl: urls.metastore, token, middlewares: [] }),
+    rawStorage: createRawClient({ baseUrl: `${urls.storage}/v2/storage`, token: storageToken }),
     branchId: config.branchId ?? 'default',
   };
 };

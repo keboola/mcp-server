@@ -4,6 +4,7 @@ import type { Config } from '@/config';
 import { registerTool } from '@/mcp/tool';
 import { registerJobTools } from '@/tools/jobs';
 import { registerProjectTools } from '@/tools/project';
+import { registerStorageTools } from '@/tools/storage';
 
 // Reading package.json at build time would need JSON import assertions; keep a
 // constant and bump alongside package.json until the build wiring lands.
@@ -36,6 +37,7 @@ export const createServer = (config: Config): McpServer => {
 
   registerProjectTools(server, config);
   registerJobTools(server, config);
+  registerStorageTools(server, config);
 
   return server;
 };
