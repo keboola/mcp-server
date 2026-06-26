@@ -1,7 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { createKeboolaClients } from '@/clients/keboola';
+import { createKeboolaClients, createLinksManager, type KeboolaClients } from '@/clients/keboola';
+import { RawHttpError } from '@/clients/raw';
 import type { Config } from '@/config';
 import { registerTool } from '@/mcp/tool';
 
@@ -9,6 +10,73 @@ import { registerTool } from '@/mcp/tool';
 
 const jsonBlock = (label: string, index: number, example: unknown): string =>
   `${index}. ${label}:\n\`\`\`json\n${JSON.stringify(example, null, 2)}\n\`\`\`\n\n`;
+
+type RawComponent = Record<string, unknown>;
+
+const pick = <T>(raw: RawComponent, ...keys: string[]): T | undefined => {
+  for (const key of keys) {
+    if (raw[key] !== undefined && raw[key] !== null) return raw[key] as T;
+  }
+  return undefined;
+};
+
+/** Capabilities derived from developer-portal flags (port of ComponentCapabilities.from_flags). */
+const capabilitiesFromFlags = (flags: string[]) => ({
+  is_row_based: flags.includes('genericDockerUI-rows'),
+  has_table_input:
+    flags.includes('genericDockerUI-tableInput') ||
+    flags.includes('genericDockerUI-simpleTableInput'),
+  has_table_output: flags.includes('genericDockerUI-tableOutput'),
+  has_file_input: flags.includes('genericDockerUI-fileInput'),
+  has_file_output: flags.includes('genericDockerUI-fileOutput'),
+  requires_oauth: flags.includes('genericDockerUI-authorization'),
+});
+
+/** Maps a raw component (AI catalog or Storage API) to the Component output shape. */
+const toComponent = (raw: RawComponent) => {
+  const flags = (pick<string[]>(raw, 'flags', 'componentFlags') ?? []) as string[];
+  const data = (pick<Record<string, unknown>>(raw, 'data') ?? {}) as Record<string, unknown>;
+  return {
+    component_id: pick<string>(raw, 'id', 'componentId', 'component_id') ?? '',
+    component_name: pick<string>(raw, 'name', 'componentName', 'component_name') ?? '',
+    component_type: pick<string>(raw, 'type', 'componentType', 'component_type') ?? '',
+    component_categories: pick<string[]>(raw, 'categories', 'componentCategories') ?? [],
+    capabilities: capabilitiesFromFlags(flags),
+    documentation_url: pick<string>(raw, 'documentationUrl', 'documentation_url') ?? null,
+    documentation: pick<string>(raw, 'documentation') ?? null,
+    configuration_schema: pick<unknown>(raw, 'configurationSchema', 'configuration_schema') ?? null,
+    configuration_row_schema:
+      pick<unknown>(raw, 'configurationRowSchema', 'configuration_row_schema') ?? null,
+    sync_actions: (data.synchronous_actions as string[] | undefined) ?? null,
+    links: [] as unknown[],
+  };
+};
+
+/**
+ * Fetches a component, preferring the AI catalog (docs + schemas) and merging the
+ * Storage API `data` (sync actions); falls back to Storage API on 404. Port of
+ * components/utils.py `fetch_component`.
+ */
+export const fetchComponent = async (
+  clients: KeboolaClients,
+  componentId: string,
+): Promise<RawComponent> => {
+  try {
+    const fromAi = await clients.rawAi.get<RawComponent>(`docs/components/${componentId}`);
+    const fromStorage = await clients.rawStorage.get<RawComponent>(
+      `branch/${clients.branchId}/components/${componentId}`,
+    );
+    fromAi.data = fromStorage.data ?? {};
+    return fromAi;
+  } catch (error) {
+    if (error instanceof RawHttpError && error.status === 404) {
+      return clients.rawStorage.get<RawComponent>(
+        `branch/${clients.branchId}/components/${componentId}`,
+      );
+    }
+    throw error;
+  }
+};
 
 export const registerComponentTools = (server: McpServer, config: Config): void => {
   registerTool(server, {
@@ -49,6 +117,32 @@ export const registerComponentTools = (server: McpServer, config: Config): void 
         });
       }
       return markdown;
+    },
+  });
+
+  registerTool(server, {
+    name: 'get_components',
+    title: 'Get components',
+    description: 'Retrieves detailed information about one or more components by their IDs.',
+    annotations: { readOnlyHint: true },
+    inputSchema: {
+      component_ids: z.array(z.string()).describe('IDs of the components to retrieve.'),
+    },
+    handler: async ({ component_ids }) => {
+      const clients = createKeboolaClients(config);
+      const linksManager = await createLinksManager(config, clients);
+
+      const components = await Promise.all(
+        component_ids.map(async (componentId) => {
+          const component = toComponent(await fetchComponent(clients, componentId));
+          component.links = [
+            linksManager.getConfigDashboardLink(componentId, component.component_name),
+          ];
+          return component;
+        }),
+      );
+
+      return { components, links: [linksManager.getUsedComponentsLink()] };
     },
   });
 };

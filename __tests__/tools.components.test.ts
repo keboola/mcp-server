@@ -51,3 +51,56 @@ describe('get_config_examples', () => {
     expect(text).toBe('');
   });
 });
+
+const verify = () =>
+  http.get('https://connection.test/*', ({ request }) => {
+    const { pathname } = new URL(request.url);
+    if (pathname.endsWith('/tokens/verify')) return HttpResponse.json({ owner: { id: '42' } });
+    return undefined;
+  });
+
+describe('get_components', () => {
+  it('merges AI catalog metadata with Storage data and derives capabilities', async () => {
+    server.use(
+      verify(),
+      http.get('https://ai.test/*', () =>
+        HttpResponse.json({
+          id: 'keboola.ex-aws-s3',
+          name: 'AWS S3',
+          type: 'extractor',
+          flags: ['genericDockerUI-rows', 'genericDockerUI-tableOutput'],
+          documentation: 'docs here',
+        }),
+      ),
+      http.get('https://connection.test/*', ({ request }) => {
+        const { pathname } = new URL(request.url);
+        if (pathname.endsWith('/tokens/verify')) return HttpResponse.json({ owner: { id: '42' } });
+        if (pathname.includes('/components/')) {
+          return HttpResponse.json({ data: { synchronous_actions: ['testConnection'] } });
+        }
+        return undefined;
+      }),
+    );
+
+    const { text } = await callTool('get_components', { component_ids: ['keboola.ex-aws-s3'] });
+    expect(text).toContain('AWS S3');
+    expect(text).toContain('is_row_based: true');
+    expect(text).toContain('testConnection');
+    expect(text).toContain('docs here');
+  });
+
+  it('falls back to the Storage API when the AI catalog returns 404', async () => {
+    server.use(
+      verify(),
+      http.get('https://ai.test/*', () => new HttpResponse(null, { status: 404 })),
+      http.get('https://connection.test/*', ({ request }) => {
+        const { pathname } = new URL(request.url);
+        if (pathname.endsWith('/tokens/verify')) return HttpResponse.json({ owner: { id: '42' } });
+        return HttpResponse.json({ id: 'priv.comp', name: 'Private', type: 'writer', flags: [] });
+      }),
+    );
+
+    const { text } = await callTool('get_components', { component_ids: ['priv.comp'] });
+    expect(text).toContain('Private');
+  });
+});

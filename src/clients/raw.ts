@@ -45,6 +45,17 @@ const buildUrl = (
   return url.toString();
 };
 
+/** Error carrying the HTTP status, so callers can branch on it (e.g. 404 fallbacks). */
+export class RawHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'RawHttpError';
+  }
+}
+
 /** Builds a detailed error from a failed response (port of `_raise_for_status`). */
 const errorFromResponse = async (response: Response): Promise<Error> => {
   const parts = [`${response.status} ${response.statusText}`.trim()];
@@ -60,7 +71,7 @@ const errorFromResponse = async (response: Response): Promise<Error> => {
   } catch {
     if (text) parts.push(`API error: ${text}`);
   }
-  return new Error(parts.join('\n'));
+  return new RawHttpError(parts.join('\n'), response.status);
 };
 
 export type RawClient = {
