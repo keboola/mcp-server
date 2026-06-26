@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Config } from '@/config';
 import { registerTool } from '@/mcp/tool';
 import { registerComponentTools } from '@/tools/components';
+import { registerDocTools } from '@/tools/doc';
 import { registerJobTools } from '@/tools/jobs';
 import { registerOAuthTools } from '@/tools/oauth';
 import { registerProjectTools } from '@/tools/project';
@@ -42,6 +43,7 @@ export const createServer = (config: Config): McpServer => {
   registerStorageTools(server, config);
   registerOAuthTools(server, config);
   registerComponentTools(server, config);
+  registerDocTools(server, config);
 
   return server;
 };
