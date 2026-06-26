@@ -1,0 +1,10 @@
+{
+  "printWidth": 100,
+  "tabWidth": 2,
+  "singleQuote": true,
+  "arrowParens": "always",
+  "jsxSingleQuote": false,
+  "bracketSameLine": false,
+  "sortPackageJson": false,
+  "ignorePatterns": ["dist", "src/keboola_mcp_server", "**/CHANGELOG.md"]
+}
