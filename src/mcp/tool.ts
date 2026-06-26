@@ -44,7 +44,9 @@ export const registerTool = <Shape extends ZodRawShape>(
     (async (args: z.infer<z.ZodObject<Shape>>): Promise<CallToolResult> => {
       try {
         const result = await def.handler(args);
-        return { content: [{ type: 'text', text: serialize(result) }] };
+        // String results pass through verbatim (parity with FastMCP); objects are TOON-encoded.
+        const text = typeof result === 'string' ? result : serialize(result);
+        return { content: [{ type: 'text', text }] };
       } catch (error) {
         const base = error instanceof Error ? error.message : String(error);
         const text = def.recovery ? `${base}\nRecovery: ${def.recovery}` : base;
