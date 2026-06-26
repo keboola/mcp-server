@@ -3,6 +3,7 @@ import { createQueueClient } from '@keboola/api-client/queue';
 import { createStorageClient } from '@keboola/api-client/storage';
 
 import type { Config } from '@/config';
+import { ProjectLinksManager } from '@/links';
 import { deriveServiceUrls } from './urls';
 
 /**
@@ -44,4 +45,21 @@ export const createKeboolaClients = (config: Config): KeboolaClients => {
     metastore: createMetastoreClient({ baseUrl: urls.metastore, token, middlewares: [] }),
     branchId: config.branchId ?? 'default',
   };
+};
+
+/**
+ * Builds a ProjectLinksManager for the current project. Mirrors the Python
+ * `ProjectLinksManager.from_client`: resolves the project id from the verified token.
+ */
+export const createLinksManager = async (
+  config: Config,
+  clients: KeboolaClients,
+): Promise<ProjectLinksManager> => {
+  const token = await clients.storage.tokens.verify();
+  const projectId = String((token.owner as { id: string | number }).id);
+  return new ProjectLinksManager({
+    baseUrl: config.storageApiUrl ?? '',
+    projectId,
+    branchId: config.branchId,
+  });
 };

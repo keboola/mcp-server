@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import type { Config } from '@/config';
 import { registerTool } from '@/mcp/tool';
+import { registerJobTools } from '@/tools/jobs';
 import { registerProjectTools } from '@/tools/project';
 
 // Reading package.json at build time would need JSON import assertions; keep a
@@ -34,6 +35,7 @@ export const createServer = (config: Config): McpServer => {
   });
 
   registerProjectTools(server, config);
+  registerJobTools(server, config);
 
   return server;
 };
