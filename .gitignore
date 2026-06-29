@@ -22,6 +22,12 @@ venv
 # Environment variables
 .env
 
+# Local integration-test project pool (contains real Storage API tokens) — never commit.
+# The committed template with $TEST_KBC_PROJECT_*_TOKEN placeholders lives at
+# .github/ci/projects.json (anchored ignores below don't match that path).
+/projects.json
+/projects.local.json
+
 # Test related files
 .coverage
 .coverage.*
