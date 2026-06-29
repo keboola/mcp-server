@@ -17,6 +17,16 @@ export type TestProject = {
   projectId: number;
 };
 
+export type GetTestProjectOptions = AcquireOptions & {
+  /**
+   * Reset the project to a clean state before returning (default `true`). Tests that don't
+   * mutate project state (e.g. docs_query, get_project_info, a literal SELECT) can pass
+   * `false` to skip the wipe — useful against shared projects the dedicated-project guard
+   * would otherwise refuse to clean.
+   */
+  clean?: boolean;
+};
+
 /**
  * Leases a project for the calling test, resets it to a clean state, and returns a ready
  * `Config`. The lease is released on test completion. If the whole pool is busy this blocks
@@ -24,14 +34,18 @@ export type TestProject = {
  *
  * Must be called from within a running test (it registers onTestFinished).
  */
-export const getTestProjectForTest = async (opts: AcquireOptions = {}): Promise<TestProject> => {
+export const getTestProjectForTest = async (
+  opts: GetTestProjectOptions = {},
+): Promise<TestProject> => {
   const pool = getPool();
   const leased = await pool.getTestProject(opts);
   onTestFinished(async () => {
     await leased.release();
   });
 
-  await cleanProject(leased.definition);
+  if (opts.clean !== false) {
+    await cleanProject(leased.definition);
+  }
 
   return {
     config: new Config({

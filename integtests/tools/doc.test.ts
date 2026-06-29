@@ -6,7 +6,7 @@ import { getTestProjectForTest } from '../testproject/fixture';
 // Ported from integtests/tools/test_doc.py.
 describe('docs_query (integration)', () => {
   it('returns an answer with text and source URLs', async () => {
-    const { config } = await getTestProjectForTest();
+    const { config } = await getTestProjectForTest({ clean: false });
     const session = await connectMcp(config);
     try {
       const text = await callToolText(session.client, 'docs_query', {

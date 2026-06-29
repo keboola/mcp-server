@@ -8,7 +8,7 @@ import { getTestProjectForTest } from '../testproject/fixture';
 // invalid-query error) which need no project data.
 describe('query_data (integration)', () => {
   it('runs a literal query and returns CSV data', async () => {
-    const { config } = await getTestProjectForTest();
+    const { config } = await getTestProjectForTest({ clean: false });
     const session = await connectMcp(config);
     try {
       const text = await callToolText(session.client, 'query_data', {
@@ -23,7 +23,7 @@ describe('query_data (integration)', () => {
   });
 
   it('reports an error for invalid SQL', async () => {
-    const { config } = await getTestProjectForTest();
+    const { config } = await getTestProjectForTest({ clean: false });
     const session = await connectMcp(config);
     try {
       const result = await callToolRaw(session.client, 'query_data', {

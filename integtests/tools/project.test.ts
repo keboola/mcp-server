@@ -6,7 +6,7 @@ import { getTestProjectForTest } from '../testproject/fixture';
 // Ported from integtests/tools/test_project.py.
 describe('get_project_info (integration)', () => {
   it('returns project id, sql dialect, links, and branch context', async () => {
-    const { config, projectId } = await getTestProjectForTest();
+    const { config, projectId } = await getTestProjectForTest({ clean: false });
     const session = await connectMcp(config);
     try {
       const text = await callToolText(session.client, 'get_project_info');
