@@ -16,6 +16,9 @@ export default defineConfig({
     hookTimeout: 120_000,
     // Files run in parallel workers; each worker leases its own project.
     fileParallelism: true,
+    // See vitest.config.ts: inline @keboola/api-client so its extensionless dayjs imports
+    // resolve under vitest.
+    server: { deps: { inline: [/@keboola\/api-client/] } },
   },
   resolve: {
     alias: [{ find: /^@\/(.*)/, replacement: `${r('src')}/$1` }],

@@ -1,6 +1,9 @@
+import { createAiClient } from '@keboola/api-client/ai';
+import { createDataScienceClient } from '@keboola/api-client/dataScience';
 import { createMetastoreClient } from '@keboola/api-client/metastore';
 import { createQueueClient } from '@keboola/api-client/queue';
 import { createStorageClient } from '@keboola/api-client/storage';
+import { createSyncActionsClient } from '@keboola/api-client/syncActions';
 
 import type { Config } from '@/config';
 import { ProjectLinksManager } from '@/links';
@@ -20,6 +23,12 @@ export type KeboolaClients = {
   storage: ReturnType<typeof createStorageClient>;
   queue: ReturnType<typeof createQueueClient>;
   metastore: ReturnType<typeof createMetastoreClient>;
+  /** Typed AI service client (suggestComponent, explainError, describeConfiguration, …). */
+  ai: ReturnType<typeof createAiClient>;
+  /** Typed Sync Actions client (sendSyncAction, gitRepository.*). */
+  syncActions: ReturnType<typeof createSyncActionsClient>;
+  /** Typed Data Science client (apps CRUD, runs, logs tail, runtimes). */
+  dataScience: ReturnType<typeof createDataScienceClient>;
   /**
    * Raw Storage API client rooted at `<storage>/v2/storage`, for endpoints where
    * api-client's typed methods diverge from the exact SAPI calls (e.g. table+column
@@ -65,6 +74,17 @@ export const createKeboolaClients = (config: Config): KeboolaClients => {
     storage: createStorageClient({ baseUrl: urls.storage, token, middlewares: [retry] }),
     queue: createQueueClient({ baseUrl: urls.queue, token, middlewares: [retry] }),
     metastore: createMetastoreClient({ baseUrl: urls.metastore, token, middlewares: [retry] }),
+    ai: createAiClient({ baseUrl: urls.ai, token, middlewares: [retry] }),
+    syncActions: createSyncActionsClient({
+      baseUrl: urls.syncActions,
+      token,
+      middlewares: [retry],
+    }),
+    dataScience: createDataScienceClient({
+      baseUrl: urls.dataScience,
+      token,
+      middlewares: [retry],
+    }),
     rawStorage: createRawClient({ baseUrl: `${urls.storage}/v2/storage`, token: storageToken }),
     rawQueue: createRawClient({ baseUrl: urls.queue, token }),
     rawAi: createRawClient({ baseUrl: urls.ai, token }),
