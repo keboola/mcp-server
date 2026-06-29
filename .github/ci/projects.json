@@ -1,0 +1,9 @@
+[
+  {
+    "host": "connection.keboola.com",
+    "project": 0,
+    "stagingStorage": "s3",
+    "backend": "snowflake",
+    "token": "$TEST_KBC_PROJECT_0_TOKEN"
+  }
+]

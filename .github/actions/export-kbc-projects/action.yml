@@ -1,0 +1,30 @@
+name: 'Export kbc projects with secrets'
+description: 'Generates projects.json from .github/ci/projects.json, substituting TEST_KBC_PROJECT_* secrets'
+inputs:
+  secrets:
+    description: workflow secrets (pass `toJSON(secrets)`)
+    required: true
+outputs:
+  projects-file:
+    description: Absolute path to the generated projects.json
+    value: ${{ steps.gen.outputs.projects-file }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Generate projects.json file, replace secrets
+      id: gen
+      shell: bash
+      run: |
+        # Export every TEST_KBC_PROJECT_* secret as an env var, then envsubst the template.
+        jqQuery='to_entries[] | select(.key | startswith("TEST_KBC_PROJECT_")) | "\(.key)=\(.value|tostring) "'
+        export $(
+        (jq -r -j "$jqQuery") << EndOfSecrets
+          ${{ inputs.secrets }}
+        EndOfSecrets
+        )
+
+        envsubst < .github/ci/projects.json > projects.json
+
+        # Stable mtime so test caching is not invalidated by regeneration.
+        touch -d '1970-01-01T00:00:01' projects.json
+        echo "projects-file=$(pwd)/projects.json" >> "$GITHUB_OUTPUT"

@@ -27,7 +27,7 @@ the same `projects.json` layout and CI export mechanism the go monorepo uses.
 | Concern | Behavior |
 | --- | --- |
 | Pool source | A `projects.json` array of project definitions (host, project id, token, backend, stagingStorage), the same schema as [`go-monorepo/build/ci/projects.json`](https://github.com/keboola/go-monorepo/blob/main/build/ci/projects.json). Path from `TEST_KBC_PROJECTS_FILE` (absolute). |
-| CI secret injection | A composite action mirroring [`export-kbc-projects`](https://github.com/keboola/go-monorepo/blob/main/.github/actions/export-kbc-projects/action.yml): `envsubst` the `$TEST_KBC_PROJECT_<id>_TOKEN` placeholders in `build/ci/projects.json` from `TEST_KBC_PROJECT_*` secrets into a runtime `projects.json`. |
+| CI secret injection | A composite action mirroring [`export-kbc-projects`](https://github.com/keboola/go-monorepo/blob/main/.github/actions/export-kbc-projects/action.yml): `envsubst` the `$TEST_KBC_PROJECT_<id>_TOKEN` placeholders in `.github/ci/projects.json` from `TEST_KBC_PROJECT_*` secrets into a runtime `projects.json`. |
 | Acquisition granularity | **Per test case**, not per run. A test calls `getTestProject(...)`; the lease is released automatically at the end of that test. |
 | Mutual exclusion | A **redis lease** per `(host, projectId)` key (port of go-utils `redislocker.go`): `SET key token NX PX ttl`; auto-extend at `ttl/4`; release via compare-and-delete. TTL 2 min. |
 | Local fallback | When no redis is configured, fall back to a **host-local file lock** (port of `fslocker.go`) so the suite runs on a developer machine without redis. |
