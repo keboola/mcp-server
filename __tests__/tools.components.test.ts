@@ -13,7 +13,7 @@ import {
   splitSqlStatements,
   updateParams,
   updateTransformationParameters,
-} from '@/tools/components.model';
+} from '@/tools/components';
 import {
   __testing,
   validateRootParametersConfiguration,

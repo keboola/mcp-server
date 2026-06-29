@@ -41,8 +41,8 @@ import {
   type TokenInfo,
 } from '@/mcp/filtering';
 import { createServer } from '@/server';
+import type { ConfigParamUpdate } from '@/tools/components';
 import { configPreviewInternals } from '@/tools/components';
-import type { ConfigParamUpdate } from '@/tools/components.model';
 
 type JsonDict = Record<string, unknown>;
 
