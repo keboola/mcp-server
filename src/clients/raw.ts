@@ -148,6 +148,13 @@ export const createRawClient = (options: RawClientOptions): RawClient => {
     post: (endpoint, opts) => json('POST', endpoint, opts),
     put: (endpoint, opts) => json('PUT', endpoint, opts),
     patch: (endpoint, opts) => json('PATCH', endpoint, opts),
-    delete: (endpoint, opts) => json('DELETE', endpoint, opts),
+    // DELETE commonly returns 204 No Content / empty body; tolerate that instead of
+    // throwing a JSON parse error (port of Python's `if response.content` guard).
+    delete: async <T>(endpoint: string, opts?: RawRequestOptions): Promise<T> => {
+      const response = await request('DELETE', endpoint, opts);
+      if (!response.ok) throw await errorFromResponse(response);
+      const text = await response.text();
+      return (text ? JSON.parse(text) : null) as T;
+    },
   };
 };

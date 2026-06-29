@@ -16,6 +16,7 @@ describe('deriveServiceUrls', () => {
       encryption: 'https://encryption.eu-central-1.keboola.com',
       scheduler: 'https://scheduler.eu-central-1.keboola.com',
       syncActions: 'https://sync-actions.eu-central-1.keboola.com',
+      queryService: 'https://query.eu-central-1.keboola.com',
     });
   });
 

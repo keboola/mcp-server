@@ -13,6 +13,7 @@ export type ServiceUrls = {
   encryption: string;
   scheduler: string;
   syncActions: string;
+  queryService: string;
 };
 
 export const deriveServiceUrls = (storageApiUrl: string): ServiceUrls => {
@@ -39,5 +40,6 @@ export const deriveServiceUrls = (storageApiUrl: string): ServiceUrls => {
     encryption: at('encryption'),
     scheduler: at('scheduler'),
     syncActions: at('sync-actions'),
+    queryService: at('query'),
   };
 };
