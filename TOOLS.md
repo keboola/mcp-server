@@ -4,19 +4,16 @@ This document provides details about the tools available in the Keboola MCP serv
 ## Index
 
 ### Component Tools
-- [add_config_row](#add_config_row): Creates a component configuration row in the specified configuration_id, using the specified name,
-component ID, configuration JSON, and description.
+- [add_config_row](#add_config_row): Creates a component configuration row in the specified configuration_id, using the specified name, component ID, configuration JSON, and description.
 - [create_config](#create_config): Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
-- [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
-description, and a list of created table names.
+- [create_sql_transformation](#create_sql_transformation): Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed description, and a list of created table names.
 - [get_components](#get_components): Retrieves detailed information about one or more components by their IDs.
 - [get_config_examples](#get_config_examples): Retrieves sample configuration examples for a specific component.
 - [get_configs](#get_configs): Retrieves component configurations in the project with optional filtering.
 - [run_sync_action](#run_sync_action): Executes a synchronous action for a component configuration or a component row configuration.
 - [update_config](#update_config): Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
 - [update_config_row](#update_config_row): Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
-- [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
-name or description.
+- [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, name or description.
 
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
@@ -38,28 +35,22 @@ name or description.
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
-- [create_python_js_data_app_git_credential](#create_python_js_data_app_git_credential): Mints a one-time HTTPS token on a python-js **prod** data app so the caller can clone, pull,
-and push to the app's managed git repo over HTTPS.
-- [delete_python_js_data_app_draft](#delete_python_js_data_app_draft): Deletes a python-js DRAFT data app — both the data-app instance (DSAPI) and its Storage
-configuration.
-- [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
-action and the configuration ID.
-- [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
-providing their configuration IDs.
+- [create_python_js_data_app_git_credential](#create_python_js_data_app_git_credential): Mints a one-time HTTPS token on a python-js **prod** data app so the caller can clone, pull, and push to the app's managed git repo over HTTPS.
+- [delete_python_js_data_app_draft](#delete_python_js_data_app_draft): Deletes a python-js DRAFT data app — both the data-app instance (DSAPI) and its Storage configuration.
+- [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the action and the configuration ID.
+- [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by providing their configuration IDs.
 - [modify_python_js_data_app](#modify_python_js_data_app): Creates or updates a python-js data app.
 - [modify_streamlit_data_app](#modify_streamlit_data_app): Creates or updates a Streamlit data app.
 
 ### Project Tools
-- [get_project_info](#get_project_info): Retrieves structured information about the current project,
-including essential context and base instructions for working with it
-(e.
+- [get_project_info](#get_project_info): Retrieves structured information about the current project, including essential context and base instructions for working with it (e.
 - [update_project_description](#update_project_description): Updates the description of the current Keboola project.
 
 ### SQL Tools
 - [query_data](#query_data): Executes an SQL SELECT query to get the data from the underlying database.
 
 ### Search Tools
-- [find_component_id](#find_component_id): Returns list of component IDs that match the given query.
+- [find_component_id](#find_component_id): Returns a list of component IDs that match the given natural-language query.
 - [search](#search): Searches for Keboola items (tables, buckets, components, configurations, transformations, flows, data-apps, etc.
 
 ### Semantic Tools
@@ -75,7 +66,7 @@ the expected semantic objects provided.
 lineage references (created/updated by), and links.
 - [get_tables](#get_tables): Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
 column definitions, lineage references (created/updated by) and links.
-- [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
+- [update_descriptions](#update_descriptions): Updates the description for Keboola storage items (buckets, tables, or columns).
 
 ---
 
@@ -88,79 +79,88 @@ column definitions, lineage references (created/updated by) and links.
 
 **Description**:
 
-Creates a component configuration row in the specified configuration_id, using the specified name,
-component ID, configuration JSON, and description.
-
-BEFORE CALLING - REQUIRED STEPS:
-1. Call `get_components([component_id])` to retrieve the component's `configuration_row_schema`.
-2. Read `configuration_row_schema.required` to find ALL mandatory top-level fields.
-3. Call `get_config_examples(component_id)` to see real-world row parameter examples.
-4. Populate `parameters` with every required field before calling this tool.
-Skipping these steps will cause a schema validation error.
-
-USAGE:
-- Use when you want to create a new row configuration for a specific component configuration.
-
-WHEN NOT TO USE:
-- `keboola.orchestrator` / `keboola.flow` → use flows tools
-- `keboola.data-apps` → use data applications tools
-- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
-
-EXAMPLES:
-- user_input: `Create a new configuration row for component X with these settings`
-    - set the component_id, configuration_id and configuration parameters accordingly
-    - returns the created component configuration if successful.
+Creates a component configuration row in the specified configuration_id, using the specified name, component ID, configuration JSON, and description.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "name": {
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
-      "type": "string"
+      "type": "string",
+      "description": "A short, descriptive name summarizing the purpose of the component configuration."
     },
     "description": {
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
-      "type": "string"
+      "type": "string",
+      "description": "The detailed description of the component configuration explaining its purpose and functionality."
     },
     "component_id": {
-      "description": "The ID of the component for which to create the configuration.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the component for which to create the configuration."
     },
     "configuration_id": {
-      "description": "The ID of the configuration for which to create the configuration row.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the configuration for which to create the configuration row."
     },
     "parameters": {
-      "additionalProperties": true,
-      "description": "The component row configuration parameters, adhering to the configuration_row_schema",
-      "type": "object"
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {},
+      "description": "The component row configuration parameters, adhering to the configuration_row_schema"
     },
     "storage": {
-      "additionalProperties": true,
-      "default": null,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "type": "object"
+      "anyOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "processors_before": {
-      "default": null,
-      "description": "The list of processors that will run before the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run before the configured component runs.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "processors_after": {
-      "default": null,
-      "description": "The list of processors that will run after the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run after the configured component runs.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -170,7 +170,7 @@ EXAMPLES:
     "configuration_id",
     "parameters"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -185,123 +185,125 @@ EXAMPLES:
 
 Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 
-BEFORE CALLING - REQUIRED STEPS:
-1. Call `get_components([component_id])` to retrieve the component's `configuration_schema`.
-2. Read `configuration_schema.required` to find ALL mandatory top-level fields.
-3. Call `get_config_examples(component_id)` to see real-world parameter examples.
-4. Populate `parameters` with every required field before calling this tool.
-Skipping these steps will cause a schema validation error.
-
-USAGE:
-- Use when you want to create a new root configuration for a specific component.
-
-WHEN NOT TO USE:
-- `keboola.orchestrator` / `keboola.flow` → use flows tools
-- `keboola.data-apps` → use data applications tools
-- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
-
-EXAMPLES:
-- user_input: `Create a new configuration for component X with these settings`
-    - set the component_id and configuration parameters accordingly
-    - returns the created component configuration if successful.
-
 
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "VariableDefinition": {
-      "description": "A single variable definition to attach to a configuration.",
-      "properties": {
-        "name": {
-          "description": "Variable name.",
-          "type": "string"
-        },
-        "type": {
-          "default": "string",
-          "description": "Variable type: \"string\" or \"vault\".",
-          "enum": [
-            "string",
-            "vault"
-          ],
-          "type": "string"
-        },
-        "default_value": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional default value bound at creation time."
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "name": {
-      "description": "A short, descriptive name summarizing the purpose of the component configuration.",
-      "type": "string"
+      "type": "string",
+      "description": "A short, descriptive name summarizing the purpose of the component configuration."
     },
     "description": {
-      "description": "The detailed description of the component configuration explaining its purpose and functionality.",
-      "type": "string"
+      "type": "string",
+      "description": "The detailed description of the component configuration explaining its purpose and functionality."
     },
     "component_id": {
-      "description": "The ID of the component for which to create the configuration.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the component for which to create the configuration."
     },
     "parameters": {
-      "additionalProperties": true,
-      "description": "The component configuration parameters, adhering to the configuration_schema",
-      "type": "object"
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {},
+      "description": "The component configuration parameters, adhering to the configuration_schema"
     },
     "storage": {
-      "additionalProperties": true,
-      "default": null,
       "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "type": "object"
-    },
-    "processors_before": {
-      "default": null,
-      "description": "The list of processors that will run before the configured component runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "processors_after": {
-      "default": null,
-      "description": "The list of processors that will run after the configured component runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "variables": {
       "anyOf": [
         {
-          "items": {
-            "$ref": "#/$defs/VariableDefinition"
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
           },
-          "type": "array"
+          "additionalProperties": {}
         },
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Variable definitions to attach to this configuration. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value. On creation, both `None` (omitted) and `[]` (empty list) mean \"do not attach variables\" \u2014 no `keboola.variables` config is created. To remove variables from an existing configuration, use `update_config` with `variables=[]`."
+      ]
+    },
+    "processors_before": {
+      "description": "The list of processors that will run before the configured component runs.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "processors_after": {
+      "description": "The list of processors that will run after the configured component runs.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "variables": {
+      "description": "Variable definitions to attach to this configuration. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value. On creation, both `None` (omitted) and `[]` (empty list) mean \"do not attach variables\" — no `keboola.variables` config is created. To remove variables from an existing configuration, use `update_config` with `variables=[]`.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Variable name."
+              },
+              "type": {
+                "default": "string",
+                "description": "Variable type: \"string\" or \"vault\".",
+                "type": "string",
+                "enum": [
+                  "string",
+                  "vault"
+                ]
+              },
+              "default_value": {
+                "description": "Optional default value bound at creation time.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -310,7 +312,7 @@ EXAMPLES:
     "component_id",
     "parameters"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -323,119 +325,50 @@ EXAMPLES:
 
 **Description**:
 
-Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
-description, and a list of created table names.
-
-CONSIDERATIONS:
-- By default, SQL transformation must create at least one table to produce a result; omit only if the user
-  explicitly indicates that no table creation is needed.
-- Each SQL code block must include descriptive name that reflects its purpose and group one or more executable
-  semantically related SQL statements.
-- Each SQL query statement within a code block must be executable and follow the current SQL dialect.
-- Use delimited identifiers for the current SQL dialect for all identifiers and FQN references.
-- When referring to the input tables within the SQL query, use fully qualified table names, which can be
-  retrieved using appropriate tools.
-- When creating a new table within the SQL query (e.g. CREATE TABLE ...): use only the table name with
-  delimited identifiers, without the fully qualified path; add the plain table name without delimiters
-  to the `created_table_names` list.
-- Unless otherwise specified by user, transformation name and description are generated based on the SQL query
-  and user intent.
-- If there are 20 or more SQL transformations in the project, consider organizing them with a folder: existing
-  folder names are surfaced in the response's change_summary — use one of them or create a new one.
-
-USAGE:
-- Use when you want to create a new SQL transformation.
-
-EXAMPLES:
-- user_input: `Can you create a new transformation out of this sql query?`
-    - set the sql_code_blocks to the query, and set other parameters accordingly.
-    - returns the created SQL transformation configuration if successful.
-- user_input: `Generate me an SQL transformation which [USER INTENT]`
-    - set the sql_code_blocks to the query based on the [USER INTENT], and set other parameters accordingly.
-    - returns the created SQL transformation configuration if successful.
+Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed description, and a list of created table names.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "Code": {
-      "description": "The code block for the transformation block.",
-      "properties": {
-        "name": {
-          "description": "A descriptive name for the code block",
-          "type": "string"
-        },
-        "script": {
-          "description": "The SQL script of the code block",
-          "type": "string"
-        }
-      },
-      "required": [
-        "name",
-        "script"
-      ],
-      "type": "object"
-    },
-    "VariableDefinition": {
-      "description": "A single variable definition to attach to a configuration.",
-      "properties": {
-        "name": {
-          "description": "Variable name.",
-          "type": "string"
-        },
-        "type": {
-          "default": "string",
-          "description": "Variable type: \"string\" or \"vault\".",
-          "enum": [
-            "string",
-            "vault"
-          ],
-          "type": "string"
-        },
-        "default_value": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional default value bound at creation time."
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "name": {
-      "description": "A short, descriptive name summarizing the purpose of the SQL transformation.",
-      "type": "string"
+      "type": "string",
+      "description": "A short, descriptive name summarizing the purpose of the SQL transformation."
     },
     "description": {
-      "description": "The detailed description of the SQL transformation capturing the user intent, explaining the SQL query, and the expected output.",
-      "type": "string"
+      "type": "string",
+      "description": "The detailed description of the SQL transformation capturing the user intent, explaining the SQL query, and the expected output."
     },
     "sql_code_blocks": {
-      "description": "The SQL query code blocks, each containing a descriptive name and an executable SQL script written in the current SQL dialect. The query will be automatically reformatted to be more readable.",
+      "type": "array",
       "items": {
-        "$ref": "#/$defs/Code"
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "A descriptive name for the code block"
+          },
+          "script": {
+            "type": "string",
+            "description": "The SQL script of the code block"
+          }
+        },
+        "required": [
+          "name",
+          "script"
+        ]
       },
-      "type": "array"
+      "description": "The SQL query code blocks, each containing a descriptive name and an executable SQL script written in the current SQL dialect. The query will be automatically reformatted to be more readable."
     },
     "created_table_names": {
       "default": [],
       "description": "A list of created table names if they are generated within the SQL query statements (e.g., using `CREATE TABLE ...`).",
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     },
     "folder": {
       "default": "",
@@ -443,19 +376,47 @@ EXAMPLES:
       "type": "string"
     },
     "variables": {
+      "description": "Variable definitions to attach to this transformation. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value. On creation, both `None` (omitted) and `[]` (empty list) mean \"do not attach variables\" — no `keboola.variables` config is created. To remove variables from an existing transformation, use `update_sql_transformation` with `variables=[]`.",
       "anyOf": [
         {
+          "type": "array",
           "items": {
-            "$ref": "#/$defs/VariableDefinition"
-          },
-          "type": "array"
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Variable name."
+              },
+              "type": {
+                "default": "string",
+                "description": "Variable type: \"string\" or \"vault\".",
+                "type": "string",
+                "enum": [
+                  "string",
+                  "vault"
+                ]
+              },
+              "default_value": {
+                "description": "Optional default value bound at creation time.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
         },
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Variable definitions to attach to this transformation. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value. On creation, both `None` (omitted) and `[]` (empty list) mean \"do not attach variables\" \u2014 no `keboola.variables` config is created. To remove variables from an existing transformation, use `update_sql_transformation` with `variables=[]`."
+      ]
     }
   },
   "required": [
@@ -463,7 +424,7 @@ EXAMPLES:
     "description",
     "sql_code_blocks"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -478,44 +439,24 @@ EXAMPLES:
 
 Retrieves detailed information about one or more components by their IDs.
 
-RETURNS FOR EACH COMPONENT:
-- Component metadata (name, type, description)
-- Documentation and usage instructions
-- Configuration JSON schema (required for creating/updating configurations)
-- Links to component dashboard in Keboola UI
-
-WHEN TO USE:
-- Before creating a new configuration: fetch the component to get its configuration schema
-- Before updating a configuration: fetch the component to understand valid configuration options
-- When user asks about component capabilities or documentation
-
-PREREQUISITES:
-- You must know the component_id(s). If unknown, first use `find_component_id` or `docs` tool to discover them.
-
-EXAMPLES:
-- User: "Create a generic extractor configuration"
-  → First call `find_component_id` to get the component_id, then call this tool to get the schema
-- User: "What options does the Snowflake writer support?"
-  → Call this tool with the Snowflake writer component_id to retrieve its documentation and schema
-
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "component_ids": {
-      "description": "IDs of the components",
+      "type": "array",
       "items": {
         "type": "string"
       },
-      "type": "array"
+      "description": "IDs of the components to retrieve."
     }
   },
   "required": [
     "component_ids"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -530,30 +471,21 @@ EXAMPLES:
 
 Retrieves sample configuration examples for a specific component.
 
-USAGE:
-- Use before calling `create_config` or `add_config_row` to understand the expected parameters structure.
-- Use when you want to see example configurations for a specific component.
-
-EXAMPLES:
-- user_input: `Show me example configurations for component X`
-    - set the component_id parameter accordingly
-    - returns a markdown formatted string with configuration examples
-
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "component_id": {
-      "description": "The ID of the component to get configuration examples for.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the component to get configuration examples for."
     }
   },
   "required": [
     "component_id"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -568,100 +500,63 @@ EXAMPLES:
 
 Retrieves component configurations in the project with optional filtering.
 
-Can list summaries of multiple configurations (grouped by component) or retrieve full details
-for specific configurations.
-
-Returns a list of components, each containing:
-- Component metadata (ID, name, type, description)
-- Configurations for that component (summaries by default, full details if requested)
-- Links to the Keboola UI
-
-PARAMETER BEHAVIOR:
-- If configs is provided (non-empty): Returns FULL details ONLY for those configs.
-- Else if component_ids is provided (non-empty): Lists config summaries for those components.
-- Else: Lists configs based on component_types (all types if empty).
-
-WHEN TO USE:
-- For listing: Use component_types/component_ids.
-- For details: Use configs (can handle multiple).
-
-WHEN NOT TO USE:
-- Do NOT list all configs just to find a configuration by name. Use `search` with
-  item_types=["configuration", "transformation"] instead.
-- Only use broad listing (empty component_types and component_ids) when you need
-  a complete inventory of all configurations in the project.
-
-EXAMPLES:
-- List all configs (summaries): component_types=[], component_ids=[]
-- List extractors (summaries): component_types=["extractor"]
-- Get details for specific configs:
-  configs=[{"component_id": "keboola.ex-db-mysql", "configuration_id": "12345"}]
-
 
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "FullConfigId": {
-      "description": "Composite configuration ID (component ID + configuration ID).",
-      "properties": {
-        "component_id": {
-          "description": "ID of the component",
-          "type": "string"
-        },
-        "configuration_id": {
-          "description": "ID of the configuration",
-          "type": "string"
-        }
-      },
-      "required": [
-        "component_id",
-        "configuration_id"
-      ],
-      "type": "object"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "component_types": {
       "default": [],
-      "description": "Filter by component types. Options: \"application\", \"extractor\", \"transformation\", \"writer\". Empty list [] means ALL component types will be returned. This parameter is IGNORED when configs is provided (non-empty) or component_ids is non-empty.",
+      "description": "Filter by component types; empty = all. Ignored when configs/component_ids given.",
+      "type": "array",
       "items": {
+        "type": "string",
         "enum": [
           "application",
           "extractor",
           "transformation",
           "writer"
-        ],
-        "type": "string"
-      },
-      "type": "array"
+        ]
+      }
     },
     "component_ids": {
       "default": [],
-      "description": "Filter by specific component IDs (e.g., [\"keboola.ex-db-mysql\", \"keboola.wr-google-sheets\"]). Empty list [] uses component_types filtering instead. When provided (non-empty) and configs is empty, lists summaries for these components. Ignored if configs is provided.",
+      "description": "Filter by specific component IDs. Ignored when configs is given.",
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     },
     "configs": {
       "default": [],
-      "description": "List of specific configurations to retrieve full details for. Each dict must have \"component_id\" (str) and \"configuration_id\" (str). Example: [{\"component_id\": \"keboola.ex-db-mysql\", \"configuration_id\": \"12345\"}]. If provided (non-empty), ignores other filters and returns full details only for these configs, grouped by component. Use this for detailed retrieval.",
+      "description": "Specific configs to retrieve full details for (grouped by component).",
+      "type": "array",
       "items": {
-        "$ref": "#/$defs/FullConfigId"
-      },
-      "type": "array"
+        "type": "object",
+        "properties": {
+          "component_id": {
+            "type": "string"
+          },
+          "configuration_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "component_id",
+          "configuration_id"
+        ]
+      }
     }
   },
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
 ---
 <a name="run_sync_action"></a>
 ## run_sync_action
-**Annotations**: `read-only`
+**Annotations**: 
 
 **Tags**: `components`
 
@@ -669,30 +564,26 @@ EXAMPLES:
 
 Executes a synchronous action for a component configuration or a component row configuration.
 
-WHEN TO USE:
-- For finding available values of a configuration field
-- For validating already configured values (e.g. testing a database connection)
-- For listing remote resources such as endpoints, schemas or tables
-
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "action_name": {
-      "description": "The sync action to execute (e.g., \"testConnection\", \"getTables\").",
-      "type": "string"
+      "type": "string",
+      "description": "The sync action to execute (e.g., \"testConnection\", \"getTables\")."
     },
     "component_id": {
-      "description": "The ID of the component (e.g., \"keboola.ex-db-mysql\").",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the component (e.g., \"keboola.ex-db-mysql\")."
     },
     "configuration_id": {
-      "description": "The ID of the configuration to use for the sync action.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the configuration to use for the sync action."
     },
     "configuration_row_id": {
+      "description": "Optional row ID; row parameters/storage are shallow-merged on top of root config.",
       "anyOf": [
         {
           "type": "string"
@@ -700,9 +591,7 @@ WHEN TO USE:
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Optional row ID for row-level actions. When provided, the row parameters and storage are shallow-merged on top of root config."
+      ]
     }
   },
   "required": [
@@ -710,7 +599,7 @@ WHEN TO USE:
     "component_id",
     "configuration_id"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -723,185 +612,25 @@ WHEN TO USE:
 
 **Description**:
 
-Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
-
-This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
-All other fields will remain unchanged.
-Use this tool when modifying existing configurations; for configuration rows, use update_config_row instead.
-
-WHEN TO USE:
-- Modifying configuration parameters (credentials, settings, API keys, etc.)
-- Updating storage mappings (input/output tables or files)
-- Changing configuration name or description
-- Any combination of the above
-
-WHEN NOT TO USE:
-- `keboola.orchestrator` / `keboola.flow` → use flows tools
-- `keboola.data-apps` → use data applications tools
-- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
-
-PREREQUISITES:
-- Configuration must already exist (use create_config for new configurations)
-- You must know both component_id and configuration_id
-- For parameter updates: Review the component's root_configuration_schema using get_components.
-- For storage updates: Ensure mappings are valid for the component type
-
-IMPORTANT CONSIDERATIONS:
-- Parameter updates are PARTIAL - only specify fields you want to change
-- parameter_updates supports granular operations: set keys, replace strings, remove keys, or append to lists
-- Parameters must conform to the component's root_configuration_schema
-- Validate schemas before calling: use get_components to retrieve root_configuration_schema
-- For row-based components, this updates the ROOT only (use update_config_row for individual rows)
-
-WORKFLOW:
-1. Retrieve current configuration using get_configs (to understand current state)
-2. Identify specific parameters/storage mappings to modify
-3. Prepare parameter_updates list with targeted operations
-4. Call update_config with only the fields to change
+Updates an existing root component configuration by modifying its parameters, storage mappings, name or description. Updates are PARTIAL — only provide the fields you want to change; parameter_updates apply granular diff operations to the existing parameters.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "ConfigParamListAppend": {
-      "description": "Append a value to a list parameter.",
-      "properties": {
-        "op": {
-          "const": "list_append",
-          "type": "string"
-        },
-        "path": {
-          "description": "JSONPath to the list parameter",
-          "type": "string"
-        },
-        "value": {
-          "description": "Value to append to the list"
-        }
-      },
-      "required": [
-        "op",
-        "path",
-        "value"
-      ],
-      "type": "object"
-    },
-    "ConfigParamRemove": {
-      "description": "Remove a parameter key.",
-      "properties": {
-        "op": {
-          "const": "remove",
-          "type": "string"
-        },
-        "path": {
-          "description": "JSONPath to the parameter key to remove",
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "path"
-      ],
-      "type": "object"
-    },
-    "ConfigParamReplace": {
-      "description": "Replace a substring in a string parameter.",
-      "properties": {
-        "op": {
-          "const": "str_replace",
-          "type": "string"
-        },
-        "path": {
-          "description": "JSONPath to the parameter key to modify",
-          "type": "string"
-        },
-        "search_for": {
-          "description": "Substring to search for (non-empty)",
-          "type": "string"
-        },
-        "replace_with": {
-          "description": "Replacement string (can be empty for deletion)",
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "path",
-        "search_for",
-        "replace_with"
-      ],
-      "type": "object"
-    },
-    "ConfigParamSet": {
-      "description": "Set or create a parameter value at the specified path.\n\nUse this operation to:\n- Update an existing parameter value\n- Create a new parameter key\n- Replace a nested parameter value",
-      "properties": {
-        "op": {
-          "const": "set",
-          "type": "string"
-        },
-        "path": {
-          "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
-          "type": "string"
-        },
-        "value": {
-          "description": "New value to set"
-        }
-      },
-      "required": [
-        "op",
-        "path",
-        "value"
-      ],
-      "type": "object"
-    },
-    "VariableDefinition": {
-      "description": "A single variable definition to attach to a configuration.",
-      "properties": {
-        "name": {
-          "description": "Variable name.",
-          "type": "string"
-        },
-        "type": {
-          "default": "string",
-          "description": "Variable type: \"string\" or \"vault\".",
-          "enum": [
-            "string",
-            "vault"
-          ],
-          "type": "string"
-        },
-        "default_value": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional default value bound at creation time."
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "change_description": {
-      "description": "A clear, human-readable summary of what changed in this update. Be specific: e.g., \"Updated API key\", \"Added customers table to input mapping\".",
-      "type": "string"
+      "type": "string",
+      "description": "A clear, human-readable summary of what changed in this update. Be specific: e.g., \"Updated API key\", \"Added customers table to input mapping\"."
     },
     "component_id": {
-      "description": "The ID of the component the configuration belongs to.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the component the configuration belongs to."
     },
     "configuration_id": {
-      "description": "The ID of the configuration to update.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the configuration to update."
     },
     "name": {
       "default": "",
@@ -914,60 +643,159 @@ WORKFLOW:
       "type": "string"
     },
     "parameter_updates": {
-      "default": null,
       "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove, list_append) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Paths are relative to the `parameters` object, not the configuration root (e.g. use `tables`, not `parameters.tables`). Prefer simple JSONPaths (e.g., \"array_param[1]\", \"object_param.key\") and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path.",
-      "items": {
-        "discriminator": {
-          "mapping": {
-            "list_append": "#/$defs/ConfigParamListAppend",
-            "remove": "#/$defs/ConfigParamRemove",
-            "set": "#/$defs/ConfigParamSet",
-            "str_replace": "#/$defs/ConfigParamReplace"
-          },
-          "propertyName": "op"
-        },
-        "oneOf": [
-          {
-            "$ref": "#/$defs/ConfigParamSet"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamReplace"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamRemove"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamListAppend"
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "set"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")"
+                  },
+                  "value": {
+                    "description": "New value to set"
+                  }
+                },
+                "required": [
+                  "op",
+                  "path",
+                  "value"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "str_replace"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "JSONPath to the parameter key to modify"
+                  },
+                  "search_for": {
+                    "type": "string",
+                    "description": "Substring to search for (non-empty)"
+                  },
+                  "replace_with": {
+                    "type": "string",
+                    "description": "Replacement string (can be empty for deletion)"
+                  }
+                },
+                "required": [
+                  "op",
+                  "path",
+                  "search_for",
+                  "replace_with"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "remove"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "JSONPath to the parameter key to remove"
+                  }
+                },
+                "required": [
+                  "op",
+                  "path"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "list_append"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "JSONPath to the list parameter"
+                  },
+                  "value": {
+                    "description": "Value to append to the list"
+                  }
+                },
+                "required": [
+                  "op",
+                  "path",
+                  "value"
+                ]
+              }
+            ]
           }
-        ]
-      },
-      "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "storage": {
-      "additionalProperties": true,
-      "default": null,
-      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
-      "type": "object"
+      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration.",
+      "anyOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "processors_before": {
-      "default": null,
-      "description": "The list of processors that will run before the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run before the configured component runs.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "processors_after": {
-      "default": null,
-      "description": "The list of processors that will run after the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run after the configured component runs.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "folder": {
+      "description": "Folder name to organize this configuration in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more configurations in the project. If there are 20 or more configurations, you should assign one of the existing folders or create a new one that clearly reflects the configuration purpose.",
       "anyOf": [
         {
           "type": "string"
@@ -975,24 +803,50 @@ WORKFLOW:
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Folder name to organize this configuration in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more configurations in the project. If there are 20 or more configurations, you should assign one of the existing folders or create a new one that clearly reflects the configuration purpose."
+      ]
     },
     "variables": {
+      "description": "Variable definitions for this configuration. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged.",
       "anyOf": [
         {
+          "type": "array",
           "items": {
-            "$ref": "#/$defs/VariableDefinition"
-          },
-          "type": "array"
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Variable name."
+              },
+              "type": {
+                "default": "string",
+                "description": "Variable type: \"string\" or \"vault\".",
+                "type": "string",
+                "enum": [
+                  "string",
+                  "vault"
+                ]
+              },
+              "default_value": {
+                "description": "Optional default value bound at creation time.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
         },
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Variable definitions for this configuration. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged."
+      ]
     }
   },
   "required": [
@@ -1000,7 +854,7 @@ WORKFLOW:
     "component_id",
     "configuration_id"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -1013,157 +867,29 @@ WORKFLOW:
 
 **Description**:
 
-Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.
-
-This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
-All other fields will remain unchanged.
-Configuration rows are individual items within a configuration, often representing separate data sources,
-tables, or endpoints that share the same component type and parent configuration settings.
-
-WHEN TO USE:
-- Modifying row-specific parameters (table sources, filters, credentials, etc.)
-- Updating storage mappings for a specific row (input/output tables or files)
-- Changing row name or description
-- Any combination of the above
-
-WHEN NOT TO USE:
-- `keboola.orchestrator` / `keboola.flow` → use flows tools
-- `keboola.data-apps` → use data applications tools
-- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
-
-PREREQUISITES:
-- The configuration row must already exist (use add_config_row for new rows)
-- You must know component_id, configuration_id, and configuration_row_id
-- For parameter updates: Review the component's row_configuration_schema using get_components
-- For storage updates: Ensure mappings are valid for row-level storage
-
-IMPORTANT CONSIDERATIONS:
-- Parameter updates are PARTIAL - only specify fields you want to change
-- parameter_updates supports granular operations: set individual keys, replace strings, or remove keys
-- Parameters must conform to the component's row_configuration_schema (not root schema)
-- Validate schemas before calling: use get_components to retrieve row_configuration_schema
-- Each row operates independently - changes to one row don't affect others
-- Row-level storage is separate from root-level storage configuration
-
-WORKFLOW:
-1. Retrieve current configuration using get_configs to see existing rows
-2. Identify the specific row to modify by its configuration_row_id
-3. Prepare parameter_updates list with targeted operations for this row
-4. Call update_config_row with only the fields to change
+Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description. Updates are PARTIAL — only provide the fields you want to change; parameter_updates apply granular diff operations to the existing row parameters.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "ConfigParamListAppend": {
-      "description": "Append a value to a list parameter.",
-      "properties": {
-        "op": {
-          "const": "list_append",
-          "type": "string"
-        },
-        "path": {
-          "description": "JSONPath to the list parameter",
-          "type": "string"
-        },
-        "value": {
-          "description": "Value to append to the list"
-        }
-      },
-      "required": [
-        "op",
-        "path",
-        "value"
-      ],
-      "type": "object"
-    },
-    "ConfigParamRemove": {
-      "description": "Remove a parameter key.",
-      "properties": {
-        "op": {
-          "const": "remove",
-          "type": "string"
-        },
-        "path": {
-          "description": "JSONPath to the parameter key to remove",
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "path"
-      ],
-      "type": "object"
-    },
-    "ConfigParamReplace": {
-      "description": "Replace a substring in a string parameter.",
-      "properties": {
-        "op": {
-          "const": "str_replace",
-          "type": "string"
-        },
-        "path": {
-          "description": "JSONPath to the parameter key to modify",
-          "type": "string"
-        },
-        "search_for": {
-          "description": "Substring to search for (non-empty)",
-          "type": "string"
-        },
-        "replace_with": {
-          "description": "Replacement string (can be empty for deletion)",
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "path",
-        "search_for",
-        "replace_with"
-      ],
-      "type": "object"
-    },
-    "ConfigParamSet": {
-      "description": "Set or create a parameter value at the specified path.\n\nUse this operation to:\n- Update an existing parameter value\n- Create a new parameter key\n- Replace a nested parameter value",
-      "properties": {
-        "op": {
-          "const": "set",
-          "type": "string"
-        },
-        "path": {
-          "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")",
-          "type": "string"
-        },
-        "value": {
-          "description": "New value to set"
-        }
-      },
-      "required": [
-        "op",
-        "path",
-        "value"
-      ],
-      "type": "object"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "change_description": {
-      "description": "A clear, human-readable summary of what changed in this row update. Be specific.",
-      "type": "string"
+      "type": "string",
+      "description": "A clear, human-readable summary of what changed in this row update. Be specific."
     },
     "component_id": {
-      "description": "The ID of the component the configuration belongs to.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the component the configuration belongs to."
     },
     "configuration_id": {
-      "description": "The ID of the parent configuration containing the row to update.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the parent configuration containing the row to update."
     },
     "configuration_row_id": {
-      "description": "The ID of the specific configuration row to update.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the specific configuration row to update."
     },
     "name": {
       "default": "",
@@ -1176,60 +902,159 @@ WORKFLOW:
       "type": "string"
     },
     "parameter_updates": {
-      "default": null,
       "description": "List of granular parameter update operations to apply to this row. Each operation (set, str_replace, remove, list_append) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Paths are relative to the row's `parameters` object, not the row root (e.g. use `tables`, not `parameters.tables`). Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
-      "items": {
-        "discriminator": {
-          "mapping": {
-            "list_append": "#/$defs/ConfigParamListAppend",
-            "remove": "#/$defs/ConfigParamRemove",
-            "set": "#/$defs/ConfigParamSet",
-            "str_replace": "#/$defs/ConfigParamReplace"
-          },
-          "propertyName": "op"
-        },
-        "oneOf": [
-          {
-            "$ref": "#/$defs/ConfigParamSet"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamReplace"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamRemove"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamListAppend"
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "set"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "JSONPath to the parameter key to set (e.g., \"api_key\", \"database.host\")"
+                  },
+                  "value": {
+                    "description": "New value to set"
+                  }
+                },
+                "required": [
+                  "op",
+                  "path",
+                  "value"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "str_replace"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "JSONPath to the parameter key to modify"
+                  },
+                  "search_for": {
+                    "type": "string",
+                    "description": "Substring to search for (non-empty)"
+                  },
+                  "replace_with": {
+                    "type": "string",
+                    "description": "Replacement string (can be empty for deletion)"
+                  }
+                },
+                "required": [
+                  "op",
+                  "path",
+                  "search_for",
+                  "replace_with"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "remove"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "JSONPath to the parameter key to remove"
+                  }
+                },
+                "required": [
+                  "op",
+                  "path"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "list_append"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "JSONPath to the list parameter"
+                  },
+                  "value": {
+                    "description": "Value to append to the list"
+                  }
+                },
+                "required": [
+                  "op",
+                  "path",
+                  "value"
+                ]
+              }
+            ]
           }
-        ]
-      },
-      "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "storage": {
-      "additionalProperties": true,
-      "default": null,
-      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_configs first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration",
-      "type": "object"
+      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row.",
+      "anyOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "processors_before": {
-      "default": null,
-      "description": "The list of processors that will run before the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run before the configured component runs.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "processors_after": {
-      "default": null,
-      "description": "The list of processors that will run after the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run after the configured component runs.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "is_disabled": {
+      "description": "Enable or disable the configuration row. Set to True to disable execution (config row won't run), False to enable execution (config row will run). Only provide if changing the status, leave as null to preserve current state.",
       "anyOf": [
         {
           "type": "boolean"
@@ -1237,9 +1062,7 @@ WORKFLOW:
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Enable or disable the configuration row. Set to True to disable execution (config row won't run), False to enable execution (config row will run). Only provide if changing the status, leave as null to preserve current state."
+      ]
     }
   },
   "required": [
@@ -1248,7 +1071,7 @@ WORKFLOW:
     "configuration_id",
     "configuration_row_id"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -1261,544 +1084,21 @@ WORKFLOW:
 
 **Description**:
 
-Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
-name or description.
-
-This tool allows PARTIAL parameter updates for transformation SQL blocks and code - you only need to provide
-the operations you want to perform. All other fields will remain unchanged.
-Use this for modifying SQL transformations created with create_sql_transformation.
-
-WHEN TO USE:
-- SQL transformations only (Snowflake/BigQuery); use update_config for Python/R transformations
-- Modifying SQL queries in transformation (add/edit/remove SQL statements)
-- Updating transformation block or code block names
-- Changing input/output table mappings for the transformation
-- Updating the transformation name or description
-- Any combination of the above
-
-PREREQUISITES:
-- Transformation must already exist (use create_sql_transformation for new transformations)
-- You must know the configuration_id of the transformation
-- SQL dialect is determined automatically from the workspace
-- CRITICAL: Use get_configs first to see the current transformation structure and get block_id/code_id values
-
-TRANSFORMATION STRUCTURE:
-A transformation has this hierarchy:
-  transformation
-  └─ blocks[] - List of transformation blocks (each has a unique block_id)
-     └─ block.name - Descriptive name for the block
-     └─ block.codes[] - List of code blocks within the block (each has a unique code_id)
-        └─ code.name - Descriptive name for the code block
-        └─ code.script - SQL script (string with SQL statements)
-
-Example structure from get_configs:
-{
-  "blocks": [
-    {
-      "id": "b0",  ← block_id needed for operations (format: b{index})
-      "name": "Data Preparation",
-      "codes": [
-        {
-          "id": "b0.c0",  ← code_id needed for operations (format: b{block_index}.c{code_index})
-          "name": "Load customers",
-          "script": "SELECT * FROM customers WHERE status = 'active';"
-        }
-      ]
-    }
-  ]
-}
-
-PARAMETER UPDATE OPERATIONS:
-All operations use block_id and code_id to identify elements (get these from get_configs first).
-
-ID Format:
-- block_id: "b0", "b1", "b2", etc. (format: b{index})
-- code_id: "b0.c0", "b0.c1", "b1.c0", etc. (format: b{block_index}.c{code_index})
-
-1. BLOCK OPERATIONS:
-   - add_block: Create a new block in the transformation
-     {"op": "add_block", "block": {"name": "New Block", "codes": []}, "position": "end"}
-
-   - remove_block: Delete an entire block
-     {"op": "remove_block", "block_id": "b0"}
-
-   - rename_block: Change a block's name
-     {"op": "rename_block", "block_id": "b2", "block_name": "Updated Name"}
-
-2. CODE BLOCK OPERATIONS:
-   - add_code: Create a new code block within an existing block
-     {"op": "add_code", "block_id": "b1", "code": {"name": "New Code", "script": "SELECT 1;"}, "position": "end"}
-
-   - remove_code: Delete a code block
-     {"op": "remove_code", "block_id": "b0", "code_id": "b0.c0"}
-
-   - rename_code: Change a code block's name
-     {"op": "rename_code", "block_id": "b1", "code_id": "b1.c2", "code_name": "Updated Name"}
-
-3. SQL SCRIPT OPERATIONS:
-   - set_code: Replace the entire SQL script (overwrites existing)
-     {"op": "set_code", "block_id": "b0", "code_id": "b0.c0", "script": "SELECT * FROM new_table;"}
-
-   - add_script: Append or prepend SQL to existing script (preserves existing)
-     {"op": "add_script", "block_id": "b2", "code_id": "b2.c1", "script": "WHERE date > '2024-01-01'",
-      "position": "end"}
-
-   - str_replace: Find and replace text in SQL scripts
-     {"op": "str_replace", "search_for": "old_table", "replace_with": "new_table", "block_id": "b0",'
-      "code_id": "b0.c0"}
-     - Omit code_id to replace in all codes of a block
-     - Omit both block_id and code_id to replace everywhere
-
-IMPORTANT CONSIDERATIONS:
-- Parameter updates are PARTIAL - only the operations you specify are applied
-- All other parts of the transformation remain unchanged
-- Each SQL script must be executable and follow the current SQL dialect:
-  - Use delimited identifiers for the current SQL dialect.
-  - Never mix delimiter styles within a single query.
-- Storage configuration is COMPLETE REPLACEMENT - include ALL mappings you want to keep
-- Leave updated_description empty to preserve the original description
-- SCHEMA CHANGES: Destructive schema changes (removing columns, changing types, renaming columns) require
-  manually deleting the output table before running the updated transformation to avoid schema mismatch errors.
-  Non-destructive changes (adding columns) typically do not require table deletion.
-
-WORKFLOW:
-1. Call get_configs to retrieve current transformation structure and identify block_id/code_id values
-2. Identify what needs to change (SQL code, storage, description)
-3. For SQL changes: Prepare parameter_updates list with targeted operations
-4. For storage changes: Build complete storage configuration (include all mappings)
-5. Call update_sql_transformation with change_description and only the fields to change
-
-EXAMPLE WORKFLOWS:
-
-Example 1 - Update SQL script in existing code block:
-Step 1: Get current config
-  result = get_configs(component_id="keboola.snowflake-transformation", configuration_id="12345")
-  # Note the block_id (e.g., "b0") and code_id (e.g., "b0.c1") from result
-
-Step 2: Update the SQL
-  update_sql_transformation(
-    configuration_id="12345",
-    change_description="Updated WHERE clause to filter active customers only",
-    parameter_updates=[
-      {
-        "op": "set_code",
-        "block_id": "b0",      # from step 1
-        "code_id": "b0.c0",    # from step 1
-        "script": "SELECT * FROM customers WHERE status = 'active' AND region = 'US';"
-      }
-    ]
-  )
-
-Example 2 - Append a new code block to the second block of an existing transformation:
-  update_sql_transformation(
-    configuration_id="12345",
-    change_description="Added aggregation step",
-    parameter_updates=[
-      {
-        "op": "add_code",
-        "block_id": "b1",  # second block
-        "code": {
-          "name": "Aggregate Sales",
-          "script": "SELECT customer_id, SUM(amount) as total FROM orders GROUP BY customer_id;"
-        },
-        "position": "end"
-      }
-    ]
-  )
-
-Example 3 - Replace table name across all SQL scripts:
-  update_sql_transformation(
-    configuration_id="12345",
-    change_description="Renamed source table from old_customers to customers",
-    parameter_updates=[
-      {
-        "op": "str_replace",
-        "search_for": "old_customers",
-        "replace_with": "customers"
-        # No block_id or code_id = applies to all scripts
-      }
-    ]
-  )
-
-Example 4 - Update storage mappings:
-  update_sql_transformation(
-    configuration_id="12345",
-    change_description="Added new input table",
-    storage={
-      "input": {
-        "tables": [
-          {
-            "source": "in.c-main.customers",
-            "destination": "customers"
-          },
-          {
-            "source": "in.c-main.orders",
-            "destination": "orders"
-          }
-        ]
-      },
-      "output": {
-        "tables": [
-          {
-            "source": "result",
-            "destination": "out.c-main.customer_summary"
-          }
-        ]
-      }
-    }
-  )
+Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings, name or description. parameter_updates apply PARTIAL, granular diff operations to the transformation blocks/codes; storage is a complete replacement.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "Block": {
-      "description": "The transformation block.",
-      "properties": {
-        "name": {
-          "description": "A descriptive name for the code block",
-          "type": "string"
-        },
-        "codes": {
-          "description": "SQL code sub-blocks",
-          "items": {
-            "$ref": "#/$defs/Code"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "name",
-        "codes"
-      ],
-      "type": "object"
-    },
-    "Code": {
-      "description": "The code block for the transformation block.",
-      "properties": {
-        "name": {
-          "description": "A descriptive name for the code block",
-          "type": "string"
-        },
-        "script": {
-          "description": "The SQL script of the code block",
-          "type": "string"
-        }
-      },
-      "required": [
-        "name",
-        "script"
-      ],
-      "type": "object"
-    },
-    "TfAddBlock": {
-      "description": "Add a new block to the transformation.",
-      "properties": {
-        "op": {
-          "const": "add_block",
-          "type": "string"
-        },
-        "block": {
-          "$ref": "#/$defs/Block",
-          "description": "The block to add"
-        },
-        "position": {
-          "default": "end",
-          "description": "The position of the block to add",
-          "enum": [
-            "start",
-            "end"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "block"
-      ],
-      "type": "object"
-    },
-    "TfAddCode": {
-      "description": "Add a new code to an existing block in the transformation.",
-      "properties": {
-        "op": {
-          "const": "add_code",
-          "type": "string"
-        },
-        "block_id": {
-          "description": "The ID of the block to add the code to",
-          "type": "string"
-        },
-        "code": {
-          "$ref": "#/$defs/Code",
-          "description": "The code to add"
-        },
-        "position": {
-          "default": "end",
-          "description": "The position of the code to add",
-          "enum": [
-            "start",
-            "end"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "block_id",
-        "code"
-      ],
-      "type": "object"
-    },
-    "TfAddScript": {
-      "description": "Append or prepend SQL script text to an existing code in an existing block in the transformation.",
-      "properties": {
-        "op": {
-          "const": "add_script",
-          "type": "string"
-        },
-        "block_id": {
-          "description": "The ID of the block to add the script to",
-          "type": "string"
-        },
-        "code_id": {
-          "description": "The ID of the code to add the script to",
-          "type": "string"
-        },
-        "script": {
-          "description": "The SQL script to add",
-          "type": "string"
-        },
-        "position": {
-          "default": "end",
-          "description": "The position of the script to add",
-          "enum": [
-            "start",
-            "end"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "block_id",
-        "code_id",
-        "script"
-      ],
-      "type": "object"
-    },
-    "TfRemoveBlock": {
-      "description": "Remove an existing block from the transformation.",
-      "properties": {
-        "op": {
-          "const": "remove_block",
-          "type": "string"
-        },
-        "block_id": {
-          "description": "The ID of the block to remove",
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "block_id"
-      ],
-      "type": "object"
-    },
-    "TfRemoveCode": {
-      "description": "Remove an existing code from an existing block in the transformation.",
-      "properties": {
-        "op": {
-          "const": "remove_code",
-          "type": "string"
-        },
-        "block_id": {
-          "description": "The ID of the block to remove the code from",
-          "type": "string"
-        },
-        "code_id": {
-          "description": "The ID of the code to remove",
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "block_id",
-        "code_id"
-      ],
-      "type": "object"
-    },
-    "TfRenameBlock": {
-      "description": "Rename an existing block in the transformation.",
-      "properties": {
-        "op": {
-          "const": "rename_block",
-          "type": "string"
-        },
-        "block_id": {
-          "description": "The ID of the block to rename",
-          "type": "string"
-        },
-        "block_name": {
-          "description": "The new name of the block",
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "block_id",
-        "block_name"
-      ],
-      "type": "object"
-    },
-    "TfRenameCode": {
-      "description": "Rename an existing code in an existing block in the transformation.",
-      "properties": {
-        "op": {
-          "const": "rename_code",
-          "type": "string"
-        },
-        "block_id": {
-          "description": "The ID of the block to rename the code in",
-          "type": "string"
-        },
-        "code_id": {
-          "description": "The ID of the code to rename",
-          "type": "string"
-        },
-        "code_name": {
-          "description": "The new name of the code",
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "block_id",
-        "code_id",
-        "code_name"
-      ],
-      "type": "object"
-    },
-    "TfSetCode": {
-      "description": "Set the SQL script of an existing code in an existing block in the transformation.",
-      "properties": {
-        "op": {
-          "const": "set_code",
-          "type": "string"
-        },
-        "block_id": {
-          "description": "The ID of the block to set the code in",
-          "type": "string"
-        },
-        "code_id": {
-          "description": "The ID of the code to set",
-          "type": "string"
-        },
-        "script": {
-          "description": "The SQL script of the code to set",
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "block_id",
-        "code_id",
-        "script"
-      ],
-      "type": "object"
-    },
-    "TfStrReplace": {
-      "description": "Replace a substring in SQL statements in the transformation.",
-      "properties": {
-        "op": {
-          "const": "str_replace",
-          "type": "string"
-        },
-        "block_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "The ID of the block to replace substrings in. If not provided, all blocks will be updated."
-        },
-        "code_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "The ID of the code to replace substrings in. If not provided, all codes in the block will be updated."
-        },
-        "search_for": {
-          "description": "Substring to search for (non-empty)",
-          "type": "string"
-        },
-        "replace_with": {
-          "description": "Replacement string (can be empty for deletion)",
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "search_for",
-        "replace_with"
-      ],
-      "type": "object"
-    },
-    "VariableDefinition": {
-      "description": "A single variable definition to attach to a configuration.",
-      "properties": {
-        "name": {
-          "description": "Variable name.",
-          "type": "string"
-        },
-        "type": {
-          "default": "string",
-          "description": "Variable type: \"string\" or \"vault\".",
-          "enum": [
-            "string",
-            "vault"
-          ],
-          "type": "string"
-        },
-        "default_value": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional default value bound at creation time."
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "change_description": {
-      "description": "A clear, human-readable summary of what changed in this transformation update. Be specific: e.g., \"Added JOIN with customers table\", \"Updated WHERE clause to filter active records\".",
-      "type": "string"
+      "type": "string",
+      "description": "A clear, human-readable summary of what changed in this transformation update. Be specific: e.g., \"Added JOIN with customers table\", \"Updated WHERE clause to filter active records\"."
     },
     "configuration_id": {
-      "description": "The ID of the transformation configuration to update.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the transformation configuration to update."
     },
     "name": {
       "default": "",
@@ -1811,62 +1111,319 @@ Example 4 - Update storage mappings:
       "type": "string"
     },
     "parameter_updates": {
-      "default": null,
-      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. \n\nIMPORTANT: Use get_configs first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned.\n\nAvailable operations:\n1. add_block: Add a new block to the transformation\n   - Fields: op=\"add_block\", block={name, codes}, position=\"start\"|\"end\"\n2. remove_block: Remove an existing block\n   - Fields: op=\"remove_block\", block_id (e.g., \"b0\")\n3. rename_block: Rename an existing block\n   - Fields: op=\"rename_block\", block_id (e.g., \"b0\"), block_name\n4. add_code: Add a new code block to an existing block\n   - Fields: op=\"add_code\", block_id (e.g., \"b0\"), code={name, script}, position=\"start\"|\"end\"\n5. remove_code: Remove an existing code block\n   - Fields: op=\"remove_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\")\n6. rename_code: Rename an existing code block\n   - Fields: op=\"rename_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), code_name\n7. set_code: Replace the entire SQL script of a code block\n   - Fields: op=\"set_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script\n8. add_script: Append or prepend SQL to a code block\n   - Fields: op=\"add_script\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script,     position=\"start\"|\"end\"\n9. str_replace: Replace substring in SQL scripts\n   - Fields: op=\"str_replace\", search_for, replace_with, block_id (optional), code_id (optional)\n   - If block_id omitted: replaces in all blocks\n   - If code_id omitted: replaces in all codes of the specified block\n",
-      "items": {
-        "discriminator": {
-          "mapping": {
-            "add_block": "#/$defs/TfAddBlock",
-            "add_code": "#/$defs/TfAddCode",
-            "add_script": "#/$defs/TfAddScript",
-            "remove_block": "#/$defs/TfRemoveBlock",
-            "remove_code": "#/$defs/TfRemoveCode",
-            "rename_block": "#/$defs/TfRenameBlock",
-            "rename_code": "#/$defs/TfRenameCode",
-            "set_code": "#/$defs/TfSetCode",
-            "str_replace": "#/$defs/TfStrReplace"
-          },
-          "propertyName": "op"
-        },
-        "oneOf": [
-          {
-            "$ref": "#/$defs/TfAddBlock"
-          },
-          {
-            "$ref": "#/$defs/TfRemoveBlock"
-          },
-          {
-            "$ref": "#/$defs/TfRenameBlock"
-          },
-          {
-            "$ref": "#/$defs/TfAddCode"
-          },
-          {
-            "$ref": "#/$defs/TfRemoveCode"
-          },
-          {
-            "$ref": "#/$defs/TfRenameCode"
-          },
-          {
-            "$ref": "#/$defs/TfSetCode"
-          },
-          {
-            "$ref": "#/$defs/TfAddScript"
-          },
-          {
-            "$ref": "#/$defs/TfStrReplace"
+      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. Use get_configs first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned. Available operations: add_block, remove_block, rename_block, add_code, remove_code, rename_code, set_code, add_script, str_replace.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "add_block"
+                  },
+                  "block": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "A descriptive name for the code block"
+                      },
+                      "codes": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "description": "A descriptive name for the code block"
+                            },
+                            "script": {
+                              "type": "string",
+                              "description": "The SQL script of the code block"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "script"
+                          ]
+                        },
+                        "description": "SQL code sub-blocks"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "codes"
+                    ],
+                    "description": "The block to add"
+                  },
+                  "position": {
+                    "default": "end",
+                    "type": "string",
+                    "enum": [
+                      "start",
+                      "end"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "block"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "remove_block"
+                  },
+                  "block_id": {
+                    "type": "string",
+                    "description": "The ID of the block to remove"
+                  }
+                },
+                "required": [
+                  "op",
+                  "block_id"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "rename_block"
+                  },
+                  "block_id": {
+                    "type": "string"
+                  },
+                  "block_name": {
+                    "type": "string",
+                    "description": "The new name of the block"
+                  }
+                },
+                "required": [
+                  "op",
+                  "block_id",
+                  "block_name"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "add_code"
+                  },
+                  "block_id": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "A descriptive name for the code block"
+                      },
+                      "script": {
+                        "type": "string",
+                        "description": "The SQL script of the code block"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "script"
+                    ],
+                    "description": "The code to add"
+                  },
+                  "position": {
+                    "default": "end",
+                    "type": "string",
+                    "enum": [
+                      "start",
+                      "end"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "block_id",
+                  "code"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "remove_code"
+                  },
+                  "block_id": {
+                    "type": "string"
+                  },
+                  "code_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "block_id",
+                  "code_id"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "rename_code"
+                  },
+                  "block_id": {
+                    "type": "string"
+                  },
+                  "code_id": {
+                    "type": "string"
+                  },
+                  "code_name": {
+                    "type": "string",
+                    "description": "The new name of the code"
+                  }
+                },
+                "required": [
+                  "op",
+                  "block_id",
+                  "code_id",
+                  "code_name"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "set_code"
+                  },
+                  "block_id": {
+                    "type": "string"
+                  },
+                  "code_id": {
+                    "type": "string"
+                  },
+                  "script": {
+                    "type": "string",
+                    "description": "The SQL script of the code to set"
+                  }
+                },
+                "required": [
+                  "op",
+                  "block_id",
+                  "code_id",
+                  "script"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "add_script"
+                  },
+                  "block_id": {
+                    "type": "string"
+                  },
+                  "code_id": {
+                    "type": "string"
+                  },
+                  "script": {
+                    "type": "string",
+                    "description": "The SQL script to add"
+                  },
+                  "position": {
+                    "default": "end",
+                    "type": "string",
+                    "enum": [
+                      "start",
+                      "end"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "block_id",
+                  "code_id",
+                  "script"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "str_replace"
+                  },
+                  "block_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "code_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "search_for": {
+                    "type": "string",
+                    "description": "Substring to search for (non-empty)"
+                  },
+                  "replace_with": {
+                    "type": "string",
+                    "description": "Replacement string (can be empty for deletion)"
+                  }
+                },
+                "required": [
+                  "op",
+                  "search_for",
+                  "replace_with"
+                ]
+              }
+            ]
           }
-        ]
-      },
-      "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "storage": {
-      "additionalProperties": true,
-      "default": null,
-      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
-      "type": "object"
+      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration.",
+      "anyOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "folder": {
+      "description": "Folder name to organize this transformation in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose.",
       "anyOf": [
         {
           "type": "string"
@@ -1874,31 +1431,57 @@ Example 4 - Update storage mappings:
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Folder name to organize this transformation in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose."
+      ]
     },
     "variables": {
+      "description": "Variable definitions for this transformation. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged.",
       "anyOf": [
         {
+          "type": "array",
           "items": {
-            "$ref": "#/$defs/VariableDefinition"
-          },
-          "type": "array"
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Variable name."
+              },
+              "type": {
+                "default": "string",
+                "description": "Variable type: \"string\" or \"vault\".",
+                "type": "string",
+                "enum": [
+                  "string",
+                  "vault"
+                ]
+              },
+              "default_value": {
+                "description": "Optional default value bound at creation time.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
         },
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Variable definitions for this transformation. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged."
+      ]
     }
   },
   "required": [
     "change_description",
     "configuration_id"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -1913,60 +1496,33 @@ Example 4 - Update storage mappings:
 
 **Description**:
 
-Mints a one-time HTTPS token on a python-js **prod** data app so the caller can clone, pull,
-and push to the app's managed git repo over HTTPS.
+Mints a one-time HTTPS token on a python-js **prod** data app so the caller can clone, pull, and push to the app's managed git repo over HTTPS.
 
-**Always call against the prod app's configuration_id** — drafts have no managed repo of their
-own, so calling this on a draft fails. The prod app is the canonical repo owner; drafts
-iterate against branches of that same repo.
+**Always call against the prod app's configuration_id** — drafts have no managed repo of their own, so calling this on a draft fails. The prod app is the canonical repo owner; drafts iterate against branches of that same repo.
 
-**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
-branch-delete — is yours. This tool only mints credentials.
+**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge, branch-delete — is yours. This tool only mints credentials.
 
-Returns a ready-to-use `git_clone_url` of the form `https://kai:<secret>@<host>/<path>.git`
-plus the raw `secret`. The token is returned **only** at creation — the platform cannot return
-it again on any subsequent read. Stash the URL (or the secret) somewhere the LLM can reuse for
-the rest of the session.
-
-The data-science API accepts multiple credentials per app, so calling this again mints an
-additional token without invalidating any tokens already held by other clients.
-
-## When to call
-
-1. **Right after `modify_python_js_data_app` create of a prod app** — the new prod has a
-   managed repo but no credentials yet. Call this tool with the new app's `configuration_id`
-   to enable git access. (Note: when creating a **draft**, the prod-side token is minted and
-   embedded into the returned `git_clone_url` automatically — no separate call needed.)
-
-2. **Recovery when the cached token is gone / continuing an unfinished draft** — e.g., a fresh
-   sandbox continuing yesterday's work, with the previous sandbox's filesystem wiped. The
-   cached `git_clone_url` is lost; the configuration ID for the prod app is all you have.
-   Call this tool with the **prod app's** `configuration_id` to mint a fresh token (drafts
-   have no managed repo, so always mint against prod). Existing credentials remain valid, so
-   other clients are not disrupted.
+Returns a ready-to-use `git_clone_url` of the form `https://kai:<secret>@<host>/<path>.git` plus the raw `secret`. The token is returned **only** at creation — the platform cannot return it again on any subsequent read. Stash the URL (or the secret) somewhere the LLM can reuse for the rest of the session.
 
 ## Constraints
-- Only python-js prod data apps have a managed git repo. Streamlit apps reject the call with
-  a clear error.
-- Permissions are always `readWrite` — the LLM virtually always needs push access. The
-  data-science API supports read-only credentials, but the tool does not expose that knob;
-  revisit once a real use case appears.
+- Only python-js prod data apps have a managed git repo. Streamlit apps reject the call with a clear error.
+- Permissions are always `readWrite`.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "configuration_id": {
-      "description": "Storage configuration ID of the python-js data app.",
-      "type": "string"
+      "type": "string",
+      "description": "Storage configuration ID of the python-js data app."
     }
   },
   "required": [
     "configuration_id"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -1979,16 +1535,11 @@ additional token without invalidating any tokens already held by other clients.
 
 **Description**:
 
-Deletes a python-js DRAFT data app — both the data-app instance (DSAPI) and its Storage
-configuration.
+Deletes a python-js DRAFT data app — both the data-app instance (DSAPI) and its Storage configuration.
 
-**MCP never runs git on your behalf.** Deleting the feature branch on the remote is your job;
-this tool only tears down the draft config and its data-app instance.
+**MCP never runs git on your behalf.** Deleting the feature branch on the remote is your job; this tool only tears down the draft config and its data-app instance.
 
-WHEN TO CALL: at the end of a promote-to-prod sequence, after you have merged the draft's
-branch into `main`, pushed, deleted the feature branch from the remote, and redeployed the
-prod app. The Keboola UI lists drafts under their parent prod app; once you call this tool,
-the draft disappears from that list.
+WHEN TO CALL: at the end of a promote-to-prod sequence, after you have merged the draft's branch into `main`, pushed, deleted the feature branch from the remote, and redeployed the prod app. The Keboola UI lists drafts under their parent prod app; once you call this tool, the draft disappears from that list.
 
 WHAT THIS TOOL REFUSES:
   - prod apps (no `isDraft` flag) — protects against accidental prod deletion;
@@ -1996,27 +1547,25 @@ WHAT THIS TOOL REFUSES:
 
 WHAT THIS TOOL DOES NOT DO:
   - Run git. Deleting the feature branch on the remote is your job.
-  - Revoke the prod-side git credential minted when the draft was created. Credential
-    rotation is the user's job via the Keboola UI.
+  - Revoke the prod-side git credential minted when the draft was created.
 
-After a successful call, pivot back to the parent prod app (its configuration_id is returned
-in the response) or to `get_data_apps` for further work.
+After a successful call, pivot back to the parent prod app (its configuration_id is returned in the response) or to `get_data_apps` for further work.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "configuration_id": {
-      "description": "Storage configuration ID of the python-js draft data app to delete.",
-      "type": "string"
+      "type": "string",
+      "description": "Storage configuration ID of the python-js draft data app to delete."
     }
   },
   "required": [
     "configuration_id"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -2029,74 +1578,62 @@ in the response) or to `get_data_apps` for further work.
 
 **Description**:
 
-Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
-action and the configuration ID.
+Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the action and the configuration ID.
 
-**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
-branch-delete — is yours. This tool only triggers deploys against existing git state.
+**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge, branch-delete — is yours. This tool only triggers deploys against existing git state.
 
 ## Mode (python-js apps)
-- `mode='dev'` deploys the target as a **dev version of the data app** — the runtime uses a
-  development `setup.sh` (hot reload) and the data-app proxy enables an auto-auth path so an
-  iframe preview can render without a manual login. Only meaningful on **draft** configs
-  (python-js apps with `isDraft=true`).
-- For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
-  the prod app picks up the current `main`.
-- The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
-  there is no deploy-time override.
-- python-js apps do NOT fetch a Storage `configVersion` for deployment (their source lives in
-  git, not in the Storage configuration); this is handled automatically.
+- `mode='dev'` deploys the target as a **dev version of the data app** — the runtime uses a development `setup.sh` (hot reload) and the data-app proxy enables an auto-auth path so an iframe preview can render without a manual login. Only meaningful on **draft** configs (python-js apps with `isDraft=true`).
+- For prod redeploys (including after merging a draft's branch into `main`), use no `mode` — the prod app picks up the current `main`.
+- The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time; there is no deploy-time override.
+- python-js apps do NOT fetch a Storage `configVersion` for deployment (their source lives in git, not in the Storage configuration); this is handled automatically.
 
 ## Streamlit apps
-Streamlit apps have no managed git repo, so `mode` has no effect on the deployed app.
-`mode=None` is the expected call shape.
+Streamlit apps have no managed git repo, so `mode` has no effect on the deployed app. `mode=None` is the expected call shape.
 
 ## General considerations
-- Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the
-  restart.
-- After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
-  errors.
+- Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the restart.
+- After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app errors.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "action": {
-      "description": "The action to perform.",
+      "type": "string",
       "enum": [
         "deploy",
         "stop"
       ],
-      "type": "string"
+      "description": "The action to perform."
     },
     "configuration_id": {
-      "description": "The ID of the data app configuration.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the data app configuration."
     },
     "mode": {
+      "description": "Deployment mode. Set to \"dev\" to deploy a python-js draft as a **dev version of the data app** — the runtime uses a development `setup.sh` (hot reload), and the data-app proxy enables an auto-auth path so an iframe preview can render without a manual login. Only meaningful on **draft** configs (python-js apps with `isDraft=true`). Leave None (default) for prod redeploys and for Streamlit apps.",
       "anyOf": [
         {
+          "type": "string",
           "enum": [
             "dev",
             "production"
-          ],
-          "type": "string"
+          ]
         },
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Deployment mode. Set to \"dev\" to deploy a python-js draft as a **dev version of the data app** \u2014 the runtime uses a development `setup.sh` (hot reload), and the data-app proxy enables an auto-auth path so an iframe preview can render without a manual login. Only meaningful on **draft** configs (python-js apps with `isDraft=true`). Leave None (default) for prod redeploys and for Streamlit apps."
+      ]
     }
   },
   "required": [
     "action",
     "configuration_id"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -2109,60 +1646,50 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
 
 **Description**:
 
-Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
-providing their configuration IDs.
+Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by providing their configuration IDs.
 
 WHEN NOT TO USE:
-- Do NOT list all data apps just to find one by name. Use `search` with
-  item_types=["data-app"] instead.
+- Do NOT list all data apps just to find one by name. Use `search` with item_types=["data-app"] instead.
 - Only list all data apps when you need a complete inventory.
 
 Considerations:
 - If configuration_ids are provided, the tool will return details of the data apps by their configuration IDs.
 - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
-- Data App detail contains configuration, metadata, source code, links, and deployment info along with the latest
-data app logs to investigate in-app errors. The logs may be updated after opening the data app URL.
-- `deployment_info.last_run` carries the outcome of the most recent deployment attempt. For an app
-  that fails to start, check its `failure_reason`/`failure_message` FIRST — they cover setup-phase
-  failures (e.g. invalid secrets, git clone errors, failing setup scripts) that happen before the
-  container starts and therefore never appear in the regular logs.
-- `repo_url` (managed git repo URL for python-js apps) is ONLY populated on the detail path
-  (when `configuration_ids` is provided). The inventory list always returns `repo_url=None`,
-  even for python-js apps with a managed repo — to retrieve the URL, call this tool again
-  with the target `configuration_ids`.
-- When called with `configuration_ids=[<prod-cfg>]` for a python-js **prod** app, the response
-  includes a `drafts: [...]` array of every draft (configs with `isDraft=true` and
-  `parentConfigurationId == <prod-cfg>`) currently in the project. Drafts in trash are not
-  included. Use this to discover existing drafts when continuing a previously abandoned
-  iteration (Scenario C in `modify_python_js_data_app`). The array is empty for drafts
-  themselves and for Streamlit apps.
+- Data App detail contains configuration, metadata, source code, links, and deployment info along with the latest data app logs to investigate in-app errors. The logs may be updated after opening the data app URL.
+- `deployment_info.last_run` carries the outcome of the most recent deployment attempt. For an app that fails to start, check its `failure_reason`/`failure_message` FIRST — they cover setup-phase failures (e.g. invalid secrets, git clone errors, failing setup scripts) that happen before the container starts and therefore never appear in the regular logs.
+- `repo_url` (managed git repo URL for python-js apps) is ONLY populated on the detail path (when `configuration_ids` is provided). The inventory list always returns `repo_url=None`, even for python-js apps with a managed repo — to retrieve the URL, call this tool again with the target `configuration_ids`.
+- When called with `configuration_ids=[<prod-cfg>]` for a python-js **prod** app, the response includes a `drafts: [...]` array of every draft (configs with `isDraft=true` and `parentConfigurationId == <prod-cfg>`) currently in the project. Drafts in trash are not included. The array is empty for drafts themselves and for Streamlit apps.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "configuration_ids": {
       "default": [],
       "description": "The IDs of the data app configurations.",
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     },
     "limit": {
       "default": 100,
       "description": "The limit of the data apps to fetch.",
-      "type": "integer"
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
     },
     "offset": {
       "default": 0,
       "description": "The offset of the data apps to fetch.",
-      "type": "integer"
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
     }
   },
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -2177,110 +1704,37 @@ data app logs to investigate in-app errors. The logs may be updated after openin
 
 Creates or updates a python-js data app.
 
-Two-app project model. Every python-js project has a persistent **prod app** that owns the
-only managed git repository for the project, and zero or more **drafts** parented to that
-prod app. A draft is a Storage configuration with `parameters.dataApp.isDraft=true` and
-`parameters.dataApp.parentConfigurationId=<prod cfg id>`; it's an *external-git* app that
-clones the parent prod's repo at a pinned branch on every deploy. Drafts are surfaced in the
-Keboola UI under their parent prod app. Use `deploy_data_app(mode='dev')` to deploy a draft
-as a dev version of the data app (hot reload + auto-auth for iframe preview); use
-`delete_python_js_data_app_draft` to tear a draft down after its branch has been promoted.
+Two-app project model. Every python-js project has a persistent **prod app** that owns the only managed git repository for the project, and zero or more **drafts** parented to that prod app. A draft is a Storage configuration with `parameters.dataApp.isDraft=true` and `parameters.dataApp.parentConfigurationId=<prod cfg id>`; it's an *external-git* app that clones the parent prod's repo at a pinned branch on every deploy. Drafts are surfaced in the Keboola UI under their parent prod app. Use `deploy_data_app(mode='dev')` to deploy a draft as a dev version of the data app (hot reload + auto-auth for iframe preview); use `delete_python_js_data_app_draft` to tear a draft down after its branch has been promoted.
 
-**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
-branch-delete — is yours. MCP gives you authenticated clone URLs and manages configs/deploys;
-it never invokes git.
+**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge, branch-delete — is yours. MCP gives you authenticated clone URLs and manages configs/deploys; it never invokes git.
 
-**The draft flow below is mandatory — never edit prod source directly.** Every source-code
-change goes through a draft branch that the user previews and explicitly approves first. NEVER
-push directly to `main`: `main` only ever advances by merging an approved draft branch, and
-only after the user has approved that draft's preview.
-
-Three scenarios the agent has to distinguish:
-
-## Scenario A — Create a brand-new data app
-
-1. `modify_python_js_data_app(slug='demo')` → `(configuration_id=PROD, repo_url=R)`.
-   PROD owns the only managed repo for this app.
-2. `modify_python_js_data_app(slug='demo-draft', parent_configuration_id=PROD)`
-   → `(configuration_id=DRAFT, repo_url=R, git_clone_url=U, branch='init')`.
-   Default draft branch is `'init'`. Override with `branch=<name>` for a descriptive name.
-3. YOU: `git clone U`; `git checkout init` (creating it if the repo is empty); write source;
-   `git push origin init`.
-4. `deploy_data_app(action='deploy', configuration_id=DRAFT, mode='dev')`
-   → preview URL serving the `init` branch as a dev version. Iterate with the user.
-5. Once approved — YOU: `git checkout main`; `git merge init`; `git push origin main`;
-   `git push origin --delete init`.
-6. `deploy_data_app(action='deploy', configuration_id=PROD)`
-   → prod URL now serves the merged `main`.
-7. `delete_python_js_data_app_draft(configuration_id=DRAFT)`
-   → tears down the draft's config + data-app instance. Always run this once promoted.
-
-## Scenario B — Edit an existing data app
-
-You already have PROD's `configuration_id` (from `get_data_apps` or earlier conversation).
-
-1. `create_python_js_data_app_git_credential(configuration_id=PROD)`
-   → fresh `git_clone_url U` with an embedded one-time token.
-2. `modify_python_js_data_app(
-        slug='demo-draft-<short suffix>',
-        parent_configuration_id=PROD,
-        branch='<describes-the-change>',   # e.g. 'add-revenue-filter'
-   )` → `(DRAFT, R, U2, branch)`. Use U2 (it has its own fresh token).
-3. YOU: `git clone U2`; `git checkout <branch>` (creating it from `main`); edit source;
-   `git push origin <branch>`.
-4–7. Same as Scenario A steps 4–7.
-
-## Scenario C — Continue an unfinished draft
-
-The previous sandbox is gone. You have PROD's `configuration_id` but no working clone and no
-draft handle.
-
-1. `get_data_apps(configuration_ids=[PROD])` → returns PROD's detail including `drafts: [...]`.
-   Pick the draft the user means (ask if multiple and unclear). Each entry exposes its
-   `configuration_id`, slug, and pinned branch.
-2. `create_python_js_data_app_git_credential(configuration_id=PROD)`
-   → fresh `git_clone_url U` (the previous one was minted in a wiped sandbox and is lost).
-   Drafts have no managed repo of their own — always mint against PROD.
-3. YOU: `git clone U`; `git checkout <draft's pinned branch>`; resume work; `git push`.
-4. `deploy_data_app(action='deploy', configuration_id=<DRAFT>, mode='dev')` → preview URL.
-   The draft's branch is already pinned in its config.
-5–7. Same promote/cleanup sequence as Scenario A steps 5–7.
+**The draft flow is mandatory — never edit prod source directly.** Every source-code change goes through a draft branch that the user previews and explicitly approves first. NEVER push directly to `main`: `main` only ever advances by merging an approved draft branch, and only after the user has approved that draft's preview.
 
 ## Argument rules
-
 - `parent_configuration_id` is **create-only**. Rejected on update.
-- `branch` is **create-only** and only valid when `parent_configuration_id` is set.
-  Defaults to `'init'`. Must not be `'main'`. Rejected on prod create and on update.
+- `branch` is **create-only** and only valid when `parent_configuration_id` is set. Defaults to `'init'`. Must not be `'main'`. Rejected on prod create and on update.
 - `slug` is required on create and immutable after.
-- The **update path** (passing `configuration_id`) is for changing `name`, `description`,
-  `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or
-  a draft. Source code changes go through the git flow above, not this tool.
+- The **update path** (passing `configuration_id`) is for changing `name`, `description`, `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or a draft. Source code changes go through the git flow above, not this tool.
 
 ## Authentication
-
-New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
-to expose publicly. On update, `authentication_type='default'` preserves the existing
-`authorization` block (including OIDC setups configured outside the MCP); `'basic-auth'` /
-`'no-auth'` overwrite it.
+New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'` to expose publicly. On update, `authentication_type='default'` preserves the existing `authorization` block (including OIDC setups configured outside the MCP); `'basic-auth'` / `'no-auth'` overwrite it.
 
 ## Slug constraint
-
-Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). For drafts, append a
-short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its drafts.
+Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). For drafts, append a short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its drafts.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "name": {
-      "description": "Name of the data app (max ~50 chars to fit DNS label limit).",
-      "type": "string"
+      "type": "string",
+      "description": "Name of the data app (max ~50 chars to fit DNS label limit)."
     },
     "description": {
-      "description": "Description of the data app.",
-      "type": "string"
+      "type": "string",
+      "description": "Description of the data app."
     },
     "configuration_id": {
       "default": "",
@@ -2293,6 +1747,7 @@ short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its
       "type": "string"
     },
     "slug": {
+      "description": "URL-safe slug for the data app (used as a subdomain). Required when creating; immutable after.",
       "anyOf": [
         {
           "type": "string"
@@ -2300,11 +1755,10 @@ short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "URL-safe slug for the data app (used as a subdomain). Required when creating; immutable after."
+      ]
     },
     "parent_configuration_id": {
+      "description": "Storage configuration ID of the prod python-js data app this draft will iterate against. When set on create, the new app is created as a **draft**: no managed repo is provisioned for it; instead its `parameters.dataApp.git` block is populated to point at the prod app's managed repo, with a freshly-minted prod-app HTTPS token and the chosen draft branch. Leave None on create to make a **prod app** (which gets its own managed repo). Rejected on update.",
       "anyOf": [
         {
           "type": "string"
@@ -2312,11 +1766,10 @@ short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Storage configuration ID of the prod python-js data app this draft will iterate against. When set on create, the new app is created as a **draft**: no managed repo is provisioned for it; instead its `parameters.dataApp.git` block is populated to point at the prod app's managed repo, with a freshly-minted prod-app HTTPS token and the chosen draft branch. Leave None on create to make a **prod app** (which gets its own managed repo). Rejected on update."
+      ]
     },
     "branch": {
+      "description": "Draft branch to pin the new draft to. Only valid on the draft create path (when `parent_configuration_id` is set). Defaults to `init` when unset. Must not be `main` (reserved for the prod app). Rejected on prod create and on update.",
       "anyOf": [
         {
           "type": "string"
@@ -2324,39 +1777,42 @@ short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Draft branch to pin the new draft to. Only valid on the draft create path (when `parent_configuration_id` is set). Defaults to `init` when unset (a sensible name for the first draft of a brand-new prod app). For subsequent edit-existing drafts, pass a descriptive branch name like 'add-revenue-filter'. Must not be `main` (reserved for the prod app). Rejected on prod create and on update."
+      ]
     },
     "authentication_type": {
       "default": "default",
       "description": "Authentication type. \"no-auth\" removes authentication completely, \"basic-auth\" secures the data app via HTTP basic authentication, and \"default\" means: on create, apply basic auth (safe default for new apps); on update, keep the existing authentication configuration (including OIDC setups configured outside the MCP).",
+      "type": "string",
       "enum": [
         "no-auth",
         "basic-auth",
         "default"
-      ],
-      "type": "string"
+      ]
     },
     "auto_suspend_after_seconds": {
       "default": 900,
       "description": "Number of seconds after which the running data app is automatically suspended.",
-      "type": "integer"
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
     },
     "storage": {
+      "description": "Complete storage configuration for the data app (input/output table mappings). Replaces the ENTIRE storage block when updating an existing app. Leave unset (None) to preserve the existing storage configuration; pass an empty dict to explicitly clear it.",
       "anyOf": [
         {
-          "additionalProperties": true,
-          "type": "object"
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
         },
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Complete storage configuration for the data app (input/output table mappings). Validated against the storage JSON schema. Replaces the ENTIRE storage block when updating an existing app. For data apps with Storage Access, declare output tables with `unload_strategy: \"direct-grant\"` (in that case `source` is not required and the workspace is granted direct SELECT/INSERT/UPDATE/DELETE/TRUNCATE on the destination Storage table). Leave unset (None) to preserve the existing storage configuration; pass an empty dict to explicitly clear it."
+      ]
     },
     "folder": {
+      "description": "Folder name to organize this data app in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose.",
       "anyOf": [
         {
           "type": "string"
@@ -2364,16 +1820,14 @@ short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Folder name to organize this data app in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose."
+      ]
     }
   },
   "required": [
     "name",
     "description"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -2389,63 +1843,49 @@ short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its
 Creates or updates a Streamlit data app.
 
 Considerations:
-- The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
-`{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function queries the workspace to get
-data, it accepts a string of SQL query following current sql dialect and returns a pandas DataFrame with the results
-from the workspace.
-- Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
-`query_data` tool to inspect the data in the workspace before using it in the data app.
-- If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`
-parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None
-appropriately based on the parameter type.
-- After creating or updating a data app with this tool, ALWAYS call
-`deploy_data_app(action="deploy", configuration_id=...)` to start a new app or restart an existing app so
-changes take effect. Without this step, a newly created app will not start, and an existing app will keep
-running the previous deployment without the latest changes.
-- New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
-updating, set `authentication_type` to `default` to keep the existing authentication type configuration
-(including OIDC setups) unless explicitly specified otherwise.
+- The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder `{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function queries the workspace to get data, it accepts a string of SQL query following current sql dialect and returns a pandas DataFrame with the results from the workspace.
+- Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the `query_data` tool to inspect the data in the workspace before using it in the data app.
+- If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description` parameter. To keep existing data app values during an update, leave them as empty strings, lists, or None appropriately based on the parameter type.
+- After creating or updating a data app with this tool, ALWAYS call `deploy_data_app(action="deploy", configuration_id=...)` to start a new app or restart an existing app so changes take effect. Without this step, a newly created app will not start, and an existing app will keep running the previous deployment without the latest changes.
+- New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when updating, set `authentication_type` to `default` to keep the existing authentication type configuration (including OIDC setups) unless explicitly specified otherwise.
 
 SQL & DATA TYPE RULES:
-- Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
-  Match the exact identifier case used in SQL when referencing columns in Python code.
-- `query_data` RETURNS ALL COLUMNS AS STRINGS regardless of SQL CAST. Always convert types in Python after loading:
-`df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and
-`df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
+- Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL. Match the exact identifier case used in SQL when referencing columns in Python code.
+- `query_data` RETURNS ALL COLUMNS AS STRINGS regardless of SQL CAST. Always convert types in Python after loading: `df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and `df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "name": {
-      "description": "Name of the data app (max ~50 chars to fit DNS label limit).",
-      "type": "string"
+      "type": "string",
+      "description": "Name of the data app (max ~50 chars to fit DNS label limit)."
     },
     "description": {
-      "description": "Description of the data app.",
-      "type": "string"
+      "type": "string",
+      "description": "Description of the data app."
     },
     "source_code": {
-      "description": "Complete Python/Streamlit source code for the data app.",
-      "type": "string"
+      "type": "string",
+      "description": "Complete Python/Streamlit source code for the data app."
     },
     "packages": {
-      "description": "Python packages used in the source code that will be installed by `pip install` into the environment before the code runs. For example: [\"pandas\", \"requests~=2.32\"].",
+      "type": "array",
       "items": {
         "type": "string"
       },
-      "type": "array"
+      "description": "Python packages used in the source code that will be installed by `pip install` into the environment before the code runs. For example: [\"pandas\", \"requests~=2.32\"]."
     },
     "authentication_type": {
-      "description": "Authentication type, \"no-auth\" removes authentication completely, \"basic-auth\" sets the data app to be secured using the HTTP basic authentication, and \"default\" keeps the existing authentication type when updating.",
+      "type": "string",
       "enum": [
         "no-auth",
         "basic-auth",
         "default"
       ],
-      "type": "string"
+      "description": "Authentication type, \"no-auth\" removes authentication completely, \"basic-auth\" sets the data app to be secured using the HTTP basic authentication, and \"default\" keeps the existing authentication type when updating."
     },
     "configuration_id": {
       "default": "",
@@ -2458,6 +1898,7 @@ SQL & DATA TYPE RULES:
       "type": "string"
     },
     "folder": {
+      "description": "Folder name to organize this data app in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose.",
       "anyOf": [
         {
           "type": "string"
@@ -2465,9 +1906,7 @@ SQL & DATA TYPE RULES:
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Folder name to organize this data app in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose."
+      ]
     }
   },
   "required": [
@@ -2477,7 +1916,7 @@ SQL & DATA TYPE RULES:
     "packages",
     "authentication_type"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -2498,17 +1937,17 @@ Answers a question using the Keboola documentation as a source.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "query": {
-      "description": "Natural language query to search for in the documentation.",
-      "type": "string"
+      "type": "string",
+      "description": "Natural language query to search for in the documentation."
     }
   },
   "required": [
     "query"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -2544,31 +1983,37 @@ WHEN TO USE:
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "name": {
-      "description": "A short, descriptive name for the flow.",
-      "type": "string"
+      "type": "string",
+      "description": "A short, descriptive name for the flow."
     },
     "description": {
-      "description": "Detailed description of the flow purpose.",
-      "type": "string"
+      "type": "string",
+      "description": "Detailed description of the flow purpose."
     },
     "phases": {
-      "description": "List of phase definitions for conditional flows.",
+      "type": "array",
       "items": {
-        "additionalProperties": true,
-        "type": "object"
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
       },
-      "type": "array"
+      "description": "List of phase definitions for conditional flows."
     },
     "tasks": {
-      "description": "List of task definitions for conditional flows.",
+      "type": "array",
       "items": {
-        "additionalProperties": true,
-        "type": "object"
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
       },
-      "type": "array"
+      "description": "List of task definitions for conditional flows."
     },
     "folder": {
       "default": "",
@@ -2582,7 +2027,7 @@ WHEN TO USE:
     "phases",
     "tasks"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -2615,31 +2060,37 @@ WHEN TO USE:
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "name": {
-      "description": "A short, descriptive name for the flow.",
-      "type": "string"
+      "type": "string",
+      "description": "A short, descriptive name for the flow."
     },
     "description": {
-      "description": "Detailed description of the flow purpose.",
-      "type": "string"
+      "type": "string",
+      "description": "Detailed description of the flow purpose."
     },
     "phases": {
-      "description": "List of phase definitions.",
+      "type": "array",
       "items": {
-        "additionalProperties": true,
-        "type": "object"
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
       },
-      "type": "array"
+      "description": "List of phase definitions."
     },
     "tasks": {
-      "description": "List of task definitions.",
+      "type": "array",
       "items": {
-        "additionalProperties": true,
-        "type": "object"
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
       },
-      "type": "array"
+      "description": "List of task definitions."
     },
     "folder": {
       "default": "",
@@ -2653,7 +2104,7 @@ WHEN TO USE:
     "phases",
     "tasks"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -2680,21 +2131,21 @@ RULES:
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "flow_type": {
-      "description": "The type of the flow to retrieve examples for.",
+      "type": "string",
       "enum": [
         "keboola.flow",
         "keboola.orchestrator"
       ],
-      "type": "string"
+      "description": "The type of the flow to retrieve examples for."
     }
   },
   "required": [
     "flow_type"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -2721,21 +2172,21 @@ RULES:
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "flow_type": {
-      "description": "The type of flow for which to fetch schema.",
+      "type": "string",
       "enum": [
         "keboola.flow",
         "keboola.orchestrator"
       ],
-      "type": "string"
+      "description": "The type of flow for which to fetch schema."
     }
   },
   "required": [
     "flow_type"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -2763,18 +2214,18 @@ OPTIONS:
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "flow_ids": {
       "default": [],
       "description": "IDs of flows to retrieve full details for. When provided (non-empty), returns full flow configurations including phases and tasks. When empty [], lists all flows in the project as summaries.",
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     }
   },
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -2819,112 +2270,59 @@ adjusting dependencies, or enabling/disabling flow execution
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "ScheduleRequest": {
-      "properties": {
-        "action": {
-          "description": "Action to perform on the schedule.",
-          "enum": [
-            "add",
-            "update",
-            "remove"
-          ],
-          "type": "string"
-        },
-        "scheduleId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "ID of the schedule configuration to update. None if creating a new schedule."
-        },
-        "timezone": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Timezone for the schedule. Default UTC if None provided."
-        },
-        "cronTab": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Cron expression for the schedule following the format: `* * * * *`.Where 1. minutes, 2. hours, 3. days of month, 4. months, 5. days of week. Example: `15,45 1,13 * * 0`"
-        },
-        "state": {
-          "anyOf": [
-            {
-              "enum": [
-                "enabled",
-                "disabled"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Enable or disable the schedule."
-        }
-      },
-      "required": [
-        "action"
-      ],
-      "type": "object"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "configuration_id": {
-      "description": "ID of the flow configuration.",
-      "type": "string"
+      "type": "string",
+      "description": "ID of the flow configuration."
     },
     "flow_type": {
-      "description": "The type of flow to update. Use \"keboola.flow\" for conditional flows or \"keboola.orchestrator\" for legacy flows. This MUST match the existing flow type.",
+      "type": "string",
       "enum": [
         "keboola.flow",
         "keboola.orchestrator"
       ],
-      "type": "string"
+      "description": "The type of flow to update. Use \"keboola.flow\" for conditional flows or \"keboola.orchestrator\" for legacy flows. This MUST match the existing flow type."
     },
     "change_description": {
-      "description": "Description of changes made.",
-      "type": "string"
+      "type": "string",
+      "description": "Description of changes made."
     },
     "phases": {
-      "default": null,
       "description": "Updated list of phase definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "tasks": {
-      "default": null,
       "description": "Updated list of task definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "name": {
       "default": "",
@@ -2939,12 +2337,75 @@ adjusting dependencies, or enabling/disabling flow execution
     "schedules": {
       "default": [],
       "description": "Optional sequence of schedule requests to add/update/remove schedules for this flow. Each request must have \"action\": \"add\"|\"update\"|\"remove\". For add: include \"cron_tab\", \"state\" (\"enabled\"|\"disabled\"), \"timezone\". For update/remove: include \"schedule_id\". Example: [{\"action\": \"add\", \"cron_tab\": \"0 8 * * 1-5\", \"state\": \"enabled\", \"timezone\": \"UTC\"}]",
+      "type": "array",
       "items": {
-        "$ref": "#/$defs/ScheduleRequest"
-      },
-      "type": "array"
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "add",
+              "update",
+              "remove"
+            ],
+            "description": "Action to perform on the schedule."
+          },
+          "schedule_id": {
+            "description": "ID of the schedule configuration to update. None if creating a new schedule.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timezone": {
+            "description": "Timezone for the schedule. Default UTC if None provided.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cron_tab": {
+            "description": "Cron expression for the schedule following the format: `* * * * *`.Where 1. minutes, 2. hours, 3. days of month, 4. months, 5. days of week. Example: `15,45 1,13 * * 0`",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "description": "Enable or disable the schedule.",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "enabled",
+                  "disabled"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
     },
     "is_disabled": {
+      "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state.",
       "anyOf": [
         {
           "type": "boolean"
@@ -2952,11 +2413,10 @@ adjusting dependencies, or enabling/disabling flow execution
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
+      ]
     },
     "folder": {
+      "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
       "anyOf": [
         {
           "type": "string"
@@ -2964,9 +2424,7 @@ adjusting dependencies, or enabling/disabling flow execution
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose."
+      ]
     }
   },
   "required": [
@@ -2974,7 +2432,7 @@ adjusting dependencies, or enabling/disabling flow execution
     "flow_type",
     "change_description"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3016,41 +2474,59 @@ or enabling/disabling flow execution
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "configuration_id": {
-      "description": "ID of the flow configuration.",
-      "type": "string"
+      "type": "string",
+      "description": "ID of the flow configuration."
     },
     "flow_type": {
-      "description": "The type of flow to update. Use \"keboola.flow\" for conditional flows or \"keboola.orchestrator\" for legacy flows. This MUST match the existing flow type.",
+      "type": "string",
       "enum": [
         "keboola.flow",
         "keboola.orchestrator"
       ],
-      "type": "string"
+      "description": "The type of flow to update. Use \"keboola.flow\" for conditional flows or \"keboola.orchestrator\" for legacy flows. This MUST match the existing flow type."
     },
     "change_description": {
-      "description": "Description of changes made.",
-      "type": "string"
+      "type": "string",
+      "description": "Description of changes made."
     },
     "phases": {
-      "default": null,
       "description": "Updated list of phase definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "tasks": {
-      "default": null,
       "description": "Updated list of task definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "name": {
       "default": "",
@@ -3063,6 +2539,7 @@ or enabling/disabling flow execution
       "type": "string"
     },
     "is_disabled": {
+      "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state.",
       "anyOf": [
         {
           "type": "boolean"
@@ -3070,11 +2547,10 @@ or enabling/disabling flow execution
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Enable or disable the flow. Set to True to disable execution (flow won't run), False to enable execution (flow will run). Only provide if changing the status, leave as null to preserve current state."
+      ]
     },
     "folder": {
+      "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
       "anyOf": [
         {
           "type": "string"
@@ -3082,9 +2558,7 @@ or enabling/disabling flow execution
         {
           "type": "null"
         }
-      ],
-      "default": null,
-      "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose."
+      ]
     }
   },
   "required": [
@@ -3092,7 +2566,7 @@ or enabling/disabling flow execution
     "flow_type",
     "change_description"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3109,85 +2583,23 @@ or enabling/disabling flow execution
 
 Retrieves job execution information from the Keboola project.
 
-CONTEXT:
-Jobs in Keboola are execution records of components (extractors, transformations, writers, flows).
-Each job represents a single run with its status, timing, configuration, and results.
-
-TWO MODES OF OPERATION (controlled by job_ids parameter):
-
-MODE 1: GET DETAILS FOR SPECIFIC JOBS (job_ids is non-empty)
-- Provide one or more job IDs: job_ids=["12345", "67890"]
-- Returns: FULL details for each job including status, config_data, results, timing, and metadata
-- Ignores: All filtering/sorting parameters (status, component_id, config_id, limit, offset, sort_by, sort_order)
-- Use when: You know specific job IDs and need complete information about them
-
-MODE 2: LIST/SEARCH JOBS (job_ids is empty)
-- Leave job_ids empty: job_ids=[]
-- Returns: SUMMARY list of jobs (id, status, component_id, config_id, timing only - no config_data or results)
-- Supports: Filtering by status/component_id/config_id, pagination with limit/offset, sorting
-- Use when: You need to find jobs, see recent executions, or monitor job history
-
-DECISION GUIDE:
-- Start with MODE 2 (list) to find jobs → then use MODE 1 (details) if you need full information
-- If you already know job IDs → use MODE 1 directly
-- For monitoring/browsing → use MODE 2 with filters
-
-NOTE: Jobs cannot be found by name using the `search` tool. However, always use the filtering
-parameters (status, component_id, config_id) to narrow results rather than listing all jobs
-with no filters. If you need to find jobs for a specific configuration but only know its name,
-first use `search` to find the configuration ID, then filter jobs by that config_id.
-
-COMMON WORKFLOWS:
-1. Find failed jobs: job_ids=[], status="error" → identify problematic job IDs → get details with MODE 1
-2. Check recent runs: job_ids=[], component_id="...", limit=10 → see latest executions
-3. Monitor specific job: job_ids=["123"] → poll for status and results
-4. Troubleshoot config: job_ids=[], component_id="...", config_id="...", status="error" → find which runs failed
-
-EXAMPLES:
-
-MODE 1 - Get full details:
-- job_ids=["12345"] → detailed info for job 12345
-- job_ids=["12345", "67890"] → detailed info for multiple jobs
-
-MODE 2 - List/search jobs:
-- job_ids=[] → list latest 100 jobs (default)
-- job_ids=[], status="error" → list only failed jobs
-- job_ids=[], status="processing" → list currently running jobs
-- job_ids=[], component_id="keboola.ex-aws-s3" → list jobs for S3 extractor
-- job_ids=[], component_id="keboola.ex-aws-s3", config_id="12345" → list jobs for specific configuration
-- job_ids=[], limit=50, offset=100 → pagination (skip first 100, get next 50)
-- job_ids=[], sort_by="endTime", sort_order="asc" → oldest completed first
-- job_ids=[], sort_by="durationSeconds", sort_order="desc" → longest running first
-
-LOG RETRIEVAL (only in MODE 1):
-- Set include_logs=True to fetch execution logs from the Storage API events
-- Logs are fetched using the job's runId and returned in chronological order
-- Use log_tail_lines to control how many recent log events to return (default 50, max 500)
-- Use log_event_types to filter by event type: ["error"] for just errors, ["error", "warn"] for errors and warnings
-- If a job has no runId (e.g., not yet started), logs will be None
-
-EXAMPLES WITH LOGS:
-- job_ids=["12345"], include_logs=True → job details + last 50 log events
-- job_ids=["12345"], include_logs=True, log_event_types=["error"] → job details + only error events
-- job_ids=["12345"], include_logs=True, log_tail_lines=200 → job details + last 200 log events
-
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "job_ids": {
       "default": [],
-      "description": "IDs of jobs to retrieve full details for. When provided (non-empty), returns full job details including status, parameters, results, and metadata. When empty [], lists jobs in the project as summaries with optional filtering.",
+      "description": "IDs of jobs to retrieve full details for; empty lists jobs as summaries.",
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     },
     "status": {
-      "default": null,
-      "description": "The optional status of the jobs to filter by when listing (ignored if job_ids is provided). If None then all statuses are included.",
+      "description": "Filter listed jobs by status (ignored if job_ids given).",
+      "type": "string",
       "enum": [
         "waiting",
         "processing",
@@ -3198,88 +2610,78 @@ EXAMPLES WITH LOGS:
         "terminating",
         "cancelled",
         "terminated"
-      ],
-      "type": "string"
+      ]
     },
     "component_id": {
-      "default": null,
-      "description": "The optional ID of the component whose jobs you want to list (ignored if job_ids is provided). Default = None.",
+      "description": "Filter listed jobs by component id (ignored if job_ids given).",
       "type": "string"
     },
     "config_id": {
-      "default": null,
-      "description": "The optional ID of the component configuration whose jobs you want to list (ignored if job_ids is provided). Default = None.",
+      "description": "Filter listed jobs by configuration id (ignored if job_ids given).",
       "type": "string"
     },
     "limit": {
       "default": 100,
-      "description": "The number of jobs to list when listing (ignored if job_ids is provided), default = 100, max = 500.",
-      "maximum": 500,
+      "description": "Number of jobs to list (max 500).",
+      "type": "integer",
       "minimum": 1,
-      "type": "integer"
+      "maximum": 500
     },
     "offset": {
       "default": 0,
-      "description": "The offset of the jobs to list when listing (ignored if job_ids is provided), default = 0.",
+      "description": "Offset of jobs to list.",
+      "type": "integer",
       "minimum": 0,
-      "type": "integer"
+      "maximum": 9007199254740991
     },
     "sort_by": {
       "default": "startTime",
-      "description": "The field to sort the jobs by when listing (ignored if job_ids is provided), default = \"startTime\".",
+      "description": "Field to sort listed jobs by.",
+      "type": "string",
       "enum": [
         "startTime",
         "endTime",
         "createdTime",
         "durationSeconds",
         "id"
-      ],
-      "type": "string"
+      ]
     },
     "sort_order": {
       "default": "desc",
-      "description": "The order to sort the jobs by when listing (ignored if job_ids is provided), default = \"desc\".",
+      "description": "Sort order for listed jobs.",
+      "type": "string",
       "enum": [
         "asc",
         "desc"
-      ],
-      "type": "string"
+      ]
     },
     "include_logs": {
       "default": false,
-      "description": "Whether to include execution logs for each job. Only used when job_ids is provided (MODE 1). Logs are fetched from the Storage API events endpoint using the job's runId. Default is False.",
+      "description": "Include execution logs (only when job_ids given).",
       "type": "boolean"
     },
     "log_tail_lines": {
       "default": 50,
-      "description": "Maximum number of log events to return per job (most recent first). Only used when include_logs=True. Default = 50, max = 500.",
-      "maximum": 500,
+      "description": "Max log events per job (most recent).",
+      "type": "integer",
       "minimum": 1,
-      "type": "integer"
+      "maximum": 500
     },
     "log_event_types": {
-      "anyOf": [
-        {
-          "items": {
-            "enum": [
-              "info",
-              "warn",
-              "error",
-              "success"
-            ],
-            "type": "string"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Filter log events by type. Only used when include_logs=True. If None, all event types are included. Example: [\"error\"] to only show errors, [\"error\", \"warn\"] for errors and warnings."
+      "description": "Filter log events by type (only when include_logs=true).",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "info",
+          "warn",
+          "error",
+          "success"
+        ]
+      }
     }
   },
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3298,37 +2700,29 @@ Starts a new job for a given component or transformation.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "component_id": {
-      "description": "The ID of the component or transformation for which to start a job.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the component or transformation to start a job for."
     },
     "configuration_id": {
-      "description": "The ID of the configuration for which to start a job.",
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the configuration to start a job for."
     },
     "configuration_row_ids": {
-      "anyOf": [
-        {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Optional list of configuration row IDs to run. If not provided, all rows are executed."
+      "description": "Optional configuration row IDs to run; if omitted, all rows are executed.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
     "component_id",
     "configuration_id"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3337,7 +2731,7 @@ Starts a new job for a given component or transformation.
 # OAuth Tools
 <a name="create_oauth_url"></a>
 ## create_oauth_url
-**Annotations**: `destructive`
+**Annotations**: 
 
 **Tags**: `oauth`
 
@@ -3345,32 +2739,26 @@ Starts a new job for a given component or transformation.
 
 Generates an OAuth authorization URL for a Keboola component configuration.
 
-When using this tool, be very concise in your response. Just guide the user to click the
-authorization link.
-
-Note that this tool should be called specifically for the OAuth-requiring components after their
-configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmail.
-
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "component_id": {
-      "description": "The component ID to grant access to (e.g., \"keboola.ex-google-analytics-v4\").",
-      "type": "string"
+      "type": "string",
+      "description": "The component ID to grant access to (e.g., \"keboola.ex-google-analytics-v4\")."
     },
     "config_id": {
-      "description": "The configuration ID for the component.",
-      "type": "string"
+      "type": "string",
+      "description": "The configuration ID for the component."
     }
   },
   "required": [
     "component_id",
     "config_id"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3385,20 +2773,17 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 
 **Description**:
 
-Retrieves structured information about the current project,
-including essential context and base instructions for working with it
-(e.g., transformations, components, workflows, and dependencies).
+Retrieves structured information about the current project, including essential context and base instructions for working with it (e.g., transformations, components, workflows, and dependencies).
 
-Always call this tool at least once at the start of a conversation
-to establish the project context before using other tools.
+Always call this tool at least once at the start of a conversation to establish the project context before using other tools.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {},
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3417,17 +2802,17 @@ Updates the description of the current Keboola project.
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "description": {
-      "description": "The new project description text.",
-      "type": "string"
+      "type": "string",
+      "description": "The new project description text."
     }
   },
   "required": [
     "description"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3442,30 +2827,23 @@ Updates the description of the current Keboola project.
 
 **Description**:
 
-Returns list of component IDs that match the given query.
-
-WHEN TO USE:
-- Use when you want to find the component for a specific purpose.
-
-USAGE EXAMPLES:
-- user_input: "I am looking for a salesforce extractor component"
-  → Returns a list of component IDs that match the query, ordered by relevance/best match.
+Returns a list of component IDs that match the given natural-language query.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "query": {
-      "description": "Natural language query to find the requested component.",
-      "type": "string"
+      "type": "string",
+      "description": "Natural language query to find the requested component."
     }
   },
   "required": [
     "query"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3478,147 +2856,27 @@ USAGE EXAMPLES:
 
 **Description**:
 
-Searches for Keboola items (tables, buckets, components, configurations, transformations, flows, data-apps, etc.)
-in the current project and returns matching ID + metadata.
-
-This tool supports two complementary search types:
-
-1) textual
-- Searches items by name, server-side (fast, independent of project size).
-- Tokenized full-text name matching, case- and diacritics-insensitive. Pass the plain name; do NOT build
-  regex (rejected). It is NOT typo-corrected — misspellings may not match.
-- Prefers the current branch context; when nothing is found there, automatically widens the search to all
-  branches of the project — such hits carry `branch_id`/`branch_name` so you can tell where they live.
-
-2) config-based
-- Searches item configurations (JSON objects) by matching patterns against the configuration values ​​converted
-  to a string, optionally narrowed by JSON path `scopes`.
-- Returns also `match_scopes` with JSON paths and matched patterns per scope.
-
-THIS IS THE PRIMARY DISCOVERY TOOL. Always use it BEFORE any get_* tool when you need to find items
-by name or specific configuration content. Do NOT enumerate items with get_buckets, get_tables, get_configs,
-get_flows, or get_data_apps just to locate a specific item — use this tool instead.
-
-WHEN TO USE:
-- User asks to "find", "locate", or "search for" something by name, keyword, text pattern, configuration content or
-value
-- User mentions a partial name and you need to find the full item (e.g., "find the customer table")
-- User asks "what tables/configs/flows do I have with X in the name?"
-- You need to discover items before performing operations on them
-- User asks to "list all items with [name] or [configuration value/part] in it"
-- User asks where a value, table, component, specific configuration ID, or specific settings is used in components,
-data-apps, flows, or transformations
-- You need to trace lineage by searching for IDs referenced in configurations, or to find flows using a
-  specific component, or find usage of a bucket/table in transformations or components, or to find items with
-  specific parameters.
-- User asks to "what is the genesis of this item?" or "explain me business logic of this item?"
-
-HOW IT WORKS:
-- Supports two types:
-  - search_type="textual": tokenized full-text name search, server-side. Names only — descriptions, column
-    names, IDs and configuration contents are NOT searched (use config-based search for configuration contents,
-    or get_tables for columns). Matching is case- and diacritics-insensitive but NOT typo-corrected.
-  - search_type="config-based": matches inside configuration JSON objects, optionally narrowed by JSON path `scopes`
-- case-insensitive search
-- mode for pattern search: applies to config-based only — `literal` (default) or `regex`. Textual search ignores
-  `mode` (always full-text) and rejects `regex`.
-- Multiple patterns work as OR condition - matches items containing ANY of the patterns
-- Each result includes the item's ID, name, creation date, and relevant metadata; the response also carries
-  `total` and `by_type` counts and the `branch_scope` the hits come from
-- textual search prefers the current branch; on zero hits it automatically retries across all branches of the
-  project and marks the response with branch_scope="all-branches"
-- scopes (config-based) narrow matching to specific JSONPath areas within configurations; matching is performed
-  against the stringified JSON node content in those areas.
-- config-based always returns all matched paths per item in `match_scopes` (including matched patterns)
-
-IMPORTANT:
-- Always use this tool when the user mentions a name but you don't have the exact ID
-- The search returns IDs that you can use with other tools (e.g., get_tables, get_configs, get_flows)
-- Results are ordered by the `updated` field, most recent first. `updated` is the item's last update time
-  when available, or its creation time otherwise (textual/global-search hits expose only the creation time).
-- Textual search matches names only, with tokenized full-text matching (case/diacritics-insensitive; not
-  typo-corrected; no regex). It may not return every item the legacy enumeration did. To find items by
-  description or by table column, use get_tables; to find items by configuration content, use config-based search.
-- For exact ID lookups, use specific tools like get_tables, get_configs, get_flows instead
-- Use specific `scopes` only when you know the config structure (schema or real example); otherwise run config-based
-  search without scopes.
-- Use find_component_id and get_configs tools to find configurations related to a specific component
-- If results are too numerous or empty, ask the user to refine their query rather than enumerating all items.
-
-USAGE EXAMPLES:
-1) textual search examples:
-- user_input: "Find all tables with 'customer' in the name"
-    → patterns=["customer"], item_types=["table"]
-    → Returns all tables whose name matches "customer"
-
-- user_input: "Search for the sales transformation"
-    → patterns=["sales"], item_types=["transformation"]
-    → Returns transformations with "sales" in the name
-
-- user_input: "Find items named 'daily report' or 'weekly summary'"
-    → patterns=["daily report", "weekly summary"], item_types=[]
-    → Returns all items matching any of these patterns
-
-- user_input: "Show me all configurations related to Google Analytics"
-    → patterns=["google analytics"], item_types=["configuration"]
-    → Returns configurations with matching names
-
-2) config-based search examples:
-- user_input: "Find transformations/configs/components referencing table in.c-prod.customers"
-    -> patterns=["in.c-prod.customers"], item_types=["transformation", "configuration"],
-    search_type="config-based"
-    -> No scopes = search whole stringified config; result includes `match_scopes` with exact paths + patterns
-
-- user_input: "Find configurations/transformations (etc.) using specific setting / id anywhere"
-    -> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
-
-- user_input: "Find configurations/transformations (etc.) using specific setting / id in parameters"
--> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
-scopes=["parameters"]
-
-- user_input: "Find configurations/transformations (etc.) using specific setting / id in storage"
--> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
-scopes=["storage"]
-
-- user_input: "Find configurations/transformations (etc.) using specific setting / id in authorization"
-    -> patterns=["setting", "id"], item_types=["configuration", "transformations"], search_type="config-based",
-    scopes=["parameters.authorization", "authorization"]
-
-- user_input: "Find components/transformations using my_bucket in input or output mappings"
-    -> patterns=["my_bucket"], item_types=["configuration", "transformation"], search_type="config-based",
-    scopes=["storage.input", "storage.output"]
-    -> Returns matches with paths like `storage.input.tables[0].source`, `storage.input.files[0].source`,
-    or `storage.output.tables[0].destination`
-
-- user_input: "Find flows using configuration ID 01k9cz233cvd1rga3zzx40g8qj"
-    -> patterns=["01k9cz233cvd1rga3zzx40g8qj"], item_types=["flow"], search_type="config-based",
-    scopes=["tasks", "phases"]
-
-- user_input: "Find transformations using this table / column / specific code in its script"
-    -> patterns=["element"], item_types=["transformation"], search_type="config-based",
-    scopes=["parameters", "storage"]
-
-- user_input: "Find data apps using something in its config / python code / setting"
-    -> patterns=["something"], item_types=["data-app"], search_type="config-based"
-    -> Returns data apps where script/config sections contain the keyword and includes `match_scopes`
+Searches for Keboola items (tables, buckets, components, configurations, transformations, flows, data-apps, etc.) in the current project and returns matching IDs and metadata. Supports textual search (matches item names, server-side) and config-based search (matches patterns against the configuration JSON content, optionally narrowed by JSONPath scopes). THIS IS THE PRIMARY DISCOVERY TOOL — use it before any get_* tool when you need to find items by name or configuration content. Multiple patterns work as an OR condition. Textual search prefers the current branch and, when nothing is found there, automatically widens to all branches of the project.
 
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "patterns": {
-      "description": "One or more search patterns. For textual search they match item names (server-side, tokenized full-text); for config-based search they match the configuration JSON content. Case-insensitive by default. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"my_bucket\"]. Do not use empty strings or empty lists.",
+      "type": "array",
       "items": {
         "type": "string"
       },
-      "type": "array"
+      "description": "One or more search patterns. For textual search they match item names (server-side, tokenized full-text); for config-based search they match the configuration JSON content. Case-insensitive by default. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"my_bucket\"]. Do not use empty strings or empty lists."
     },
     "item_types": {
       "default": [],
       "description": "Filter for specific Keboola item types. Common values: \"table\" (data tables), \"bucket\" (table containers), \"transformation\" (SQL/Python transformations), \"component\" (extractor/writer/application components), \"data-app\" (data apps), \"flow\" (orchestration flows). Use when you know what type of item you're looking for or leave empty to search all types.",
+      "type": "array",
       "items": {
+        "type": "string",
         "enum": [
           "bucket",
           "table",
@@ -3632,52 +2890,50 @@ scopes=["storage"]
           "shared-code",
           "rows",
           "state"
-        ],
-        "type": "string"
-      },
-      "type": "array"
+        ]
+      }
     },
     "search_type": {
       "default": "textual",
       "description": "Search mode: \"textual\" (name/id/description) or \"config-based\" (stringified configuration payloads). (default: \"textual\")",
+      "type": "string",
       "enum": [
         "textual",
         "config-based"
-      ],
-      "type": "string"
+      ]
     },
     "scopes": {
       "default": [],
       "description": "JSONPath expressions to narrow config-based search to specific parts of the configuration. Simple dot-notation (e.g. \"parameters\", \"storage.input\") and full JSONPath (e.g. \"$.tasks[*]\") are both supported (e.g. \"parameters.host\", \"storage.input[0].source\"). Leave empty to search the whole configuration.",
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     },
     "mode": {
       "default": "literal",
       "description": "How to interpret patterns. Applies to config-based search only: \"regex\" for regular expressions or \"literal\" for exact text (default: \"literal\"). Ignored by textual search, which is always a tokenized full-text name query (not typo-corrected) and rejects \"regex\".",
+      "type": "string",
       "enum": [
         "regex",
         "literal"
-      ],
-      "type": "string"
+      ]
     },
     "limit": {
       "default": 50,
       "description": "Maximum number of items to return (default: 50, max: 100).",
-      "type": "integer"
+      "type": "number"
     },
     "offset": {
       "default": 0,
       "description": "Number of matching items to skip for pagination (default: 0).",
-      "type": "integer"
+      "type": "number"
     }
   },
   "required": [
     "patterns"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3723,62 +2979,53 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "SemanticObjectType": {
-      "enum": [
-        "semantic-model",
-        "semantic-dataset",
-        "semantic-metric",
-        "semantic-relationship",
-        "semantic-glossary",
-        "semantic-constraint"
-      ],
-      "type": "string"
-    },
-    "SemanticObjectTypeSelection": {
-      "description": "Semantic object type selection used by semantic tools.",
-      "properties": {
-        "object_type": {
-          "$ref": "#/$defs/SemanticObjectType",
-          "description": "Semantic object type to load."
-        },
-        "ids": {
-          "default": [],
-          "description": "Specific object UUIDs to include. Empty list [] means include all objects of this type.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "object_type"
-      ],
-      "type": "object"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "semantic_objects": {
-      "description": "List of semantic object selections to load. Each item contains \"object_type\" and optional \"ids\". If \"ids\" is empty, all objects of that type are returned in compact form. If \"ids\" is non-empty, only those objects are returned with full attributes.",
+      "type": "array",
       "items": {
-        "$ref": "#/$defs/SemanticObjectTypeSelection"
+        "type": "object",
+        "properties": {
+          "object_type": {
+            "type": "string",
+            "enum": [
+              "semantic-model",
+              "semantic-dataset",
+              "semantic-metric",
+              "semantic-relationship",
+              "semantic-glossary",
+              "semantic-constraint"
+            ],
+            "description": "Semantic object type to load."
+          },
+          "ids": {
+            "default": [],
+            "description": "Specific object UUIDs to include. Empty list [] means include all objects of this type.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "object_type"
+        ]
       },
-      "type": "array"
+      "description": "List of semantic object selections to load. Each item contains \"object_type\" and optional \"ids\". If \"ids\" is empty, all objects of that type are returned in compact form. If \"ids\" is non-empty, only those objects are returned with full attributes."
     },
     "semantic_model_ids": {
       "default": [],
       "description": "Optional list of semantic model IDs to restrict loading to specific models. Empty list [] means load across all semantic models.",
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     }
   },
   "required": [
     "semantic_objects"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3800,33 +3047,28 @@ WHEN TO USE:
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "SemanticObjectType": {
-      "enum": [
-        "semantic-model",
-        "semantic-dataset",
-        "semantic-metric",
-        "semantic-relationship",
-        "semantic-glossary",
-        "semantic-constraint"
-      ],
-      "type": "string"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "semantic_types": {
-      "description": "List of semantic object types for which JSON schemas should be returned. Each returned item contains the requested semantic type and its metastore schema.",
+      "type": "array",
       "items": {
-        "$ref": "#/$defs/SemanticObjectType"
+        "type": "string",
+        "enum": [
+          "semantic-model",
+          "semantic-dataset",
+          "semantic-metric",
+          "semantic-relationship",
+          "semantic-glossary",
+          "semantic-constraint"
+        ]
       },
-      "type": "array"
+      "description": "List of semantic object types for which JSON schemas should be returned. Each returned item contains the requested semantic type and its metastore schema."
     }
   },
   "required": [
     "semantic_types"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3882,43 +3124,38 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "SemanticObjectType": {
-      "enum": [
-        "semantic-model",
-        "semantic-dataset",
-        "semantic-metric",
-        "semantic-relationship",
-        "semantic-glossary",
-        "semantic-constraint"
-      ],
-      "type": "string"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "patterns": {
-      "description": "One or more regex patterns used to search semantic metadata. The search checks semantic model names plus semantic object names and nested attribute values. Use multiple patterns when you need to find objects related to several business terms at once.",
+      "type": "array",
       "items": {
         "type": "string"
       },
-      "type": "array"
+      "description": "One or more regex patterns used to search semantic metadata. The search checks semantic model names plus semantic object names and nested attribute values. Use multiple patterns when you need to find objects related to several business terms at once."
     },
     "semantic_types": {
       "default": [],
       "description": "Optional semantic object types to search. Empty list [] means ALL semantic object types are searched. Use this to narrow the search when you already know whether you want datasets, metrics, relationships, glossary terms, constraints, or models.",
+      "type": "array",
       "items": {
-        "$ref": "#/$defs/SemanticObjectType"
-      },
-      "type": "array"
+        "type": "string",
+        "enum": [
+          "semantic-model",
+          "semantic-dataset",
+          "semantic-metric",
+          "semantic-relationship",
+          "semantic-glossary",
+          "semantic-constraint"
+        ]
+      }
     },
     "semantic_model_ids": {
       "default": [],
       "description": "Optional list of semantic model IDs to restrict the search to specific models. Empty list [] means search across all semantic models.",
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     },
     "case_sensitive": {
       "default": false,
@@ -3928,13 +3165,15 @@ EXAMPLES:
     "max_results": {
       "default": 100,
       "description": "Maximum number of matched semantic objects to return. Use a smaller value for quick discovery and a larger value only when you need a broader result set.",
-      "type": "integer"
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
     }
   },
   "required": [
     "patterns"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -3990,67 +3229,58 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "SemanticObjectType": {
-      "enum": [
-        "semantic-model",
-        "semantic-dataset",
-        "semantic-metric",
-        "semantic-relationship",
-        "semantic-glossary",
-        "semantic-constraint"
-      ],
-      "type": "string"
-    },
-    "SemanticObjectTypeSelection": {
-      "description": "Semantic object type selection used by semantic tools.",
-      "properties": {
-        "object_type": {
-          "$ref": "#/$defs/SemanticObjectType",
-          "description": "Semantic object type to load."
-        },
-        "ids": {
-          "default": [],
-          "description": "Specific object UUIDs to include. Empty list [] means include all objects of this type.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "object_type"
-      ],
-      "type": "object"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "sql_query": {
-      "description": "SQL query that should be checked against the semantic layer. The query is not executed; the tool performs best-effort semantic detection and rule validation using heuristic string matching, so the detected objects may be incomplete or imperfect.",
-      "type": "string"
+      "type": "string",
+      "description": "SQL query that should be checked against the semantic layer. The query is not executed; the tool performs best-effort semantic detection and rule validation using heuristic string matching, so the detected objects may be incomplete or imperfect."
     },
     "semantic_model_ids": {
-      "description": "One or more semantic model IDs against which the SQL should be validated. Contexts from all models are merged into a single universe for object detection. Constraint evaluation is performed per model to avoid cross-model rule contamination.",
+      "type": "array",
       "items": {
         "type": "string"
       },
-      "type": "array"
+      "description": "One or more semantic model IDs against which the SQL should be validated. Contexts from all models are merged into a single universe for object detection. Constraint evaluation is performed per model to avoid cross-model rule contamination."
     },
     "expected_semantic_objects": {
       "default": [],
       "description": "Optional semantic object selections that define the expected semantic scope of the query. These expectations are compared with the objects actually detected in the SQL. Use `ids` when you want to assert that specific semantic objects should be present.",
+      "type": "array",
       "items": {
-        "$ref": "#/$defs/SemanticObjectTypeSelection"
-      },
-      "type": "array"
+        "type": "object",
+        "properties": {
+          "object_type": {
+            "type": "string",
+            "enum": [
+              "semantic-model",
+              "semantic-dataset",
+              "semantic-metric",
+              "semantic-relationship",
+              "semantic-glossary",
+              "semantic-constraint"
+            ],
+            "description": "Semantic object type to load."
+          },
+          "ids": {
+            "default": [],
+            "description": "Specific object UUIDs to include. Empty list [] means include all objects of this type.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "object_type"
+        ]
+      }
     }
   },
   "required": [
     "sql_query",
     "semantic_model_ids"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -4065,66 +3295,68 @@ EXAMPLES:
 
 **Description**:
 
-Executes an SQL SELECT query to get the data from the underlying database.
 
-BEFORE QUERYING:
-* Always verify the table has a non-null fullyQualifiedName from get_tables tool.
-  If it does not, the table is not SQL-accessible from this workspace — do not attempt the query and inform user.
+    Executes an SQL SELECT query to get the data from the underlying database.
 
-CRITICAL SQL REQUIREMENTS:
+    BEFORE QUERYING:
+    * Always verify the table has a non-null fullyQualifiedName from get_tables tool.
+      If it does not, the table is not SQL-accessible from this workspace — do not attempt the query and inform user.
 
-* ALWAYS check the SQL dialect before constructing queries.
-* Do not include any comments in the SQL code
-* Use delimited identifiers and FQN format for the current SQL dialect.
+    CRITICAL SQL REQUIREMENTS:
 
-TABLE AND COLUMN REFERENCES:
-* Always use fully qualified table names in the exact FQN format provided by table information tools
-* Follow the identifier structure exactly as shown by table info tools for the current SQL dialect
-* Always use delimited identifiers when referring to table columns
+    * ALWAYS check the SQL dialect before constructing queries.
+    * Do not include any comments in the SQL code
+    * Use delimited identifiers and FQN format for the current SQL dialect.
 
-CTE (WITH CLAUSE) RULES:
-* ALL column references in main query MUST match exact case used in the CTE
-* If you alias a column in a CTE, reference it under the aliased name in the subsequent queries
-* Define all column aliases explicitly in CTEs
-* Use delimited identifiers in both CTE definition and references to preserve case
+    TABLE AND COLUMN REFERENCES:
+    * Always use fully qualified table names in the exact FQN format provided by table information tools
+    * Follow the identifier structure exactly as shown by table info tools for the current SQL dialect
+    * Always use delimited identifiers when referring to table columns
 
-FUNCTION COMPATIBILITY:
-* Check data types before using date functions (DATE_TRUNC, EXTRACT require proper date/timestamp types)
-* Cast VARCHAR columns to appropriate types before using in date/numeric functions
+    CTE (WITH CLAUSE) RULES:
+    * ALL column references in main query MUST match exact case used in the CTE
+    * If you alias a column in a CTE, reference it under the aliased name in the subsequent queries
+    * Define all column aliases explicitly in CTEs
+    * Use delimited identifiers in both CTE definition and references to preserve case
 
-ERROR PREVENTION:
-* Never pass empty strings ('') where numeric or date values are expected
-* Use NULLIF or CASE statements to handle empty values
-* Always use TRY_CAST or similar safe casting functions when converting data types
-* Check for division by zero using NULLIF(denominator, 0)
-* Always use the LIMIT clause in your SELECT statements when fetching data. There are hard limits imposed
-  by this tool on the maximum number of rows that can be fetched and the maximum number of characters.
-  The tool will truncate the data if those limits are exceeded.
+    FUNCTION COMPATIBILITY:
+    * Check data types before using date functions (DATE_TRUNC, EXTRACT require proper date/timestamp types)
+    * Cast VARCHAR columns to appropriate types before using in date/numeric functions
 
-DATA VALIDATION:
-* When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
-* Ensure valid filtering by checking actual data values first
+    ERROR PREVENTION:
+    * Never pass empty strings ('') where numeric or date values are expected
+    * Use NULLIF or CASE statements to handle empty values
+    * Always use TRY_CAST or similar safe casting functions when converting data types
+    * Check for division by zero using NULLIF(denominator, 0)
+    * Always use the LIMIT clause in your SELECT statements when fetching data. There are hard limits imposed
+      by this tool on the maximum number of rows that can be fetched and the maximum number of characters.
+      The tool will truncate the data if those limits are exceeded.
+
+    DATA VALIDATION:
+    * When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
+    * Ensure valid filtering by checking actual data values first
+    
 
 
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "sql_query": {
-      "description": "SQL SELECT query to run.",
-      "type": "string"
+      "type": "string",
+      "description": "SQL SELECT query to run."
     },
     "query_name": {
-      "description": "A concise, human-readable name for this query based on its purpose and what data it retrieves. Use normal words with spaces (e.g., \"Customer Orders Last Month\", \"Top Selling Products\", \"User Activity Summary\").",
-      "type": "string"
+      "type": "string",
+      "description": "A concise, human-readable name for this query based on its purpose and what data it retrieves. Use normal words with spaces (e.g., \"Customer Orders Last Month\", \"Top Selling Products\", \"User Activity Summary\")."
     }
   },
   "required": [
     "sql_query",
     "query_name"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -4155,18 +3387,18 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "bucket_ids": {
       "default": [],
       "description": "Filter by specific bucket IDs.",
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     }
   },
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
@@ -4219,23 +3451,23 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "bucket_ids": {
       "default": [],
       "description": "Filter by specific bucket IDs.",
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     },
     "table_ids": {
       "default": [],
       "description": "Filter by specific table IDs.",
+      "type": "array",
       "items": {
         "type": "string"
-      },
-      "type": "array"
+      }
     },
     "include_usage": {
       "default": false,
@@ -4243,73 +3475,53 @@ EXAMPLES:
       "type": "boolean"
     }
   },
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
 ---
 <a name="update_descriptions"></a>
 ## update_descriptions
-**Annotations**: `destructive`
+**Annotations**: 
 
 **Tags**: `storage`
 
 **Description**:
 
-Updates the description for a Keboola storage item.
-
-This tool supports three item types, inferred from the provided item_id:
-
-- bucket: item_id = "in.c-bucket"
-- table: item_id = "in.c-bucket.table"
-- column: item_id = "in.c-bucket.table.column"
-
-Usage examples (payload uses a list of DescriptionUpdate objects):
-- Update a bucket:
-  updates=[DescriptionUpdate(item_id="in.c-my-bucket", description="New bucket description")]
-- Update a table:
-  updates=[DescriptionUpdate(item_id="in.c-my-bucket.my-table", description="New table description")]
-- Update a column:
-  updates=[DescriptionUpdate(item_id="in.c-my-bucket.my-table.my_column", description="New column description")]
+Updates the description for Keboola storage items (buckets, tables, or columns).
 
 
 **Input JSON Schema**:
 ```json
 {
-  "$defs": {
-    "DescriptionUpdate": {
-      "description": "Structured update describing a storage item and its new description.",
-      "properties": {
-        "item_id": {
-          "description": "Storage item name: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
-          "type": "string"
-        },
-        "description": {
-          "description": "New description to set for the storage item.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "item_id",
-        "description"
-      ],
-      "type": "object"
-    }
-  },
-  "additionalProperties": false,
+  "type": "object",
   "properties": {
     "updates": {
-      "description": "List of DescriptionUpdate objects with storage item_id and new description. Examples: \"bucket_id\", \"bucket_id.table_id\", \"bucket_id.table_id.column_name\"",
+      "type": "array",
       "items": {
-        "$ref": "#/$defs/DescriptionUpdate"
+        "type": "object",
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "description": "Storage item: \"bucket_id\", \"bucket_id.table_id\", or \"bucket_id.table_id.column_name\"."
+          },
+          "description": {
+            "type": "string",
+            "description": "New description to set."
+          }
+        },
+        "required": [
+          "item_id",
+          "description"
+        ]
       },
-      "type": "array"
+      "description": "List of description updates to apply."
     }
   },
   "required": [
     "updates"
   ],
-  "type": "object"
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
 ```
 
