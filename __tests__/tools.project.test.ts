@@ -110,6 +110,17 @@ const useProjectInfoHandlers = (opts: ProjectInfoHandlers = {}) => {
     http.get('https://connection.test/v2/storage/branch/:branchId/metadata', () =>
       HttpResponse.json(branchMetadata),
     ),
+    // WorkspaceManager fetches a workspace by id (resolved from the MCP metadata key)…
+    http.get(
+      'https://connection.test/v2/storage/branch/:branchId/workspaces/:wsId',
+      ({ params }) => {
+        const ws = (workspaces as { id: number }[]).find(
+          (w) => String(w.id) === String(params.wsId),
+        );
+        return ws ? HttpResponse.json(ws) : new HttpResponse(null, { status: 404 });
+      },
+    ),
+    // …or lists them when resolving by the configured workspace schema.
     http.get('https://connection.test/v2/storage/branch/:branchId/workspaces', () =>
       HttpResponse.json(workspaces),
     ),
@@ -185,7 +196,13 @@ describe('get_project_info', () => {
         },
         {
           id: 222,
-          connection: { backend: 'bigquery', schema: 'TARGET_SCHEMA' },
+          connection: {
+            backend: 'bigquery',
+            schema: 'TARGET_SCHEMA',
+            // BigQuery workspaces carry the service-account JSON in `connection.user`;
+            // WorkspaceManager parses project_id out of it.
+            user: JSON.stringify({ project_id: 'my-bq-project' }),
+          },
           readOnlyStorageAccess: true,
         },
       ],
@@ -199,10 +216,7 @@ describe('get_project_info', () => {
     expect(text).toContain('`project`.`dataset`.`table`');
   });
 
-  it('errors when no workspace can be resolved', async () => {
-    useProjectInfoHandlers({ branchMetadata: [], workspaces: [] });
-    const { result, text } = await callProjectInfo(config);
-    expect(result.isError).toBe(true);
-    expect(text).toContain('Failed to initialize Keboola Workspace.');
-  });
+  // Note: when no workspace exists, get_project_info now CREATES one via WorkspaceManager
+  // (parity with the Python behavior / query_data), rather than erroring. The create-and-poll
+  // path is covered in __tests__/workspace.test.ts.
 });

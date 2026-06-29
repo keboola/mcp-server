@@ -9,6 +9,7 @@ import type { Link } from '@/links';
 import { logger } from '@/logger';
 import { registerTool } from '@/mcp/tool';
 import { resourcePath } from '@/resource-path';
+import { createWorkspaceManager } from '@/tools/sql';
 
 // Ported from tools/project.py.
 
@@ -150,62 +151,6 @@ const resolveBranchContext = async (
   return [branchId, branchName, isDevelopmentBranch];
 };
 
-// --- Workspace resolution (read-only port of WorkspaceManager) ---------------
-// Python resolves sql_dialect + workspace_id via WorkspaceManager, which finds a
-// read-only workspace either by the configured schema or via the branch metadata
-// key, creating one when absent. get_project_info only *reads* the dialect and id,
-// so we implement the lookup paths locally here (no creation). See gaps in report.
-const MCP_WORKSPACE_META_KEY = 'KBC.McpServer.v2.workspaceId';
-
-type WorkspaceInfo = { id: number; backend: string };
-
-const backendToDialect = (backend: string): string => {
-  if (backend === 'snowflake') return 'Snowflake';
-  if (backend === 'bigquery') return 'BigQuery';
-  throw new Error(`Unexpected backend type "${backend}" in workspace.`);
-};
-
-const resolveWorkspace = async (
-  config: Config,
-  clients: KeboolaClients,
-): Promise<WorkspaceInfo> => {
-  const branchId = clients.branchId;
-  const workspaces = (await clients.storage.workspaces.getWorkspaces(branchId)) as {
-    id: number;
-    connection?: { backend?: string; schema?: string };
-    readOnlyStorageAccess?: boolean;
-  }[];
-
-  // Path 1: explicit workspace schema requested via config.
-  if (config.workspaceSchema) {
-    const match = workspaces.find(
-      (w) => w.id && w.connection?.backend && w.connection?.schema === config.workspaceSchema,
-    );
-    if (match) {
-      return { id: match.id, backend: match.connection!.backend! };
-    }
-    throw new Error(
-      `No Keboola workspace found or the workspace has no read-only storage access: ` +
-        `workspace_schema=${config.workspaceSchema}`,
-    );
-  }
-
-  // Path 2: the MCP-managed read-only workspace noted in the branch metadata.
-  const metadata = (await clients.storage.branches.getDevBranchMetadata(branchId)) as {
-    key: string;
-    value: string;
-  }[];
-  const meta = metadata.find((m) => m.key === MCP_WORKSPACE_META_KEY && m.value);
-  if (meta) {
-    const ws = workspaces.find((w) => String(w.id) === String(meta.value));
-    if (ws && ws.readOnlyStorageAccess && ws.connection?.backend) {
-      return { id: ws.id, backend: ws.connection.backend };
-    }
-  }
-
-  throw new Error('Failed to initialize Keboola Workspace.');
-};
-
 /** Registers the project tools (Plan §4). Ported from tools/project.py. */
 export const registerProjectTools = (server: McpServer, config: Config): void => {
   registerTool(server, {
@@ -258,9 +203,12 @@ export const registerProjectTools = (server: McpServer, config: Config): void =>
       const description =
         metadata.find((item) => item.key === MetadataField.PROJECT_DESCRIPTION)?.value ?? '';
 
-      const workspace = await resolveWorkspace(config, clients);
-      const sqlDialect = backendToDialect(workspace.backend);
-      const workspaceId = workspace.id;
+      // Resolve sql_dialect + workspace_id via the shared WorkspaceManager, which finds the
+      // MCP read-only workspace (by configured schema or branch metadata) and creates one
+      // when absent — matching the Python get_project_info / query_data behavior.
+      const workspaceManager = await createWorkspaceManager(config);
+      const sqlDialect = await workspaceManager.getSqlDialect();
+      const workspaceId = await workspaceManager.getWorkspaceId();
 
       const projectFeatures = (projectData.features ?? {}) as Record<string, unknown> | unknown[];
       const conditionalFlows = Array.isArray(projectFeatures)

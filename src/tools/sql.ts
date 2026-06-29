@@ -81,7 +81,7 @@ const toCsv = (data: SqlSelectData): string => {
  * workspace-discovery clients are built locally (the shared `createKeboolaClients`
  * does not expose a query service client), rooted at `query.<suffix>`.
  */
-const createWorkspaceManager = async (config: Config): Promise<WorkspaceManager> => {
+export const createWorkspaceManager = async (config: Config): Promise<WorkspaceManager> => {
   const clients = createKeboolaClients(config);
   const urls = deriveServiceUrls(config.storageApiUrl ?? '');
   // Query Service host: no dedicated key in deriveServiceUrls — derive `query.<suffix>`
