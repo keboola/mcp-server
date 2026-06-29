@@ -47,6 +47,8 @@
     "lint:fix": "oxlint --fix . --quiet && oxfmt src __tests__ *.ts *.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integ": "vitest run --config vitest.integ.config.ts",
+    "test:integ:watch": "vitest --config vitest.integ.config.ts",
     "gen:tools-docs": "tsx scripts/gen-tools-docs.ts",
     "check:tools-docs": "tsx scripts/gen-tools-docs.ts --check"
   },
@@ -66,6 +68,7 @@
     "@keboola/oxlint-config": "^0.1.2",
     "@keboola/tsconfig": "^0.1.1",
     "@types/node": "^24.0.0",
+    "ioredis": "^5.4.1",
     "msw": "^2.14.6",
     "oxfmt": "^0.44.0",
     "oxlint": "^1.56.0",
