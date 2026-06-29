@@ -16,4 +16,8 @@ export default defineConfig({
   // Shebang so `npx @keboola/mcp-server` runs directly.
   banner: { js: '#!/usr/bin/env node' },
   external: [/^[^.@]/, /^@(?!\/)/],
+  // Resource files (flow schema/examples, system prompt, data-app code templates)
+  // are read from disk at runtime via `@/resource-path` (resolves to dist/resources
+  // in the bundle). Copy the tree into dist so it ships in the image and on npm.
+  onSuccess: 'cp -R src/resources dist/resources',
 });

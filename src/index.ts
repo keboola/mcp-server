@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 
 import { Config } from '@/config';
+import { applyDeploymentDefaults, parseEnv } from '@/env';
 import { createServer } from '@/server';
 import { startHttp } from '@/transports/http';
 import { startStdio } from '@/transports/stdio';
@@ -14,30 +15,36 @@ const parseCliConfig = (): ParsedCli => {
   const { values } = parseArgs({
     options: {
       transport: { type: 'string', default: 'stdio' },
-      'log-level': { type: 'string', default: 'INFO' },
+      'log-level': { type: 'string' },
       'api-url': { type: 'string' },
       'storage-token': { type: 'string' },
       'workspace-schema': { type: 'string' },
-      host: { type: 'string', default: 'localhost' },
-      port: { type: 'string', default: '8000' },
+      host: { type: 'string' },
+      port: { type: 'string' },
     },
     allowPositionals: false,
   });
 
   const transport = (values.transport ?? 'stdio') as Transport;
 
-  // Base config from the environment, then CLI flags layered on top.
-  const config = Config.fromMap(process.env).replaceBy({
+  // Process-level deployment env (validated, build/run-segregated).
+  const env = parseEnv();
+
+  // Per-request base config: KBC_*/X-* env, then CLI flags layered on top.
+  let config = Config.fromMap(process.env).replaceBy({
     storageApiUrl: values['api-url'],
     storageToken: values['storage-token'],
     workspaceSchema: values['workspace-schema'],
   });
+  // Derive Storage/OAuth/MCP URLs from HOSTNAME_SUFFIX when not set explicitly.
+  config = applyDeploymentDefaults(config, env);
 
   return {
     transport,
     config,
-    host: values.host ?? 'localhost',
-    port: Number(values.port ?? '8000'),
+    // Precedence: explicit CLI flag > deployment env > schema default.
+    host: values.host ?? env.HOST,
+    port: values.port ? Number(values.port) : env.PORT,
   };
 };
 
