@@ -375,7 +375,9 @@ describe('modify_flow', () => {
     });
     expect(isError).toBeFalsy();
     expect(text).toContain('version: 4');
-    const cfg = putBody.configuration as { phases: { name: string }[] };
+    // The typed Storage client (updateConfiguration) serializes `configuration` as a JSON
+    // string field (the canonical SAPI contract), unlike the previous raw nested-object body.
+    const cfg = JSON.parse(putBody.configuration as string) as { phases: { name: string }[] };
     expect(cfg.phases[0]!.name).toBe('New Phase');
     expect(putBody.changeDescription).toBe('update phases');
   });
