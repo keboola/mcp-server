@@ -5,6 +5,7 @@ import { createStorageClient } from '@keboola/api-client/storage';
 import type { Config } from '@/config';
 import { ProjectLinksManager } from '@/links';
 import { createRawClient, type RawClient } from './raw';
+import { createRetryMiddleware } from './retry';
 import { deriveServiceUrls } from './urls';
 
 /**
@@ -53,12 +54,17 @@ export const createKeboolaClients = (config: Config): KeboolaClients => {
   // (matches Python's `bearer_or_sapi_token`).
   const storageToken = config.bearerToken ? `Bearer ${config.bearerToken}` : token;
 
+  // Retry transient failures (network errors, 5xx, 429) with exponential backoff so a flaky
+  // or briefly-unavailable Keboola service doesn't fail a tool call. Mirrors the raw client's
+  // own retry on the same status set. A fresh middleware instance per request is cheap.
+  const retry = createRetryMiddleware(3);
+
   // ponytail: SAPI token via X-StorageApi-Token (the common path). OAuth bearer
   // token handling is layered in with the OAuth provider (Plan §5).
   return {
-    storage: createStorageClient({ baseUrl: urls.storage, token, middlewares: [] }),
-    queue: createQueueClient({ baseUrl: urls.queue, token, middlewares: [] }),
-    metastore: createMetastoreClient({ baseUrl: urls.metastore, token, middlewares: [] }),
+    storage: createStorageClient({ baseUrl: urls.storage, token, middlewares: [retry] }),
+    queue: createQueueClient({ baseUrl: urls.queue, token, middlewares: [retry] }),
+    metastore: createMetastoreClient({ baseUrl: urls.metastore, token, middlewares: [retry] }),
     rawStorage: createRawClient({ baseUrl: `${urls.storage}/v2/storage`, token: storageToken }),
     rawQueue: createRawClient({ baseUrl: urls.queue, token }),
     rawAi: createRawClient({ baseUrl: urls.ai, token }),
