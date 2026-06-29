@@ -44,8 +44,16 @@ export const createRedisLocker = (redisUrl: string, password: string): Locker =>
     port,
     password,
     ...(tls ? { tls: { minVersion: 'TLSv1.2' as const } } : {}),
-    maxRetriesPerRequest: 1,
-    lazyConnect: false,
+    // Tolerate a flaky/briefly-unavailable redis: retry each command a few times and
+    // reconnect with capped exponential backoff instead of failing immediately.
+    maxRetriesPerRequest: 3,
+    retryStrategy: (times) => Math.min(times * 200, 2000),
+  });
+  client.on('error', (err) => {
+    // ioredis emits connection errors on this channel; without a listener they become
+    // unhandled 'error' events that crash the process. Swallow — command-level failures
+    // surface where they're awaited and are handled there.
+    console.warn(`[testproject] redis error: ${err.message}`);
   });
 
   const forProject = (def: ProjectDefinition): ProjectLocker => {
@@ -53,7 +61,18 @@ export const createRedisLocker = (redisUrl: string, password: string): Locker =>
     return {
       tryLock: async (): Promise<ReleaseFn | null> => {
         const token = randomUUID();
-        const ok = await client.set(key, token, 'PX', TTL_MS, 'NX');
+        let ok: string | null;
+        try {
+          ok = await client.set(key, token, 'PX', TTL_MS, 'NX');
+        } catch (err) {
+          // Transient redis failure (after the per-command retries above): treat the project
+          // as unavailable for now so the pool moves on and retries, rather than failing the
+          // whole test on a blip. A persistently-down redis is bounded by the job timeout.
+          console.warn(
+            `[testproject] redis SET failed for ${key}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return null;
+        }
         if (ok !== 'OK') return null;
 
         // Auto-extend the lease for the (unknown) lifetime of the test.

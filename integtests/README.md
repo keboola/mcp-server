@@ -37,11 +37,11 @@ The harness loads the pool once per process from the absolute path in **`TEST_KB
 | Variable | Meaning | Where |
 | --- | --- | --- |
 | `TEST_KBC_PROJECTS_FILE` | Absolute path to the generated `projects.json` | always |
-| `TEST_KBC_PROJECTS_LOCK_HOST` | redis URL (`redis://host:port`, `rediss://` or `+tls` for TLS) | CI |
-| `TEST_KBC_PROJECTS_LOCK_PASSWORD` | redis password | CI |
-| `TEST_KBC_PROJECTS_LOCK_DIR_NAME` | dir for the local fs-lock fallback | local (optional) |
+| `TEST_MCP_PROJECTS_LOCK_HOST` | redis URL (`redis://host:port`, `rediss://` or `+tls` for TLS) | CI |
+| `TEST_MCP_PROJECTS_LOCK_PASSWORD` | redis password | CI |
+| `TEST_MCP_PROJECTS_LOCK_DIR_NAME` | dir for the local fs-lock fallback | local (optional) |
 
-When `TEST_KBC_PROJECTS_LOCK_HOST` is set, projects are leased via **redis** (cross-runner
+When `TEST_MCP_PROJECTS_LOCK_HOST` is set, projects are leased via **redis** (cross-runner
 safe). Otherwise the harness falls back to a **host-local file lock** — fine for a single
 developer machine, but it provides no cross-runner safety, so CI always uses redis.
 
@@ -87,7 +87,7 @@ export TEST_KBC_PROJECTS_FILE="$(pwd)/projects.local.json"
 npm run test:integ
 ```
 
-Add `TEST_KBC_PROJECTS_LOCK_HOST` / `_PASSWORD` only if you want to exercise the redis path
+Add `TEST_MCP_PROJECTS_LOCK_HOST` / `_PASSWORD` only if you want to exercise the redis path
 locally (e.g. `docker run -p 6379:6379 redis`).
 
 Harness logic itself (pool selection, parsing, retry) is covered by ordinary unit tests in
@@ -111,7 +111,7 @@ The `integration_tests` job (see the RFC's `ci-job.yml` sketch) runs:
 
 1. `export-kbc-projects` → generates `projects.json` from `TEST_KBC_PROJECT_*` secrets and
    exports its absolute path as `TEST_KBC_PROJECTS_FILE`.
-2. Starts a redis service and sets `TEST_KBC_PROJECTS_LOCK_HOST` / `_PASSWORD`.
+2. Starts a redis service and sets `TEST_MCP_PROJECTS_LOCK_HOST` / `_PASSWORD`.
 3. `npm run test:integ`.
 
 Pool size = max concurrent runners. Add projects to `.github/ci/projects.json` (and a matching

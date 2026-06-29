@@ -41,9 +41,9 @@ the same `projects.json` layout and CI export mechanism the go monorepo uses.
 | Variable | Meaning | Required |
 | --- | --- | --- |
 | `TEST_KBC_PROJECTS_FILE` | Absolute path to the generated `projects.json` | yes |
-| `TEST_KBC_PROJECTS_LOCK_HOST` | redis URL (`redis://host:port`, `+tls` suffix for TLS) | CI only |
-| `TEST_KBC_PROJECTS_LOCK_PASSWORD` | redis password | CI only |
-| `TEST_KBC_PROJECTS_LOCK_DIR_NAME` | dir for the fs-locker fallback | local optional |
+| `TEST_MCP_PROJECTS_LOCK_HOST` | redis URL (`redis://host:port`, `+tls` suffix for TLS) | CI only |
+| `TEST_MCP_PROJECTS_LOCK_PASSWORD` | redis password | CI only |
+| `TEST_MCP_PROJECTS_LOCK_DIR_NAME` | dir for the fs-locker fallback | local optional |
 
 No per-token env arrays (`INTEGTEST_STORAGE_TOKENS`) anymore — the pool is the JSON file.
 

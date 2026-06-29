@@ -19,6 +19,6 @@ export type Locker = {
   close: () => Promise<void>;
 };
 
-export const LOCK_HOST_ENV = 'TEST_KBC_PROJECTS_LOCK_HOST';
-export const LOCK_PASSWORD_ENV = 'TEST_KBC_PROJECTS_LOCK_PASSWORD';
-export const LOCK_DIR_ENV = 'TEST_KBC_PROJECTS_LOCK_DIR_NAME';
+export const LOCK_HOST_ENV = 'TEST_MCP_PROJECTS_LOCK_HOST';
+export const LOCK_PASSWORD_ENV = 'TEST_MCP_PROJECTS_LOCK_PASSWORD';
+export const LOCK_DIR_ENV = 'TEST_MCP_PROJECTS_LOCK_DIR_NAME';
