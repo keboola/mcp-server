@@ -32,6 +32,12 @@ export type ConfigFields = {
   bearerToken?: string;
   /** ID of the ongoing conversation (supplied via HTTP header only). */
   conversationId?: string;
+  /** Comma-separated allow list of tool names (`X-Allowed-Tools` header). */
+  allowedTools?: string;
+  /** Comma-separated deny list of tool names (`X-Disallowed-Tools` header). */
+  disallowedTools?: string;
+  /** Read-only mode flag (`X-Read-Only-Mode` header). */
+  readOnlyMode?: string;
 };
 
 type FieldName = keyof ConfigFields;
@@ -54,6 +60,9 @@ const FIELD_NAMES: FieldName[] = [
   'jwtSecret',
   'bearerToken',
   'conversationId',
+  'allowedTools',
+  'disallowedTools',
+  'readOnlyMode',
 ];
 
 const SECRET_HINTS = ['token', 'password', 'secret'];
@@ -161,6 +170,9 @@ export class Config {
   readonly jwtSecret?: string;
   readonly bearerToken?: string;
   readonly conversationId?: string;
+  readonly allowedTools?: string;
+  readonly disallowedTools?: string;
+  readonly readOnlyMode?: string;
 
   constructor(fields: ConfigFields = {}) {
     Object.assign(this, amendFields(fields));
