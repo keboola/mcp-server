@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "phases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "minLength": 1,
+            "description": "Unique identifier of the phase, can by anything just have to be unique within the configuration"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Name of the phase, can be anything"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the phase, free form, markdown supported"
+          },
+          "dependsOn": {
+            "type": "array",
+            "description": "List of phase ids that this phase depends on",
+            "items": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "$ref": "#/properties/phases/items/properties/id"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "minLength": 1,
+            "description": "Unique identifier of the task"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "phase": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "minLength": 1,
+            "description": "ID of the phase this task belongs to"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "continueOnFailure": {
+            "type": "boolean",
+            "default": false
+          },
+          "task": {
+            "type": "object",
+            "properties": {
+              "componentId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Component id of the task (e.g. keboola.db-ex-mysql) "
+              },
+              "configId": {
+                "type": "string",
+                "description": "Configuration id of the task"
+              },
+              "configData": {
+                "type": "object",
+                "description": "Configuration data can replace configuration and component ids, but is used seldomly"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "run",
+                  "debug"
+                ],
+                "default": "run"
+              },
+              "configRowIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "List of configuration row ids"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "previousJobId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "componentId"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "phase",
+          "task"
+        ]
+      }
+    }
+  },
+  "required": [
+    "phases",
+    "tasks"
+  ]
+}
