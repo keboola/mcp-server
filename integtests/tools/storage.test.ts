@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { callToolRaw, callToolText, connectMcp } from '../helpers/mcp';
 import { seedProject } from '../helpers/seed';
 import { getTestProjectForTest } from '../testproject/fixture';
+import type { Backend } from '../testproject/types';
 
 // Ported from integtests/tools/test_storage.py. Each test leases a fresh project, resets it,
 // seeds the standard fixtures (2 input buckets, 1 CSV table with columns id/name/item_count,
@@ -78,47 +79,63 @@ describe('storage tools (integration)', () => {
 
   // --- get_tables ----------------------------------------------------------
 
-  it('get_tables lists a bucket and returns table detail with an FQN', async () => {
-    // FQN + warehouse-native types are resolved via a Snowflake workspace; pin the backend
-    // (BigQuery leases expose no fully_qualified_name).
-    const project = await getTestProjectForTest({ backend: 'snowflake' });
-    await seedProject(project);
-    const session = await connectMcp(project.config);
-    try {
-      const listed = await callToolText(session.client, 'get_tables', {
-        bucket_ids: ['in.c-test_bucket_01'],
-      });
-      expect(listed).toContain(SEEDED_TABLE_ID);
+  // FQN + warehouse-native types are now resolved dialect-aware (Snowflake double-quoted
+  // 3-part db.schema.table; BigQuery backtick-quoted 2-part dataset.table). Both backends
+  // must expose a fully_qualified_name for the seeded table.
+  const FQN_QUOTE: Record<Backend, string> = { snowflake: '"', bigquery: '`' };
 
-      const detail = await callToolText(session.client, 'get_tables', {
-        table_ids: [SEEDED_TABLE_ID],
-      });
-      expect(detail).toMatch(/fully_qualified_name|fullyQualifiedName/);
-      expect(detail).toContain('item_count');
-    } finally {
-      await session.close();
-    }
-  });
+  it.each<Backend>(['snowflake', 'bigquery'])(
+    'get_tables lists a bucket and returns table detail with an FQN (%s)',
+    async (backend) => {
+      const project = await getTestProjectForTest({ backend });
+      await seedProject(project);
+      const session = await connectMcp(project.config);
+      try {
+        const listed = await callToolText(session.client, 'get_tables', {
+          bucket_ids: ['in.c-test_bucket_01'],
+        });
+        expect(listed).toContain(SEEDED_TABLE_ID);
 
-  it('get_tables detail returns the seeded columns with types (port of test_get_table)', async () => {
-    // database_native_type is resolved via the warehouse — pin Snowflake.
-    const project = await getTestProjectForTest({ backend: 'snowflake' });
-    await seedProject(project);
-    const session = await connectMcp(project.config);
-    try {
-      const detail = await callToolText(session.client, 'get_tables', {
-        table_ids: [SEEDED_TABLE_ID],
-      });
-      expect(detail).toContain(SEEDED_TABLE_ID);
-      expect(detail).toContain('test_table_01');
-      // Every CSV column must appear in the detail's column listing.
-      for (const col of SEEDED_COLUMNS) expect(detail).toContain(col);
-      // Detail carries database-native type info per column.
-      expect(detail).toContain('database_native_type');
-    } finally {
-      await session.close();
-    }
-  });
+        const detail = await callToolText(session.client, 'get_tables', {
+          table_ids: [SEEDED_TABLE_ID],
+        });
+        // The FQN must be present and use the backend's quote char.
+        const fqnMatch = detail.match(/fullyQualifiedName:\s*(.+?)\s*$/m);
+        expect(
+          fqnMatch,
+          `Table detail should expose a fullyQualifiedName. Got: ${detail}`,
+        ).not.toBeNull();
+        let fqn = fqnMatch![1]!.trim();
+        if (fqn.startsWith('"') && fqn.endsWith('"')) fqn = JSON.parse(fqn) as string;
+        expect(fqn).toContain(FQN_QUOTE[backend]);
+        expect(detail).toContain('item_count');
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it.each<Backend>(['snowflake', 'bigquery'])(
+    'get_tables detail returns the seeded columns with types (%s) (port of test_get_table)',
+    async (backend) => {
+      const project = await getTestProjectForTest({ backend });
+      await seedProject(project);
+      const session = await connectMcp(project.config);
+      try {
+        const detail = await callToolText(session.client, 'get_tables', {
+          table_ids: [SEEDED_TABLE_ID],
+        });
+        expect(detail).toContain(SEEDED_TABLE_ID);
+        expect(detail).toContain('test_table_01');
+        // Every CSV column must appear in the detail's column listing.
+        for (const col of SEEDED_COLUMNS) expect(detail).toContain(col);
+        // Detail carries database-native type info per column.
+        expect(detail).toContain('database_native_type');
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   it('get_tables listing returns summaries without FQN/columns (port of test_get_tables)', async () => {
     const project = await getTestProjectForTest();

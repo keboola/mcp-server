@@ -8,391 +8,45 @@ import { MetadataField } from '@/constants';
 import type { Link, ProjectLinksManager } from '@/links';
 import { logger } from '@/logger';
 import { registerTool } from '@/mcp/tool';
+import {
+  type Bucket,
+  buildTableColumns,
+  type Dialect,
+  FAKE_DEVELOPMENT_BRANCH_KEY,
+  getMetadataProperty,
+  type RawObj,
+  serializeBucket,
+  serializeTable,
+  type Table,
+  tableFqn,
+  validateBucket,
+  validateTableCommon,
+  withBucketLineage,
+  withTableLineage,
+} from './model';
 
 // Ported from tools/storage/tools.py (get_buckets, get_tables, update_descriptions),
-// tools/storage_helpers.py and tools/storage/usage.py.
+// tools/storage_helpers.py and tools/storage/usage.py. The model/serialization layer lives in
+// ./model, lineage references in ./usage.
 
 // ---------------------------------------------------------------------------
-// Metadata helpers (ports of clients/client.py get_metadata_property and
-// tools/components/utils.py get_nested, utils.py parse_iso_timestamp).
+// Project backend resolution. The SQL dialect is needed to build dialect-aware
+// fully-qualified names; it is read from the verified token's owner.defaultBackend,
+// which is far cheaper than provisioning a live workspace. Snowflake is assumed
+// when the field is absent (the dominant backend / legacy projects).
 // ---------------------------------------------------------------------------
 
-type RawObj = Record<string, unknown>;
-
-const FAKE_DEVELOPMENT_BRANCH = 'KBC.fakeDevelopmentBranch';
-const SHARED_DESCRIPTION = 'KBC.sharedDescription';
-const DATATYPE_BASETYPE = 'KBC.datatype.basetype';
-const DATATYPE_TYPE = 'KBC.datatype.type';
-const DATATYPE_NULLABLE = 'KBC.datatype.nullable';
-const CREATED_BY_COMPONENT_ID = 'KBC.createdBy.component.id';
-const CREATED_BY_CONFIGURATION_ID = 'KBC.createdBy.configuration.id';
-const CREATED_BY_CONFIGURATION_ROW_ID = 'KBC.createdBy.configurationRow.id';
-const UPDATED_BY_COMPONENT_ID = 'KBC.lastUpdatedBy.component.id';
-const UPDATED_BY_CONFIGURATION_ID = 'KBC.lastUpdatedBy.configuration.id';
-const UPDATED_BY_CONFIGURATION_ROW_ID = 'KBC.lastUpdatedBy.configurationRow.id';
-
-/** Parse an ISO 8601 timestamp into epoch millis, accepting `Z` and `+HHMM` offsets. */
-const parseIsoTimestamp = (ts: string): number => {
-  const normalized = ts.replace('Z', '+00:00').replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
-  const millis = Date.parse(normalized);
-  if (Number.isNaN(millis)) throw new Error(`Invalid ISO timestamp: ${ts}`);
-  return millis;
-};
-
-/** Port of get_metadata_property: most-recent value for `key`, optionally provider-ranked. */
-const getMetadataProperty = (
-  metadata: unknown,
-  key: string,
-  preferredProviders?: string[],
-): string | null => {
-  if (!Array.isArray(metadata)) return null;
-  const filtered = (metadata as RawObj[]).filter((m) => m && m.key === key);
-  if (filtered.length === 0) return null;
-  const sortKey = (m: RawObj): [number, string] => {
-    const ts = (m.timestamp as string) ?? '';
-    if (preferredProviders) {
-      const p = m.provider as string | undefined;
-      const idx =
-        p && preferredProviders.includes(p)
-          ? preferredProviders.indexOf(p)
-          : preferredProviders.length;
-      return [-1 * idx, ts];
-    }
-    return [0, ts];
-  };
-  let best: RawObj | undefined;
-  let bestKey: [number, string] | undefined;
-  for (const m of filtered) {
-    const k = sortKey(m);
-    if (!bestKey || k[0] > bestKey[0] || (k[0] === bestKey[0] && k[1] > bestKey[1])) {
-      best = m;
-      bestKey = k;
-    }
+const resolveDialect = async (raw: RawClient): Promise<Dialect> => {
+  try {
+    const tokenInfo = await raw.get<RawObj>('tokens/verify');
+    const owner = (tokenInfo.owner ?? {}) as RawObj;
+    return owner.defaultBackend === 'bigquery' ? 'bigquery' : 'snowflake';
+  } catch (error) {
+    logger.warn(
+      `get_tables: failed to resolve project backend (${String(error)}); defaulting to snowflake.`,
+    );
+    return 'snowflake';
   }
-  const value = best?.value;
-  return value != null ? String(value) : null;
-};
-
-/** Port of get_nested: dot-path lookup through nested objects. */
-const getNested = (obj: unknown, path: string): unknown => {
-  let cur: unknown = obj;
-  for (const part of path.split('.')) {
-    if (cur && typeof cur === 'object' && !Array.isArray(cur)) {
-      cur = (cur as RawObj)[part];
-    } else {
-      return undefined;
-    }
-    if (cur == null) return undefined;
-  }
-  return cur;
-};
-
-/** Most recent of the given ISO timestamps (string-preserving), or null. */
-const maxTimestamp = (...timestamps: (string | null | undefined)[]): string | null => {
-  const valid = timestamps.filter((ts): ts is string => Boolean(ts));
-  if (valid.length === 0) return null;
-  const score = (ts: string): [number, number | string] => {
-    try {
-      return [1, parseIsoTimestamp(ts)];
-    } catch {
-      return [0, ts];
-    }
-  };
-  let best = valid[0]!;
-  let bestScore = score(best);
-  for (const ts of valid.slice(1)) {
-    const s = score(ts);
-    if (s[0] > bestScore[0] || (s[0] === bestScore[0] && s[1] > bestScore[1])) {
-      best = ts;
-      bestScore = s;
-    }
-  }
-  return best;
-};
-
-const asNumberOrNull = (value: unknown): number | null => {
-  if (value == null) return null;
-  const n = Number(value);
-  return Number.isNaN(n) ? null : n;
-};
-
-// ---------------------------------------------------------------------------
-// Lineage usage references (port of tools/storage/usage.py get_created_by /
-// get_last_updated_by). find_id_usage depends on the search subsystem which is
-// not yet ported, so include_usage is unavailable (see _find_id_usage_unavailable).
-// ---------------------------------------------------------------------------
-
-type ComponentUsageReference = {
-  component_id: string;
-  configuration_id: string;
-  configuration_row_id: string | null;
-  configuration_name: string | null;
-  used_in: string | null;
-  timestamp: string | null;
-};
-
-const latestMetadataTimestamp = (metadata: RawObj[], keys: string[]): string | null => {
-  let latest: number | null = null;
-  let latestRaw: string | null = null;
-  for (const item of metadata) {
-    if (!keys.includes(item.key as string)) continue;
-    const rawTs = item.timestamp;
-    if (typeof rawTs !== 'string') continue;
-    let parsed: number;
-    try {
-      parsed = parseIsoTimestamp(rawTs);
-    } catch {
-      continue;
-    }
-    if (latest === null || parsed > latest) {
-      latest = parsed;
-      latestRaw = rawTs;
-    }
-  }
-  return latestRaw;
-};
-
-const lineageReference = (
-  metadata: unknown,
-  componentKey: string,
-  configKey: string,
-  rowKey: string,
-): ComponentUsageReference | null => {
-  if (!Array.isArray(metadata)) return null;
-  const items = metadata as RawObj[];
-  const componentId = getMetadataProperty(items, componentKey);
-  const configurationId = getMetadataProperty(items, configKey);
-  const rowId = getMetadataProperty(items, rowKey);
-  if (componentId === null || configurationId === null) return null;
-  return {
-    component_id: String(componentId),
-    configuration_id: String(configurationId),
-    configuration_row_id: rowId ? String(rowId) : null,
-    configuration_name: null,
-    used_in: null,
-    timestamp: latestMetadataTimestamp(items, [componentKey, configKey, rowKey]),
-  };
-};
-
-const getCreatedBy = (metadata: unknown): ComponentUsageReference | null =>
-  lineageReference(
-    metadata,
-    CREATED_BY_COMPONENT_ID,
-    CREATED_BY_CONFIGURATION_ID,
-    CREATED_BY_CONFIGURATION_ROW_ID,
-  );
-
-const getLastUpdatedBy = (metadata: unknown): ComponentUsageReference | null =>
-  lineageReference(
-    metadata,
-    UPDATED_BY_COMPONENT_ID,
-    UPDATED_BY_CONFIGURATION_ID,
-    UPDATED_BY_CONFIGURATION_ROW_ID,
-  );
-
-// ---------------------------------------------------------------------------
-// Bucket / table models (ports of BucketDetail, TableSummary, TableDetail).
-// ---------------------------------------------------------------------------
-
-type Bucket = {
-  id: string;
-  name: string;
-  displayName: string;
-  description: string | null;
-  stage: string;
-  created: string;
-  updated: string | null;
-  dataSizeBytes: number | null;
-  tablesCount: number | null;
-  links: Link[] | null;
-  source_project: string | null;
-  created_by: ComponentUsageReference | null;
-  last_updated_by: ComponentUsageReference | null;
-  // internal, excluded from output
-  branch_id: string | null;
-  prod_id: string;
-};
-
-const validateBucket = (raw: RawObj): Bucket => {
-  const id = String(raw.id ?? '');
-  const metadata = raw.metadata;
-
-  const branchId = getMetadataProperty(metadata, FAKE_DEVELOPMENT_BRANCH);
-  const prodId = branchId ? id.replace(`c-${branchId}-`, 'c-') : id;
-
-  const description =
-    getMetadataProperty(metadata, SHARED_DESCRIPTION) ||
-    getMetadataProperty(metadata, MetadataField.DESCRIPTION) ||
-    (raw.description as string | undefined) ||
-    null;
-
-  const tables = raw.tables;
-  const tablesCount = Array.isArray(tables) ? tables.length : null;
-
-  let sourceProject: string | null = null;
-  const sp = getNested(raw, 'sourceBucket.project') as RawObj | undefined;
-  if (sp) sourceProject = `${sp.name} (ID: ${sp.id})`;
-
-  const updated = (raw.updated as string | undefined) || maxTimestamp(raw.lastChangeDate as string);
-
-  return {
-    id,
-    name: String(raw.name ?? ''),
-    displayName: String(raw.displayName ?? raw.display_name ?? ''),
-    description: description || null,
-    stage: String(raw.stage ?? ''),
-    created: String(raw.created ?? ''),
-    updated: updated || null,
-    dataSizeBytes: asNumberOrNull(raw.dataSizeBytes),
-    tablesCount,
-    links: null,
-    source_project: sourceProject,
-    created_by: null,
-    last_updated_by: null,
-    branch_id: branchId || null,
-    prod_id: prodId,
-  };
-};
-
-/** Port of BucketDetail.with_lineage_metadata. */
-const withBucketLineage = (bucket: Bucket, raw: RawObj): Bucket => {
-  const metadata = raw.metadata;
-  if (!Array.isArray(metadata) || metadata.length === 0) return bucket;
-  const lastUpdatedBy = getLastUpdatedBy(metadata);
-  return {
-    ...bucket,
-    created_by: getCreatedBy(metadata),
-    last_updated_by: lastUpdatedBy,
-    updated: maxTimestamp(bucket.updated, lastUpdatedBy?.timestamp ?? null),
-  };
-};
-
-type TableColumnInfo = {
-  name: string;
-  quotedName: string;
-  database_native_type: string;
-  nullable: boolean;
-  keboola_base_type: string | null;
-  description: string | null;
-};
-
-type Table = {
-  id: string;
-  name: string;
-  displayName: string;
-  description: string | null;
-  primaryKey: string | null; // serialized as '|'-joined string (port of serialize_primary_key)
-  created: string | null;
-  updated: string | null;
-  rowsCount: number | null;
-  dataSizeBytes: number | null;
-  links: Link[] | null;
-  source_project: string | null;
-  // detail-only fields (absent on summaries)
-  columns?: TableColumnInfo[] | null;
-  fullyQualifiedName?: string | null;
-  used_by?: ComponentUsageReference[] | null;
-  created_by?: ComponentUsageReference | null;
-  last_updated_by?: ComponentUsageReference | null;
-  // internal
-  branch_id: string | null;
-  prod_id: string;
-  isDetail: boolean;
-};
-
-const validateTableCommon = (raw: RawObj): Omit<Table, 'isDetail'> => {
-  const id = String(raw.id ?? '');
-  const metadata = raw.metadata;
-
-  const branchId = getMetadataProperty(metadata, FAKE_DEVELOPMENT_BRANCH);
-  const prodId = branchId ? id.replace(`c-${branchId}-`, 'c-') : id;
-
-  const description =
-    getMetadataProperty(metadata, MetadataField.DESCRIPTION) ||
-    getMetadataProperty(getNested(raw, 'sourceTable.metadata') ?? [], MetadataField.DESCRIPTION) ||
-    (raw.description as string | undefined) ||
-    null;
-
-  let sourceProject: string | null = null;
-  const sp = getNested(raw, 'sourceTable.project') as RawObj | undefined;
-  if (sp) sourceProject = `${sp.name} (ID: ${sp.id})`;
-
-  const updated =
-    (raw.updated as string | undefined) ||
-    maxTimestamp(raw.lastChangeDate as string, raw.lastImportDate as string);
-
-  const pk = raw.primaryKey;
-  const primaryKey = Array.isArray(pk) && pk.length ? (pk as string[]).join('|') : null;
-
-  return {
-    id,
-    name: String(raw.name ?? ''),
-    displayName: String(raw.displayName ?? raw.display_name ?? ''),
-    description: description || null,
-    primaryKey,
-    created: (raw.created as string | undefined) ?? null,
-    updated: updated || null,
-    rowsCount: asNumberOrNull(raw.rowsCount),
-    dataSizeBytes: asNumberOrNull(raw.dataSizeBytes),
-    links: null,
-    source_project: sourceProject,
-    branch_id: branchId || null,
-    prod_id: prodId,
-  };
-};
-
-const withTableLineage = (table: Table, raw: RawObj): Table => {
-  const metadata = raw.metadata;
-  if (!Array.isArray(metadata) || metadata.length === 0) return table;
-  const lastUpdatedBy = getLastUpdatedBy(metadata);
-  return {
-    ...table,
-    created_by: getCreatedBy(metadata),
-    last_updated_by: lastUpdatedBy,
-    updated: maxTimestamp(table.updated, lastUpdatedBy?.timestamp ?? null),
-  };
-};
-
-// Strip internal/absent fields before emitting (mirrors pydantic exclude + the
-// TableSummary vs TableDetail field split). isDetail tables keep their detail fields.
-const serializeBucket = (b: Bucket): RawObj => ({
-  id: b.id,
-  name: b.name,
-  displayName: b.displayName,
-  description: b.description,
-  stage: b.stage,
-  created: b.created,
-  updated: b.updated,
-  dataSizeBytes: b.dataSizeBytes,
-  tablesCount: b.tablesCount,
-  links: b.links,
-  source_project: b.source_project,
-  created_by: b.created_by,
-  last_updated_by: b.last_updated_by,
-});
-
-const serializeTable = (t: Table): RawObj => {
-  const base: RawObj = {
-    id: t.id,
-    name: t.name,
-    displayName: t.displayName,
-    description: t.description,
-    primaryKey: t.primaryKey,
-    created: t.created,
-    updated: t.updated,
-    rowsCount: t.rowsCount,
-    dataSizeBytes: t.dataSizeBytes,
-    links: t.links,
-    source_project: t.source_project,
-  };
-  if (t.isDetail) {
-    base.columns = t.columns ?? null;
-    base.fullyQualifiedName = t.fullyQualifiedName ?? null;
-    base.used_by = t.used_by ?? null;
-    base.created_by = t.created_by ?? null;
-    base.last_updated_by = t.last_updated_by ?? null;
-  }
-  return base;
 };
 
 // ---------------------------------------------------------------------------
@@ -427,7 +81,7 @@ const dedupeLinks = (links: Link[]): Link[] => {
   const seen = new Set<string>();
   const out: Link[] = [];
   for (const link of links) {
-    const key = `${link.type} ${link.title} ${link.url}`;
+    const key = `${link.type} ${link.title} ${link.url}`;
     if (!seen.has(key)) {
       seen.add(key);
       out.push(link);
@@ -481,26 +135,12 @@ const listTables = async (
   return [...tablesByProdId.values()];
 };
 
-/**
- * Resolve a fully qualified name from the table's bucket backendPath, Snowflake-style.
- * Port of _SnowflakeWorkspace.get_table_info — Snowflake is the dominant backend.
- * NOTE: the actual SQL dialect requires a live workspace (WorkspaceManager, not yet
- * ported); BigQuery FQN/alias rules and quoting differ. See REPORT gaps.
- */
-const tableFqn = (rawTable: RawObj): string | null => {
-  const bucket = rawTable.bucket;
-  const backendPath =
-    bucket && typeof bucket === 'object' ? (bucket as RawObj).backendPath : undefined;
-  if (!Array.isArray(backendPath) || backendPath.length < 2) return null;
-  const name = String(rawTable.name ?? '');
-  return [backendPath[0], backendPath[1], name].map((p) => `"${p}"`).join('.');
-};
-
 const getTableDetail = async (
   raw: RawClient,
   branchId: string,
   tableId: string,
   linksManager: ProjectLinksManager,
+  dialect: Dialect,
 ): Promise<Table | null> => {
   let rawTable: RawObj | null;
   try {
@@ -512,46 +152,9 @@ const getTableDetail = async (
   if (!rawTable) return null;
 
   // production path: a table carrying branch metadata is not a prod table.
-  if (getMetadataProperty(rawTable.metadata, FAKE_DEVELOPMENT_BRANCH)) return null;
+  if (getMetadataProperty(rawTable.metadata, FAKE_DEVELOPMENT_BRANCH_KEY)) return null;
 
-  const rawColumns = Array.isArray(rawTable.columns) ? (rawTable.columns as string[]) : [];
-  const columnMetadata = (rawTable.columnMetadata as Record<string, unknown>) ?? {};
-  const sourceColumnMetadata =
-    (getNested(rawTable, 'sourceTable.columnMetadata') as Record<string, unknown>) ?? {};
-
-  const columns: TableColumnInfo[] = rawColumns.map((colName) => {
-    const colMeta = columnMetadata[colName] ?? [];
-    const srcMeta = sourceColumnMetadata[colName] ?? [];
-
-    const description =
-      getMetadataProperty(colMeta, MetadataField.DESCRIPTION) ||
-      getMetadataProperty(srcMeta, MetadataField.DESCRIPTION) ||
-      null;
-    const baseType =
-      getMetadataProperty(colMeta, DATATYPE_BASETYPE, ['user']) ||
-      getMetadataProperty(srcMeta, DATATYPE_BASETYPE, ['user']) ||
-      null;
-    let nativeType =
-      getMetadataProperty(colMeta, DATATYPE_TYPE) || getMetadataProperty(srcMeta, DATATYPE_TYPE);
-    const nullableStr =
-      getMetadataProperty(colMeta, DATATYPE_NULLABLE) ||
-      getMetadataProperty(srcMeta, DATATYPE_NULLABLE);
-
-    if (nativeType === null) {
-      nativeType = 'VARCHAR'; // Snowflake default (BigQuery would be STRING)
-    }
-    const nullable =
-      nullableStr != null ? ['1', 'true'].includes(String(nullableStr).toLowerCase()) : false;
-
-    return {
-      name: colName,
-      quotedName: `"${colName}"`,
-      database_native_type: nativeType,
-      nullable,
-      keboola_base_type: baseType,
-      description,
-    };
-  });
+  const columns = buildTableColumns(rawTable, dialect);
 
   const bucketInfo = (rawTable.bucket as RawObj) ?? {};
   const bucketId = String(bucketInfo.id ?? '');
@@ -562,7 +165,7 @@ const getTableDetail = async (
     ...common,
     isDetail: true,
     columns,
-    fullyQualifiedName: tableFqn(rawTable),
+    fullyQualifiedName: tableFqn(rawTable, dialect),
     used_by: null,
     created_by: null,
     last_updated_by: null,
@@ -854,9 +457,12 @@ EXAMPLES:
       }
 
       if (table_ids.length > 0) {
+        // Resolve the SQL dialect once so detail FQNs / native-type defaults are
+        // backend-correct (Snowflake double-quote 3-part vs BigQuery backtick 2-part).
+        const dialect = await resolveDialect(raw);
         const results = await Promise.all(
           table_ids.map(async (tableId): Promise<Table | string> => {
-            const t = await getTableDetail(raw, branchId, tableId, linksManager);
+            const t = await getTableDetail(raw, branchId, tableId, linksManager, dialect);
             return t ?? tableId;
           }),
         );

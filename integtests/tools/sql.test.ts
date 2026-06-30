@@ -3,15 +3,18 @@ import { describe, expect, it } from 'vitest';
 import { callToolRaw, callToolText, connectMcp } from '../helpers/mcp';
 import { seedProject } from '../helpers/seed';
 import { getTestProjectForTest } from '../testproject/fixture';
+import type { Backend } from '../testproject/types';
 
 // Ported from integtests/tools/test_sql.py: a literal SELECT, the invalid-query error path,
 // and the faithful seeded COUNT(*) case (get_buckets -> get_tables -> query_data against the
 // table's fully-qualified name).
 describe('query_data (integration)', () => {
-  it('counts rows of a seeded table via its fully-qualified name', async () => {
-    // The fully-qualified-name resolver is Snowflake-only (port of _SnowflakeWorkspace), so
-    // pin to a Snowflake project where get_tables reliably exposes the FQN.
-    const project = await getTestProjectForTest({ backend: 'snowflake' });
+  it.each<Backend>(['snowflake', 'bigquery'])(
+    'counts rows of a seeded table via its fully-qualified name (%s)',
+    async (backend) => {
+    // get_tables now resolves the FQN dialect-aware, so the seeded COUNT works on both
+    // Snowflake (double-quoted db.schema.table) and BigQuery (backtick dataset.table).
+    const project = await getTestProjectForTest({ backend });
     await seedProject(project);
     const session = await connectMcp(project.config);
     try {
@@ -45,8 +48,8 @@ describe('query_data (integration)', () => {
     } finally {
       await session.close();
     }
-  });
-
+    },
+  );
 
   it('runs a literal query and returns CSV data', async () => {
     const { config } = await getTestProjectForTest({ clean: false });
