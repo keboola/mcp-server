@@ -124,9 +124,9 @@ All on the `connection.europe-west3.gcp.keboola.com` stack (GCP → `gcs` stagin
 
 | Project ID | Backend | Role |
 |---|---|---|
-| 2728, 2729 | Snowflake | pool |
-| 2731, 2732 | BigQuery | pool |
-| 2908 | Snowflake | has the `storage-branches` feature (used by the branch-storage tests) |
+| 3053, 3054 | Snowflake | pool |
+| 3056, 3057 | BigQuery | pool |
+| 3055 | Snowflake | has the `storage-branches` feature (used by the branch-storage tests) |
 
 Each needs a `TEST_KBC_PROJECT_<id>_TOKEN` GitHub secret (a Storage API master token). The
 redis lease comes from `vars.TEST_MCP_PROJECTS_LOCK_HOST` + `secrets.TEST_MCP_PROJECTS_LOCK_PASSWORD`,
