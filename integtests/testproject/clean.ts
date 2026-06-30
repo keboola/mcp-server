@@ -61,9 +61,11 @@ export const cleanProject = async (def: ProjectDefinition): Promise<void> => {
   const components = await raw.get<Component[]>('components', { params: { include: 'configuration' } });
   for (const component of components) {
     for (const config of component.configurations ?? []) {
-      // First delete moves to trash; second removes it.
-      await raw.delete(`components/${component.id}/configs/${config.id}`);
-      await raw.delete(`components/${component.id}/configs/${config.id}`);
+      // First delete moves to trash; second purges it. Best-effort: some pooled projects'
+      // tokens return 403 on the purge ("You don't have access to the resource") — leaving a
+      // trashed config behind is harmless, so tolerate it rather than aborting the reset.
+      await raw.delete(`components/${component.id}/configs/${config.id}`).catch(() => {});
+      await raw.delete(`components/${component.id}/configs/${config.id}`).catch(() => {});
     }
   }
 

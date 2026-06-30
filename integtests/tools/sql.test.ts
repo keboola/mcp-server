@@ -24,10 +24,14 @@ describe('query_data (integration)', () => {
       const detail = await callToolText(session.client, 'get_tables', {
         table_ids: ['in.c-test_bucket_01.test_table_01'],
       });
-      // Pull the fully-qualified name out of the detail (TOON camelCase, quoted FQN parts).
-      const fqnMatch = detail.match(/fullyQualifiedName:\s*("?)(.+?)\1\s*(?:\n|$)/);
+      // Pull the fully-qualified name out of the detail. The Snowflake FQN ("DB"."SCHEMA"."TBL")
+      // contains quotes/dots, so TOON emits it as a double-quoted (JSON-escaped) scalar. Capture
+      // the whole value on the line and JSON-decode it when quoted — a naive non-greedy match
+      // would truncate at the first inner quote and produce invalid SQL.
+      const fqnMatch = detail.match(/fullyQualifiedName:\s*(.+?)\s*$/m);
       expect(fqnMatch, `Table detail should expose a fullyQualifiedName. Got: ${detail}`).not.toBeNull();
-      const fqn = fqnMatch![2]!.trim();
+      let fqn = fqnMatch![1]!.trim();
+      if (fqn.startsWith('"') && fqn.endsWith('"')) fqn = JSON.parse(fqn) as string;
       expect(fqn.length).toBeGreaterThan(0);
 
       const text = await callToolText(session.client, 'query_data', {

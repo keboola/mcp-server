@@ -40,7 +40,8 @@ const waitForJobInList = async (
 
 /** Extracts the started job id from the run_job TOON output (top-level `id: <digits>`). */
 const extractJobId = (runJobText: string): string => {
-  const match = runJobText.match(/\bid:\s*(\d+)/);
+  // TOON quotes numeric-looking string scalars, so the id may be `id: "123"` or `id: 123`.
+  const match = runJobText.match(/\bid:\s*"?(\d+)"?/);
   expect(match, `run_job output should contain a job id. Got: ${runJobText}`).not.toBeNull();
   return match![1]!;
 };

@@ -79,7 +79,9 @@ describe('storage tools (integration)', () => {
   // --- get_tables ----------------------------------------------------------
 
   it('get_tables lists a bucket and returns table detail with an FQN', async () => {
-    const project = await getTestProjectForTest();
+    // FQN + warehouse-native types are resolved via a Snowflake workspace; pin the backend
+    // (BigQuery leases expose no fully_qualified_name).
+    const project = await getTestProjectForTest({ backend: 'snowflake' });
     await seedProject(project);
     const session = await connectMcp(project.config);
     try {
@@ -99,7 +101,8 @@ describe('storage tools (integration)', () => {
   });
 
   it('get_tables detail returns the seeded columns with types (port of test_get_table)', async () => {
-    const project = await getTestProjectForTest();
+    // database_native_type is resolved via the warehouse — pin Snowflake.
+    const project = await getTestProjectForTest({ backend: 'snowflake' });
     await seedProject(project);
     const session = await connectMcp(project.config);
     try {
