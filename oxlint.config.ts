@@ -7,7 +7,7 @@ export default defineConfig({
   env: {
     node: true,
   },
-  ignorePatterns: ['dist/', 'src/keboola_mcp_server/'],
+  ignorePatterns: ['dist/'],
   rules: {
     // Not a turborepo; env vars are validated by Config, not turbo.json.
     'turbo/no-undeclared-env-vars': 'off',

@@ -4,13 +4,11 @@
 # Cooldown (supply-chain hardening): Dependabot will not open an update PR for a
 # version until it has been published for at least `default-days` days. Most
 # malicious package releases are detected and yanked within this window, so we
-# avoid pulling a freshly published (potentially compromised) version. This
-# mirrors the `exclude-newer = "7 days"` setting in pyproject.toml [tool.uv],
-# which guards manual `uv lock` regeneration.
+# avoid pulling a freshly published (potentially compromised) version.
 version: 2
 updates:
-  # Python dependencies managed via uv / pyproject.toml + uv.lock
-  - package-ecosystem: "uv"
+  # npm dependencies managed via package.json + package-lock.json
+  - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"

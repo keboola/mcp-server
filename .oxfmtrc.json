@@ -8,7 +8,6 @@
   "sortPackageJson": false,
   "ignorePatterns": [
     "dist",
-    "src/keboola_mcp_server",
     "**/CHANGELOG.md",
     "src/resources",
     "src/tools/storage-schema.json"
