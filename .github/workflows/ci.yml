@@ -89,7 +89,6 @@ jobs:
       # Unwrap the project pool: substitute $TEST_KBC_PROJECT_*_TOKEN secrets into
       # .github/ci/projects.json -> ./projects.json (mirrors keboola/go-monorepo).
       - name: Export Keboola test projects
-        id: projects
         uses: ./.github/actions/export-kbc-projects
         with:
           secrets: ${{ toJSON(secrets) }}
@@ -100,7 +99,10 @@ jobs:
           # so leases coordinate with other consumers of the pool).
           TEST_MCP_PROJECTS_LOCK_HOST: ${{ vars.TEST_MCP_PROJECTS_LOCK_HOST }}
           TEST_MCP_PROJECTS_LOCK_PASSWORD: ${{ secrets.TEST_MCP_PROJECTS_LOCK_PASSWORD }}
-          TEST_KBC_PROJECTS_FILE: ${{ steps.projects.outputs.projects-file }}
+          # Path to the pool file, taken from the repo/org variable you maintain centrally
+          # (same convention as keboola/go-monorepo). The export step above writes the file
+          # of this name at the workspace root.
+          TEST_KBC_PROJECTS_FILE: ${{ github.workspace }}/${{ vars.TEST_KBC_PROJECTS_FILE }}
         run: npm run test:integ
 
   publish_npm:
