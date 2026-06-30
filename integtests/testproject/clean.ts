@@ -78,7 +78,11 @@ export const cleanProject = async (def: ProjectDefinition): Promise<void> => {
   const metadata = await raw.get<Meta[]>('branch/default/metadata');
   for (const meta of metadata) {
     if (meta.key === WorkspaceManager.MCP_META_KEY) {
-      await raw.delete(`branch/default/metadata/${meta.id}`);
+      // Some pooled projects return 403 on branch-metadata delete (token scope); the stale
+      // workspace-id metadata is harmless to leave behind, so tolerate it.
+      await raw.delete(`branch/default/metadata/${meta.id}`).catch(() => {
+        /* best-effort: leftover MCP workspace-id metadata does not break the next run */
+      });
     }
   }
 };
