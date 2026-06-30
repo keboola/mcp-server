@@ -14,8 +14,25 @@ type Bucket = { id: string };
 type Component = { id: string; configurations?: { id: string }[] };
 type Workspace = { id: string | number; creatorToken?: { description?: string } };
 type Meta = { id: string | number; key?: string };
+type StorageJob = { id?: string | number; status?: string };
 
 const STATIC_WORKSPACE_CREATORS = new Set(['Background Indexing Token']);
+
+type RawClient = ReturnType<typeof createRawClient>;
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Polls a Storage async job to completion (used for async bucket drop). */
+const waitForStorageJob = async (raw: RawClient, job: StorageJob): Promise<void> => {
+  if (!job?.id) return; // synchronous response (older stacks) — nothing to wait for
+  const deadline = Date.now() + 120_000;
+  for (;;) {
+    const current = await raw.get<StorageJob>(`jobs/${job.id}`);
+    const status = current.status ?? '';
+    if (status === 'success' || status === 'error' || status === 'cancelled') return;
+    if (Date.now() > deadline) throw new Error(`Storage job ${job.id} did not finish within 120s`);
+    await sleep(1000);
+  }
+};
 
 export const cleanProject = async (def: ProjectDefinition): Promise<void> => {
   const raw = createRawClient({ baseUrl: `${storageApiUrl(def)}/v2/storage`, token: def.token });
@@ -31,8 +48,14 @@ export const cleanProject = async (def: ProjectDefinition): Promise<void> => {
     );
   }
 
+  // Bucket drop must be async — the Storage API rejects a synchronous force-drop
+  // ("Synchronous drop is not supported, use async call"). Each delete returns a storage
+  // job; wait for it so a subsequent seed doesn't race a half-deleted bucket.
   for (const bucket of buckets) {
-    await raw.delete(`buckets/${bucket.id}`, { params: { force: 'true' } });
+    const job = await raw.delete<StorageJob>(`buckets/${bucket.id}`, {
+      params: { force: 'true', async: 'true' },
+    });
+    await waitForStorageJob(raw, job);
   }
 
   const components = await raw.get<Component[]>('components', { params: { include: 'configuration' } });
