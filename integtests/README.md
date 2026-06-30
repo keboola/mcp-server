@@ -117,3 +117,17 @@ The `integration_tests` job (see the RFC's `ci-job.yml` sketch) runs:
 Pool size = max concurrent runners. Add projects to `.github/ci/projects.json` (and a matching
 `TEST_KBC_PROJECT_<id>_TOKEN` secret) to raise the ceiling. Integration tests are skipped for
 fork PRs (no access to secrets).
+
+### The committed pool (`.github/ci/projects.json`)
+
+All on the `connection.europe-west3.gcp.keboola.com` stack (GCP → `gcs` staging):
+
+| Project ID | Backend | Role |
+|---|---|---|
+| 2728, 2729 | Snowflake | pool |
+| 2731, 2732 | BigQuery | pool |
+| 2908 | Snowflake | has the `storage-branches` feature (used by the branch-storage tests) |
+
+Each needs a `TEST_KBC_PROJECT_<id>_TOKEN` GitHub secret (a Storage API master token). The
+redis lease comes from `vars.TEST_MCP_PROJECTS_LOCK_HOST` + `secrets.TEST_MCP_PROJECTS_LOCK_PASSWORD`,
+and the pool file path from `vars.TEST_KBC_PROJECTS_FILE` — same convention as keboola/go-monorepo.

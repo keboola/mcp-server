@@ -1,72 +1,37 @@
 [
   {
     "host": "connection.europe-west3.gcp.keboola.com",
-    "project": 154,
+    "project": 2728,
     "stagingStorage": "gcs",
     "backend": "snowflake",
-    "token": "$TEST_KBC_PROJECT_154_TOKEN"
+    "token": "$TEST_KBC_PROJECT_2728_TOKEN"
   },
   {
     "host": "connection.europe-west3.gcp.keboola.com",
-    "project": 1931,
+    "project": 2729,
     "stagingStorage": "gcs",
     "backend": "snowflake",
-    "token": "$TEST_KBC_PROJECT_1931_TOKEN"
-  },
-  {
-    "host": "connection.keboola.com",
-    "project": 10013,
-    "stagingStorage": "s3",
-    "backend": "snowflake",
-    "token": "$TEST_KBC_PROJECT_10013_TOKEN"
-  },
-  {
-    "host": "connection.keboola.com",
-    "project": 10014,
-    "stagingStorage": "s3",
-    "backend": "snowflake",
-    "token": "$TEST_KBC_PROJECT_10014_TOKEN"
+    "token": "$TEST_KBC_PROJECT_2729_TOKEN"
   },
   {
     "host": "connection.europe-west3.gcp.keboola.com",
-    "project": 1297,
+    "project": 2731,
     "stagingStorage": "gcs",
     "backend": "bigquery",
-    "token": "$TEST_KBC_PROJECT_1297_TOKEN"
+    "token": "$TEST_KBC_PROJECT_2731_TOKEN"
   },
   {
     "host": "connection.europe-west3.gcp.keboola.com",
-    "project": 2832,
+    "project": 2732,
     "stagingStorage": "gcs",
     "backend": "bigquery",
-    "token": "$TEST_KBC_PROJECT_2832_TOKEN"
+    "token": "$TEST_KBC_PROJECT_2732_TOKEN"
   },
   {
     "host": "connection.europe-west3.gcp.keboola.com",
-    "project": 2833,
+    "project": 2908,
     "stagingStorage": "gcs",
-    "backend": "bigquery",
-    "token": "$TEST_KBC_PROJECT_2833_TOKEN"
-  },
-  {
-    "host": "connection.europe-west3.gcp.keboola.com",
-    "project": 2834,
-    "stagingStorage": "gcs",
-    "backend": "bigquery",
-    "token": "$TEST_KBC_PROJECT_2834_TOKEN"
-  },
-  {
-    "host": "connection.keboola.com",
-    "project": 10166,
-    "stagingStorage": "s3",
     "backend": "snowflake",
-    "token": "$TEST_KBC_PROJECT_10166_TOKEN"
-  },
-  {
-    "host": "connection.keboola.com",
-    "project": 10169,
-    "stagingStorage": "s3",
-    "backend": "snowflake",
-    "token": "$TEST_KBC_PROJECT_10169_TOKEN"
+    "token": "$TEST_KBC_PROJECT_2908_TOKEN"
   }
 ]
