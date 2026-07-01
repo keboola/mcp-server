@@ -8,7 +8,7 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.mcp import SCOPE_KEY
+from keboola_mcp_server.mcp import SCOPE_KEY, SessionScope
 from keboola_mcp_server.tools.project import (
     ProjectInfo,
     _get_toolset_restrictions,
@@ -281,11 +281,24 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
         'keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection)
     )
 
+    # No scope confirmed yet.
     result = await get_accessible_projects(mcp_context_client)
 
     introspect.assert_awaited_once_with(STACK, subject_token='kbc_at_parent')
     assert result.user_email == 'm@k.com'
     assert [(p.id, p.name, p.role) for p in result.projects] == [(18, 'A', 'admin'), (83, 'B', 'admin')]
+    assert result.scoped_project_ids is None
+    assert result.active_project_id is None
+    assert result.read_only is None
+    assert all(not p.in_scope and not p.is_active for p in result.projects)
+
+    # Once scoped, the current scope is surfaced on the projects and at the top level.
+    mcp_context_client.session.state[SCOPE_KEY] = SessionScope(project_ids=[83], read_only=True, confirmed=True)
+    result = await get_accessible_projects(mcp_context_client)
+    assert result.scoped_project_ids == [83]
+    assert result.active_project_id == 83
+    assert result.read_only is True
+    assert [(p.id, p.in_scope, p.is_active) for p in result.projects] == [(18, False, False), (83, True, True)]
 
 
 @pytest.mark.asyncio
