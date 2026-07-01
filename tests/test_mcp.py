@@ -27,6 +27,7 @@ from keboola_mcp_server.mcp import (
     toon_serializer,
     unwrap_results,
 )
+from keboola_mcp_server.workspace import WorkspaceManager
 
 
 class SimpleModel(BaseModel):
@@ -903,7 +904,7 @@ class TestMultiProjectMiddleware:
             (None, 'get_tables', True),
             (SessionScope(project_ids=[11], confirmed=True), 'get_tables', True),
             (SessionScope(project_ids=[11, 22], confirmed=True), 'update_config', False),  # write: no fan-out
-            (SessionScope(project_ids=[11, 22], confirmed=True), 'query_data', True),  # excluded tool
+            (SessionScope(project_ids=[11, 22], confirmed=True), 'get_project_info', True),  # excluded tool
         ],
         ids=['no_scope', 'single_project', 'write_tool', 'excluded_tool'],
     )
@@ -952,27 +953,59 @@ class TestMultiProjectMiddleware:
         )
         context, state = self._ctx(scope, 'get_tables', read_only=True)
         active_clients: list = []
+        active_workspaces: list = []
 
         async def call_next(_):
             active_clients.append(state[KeboolaClient.STATE_KEY])
+            active_workspaces.append(state[WorkspaceManager.STATE_KEY])
             return self._result('rows')
 
-        with patch.object(
-            MultiProjectMiddleware,
-            '_client_for_project',
-            AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+        with (
+            patch.object(
+                MultiProjectMiddleware,
+                '_client_for_project',
+                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+            ),
+            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
         ):
             result = await MultiProjectMiddleware().on_call_tool(context, call_next)
 
-        # Ran once per project, each against that project's client.
+        # Ran once per project, each against that project's client AND workspace.
         assert active_clients == ['client-11', 'client-22']
-        # Active client restored afterwards.
+        assert active_workspaces == ['wsm-client-11', 'wsm-client-22']
+        # Active client and workspace restored afterwards.
         assert state[KeboolaClient.STATE_KEY] == 'orig-client'
+        assert state.get(WorkspaceManager.STATE_KEY) is None
         # Per-project results are labelled in the text content.
         texts = [c.text for c in result.content]
         assert texts == ['=== project 11 ===', 'rows', '=== project 22 ===', 'rows']
         # Structured output is deep-merged (list fields concatenated) so it still validates the schema.
         assert result.structured_content == {'rows': ['rows', 'rows']}
+
+    @pytest.mark.asyncio
+    async def test_query_data_targets_single_project_workspace(self) -> None:
+        # query_data is no longer excluded: with the project_ids filter it runs once against that
+        # project's own workspace, so the user can query any scoped project without re-scoping.
+        scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_s', confirmed=True)
+        context, state = self._ctx(scope, 'query_data', read_only=True, arguments={'project_ids': [22]})
+        seen_workspaces: list = []
+
+        async def call_next(_):
+            seen_workspaces.append(state[WorkspaceManager.STATE_KEY])
+            return self._result('csv')
+
+        with (
+            patch.object(
+                MultiProjectMiddleware,
+                '_client_for_project',
+                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+            ),
+            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
+        ):
+            result = await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        assert seen_workspaces == ['wsm-client-22']  # ran against project 22's workspace
+        assert result.content[0].text == 'csv'
 
     @pytest.mark.asyncio
     async def test_project_filter_single_target_runs_once(self) -> None:
@@ -981,19 +1014,25 @@ class TestMultiProjectMiddleware:
         scope = SessionScope(project_ids=[11, 22, 33], scoped_token='kbc_at_s', confirmed=True)
         context, state = self._ctx(scope, 'get_tables', read_only=True, arguments={'project_ids': [22]})
         seen_clients: list = []
+        seen_workspaces: list = []
 
         async def call_next(_):
             seen_clients.append(state[KeboolaClient.STATE_KEY])
+            seen_workspaces.append(state[WorkspaceManager.STATE_KEY])
             return self._result('t')
 
-        with patch.object(
-            MultiProjectMiddleware,
-            '_client_for_project',
-            AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+        with (
+            patch.object(
+                MultiProjectMiddleware,
+                '_client_for_project',
+                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+            ),
+            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
         ):
             result = await MultiProjectMiddleware().on_call_tool(context, call_next)
 
         assert seen_clients == ['client-22']  # ran once, against project 22 only
+        assert seen_workspaces == ['wsm-client-22']  # its own workspace
         assert state[KeboolaClient.STATE_KEY] == 'orig-client'  # restored
         assert 'project_ids' not in context.message.arguments  # stripped before the tool
         assert result.content[0].text == 't'  # raw single-project result, not an envelope
@@ -1008,10 +1047,13 @@ class TestMultiProjectMiddleware:
             seen_clients.append(state[KeboolaClient.STATE_KEY])
             return self._result('t')
 
-        with patch.object(
-            MultiProjectMiddleware,
-            '_client_for_project',
-            AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+        with (
+            patch.object(
+                MultiProjectMiddleware,
+                '_client_for_project',
+                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+            ),
+            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
         ):
             await MultiProjectMiddleware().on_call_tool(context, call_next)
 
@@ -1034,7 +1076,7 @@ class TestMultiProjectMiddleware:
         # a read fan-out tool, an excluded tool, and a write tool
         read_tool = _tool('get_tables', read_only=True)
         read_tool.parameters = {'type': 'object', 'properties': {'bucket_ids': {'type': 'array'}}}
-        excluded = _tool('query_data', read_only=True)
+        excluded = _tool('get_project_info', read_only=True)
         excluded.parameters = {'type': 'object', 'properties': {}}
         write_tool = _tool('update_config', read_only=False)
         write_tool.parameters = {'type': 'object', 'properties': {}}
@@ -1049,5 +1091,5 @@ class TestMultiProjectMiddleware:
         tools = await MultiProjectMiddleware().on_list_tools(context, call_next)
         by_name = {t.name: t for t in tools}
         assert 'project_ids' in by_name['get_tables'].parameters['properties']
-        assert 'project_ids' not in by_name['query_data'].parameters['properties']
+        assert 'project_ids' not in by_name['get_project_info'].parameters['properties']
         assert 'project_ids' not in by_name['update_config'].parameters['properties']

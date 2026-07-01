@@ -46,12 +46,12 @@ SCOPE_KEY = 'project_scope'
 
 # Tools that must not be fanned out across multiple projects, even when a multi-project scope is
 # active and they are read-only: the scope/auth tools operate on the whole-stack token (not a single
-# project), and query_data resolves through a per-project WorkspaceManager that the fan-out does not
-# swap (it would otherwise run against the active project's workspace N times).
-# ponytail: explicit deny-set; per-project WorkspaceManager fan-out is a follow-up, not v1.
-# get_project_info and query_data resolve through the active project's WorkspaceManager (workspace id
-# / sql dialect), which the fan-out does not swap, so they report the active project only.
-_NO_FANOUT_TOOLS = {'get_accessible_projects', 'set_project_scope', 'get_project_info', 'query_data'}
+# project), and get_project_info resolves through the active project's WorkspaceManager (workspace id
+# / sql dialect), so it reports the active project only.
+# query_data is intentionally NOT here: the fan-out swaps a per-project WorkspaceManager (see
+# MultiProjectMiddleware._swap_project) so a query runs against the workspace of each targeted
+# project — narrow to one with the project_ids filter, or run across all scoped projects.
+_NO_FANOUT_TOOLS = {'get_accessible_projects', 'set_project_scope', 'get_project_info'}
 
 # Tools allowed before the user has confirmed a project scope. Everything else is blocked with a
 # message telling the assistant to ask the user which projects to work on first (ask-first UX).
@@ -766,6 +766,7 @@ class MultiProjectMiddleware(fmw.Middleware):
 
         server_state = ServerState.from_context(ctx)
         original_client = state.get(KeboolaClient.STATE_KEY)
+        original_workspace = state.get(WorkspaceManager.STATE_KEY)
         # Default (auto-leased) scope carries no minted token; fall back to the active client's token.
         base_token = scope.scoped_token or (original_client.token if isinstance(original_client, KeboolaClient) else '')
 
@@ -776,22 +777,20 @@ class MultiProjectMiddleware(fmw.Middleware):
             if target == scope.active_project_id:
                 return await call_next(context)
             try:
-                state[KeboolaClient.STATE_KEY] = await self._client_for_project(
-                    server_state, base_token, target, scope.read_only
-                )
+                await self._swap_project(state, server_state, base_token, target, scope.read_only)
                 return await call_next(context)
             finally:
                 state[KeboolaClient.STATE_KEY] = original_client
+                state[WorkspaceManager.STATE_KEY] = original_workspace
 
         results: list[tuple[int, ToolResult]] = []
         try:
             for project_id in targets:
-                state[KeboolaClient.STATE_KEY] = await self._client_for_project(
-                    server_state, base_token, project_id, scope.read_only
-                )
+                await self._swap_project(state, server_state, base_token, project_id, scope.read_only)
                 results.append((project_id, await call_next(context)))
         finally:
             state[KeboolaClient.STATE_KEY] = original_client
+            state[WorkspaceManager.STATE_KEY] = original_workspace
 
         return self._merge(results)
 
@@ -831,6 +830,27 @@ class MultiProjectMiddleware(fmw.Middleware):
             params['properties'] = props
             patched.append(tool.model_copy(update={'parameters': params}))
         return patched
+
+    @classmethod
+    async def _swap_project(
+        cls,
+        state: dict[str, Any],
+        server_state: ServerState,
+        base_token: str,
+        project_id: int,
+        read_only: bool,
+    ) -> None:
+        """Points the session state at `project_id` for the duration of one fanned-out tool call.
+
+        Swaps in a per-project `KeboolaClient` AND a `WorkspaceManager` built on it, so
+        workspace-bound reads (query_data) run against *this* project's workspace rather than the
+        active project's. The workspace is provisioned lazily on first use per project.
+        ponytail: rebuilt per call; caching across calls would need a store that survives the
+        per-request state rebuild — add if provisioning latency shows up in practice.
+        """
+        client = await cls._client_for_project(server_state, base_token, project_id, read_only)
+        state[KeboolaClient.STATE_KEY] = client
+        state[WorkspaceManager.STATE_KEY] = await WorkspaceManager.create(client, server_state.config.workspace_schema)
 
     @staticmethod
     async def _client_for_project(
