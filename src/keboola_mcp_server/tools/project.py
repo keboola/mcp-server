@@ -288,12 +288,12 @@ class AccessibleProject(BaseModel):
     )
 
 
-class LlmInstructionGroup(BaseModel):
+class BaseInstructionGroup(BaseModel):
     """Base working instructions shared by all projects of one SQL dialect (dialect-specific system prompt)."""
 
-    project_ids: list[int] = Field(description='The scoped projects this instruction applies to.')
+    project_ids: list[int] = Field(description='The scoped projects these instructions apply to.')
     sql_dialect: str | None = Field(default=None, description='The SQL dialect these projects share.')
-    llm_instruction: str = Field(description='The base working instructions for projects of this dialect.')
+    instructions: str = Field(description='The base working instructions for projects of this dialect.')
 
 
 class AccessibleProjects(BaseModel):
@@ -307,7 +307,7 @@ class AccessibleProjects(BaseModel):
         default=None, description='The active project that write operations and single-project tools target.'
     )
     read_only: bool | None = Field(default=None, description='Whether the current scoped token is read-only.')
-    llm_instructions: list[LlmInstructionGroup] | None = Field(
+    base_instructions: list[BaseInstructionGroup] | None = Field(
         default=None,
         description=(
             'The base working instructions, grouped by SQL dialect (deduplicated across projects). '
@@ -316,7 +316,7 @@ class AccessibleProjects(BaseModel):
         ),
     )
     llm_instruction: str = Field(
-        description='Guidance for the assistant on how to use this result.',
+        description='Guidance for the assistant on how to use this result (distinct from base_instructions).',
     )
 
 
@@ -405,16 +405,16 @@ async def get_accessible_projects(
 
     # Optionally attach the base working instructions, grouped by dialect so the (large) prompt is
     # sent once per distinct dialect rather than duplicated per project.
-    llm_instructions: list[LlmInstructionGroup] | None = None
+    base_instructions: list[BaseInstructionGroup] | None = None
     if with_llm_instruction:
         by_dialect: dict[str | None, list[int]] = {}
         for p in projects:
             by_dialect.setdefault(p.sql_dialect, []).append(p.id)
-        llm_instructions = [
-            LlmInstructionGroup(
+        base_instructions = [
+            BaseInstructionGroup(
                 project_ids=ids,
                 sql_dialect=dialect,
-                llm_instruction=get_project_system_prompt(dialect or 'Snowflake'),
+                instructions=get_project_system_prompt(dialect or 'Snowflake'),
             )
             for dialect, ids in by_dialect.items()
         ]
@@ -436,7 +436,7 @@ async def get_accessible_projects(
         scoped_project_ids=scoped_ids,
         active_project_id=active_id,
         read_only=scope.read_only if scoped_ids is not None else None,
-        llm_instructions=llm_instructions,
+        base_instructions=base_instructions,
         llm_instruction=instruction,
     )
 
