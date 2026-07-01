@@ -138,6 +138,10 @@ jobs:
           INTEGTEST_STORAGE_TOKENS: ${{ secrets.INTEGTEST_STORAGE_TOKENS }}
           INTEGTEST_POOL_STORAGE_API_URL: ${{ vars.INTEGTEST_POOL_STORAGE_API_URL }}
           INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES: ${{ secrets.INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES }}
+          # Programmatic token (kbc_pat_/kbc_at_) for the multi-project PAT flow tests. When unset,
+          # integtests/test_pat_multiproject.py skips. INTEGTEST_STORAGE_PAT_URL falls back to the pool URL.
+          INTEGTEST_STORAGE_PAT: ${{ secrets.INTEGTEST_STORAGE_PAT }}
+          INTEGTEST_STORAGE_PAT_URL: ${{ vars.INTEGTEST_STORAGE_PAT_URL }}
         run: |
           uv run tox -e integtests
 
