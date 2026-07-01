@@ -17,10 +17,10 @@
  *
  * keeping the exported {@link DocsSearch} interface identical so the tools don't change.
  *
- * One divergence from the current SDK: `recommendComponents` must expose each result's
- * `sourceKey` so `find_component_id` can recover the component id (the id lives in
- * `source_key = 'component:<id>'`, which the SDK's SELECT drops). Tracked as a required
- * SDK enhancement in the RFC follow-up.
+ * `recommendComponents` exposes each result's `sourceKey` so `find_component_id` can
+ * recover the component id (it lives in `source_key = 'component:<id>'`). This was added
+ * to the SDK on keboola/ui#6672, so the vendored SELECT here matches the published shape
+ * and the swap will be a clean drop-in.
  */
 import { Pool } from 'pg';
 

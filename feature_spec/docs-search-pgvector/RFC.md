@@ -140,11 +140,11 @@ original plan, agreed during implementation:
 2. **The SDK is vendored, temporarily.** `@keboola/docs-search` is a private,
    unpublished workspace package (keboola/ui#6672), so its ~150-line retrieval tier is
    copied into `src/clients/docsSearch.ts` behind the exact `DocsSearch` interface, with a
-   documented swap-to-published-package path. **Required SDK enhancement:**
-   `recommendComponents` must expose each result's `sourceKey` (the component id lives in
-   `source_key = 'component:<id>'`, which the SDK's current SELECT drops) — the tool
-   recovers the component id from it. Until the SDK exposes it, the swap keeps the vendored
-   SELECT.
+   documented swap-to-published-package path. The one SDK gap this needed —
+   `recommendComponents` exposing each result's `sourceKey` (the component id lives in
+   `source_key = 'component:<id>'`, which the SDK's SELECT dropped) — was fixed on
+   keboola/ui#6672 (`aa8a779`), so the vendored SELECT matches the published shape and the
+   swap will be a clean drop-in.
 
 The gate (point 5) is wired via `DOCS_INDEX_TOOL_NAMES` in `mcp/filtering.ts`: the two
 tools are filtered from `tools/list` and denied on call when `getDocsSearch()` returns
