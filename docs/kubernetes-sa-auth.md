@@ -12,8 +12,11 @@ requests keep the **user's own Storage token** and additionally carry the SA JWT
 the `X-Kubernetes-Authorization` header:
 
 - creating the billing configuration (`keboola.mcp-server-tool`),
-- creating the workspace itself,
-- writing the workspace ID into the branch metadata.
+- creating the workspace itself.
+
+The workspace is a regular workspace created under the `keboola.mcp-server-tool`
+configuration and is rediscovered by listing workspaces and matching that component —
+no branch-metadata pointer is written anymore.
 
 Connection validates the JWT and, when the ServiceAccount is authorized for workspace
 provisioning, waives the permissions the user's token lacks —
@@ -48,6 +51,6 @@ Key properties:
 - Read-only users who only ever use a locally-run MCP server and never connect to
   the deployed one cannot get a workspace created — their own token lacks the
   required permissions, and there is no ServiceAccount token to step up with.
-- For read-only users the step-up is intentionally limited to workspace provisioning.
-  Any other write operation still requires adequate permissions on the user's own
-  token and keeps failing for a read-only user.
+- For read-only users the step-up is intentionally limited to workspace provisioning
+  and storage event emission. Any other write operation still requires adequate
+  permissions on the user's own token and keeps failing for a read-only user.
