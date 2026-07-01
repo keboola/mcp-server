@@ -658,19 +658,22 @@ class WorkspaceManager:
     async def _find_ws_in_branch(self) -> _WspInfo | None:
         """Finds the shared read-only MCP workspace in the current branch.
 
-        The MCP server creates its workspace under the MCP_WORKSPACE_COMPONENT_ID
-        component, so it is rediscovered by listing workspaces and matching that
-        component (plus read-only storage access). This needs only the read-only
-        `workspace_list` endpoint — no branch-metadata pointer, and therefore no
-        elevated metadata write that a read-only user's token would be denied.
+        The MCP server creates its workspace under a configuration of the
+        MCP_WORKSPACE_COMPONENT_ID component, so it is rediscovered by listing that
+        component's configurations and fetching each config's workspaces through the
+        config-scoped endpoint, then matching read-only storage access. This needs only
+        read access to the MCP component's own configs — no project-wide workspace
+        listing, no branch-metadata pointer, and therefore no elevated metadata write
+        that a read-only user's token would be denied.
         """
-        for sapi_wsp_info in await self._client.storage_client.workspace_list():
-            assert isinstance(sapi_wsp_info, dict)
-            if sapi_wsp_info.get('component') != self.MCP_WORKSPACE_COMPONENT_ID:
-                continue
-            info = _WspInfo.from_sapi_info(sapi_wsp_info)
-            if info.id and info.backend and info.schema and info.readonly:
-                return info
+        component_id = self.MCP_WORKSPACE_COMPONENT_ID
+        for config in await self._client.storage_client.configuration_list(component_id):
+            config_id = str(config['id'])
+            for sapi_wsp_info in await self._client.storage_client.workspace_list_for_config(component_id, config_id):
+                assert isinstance(sapi_wsp_info, dict)
+                info = _WspInfo.from_sapi_info(sapi_wsp_info)
+                if info.id and info.backend and info.schema and info.readonly:
+                    return info
 
         return None
 
