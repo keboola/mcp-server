@@ -264,8 +264,12 @@ describe('data app tools (integration)', () => {
   // delete the draft via delete_python_js_data_app_draft, assert it's gone from prod drafts.
   it('python-js prod + external-git draft lifecycle', async () => {
     const project = await getTestProjectForTest({ clean: false });
-    const ds = dataScienceFor(project.config);
-    const session = await connectMcp(project.config);
+    // modify_python_js_data_app injects the query_data code, which needs the workspace
+    // dialect — provision a read-only workspace and pass its schema (as the Streamlit tests do).
+    const ws = await provisionWorkspace(project);
+    const cfg = withWorkspaceSchema(project.config, ws.schema);
+    const ds = dataScienceFor(cfg);
+    const session = await connectMcp(cfg);
     const repoDir = mkdtempSync(join(tmpdir(), 'kbc-pyjs-'));
     const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
     const git = (...args: string[]): void => {
@@ -406,6 +410,7 @@ describe('data app tools (integration)', () => {
       }
       rmSync(repoDir, { recursive: true, force: true });
       await session.close();
+      await ws.remove();
     }
   });
 });
