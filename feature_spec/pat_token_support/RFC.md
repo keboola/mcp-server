@@ -203,3 +203,208 @@ OAuth is **not** removed (the MCP protocol needs it for HTTP transport). The OAu
 3. **Refresh token** — treated as an opaque string (no prefix assumptions).
 4. **SA token path env var** — align with the workspace step-up var (`b971146f`) and the Go services' `*_KUBERNETES_TOKEN_PATH` convention; share one file-read helper.
 5. **Refresh + dead token** — the server **always refreshes during usage** when it holds the token pair; when the token is dead (refresh fails), it clears stored credentials and **enforces re-login**.
+
+---
+
+# Extension: Multi-project scope via introspect + scoped exchange (PSGO-261, increment 2)
+
+> This section extends the RFC above. Parts A/B (programmatic-token exchange, PKCE login) are unchanged
+> and are the substrate this builds on. It revises decisions **D1** and **D2** (see below).
+
+## New problem
+
+Parts A/B give the server a programmatic token and a single `project_id`. A whole-stack PAT/AT can
+actually reach **many** projects, and the Kai multi-project workflows (the parent driver, PAT-1838)
+need one agent session to act across several of them. Two gaps remain:
+
+1. **Discovery.** The server has no way to enumerate which projects the inbound token can reach.
+   (Brainstorm left this as an open question: "the exact stack-level endpoint to enumerate
+   PAT-accessible projects.")
+2. **Scope.** `project_id` is a single value. There is no way to (a) operate over a set of projects,
+   nor (b) *narrow* a whole-stack token down to a reviewed subset for the rest of the session.
+
+## Token-contract additions (authoritative, from connection auth API)
+
+### Introspect — enumerate accessible projects
+
+```
+GET {connection}/v1/auth/token/introspect
+Headers: Authorization: Bearer <kbc_at_* | kbc_pat_*>
+
+200:
+{ "sessionId": "...", "user": { "id", "email", "name" },
+  "grantType": "authorization_code", "expiresAt": "<ISO8601>",
+  "projects": [ { "id": <int>, "name": "...", "role": "admin|..." }, ... ] }
+```
+
+This is the discovery endpoint. It works for any programmatic token and is the source of truth for
+"which projects can this session touch."
+
+### Scoped exchange — mint a token narrowed to chosen projects
+
+```
+POST {connection}/v1/auth/pat/exchange
+Headers: Authorization: Bearer <current subject token>
+Body:    { "expiresIn": null|<int>, "scope": { "projects": [<int>,...]|null, "readOnly": true|null } }
+
+201:
+{ "accessToken": "<scoped kbc_at_*>", "tokenType": "Bearer", "expiresIn": <int>,
+  "scope": {...}, "readOnly": <bool>, "parentTokenId": "...", "parentTokenType": "session",
+  "expiresAt": "<ISO8601>", "pat": { "id", "name", "scope", "projects": [...], "readOnly", ... } }
+```
+
+`scope.projects = null` → all projects (whole-stack). A non-null list mints a token that can reach
+**only** those projects. `readOnly: true` mints a read-only token. The returned `accessToken` becomes
+the session's subject token for all downstream exchange/forwarding.
+
+## Required behavior
+
+1. **Discovery tool.** `get_accessible_projects()` calls introspect and returns the projects list
+   (id, name, role) plus the user identity. Read-only, no side effects.
+2. **Scope-selection tool.** `set_project_scope(project_ids: list[int] | "all", read_only: bool=false)`:
+   - `"all"` → scope = every introspected project id; keep the current (whole-stack) token.
+   - a subset → call `/v1/auth/pat/exchange` with `scope.projects=project_ids` (+ `readOnly`), store
+     the returned scoped `accessToken` as the **session subject token**, set scope = `project_ids`,
+     and clear the per-project client cache so it rebuilds against the scoped token.
+3. **Conversation-start nudge.** Server instructions tell the agent: on first interaction call
+   `get_accessible_projects`, present them, and ask the user **"work across all of these, or a
+   subset?"**; call `set_project_scope` with the answer. (MCP has no protocol-level startup prompt —
+   this is the idiomatic discovery-tool + instructions pattern, same shape as `get_project_info`.)
+4. **Transparent multi-project execution.** Once scope is set, existing tools run **once per project
+   in scope** with no per-tool `projects[]` argument. Mechanism (decision D6):
+   - Session state holds `scope` (ordered project_ids), `active_project_id`, and a lazy
+     `project_id -> KeboolaClient` cache. `KeboolaClient.from_state(state)` returns the client for
+     `active_project_id`. **All 43 existing call sites are unchanged.**
+   - A dispatch-layer wrapper (`SessionStateMiddleware.on_call_tool`) reads the scope:
+     - **1 project** (or legacy single-project session): set `active_project_id`, call the tool once,
+       return its result **raw** — byte-for-byte today's behavior.
+     - **N projects, read tool:** loop the scope, set `active_project_id` per iteration, collect into a
+       per-project envelope `[{ "project_id": <int>, "result": <tool result> }, ...]`. No semantic
+       merge — the envelope preserves each tool's native return shape (this is the answer to the
+       "merging arbitrary shapes is lossy" risk: we wrap, we don't merge).
+     - **N projects, write tool:** do **not** fan out. Require a single target project; if scope has
+       >1 and no explicit single target was confirmed, return a clear error instructing the agent to
+       confirm with the user and target one project (decision D8).
+   - Per-project clients build lazily: deployed → resolver exchange per project (Part A) using the
+     scoped subject token; local → forward bearer + `X-KBC-ProjectId: <project>`.
+   - Fan-out is sequential in v1. `# ponytail: sequential fan-out; asyncio.gather if N-project latency bites.`
+5. **Read/write classification.** An explicit set of mutating tool names (or a registration-time flag)
+   drives the write-policy branch. Explicit list over magic — there are few write tools.
+
+## Mode / availability matrix (additions)
+
+| Inbound credential | Introspect / scope tooling | Multi-project |
+| --- | --- | --- |
+| programmatic (`kbc_at_*`/`kbc_pat_*`, PKCE or Bearer) | available | yes |
+| legacy `KBC_STORAGE_TOKEN` | n/a (project-bound token) | no — single project, unchanged |
+| OAuth `SimpleOAuthProvider` (current SAPI mint) | n/a until OAuth→PAT PR lands | no (interim) |
+
+## Revised decisions
+
+- **D1 (revised) — scope narrowing is now token-enforced, not advisory.** The original D1 said
+  "no minting; narrowing is runtime-only session state." With the user choosing the `pat/exchange`
+  path, narrowing to a subset **mints a scoped token** (in-memory, session-lived, never persisted).
+  The *stored* (on-disk PKCE) credential is still whole-stack — D1's storage stance holds — but the
+  *active* session token is the scoped one, so a tool can no longer reach an out-of-scope project even
+  by bug. Strictly stronger than the original advisory model.
+- **D2 (extended) — `project_id` → project scope (a set).** Still explicit session state, never
+  silently derived. Default scope = `[KBC_PROJECT_ID]` / `X-KBC-ProjectId` (today's single-project
+  behavior, backward compatible). `get_accessible_projects` + `set_project_scope` replace the
+  previously-hypothetical "select-project tool"; introspect closes the open enumeration question.
+- **D6 (new) — transparent fan-out via active-project indirection.** Tools take no `projects[]` arg;
+  the dispatch wrapper swaps `active_project_id` and the per-project client cache. Multi-project
+  results use a per-project envelope, never a semantic merge. Zero changes to the 43 `from_state`
+  sites. (Chosen over a per-tool `projects[]` param.)
+- **D7 (new) — scoped exchange uses `/v1/auth/pat/exchange`.** Not `/v1/auth/pat` (PAT create). The
+  exchange yields a child token (`parentTokenType: session`) tied to the current session, which is the
+  right lifetime for a session-scoped narrowing.
+- **D8 (new) — multi-project writes are user-driven only.** Read/query/search tools fan out freely.
+  Mutating tools (create/update/run config, flow, job, data-app, transformation) never fan out
+  automatically: with >1 project in scope they require a single confirmed target project. Server
+  instructions state: **the agent must never write to more than one project without explicit user
+  guidance or confirmation.** Bulk multi-project writes are possible but only on that explicit signal.
+
+## Scope changes (relative to the base RFC)
+
+**Moved into scope:** introspect-based project enumeration; `/v1/auth/pat/exchange` scoped token
+minting; multi-project read fan-out; user-confirmed multi-project writes;
+`get_accessible_projects` + `set_project_scope` tools; per-project client cache.
+
+**Still out of scope:** OAuth→PAT exchange (separate PR); caching of resolver results; keyring/DB
+credential storage; `/v1/auth/pat` PAT lifecycle management (create/list/revoke) tools; parallel
+fan-out (sequential in v1).
+
+## Delivery plan (phased, compact)
+
+**Phase 1 — Discovery (low risk, read-only).**
+- `clients/auth_bridge.py` (or a new `clients/auth.py`): `introspect(subject_token) -> Introspection`
+  (user + projects[]). GET `/v1/auth/token/introspect`, token redaction same as the resolver.
+- `tools/project.py`: `get_accessible_projects()` tool.
+- Server instructions: add the "ask all-vs-subset at start" nudge.
+- Tests: introspect success/parse, 401/timeout mapping, no-token-in-logs; tool returns projects.
+
+**Phase 2 — Scoped exchange + session scope state (revises D1).**
+- `exchange_scope(subject_token, project_ids|None, read_only, expires_in) -> scoped token` (POST
+  `/v1/auth/pat/exchange`).
+- Session scope state: `scope: list[int]`, `read_only: bool`, scoped subject token; default scope from
+  `project_id`. `set_project_scope` tool wires exchange → state → cache invalidation.
+- Tests: subset → exchange called with right body, scoped token stored; "all" → no exchange; read_only
+  propagates; scope defaults to single project when unset.
+
+**Phase 3 — Transparent fan-out (the core refactor, D6/D8).**
+- Session state: `active_project_id` + lazy `project_id -> KeboolaClient` cache; `from_state` returns
+  the active client (indirection only — call sites unchanged).
+- `SessionStateMiddleware.on_call_tool` wrapper: 1-project raw passthrough; N-project read envelope;
+  N-project write guard.
+- Explicit write-tool name set.
+- Tests: single-project unchanged (regression); 2-project read returns enveloped per-project results;
+  write tool with N-project scope refuses without a confirmed target; per-project client built with the
+  right token/header.
+
+**Cross-cutting:** version bump (minor — new capability), `uv.lock`, `TOOLS.md` regen (new tools +
+the per-project envelope shape change the docs), integration tests on a dev stack with a real
+`kbc_pat_*` across ≥2 projects.
+
+## Open questions (new)
+
+- [ ] **Envelope vs raw for exactly-1-in-scope-but-explicitly-multi.** Confirm: a scope of exactly one
+  project returns raw (not a 1-element envelope) so single-project UX never regresses. (Assumed yes.)
+- [ ] **`expiresIn` for the scoped exchange.** Use `null` (inherit parent/default) in v1, or pin to the
+  remaining parent lifetime? Affects mid-session expiry of the scoped token.
+- [ ] **Scope change mid-session re-introspect.** After `set_project_scope`, do we re-introspect to
+  validate the subset is still reachable, or trust the prior introspect? (Lean: trust; resolver/exchange
+  will reject an out-of-scope project anyway.)
+- [ ] **Write-target confirmation mechanism.** Is the "confirmed single target" a tool argument
+  (`project_id` on the write tool), a separate `set_write_target` call, or purely instruction-driven?
+  (Lean: explicit `project_id` arg on write tools, honored only when scope >1.)
+
+## Resolutions (2026-06-30) — answers to the increment-2 open questions
+
+- **Scoping requires a dedicated tool (`set_project_scope`); it is the only mechanism.** The MCP
+  server receives nothing from the conversation except tool calls — plain chat text never reaches the
+  server. Scope is server-side state (scoped token + per-project client cache + active project), so the
+  user's in-conversation intent can only change scope by the agent invoking the tool. The tool is
+  callable **at any point mid-conversation**, not just at start; the conversation-start nudge is an
+  instruction-level suggestion, not a gate. The user drives scope changes by saying so; the agent
+  translates that into the tool call. (Resolves the recurring "do I need a tool / is it user-driven"
+  question: yes, a tool; driven by the user via conversation, any time.)
+- **The tool does not swap a single client — it invalidates the cache (D6).** `set_project_scope`
+  stores the new scope + scoped token and **clears the per-project client cache**. `from_state` then
+  lazily rebuilds each project's client against the new scoped token. Cleaner than replacing one
+  `KeboolaClient` object in state.
+- **Q2 (scoped-token lifetime) — resolved: the child token is re-minted, not independently refreshed.**
+  The `pat/exchange` response carries `accessToken` + `expiresAt` but **no `refreshToken`** — the child
+  (scoped) token is not refreshable on its own. The refreshable credential is the **parent** PKCE
+  session token (Part B, `/v1/auth/token/refresh`). MCP **remembers the scope selection**
+  (`project_ids`, `readOnly`); when the scoped child nears expiry it **re-runs `pat/exchange`** against
+  the still-valid (refresh-backed) parent token to lease a fresh scoped token. `expiresIn: null` at
+  exchange time (inherit server default) is fine because we re-mint on demand. *Flag: confirm against
+  the auth API that the child token genuinely has no own refresh token.*
+- **Q3 (re-introspect on scope change) — resolved: trust prior, let exchange reject.** When the user
+  picks a subset, MCP goes straight to `pat/exchange` without re-calling `introspect`. The exchange
+  endpoint itself rejects any project the token can't reach, so a pre-check is redundant — one fewer
+  round-trip, and the exchange is the authority.
+- **Q1 (exactly-1-in-scope) — confirmed: a single-project scope returns the raw result, not a
+  1-element envelope.** Single-project UX is byte-for-byte unchanged.
+- **Q4 (write-target confirmation) — lean: explicit `project_id` arg on write tools, honored only when
+  scope > 1.** (Still open; not blocking.)
