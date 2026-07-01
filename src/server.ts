@@ -159,6 +159,10 @@ const wrapToolGating = (server: McpServer, config: Config): void => {
       // Discovery always treats the branch as main/production (Python forces
       // branch_id=None for list requests).
       isMainBranch: true,
+      // ponytail: gate on the index being *configured* (provider built), not a live
+      // reachability probe — a per-request DB round-trip on every tools/list is not worth
+      // it. If the index is configured but down, the tool call surfaces a clear error.
+      // For strict "reachable" gating, await getDocsSearch()?.isReady() and cache it.
       docsIndexAvailable: getDocsSearch() !== null,
     };
 
