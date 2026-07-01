@@ -60,6 +60,7 @@ class TestServer:
             'deploy_data_app',
             'docs_query',
             'find_component_id',
+            'get_accessible_projects',
             'get_buckets',
             'get_components',
             'get_config_examples',
@@ -83,6 +84,7 @@ class TestServer:
             'run_sync_action',
             'search',
             'search_semantic_context',
+            'set_project_scope',
             'update_config',
             'update_config_row',
             'update_descriptions',
@@ -150,7 +152,7 @@ class TestServer:
                     missing_default.append(f'{tool.name}.{prop_name}')
 
         missing_properties.sort()
-        assert missing_properties == ['get_project_info']
+        assert missing_properties == ['get_accessible_projects', 'get_project_info']
         missing_type.sort()
         assert not missing_type, f'These tool params have no "type" info: {missing_type}'
         missing_default.sort()

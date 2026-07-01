@@ -10,6 +10,7 @@ import dataclasses
 import logging
 import os
 import textwrap
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, TypeVar
 from unittest.mock import MagicMock
@@ -21,6 +22,7 @@ from fastmcp.server import middleware as fmw
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import CallNext, MiddlewareContext
 from fastmcp.tools import Tool
+from fastmcp.tools.tool import ToolResult
 from mcp import types as mt
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel
@@ -29,6 +31,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
@@ -39,6 +42,49 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 CONVERSATION_ID = 'conversation_id'
+SCOPE_KEY = 'project_scope'
+
+# Tools that must not be fanned out across multiple projects, even when a multi-project scope is
+# active and they are read-only: the scope/auth tools operate on the whole-stack token (not a single
+# project), and query_data resolves through a per-project WorkspaceManager that the fan-out does not
+# swap (it would otherwise run against the active project's workspace N times).
+# ponytail: explicit deny-set; per-project WorkspaceManager fan-out is a follow-up, not v1.
+# get_project_info and query_data resolve through the active project's WorkspaceManager (workspace id
+# / sql dialect), which the fan-out does not swap, so they report the active project only.
+_NO_FANOUT_TOOLS = {'get_accessible_projects', 'set_project_scope', 'get_project_info', 'query_data'}
+
+# Tools allowed before the user has confirmed a project scope. Everything else is blocked with a
+# message telling the assistant to ask the user which projects to work on first (ask-first UX).
+_BOOTSTRAP_TOOLS = {'get_accessible_projects', 'set_project_scope'}
+
+
+@dataclasses.dataclass(frozen=True)
+class SessionScope:
+    """In-conversation multi-project scope (PSGO-261 increment 2).
+
+    Persisted on the session across the per-request state rebuild. ``project_ids`` is the
+    user-selected set; ``scoped_token`` is the child access token minted by /v1/auth/pat/exchange
+    and narrowed to those projects (re-minted from the parent when near expiry).
+    """
+
+    project_ids: list[int]
+    read_only: bool = False
+    scoped_token: str | None = None
+    scoped_expires_at: float | None = None
+    confirmed: bool = False
+    """True once the user has explicitly chosen a scope via ``set_project_scope``. The default
+    auto-leased scope is unconfirmed, which gates data tools until the user decides."""
+
+    @property
+    def active_project_id(self) -> int | None:
+        return self.project_ids[0] if self.project_ids else None
+
+    @property
+    def is_near_expiry(self) -> bool:
+        if self.scoped_expires_at is None:
+            return False
+        return time.time() >= (self.scoped_expires_at - 60)
+
 
 R = TypeVar('R')
 T = TypeVar('T')
@@ -226,6 +272,16 @@ class SessionStateMiddleware(fmw.Middleware):
             if http_rq := get_http_request_or_none():
                 config = self.apply_request_config(http_rq, config, own_stack_storage_api_url=own_stack_storage_api_url)
 
+            # In-conversation multi-project scope persists on the session across this per-request
+            # state rebuild. Read it before the state is overwritten, refresh the stored token during
+            # usage, and re-mint the scoped token when it nears expiry. With no scope and no preset
+            # project, auto-lease ALL accessible projects (multi-project mode) so the session
+            # bootstraps without a hand-picked project and read tools fan out across everything.
+            scope = self._read_persisted_scope(ctx.session)
+            if scope is None and not config.project_id:
+                scope = await self._autolease_default_scope(config)
+            config, scope = await self._resolve_local_tokens(config, scope)
+
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
 
@@ -241,6 +297,8 @@ class SessionStateMiddleware(fmw.Middleware):
             state = await self.create_session_state(
                 config, runtime_info, own_stack_storage_api_url=own_stack_storage_api_url
             )
+            if scope is not None:
+                state[SCOPE_KEY] = scope
             ctx.session.state = state
 
         try:
@@ -311,6 +369,103 @@ class SessionStateMiddleware(fmw.Middleware):
             )
 
         return config
+
+    @staticmethod
+    def _read_persisted_scope(session: Any) -> 'SessionScope | None':
+        """Reads the multi-project scope stashed in the prior request's session state, if any."""
+        prior = getattr(session, 'state', None)
+        if isinstance(prior, dict):
+            scope = prior.get(SCOPE_KEY)
+            if isinstance(scope, SessionScope):
+                return scope
+        return None
+
+    @classmethod
+    def _is_local_programmatic(cls, config: Config) -> bool:
+        """True for a local (non-deployed) session carrying a Keboola programmatic token."""
+        return (
+            not os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
+            and bool(config.storage_token)
+            and bool(config.storage_api_url)
+            and is_programmatic_token(config.storage_token)
+        )
+
+    @classmethod
+    async def _autolease_default_scope(cls, config: Config) -> 'SessionScope | None':
+        """
+        Default to multi-project mode: scope the session to ALL accessible projects.
+
+        Introspects the programmatic token once to enumerate the projects it can reach and returns a
+        scope covering all of them (no minted token — the whole-stack parent token is used, narrowed
+        per request only by the ``X-KBC-ProjectId`` header). Returns None when introspection is
+        unavailable (deployed server, legacy token, or no reachable projects) so the caller falls
+        back to the existing single-project behavior.
+        """
+        if not cls._is_local_programmatic(config):
+            return None
+        try:
+            parent = await get_access_token(config.storage_api_url)
+        except RuntimeError:
+            parent = config.storage_token
+        try:
+            introspection = await introspect_token(config.storage_api_url, subject_token=parent)
+        except Exception as e:
+            LOG.warning(f'Could not auto-lease projects from token introspection: {e}')
+            return None
+        project_ids = [p.id for p in introspection.projects]
+        if not project_ids:
+            return None
+        LOG.info(f'Multi-project mode: auto-leased {len(project_ids)} accessible project(s) as the default scope.')
+        return SessionScope(project_ids=project_ids)
+
+    @classmethod
+    async def _resolve_local_tokens(
+        cls, config: Config, scope: 'SessionScope | None'
+    ) -> 'tuple[Config, SessionScope | None]':
+        """
+        For local (non-deployed) programmatic-token sessions, keep tokens fresh during usage.
+
+        Refreshes the stored whole-stack (parent) token via the PKCE credential store. When the user
+        has explicitly narrowed scope (a minted scoped token is present), that token is re-minted from
+        the parent when it nears expiry. The default (auto-leased) multi-project scope carries no
+        minted token and simply uses the parent token, narrowed per request by ``X-KBC-ProjectId``.
+        On the deployed server (``KBC_KUBERNETES_TOKEN_PATH`` set) the per-request resolver exchange
+        already handles freshness, so this is a no-op there.
+        """
+        if not cls._is_local_programmatic(config):
+            return config, scope
+
+        parent = config.storage_token
+        try:
+            # Refreshes (and persists the rotated pair) when near expiry; raises if no stored creds.
+            parent = await get_access_token(config.storage_api_url)
+        except RuntimeError:
+            pass  # token supplied directly (no PKCE login) — use it as-is
+
+        token = parent
+        project_id = config.project_id
+        if scope and scope.project_ids:
+            project_id = str(scope.active_project_id)
+            if scope.scoped_token is not None:
+                if scope.is_near_expiry:
+                    try:
+                        minted = await exchange_scoped_token(
+                            config.storage_api_url,
+                            subject_token=parent,
+                            project_ids=scope.project_ids,
+                            read_only=scope.read_only,
+                        )
+                        scope = dataclasses.replace(
+                            scope, scoped_token=minted.access_token, scoped_expires_at=minted.expires_at
+                        )
+                    except Exception as e:
+                        # Don't break the session if re-minting fails; fall back to the parent token.
+                        LOG.warning(f'Could not refresh the scoped token; using the parent token: {e}')
+                        scope = dataclasses.replace(scope, scoped_token=None, scoped_expires_at=None)
+                token = scope.scoped_token or parent
+
+        config = dataclasses.replace(config, storage_token=token, project_id=project_id)
+        return config, scope
 
     @classmethod
     async def _exchange_programmatic_token(cls, config: Config) -> str:
@@ -626,6 +781,120 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             raise ToolError(denial)
 
         return await call_next(context)
+
+
+class MultiProjectMiddleware(fmw.Middleware):
+    """Fans a read-only tool call out across every project in the active multi-project scope.
+
+    Single-project (or no) scope is an unchanged passthrough. With >1 project selected, a read-only
+    tool runs once per project — the active ``KeboolaClient`` in session state is swapped to each
+    project's client and the per-project results are labelled and concatenated (no structured-content
+    merge, so each tool keeps its native output shape). Write tools never fan out: they target the
+    active project only, so the agent can never write to multiple projects without the user explicitly
+    re-scoping (PSGO-261 decision D8).
+    """
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
+    ) -> mt.CallToolResult:
+        ctx = context.fastmcp_context
+        state = ctx.session.state
+        scope = state.get(SCOPE_KEY) if isinstance(state, dict) else None
+
+        # Ask-first gate: until the user confirms a scope via set_project_scope, block data tools and
+        # tell the assistant to ask the user which projects to work on. Only applies when a scope has
+        # been auto-leased (local programmatic session); deployed/legacy sessions have no scope.
+        if isinstance(scope, SessionScope) and not scope.confirmed and context.message.name not in _BOOTSTRAP_TOOLS:
+            raise ToolError(
+                f'This session can access {len(scope.project_ids)} Keboola project(s), but no scope has '
+                'been confirmed yet. Call "get_accessible_projects", show the user their projects, and ask '
+                'whether to work across ALL of them or a subset. Then call "set_project_scope" '
+                '(no arguments = all projects, or pass the chosen project ids, optionally read_only=true). '
+                'This confirmation is required once per session.'
+            )
+
+        if not isinstance(scope, SessionScope) or len(scope.project_ids) <= 1:
+            return await call_next(context)
+        if context.message.name in _NO_FANOUT_TOOLS:
+            return await call_next(context)
+
+        tool = await ctx.fastmcp.get_tool(context.message.name)
+        if not is_read_only_tool(tool):
+            # Write tools target the active project only — never an automatic multi-project write.
+            return await call_next(context)
+
+        server_state = ServerState.from_context(ctx)
+        original_client = state.get(KeboolaClient.STATE_KEY)
+        # Default (auto-leased) scope carries no minted token; fall back to the active client's token.
+        base_token = scope.scoped_token or (original_client.token if isinstance(original_client, KeboolaClient) else '')
+        results: list[tuple[int, ToolResult]] = []
+        try:
+            for project_id in scope.project_ids:
+                state[KeboolaClient.STATE_KEY] = await self._client_for_project(
+                    server_state, base_token, project_id, scope.read_only
+                )
+                results.append((project_id, await call_next(context)))
+        finally:
+            state[KeboolaClient.STATE_KEY] = original_client
+
+        return self._merge(results)
+
+    @staticmethod
+    async def _client_for_project(
+        server_state: ServerState, token: str, project_id: int, read_only: bool
+    ) -> KeboolaClient:
+        return await KeboolaClient(
+            storage_api_url=server_state.config.storage_api_url,
+            storage_api_token=token,
+            bearer_token=token,
+            headers={
+                **SessionStateMiddleware._get_headers(server_state.runtime_info),
+                'X-KBC-ProjectId': str(project_id),
+            },
+            readonly=read_only or None,
+        ).with_branch_id(None)
+
+    @staticmethod
+    def _deep_merge(a: Any, b: Any) -> Any:
+        """Merges two per-project structured outputs so the result still validates the tool's schema.
+
+        Lists are concatenated (the combined slice across projects), nested objects merged key by key,
+        and numeric counters summed; any other scalar keeps the first project's value. This keeps every
+        required field present with its declared type, so the merged object validates against the
+        single-project output schema.
+        """
+        if isinstance(a, list) and isinstance(b, list):
+            return a + b
+        if isinstance(a, dict) and isinstance(b, dict):
+            merged = dict(a)
+            for key, value in b.items():
+                merged[key] = MultiProjectMiddleware._deep_merge(a[key], value) if key in a else value
+            return merged
+        if isinstance(a, bool) or isinstance(b, bool):
+            return a
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            return a + b  # counters like search "total"
+        return a
+
+    @staticmethod
+    def _merge(results: list[tuple[int, 'ToolResult']]) -> 'ToolResult':
+        # Label each project's output in the text content (attribution the model can read) and, when the
+        # tool declares structured output, deep-merge the per-project structured payloads into a single
+        # schema-valid object (lists concatenated across projects) so the client's output-schema
+        # validation passes.
+        content: list[Any] = []
+        merged_structured: Any = None
+        for project_id, result in results:
+            content.append(mt.TextContent(type='text', text=f'=== project {project_id} ==='))
+            content.extend(result.content or [])
+            sc = result.structured_content
+            if sc is not None:
+                merged_structured = (
+                    sc if merged_structured is None else MultiProjectMiddleware._deep_merge(merged_structured, sc)
+                )
+        return ToolResult(content=content, structured_content=merged_structured)
 
 
 def _to_python(data: Any, exclude_none: bool = True) -> Any | None:

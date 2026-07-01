@@ -1,3 +1,6 @@
+import time
+from types import SimpleNamespace
+
 import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
@@ -5,14 +8,19 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
+from keboola_mcp_server.mcp import SCOPE_KEY
 from keboola_mcp_server.tools.project import (
     ProjectInfo,
     _get_toolset_restrictions,
     _resolve_branch_context,
+    get_accessible_projects,
     get_project_info,
+    set_project_scope,
     update_project_description,
 )
 from keboola_mcp_server.workspace import WorkspaceManager
+
+STACK = 'https://connection.test.keboola.com'
 
 
 @pytest.mark.parametrize(
@@ -246,3 +254,83 @@ async def test_update_project_description(
     keboola_client.storage_client.branch_metadata_update.assert_called_once_with(
         {MetadataField.PROJECT_DESCRIPTION: description}
     )
+
+
+# --- multi-project scope tools (PSGO-261 increment 2) ---
+
+
+def _prep_client(mcp_context_client: Context, mocker: MockerFixture, *, bearer: str | None = 'kbc_at_parent'):
+    client = KeboolaClient.from_state(mcp_context_client.session.state)
+    client.bearer_token = bearer
+    client.storage_api_url = STACK
+    mocker.patch(
+        'keboola_mcp_server.tools.project.get_access_token',
+        new=mocker.AsyncMock(return_value='kbc_at_parent'),
+    )
+    return client
+
+
+@pytest.mark.asyncio
+async def test_get_accessible_projects(mcp_context_client: Context, mocker: MockerFixture) -> None:
+    _prep_client(mcp_context_client, mocker)
+    introspection = SimpleNamespace(
+        user_email='m@k.com',
+        projects=[SimpleNamespace(id=18, name='A', role='admin'), SimpleNamespace(id=83, name='B', role='admin')],
+    )
+    introspect = mocker.patch(
+        'keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection)
+    )
+
+    result = await get_accessible_projects(mcp_context_client)
+
+    introspect.assert_awaited_once_with(STACK, subject_token='kbc_at_parent')
+    assert result.user_email == 'm@k.com'
+    assert [(p.id, p.name, p.role) for p in result.projects] == [(18, 'A', 'admin'), (83, 'B', 'admin')]
+
+
+@pytest.mark.asyncio
+async def test_set_project_scope_subset_exchanges_and_stores(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    _prep_client(mcp_context_client, mocker)
+    minted = SimpleNamespace(access_token='kbc_at_scoped', expires_at=time.time() + 3600, read_only=False)
+    exch = mocker.patch(
+        'keboola_mcp_server.tools.project.exchange_scoped_token', new=mocker.AsyncMock(return_value=minted)
+    )
+
+    result = await set_project_scope(mcp_context_client, project_ids=[18, 83])
+
+    exch.assert_awaited_once_with(STACK, subject_token='kbc_at_parent', project_ids=[18, 83], read_only=False)
+    assert result.project_ids == [18, 83]
+    assert result.active_project_id == 18
+    scope = mcp_context_client.session.state[SCOPE_KEY]
+    assert scope.scoped_token == 'kbc_at_scoped'
+    assert scope.project_ids == [18, 83]
+
+
+@pytest.mark.asyncio
+async def test_set_project_scope_all_introspects_then_exchanges(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    _prep_client(mcp_context_client, mocker)
+    introspection = SimpleNamespace(
+        user_email=None,
+        projects=[SimpleNamespace(id=18, name='A', role='admin'), SimpleNamespace(id=83, name='B', role='x')],
+    )
+    mocker.patch('keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection))
+    minted = SimpleNamespace(access_token='kbc_at_all', expires_at=time.time() + 3600, read_only=False)
+    exch = mocker.patch(
+        'keboola_mcp_server.tools.project.exchange_scoped_token', new=mocker.AsyncMock(return_value=minted)
+    )
+
+    result = await set_project_scope(mcp_context_client, project_ids=None)
+
+    exch.assert_awaited_once_with(STACK, subject_token='kbc_at_parent', project_ids=[18, 83], read_only=False)
+    assert result.project_ids == [18, 83]
+
+
+@pytest.mark.asyncio
+async def test_scope_requires_programmatic_token(mcp_context_client: Context, mocker: MockerFixture) -> None:
+    _prep_client(mcp_context_client, mocker, bearer=None)
+    with pytest.raises(ValueError, match='programmatic token'):
+        await get_accessible_projects(mcp_context_client)

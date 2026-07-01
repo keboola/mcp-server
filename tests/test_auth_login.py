@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import json
 import stat
 import time
 from pathlib import Path
@@ -13,7 +14,9 @@ from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import (
     TokenSet,
     exchange_code,
+    exchange_scoped_token,
     get_access_token,
+    introspect_token,
     load_tokens,
     refresh_tokens,
     save_tokens,
@@ -132,3 +135,61 @@ def test_pkce_challenge_is_sha256_of_verifier() -> None:
 def test_invalid_stack_url_rejected() -> None:
     with pytest.raises(ValueError, match='Invalid Keboola Storage API URL'):
         auth_login._base_url('https://example.com')
+
+
+# --- introspection + scoped exchange (PSGO-261 increment 2) ---
+
+
+@pytest.mark.asyncio
+async def test_introspect_token_parses_projects() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured['url'] = str(request.url)
+        captured['auth'] = request.headers['Authorization']
+        return httpx.Response(
+            200,
+            json={
+                'user': {'id': 60, 'email': 'm@k.com', 'name': 'M'},
+                'projects': [
+                    {'id': 18, 'name': 'A', 'role': 'admin'},
+                    {'id': 83, 'name': 'B', 'role': 'admin'},
+                ],
+            },
+        )
+
+    intro = await introspect_token(STACK, subject_token='kbc_at_x', transport=httpx.MockTransport(handler))
+
+    assert captured['url'] == 'https://connection.keboola.com/v1/auth/token/introspect'
+    assert captured['auth'] == 'Bearer kbc_at_x'
+    assert intro.user_email == 'm@k.com'
+    assert [(p.id, p.name, p.role) for p in intro.projects] == [(18, 'A', 'admin'), (83, 'B', 'admin')]
+
+
+@pytest.mark.asyncio
+async def test_exchange_scoped_token_sends_scope_and_parses() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured['url'] = str(request.url)
+        captured['auth'] = request.headers['Authorization']
+        captured['body'] = json.loads(request.content)
+        return httpx.Response(201, json={'accessToken': 'kbc_at_scoped', 'expiresIn': 3600, 'readOnly': True})
+
+    scoped = await exchange_scoped_token(
+        STACK,
+        subject_token='kbc_at_parent',
+        project_ids=[18, 83],
+        read_only=True,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert captured['url'] == 'https://connection.keboola.com/v1/auth/pat/exchange'
+    assert captured['auth'] == 'Bearer kbc_at_parent'
+    # the exchange API requires project ids as strings
+    assert captured['body'] == {'expiresIn': None, 'scope': {'projects': ['18', '83'], 'readOnly': True}}
+    assert scoped.access_token == 'kbc_at_scoped'
+    assert scoped.read_only is True
+    assert scoped.project_ids == [18, 83]
+    assert scoped.expires_at > time.time()
+    assert not scoped.is_near_expiry

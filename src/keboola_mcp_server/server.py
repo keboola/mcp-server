@@ -20,6 +20,7 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport, get_
 from keboola_mcp_server.errors import ValidationErrorMiddleware
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
+    MultiProjectMiddleware,
     ServerState,
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
@@ -228,6 +229,18 @@ def create_server(
     server_state = ServerState(config=config, runtime_info=runtime_info)
     mcp = KeboolaMcpServer(
         name='Keboola MCP Server',
+        instructions=(
+            'This server runs in multi-project mode. When the user logs in with a stack-wide Keboola '
+            'token, data tools are BLOCKED until a project scope is confirmed. So at the very START of '
+            'the conversation, before doing anything else: call "get_accessible_projects", show the user '
+            'their projects, and ASK whether to work across ALL of them or a subset. Do not decide for '
+            'them. Then call "set_project_scope" with their answer (no arguments = all projects, or the '
+            'chosen project ids, optionally read_only=true). After that, read-only tools return results '
+            'per project. Never write to more than one project without explicit user confirmation — '
+            'write operations target the active (first-scoped) project only. Note: outside the Storage '
+            'API, some tools may need per-project token support not yet available on every stack; '
+            'surface such errors plainly rather than retrying.'
+        ),
         lifespan=create_keboola_lifespan(server_state),
         auth=oauth_provider,
         middleware=[
@@ -235,6 +248,7 @@ def create_server(
             SessionStateMiddleware(),
             ToolAuthorizationMiddleware(),
             ToolsFilteringMiddleware(),
+            MultiProjectMiddleware(),
             ValidationErrorMiddleware(),
         ],
     )

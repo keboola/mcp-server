@@ -1,4 +1,5 @@
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,14 +7,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
+from fastmcp.tools.tool import ToolResult
+from mcp import types as mt
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
+    SCOPE_KEY,
     AggregateError,
+    MultiProjectMiddleware,
     ServerState,
+    SessionScope,
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
     _exclude_none_serializer,
@@ -840,3 +846,208 @@ class TestProgrammaticTokenExchange:
             storage_api_url='https://connection.keboola.com', kubernetes_token_path='/var/run/secrets/token'
         )
         resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
+
+
+class TestResolveLocalTokens:
+    """SessionStateMiddleware keeps local tokens fresh and re-mints the scoped token (PSGO-261)."""
+
+    @pytest.mark.asyncio
+    async def test_deployed_is_noop(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, None)
+        assert out_config is config
+        assert out_scope is None
+
+    @pytest.mark.asyncio
+    async def test_legacy_token_is_noop(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='legacy-sapi-token')
+        out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, None)
+        assert out_config is config
+        assert out_scope is None
+
+    @pytest.mark.asyncio
+    async def test_programmatic_no_scope_refreshes_parent(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_old')
+        with patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_fresh')):
+            out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, None)
+        assert out_config.storage_token == 'kbc_at_fresh'
+        assert out_scope is None
+
+    @pytest.mark.asyncio
+    async def test_default_scope_uses_parent_token_without_minting(self, monkeypatch) -> None:
+        # The default (auto-leased) multi-project scope carries no minted token: it uses the parent
+        # token and just sets the active project — no exchange call.
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_old')
+        scope = SessionScope(project_ids=[11, 22], read_only=False)
+        with (
+            patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_parent')),
+            patch('keboola_mcp_server.mcp.exchange_scoped_token', AsyncMock()) as exch,
+        ):
+            out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
+        exch.assert_not_awaited()
+        assert out_config.storage_token == 'kbc_at_parent'
+        assert out_config.project_id == '11'  # active project = first in scope
+        assert out_scope.scoped_token is None
+
+    @pytest.mark.asyncio
+    async def test_fresh_scoped_token_is_not_reminted(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_old')
+        scope = SessionScope(project_ids=[11], scoped_token='kbc_at_live', scoped_expires_at=time.time() + 3600)
+        with (
+            patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_parent')),
+            patch('keboola_mcp_server.mcp.exchange_scoped_token', AsyncMock()) as exch,
+        ):
+            out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
+        exch.assert_not_awaited()
+        assert out_config.storage_token == 'kbc_at_live'
+
+    @pytest.mark.asyncio
+    async def test_near_expiry_scoped_token_is_reminted(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_old')
+        scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_stale', scoped_expires_at=time.time() - 1)
+        minted = SimpleNamespace(access_token='kbc_at_fresh_scoped', expires_at=time.time() + 900)
+        with (
+            patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_parent')),
+            patch('keboola_mcp_server.mcp.exchange_scoped_token', AsyncMock(return_value=minted)) as exch,
+        ):
+            out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
+        exch.assert_awaited_once()
+        assert out_scope.scoped_token == 'kbc_at_fresh_scoped'
+        assert out_config.storage_token == 'kbc_at_fresh_scoped'
+
+    @pytest.mark.asyncio
+    async def test_autolease_scopes_all_accessible_projects(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        introspection = SimpleNamespace(
+            projects=[SimpleNamespace(id=11), SimpleNamespace(id=22), SimpleNamespace(id=33)]
+        )
+        with (
+            patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_parent')),
+            patch('keboola_mcp_server.mcp.introspect_token', AsyncMock(return_value=introspection)),
+        ):
+            scope = await SessionStateMiddleware._autolease_default_scope(config)
+        assert scope.project_ids == [11, 22, 33]
+        assert scope.scoped_token is None  # default scope uses the parent token
+
+    @pytest.mark.asyncio
+    async def test_autolease_noop_when_deployed(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        assert await SessionStateMiddleware._autolease_default_scope(config) is None
+
+
+class TestMultiProjectMiddleware:
+    """Read tools fan out across the scoped projects; writes and single-project scope do not."""
+
+    @staticmethod
+    def _ctx(scope: SessionScope | None, tool_name: str, read_only: bool):
+        state: dict = {KeboolaClient.STATE_KEY: 'orig-client'}
+        if scope is not None:
+            state[SCOPE_KEY] = scope
+        ctx = MagicMock(spec=Context)
+        ctx.session = SimpleNamespace(state=state)
+        ctx.request_context.lifespan_context = ServerState(
+            config=Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x'),
+            runtime_info=ServerRuntimeInfo(transport='stdio'),
+        )
+        tool = MagicMock()
+        tool.name = tool_name
+        if read_only:
+            tool.annotations.readOnlyHint = True
+        else:
+            tool.annotations = None
+        ctx.fastmcp.get_tool = AsyncMock(return_value=tool)
+        context = SimpleNamespace(message=SimpleNamespace(name=tool_name), fastmcp_context=ctx)
+        return context, state
+
+    @staticmethod
+    def _result(text: str) -> ToolResult:
+        return ToolResult(
+            content=[mt.TextContent(type='text', text=text)],
+            structured_content={'rows': [text]},
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('scope', 'tool_name', 'read_only'),
+        [
+            (None, 'get_tables', True),
+            (SessionScope(project_ids=[11], confirmed=True), 'get_tables', True),
+            (SessionScope(project_ids=[11, 22], confirmed=True), 'update_config', False),  # write: no fan-out
+            (SessionScope(project_ids=[11, 22], confirmed=True), 'query_data', True),  # excluded tool
+        ],
+        ids=['no_scope', 'single_project', 'write_tool', 'excluded_tool'],
+    )
+    async def test_passthrough_calls_once(self, scope, tool_name, read_only) -> None:
+        context, _ = self._ctx(scope, tool_name, read_only)
+        calls = []
+
+        async def call_next(_):
+            calls.append(1)
+            return self._result('single')
+
+        result = await MultiProjectMiddleware().on_call_tool(context, call_next)
+        assert len(calls) == 1
+        assert result.content[0].text == 'single'
+
+    @pytest.mark.asyncio
+    async def test_unconfirmed_scope_blocks_data_tools(self) -> None:
+        # Default (auto-leased, unconfirmed) scope: data tools are gated with an ask-first message.
+        scope = SessionScope(project_ids=[11, 22], confirmed=False)
+        context, _ = self._ctx(scope, 'get_tables', read_only=True)
+
+        async def call_next(_):
+            raise AssertionError('call_next must not run for a gated tool')
+
+        with pytest.raises(ToolError, match='no scope has been confirmed'):
+            await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+    @pytest.mark.asyncio
+    async def test_unconfirmed_scope_allows_bootstrap_tools(self) -> None:
+        scope = SessionScope(project_ids=[11, 22], confirmed=False)
+        context, _ = self._ctx(scope, 'get_accessible_projects', read_only=True)
+        calls = []
+
+        async def call_next(_):
+            calls.append(1)
+            return self._result('projects')
+
+        result = await MultiProjectMiddleware().on_call_tool(context, call_next)
+        assert len(calls) == 1
+        assert result.content[0].text == 'projects'
+
+    @pytest.mark.asyncio
+    async def test_read_tool_fans_out_per_project(self) -> None:
+        scope = SessionScope(
+            project_ids=[11, 22], scoped_token='kbc_at_s', scoped_expires_at=time.time() + 3600, confirmed=True
+        )
+        context, state = self._ctx(scope, 'get_tables', read_only=True)
+        active_clients: list = []
+
+        async def call_next(_):
+            active_clients.append(state[KeboolaClient.STATE_KEY])
+            return self._result('rows')
+
+        with patch.object(
+            MultiProjectMiddleware,
+            '_client_for_project',
+            AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+        ):
+            result = await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        # Ran once per project, each against that project's client.
+        assert active_clients == ['client-11', 'client-22']
+        # Active client restored afterwards.
+        assert state[KeboolaClient.STATE_KEY] == 'orig-client'
+        # Per-project results are labelled in the text content.
+        texts = [c.text for c in result.content]
+        assert texts == ['=== project 11 ===', 'rows', '=== project 22 ===', 'rows']
+        # Structured output is deep-merged (list fields concatenated) so it still validates the schema.
+        assert result.structured_content == {'rows': ['rows', 'rows']}
