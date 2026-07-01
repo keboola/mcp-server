@@ -49,6 +49,7 @@
     "test:watch": "vitest",
     "test:integ": "vitest run --config vitest.integ.config.ts",
     "test:integ:watch": "vitest --config vitest.integ.config.ts",
+    "docs:build": "tsx scripts/docs-build.ts",
     "gen:tools-docs": "tsx scripts/gen-tools-docs.ts",
     "check:tools-docs": "tsx scripts/gen-tools-docs.ts --check"
   },
@@ -68,6 +69,7 @@
   "devDependencies": {
     "@keboola/oxlint-config": "^0.1.2",
     "@keboola/tsconfig": "^0.1.1",
+    "@testcontainers/postgresql": "^11.14.0",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.20.0",
     "ioredis": "^5.4.1",

@@ -144,8 +144,48 @@ const formatContext = (docs: { content: string }[]): string =>
   docs.map((d) => `<source_doc>\n${d.content}\n</source_doc>`).join('\n\n');
 
 // ---------------------------------------------------------------------------
-// Embedder / LLM (OpenAI-compatible; injected in production)
+// Embedder / LLM (OpenAI-compatible in prod; deterministic stub for local/CI)
 // ---------------------------------------------------------------------------
+
+/** Sentinel model name selecting the offline {@link StubEmbedder}. */
+export const STUB_EMBEDDER_MODEL = 'stub';
+
+/**
+ * Deterministic, offline embedder (vendored from @keboola/docs-search): the same text
+ * always yields the same unit vector, with no network calls. NOT for production retrieval
+ * quality — it exists so `docs:build` + the integ test can seed and query a real pgvector
+ * index reproducibly (build and query embed identically). Selected via
+ * `DOCS_EMBEDDER_MODEL=stub`.
+ */
+export class StubEmbedder implements Embedder {
+  readonly model = STUB_EMBEDDER_MODEL;
+  readonly dim: number;
+
+  constructor(dim = 3072) {
+    this.dim = dim;
+  }
+
+  embed(texts: string[]): Promise<number[][]> {
+    return Promise.resolve(texts.map((t) => this.vector(t)));
+  }
+
+  private vector(text: string): number[] {
+    // Seed an LCG from a rolling hash of the text, fill dim floats, L2-normalize.
+    let seed = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+      seed ^= text.charCodeAt(i);
+      seed = Math.imul(seed, 16777619);
+    }
+    let state = seed >>> 0;
+    const next = () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0xffffffff - 0.5;
+    };
+    const v = Array.from({ length: this.dim }, next);
+    const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+    return v.map((x) => x / norm);
+  }
+}
 
 /** OpenAI/Azure-compatible embedder. Thin fetch wrapper — no SDK dependency. */
 class OpenAIEmbedder implements Embedder {
@@ -249,23 +289,38 @@ const buildDocsSearch = (pool: Pool, embedder: Embedder, llm: Llm | null): DocsS
 });
 
 /**
+ * Builds the query-time embedder from env: the deterministic {@link StubEmbedder} when
+ * `DOCS_EMBEDDER_MODEL=stub` (offline local/CI), else the OpenAI-compatible embedder.
+ * Returns `null` when the config is incomplete. Shared with the `docs:build` seeder so the
+ * index is built and queried with identical vectors.
+ */
+export const createEmbedderFromEnv = (env: Env): Embedder | null => {
+  const dim = env.DOCS_EMBEDDER_DIM ?? 3072;
+  if (env.DOCS_EMBEDDER_MODEL === STUB_EMBEDDER_MODEL) return new StubEmbedder(dim);
+  if (!env.DOCS_EMBEDDER_ENDPOINT || !env.DOCS_EMBEDDER_API_KEY || !env.DOCS_EMBEDDER_MODEL) {
+    return null;
+  }
+  return new OpenAIEmbedder({
+    endpoint: env.DOCS_EMBEDDER_ENDPOINT,
+    apiKey: env.DOCS_EMBEDDER_API_KEY,
+    model: env.DOCS_EMBEDDER_MODEL,
+    dim,
+  });
+};
+
+/**
  * Builds the docs-search provider from deployment env, or returns `null` when the index
  * is not configured (no `DATABASE_URL`, or no embedder credentials). A `null` provider
  * gates the docs tools off — the rest of the server is unaffected.
  */
 export const createDocsSearchFromEnv = (env: Env): DocsSearch | null => {
   if (!env.DATABASE_URL) return null;
-  if (!env.DOCS_EMBEDDER_ENDPOINT || !env.DOCS_EMBEDDER_API_KEY || !env.DOCS_EMBEDDER_MODEL) {
+  const embedder = createEmbedderFromEnv(env);
+  if (!embedder) {
     logger.warn('DATABASE_URL is set but DOCS_EMBEDDER_* is not; docs tools disabled.');
     return null;
   }
   const pool = new Pool({ connectionString: env.DATABASE_URL, max: 4 });
-  const embedder = new OpenAIEmbedder({
-    endpoint: env.DOCS_EMBEDDER_ENDPOINT,
-    apiKey: env.DOCS_EMBEDDER_API_KEY,
-    model: env.DOCS_EMBEDDER_MODEL,
-    dim: env.DOCS_EMBEDDER_DIM ?? 3072,
-  });
   const llm =
     env.DOCS_LLM_ENDPOINT && env.DOCS_LLM_API_KEY && env.DOCS_LLM_MODEL
       ? new OpenAILlm({

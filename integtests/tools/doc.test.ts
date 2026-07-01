@@ -1,38 +1,99 @@
-import { describe, expect, it } from 'vitest';
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { Pool } from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import {
+  embedInputFor,
+  FIXTURE_SOURCES,
+  migrateDocsIndex,
+  seedDocsIndex,
+} from '../../scripts/docsIndex';
 import { callToolText, connectMcp } from '../helpers/mcp';
 import { getTestProjectForTest } from '../testproject/fixture';
 
-// Ported from integtests/tools/test_doc.py.
+import {
+  createDocsSearchFromEnv,
+  type DocsSearch,
+  setDocsSearchForTests,
+  StubEmbedder,
+} from '@/clients/docsSearch';
+import { parseEnv } from '@/env';
+
+// Ported from integtests/tools/test_doc.py, rebuilt on the pgvector docs-search index
+// (RFC: feature_spec/docs-search-pgvector/). Fully self-contained: it provisions a real
+// pgvector via testcontainers, seeds the fixture corpus with the deterministic
+// StubEmbedder, and drives docs_query / find_component_id through the MCP — no live docs
+// service and no Keboola project needed (the docs index is global). Requires Docker.
 //
-// docs_query is served by the pgvector docs-search index (RFC:
-// feature_spec/docs-search-pgvector/). The index is process-level infrastructure — when
-// DATABASE_URL (+ embedder creds) is not configured the tool is gated off, so this suite
-// is skipped rather than failing. It runs (and asserts real retrieval) only where a
-// seeded docs index is reachable.
-const DOCS_INDEX_CONFIGURED = Boolean(
-  (process.env.DATABASE_URL ?? '').trim() &&
-    (process.env.DOCS_EMBEDDER_ENDPOINT ?? '').trim() &&
-    (process.env.DOCS_EMBEDDER_API_KEY ?? '').trim() &&
-    (process.env.DOCS_EMBEDDER_MODEL ?? '').trim(),
-);
+// StubEmbedder makes retrieval reproducible but not semantic, so queries use a fixture's
+// exact embed input (title\ncontent) to guarantee a top hit — mirroring the SDK's own
+// deterministic integ tier.
 
-const describeDocs = DOCS_INDEX_CONFIGURED ? describe : describe.skip;
-if (!DOCS_INDEX_CONFIGURED) {
-  console.warn('SKIP: docs_query integration — no docs-search index configured (DATABASE_URL/DOCS_EMBEDDER_*).');
-}
+const OVERVIEW = FIXTURE_SOURCES.find((d) => d.sourceKey === 'connection-docs:overview')!;
+const MYSQL = FIXTURE_SOURCES.find((d) => d.sourceKey === 'component:keboola.ex-db-mysql')!;
 
-describeDocs('docs_query (integration)', () => {
-  it('returns an answer with text and source URLs', async () => {
+describe('docs tools (integration, pgvector)', () => {
+  let container: StartedPostgreSqlContainer | undefined;
+  let pool: Pool | undefined;
+  let provider: DocsSearch | undefined;
+  let skipReason = '';
+
+  beforeAll(async () => {
+    try {
+      container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    } catch (err) {
+      skipReason = `no Docker / pgvector container: ${(err as Error).message}`;
+      console.warn(`SKIP: docs tools integration — ${skipReason}`);
+      return;
+    }
+    const connectionString = container.getConnectionUri();
+    pool = new Pool({ connectionString });
+    await migrateDocsIndex(pool);
+    await seedDocsIndex(pool, new StubEmbedder(3072), FIXTURE_SOURCES);
+
+    // Build the real provider from env, pointed at the container, with the stub embedder.
+    provider = createDocsSearchFromEnv({
+      ...parseEnv(),
+      DATABASE_URL: connectionString,
+      DOCS_EMBEDDER_MODEL: 'stub',
+      DOCS_EMBEDDER_DIM: 3072,
+    })!;
+    setDocsSearchForTests(provider);
+  }, 120_000);
+
+  afterAll(async () => {
+    setDocsSearchForTests(undefined);
+    await provider?.close();
+    await pool?.end();
+    await container?.stop();
+  });
+
+  it('docs_query returns an answer with text and source URLs', async () => {
+    if (skipReason) return;
     const { config } = await getTestProjectForTest({ clean: false });
     const session = await connectMcp(config);
     try {
       const text = await callToolText(session.client, 'docs_query', {
-        query: 'What is Keboola Connection?',
+        query: embedInputFor(OVERVIEW),
       });
       expect(text.length).toBeGreaterThan(0);
-      // The answer carries source_urls — at least one http(s) link.
-      expect(text).toMatch(/https?:\/\//);
+      expect(text).toContain('Keboola Connection');
+      expect(text).toContain(OVERVIEW.sourceUrl);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('find_component_id recommends a component id from the index', async () => {
+    if (skipReason) return;
+    const { config } = await getTestProjectForTest({ clean: false });
+    const session = await connectMcp(config);
+    try {
+      const text = await callToolText(session.client, 'find_component_id', {
+        query: embedInputFor(MYSQL),
+      });
+      // The component id is recovered from the doc's `component:<id>` source key.
+      expect(text).toContain('keboola.ex-db-mysql');
     } finally {
       await session.close();
     }

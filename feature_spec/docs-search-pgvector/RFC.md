@@ -150,16 +150,34 @@ The gate (point 5) is wired via `DOCS_INDEX_TOOL_NAMES` in `mcp/filtering.ts`: t
 tools are filtered from `tools/list` and denied on call when `getDocsSearch()` returns
 `null` (no `DATABASE_URL` / embedder creds). Env (point 3) is `DATABASE_URL` +
 `DOCS_EMBEDDER_*` + optional `DOCS_LLM_*` in `env.ts`; `docker-compose.yml` adds the
-`pgvector/pgvector` service. The index build (point 4) remains out of scope here — see the
-architecture doc.
+`pgvector/pgvector` service. The production index build (point 4) remains out of scope
+here — see the architecture doc.
+
+**Local + CI end-to-end.** A developer can run the two tools against a real local index
+with no live services and no API key:
+
+```
+docker compose up -d pgvector
+DATABASE_URL=postgres://mcp:mcp@localhost:5432/docs DOCS_EMBEDDER_MODEL=stub npm run docs:build
+# then point the MCP at DATABASE_URL + DOCS_EMBEDDER_MODEL=stub
+```
+
+`npm run docs:build` (`scripts/docs-build.ts` + `scripts/docsIndex.ts`) migrates the schema
+and seeds a small fixture corpus using the deterministic offline `StubEmbedder`
+(`DOCS_EMBEDDER_MODEL=stub`), which the provider also uses at query time so build and query
+embed identically. This is the dev mirror of the production out-of-band build (it seeds
+fixtures, not real docs — the source connectors stay on the build side per #6672).
 
 ## Testing / Verification
 - **Unit**: `docs_query` / `find_component_id` / `get_config_examples` with an injected fake
   `DocsSearch` (stub `search`/`answerQuestion`/`getComponentDoc`/`recommendComponents`) — assert
   the tools map inputs/outputs unchanged. Availability-gate tests (index present/absent → tool
   visible/denied). No network.
-- **Integration**: a local `pgvector` (docker-compose) seeded via `runIndexBuild` with a small
-  deterministic `StubEmbedder`; run `docs_query`/`find_component_id`/component-docs through the
-  MCP client and assert real retrieval. Mirrors the SDK's own testcontainers integ tier.
+- **Integration** (`integtests/tools/doc.test.ts`): provisions a real `pgvector` via
+  testcontainers, seeds the fixture corpus with the deterministic `StubEmbedder`, and drives
+  `docs_query` + `find_component_id` through the MCP client, asserting real retrieval and
+  component-id recovery. Self-contained (needs Docker; skips with a warning if unavailable),
+  so the existing `integration_tests` CI job runs it with no extra wiring. Mirrors the SDK's
+  own testcontainers integ tier.
 - **Parity check**: compare outputs against the current AI-service tools for a fixed query set
   before deleting the AI path.
