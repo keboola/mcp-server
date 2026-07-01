@@ -280,16 +280,27 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
     introspect = mocker.patch(
         'keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection)
     )
+    # Per-project SQL dialect is resolved via a token verify narrowed by X-KBC-ProjectId; mock that.
+    mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
+    dialects = {18: 'BigQuery', 83: 'Snowflake'}
+    mocker.patch(
+        'keboola_mcp_server.tools.project._project_sql_dialect',
+        new=mocker.AsyncMock(side_effect=lambda _ss, _tok, pid: (pid, dialects[pid])),
+    )
 
     # No scope confirmed yet.
     result = await get_accessible_projects(mcp_context_client)
 
     introspect.assert_awaited_once_with(STACK, subject_token='kbc_at_parent')
     assert result.user_email == 'm@k.com'
-    assert [(p.id, p.name, p.role) for p in result.projects] == [(18, 'A', 'admin'), (83, 'B', 'admin')]
+    assert [(p.id, p.name, p.role, p.sql_dialect) for p in result.projects] == [
+        (18, 'A', 'admin', 'BigQuery'),
+        (83, 'B', 'admin', 'Snowflake'),
+    ]
     assert result.scoped_project_ids is None
     assert result.active_project_id is None
     assert result.read_only is None
+    assert result.llm_instructions is None  # not requested
     assert all(not p.in_scope and not p.is_active for p in result.projects)
 
     # Once scoped, the current scope is surfaced on the projects and at the top level.
@@ -299,6 +310,36 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
     assert result.active_project_id == 83
     assert result.read_only is True
     assert [(p.id, p.in_scope, p.is_active) for p in result.projects] == [(18, False, False), (83, True, True)]
+
+
+@pytest.mark.asyncio
+async def test_get_accessible_projects_llm_instructions_grouped_by_dialect(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    _prep_client(mcp_context_client, mocker)
+    introspection = SimpleNamespace(
+        user_email='m@k.com',
+        projects=[
+            SimpleNamespace(id=18, name='A', role='admin'),
+            SimpleNamespace(id=86, name='B', role='admin'),
+            SimpleNamespace(id=95, name='C', role='admin'),
+        ],
+    )
+    mocker.patch('keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection))
+    mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
+    dialects = {18: 'BigQuery', 86: 'BigQuery', 95: 'Snowflake'}
+    mocker.patch(
+        'keboola_mcp_server.tools.project._project_sql_dialect',
+        new=mocker.AsyncMock(side_effect=lambda _ss, _tok, pid: (pid, dialects[pid])),
+    )
+
+    result = await get_accessible_projects(mcp_context_client, with_llm_instruction=True)
+
+    assert result.llm_instructions is not None
+    # One group per distinct dialect, projects deduplicated into their dialect group (no per-project copies).
+    groups = {g.sql_dialect: g.project_ids for g in result.llm_instructions}
+    assert groups == {'BigQuery': [18, 86], 'Snowflake': [95]}
+    assert all(g.llm_instruction for g in result.llm_instructions)
 
 
 @pytest.mark.asyncio

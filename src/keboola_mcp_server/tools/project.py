@@ -12,7 +12,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import SCOPE_KEY, SessionScope
+from keboola_mcp_server.mcp import SCOPE_KEY, MultiProjectMiddleware, ServerState, SessionScope, process_concurrently
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -265,6 +265,16 @@ async def get_project_info(
     return project_info
 
 
+def _sql_dialect_from_token(token_data: JsonDict) -> str | None:
+    """Derives the project's SQL dialect from the token's owner.defaultBackend, without a workspace."""
+    backend = cast(JsonDict, token_data.get('owner', {})).get('defaultBackend')
+    if backend == 'snowflake':
+        return 'Snowflake'
+    if backend == 'bigquery':
+        return 'BigQuery'
+    return None
+
+
 class AccessibleProject(BaseModel):
     id: int = Field(description='The project id.')
     name: str | None = Field(default=None, description='The project name.')
@@ -273,6 +283,17 @@ class AccessibleProject(BaseModel):
     is_active: bool = Field(
         default=False, description='Whether this is the active project (write / single-project tool target).'
     )
+    sql_dialect: str | None = Field(
+        default=None, description='The SQL dialect of the project ("Snowflake" or "BigQuery").'
+    )
+
+
+class LlmInstructionGroup(BaseModel):
+    """Base working instructions shared by all projects of one SQL dialect (dialect-specific system prompt)."""
+
+    project_ids: list[int] = Field(description='The scoped projects this instruction applies to.')
+    sql_dialect: str | None = Field(default=None, description='The SQL dialect these projects share.')
+    llm_instruction: str = Field(description='The base working instructions for projects of this dialect.')
 
 
 class AccessibleProjects(BaseModel):
@@ -286,6 +307,14 @@ class AccessibleProjects(BaseModel):
         default=None, description='The active project that write operations and single-project tools target.'
     )
     read_only: bool | None = Field(default=None, description='Whether the current scoped token is read-only.')
+    llm_instructions: list[LlmInstructionGroup] | None = Field(
+        default=None,
+        description=(
+            'The base working instructions, grouped by SQL dialect (deduplicated across projects). '
+            'Only present when the tool is called with with_llm_instruction=true; request this once at the '
+            'start of a conversation.'
+        ),
+    )
     llm_instruction: str = Field(
         description='Guidance for the assistant on how to use this result.',
     )
@@ -301,14 +330,43 @@ class ProjectScope(BaseModel):
     llm_instruction: str = Field(description='Guidance for the assistant on the new scope.')
 
 
-@tool_errors()
-async def get_accessible_projects(ctx: Context) -> AccessibleProjects:
+async def _project_sql_dialect(
+    server_state: ServerState, subject_token: str, project_id: int
+) -> tuple[int, str | None]:
+    """Fetches one project's SQL dialect by verifying the parent token narrowed with X-KBC-ProjectId.
+
+    No workspace is provisioned — the dialect comes from the token's owner.defaultBackend, so this is
+    a single cheap Storage API call per project.
     """
-    Lists the Keboola projects the current login can access across the stack.
+    per_client = await MultiProjectMiddleware._client_for_project(
+        server_state, subject_token, project_id, read_only=True
+    )
+    token_data = await per_client.storage_client.verify_token()
+    return project_id, _sql_dialect_from_token(token_data)
+
+
+@tool_errors()
+async def get_accessible_projects(
+    ctx: Context,
+    with_llm_instruction: Annotated[
+        bool,
+        Field(
+            description=(
+                'If true, include the base working instructions (llm_instructions), grouped by SQL dialect. '
+                'Request this once at the very start of a conversation; omit it on later calls.'
+            )
+        ),
+    ] = False,
+) -> AccessibleProjects:
+    """
+    Lists the Keboola projects the current login can access across the stack, each with its SQL dialect.
 
     Call this early in a conversation when the user logs in with a stack-wide token (PKCE login),
     present the projects, and ask whether they want to work across all of them or a subset. Then call
-    `set_project_scope` with their choice.
+    `set_project_scope` with their choice. This tool compacts several API calls (token introspection
+    plus a per-project token verify for the SQL dialect) into one result, so the assistant does not
+    need a separate get_project_info call per project. Pass with_llm_instruction=true on the first
+    call to also receive the base working instructions grouped by dialect.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     subject_token = await _parent_subject_token(client)
@@ -318,6 +376,21 @@ async def get_accessible_projects(ctx: Context) -> AccessibleProjects:
     scoped_ids = scope.project_ids if isinstance(scope, SessionScope) and scope.confirmed else None
     active_id = scope.active_project_id if scoped_ids else None
 
+    # Enrich each project with its SQL dialect (concurrently). Best-effort: a project whose verify
+    # fails simply keeps sql_dialect=None rather than failing the whole listing.
+    server_state = ServerState.from_context(ctx)
+    dialects: dict[int, str | None] = {}
+    results = await process_concurrently(
+        [p.id for p in introspection.projects],
+        lambda pid: _project_sql_dialect(server_state, subject_token, pid),
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            LOG.warning(f'Could not resolve SQL dialect for a project: {result}')
+            continue
+        pid, dialect = result
+        dialects[pid] = dialect
+
     projects = [
         AccessibleProject(
             id=p.id,
@@ -325,9 +398,27 @@ async def get_accessible_projects(ctx: Context) -> AccessibleProjects:
             role=p.role,
             in_scope=scoped_ids is not None and p.id in scoped_ids,
             is_active=p.id == active_id,
+            sql_dialect=dialects.get(p.id),
         )
         for p in introspection.projects
     ]
+
+    # Optionally attach the base working instructions, grouped by dialect so the (large) prompt is
+    # sent once per distinct dialect rather than duplicated per project.
+    llm_instructions: list[LlmInstructionGroup] | None = None
+    if with_llm_instruction:
+        by_dialect: dict[str | None, list[int]] = {}
+        for p in projects:
+            by_dialect.setdefault(p.sql_dialect, []).append(p.id)
+        llm_instructions = [
+            LlmInstructionGroup(
+                project_ids=ids,
+                sql_dialect=dialect,
+                llm_instruction=get_project_system_prompt(dialect or 'Snowflake'),
+            )
+            for dialect, ids in by_dialect.items()
+        ]
+
     if scoped_ids is None:
         instruction = (
             'No project scope has been confirmed yet. Ask the user whether to operate across all these '
@@ -345,6 +436,7 @@ async def get_accessible_projects(ctx: Context) -> AccessibleProjects:
         scoped_project_ids=scoped_ids,
         active_project_id=active_id,
         read_only=scope.read_only if scoped_ids is not None else None,
+        llm_instructions=llm_instructions,
         llm_instruction=instruction,
     )
 
