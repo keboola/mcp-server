@@ -622,7 +622,7 @@ class WorkspaceManager:
             return self._client.storage_client
         if self._provisioning_client is None:
             self._provisioning_client = self._client.step_up_storage_client(self._kubernetes_token_path)
-            LOG.info('Workspace provisioning will send the Kubernetes step-up header.')
+            LOG.debug('Workspace provisioning will send the Kubernetes step-up header.')
         return self._provisioning_client
 
     async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
@@ -700,11 +700,11 @@ class WorkspaceManager:
         else:
             raise ValueError(f'Unexpected default backend: {default_backend}')
 
-        writer = await self._provisioning_storage_client()
+        provisioning_client = await self._provisioning_storage_client()
 
         component_id = self.MCP_WORKSPACE_COMPONENT_ID
         config_name = f'mcp-workspace-{uuid.uuid4().hex[:8]}'
-        config_resp = await writer.configuration_create(
+        config_resp = await provisioning_client.configuration_create(
             component_id=component_id,
             name=config_name,
             description='Auto-created by MCP server for workspace billing.',
@@ -713,7 +713,7 @@ class WorkspaceManager:
         config_id = str(config_resp['id'])
 
         try:
-            resp = await writer.workspace_create_for_config(
+            resp = await provisioning_client.workspace_create_for_config(
                 component_id=component_id,
                 config_id=config_id,
                 login_type=login_type,
@@ -723,7 +723,7 @@ class WorkspaceManager:
             )
         except Exception:
             try:
-                await writer.configuration_delete(component_id, config_id)
+                await provisioning_client.configuration_delete(component_id, config_id)
             except Exception as cleanup_err:
                 LOG.warning(
                     f'Failed to clean up configuration {component_id}/{config_id} '

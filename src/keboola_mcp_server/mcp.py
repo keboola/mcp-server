@@ -289,8 +289,6 @@ class SessionStateMiddleware(fmw.Middleware):
             # deployment-level credential of the MCP server itself and must not be
             # overridable per request.
             kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
-            if kubernetes_token_path:
-                LOG.info('Kubernetes SA token configured; provisioning will send the step-up header.')
             workspace_manager = await WorkspaceManager.create(
                 client, config.workspace_schema, kubernetes_token_path=kubernetes_token_path
             )
