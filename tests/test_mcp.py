@@ -947,7 +947,7 @@ class TestMultiProjectMiddleware:
     """Read tools fan out across the scoped projects; writes and single-project scope do not."""
 
     @staticmethod
-    def _ctx(scope: SessionScope | None, tool_name: str, read_only: bool):
+    def _ctx(scope: SessionScope | None, tool_name: str, read_only: bool, arguments: dict | None = None):
         state: dict = {KeboolaClient.STATE_KEY: 'orig-client'}
         if scope is not None:
             state[SCOPE_KEY] = scope
@@ -964,7 +964,8 @@ class TestMultiProjectMiddleware:
         else:
             tool.annotations = None
         ctx.fastmcp.get_tool = AsyncMock(return_value=tool)
-        context = SimpleNamespace(message=SimpleNamespace(name=tool_name), fastmcp_context=ctx)
+        message = SimpleNamespace(name=tool_name, arguments=arguments if arguments is not None else {})
+        context = SimpleNamespace(message=message, fastmcp_context=ctx)
         return context, state
 
     @staticmethod
@@ -1051,3 +1052,81 @@ class TestMultiProjectMiddleware:
         assert texts == ['=== project 11 ===', 'rows', '=== project 22 ===', 'rows']
         # Structured output is deep-merged (list fields concatenated) so it still validates the schema.
         assert result.structured_content == {'rows': ['rows', 'rows']}
+
+    @pytest.mark.asyncio
+    async def test_project_filter_single_target_runs_once(self) -> None:
+        # project_ids filter narrows a multi-project scope to one project: one call, that project's
+        # client, and the filter is stripped from the arguments the tool receives.
+        scope = SessionScope(project_ids=[11, 22, 33], scoped_token='kbc_at_s', confirmed=True)
+        context, state = self._ctx(scope, 'get_tables', read_only=True, arguments={'project_ids': [22]})
+        seen_clients: list = []
+
+        async def call_next(_):
+            seen_clients.append(state[KeboolaClient.STATE_KEY])
+            return self._result('t')
+
+        with patch.object(
+            MultiProjectMiddleware,
+            '_client_for_project',
+            AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+        ):
+            result = await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        assert seen_clients == ['client-22']  # ran once, against project 22 only
+        assert state[KeboolaClient.STATE_KEY] == 'orig-client'  # restored
+        assert 'project_ids' not in context.message.arguments  # stripped before the tool
+        assert result.content[0].text == 't'  # raw single-project result, not an envelope
+
+    @pytest.mark.asyncio
+    async def test_project_filter_subset_fans_out(self) -> None:
+        scope = SessionScope(project_ids=[11, 22, 33], scoped_token='kbc_at_s', confirmed=True)
+        context, state = self._ctx(scope, 'get_tables', read_only=True, arguments={'project_ids': [11, 33]})
+        seen_clients: list = []
+
+        async def call_next(_):
+            seen_clients.append(state[KeboolaClient.STATE_KEY])
+            return self._result('t')
+
+        with patch.object(
+            MultiProjectMiddleware,
+            '_client_for_project',
+            AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+        ):
+            await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        assert seen_clients == ['client-11', 'client-33']  # only the requested subset, in scope order
+
+    @pytest.mark.asyncio
+    async def test_project_filter_outside_scope_raises(self) -> None:
+        scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_s', confirmed=True)
+        context, _ = self._ctx(scope, 'get_tables', read_only=True, arguments={'project_ids': [99]})
+
+        async def call_next(_):
+            raise AssertionError('must not run for an out-of-scope filter')
+
+        with pytest.raises(ToolError, match='outside the current scope'):
+            await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+    @pytest.mark.asyncio
+    async def test_on_list_tools_injects_project_filter(self) -> None:
+        scope = SessionScope(project_ids=[11, 22], confirmed=True)
+        # a read fan-out tool, an excluded tool, and a write tool
+        read_tool = _tool('get_tables', read_only=True)
+        read_tool.parameters = {'type': 'object', 'properties': {'bucket_ids': {'type': 'array'}}}
+        excluded = _tool('query_data', read_only=True)
+        excluded.parameters = {'type': 'object', 'properties': {}}
+        write_tool = _tool('update_config', read_only=False)
+        write_tool.parameters = {'type': 'object', 'properties': {}}
+        for t in (read_tool, excluded, write_tool):
+            t.model_copy = lambda update, _t=t: SimpleNamespace(name=_t.name, parameters=update['parameters'])
+
+        context, _ = self._ctx(scope, 'x', read_only=True)
+
+        async def call_next(_):
+            return [read_tool, excluded, write_tool]
+
+        tools = await MultiProjectMiddleware().on_list_tools(context, call_next)
+        by_name = {t.name: t for t in tools}
+        assert 'project_ids' in by_name['get_tables'].parameters['properties']
+        assert 'project_ids' not in by_name['query_data'].parameters['properties']
+        assert 'project_ids' not in by_name['update_config'].parameters['properties']
