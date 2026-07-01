@@ -269,11 +269,23 @@ class AccessibleProject(BaseModel):
     id: int = Field(description='The project id.')
     name: str | None = Field(default=None, description='The project name.')
     role: str | None = Field(default=None, description='The user role in this project (e.g. "admin").')
+    in_scope: bool = Field(default=False, description='Whether the session is currently scoped to this project.')
+    is_active: bool = Field(
+        default=False, description='Whether this is the active project (write / single-project tool target).'
+    )
 
 
 class AccessibleProjects(BaseModel):
     user_email: str | None = Field(default=None, description='The email of the authenticated user.')
     projects: list[AccessibleProject] = Field(description='The projects the current token can reach across the stack.')
+    scoped_project_ids: list[int] | None = Field(
+        default=None,
+        description='The projects the session is currently scoped to, or null if no scope has been confirmed yet.',
+    )
+    active_project_id: int | None = Field(
+        default=None, description='The active project that write operations and single-project tools target.'
+    )
+    read_only: bool | None = Field(default=None, description='Whether the current scoped token is read-only.')
     llm_instruction: str = Field(
         description='Guidance for the assistant on how to use this result.',
     )
@@ -301,15 +313,39 @@ async def get_accessible_projects(ctx: Context) -> AccessibleProjects:
     client = KeboolaClient.from_state(ctx.session.state)
     subject_token = await _parent_subject_token(client)
     introspection = await introspect_token(client.storage_api_url, subject_token=subject_token)
-    projects = [AccessibleProject(id=p.id, name=p.name, role=p.role) for p in introspection.projects]
+
+    scope = ctx.session.state.get(SCOPE_KEY)
+    scoped_ids = scope.project_ids if isinstance(scope, SessionScope) and scope.confirmed else None
+    active_id = scope.active_project_id if scoped_ids else None
+
+    projects = [
+        AccessibleProject(
+            id=p.id,
+            name=p.name,
+            role=p.role,
+            in_scope=scoped_ids is not None and p.id in scoped_ids,
+            is_active=p.id == active_id,
+        )
+        for p in introspection.projects
+    ]
+    if scoped_ids is None:
+        instruction = (
+            'No project scope has been confirmed yet. Ask the user whether to operate across all these '
+            'projects or a subset, then call "set_project_scope" with the chosen project ids. Never write '
+            'to more than one project without explicit user confirmation.'
+        )
+    else:
+        instruction = (
+            f'Session is currently scoped to {len(scoped_ids)} project(s); the active project is {active_id}. '
+            'Call "set_project_scope" to change the scope.'
+        )
     return AccessibleProjects(
         user_email=introspection.user_email,
         projects=projects,
-        llm_instruction=(
-            'Ask the user whether to operate across all these projects or a subset, then call '
-            '"set_project_scope" with the chosen project ids. Never write to more than one project '
-            'without explicit user confirmation.'
-        ),
+        scoped_project_ids=scoped_ids,
+        active_project_id=active_id,
+        read_only=scope.read_only if scoped_ids is not None else None,
+        llm_instruction=instruction,
     )
 
 
