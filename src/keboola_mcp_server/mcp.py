@@ -57,6 +57,10 @@ _NO_FANOUT_TOOLS = {'get_accessible_projects', 'set_project_scope', 'get_project
 # message telling the assistant to ask the user which projects to work on first (ask-first UX).
 _BOOTSTRAP_TOOLS = {'get_accessible_projects', 'set_project_scope'}
 
+# Optional per-call argument injected on fan-out-eligible read tools to restrict a single call to a
+# subset of the scoped projects (consumed and stripped by MultiProjectMiddleware.on_call_tool).
+_PROJECT_FILTER_ARG = 'project_ids'
+
 
 @dataclasses.dataclass(frozen=True)
 class SessionScope:
@@ -716,11 +720,12 @@ class MultiProjectMiddleware(fmw.Middleware):
         ctx = context.fastmcp_context
         state = ctx.session.state
         scope = state.get(SCOPE_KEY) if isinstance(state, dict) else None
+        name = context.message.name
 
         # Ask-first gate: until the user confirms a scope via set_project_scope, block data tools and
         # tell the assistant to ask the user which projects to work on. Only applies when a scope has
         # been auto-leased (local programmatic session); deployed/legacy sessions have no scope.
-        if isinstance(scope, SessionScope) and not scope.confirmed and context.message.name not in _BOOTSTRAP_TOOLS:
+        if isinstance(scope, SessionScope) and not scope.confirmed and name not in _BOOTSTRAP_TOOLS:
             raise ToolError(
                 f'This session can access {len(scope.project_ids)} Keboola project(s), but no scope has '
                 'been confirmed yet. Call "get_accessible_projects", show the user their projects, and ask '
@@ -729,23 +734,58 @@ class MultiProjectMiddleware(fmw.Middleware):
                 'This confirmation is required once per session.'
             )
 
-        if not isinstance(scope, SessionScope) or len(scope.project_ids) <= 1:
+        # No auto-leased scope (deployed / legacy) or a bootstrap/scope tool: pass through untouched.
+        # Bootstrap tools own a real `project_ids` argument, so we must not strip it.
+        if not isinstance(scope, SessionScope) or name in _BOOTSTRAP_TOOLS:
             return await call_next(context)
-        if context.message.name in _NO_FANOUT_TOOLS:
+        # Workspace-bound and write tools always target the active project (no fan-out, filter ignored).
+        if name in _NO_FANOUT_TOOLS:
+            return await call_next(context)
+        tool = await ctx.fastmcp.get_tool(name)
+        if not is_read_only_tool(tool):
             return await call_next(context)
 
-        tool = await ctx.fastmcp.get_tool(context.message.name)
-        if not is_read_only_tool(tool):
-            # Write tools target the active project only — never an automatic multi-project write.
+        # Read tool: consume the optional per-call project filter (advertised via on_list_tools) so the
+        # tool never receives it, then narrow this call's target projects to the requested subset.
+        requested = None
+        args = getattr(context.message, 'arguments', None)
+        if isinstance(args, dict):
+            requested = args.pop(_PROJECT_FILTER_ARG, None)
+
+        targets = list(scope.project_ids)
+        if requested:
+            outside = [p for p in requested if p not in scope.project_ids]
+            if outside:
+                raise ToolError(
+                    f'Project(s) {outside} are outside the current scope {scope.project_ids}. '
+                    'Call "set_project_scope" to change the scope first.'
+                )
+            targets = [p for p in scope.project_ids if p in requested]
+        if not targets:
             return await call_next(context)
 
         server_state = ServerState.from_context(ctx)
         original_client = state.get(KeboolaClient.STATE_KEY)
         # Default (auto-leased) scope carries no minted token; fall back to the active client's token.
         base_token = scope.scoped_token or (original_client.token if isinstance(original_client, KeboolaClient) else '')
+
+        # A single target (scope of one, or narrowed to one via the filter) runs once against that
+        # project only — one call, that project's X-KBC-ProjectId, no per-project envelope.
+        if len(targets) == 1:
+            target = targets[0]
+            if target == scope.active_project_id:
+                return await call_next(context)
+            try:
+                state[KeboolaClient.STATE_KEY] = await self._client_for_project(
+                    server_state, base_token, target, scope.read_only
+                )
+                return await call_next(context)
+            finally:
+                state[KeboolaClient.STATE_KEY] = original_client
+
         results: list[tuple[int, ToolResult]] = []
         try:
-            for project_id in scope.project_ids:
+            for project_id in targets:
                 state[KeboolaClient.STATE_KEY] = await self._client_for_project(
                     server_state, base_token, project_id, scope.read_only
                 )
@@ -754,6 +794,43 @@ class MultiProjectMiddleware(fmw.Middleware):
             state[KeboolaClient.STATE_KEY] = original_client
 
         return self._merge(results)
+
+    async def on_list_tools(
+        self,
+        context: MiddlewareContext[mt.ListToolsRequest],
+        call_next: CallNext[mt.ListToolsRequest, list[Tool]],
+    ) -> list[Tool]:
+        # Advertise the optional per-call `project_ids` filter on fan-out-eligible read tools while a
+        # multi-project scope is active, so the assistant can target a subset (e.g. a single project)
+        # without changing the session scope. The value is consumed and stripped in on_call_tool.
+        tools = await call_next(context)
+        ctx = context.fastmcp_context
+        state = getattr(ctx.session, 'state', None)
+        scope = state.get(SCOPE_KEY) if isinstance(state, dict) else None
+        if not (isinstance(scope, SessionScope) and len(scope.project_ids) > 1):
+            return tools
+
+        patched: list[Tool] = []
+        for tool in tools:
+            if tool.name in _BOOTSTRAP_TOOLS or tool.name in _NO_FANOUT_TOOLS or not is_read_only_tool(tool):
+                patched.append(tool)
+                continue
+            params = dict(tool.parameters or {})
+            props = dict(params.get('properties') or {})
+            if _PROJECT_FILTER_ARG in props:
+                patched.append(tool)
+                continue
+            props[_PROJECT_FILTER_ARG] = {
+                'type': 'array',
+                'items': {'type': 'integer'},
+                'description': (
+                    'Optional. Restrict this call to these project ids (a subset of the confirmed '
+                    'multi-project scope). Omit to run across all scoped projects.'
+                ),
+            }
+            params['properties'] = props
+            patched.append(tool.model_copy(update={'parameters': params}))
+        return patched
 
     @staticmethod
     async def _client_for_project(
