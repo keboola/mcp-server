@@ -50,9 +50,11 @@ providing their configuration IDs.
 - [modify_streamlit_data_app](#modify_streamlit_data_app): Creates or updates a Streamlit data app.
 
 ### Project Tools
+- [get_accessible_projects](#get_accessible_projects): Lists the Keboola projects the current login can access across the stack.
 - [get_project_info](#get_project_info): Retrieves structured information about the current project,
 including essential context and base instructions for working with it
 (e.
+- [set_project_scope](#set_project_scope): Scopes the current session to a set of Keboola projects.
 - [update_project_description](#update_project_description): Updates the description of the current Keboola project.
 
 ### SQL Tools
@@ -3552,6 +3554,31 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 ---
 
 # Project Tools
+<a name="get_accessible_projects"></a>
+## get_accessible_projects
+**Annotations**: `read-only`
+
+**Tags**: `project`
+
+**Description**:
+
+Lists the Keboola projects the current login can access across the stack.
+
+Call this early in a conversation when the user logs in with a stack-wide token (PKCE login),
+present the projects, and ask whether they want to work across all of them or a subset. Then call
+`set_project_scope` with their choice.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object"
+}
+```
+
+---
 <a name="get_project_info"></a>
 ## get_project_info
 **Annotations**: `read-only`
@@ -3573,6 +3600,53 @@ to establish the project context before using other tools.
 {
   "additionalProperties": false,
   "properties": {},
+  "type": "object"
+}
+```
+
+---
+<a name="set_project_scope"></a>
+## set_project_scope
+**Annotations**: `read-only`
+
+**Tags**: `project`
+
+**Description**:
+
+Scopes the current session to a set of Keboola projects.
+
+Mints a scoped access token (narrowed to `project_ids`, optionally read-only) that is used for the
+rest of the conversation. Read-only tools then run against every scoped project in a single call;
+write operations target the active (first) project only. Call this when the user states which
+projects to work on; it can be called again any time to re-scope.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "project_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The project ids to scope the session to. Omit or pass null to scope to ALL accessible projects."
+    },
+    "read_only": {
+      "default": false,
+      "description": "If true, mint a read-only scoped token (no write operations in any scoped project).",
+      "type": "boolean"
+    }
+  },
   "type": "object"
 }
 ```
