@@ -411,3 +411,100 @@ the per-project envelope shape change the docs), integration tests on a dev stac
   1-element envelope.** Single-project UX is byte-for-byte unchanged.
 - **Q4 (write-target confirmation) — lean: explicit `project_id` arg on write tools, honored only when
   scope > 1.** (Still open; not blocking.)
+
+# Extension: query fan-out, dialect-aware bootstrap, per-service token gaps (PSGO-261, increment 3)
+
+## Context
+
+Increment 2 delivered read fan-out + scope tools but left three rough edges: `query_data` was
+pinned to the active project's workspace, `get_accessible_projects` returned only id/name/role
+(forcing a `get_project_info` per project for the SQL dialect), and only Storage + the Query
+Service actually honor the multi-project token narrowing. This increment addresses the first two
+and documents the third.
+
+## `query_data` fan-out + per-project workspace
+
+`query_data` is now a normal fan-out read tool — it was removed from `_NO_FANOUT_TOOLS`. The fan-out
+swaps **both** the `KeboolaClient` **and** a `WorkspaceManager` built on it into session state for
+the duration of a call (`MultiProjectMiddleware._swap_project`), so the SQL runs inside the targeted
+project's own read-only workspace (its BigQuery dataset / Snowflake schema), not the active
+project's.
+
+- Narrow to one project with the `project_ids` filter (`query_data(project_ids=[86])`), or run
+  across all scoped projects.
+- Per-project workspaces are provisioned lazily on first use. `ponytail:` the manager is rebuilt
+  per call; a cache surviving the per-request state rebuild is a follow-up if provisioning latency
+  shows up.
+- Merged `structured_content` for a fanned-out query keeps the first project's `csv_data` (scalar
+  deep-merge); every project's full result is present in the per-project text envelopes. Structured
+  multi-CSV merge is deferred.
+
+### Known limitations (accepted, not solved this increment)
+- **Read-only scope can't provision a first-time workspace** (workspace creation is a POST). The
+  first `query_data` into a project without an existing MCP workspace needs a non-read-only scope.
+  Verified: read-only scope → `Forbidden POST operation on a readonly client` on workspace create.
+- **No cross-project SQL in a single statement.** BigQuery has no cross-project data access;
+  Snowflake reaches another project only via a *materialized* linked-bucket alias. A single
+  `query_data` call always executes inside exactly one project's workspace. This is a backend
+  constraint, not an MCP limitation — a future increment could add FQN-aware routing, but the join
+  itself is impossible in one statement regardless.
+
+## `get_accessible_projects` as the dialect-aware bootstrap call
+
+`get_accessible_projects` now compacts several API calls into one bootstrap result so the assistant
+does not need a `get_project_info` per project:
+
+- **Introspection** → reachable projects (id, name, role).
+- **Per-project token verify** (parent token narrowed with `X-KBC-ProjectId`, run concurrently) →
+  each project's `sql_dialect`, derived from `owner.defaultBackend` — **no workspace provisioned**.
+- **Current scope surfaced** → `scoped_project_ids`, `active_project_id`, `read_only`, and
+  per-project `in_scope` / `is_active` flags. (There is no separate scope-introspection tool; this
+  is the read side of scope state without mutating the token.)
+- **Optional base instructions** → `with_llm_instruction=true` returns `base_instructions`: a
+  top-level array grouped by SQL dialect (deduplicated, **not** copied per project), e.g.
+  `[{project_ids:[18,86], sql_dialect:"BigQuery", instructions:"…"}, {project_ids:[95],
+  sql_dialect:"Snowflake", instructions:"…"}]`. Request once at the start of a conversation.
+
+`workspace_id` is intentionally omitted here (not needed for bootstrap). The result keeps the
+codebase-wide singular `llm_instruction` field (how-to-use-this-result guidance) distinct from the
+plural `base_instructions` (the working system prompts).
+
+### `get_project_info` caveat
+`get_project_info` stays in `_NO_FANOUT_TOOLS` and reports only the active project. In a
+mixed-dialect scope its single `sql_dialect` / dialect-specific `llm_instruction` is misleading for
+the other projects. Prefer `get_accessible_projects` for multi-project bootstrap. Follow-up: fan out
+`get_project_info`, or split its static prompt from the per-project dialect/branch/workspace facts.
+
+## Per-service token support under multi-project scope
+
+Fan-out narrows a call to one project via the **`X-KBC-ProjectId` header** on a shared token. Only
+services that read that header work under header-narrowing. Current wiring (`clients/client.py`):
+
+| Service | Token today | PAT / multi-project status |
+|---|---|---|
+| Storage (`connection`) | `bearer_or_sapi_token` + `X-KBC-ProjectId` | ✅ works |
+| Query Service | workspace bearer | ✅ per-project workspace |
+| Metastore (semantic) | `bearer_or_sapi_token` | ✅ PAT/bearer-first, SAPI fallback (guarded); feature-gated, untested on stacks without `mcp-semantic-tooling` |
+| Data Science (sandboxes) | `bearer_or_sapi_token` + `X-KBC-ProjectId` | ✅ PAT + project header (verified: data-app create + deploy) |
+| Scheduler | `bearer_or_sapi_token` | ✅ bearer-first (writes only) |
+| **Jobs Queue** | `self._token` (raw → `X-StorageAPI-Token`) | ❌ 401 under PAT fan-out — **future PAT work** |
+| **AI Service** | `self._token` | ⚠️ raw token — **future PAT work** |
+| **Sync Actions** | `self._token` | ⚠️ raw token — **future PAT work** |
+
+### Future PAT work (not in this increment)
+`jobs_queue`, `ai_service`, and `sync_actions` still pass the raw `self._token`, so under a
+PAT/multi-project session the satellite service rejects it (verified: `get_jobs` → 401 "Invalid
+access token" from the Queue API). To support PAT they must use the bearer/PAT token (like
+metastore/data-science/scheduler) or be handed a per-project minted token. Metastore and
+data-science already use the bearer/PAT path, so no change was needed there.
+
+## Decisions (increment 3)
+
+- **`query_data` fans out with a per-project workspace** rather than being pinned to the active
+  project. Single-project targeting via the `project_ids` filter; cross-project SQL stays out of
+  scope (backend-impossible in one statement).
+- **`get_accessible_projects` is the multi-project bootstrap**: per-project dialect via token verify
+  (no workspace), current scope surfaced, base instructions grouped by dialect behind
+  `with_llm_instruction`.
+- **Queue / AI / SyncActions PAT support is deferred** and documented above; metastore + data-science
+  already satisfy the PAT/bearer + `X-KBC-ProjectId` contract.
