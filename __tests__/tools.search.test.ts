@@ -4,13 +4,38 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
+import type { DocsSearch, RetrievedDoc } from '@/clients/docsSearch';
+import { setDocsSearchForTests } from '@/clients/docsSearch';
 import { Config } from '@/config';
 import { createServer } from '@/server';
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  setDocsSearchForTests(undefined);
+});
 afterAll(() => server.close());
+
+/** A minimal fake docs-search provider; only the methods under test are implemented. */
+const fakeDocsSearch = (overrides: Partial<DocsSearch> = {}): DocsSearch => ({
+  search: async () => [],
+  answerQuestion: async () => ({ text: '', sourceUrls: [] }),
+  recommendComponents: async () => [],
+  isReady: async () => true,
+  close: async () => {},
+  ...overrides,
+});
+
+const retrieved = (sourceKey: string, score: number): RetrievedDoc => ({
+  id: 'doc-1',
+  sourceKey,
+  sourceUrl: 'https://components.keboola.com/x',
+  title: 'x',
+  content: 'x',
+  componentType: 'extractor',
+  score,
+});
 
 const config = new Config({ storageApiUrl: 'https://connection.test', storageToken: 'tok' });
 
@@ -186,20 +211,25 @@ describe('search (enumeration fallback)', () => {
 });
 
 describe('find_component_id', () => {
-  it('returns suggested component ids with scores and a dashboard link', async () => {
-    let body: unknown;
+  it('recommends component ids from the docs index with scores and a dashboard link', async () => {
+    let asked: string | undefined;
     server.use(
       http.get('https://connection.test/*', ({ request }) =>
         new URL(request.url).pathname.endsWith('/tokens/verify')
           ? HttpResponse.json({ owner: { id: '42' } })
           : undefined,
       ),
-      http.post('https://ai.test/*', async ({ request }) => {
-        expect(new URL(request.url).pathname).toBe('/suggest/component');
-        body = await request.json();
-        return HttpResponse.json({
-          components: [{ componentId: 'keboola.ex-salesforce', score: 0.9, source: 'x' }],
-        });
+    );
+    setDocsSearchForTests(
+      fakeDocsSearch({
+        recommendComponents: async (query) => {
+          asked = query;
+          return [
+            retrieved('component:keboola.ex-salesforce', 0.9),
+            // A non-component doc (no `component:` prefix) is dropped from the result.
+            retrieved('help:some-doc', 0.8),
+          ];
+        },
       }),
     );
 
@@ -213,9 +243,30 @@ describe('find_component_id', () => {
     });
     const text = (result.content as { text: string }[])[0]!.text;
 
-    expect(body).toEqual({ prompt: 'salesforce extractor' });
+    expect(asked).toBe('salesforce extractor');
     expect(text).toContain('keboola.ex-salesforce');
     expect(text).toContain('components/keboola.ex-salesforce'); // dashboard link
+    expect(text).not.toContain('help:some-doc');
+    await client.close();
+  });
+
+  it('is denied on call when no docs index is configured', async () => {
+    server.use(
+      http.get('https://connection.test/*', ({ request }) =>
+        new URL(request.url).pathname.endsWith('/tokens/verify')
+          ? HttpResponse.json({ owner: { id: '42' } })
+          : undefined,
+      ),
+    );
+    setDocsSearchForTests(null);
+
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await createServer(config).connect(serverT);
+    const client = new Client({ name: 't', version: '0' });
+    await client.connect(clientT);
+    await expect(
+      client.callTool({ name: 'find_component_id', arguments: { query: 'salesforce' } }),
+    ).rejects.toThrow(/documentation index is not/);
     await client.close();
   });
 });

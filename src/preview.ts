@@ -431,6 +431,8 @@ export const runPreviewConfigDiff = async (
     features: getProjectFeatures(tokenInfo),
     isOauth: Boolean(config.bearerToken),
     isMainBranch: config.branchId === undefined,
+    // Preview only handles config-mutation tools, never the docs-search tools.
+    docsIndexAvailable: true,
   });
   if (denial) {
     logger.info(`[preview] Tool authorization denied (project/role/branch): ${rq.toolName}`);

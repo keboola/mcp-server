@@ -1,4 +1,3 @@
-import { createAiClient } from '@keboola/api-client/ai';
 import { createDataScienceClient } from '@keboola/api-client/dataScience';
 import { createMetastoreClient } from '@keboola/api-client/metastore';
 import { createQueueClient } from '@keboola/api-client/queue';
@@ -23,8 +22,6 @@ export type KeboolaClients = {
   storage: ReturnType<typeof createStorageClient>;
   queue: ReturnType<typeof createQueueClient>;
   metastore: ReturnType<typeof createMetastoreClient>;
-  /** Typed AI service client (suggestComponent, explainError, describeConfiguration, …). */
-  ai: ReturnType<typeof createAiClient>;
   /** Typed Sync Actions client (sendSyncAction, gitRepository.*). */
   syncActions: ReturnType<typeof createSyncActionsClient>;
   /** Typed Data Science client (apps CRUD, runs, logs tail, runtimes). */
@@ -37,7 +34,13 @@ export type KeboolaClients = {
   rawStorage: RawClient;
   /** Raw Queue API client (for endpoints not in api-client, e.g. job creation). */
   rawQueue: RawClient;
-  /** Raw AI service client (docs/components, docs/question, suggest/component). */
+  /**
+   * Raw AI catalog client for `docs/components/{id}` — the component metadata
+   * (config schemas + examples) used by `get_components` / `get_config_examples` /
+   * config validation. Documentation Q&A and component recommendation moved to the
+   * pgvector docs-search index (see clients/docsSearch.ts); this catalog endpoint has
+   * no docs-search equivalent (the index holds markdown docs, not config schemas).
+   */
   rawAi: RawClient;
   /** Raw Sync Actions service client (POST actions). */
   rawSyncActions: RawClient;
@@ -74,7 +77,6 @@ export const createKeboolaClients = (config: Config): KeboolaClients => {
     storage: createStorageClient({ baseUrl: urls.storage, token, middlewares: [retry] }),
     queue: createQueueClient({ baseUrl: urls.queue, token, middlewares: [retry] }),
     metastore: createMetastoreClient({ baseUrl: urls.metastore, token, middlewares: [retry] }),
-    ai: createAiClient({ baseUrl: urls.ai, token, middlewares: [retry] }),
     syncActions: createSyncActionsClient({
       baseUrl: urls.syncActions,
       token,

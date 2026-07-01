@@ -1,0 +1,32 @@
+# Local dev dependencies for the MCP server.
+#
+# Postgres + pgvector backs the docs-search index (docs_query / find_component_id).
+# The MCP only reads this index; it is built out-of-band (see
+# feature_spec/docs-search-pgvector/). For local use, apply the @keboola/docs-search
+# migrations and run its indexer against DATABASE_URL below.
+#
+#   DATABASE_URL=postgres://mcp:mcp@localhost:5432/docs
+#
+# In production the index lives on a provisioned Postgres (Terraform); this compose
+# file is dev-only.
+
+services:
+  pgvector:
+    # pgvector >= 0.7 is required for halfvec(3072); the pg17 tag ships it.
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: mcp
+      POSTGRES_PASSWORD: mcp
+      POSTGRES_DB: docs
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mcp -d docs']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgvector-data:

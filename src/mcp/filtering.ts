@@ -37,6 +37,14 @@ export const DATA_APP_BRANCH_GATED_TOOLS = new Set<string>([
 export const MODIFY_FLOW_TOOL_NAME = 'modify_flow';
 export const UPDATE_FLOW_TOOL_NAME = 'update_flow';
 
+/**
+ * Tools served by the pgvector docs-search index. They are available only when the MCP
+ * has a configured, reachable index; otherwise they are filtered out of discovery and
+ * denied on call (RFC: feature_spec/docs-search-pgvector/, point 5). Nothing else is
+ * affected by the index being absent.
+ */
+export const DOCS_INDEX_TOOL_NAMES = new Set<string>(['docs_query', 'find_component_id']);
+
 /** Token info as returned by the Storage API `tokens/verify` endpoint (loosely typed). */
 export type TokenInfo = Record<string, unknown>;
 
@@ -76,6 +84,8 @@ export type GatingContext = {
   features: Set<string>;
   isOauth: boolean;
   isMainBranch: boolean;
+  /** Whether a docs-search index is configured + reachable (gates the docs tools). */
+  docsIndexAvailable: boolean;
 };
 
 /**
@@ -113,6 +123,10 @@ export const filterToolsList = (tools: GatedTool[], ctx: GatingContext): GatedTo
     result = result.filter((t) => !isSemanticToolName(t.name));
   }
 
+  if (!ctx.docsIndexAvailable) {
+    result = result.filter((t) => !DOCS_INDEX_TOOL_NAMES.has(t.name));
+  }
+
   return result;
 };
 
@@ -128,9 +142,17 @@ export const authorizeToolCall = (params: {
   features: Set<string>;
   isOauth: boolean;
   isMainBranch: boolean;
+  docsIndexAvailable: boolean;
 }): string | null => {
   const { toolName, isReadOnly, isSemantic, features, isOauth, isMainBranch } = params;
   const tokenRole = params.tokenRole.toLowerCase();
+
+  if (!params.docsIndexAvailable && DOCS_INDEX_TOOL_NAMES.has(toolName)) {
+    return (
+      `The tool "${toolName}" is not available: the Keboola documentation index is not ` +
+      'configured or reachable. Contact your administrator to enable documentation search.'
+    );
+  }
 
   if (tokenRole === 'readonly' && !isReadOnly) {
     return (

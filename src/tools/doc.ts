@@ -1,13 +1,14 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { createKeboolaClients } from '@/clients/keboola';
-import type { Config } from '@/config';
+import { getDocsSearch } from '@/clients/docsSearch';
 import { registerTool } from '@/mcp/tool';
 
-// Ported from tools/doc.py.
+// Ported from tools/doc.py. Backed by the pgvector docs-search index (RFC:
+// feature_spec/docs-search-pgvector/) instead of the legacy AI docs service. The docs
+// index is process-level infrastructure (no per-request Config needed).
 
-export const registerDocTools = (server: McpServer, config: Config): void => {
+export const registerDocTools = (server: McpServer): void => {
   registerTool(server, {
     name: 'docs_query',
     title: 'Query documentation',
@@ -17,12 +18,10 @@ export const registerDocTools = (server: McpServer, config: Config): void => {
       query: z.string().describe('Natural language query to search for in the documentation.'),
     },
     handler: async ({ query }) => {
-      const { rawAi } = createKeboolaClients(config);
-      const answer = await rawAi.post<{ text: string; sourceUrls?: string[] }>('docs/question', {
-        body: { query },
-        headers: { Accept: 'application/json' },
-      });
-      return { text: answer.text, source_urls: answer.sourceUrls ?? [] };
+      const docs = getDocsSearch();
+      if (!docs) throw new Error('The documentation index is not available.');
+      const answer = await docs.answerQuestion(query);
+      return { text: answer.text, source_urls: answer.sourceUrls };
     },
   });
 };

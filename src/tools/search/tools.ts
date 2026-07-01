@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+import { getDocsSearch } from '@/clients/docsSearch';
 import { createKeboolaClients, createLinksManager } from '@/clients/keboola';
 import type { Config } from '@/config';
 import { logger } from '@/logger';
@@ -37,19 +38,27 @@ export const registerSearchTools = (server: McpServer, config: Config): void => 
       query: z.string().describe('Natural language query to find the requested component.'),
     },
     handler: async ({ query }) => {
+      const docs = getDocsSearch();
+      if (!docs) throw new Error('The documentation index is not available.');
+
       const clients = createKeboolaClients(config);
       const linksManager = await createLinksManager(config, clients);
 
-      const response = await clients.ai.suggestComponent({ prompt: query });
+      const results = await docs.recommendComponents(query);
 
-      return (response.components ?? []).map((component) => {
-        const componentId = component.componentId ?? '';
-        return {
-          component_id: componentId,
-          score: component.score ?? 0,
-          links: [linksManager.getConfigDashboardLink(componentId, undefined)],
-        };
-      });
+      return results
+        .map((doc) => {
+          // Component docs are keyed `component:<id>`; recover the id from the source key.
+          const componentId = doc.sourceKey.startsWith('component:')
+            ? doc.sourceKey.slice('component:'.length)
+            : '';
+          return {
+            component_id: componentId,
+            score: doc.score,
+            links: [linksManager.getConfigDashboardLink(componentId, undefined)],
+          };
+        })
+        .filter((r) => r.component_id !== '');
     },
   });
 

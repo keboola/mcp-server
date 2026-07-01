@@ -1,6 +1,6 @@
 {
   "name": "@keboola/mcp-server",
-  "version": "2.0.0-alpha.0",
+  "version": "2.0.0-alpha.1",
   "description": "MCP server for interacting with Keboola Connection",
   "keywords": [
     "ai",
@@ -61,6 +61,7 @@
     "dd-trace": "^5.69.0",
     "hono": "^4.12.27",
     "jose": "^6.2.3",
+    "pg": "^8.22.0",
     "pino": "^9.14.0",
     "zod": "^4.3.6"
   },
@@ -68,6 +69,7 @@
     "@keboola/oxlint-config": "^0.1.2",
     "@keboola/tsconfig": "^0.1.1",
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.20.0",
     "ioredis": "^5.4.1",
     "msw": "^2.14.6",
     "oxfmt": "^0.44.0",

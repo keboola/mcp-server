@@ -24,6 +24,7 @@ const ctx = (over: Partial<GatingContext> = {}): GatingContext => ({
   features: new Set(),
   isOauth: false,
   isMainBranch: true,
+  docsIndexAvailable: true,
   ...over,
 });
 
@@ -128,6 +129,40 @@ describe('filterToolsList — conditional vs legacy flow', () => {
   });
 });
 
+describe('filterToolsList / authorizeToolCall — docs tools by index availability', () => {
+  const docsTools = [tool('docs_query', true), tool('find_component_id', true), tool('get_jobs')];
+
+  it('keeps docs tools when the index is available, drops them when not', () => {
+    const withIndex = filterToolsList(docsTools, ctx({ docsIndexAvailable: true })).map(
+      (t) => t.name,
+    );
+    expect(withIndex).toContain('docs_query');
+    expect(withIndex).toContain('find_component_id');
+
+    const withoutIndex = filterToolsList(docsTools, ctx({ docsIndexAvailable: false })).map(
+      (t) => t.name,
+    );
+    expect(withoutIndex).not.toContain('docs_query');
+    expect(withoutIndex).not.toContain('find_component_id');
+    expect(withoutIndex).toContain('get_jobs'); // non-docs tools unaffected
+  });
+
+  it('denies a docs tool call when the index is unavailable', () => {
+    expect(
+      authorizeToolCall({
+        toolName: 'docs_query',
+        isReadOnly: true,
+        isSemantic: false,
+        tokenRole: 'admin',
+        features: new Set(),
+        isOauth: false,
+        isMainBranch: true,
+        docsIndexAvailable: false,
+      }),
+    ).toContain('documentation index is not');
+  });
+});
+
 describe('authorizeToolCall — flow tools by role / oauth', () => {
   it.each<[string, boolean, string, boolean, boolean]>([
     ['admin', false, 'modify_flow', false, false],
@@ -151,6 +186,7 @@ describe('authorizeToolCall — flow tools by role / oauth', () => {
       features: new Set(),
       isOauth,
       isMainBranch: true,
+      docsIndexAvailable: true,
     });
     expect(denial !== null).toBe(expectDenied);
   });
@@ -169,6 +205,7 @@ describe('authorizeToolCall — data apps by branch', () => {
       features: new Set(),
       isOauth: false,
       isMainBranch,
+      docsIndexAvailable: true,
     });
     if (expectDenied) {
       expect(denial).toContain('main production branch');
@@ -195,6 +232,7 @@ describe('authorizeToolCall — semantic tools by feature', () => {
       features: new Set(features),
       isOauth: false,
       isMainBranch: true,
+      docsIndexAvailable: true,
     });
     if (expectDenied) {
       expect(denial).toContain('Semantic Layer Tooling');

@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
+import { getDocsSearch } from '@/clients/docsSearch';
 import { createKeboolaClients } from '@/clients/keboola';
 import type { Config } from '@/config';
 import {
@@ -36,7 +37,7 @@ import { registerStorageTools } from '@/tools/storage';
 // Reading package.json at build time would need JSON import assertions; keep a
 // constant and bump alongside package.json until the build wiring lands.
 export const SERVER_NAME = 'keboola';
-export const SERVER_VERSION = '2.0.0-alpha.0';
+export const SERVER_VERSION = '2.0.0-alpha.1';
 
 /**
  * Builds the MCP server and registers all tools/prompts/resources.
@@ -77,7 +78,7 @@ export const createServer = (config: Config, options: CreateServerOptions = {}):
   registerStorageTools(server, config);
   registerOAuthTools(server, config);
   registerComponentTools(server, config);
-  registerDocTools(server, config);
+  registerDocTools(server);
   registerSearchTools(server, config);
   registerSqlTools(server, config);
   registerFlowTools(server, config);
@@ -158,6 +159,7 @@ const wrapToolGating = (server: McpServer, config: Config): void => {
       // Discovery always treats the branch as main/production (Python forces
       // branch_id=None for list requests).
       isMainBranch: true,
+      docsIndexAvailable: getDocsSearch() !== null,
     };
 
     const gated: GatedTool[] = result.tools.map((t) => ({
@@ -222,6 +224,7 @@ const wrapToolGating = (server: McpServer, config: Config): void => {
         features: getProjectFeatures(tokenInfo),
         isOauth: Boolean(config.bearerToken),
         isMainBranch: config.branchId === undefined,
+        docsIndexAvailable: getDocsSearch() !== null,
       });
       if (denial) {
         throw new McpError(ErrorCode.InvalidRequest, denial);

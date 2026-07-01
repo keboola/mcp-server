@@ -52,6 +52,21 @@ const envSchema = z.object({
   KBC_MCP_SERVER_URL: z.string().optional(),
   KBC_JWT_SECRET: z.string().optional(),
 
+  // Docs-search index (pgvector). All optional: when DATABASE_URL (or the embedder
+  // credentials) is absent, the docs_query / find_component_id tools gate off and the
+  // rest of the server is unaffected. The index is read-only from the MCP's side —
+  // it is built out-of-band by a cron job. See feature_spec/docs-search-pgvector/.
+  DATABASE_URL: z.string().optional(),
+  DOCS_EMBEDDER_ENDPOINT: z.string().optional(),
+  DOCS_EMBEDDER_API_KEY: z.string().optional(),
+  DOCS_EMBEDDER_MODEL: z.string().optional(),
+  DOCS_EMBEDDER_DIM: z.coerce.number().int().positive().optional(),
+  // LLM for answerQuestion synthesis. Optional: without it, docs_query falls back to
+  // returning the retrieved documentation snippets rather than a synthesized answer.
+  DOCS_LLM_ENDPOINT: z.string().optional(),
+  DOCS_LLM_API_KEY: z.string().optional(),
+  DOCS_LLM_MODEL: z.string().optional(),
+
   // Datadog APM (consumed by dd-trace via NODE_OPTIONS in the image; listed so
   // the contract is explicit and validated).
   DD_SERVICE: z.string().optional(),

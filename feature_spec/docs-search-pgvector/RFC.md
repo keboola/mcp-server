@@ -123,6 +123,36 @@ deployment, the **source connectors** (git clone/frontmatter — owned by the bu
 #6672), Terraform for the provisioned Postgres + pgvector extension, and embedder-provider
 selection/procurement.
 
+## Implementation status
+
+Landed in the TypeScript server (PSGO-268), with two deliberate deviations from the
+original plan, agreed during implementation:
+
+1. **`get_config_examples` and `fetchComponent` stay on the AI catalog.** The pgvector
+   index holds *markdown documentation pages*, not the structured component metadata
+   (`configurationSchema`, `rootConfigurationExamples`, sync actions) these paths need —
+   `getComponentDoc` returns `{content, sourceUrl, title}`, which cannot back config
+   validation. So **only the two genuine semantic-retrieval tools were migrated**:
+   `docs_query` → `answerQuestion`, `find_component_id` → `recommendComponents`. The raw
+   AI-catalog client (`rawAi`) is retained solely for `docs/components/{id}`; the unused
+   typed `ai` client (`suggestComponent`) was removed. Full AI removal (point 2) is a
+   follow-up that needs a component-metadata replacement, not just docs-search.
+2. **The SDK is vendored, temporarily.** `@keboola/docs-search` is a private,
+   unpublished workspace package (keboola/ui#6672), so its ~150-line retrieval tier is
+   copied into `src/clients/docsSearch.ts` behind the exact `DocsSearch` interface, with a
+   documented swap-to-published-package path. **Required SDK enhancement:**
+   `recommendComponents` must expose each result's `sourceKey` (the component id lives in
+   `source_key = 'component:<id>'`, which the SDK's current SELECT drops) — the tool
+   recovers the component id from it. Until the SDK exposes it, the swap keeps the vendored
+   SELECT.
+
+The gate (point 5) is wired via `DOCS_INDEX_TOOL_NAMES` in `mcp/filtering.ts`: the two
+tools are filtered from `tools/list` and denied on call when `getDocsSearch()` returns
+`null` (no `DATABASE_URL` / embedder creds). Env (point 3) is `DATABASE_URL` +
+`DOCS_EMBEDDER_*` + optional `DOCS_LLM_*` in `env.ts`; `docker-compose.yml` adds the
+`pgvector/pgvector` service. The index build (point 4) remains out of scope here — see the
+architecture doc.
+
 ## Testing / Verification
 - **Unit**: `docs_query` / `find_component_id` / `get_config_examples` with an injected fake
   `DocsSearch` (stub `search`/`answerQuestion`/`getComponentDoc`/`recommendComponents`) — assert
