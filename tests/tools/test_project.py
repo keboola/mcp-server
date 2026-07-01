@@ -300,7 +300,7 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
     assert result.scoped_project_ids is None
     assert result.active_project_id is None
     assert result.read_only is None
-    assert result.llm_instructions is None  # not requested
+    assert result.base_instructions is None  # not requested
     assert all(not p.in_scope and not p.is_active for p in result.projects)
 
     # Once scoped, the current scope is surfaced on the projects and at the top level.
@@ -335,11 +335,11 @@ async def test_get_accessible_projects_llm_instructions_grouped_by_dialect(
 
     result = await get_accessible_projects(mcp_context_client, with_llm_instruction=True)
 
-    assert result.llm_instructions is not None
+    assert result.base_instructions is not None
     # One group per distinct dialect, projects deduplicated into their dialect group (no per-project copies).
-    groups = {g.sql_dialect: g.project_ids for g in result.llm_instructions}
+    groups = {g.sql_dialect: g.project_ids for g in result.base_instructions}
     assert groups == {'BigQuery': [18, 86], 'Snowflake': [95]}
-    assert all(g.llm_instruction for g in result.llm_instructions)
+    assert all(g.instructions for g in result.base_instructions)
 
 
 @pytest.mark.asyncio
