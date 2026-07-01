@@ -33,6 +33,8 @@ DEFAULT_CLIENT_ID = 'keboola-cli-demo'
 _AUTHORIZE_PATH = 'admin/auth/pkce/authorize'
 _TOKEN_PATH = 'v1/auth/pkce/token'
 _REFRESH_PATH = 'v1/auth/token/refresh'
+_INTROSPECT_PATH = 'v1/auth/token/introspect'
+_EXCHANGE_PATH = 'v1/auth/pat/exchange'
 _REFRESH_SKEW_SECONDS = 60
 _CREDENTIALS_PATH = Path.home() / '.keboola' / 'mcp' / 'credentials.json'
 
@@ -74,6 +76,103 @@ def _parse_token_response(body: dict, *, now: float | None = None) -> TokenSet:
         refresh_token=cast(str, body['refreshToken']),
         expires_at=now + float(body.get('expiresIn') or 0),
         session_id=cast('str | None', body.get('sessionId')),
+    )
+
+
+@dataclass(frozen=True)
+class ProjectAccess:
+    """A project the introspected token can reach."""
+
+    id: int
+    name: str | None = None
+    role: str | None = None
+
+
+@dataclass(frozen=True)
+class Introspection:
+    """Identity + the set of projects a programmatic token can reach (token introspection)."""
+
+    user_id: int | None
+    user_email: str | None
+    user_name: str | None
+    projects: list[ProjectAccess]
+
+
+@dataclass(frozen=True)
+class ScopedToken:
+    """A child access token minted by /v1/auth/pat/exchange, narrowed to a set of projects."""
+
+    access_token: str
+    expires_at: float  # epoch seconds
+    project_ids: list[int]
+    read_only: bool
+
+    @property
+    def is_near_expiry(self) -> bool:
+        return time.time() >= (self.expires_at - _REFRESH_SKEW_SECONDS)
+
+
+async def introspect_token(
+    storage_api_url: str,
+    *,
+    subject_token: str,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> Introspection:
+    """Enumerates the projects a programmatic token can reach via /v1/auth/token/introspect."""
+    async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
+        response = await client.get(
+            f'{_base_url(storage_api_url)}/{_INTROSPECT_PATH}',
+            headers={'Authorization': f'Bearer {subject_token}'},
+        )
+        response.raise_for_status()
+        body = cast(dict, response.json())
+    user = body.get('user') or {}
+    projects = [
+        ProjectAccess(id=int(p['id']), name=p.get('name'), role=p.get('role'))
+        for p in body.get('projects', [])
+        if p.get('id') is not None
+    ]
+    return Introspection(
+        user_id=user.get('id'),
+        user_email=user.get('email'),
+        user_name=user.get('name'),
+        projects=projects,
+    )
+
+
+async def exchange_scoped_token(
+    storage_api_url: str,
+    *,
+    subject_token: str,
+    project_ids: list[int],
+    read_only: bool = False,
+    expires_in: int | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> ScopedToken:
+    """
+    Mints a child access token scoped to ``project_ids`` via /v1/auth/pat/exchange.
+
+    The child token has no refresh token of its own; it is re-minted from the (refreshable)
+    parent token when it nears expiry. ``read_only=True`` mints a read-only token.
+    """
+    # The exchange API expects project ids as strings (and rejects integers with a 400).
+    payload = {
+        'expiresIn': expires_in,
+        'scope': {'projects': [str(p) for p in project_ids], 'readOnly': read_only or None},
+    }
+    async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
+        response = await client.post(
+            f'{_base_url(storage_api_url)}/{_EXCHANGE_PATH}',
+            headers={'Authorization': f'Bearer {subject_token}'},
+            json=payload,
+        )
+        response.raise_for_status()
+        body = cast(dict, response.json())
+    return ScopedToken(
+        access_token=cast(str, body['accessToken']),
+        expires_at=time.time() + float(body.get('expiresIn') or 0),
+        project_ids=list(project_ids),
+        read_only=bool(body.get('readOnly')),
     )
 
 

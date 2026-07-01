@@ -1,16 +1,18 @@
 import logging
-from typing import Annotated, cast
+from typing import Annotated, Optional, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
+from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.mcp import SCOPE_KEY, SessionScope
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -40,7 +42,44 @@ def add_project_tools(mcp: FastMCP) -> None:
         )
     )
 
+    LOG.info(f'Adding tool {get_accessible_projects.__name__} to the MCP server.')
+    mcp.add_tool(
+        FunctionTool.from_function(
+            get_accessible_projects,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={PROJECT_TOOLS_TAG},
+        )
+    )
+
+    LOG.info(f'Adding tool {set_project_scope.__name__} to the MCP server.')
+    mcp.add_tool(
+        FunctionTool.from_function(
+            set_project_scope,
+            annotations=ToolAnnotations(readOnlyHint=True),
+            tags={PROJECT_TOOLS_TAG},
+        )
+    )
+
     LOG.info('Project tools initialized.')
+
+
+async def _parent_subject_token(client: KeboolaClient) -> str:
+    """
+    Resolves the whole-stack (parent) programmatic token used to introspect/scope.
+
+    Prefers the refreshable token from the local PKCE credential store (so re-scoping always starts
+    from the parent, never from an already-narrowed scoped token); falls back to whatever bearer the
+    client currently carries (a directly-supplied PAT, or an HTTP bearer).
+    """
+    if client.bearer_token is None:
+        raise ValueError(
+            'Project scoping requires a Keboola programmatic token (kbc_at_/kbc_pat_). '
+            'Run "keboola-mcp-server login --api-url <url>" first, or supply such a token.'
+        )
+    try:
+        return await get_access_token(client.storage_api_url)
+    except RuntimeError:
+        return client.bearer_token
 
 
 async def _resolve_branch_context(client: KeboolaClient) -> tuple[str | int, str, bool]:
@@ -224,3 +263,120 @@ async def get_project_info(
 
     LOG.info('Returning unified project info.')
     return project_info
+
+
+class AccessibleProject(BaseModel):
+    id: int = Field(description='The project id.')
+    name: str | None = Field(default=None, description='The project name.')
+    role: str | None = Field(default=None, description='The user role in this project (e.g. "admin").')
+
+
+class AccessibleProjects(BaseModel):
+    user_email: str | None = Field(default=None, description='The email of the authenticated user.')
+    projects: list[AccessibleProject] = Field(description='The projects the current token can reach across the stack.')
+    llm_instruction: str = Field(
+        description='Guidance for the assistant on how to use this result.',
+    )
+
+
+class ProjectScope(BaseModel):
+    project_ids: list[int] = Field(description='The projects the session is now scoped to.')
+    read_only: bool = Field(description='Whether the scoped token is read-only.')
+    active_project_id: int | None = Field(
+        default=None,
+        description='The project that write operations and single-project tools target.',
+    )
+    llm_instruction: str = Field(description='Guidance for the assistant on the new scope.')
+
+
+@tool_errors()
+async def get_accessible_projects(ctx: Context) -> AccessibleProjects:
+    """
+    Lists the Keboola projects the current login can access across the stack.
+
+    Call this early in a conversation when the user logs in with a stack-wide token (PKCE login),
+    present the projects, and ask whether they want to work across all of them or a subset. Then call
+    `set_project_scope` with their choice.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    subject_token = await _parent_subject_token(client)
+    introspection = await introspect_token(client.storage_api_url, subject_token=subject_token)
+    projects = [AccessibleProject(id=p.id, name=p.name, role=p.role) for p in introspection.projects]
+    return AccessibleProjects(
+        user_email=introspection.user_email,
+        projects=projects,
+        llm_instruction=(
+            'Ask the user whether to operate across all these projects or a subset, then call '
+            '"set_project_scope" with the chosen project ids. Never write to more than one project '
+            'without explicit user confirmation.'
+        ),
+    )
+
+
+@tool_errors()
+async def set_project_scope(
+    ctx: Context,
+    project_ids: Annotated[
+        Optional[list[int]],
+        Field(
+            description='The project ids to scope the session to. '
+            'Omit or pass null to scope to ALL accessible projects.'
+        ),
+    ] = None,
+    read_only: Annotated[
+        bool,
+        Field(description='If true, mint a read-only scoped token (no write operations in any scoped project).'),
+    ] = False,
+) -> ProjectScope:
+    """
+    Scopes the current session to a set of Keboola projects.
+
+    Mints a scoped access token (narrowed to `project_ids`, optionally read-only) that is used for the
+    rest of the conversation. Read-only tools then run against every scoped project in a single call;
+    write operations target the active (first) project only. Call this when the user states which
+    projects to work on; it can be called again any time to re-scope.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    parent_token = await _parent_subject_token(client)
+
+    ids = list(project_ids or [])
+    if not ids:
+        introspection = await introspect_token(client.storage_api_url, subject_token=parent_token)
+        ids = [p.id for p in introspection.projects]
+    if not ids:
+        raise ValueError('No accessible projects to scope to.')
+
+    # Mint a token narrowed to the chosen projects. If the exchange endpoint is unavailable on the
+    # stack, fall back to the whole-stack parent token (still narrowed per request by X-KBC-ProjectId)
+    # so scoping/fan-out keeps working without the security narrowing.
+    try:
+        minted = await exchange_scoped_token(
+            client.storage_api_url, subject_token=parent_token, project_ids=ids, read_only=read_only
+        )
+        scope = SessionScope(
+            project_ids=ids,
+            read_only=minted.read_only,
+            scoped_token=minted.access_token,
+            scoped_expires_at=minted.expires_at,
+            confirmed=True,
+        )
+    except Exception as e:
+        LOG.warning(f'Scoped-token exchange failed ({e}); scoping with the whole-stack token instead.')
+        scope = SessionScope(project_ids=ids, read_only=read_only, confirmed=True)
+    ctx.session.state[SCOPE_KEY] = scope
+
+    multi = len(ids) > 1
+    return ProjectScope(
+        project_ids=ids,
+        read_only=minted.read_only,
+        active_project_id=scope.active_project_id,
+        llm_instruction=(
+            (
+                f'Session scoped to {len(ids)} projects. Read-only tools now return results per project. '
+                f'Write operations target the active project {scope.active_project_id} only; to write to a '
+                'different project, re-scope or confirm with the user first.'
+            )
+            if multi
+            else f'Session scoped to project {ids[0]}.'
+        ),
+    )
