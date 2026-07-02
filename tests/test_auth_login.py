@@ -13,11 +13,14 @@ import pytest
 from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import (
     TokenSet,
+    create_pat,
+    elevate_session,
     ensure_access_token,
     exchange_code,
     exchange_scoped_token,
     get_access_token,
     introspect_token,
+    lease_pat,
     load_tokens,
     refresh_tokens,
     save_tokens,
@@ -233,3 +236,85 @@ async def test_exchange_scoped_token_sends_scope_and_parses() -> None:
     assert scoped.project_ids == [18, 83]
     assert scoped.expires_at > time.time()
     assert not scoped.is_near_expiry
+
+
+# --- sudo elevation + PAT creation (PSGO-261) ---
+
+
+@pytest.mark.asyncio
+async def test_elevate_session_sends_totp_and_returns_token() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured['url'] = str(request.url)
+        captured['auth'] = request.headers['Authorization']
+        captured['body'] = json.loads(request.content)
+        return httpx.Response(200, json={'token': 'kbc_sudo_1'})
+
+    token = await elevate_session(
+        STACK, subject_token='kbc_at_x', totp_code='123456', transport=httpx.MockTransport(handler)
+    )
+    assert captured['url'] == 'https://connection.keboola.com/v1/auth/sudo'
+    assert captured['auth'] == 'Bearer kbc_at_x'
+    assert captured['body'] == {'totpCode': '123456'}  # recoveryCode/type omitted
+    assert token == 'kbc_sudo_1'
+
+
+@pytest.mark.asyncio
+async def test_elevate_session_requires_exactly_one_code() -> None:
+    with pytest.raises(ValueError, match='exactly one'):
+        await elevate_session(STACK, subject_token='kbc_at_x', totp_code='1', recovery_code='2')
+    with pytest.raises(ValueError, match='exactly one'):
+        await elevate_session(STACK, subject_token='kbc_at_x')
+
+
+@pytest.mark.asyncio
+async def test_create_pat_sends_projects_and_parses_token() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured['url'] = str(request.url)
+        captured['auth'] = request.headers['Authorization']
+        captured['body'] = json.loads(request.content)
+        return httpx.Response(201, json={'token': 'kbc_pat_new'})
+
+    pat = await create_pat(
+        STACK,
+        subject_token='kbc_sudo_1',
+        project_ids=[18, 83],
+        name='demo',
+        expires_in=2592000,
+        transport=httpx.MockTransport(handler),
+    )
+    assert captured['url'] == 'https://connection.keboola.com/v1/auth/pat'
+    assert captured['auth'] == 'Bearer kbc_sudo_1'
+    # project ids serialized as strings and nested under scope, like the exchange endpoint
+    assert captured['body'] == {'name': 'demo', 'expiresIn': 2592000, 'scope': {'projects': ['18', '83']}}
+    assert pat == 'kbc_pat_new'
+
+
+@pytest.mark.asyncio
+async def test_lease_pat_introspects_then_sudo_then_creates() -> None:
+    # One routing transport across the three endpoints the flow hits, asserting the sudo token is
+    # what authorizes PAT creation and that all introspected projects are included.
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        seen.append(path)
+        if path.endswith('/token/introspect'):
+            return httpx.Response(200, json={'projects': [{'id': 18}, {'id': 83}, {'id': 95}]})
+        if path.endswith('/auth/sudo'):
+            assert json.loads(request.content) == {'recoveryCode': 'rec-9'}
+            return httpx.Response(200, json={'token': 'kbc_sudo_1'})
+        if path.endswith('/auth/pat'):
+            assert request.headers['Authorization'] == 'Bearer kbc_sudo_1'
+            assert json.loads(request.content)['scope']['projects'] == ['18', '83', '95']
+            return httpx.Response(201, json={'token': 'kbc_pat_leased'})
+        raise AssertionError(f'unexpected path {path}')
+
+    pat = await lease_pat(
+        STACK, subject_token='kbc_at_parent', recovery_code='rec-9', transport=httpx.MockTransport(handler)
+    )
+    assert pat == 'kbc_pat_leased'
+    assert [p.split('/')[-1] for p in seen] == ['introspect', 'sudo', 'pat']
