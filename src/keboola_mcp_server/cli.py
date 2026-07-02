@@ -71,6 +71,22 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
         help='Keboola Storage API URL (e.g. https://connection.<REGION>.keboola.com). '
         'Falls back to KBC_STORAGE_API_URL.',
     )
+    login_parser.add_argument(
+        '--pat',
+        action='store_true',
+        help='After the browser login, lease a Personal Access Token (kbc_pat_) over all accessible '
+        'projects and print it. Requires an MFA code (--totp or --recovery).',
+    )
+    login_parser.add_argument('--totp', metavar='CODE', help='TOTP MFA code for the sudo elevation (--pat).')
+    login_parser.add_argument(
+        '--recovery', metavar='CODE', help='Recovery MFA code for the sudo elevation (--pat); alternative to --totp.'
+    )
+    login_parser.add_argument(
+        '--pat-name',
+        metavar='STR',
+        default='keboola-mcp-server',
+        help='Name for the leased PAT (--pat).',
+    )
 
     return parser.parse_args(args)
 
@@ -113,16 +129,41 @@ _exception_handlers = {
 }
 
 
-async def _run_login(api_url: Optional[str]) -> None:
-    """Runs the interactive browser PKCE login and stores the leased tokens."""
-    from keboola_mcp_server.auth_login import perform_login
+async def _run_login(
+    api_url: Optional[str],
+    *,
+    pat: bool = False,
+    totp: Optional[str] = None,
+    recovery: Optional[str] = None,
+    pat_name: str = 'keboola-mcp-server',
+) -> None:
+    """Runs the interactive browser PKCE login and stores the leased tokens.
+
+    With ``pat=True``, additionally leases a Personal Access Token over all accessible projects
+    (introspect → sudo with the MFA code → create PAT) and prints it.
+    """
+    from keboola_mcp_server.auth_login import lease_pat, perform_login
 
     storage_api_url = api_url or os.environ.get('KBC_STORAGE_API_URL')
     if not storage_api_url:
         raise RuntimeError('A Storage API URL is required for login: pass --api-url or set KBC_STORAGE_API_URL.')
+
+    if pat and bool(totp) == bool(recovery):
+        raise RuntimeError('Leasing a PAT (--pat) requires exactly one MFA code: pass --totp or --recovery.')
+
     tokens = await perform_login(storage_api_url)
     remaining = max(0, int(tokens.expires_at - time.time()))
     print(f'\n✓ Session stored for {storage_api_url} (access token expires in ~{remaining}s).')
+
+    if pat:
+        pat_token = await lease_pat(
+            storage_api_url,
+            subject_token=tokens.access_token,
+            totp_code=totp,
+            recovery_code=recovery,
+            name=pat_name,
+        )
+        print(f'\n✓ Personal Access Token (valid ~1 month, all accessible projects):\n\n  {pat_token}\n')
 
 
 async def run_server(args: Optional[list[str]] = None) -> None:
@@ -152,7 +193,13 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         )
 
     if parsed_args.command == 'login':
-        await _run_login(getattr(parsed_args, 'api_url', None))
+        await _run_login(
+            getattr(parsed_args, 'api_url', None),
+            pat=getattr(parsed_args, 'pat', False),
+            totp=getattr(parsed_args, 'totp', None),
+            recovery=getattr(parsed_args, 'recovery', None),
+            pat_name=getattr(parsed_args, 'pat_name', 'keboola-mcp-server'),
+        )
         return
 
     # Create config from the CLI arguments

@@ -36,7 +36,10 @@ _TOKEN_PATH = 'v1/auth/pkce/token'
 _REFRESH_PATH = 'v1/auth/token/refresh'
 _INTROSPECT_PATH = 'v1/auth/token/introspect'
 _EXCHANGE_PATH = 'v1/auth/pat/exchange'
+_SUDO_PATH = 'v1/auth/sudo'
+_PAT_PATH = 'v1/auth/pat'
 _REFRESH_SKEW_SECONDS = 60
+_PAT_DEFAULT_EXPIRES_SECONDS = 30 * 24 * 60 * 60  # ~1 month
 _CREDENTIALS_PATH = Path.home() / '.keboola' / 'mcp' / 'credentials.json'
 
 
@@ -174,6 +177,108 @@ async def exchange_scoped_token(
         expires_at=time.time() + float(body.get('expiresIn') or 0),
         project_ids=list(project_ids),
         read_only=bool(body.get('readOnly')),
+    )
+
+
+async def elevate_session(
+    storage_api_url: str,
+    *,
+    subject_token: str,
+    totp_code: str | None = None,
+    recovery_code: str | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> str:
+    """Elevates (``sudo``) the session with an MFA code via POST /v1/auth/sudo.
+
+    ``totp_code`` and ``recovery_code`` are mutually exclusive — pass exactly one. The ``type``
+    field is intentionally omitted (empty). Returns the elevated bearer token to authorize
+    sensitive operations such as PAT creation; if the endpoint elevates the session in place and
+    returns no token, falls back to the original ``subject_token``.
+
+    NOTE: response field name assumed (``token``/``accessToken``) — confirm against the auth API.
+    """
+    if bool(totp_code) == bool(recovery_code):
+        raise ValueError('Provide exactly one of totp_code or recovery_code.')
+    payload = {'totpCode': totp_code} if totp_code else {'recoveryCode': recovery_code}
+    async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
+        response = await client.post(
+            f'{_base_url(storage_api_url)}/{_SUDO_PATH}',
+            headers={'Authorization': f'Bearer {subject_token}'},
+            json=payload,
+        )
+        response.raise_for_status()
+        body = cast(dict, response.json()) if response.content else {}
+    return cast(str, body.get('token') or body.get('accessToken') or subject_token)
+
+
+async def create_pat(
+    storage_api_url: str,
+    *,
+    subject_token: str,
+    project_ids: list[int],
+    name: str,
+    expires_in: int = _PAT_DEFAULT_EXPIRES_SECONDS,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> str:
+    """Creates a Personal Access Token (``kbc_pat_*``) via POST /v1/auth/pat.
+
+    ``subject_token`` must be an elevated (sudo) bearer. ``project_ids`` are sent as strings (the
+    auth service rejects integers, per the exchange endpoint). Requires a prior ``elevate_session``.
+
+    NOTE: request fields (``name``/``expiresIn``/``projects``) and the response token field are
+    assumed to mirror the exchange endpoint's conventions — confirm against the auth API.
+    """
+    payload = {
+        'name': name,
+        'expiresIn': expires_in,
+        'projects': [str(p) for p in project_ids],
+    }
+    async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
+        response = await client.post(
+            f'{_base_url(storage_api_url)}/{_PAT_PATH}',
+            headers={'Authorization': f'Bearer {subject_token}'},
+            json=payload,
+        )
+        response.raise_for_status()
+        body = cast(dict, response.json())
+    pat = body.get('token') or body.get('pat') or body.get('accessToken')
+    if not pat:
+        raise RuntimeError(f'PAT creation response did not contain a token: keys={sorted(body)}')
+    return cast(str, pat)
+
+
+async def lease_pat(
+    storage_api_url: str,
+    *,
+    subject_token: str,
+    totp_code: str | None = None,
+    recovery_code: str | None = None,
+    name: str = 'keboola-mcp-server',
+    expires_in: int = _PAT_DEFAULT_EXPIRES_SECONDS,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> str:
+    """Leases a PAT over ALL accessible projects: introspect → sudo (MFA) → create PAT.
+
+    ``subject_token`` is the whole-stack session access token (``kbc_at_*``) from the PKCE login.
+    """
+    introspection = await introspect_token(storage_api_url, subject_token=subject_token, transport=transport)
+    project_ids = [p.id for p in introspection.projects]
+    if not project_ids:
+        raise RuntimeError('The session token can not reach any projects; cannot create a PAT.')
+    elevated = await elevate_session(
+        storage_api_url,
+        subject_token=subject_token,
+        totp_code=totp_code,
+        recovery_code=recovery_code,
+        transport=transport,
+    )
+    return await create_pat(
+        storage_api_url,
+        subject_token=elevated,
+        project_ids=project_ids,
+        name=name,
+        expires_in=expires_in,
+        transport=transport,
     )
 
 
