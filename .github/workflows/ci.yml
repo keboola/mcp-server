@@ -86,6 +86,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Postgres + pgvector backs the docs-search index (docs_query / find_component_id).
+      # The docs integ test seeds it with the deterministic stub embedder and reads it back.
+      - name: Start pgvector with docker compose
+        run: docker compose up -d --wait pgvector
+
       # Unwrap the project pool: substitute $TEST_KBC_PROJECT_*_TOKEN secrets into
       # .github/ci/projects.json -> ./projects.json (mirrors keboola/go-monorepo).
       - name: Export Keboola test projects
@@ -103,6 +108,12 @@ jobs:
           # (same convention as keboola/go-monorepo). The export step above writes the file
           # of this name at the workspace root.
           TEST_KBC_PROJECTS_FILE: ${{ github.workspace }}/${{ vars.TEST_KBC_PROJECTS_FILE }}
+          # Docs-search index: the docker-compose pgvector above + the deterministic offline
+          # embedder. Enables docs_query / find_component_id for the docs integ test; the
+          # rest of the suite is unaffected.
+          DATABASE_URL: postgres://mcp:mcp@localhost:5432/docs
+          DOCS_EMBEDDER_MODEL: stub
+          DOCS_EMBEDDER_DIM: '3072'
         run: npm run test:integ
 
   publish_npm:

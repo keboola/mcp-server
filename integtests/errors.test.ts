@@ -71,19 +71,11 @@ describe('error handling (integration)', () => {
     }
   });
 
-  // test_docs_api_empty_query_error: an empty docs query yields a 422 from the docs API,
-  // surfaced as a tool error.
-  it('docs_query surfaces a 422 for an empty query as a tool error', async () => {
-    const { config } = await getTestProjectForTest({ clean: false });
-    const session = await connectMcp(config);
-    try {
-      const result = await callToolRaw(session.client, 'docs_query', { query: '' });
-      expect(result.isError).toBeTruthy();
-      expect(errorText(result)).toMatch(/422|not valid/i);
-    } finally {
-      await session.close();
-    }
-  });
+  // NOTE: the Python test_docs_api_empty_query_error (a 422 from the AI docs service on an
+  // empty query) was dropped: docs_query is now served by the pgvector docs-search index
+  // (RFC: feature_spec/docs-search-pgvector/), where an empty query returns no results
+  // rather than erroring. The docs happy-path + index gating are covered by
+  // integtests/tools/doc.test.ts.
 
   // test_sql_api_invalid_query_error_(snowflake|bigquery): an invalid SQL query is
   // surfaced as a tool error with the "Failed to run SQL query" prefix, regardless of

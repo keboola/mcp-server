@@ -28,6 +28,11 @@ const EXCLUDE = new Set([
   'get_semantic_schema',
   'search_semantic_context',
   'validate_semantic_query',
+  // Docs-search tools are gated on a configured pgvector index (DATABASE_URL); whether they
+  // appear depends on the run's env, so exclude them from the strict set (covered by
+  // integtests/tools/doc.test.ts).
+  'docs_query',
+  'find_component_id',
 ]);
 
 const EXPECTED_TOOLS = new Set(
