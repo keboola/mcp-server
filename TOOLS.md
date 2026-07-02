@@ -661,7 +661,7 @@ EXAMPLES:
 ---
 <a name="run_sync_action"></a>
 ## run_sync_action
-**Annotations**: 
+**Annotations**: `read-only`
 
 **Tags**: `components`
 

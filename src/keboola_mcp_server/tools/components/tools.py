@@ -173,12 +173,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             run_sync_action,
             tags={COMPONENT_TOOLS_TAG},
-            # A sync action (testConnection, getTables, ...) does not persist changes to the project,
-            # but it is NOT a safe read: it POSTs an arbitrary component action with caller-supplied
-            # configData (reaching external systems, credentials, OAuth, etc.). readOnlyHint=True lets
-            # MCP clients auto-run it without user approval — a (limited) security gap. Mark it
-            # non-read-only so clients prompt for consent before executing it.
-            annotations=ToolAnnotations(readOnlyHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
         )
     )
 
