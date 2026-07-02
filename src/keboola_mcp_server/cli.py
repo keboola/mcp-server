@@ -166,12 +166,14 @@ async def run_server(args: Optional[list[str]] = None) -> None:
         # Create and run the server
         if parsed_args.transport == 'stdio':
             # Local/stdio needs only the stack URL: with no token configured, use the tokens
-            # leased by a prior browser `login` (refreshing them as needed).
+            # leased by a prior browser `login` (refreshing them as needed). When no session is
+            # stored or it can no longer be refreshed, log in interactively on the spot — so the
+            # server can be started without a separate `login` step.
             config = config.replace_by(os.environ)
             if not config.storage_token and config.storage_api_url:
-                from keboola_mcp_server.auth_login import get_access_token
+                from keboola_mcp_server.auth_login import ensure_access_token
 
-                access_token = await get_access_token(config.storage_api_url)
+                access_token = await ensure_access_token(config.storage_api_url)
                 config = dataclasses.replace(config, storage_token=access_token)
 
             runtime_config = ServerRuntimeInfo(transport=parsed_args.transport)

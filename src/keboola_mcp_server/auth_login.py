@@ -285,6 +285,29 @@ async def get_access_token(
     return tokens.access_token
 
 
+async def ensure_access_token(
+    storage_api_url: str,
+    *,
+    open_browser=webbrowser.open,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> str:
+    """Return a valid access token, running the browser PKCE login when needed.
+
+    Convenience for the locally-run (stdio) server so it can be started with only the stack URL
+    and no separate ``login`` step: if no session is stored, or the stored one can no longer be
+    refreshed, this logs in interactively (opens a browser + loopback callback), persists the
+    session, and returns the fresh token. Only usable where a browser and the loopback redirect
+    are reachable on the machine running the server — remote/deployed servers must use
+    client-driven OAuth instead.
+    """
+    try:
+        return await get_access_token(storage_api_url, transport=transport)
+    except RuntimeError as exc:
+        LOG.info(f'No usable stored session for {storage_api_url} ({exc}); starting browser login.')
+        await perform_login(storage_api_url, open_browser=open_browser)
+        return await get_access_token(storage_api_url, transport=transport)
+
+
 def _forget(storage_api_url: str) -> None:
     store = _read_store()
     if store.pop(_store_key(storage_api_url), None) is not None:
