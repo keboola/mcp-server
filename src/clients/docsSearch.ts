@@ -147,8 +147,16 @@ const formatContext = (docs: { content: string }[]): string =>
 // Embedder / LLM (OpenAI-compatible in prod; deterministic stub for local/CI)
 // ---------------------------------------------------------------------------
 
-/** Sentinel model name selecting the offline {@link StubEmbedder}. */
+/** Sentinel `DOCS_EMBEDDER_MODEL` value selecting the offline {@link StubEmbedder}. */
 export const STUB_EMBEDDER_MODEL = 'stub';
+/** Sentinel `DOCS_EMBEDDER_MODEL` value selecting the in-process {@link LocalEmbedder}. */
+export const LOCAL_EMBEDDER_MODEL = 'local';
+
+/** Default HuggingFace model + dim for the local embedder (small, fast, CPU-friendly). */
+export const DEFAULT_LOCAL_MODEL = 'Xenova/all-MiniLM-L6-v2';
+export const DEFAULT_LOCAL_DIM = 384;
+/** Default dim for the stub / remote embedders (text-embedding-3-large native size). */
+export const DEFAULT_EMBEDDER_DIM = 3072;
 
 /**
  * Deterministic, offline embedder (vendored from @keboola/docs-search): the same text
@@ -184,6 +192,52 @@ export class StubEmbedder implements Embedder {
     const v = Array.from({ length: this.dim }, next);
     const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
     return v.map((x) => x / norm);
+  }
+}
+
+/**
+ * In-process embedder running a HuggingFace model as ONNX on CPU via transformers.js —
+ * no external service, no API key (selected via `DOCS_EMBEDDER_MODEL=local`). The model
+ * id (`DOCS_EMBEDDER_LOCAL_MODEL`) and dim (`DOCS_EMBEDDER_DIM`) are configurable; the dim
+ * MUST match the model's output size and the pgvector column. `@huggingface/transformers`
+ * is an optional dependency, dynamically imported so stub/remote users don't need it
+ * installed; a clear error is thrown if it is missing.
+ */
+export class LocalEmbedder implements Embedder {
+  readonly model: string;
+  readonly dim: number;
+  // Lazily-loaded feature-extraction pipeline (model weights are fetched/cached on first use).
+  private extractor: Promise<
+    (texts: string[], opts: object) => Promise<{ tolist(): number[][] }>
+  > | null = null;
+
+  constructor(model: string, dim: number) {
+    this.model = model;
+    this.dim = dim;
+  }
+
+  private pipeline() {
+    if (!this.extractor) {
+      this.extractor = import('@huggingface/transformers')
+        .then(({ pipeline }) => pipeline('feature-extraction', this.model) as never)
+        .catch((err: unknown) => {
+          this.extractor = null;
+          const cause = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            "The local embedder needs the optional '@huggingface/transformers' package. " +
+              'Install it (`npm i @huggingface/transformers`) or use a remote embedder ' +
+              `(DOCS_EMBEDDER_ENDPOINT/API_KEY/MODEL). Cause: ${cause}`,
+          );
+        });
+    }
+    return this.extractor;
+  }
+
+  async embed(texts: string[]): Promise<number[][]> {
+    const extractor = await this.pipeline();
+    // Mean-pool + L2-normalize → one unit vector per text (cosine-ready).
+    const output = await extractor(texts, { pooling: 'mean', normalize: true });
+    return output.tolist();
   }
 }
 
@@ -289,22 +343,33 @@ const buildDocsSearch = (pool: Pool, embedder: Embedder, llm: Llm | null): DocsS
 });
 
 /**
- * Builds the query-time embedder from env: the deterministic {@link StubEmbedder} when
- * `DOCS_EMBEDDER_MODEL=stub` (offline local/CI), else the OpenAI-compatible embedder.
- * Returns `null` when the config is incomplete. Shared with the `docs:build` seeder so the
- * index is built and queried with identical vectors.
+ * Builds the query-time embedder from env, by `DOCS_EMBEDDER_MODEL`:
+ *   - `stub`  → deterministic offline {@link StubEmbedder} (CI/tests), dim = DOCS_EMBEDDER_DIM ?? 3072
+ *   - `local` → in-process {@link LocalEmbedder} (HuggingFace/ONNX), model = DOCS_EMBEDDER_LOCAL_MODEL
+ *               ?? all-MiniLM-L6-v2, dim = DOCS_EMBEDDER_DIM ?? 384
+ *   - else (endpoint+key+model) → remote {@link OpenAIEmbedder}, dim = DOCS_EMBEDDER_DIM ?? 3072
+ * Returns `null` when the config is incomplete (docs tools then gate off). Shared with the
+ * `docs:build` seeder so the index is built and queried with the same model + dim.
  */
 export const createEmbedderFromEnv = (env: Env): Embedder | null => {
-  const dim = env.DOCS_EMBEDDER_DIM ?? 3072;
-  if (env.DOCS_EMBEDDER_MODEL === STUB_EMBEDDER_MODEL) return new StubEmbedder(dim);
-  if (!env.DOCS_EMBEDDER_ENDPOINT || !env.DOCS_EMBEDDER_API_KEY || !env.DOCS_EMBEDDER_MODEL) {
+  const kind = env.DOCS_EMBEDDER_MODEL;
+  if (kind === STUB_EMBEDDER_MODEL) {
+    return new StubEmbedder(env.DOCS_EMBEDDER_DIM ?? DEFAULT_EMBEDDER_DIM);
+  }
+  if (kind === LOCAL_EMBEDDER_MODEL) {
+    return new LocalEmbedder(
+      env.DOCS_EMBEDDER_LOCAL_MODEL ?? DEFAULT_LOCAL_MODEL,
+      env.DOCS_EMBEDDER_DIM ?? DEFAULT_LOCAL_DIM,
+    );
+  }
+  if (!env.DOCS_EMBEDDER_ENDPOINT || !env.DOCS_EMBEDDER_API_KEY || !kind) {
     return null;
   }
   return new OpenAIEmbedder({
     endpoint: env.DOCS_EMBEDDER_ENDPOINT,
     apiKey: env.DOCS_EMBEDDER_API_KEY,
-    model: env.DOCS_EMBEDDER_MODEL,
-    dim,
+    model: kind,
+    dim: env.DOCS_EMBEDDER_DIM ?? DEFAULT_EMBEDDER_DIM,
   });
 };
 

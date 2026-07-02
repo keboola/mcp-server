@@ -131,3 +131,26 @@ The platform has no Postgres for the MCP today. Rollout:
 - **Cost**: embeddings are computed only for changed docs (incremental) at build time, and once
   per query at read time — far cheaper than a bespoke hosted retrieval service; Postgres is
   read-mostly and small.
+
+## 8. Embedding model & dimensions
+
+pgvector (like LanceDB) is only the vector **store** — it does not generate embeddings. A
+model must turn text → vector; that model is the one external piece. The MCP + the seeder
+select it via `DOCS_EMBEDDER_MODEL`, and **build-time and query-time must use the same model
+and dimension** (mismatched vectors return garbage):
+
+| `DOCS_EMBEDDER_MODEL` | Embedder | Infra to provision | Dim |
+| --- | --- | --- | --- |
+| `stub` | Deterministic offline hash (CI/tests only — **not semantic**) | none | 3072 (default) |
+| `local` | In-process HuggingFace model via transformers.js (ONNX, CPU) — no service, no key | **none** (optional `@huggingface/transformers` dep; model weights cached on first use) | model-native (e.g. 384 `all-MiniLM-L6-v2`, 1024 `bge-large`) |
+| *(remote model name)* | OpenAI/Azure-compatible endpoint (`DOCS_EMBEDDER_ENDPOINT`/`API_KEY`) — e.g. reuse kai-bot's `embeddings` deployment | reuse existing / provision one | 3072 `text-embedding-3-large` (or 1536 small) |
+
+- **Dimension is configurable** end-to-end: `DOCS_EMBEDDER_DIM` drives the embedder and the
+  `halfvec(N)` column (`halfvec` indexes up to 4000 dims, so 384/768/1024/1536/3072 all work;
+  under 2000 a plain `vector(N)` is also possible). The local seeder recreates the tables if
+  the dim changes.
+- **3072 vs 1024**: more dims = marginally better retrieval + ~3× storage/search cost. On a
+  bounded docs corpus 1024 is within a couple % of 3072 — a good default for local models.
+- **To avoid provisioning any embedding infra**, use `local` (only Postgres is provisioned) or
+  reuse kai-bot's already-provisioned Azure `embeddings` deployment. Provisioning a *new*
+  dedicated deployment is the only option that adds infra.

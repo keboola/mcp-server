@@ -57,9 +57,14 @@ const envSchema = z.object({
   // rest of the server is unaffected. The index is read-only from the MCP's side —
   // it is built out-of-band by a cron job. See feature_spec/docs-search-pgvector/.
   DATABASE_URL: z.string().optional(),
+  // DOCS_EMBEDDER_MODEL selects the embedder: 'stub' (offline CI), 'local' (in-process
+  // HuggingFace/ONNX — no service/key), or a remote model name (needs ENDPOINT+API_KEY).
+  // DOCS_EMBEDDER_DIM must match the model output AND the pgvector column dim (defaults:
+  // 3072 for stub/remote, 384 for local). DOCS_EMBEDDER_LOCAL_MODEL overrides the local HF id.
   DOCS_EMBEDDER_ENDPOINT: z.string().optional(),
   DOCS_EMBEDDER_API_KEY: z.string().optional(),
   DOCS_EMBEDDER_MODEL: z.string().optional(),
+  DOCS_EMBEDDER_LOCAL_MODEL: z.string().optional(),
   DOCS_EMBEDDER_DIM: z.coerce.number().int().positive().optional(),
   // LLM for answerQuestion synthesis. Optional: without it, docs_query falls back to
   // returning the retrieved documentation snippets rather than a synthesized answer.

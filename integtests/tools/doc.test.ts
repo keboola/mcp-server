@@ -37,8 +37,9 @@ describeDocs('docs tools (integration, pgvector)', () => {
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: DATABASE_URL });
-    await migrateDocsIndex(pool);
-    await seedDocsIndex(pool, new StubEmbedder(3072), FIXTURE_SOURCES);
+    const embedder = new StubEmbedder(3072);
+    await migrateDocsIndex(pool, embedder.dim);
+    await seedDocsIndex(pool, embedder, FIXTURE_SOURCES);
   }, 60_000);
 
   afterAll(async () => {

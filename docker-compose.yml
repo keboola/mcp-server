@@ -6,13 +6,27 @@
 #   mcp        — the MCP server (production image) over streamable-HTTP on :8000.
 #
 # The MCP only ever *reads* the index; docs-seed is the local mirror of the production
-# out-of-band build (see feature_spec/docs-search-pgvector/). It seeds fixtures, not real
-# docs, using the deterministic stub embedder so no embedding API key is needed.
+# out-of-band build (see feature_spec/docs-search-pgvector/).
+#
+# Embedder: defaults to the deterministic `stub` (offline, no download, no key) — good for a
+# smoke stack, but NOT semantic, so realistic queries return nothing. For real semantic
+# search with no external service, flip the shared `x-docs-embedder` anchor below to the
+# in-process HuggingFace model:
+#     DOCS_EMBEDDER_MODEL: local
+#     DOCS_EMBEDDER_DIM: '384'
+# (or point DOCS_EMBEDDER_ENDPOINT/API_KEY/MODEL at a remote embedder). The anchor is shared
+# by docs-seed and mcp so build-time and query-time embedders can never drift.
 #
 # Usage:
 #   docker compose up -d --wait pgvector          # just Postgres (used by `npm run test:integ`)
 #   docker compose up --build                     # full stack: pgvector -> docs-seed -> mcp
 #   curl localhost:8000/health-check              # MCP health once up ({"status":"ok"})
+
+# Shared docs-index env — edit here to switch stub / local / remote for BOTH services at once.
+x-docs-embedder: &docs-embedder
+  DATABASE_URL: postgres://mcp:mcp@pgvector:5432/docs
+  DOCS_EMBEDDER_MODEL: stub
+  DOCS_EMBEDDER_DIM: '3072'
 
 services:
   pgvector:
@@ -38,10 +52,7 @@ services:
     build: .
     image: keboola-mcp-server:local
     command: ['node', 'dist/docs-build.js']
-    environment:
-      DATABASE_URL: postgres://mcp:mcp@pgvector:5432/docs
-      DOCS_EMBEDDER_MODEL: stub
-      DOCS_EMBEDDER_DIM: '3072'
+    environment: *docs-embedder
     depends_on:
       pgvector:
         condition: service_healthy
@@ -54,13 +65,10 @@ services:
     ports:
       - '8000:8000'
     environment:
+      # Shared docs-index embedder (same as the seeder — must match, hence the anchor).
+      <<: *docs-embedder
       HOST: 0.0.0.0
       PORT: '8000'
-      # Docs-search index (read-only from the MCP). Same stub embedder as the seeder so
-      # build-time and query-time vectors match.
-      DATABASE_URL: postgres://mcp:mcp@pgvector:5432/docs
-      DOCS_EMBEDDER_MODEL: stub
-      DOCS_EMBEDDER_DIM: '3072'
       # HTTP mode is multi-tenant: clients pass the Storage token per request via
       # X-StorageApi-Token / Authorization headers, so no KBC_* token is needed at boot.
       # For a single-tenant local run you can bake them in instead:

@@ -29,14 +29,16 @@ const main = async (): Promise<void> => {
   const embedder = createEmbedderFromEnv(env);
   if (!embedder) {
     throw new Error(
-      'No embedder configured. Set DOCS_EMBEDDER_MODEL=stub for offline dev, or DOCS_EMBEDDER_ENDPOINT/API_KEY/MODEL.',
+      'No embedder configured. Set DOCS_EMBEDDER_MODEL to: "stub" (offline CI), "local" ' +
+        '(in-process HuggingFace, no key), or a remote model name with ' +
+        'DOCS_EMBEDDER_ENDPOINT/API_KEY.',
     );
   }
 
   const pool = new Pool({ connectionString: env.DATABASE_URL });
   try {
     logger.info(`Building docs index with embedder "${embedder.model}" (dim ${embedder.dim})…`);
-    await migrateDocsIndex(pool);
+    await migrateDocsIndex(pool, embedder.dim);
     const { docCount, chunkCount } = await seedDocsIndex(pool, embedder, FIXTURE_SOURCES);
     logger.info(`Docs index built: ${docCount} docs, ${chunkCount} chunks.`);
   } finally {

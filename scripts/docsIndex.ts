@@ -28,7 +28,15 @@ export type SourceDoc = {
 };
 
 /** Idempotent schema (mirrors @keboola/docs-search migrations/001_init.sql). */
-export const MIGRATION_SQL = `
+/** Default embedding dimension (text-embedding-3-large / stub). The local embedder is 384. */
+export const DEFAULT_DIM = 3072;
+
+/**
+ * Idempotent schema at a given embedding dimension (mirrors @keboola/docs-search
+ * migrations/001_init.sql, but the `halfvec(N)` size is parametrized). `halfvec` covers
+ * up to 4000 dims, so the same type works for 384 / 768 / 1024 / 1536 / 3072.
+ */
+export const migrationSql = (dim: number): string => `
 create extension if not exists vector;
 
 create table if not exists doc (
@@ -47,7 +55,7 @@ create table if not exists doc_chunk (
   doc_id      uuid not null references doc(id) on delete cascade,
   ordinal     int  not null,
   embed_input text not null,
-  embedding   halfvec(3072) not null
+  embedding   halfvec(${dim}) not null
 );
 
 create table if not exists index_manifest (
@@ -129,9 +137,23 @@ export const FIXTURE_SOURCES: SourceDoc[] = [
 
 const vectorLiteral = (vec: number[]): string => `[${vec.join(',')}]`;
 
-/** Applies the idempotent schema. */
-export const migrateDocsIndex = async (pool: Pool): Promise<void> => {
-  await pool.query(MIGRATION_SQL);
+/**
+ * Applies the idempotent schema at `dim`. If the index already exists at a *different*
+ * embedding dimension, the tables are dropped and recreated — switching embedder/dim
+ * requires a full reindex anyway, and the seeder rebuilds from scratch. (In production the
+ * dim is stable; a planned dim change is an intentional reindex.)
+ */
+export const migrateDocsIndex = async (pool: Pool, dim: number = DEFAULT_DIM): Promise<void> => {
+  const { rows } = await pool.query<{ type: string }>(
+    `SELECT format_type(a.atttypid, a.atttypmod) AS type
+     FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+     WHERE c.relname = 'doc_chunk' AND a.attname = 'embedding' AND NOT a.attisdropped`,
+  );
+  const current = rows[0]?.type; // e.g. "halfvec(3072)"
+  if (current && current !== `halfvec(${dim})`) {
+    await pool.query('DROP TABLE IF EXISTS doc_chunk, doc, index_manifest, index_meta CASCADE');
+  }
+  await pool.query(migrationSql(dim));
 };
 
 /**
