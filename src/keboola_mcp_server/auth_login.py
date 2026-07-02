@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import secrets
+import sys
 import time
 import urllib.parse
 import webbrowser
@@ -285,6 +286,37 @@ async def get_access_token(
     return tokens.access_token
 
 
+async def ensure_access_token(
+    storage_api_url: str,
+    *,
+    allow_interactive: bool = True,
+    open_browser=webbrowser.open,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> str:
+    """Return a valid access token, running the browser PKCE login when needed and allowed.
+
+    Convenience for the locally-run (stdio) server so it can be started with only the stack URL
+    and no separate ``login`` step: if no session is stored, or the stored one can no longer be
+    refreshed, this logs in interactively (opens a browser + loopback callback), persists the
+    session, and returns the fresh token.
+
+    ``allow_interactive`` MUST be false unless a real terminal is attached. When the stdio server
+    is launched by an MCP client its stdout is the JSON-RPC channel and there is no TTY, so an
+    interactive login would both corrupt the protocol stream and block the initialize handshake
+    (the loopback wait has no timeout). In that case this raises the same "run login" guidance as
+    ``get_access_token`` instead of attempting a browser login. Remote/deployed servers must use
+    client-driven OAuth regardless.
+    """
+    try:
+        return await get_access_token(storage_api_url, transport=transport)
+    except RuntimeError as exc:
+        if not allow_interactive:
+            raise
+        LOG.info(f'No usable stored session for {storage_api_url} ({exc}); starting browser login.')
+        await perform_login(storage_api_url, open_browser=open_browser)
+        return await get_access_token(storage_api_url, transport=transport)
+
+
 def _forget(storage_api_url: str) -> None:
     store = _read_store()
     if store.pop(_store_key(storage_api_url), None) is not None:
@@ -326,7 +358,8 @@ async def perform_login(storage_api_url: str, *, open_browser=webbrowser.open) -
         'state': state,
     }
     authorize_url = f'{_base_url(storage_api_url)}/{_AUTHORIZE_PATH}?{urllib.parse.urlencode(params)}'
-    print(f'Open this URL in your browser to authenticate:\n\n  {authorize_url}\n', flush=True)
+    # Never write to stdout: under the stdio transport stdout is the JSON-RPC channel. Use stderr.
+    print(f'Open this URL in your browser to authenticate:\n\n  {authorize_url}\n', file=sys.stderr, flush=True)
     open_browser(authorize_url)
 
     _CallbackHandler.result = {}
@@ -342,7 +375,7 @@ async def perform_login(storage_api_url: str, *, open_browser=webbrowser.open) -
     if not code:
         raise RuntimeError('Authorization callback did not return a code.')
 
-    print('Exchanging authorization code for tokens…', flush=True)
+    print('Exchanging authorization code for tokens…', file=sys.stderr, flush=True)
     tokens = await exchange_code(
         storage_api_url, code=code, state=state, code_verifier=verifier, redirect_uri=redirect_uri
     )

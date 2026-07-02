@@ -13,6 +13,7 @@ import pytest
 from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import (
     TokenSet,
+    ensure_access_token,
     exchange_code,
     exchange_scoped_token,
     get_access_token,
@@ -124,6 +125,45 @@ async def test_get_access_token_dead_token_forgets_and_raises(creds_file: Path) 
         await get_access_token(STACK, transport=_token_response(401))
     # Stale credentials dropped so the next start triggers a fresh login.
     assert load_tokens(STACK) is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_access_token_returns_stored_without_login(creds_file: Path, monkeypatch) -> None:
+    save_tokens(STACK, TokenSet('kbc_at_valid', 'kbc_rt_1', expires_at=time.time() + 3600))
+
+    async def _must_not_login(*_a, **_k):
+        raise AssertionError('perform_login must not run when a valid session is stored')
+
+    monkeypatch.setattr(auth_login, 'perform_login', _must_not_login)
+    token = await ensure_access_token(STACK, transport=_token_response(500))
+    assert token == 'kbc_at_valid'
+
+
+@pytest.mark.asyncio
+async def test_ensure_access_token_logs_in_when_no_session(creds_file: Path, monkeypatch) -> None:
+    # No stored session → ensure_access_token runs the browser login, then returns the fresh token.
+    calls: list[str] = []
+
+    async def _fake_login(storage_api_url: str, **_k):
+        calls.append(storage_api_url)
+        save_tokens(storage_api_url, TokenSet('kbc_at_fresh', 'kbc_rt_fresh', expires_at=time.time() + 3600))
+
+    monkeypatch.setattr(auth_login, 'perform_login', _fake_login)
+    token = await ensure_access_token(STACK, transport=_token_response(500))
+    assert token == 'kbc_at_fresh'
+    assert calls == [STACK]
+
+
+@pytest.mark.asyncio
+async def test_ensure_access_token_non_interactive_raises_without_login(creds_file: Path, monkeypatch) -> None:
+    # No TTY (e.g. launched by an MCP client): must NOT attempt a browser login (it would corrupt
+    # the stdio protocol / hang the handshake); raise the clear guidance instead.
+    async def _must_not_login(*_a, **_k):
+        raise AssertionError('perform_login must not run when interactive login is disallowed')
+
+    monkeypatch.setattr(auth_login, 'perform_login', _must_not_login)
+    with pytest.raises(RuntimeError, match='Run "keboola-mcp-server login'):
+        await ensure_access_token(STACK, allow_interactive=False)
 
 
 def test_pkce_challenge_is_sha256_of_verifier() -> None:

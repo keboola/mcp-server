@@ -165,12 +165,20 @@ async def run_server(args: list[str] | None = None) -> None:
         # Create and run the server
         if parsed_args.transport == 'stdio':
             # Local/stdio needs only the stack URL: with no token configured, use the tokens
-            # leased by a prior browser `login` (refreshing them as needed).
+            # leased by a prior browser `login` (refreshing them as needed). When no session is
+            # stored or it can no longer be refreshed, log in interactively on the spot — so the
+            # server can be started without a separate `login` step.
             config = config.replace_by(os.environ)
             if not config.storage_token and config.storage_api_url:
-                from keboola_mcp_server.auth_login import get_access_token
+                from keboola_mcp_server.auth_login import ensure_access_token
 
-                access_token = await get_access_token(config.storage_api_url)
+                # Only run the interactive browser login when a real terminal is attached. When an
+                # MCP client launches this stdio server, stdin/stdout are pipes (no TTY) and stdout
+                # is the JSON-RPC channel — an interactive login there would corrupt the protocol
+                # and block the initialize handshake. In that case require a prior `login` (or a
+                # configured token) and fail fast with guidance instead.
+                allow_interactive = sys.stdin.isatty() and sys.stderr.isatty()
+                access_token = await ensure_access_token(config.storage_api_url, allow_interactive=allow_interactive)
                 config = dataclasses.replace(config, storage_token=access_token)
 
             runtime_config = ServerRuntimeInfo(transport=parsed_args.transport)
