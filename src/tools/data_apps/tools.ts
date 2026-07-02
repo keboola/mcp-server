@@ -841,5 +841,6 @@ After a successful call, pivot back to the parent prod app (its configuration_id
     },
   });
 
-  logger.info('Data app tools initialized.');
+  // debug, not info: createServer() runs per HTTP request, so this fires on every request.
+  logger.debug('Data app tools initialized.');
 };

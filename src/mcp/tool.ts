@@ -24,6 +24,29 @@ export type ToolDefinition<Shape extends ZodRawShape> = {
   handler: (args: z.infer<z.ZodObject<Shape>>) => Promise<unknown> | unknown;
 };
 
+/**
+ * Human-useful message from a tool error. `@keboola/api-client`'s `ApiError.message` is
+ * only the HTTP status text (e.g. "Bad Request") — the real reason and the support
+ * exception id live on `error.data` (`{ error, message, exceptionId }`). Surface them so
+ * the client sees "Bad Request: Invalid access token (exception ID: …)" instead of an
+ * opaque status. (Our raw client already composes this into its message, so it has no
+ * `.data` and passes through unchanged.)
+ */
+export const describeToolError = (error: unknown): string => {
+  const base = error instanceof Error ? error.message : String(error);
+  const data = (error as { data?: unknown }).data;
+  if (!data || typeof data !== 'object') return base;
+  const d = data as Record<string, unknown>;
+  const detail = [d.error, d.message].find(
+    (v): v is string => typeof v === 'string' && v.trim().length > 0,
+  );
+  let msg = detail && detail.trim() !== base ? `${base}: ${detail.trim()}` : base;
+  if (typeof d.exceptionId === 'string' && d.exceptionId.length > 0) {
+    msg += ` (exception ID: ${d.exceptionId})`;
+  }
+  return msg;
+};
+
 export const registerTool = <Shape extends ZodRawShape>(
   server: McpServer,
   def: ToolDefinition<Shape>,
@@ -48,7 +71,7 @@ export const registerTool = <Shape extends ZodRawShape>(
         const text = typeof result === 'string' ? result : serialize(result);
         return { content: [{ type: 'text', text }] };
       } catch (error) {
-        const base = error instanceof Error ? error.message : String(error);
+        const base = describeToolError(error);
         const text = def.recovery ? `${base}\nRecovery: ${def.recovery}` : base;
         logger.error({ err: error, tool: def.name }, `MCP tool "${def.name}" call failed`);
         return { content: [{ type: 'text', text }], isError: true };

@@ -550,5 +550,6 @@ export const registerFlowTools = (server: McpServer, config: Config): void => {
     },
   });
 
-  logger.info('Flow tools initialized.');
+  // debug, not info: createServer() runs per HTTP request, so this fires on every request.
+  logger.debug('Flow tools initialized.');
 };
