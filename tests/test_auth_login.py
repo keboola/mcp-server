@@ -288,8 +288,8 @@ async def test_create_pat_sends_projects_and_parses_token() -> None:
     )
     assert captured['url'] == 'https://connection.keboola.com/v1/auth/pat'
     assert captured['auth'] == 'Bearer kbc_sudo_1'
-    # project ids serialized as strings, like the exchange endpoint
-    assert captured['body'] == {'name': 'demo', 'expiresIn': 2592000, 'projects': ['18', '83']}
+    # project ids serialized as strings and nested under scope, like the exchange endpoint
+    assert captured['body'] == {'name': 'demo', 'expiresIn': 2592000, 'scope': {'projects': ['18', '83']}}
     assert pat == 'kbc_pat_new'
 
 
@@ -309,7 +309,7 @@ async def test_lease_pat_introspects_then_sudo_then_creates() -> None:
             return httpx.Response(200, json={'token': 'kbc_sudo_1'})
         if path.endswith('/auth/pat'):
             assert request.headers['Authorization'] == 'Bearer kbc_sudo_1'
-            assert json.loads(request.content)['projects'] == ['18', '83', '95']
+            assert json.loads(request.content)['scope']['projects'] == ['18', '83', '95']
             return httpx.Response(201, json={'token': 'kbc_pat_leased'})
         raise AssertionError(f'unexpected path {path}')
 

@@ -226,13 +226,13 @@ async def create_pat(
     ``subject_token`` must be an elevated (sudo) bearer. ``project_ids`` are sent as strings (the
     auth service rejects integers, per the exchange endpoint). Requires a prior ``elevate_session``.
 
-    NOTE: request fields (``name``/``expiresIn``/``projects``) and the response token field are
-    assumed to mirror the exchange endpoint's conventions — confirm against the auth API.
+    Projects are nested under ``scope`` (mirroring /v1/auth/pat/exchange); a top-level ``projects``
+    field is rejected by the API. Response token field assumed (``token``/``pat``/``accessToken``).
     """
     payload = {
         'name': name,
         'expiresIn': expires_in,
-        'projects': [str(p) for p in project_ids],
+        'scope': {'projects': [str(p) for p in project_ids]},
     }
     async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
         response = await client.post(
