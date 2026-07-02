@@ -366,6 +366,77 @@ async def test_workspace_manager_execute_query_forwards_callback():
 
 
 @pytest.mark.asyncio
+async def test_workspace_creation_uses_step_up_client(tmp_path):
+    """
+    When a Kubernetes SA token path is configured (deployed MCP server), workspace
+    provisioning must route its writes through the step-up Storage client
+    (KeboolaClient.step_up_storage_client) rather than the user's plain client, so
+    Connection can waive the permissions a read-only token lacks. Header construction
+    and read-only propagation are covered by the KeboolaClient.step_up_storage_client
+    tests.
+    """
+    token_file = tmp_path / 'token'
+    token_file.write_text('sa-jwt\n')
+
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_storage_client.verify_token.return_value = {'owner': {'id': 123, 'defaultBackend': 'snowflake'}}
+
+    mock_writer = AsyncMock()
+    mock_writer.configuration_create.return_value = {'id': 'test-config-123', 'name': 'test'}
+    mock_writer.workspace_create_for_config.return_value = {'id': 42}
+    mock_client.step_up_storage_client.return_value = mock_writer
+
+    manager = WorkspaceManager(mock_client, kubernetes_token_path=str(token_file))
+    # Stop the flow right after the provisioning calls we want to assert on.
+    manager._find_ws_by_id = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    mock_storage_client.job_detail.return_value = {'status': 'success', 'results': {'id': 42}}
+
+    await manager._create_ws()
+
+    # The step-up client is built from the projected token path ...
+    mock_client.step_up_storage_client.assert_called_once_with(str(token_file))
+    # ... and all provisioning writes went through it, not the user's plain client.
+    mock_writer.configuration_create.assert_awaited_once()
+    mock_writer.workspace_create_for_config.assert_awaited_once()
+    mock_storage_client.configuration_create.assert_not_called()
+    mock_storage_client.workspace_create_for_config.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_provisioning_client_falls_back_to_user_client():
+    """Without a Kubernetes token path the provisioning client is the user's own Storage client."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+
+    manager = WorkspaceManager(mock_client)
+
+    assert await manager._provisioning_storage_client() is mock_storage_client
+    mock_client.step_up_storage_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_provisioning_client_is_cached_per_manager(tmp_path):
+    """The step-up provisioning client is built at most once per manager."""
+    token_file = tmp_path / 'token'
+    token_file.write_text('sa-jwt')
+
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.step_up_storage_client.return_value = AsyncMock()
+
+    manager = WorkspaceManager(mock_client, kubernetes_token_path=str(token_file))
+
+    first = await manager._provisioning_storage_client()
+    second = await manager._provisioning_storage_client()
+
+    assert first is second
+    mock_client.step_up_storage_client.assert_called_once_with(str(token_file))
+
+
+@pytest.mark.asyncio
 async def test_workspace_manager_create_skips_feature_lookup_on_default_branch():
     """
     On the default branch `has_storage_branches` short-circuits before calling
@@ -446,3 +517,53 @@ async def test_execute_query_cancellation_propagates_to_backend(
 
     if expect_cancel_call:
         mock_qs.cancel_job.assert_called_once_with('job-abc-123', reason='Client cancelled the request')
+
+
+def _wsp(ws_id: int, readonly: bool) -> dict:
+    """Minimal SAPI workspace item (shape per the config-scoped workspaces payload)."""
+    return {
+        'id': ws_id,
+        'connection': {'backend': 'snowflake', 'schema': f'WORKSPACE_{ws_id}'},
+        'readOnlyStorageAccess': readonly,
+    }
+
+
+@pytest.mark.asyncio
+async def test_find_ws_in_branch_matches_mcp_component_readonly():
+    """_find_ws_in_branch returns the read-only workspace found under the MCP component's
+    configs, skipping non-read-only workspaces — no project-wide list, no branch-metadata read."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_storage_client.configuration_list.return_value = [{'id': 'cfg-1'}, {'id': 'cfg-2'}]
+    ws_by_config = {
+        'cfg-1': [_wsp(2, False)],  # not read-only
+        'cfg-2': [_wsp(3, True)],  # the match
+    }
+
+    async def _list_for_config(component_id: str, config_id: str) -> list[dict]:
+        assert component_id == WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID
+        return ws_by_config[config_id]
+
+    mock_storage_client.workspace_list_for_config.side_effect = _list_for_config
+
+    manager = WorkspaceManager(mock_client)
+    info = await manager._find_ws_in_branch()
+
+    assert info is not None
+    assert info.id == 3
+    mock_storage_client.configuration_list.assert_awaited_once_with(WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID)
+    mock_storage_client.workspace_list.assert_not_called()
+    mock_storage_client.branch_metadata_get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_ws_in_branch_returns_none_when_no_mcp_workspace():
+    mock_client = Mock(spec=KeboolaClient)
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_storage_client.configuration_list.return_value = [{'id': 'cfg-1'}]
+    mock_storage_client.workspace_list_for_config.return_value = [_wsp(2, False)]
+
+    manager = WorkspaceManager(mock_client)
+    assert await manager._find_ws_in_branch() is None

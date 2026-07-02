@@ -1,6 +1,7 @@
 """Keboola Storage API client wrapper."""
 
 import logging
+from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence, TypeVar
 from urllib.parse import urlparse, urlunparse
 
@@ -266,6 +267,35 @@ class KeboolaClient:
     @property
     def storage_client(self) -> 'AsyncStorageClient':
         return self._storage_client
+
+    def step_up_storage_client(self, kubernetes_token_path: str) -> 'AsyncStorageClient':
+        """
+        Returns a Storage client that keeps this client's user token and additionally
+        sends the projected Kubernetes ServiceAccount JWT as the X-Kubernetes-Authorization
+        step-up header. Connection waives the permissions the user's token lacks on the
+        step-up-enabled actions (workspace / config / event creation) when the
+        ServiceAccount is authorized for them — no privileged token is minted and the
+        user's token stays the audited principal. The read-only write guard of the user's
+        Storage client is preserved; the header only widens server-side permissions.
+
+        The token file is read on each call so kubelet rotation needs no restart.
+
+        :param kubernetes_token_path: Path to the projected ServiceAccount token file.
+        :raises ValueError: If the token file is empty.
+        """
+        jwt = Path(kubernetes_token_path).read_text().strip()
+        if not jwt:
+            raise ValueError(f'Kubernetes ServiceAccount token file is empty: {kubernetes_token_path}')
+
+        headers = dict(self._headers or {})
+        headers['X-Kubernetes-Authorization'] = f'Bearer {jwt}'
+        return AsyncStorageClient.create(
+            root_url=self._storage_api_url,
+            token=self._token,
+            branch_id=self._branch_id,
+            headers=headers,
+            readonly=self._storage_client.raw_client.readonly,
+        )
 
     @property
     def jobs_queue_client(self) -> 'JobsQueueClient':

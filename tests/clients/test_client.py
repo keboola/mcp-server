@@ -759,3 +759,54 @@ def test_get_metadata_property(
         default=default,
     )
     assert result == expected
+
+
+class TestStepUpStorageClient:
+    """KeboolaClient.step_up_storage_client builds the Kubernetes step-up Storage client."""
+
+    def test_attaches_step_up_header_and_keeps_user_token(self, tmp_path):
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt\n')
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token='user-token',
+            headers={'User-Agent': 'test'},
+        )
+
+        stepped = client.step_up_storage_client(str(token_file))
+
+        headers = stepped.raw_client.headers
+        # The SA JWT rides as the step-up header ...
+        assert headers['X-Kubernetes-Authorization'] == 'Bearer sa-jwt'
+        # ... alongside the user's own token (no privileged token is minted) ...
+        assert headers['X-StorageAPI-Token'] == 'user-token'
+        # ... and pre-existing headers are preserved.
+        assert headers['User-Agent'] == 'test'
+
+    @pytest.mark.parametrize('readonly', [None, True, False])
+    def test_propagates_readonly_guard(self, tmp_path, readonly):
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt')
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token='user-token',
+            readonly=readonly,
+        )
+
+        stepped = client.step_up_storage_client(str(token_file))
+
+        assert stepped.raw_client.readonly == client.storage_client.raw_client.readonly
+
+    def test_fails_loudly_on_empty_token_file(self, tmp_path):
+        token_file = tmp_path / 'token'
+        token_file.write_text('  \n')
+        client = KeboolaClient(storage_api_url='https://connection.keboola.com', storage_api_token='user-token')
+
+        with pytest.raises(ValueError, match='token file is empty'):
+            client.step_up_storage_client(str(token_file))
+
+    def test_fails_loudly_on_missing_token_file(self, tmp_path):
+        client = KeboolaClient(storage_api_url='https://connection.keboola.com', storage_api_token='user-token')
+
+        with pytest.raises(FileNotFoundError):
+            client.step_up_storage_client(str(tmp_path / 'missing'))

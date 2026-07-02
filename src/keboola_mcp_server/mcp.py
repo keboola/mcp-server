@@ -8,6 +8,7 @@ and other utilities for the MCP server.
 import asyncio
 import dataclasses
 import logging
+import os
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, TypeVar
@@ -283,7 +284,14 @@ class SessionStateMiddleware(fmw.Middleware):
             raise
 
         try:
-            workspace_manager = await WorkspaceManager.create(client, config.workspace_schema)
+            # The Kubernetes ServiceAccount token path is read from the process environment
+            # only (KBC_KUBERNETES_TOKEN_PATH), never from `Config`/HTTP headers — it is a
+            # deployment-level credential of the MCP server itself and must not be
+            # overridable per request.
+            kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
+            workspace_manager = await WorkspaceManager.create(
+                client, config.workspace_schema, kubernetes_token_path=kubernetes_token_path
+            )
             state[WorkspaceManager.STATE_KEY] = workspace_manager
             LOG.info('Successfully initialized Storage API Workspace manager.')
         except Exception as e:

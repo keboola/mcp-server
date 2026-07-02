@@ -1068,6 +1068,25 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(list[JsonDict], await self.get(endpoint=f'branch/{self._branch_id}/workspaces'))
 
+    async def workspace_list_for_config(self, component_id: str, config_id: str) -> list[JsonDict]:
+        """
+        Lists the workspaces belonging to a single component configuration.
+
+        Thin wrapper for GET /branch/{branch_id}/components/{component_id}/configs/{config_id}/workspaces.
+        Scoped to one config, so it needs only that config's read access — no project-wide
+        workspace listing.
+
+        :param component_id: The id of the component.
+        :param config_id: The id of the configuration.
+        :return: List of workspaces for the configuration.
+        """
+        return cast(
+            list[JsonDict],
+            await self.get(
+                endpoint=f'branch/{self._branch_id}/components/{component_id}/configs/{config_id}/workspaces'
+            ),
+        )
+
     async def verify_token(self) -> JsonDict:
         """
         Checks the token privileges and returns information about the project to which the token belongs.

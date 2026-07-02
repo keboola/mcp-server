@@ -1,6 +1,7 @@
 import inspect
 import json
 import logging
+import os
 import time
 from functools import wraps
 from typing import Any, Callable, Mapping, Optional, Type, TypeVar, cast
@@ -121,7 +122,15 @@ async def _trigger_event(
         event_type: StorageEventType = 'success'
 
     client = KeboolaClient.from_state(ctx.session.state)
-    resp = await client.storage_client.trigger_event(
+    # Emitting a storage event is a write; a read-only user's own token is denied (403).
+    # On the Keboola-deployed server (KBC_KUBERNETES_TOKEN_PATH set) send the SA JWT as the
+    # step-up header so Connection waives the missing permission on the event-create action
+    # (storage:events:create). Read from the process env only — never from Config/HTTP — and
+    # fall back to the user's own client when not deployed/configured.
+    storage_client = client.storage_client
+    if kubernetes_token_path := os.environ.get('KBC_KUBERNETES_TOKEN_PATH'):
+        storage_client = client.step_up_storage_client(kubernetes_token_path)
+    resp = await storage_client.trigger_event(
         message=message,
         component_id=_USER_AGENT_TO_COMPONENT_ID.get(user_agent.split(sep='/')[0]) or 'keboola.mcp-server-tool',
         event_type=event_type,
