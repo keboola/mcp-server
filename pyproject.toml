@@ -12,7 +12,7 @@ license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
     "fastmcp == 3.4.2",
-    "mcp == 1.27.2",
+    "mcp==1.28.0",
     "httpx ~= 0.28",
     "httpx-retries~=0.5",
     "jsonpath-ng ~= 1.8",
