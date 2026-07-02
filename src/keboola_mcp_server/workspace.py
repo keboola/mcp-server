@@ -613,10 +613,11 @@ class WorkspaceManager:
         is ever minted; the audit trail stays on the user's token.
         Otherwise the user's own Storage client is used unchanged.
 
-        The step-up client is cached for this manager's lifetime — provisioning happens
-        at most once per manager, well within the projected token's rotation window.
-        The token file is read here (per provisioning flow), so kubelet rotation needs
-        no restarts.
+        The step-up client is cached for this manager's lifetime, so the token file is
+        read once — when the client is first built — not on every provisioning attempt.
+        Provisioning happens at most once per manager, well within the projected token's
+        rotation window; a fresh manager (new session) re-reads the file, so kubelet
+        rotation is picked up without restarting the server.
         """
         if not self._kubernetes_token_path:
             return self._client.storage_client

@@ -14,9 +14,10 @@ the `X-Kubernetes-Authorization` header:
 - creating the billing configuration (`keboola.mcp-server-tool`),
 - creating the workspace itself.
 
-The workspace is a regular workspace created under the `keboola.mcp-server-tool`
-configuration and is rediscovered by listing workspaces and matching that component —
-no branch-metadata pointer is written anymore.
+The workspace is a regular workspace created under a configuration of the
+`keboola.mcp-server-tool` component, and is rediscovered by listing that component's
+configurations and fetching each config's workspaces through the config-scoped
+workspaces endpoint — no branch-metadata pointer is written anymore.
 
 Connection validates the JWT and, when the ServiceAccount is authorized for workspace
 provisioning, waives the permissions the user's token lacks —
@@ -26,8 +27,10 @@ Everything else (queries, reads, tools) is untouched.
 
 Key properties:
 
-- The token file is read per provisioning flow — kubelet rotation is picked up
-  automatically (no caching across flows).
+- The token file is read when the step-up provisioning client is first built, once per
+  session (`WorkspaceManager` lifetime). Provisioning happens at most once per session,
+  well within the projected token's rotation window; a new session re-reads the file, so
+  kubelet rotation is picked up without restarting the server.
 - `KBC_KUBERNETES_TOKEN_PATH` is read from the process environment only; it cannot be
   set or overridden via HTTP headers or per-request config.
 - A missing or empty token file fails loudly — the step-up header is never silently
