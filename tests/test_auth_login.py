@@ -154,6 +154,18 @@ async def test_ensure_access_token_logs_in_when_no_session(creds_file: Path, mon
     assert calls == [STACK]
 
 
+@pytest.mark.asyncio
+async def test_ensure_access_token_non_interactive_raises_without_login(creds_file: Path, monkeypatch) -> None:
+    # No TTY (e.g. launched by an MCP client): must NOT attempt a browser login (it would corrupt
+    # the stdio protocol / hang the handshake); raise the clear guidance instead.
+    async def _must_not_login(*_a, **_k):
+        raise AssertionError('perform_login must not run when interactive login is disallowed')
+
+    monkeypatch.setattr(auth_login, 'perform_login', _must_not_login)
+    with pytest.raises(RuntimeError, match='Run "keboola-mcp-server login'):
+        await ensure_access_token(STACK, allow_interactive=False)
+
+
 def test_pkce_challenge_is_sha256_of_verifier() -> None:
     verifier = auth_login._b64url(b'0123456789abcdef0123456789abcdef0123456789ab')
     expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode('ascii')).digest()).decode().rstrip('=')
