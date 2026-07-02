@@ -206,7 +206,8 @@ async def elevate_session(
             headers={'Authorization': f'Bearer {subject_token}'},
             json=payload,
         )
-        response.raise_for_status()
+        if response.is_error:
+            raise RuntimeError(f'POST /{_SUDO_PATH} failed ({response.status_code}): {response.text}')
         body = cast(dict, response.json()) if response.content else {}
     return cast(str, body.get('token') or body.get('accessToken') or subject_token)
 
@@ -239,7 +240,9 @@ async def create_pat(
             headers={'Authorization': f'Bearer {subject_token}'},
             json=payload,
         )
-        response.raise_for_status()
+        if response.is_error:
+            # Surface the validation body so a wrong/missing field is visible (the schema is assumed).
+            raise RuntimeError(f'POST /{_PAT_PATH} failed ({response.status_code}) with {payload=}: {response.text}')
         body = cast(dict, response.json())
     pat = body.get('token') or body.get('pat') or body.get('accessToken')
     if not pat:
