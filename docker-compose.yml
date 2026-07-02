@@ -1,0 +1,74 @@
+# Local dev stack for the MCP server + its docs-search index.
+#
+# Three services:
+#   pgvector   — Postgres + pgvector, backs the docs-search index (docs_query / find_component_id).
+#   docs-seed  — one-shot: applies the schema + seeds the fixture corpus (migrate + seed), then exits.
+#   mcp        — the MCP server (production image) over streamable-HTTP on :8000.
+#
+# The MCP only ever *reads* the index; docs-seed is the local mirror of the production
+# out-of-band build (see feature_spec/docs-search-pgvector/). It seeds fixtures, not real
+# docs, using the deterministic stub embedder so no embedding API key is needed.
+#
+# Usage:
+#   docker compose up -d --wait pgvector          # just Postgres (used by `npm run test:integ`)
+#   docker compose up --build                     # full stack: pgvector -> docs-seed -> mcp
+#   curl localhost:8000/health-check              # MCP health once up ({"status":"ok"})
+
+services:
+  pgvector:
+    # pgvector >= 0.7 is required for halfvec(3072); the pg17 tag ships it.
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: mcp
+      POSTGRES_PASSWORD: mcp
+      POSTGRES_DB: docs
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mcp -d docs']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Migrate the schema + seed the fixture corpus, then exit. Runs the compiled seeder
+  # (`dist/docs-build.js`) from the same image the MCP runs — no tsx/scripts needed.
+  docs-seed:
+    build: .
+    image: keboola-mcp-server:local
+    command: ['node', 'dist/docs-build.js']
+    environment:
+      DATABASE_URL: postgres://mcp:mcp@pgvector:5432/docs
+      DOCS_EMBEDDER_MODEL: stub
+      DOCS_EMBEDDER_DIM: '3072'
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    restart: 'no'
+
+  mcp:
+    image: keboola-mcp-server:local
+    # Reuses the image built by docs-seed (build: .). streamable-HTTP is the deployed mode.
+    command: ['node', 'dist/index.js', '--transport', 'streamable-http']
+    ports:
+      - '8000:8000'
+    environment:
+      HOST: 0.0.0.0
+      PORT: '8000'
+      # Docs-search index (read-only from the MCP). Same stub embedder as the seeder so
+      # build-time and query-time vectors match.
+      DATABASE_URL: postgres://mcp:mcp@pgvector:5432/docs
+      DOCS_EMBEDDER_MODEL: stub
+      DOCS_EMBEDDER_DIM: '3072'
+      # HTTP mode is multi-tenant: clients pass the Storage token per request via
+      # X-StorageApi-Token / Authorization headers, so no KBC_* token is needed at boot.
+      # For a single-tenant local run you can bake them in instead:
+      #   KBC_STORAGE_API_URL: https://connection.<stack>.keboola.com
+      #   KBC_STORAGE_TOKEN: <your-token>
+    depends_on:
+      docs-seed:
+        condition: service_completed_successfully
+
+volumes:
+  pgvector-data:

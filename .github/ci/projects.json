@@ -1,0 +1,37 @@
+[
+  {
+    "host": "connection.europe-west3.gcp.keboola.com",
+    "project": 3053,
+    "stagingStorage": "gcs",
+    "backend": "snowflake",
+    "token": "$TEST_KBC_PROJECT_3053_TOKEN"
+  },
+  {
+    "host": "connection.europe-west3.gcp.keboola.com",
+    "project": 3054,
+    "stagingStorage": "gcs",
+    "backend": "snowflake",
+    "token": "$TEST_KBC_PROJECT_3054_TOKEN"
+  },
+  {
+    "host": "connection.europe-west3.gcp.keboola.com",
+    "project": 3056,
+    "stagingStorage": "gcs",
+    "backend": "bigquery",
+    "token": "$TEST_KBC_PROJECT_3056_TOKEN"
+  },
+  {
+    "host": "connection.europe-west3.gcp.keboola.com",
+    "project": 3057,
+    "stagingStorage": "gcs",
+    "backend": "bigquery",
+    "token": "$TEST_KBC_PROJECT_3057_TOKEN"
+  },
+  {
+    "host": "connection.europe-west3.gcp.keboola.com",
+    "project": 3055,
+    "stagingStorage": "gcs",
+    "backend": "snowflake",
+    "token": "$TEST_KBC_PROJECT_3055_TOKEN"
+  }
+]

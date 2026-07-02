@@ -1,0 +1,15 @@
+{
+  "printWidth": 100,
+  "tabWidth": 2,
+  "singleQuote": true,
+  "arrowParens": "always",
+  "jsxSingleQuote": false,
+  "bracketSameLine": false,
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "dist",
+    "**/CHANGELOG.md",
+    "src/resources",
+    "src/tools/storage-schema.json"
+  ]
+}

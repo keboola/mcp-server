@@ -1,0 +1,86 @@
+{
+  "name": "@keboola/mcp-server",
+  "version": "2.0.0-alpha.1",
+  "description": "MCP server for interacting with Keboola Connection",
+  "keywords": [
+    "ai",
+    "data-platform",
+    "keboola",
+    "mcp",
+    "model-context-protocol"
+  ],
+  "homepage": "https://github.com/keboola/keboola-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/keboola/keboola-mcp-server/issues"
+  },
+  "license": "MIT",
+  "author": "Keboola <devel@keboola.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/keboola/keboola-mcp-server.git"
+  },
+  "bin": {
+    "keboola-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit",
+    "lint": "oxlint . --quiet && oxfmt --check src __tests__ *.ts *.json",
+    "lint:fix": "oxlint --fix . --quiet && oxfmt src __tests__ *.ts *.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integ": "vitest run --config vitest.integ.config.ts",
+    "test:integ:watch": "vitest --config vitest.integ.config.ts",
+    "docs:build": "tsx scripts/docs-build.ts",
+    "gen:tools-docs": "tsx scripts/gen-tools-docs.ts",
+    "check:tools-docs": "tsx scripts/gen-tools-docs.ts --check"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.14",
+    "@keboola/api-client": "^5.0.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@toon-format/toon": "^2.3.0",
+    "ajv": "^8.20.0",
+    "dd-trace": "^5.69.0",
+    "hono": "^4.12.27",
+    "jose": "^6.2.3",
+    "pg": "^8.22.0",
+    "pino": "^9.14.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@keboola/oxlint-config": "^0.1.2",
+    "@keboola/tsconfig": "^0.1.1",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.20.0",
+    "ioredis": "^5.4.1",
+    "msw": "^2.14.6",
+    "oxfmt": "^0.44.0",
+    "oxlint": "^1.56.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.8"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

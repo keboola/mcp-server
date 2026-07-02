@@ -9,8 +9,8 @@
   },
   "packages": [
     {
-      "registryType": "pypi",
-      "identifier": "keboola-mcp-server",
+      "registryType": "npm",
+      "identifier": "@keboola/mcp-server",
       "version": "__MCP_SERVER_VERSION__",
       "transport": {
         "type": "stdio"
