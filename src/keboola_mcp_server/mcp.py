@@ -619,15 +619,15 @@ class ToolsFilteringMiddleware(fmw.Middleware):
     ) -> list[Tool]:
         tools = await call_next(context)
 
-        # Feature/role filtering needs verify_token (a Connection round-trip). For a programmatic
-        # (kbc_*) session that has NOT confirmed a scope yet there is no single project to evaluate
-        # features against, and doing the call on tools/list would block connecting on a slow stack.
-        # Skip list-time filtering there and advertise the superset; the on_call_tool guards still
-        # enforce every feature/role/branch rule per project when a tool is actually invoked.
+        # Feature/role filtering needs verify_token (a Connection round-trip with a single project
+        # context). For a programmatic (kbc_*) session this doesn't work at list time: pre-scope there
+        # is no project (and the call would block connecting on a slow stack); post-scope the session
+        # holds a multi-project scoped token and verify without an X-KBC-ProjectId returns 401 — which
+        # made every tools/list fail and the client disconnect. So skip list-time filtering for ALL
+        # programmatic sessions and advertise the superset; the on_call_tool guards still enforce every
+        # feature/role/branch rule per project (with the right project_id) when a tool is invoked.
         client = KeboolaClient.from_state(context.fastmcp_context.session.state)
-        scope = context.fastmcp_context.session.state.get(SCOPE_KEY)
-        scope_confirmed = isinstance(scope, SessionScope) and scope.confirmed
-        if is_programmatic_token(client.token) and not scope_confirmed:
+        if is_programmatic_token(client.token):
             return tools
 
         token_info = await self.get_token_info(context.fastmcp_context)
