@@ -790,6 +790,18 @@ class TestMaybeUseStoredSession:
         assert out is config
 
     @pytest.mark.asyncio
+    async def test_list_request_uses_stored_token_without_network_refresh(self, monkeypatch) -> None:
+        # /list must not do a network refresh: read the stored token as-is via load_tokens.
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com')
+        with (
+            patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(side_effect=AssertionError('no network'))),
+            patch('keboola_mcp_server.mcp.load_tokens', return_value=SimpleNamespace(access_token='kbc_at_file')),
+        ):
+            out = await SessionStateMiddleware._maybe_use_stored_session(config, refresh=False)
+        assert out.storage_token == 'kbc_at_file'
+
+    @pytest.mark.asyncio
     async def test_deployed_is_noop(self, monkeypatch) -> None:
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
         config = Config(storage_api_url='https://connection.keboola.com')
