@@ -250,8 +250,14 @@ class SessionStateMiddleware(fmw.Middleware):
             # usage, and re-mint the scoped token when it nears expiry. With no scope and no preset
             # project, auto-lease ALL accessible projects (multi-project mode) so the session
             # bootstraps without a hand-picked project and read tools fan out across everything.
+            #
+            # Capability-discovery requests (tools/list, prompts/list, resources/list) must be fast and
+            # must NOT depend on a network round-trip to Connection: auto-lease calls token introspect,
+            # which — if the stack is slow — would make tools/list hang until the client's timeout.
+            # Skip auto-lease for /list; the scope is established on the first real (non-list) call.
+            is_list = context.method.endswith('/list')
             scope = self._read_persisted_scope(ctx.session)
-            if scope is None and not config.project_id:
+            if scope is None and not config.project_id and not is_list:
                 scope = await self._autolease_default_scope(config)
             config, scope = await self._resolve_local_tokens(config, scope)
 
@@ -262,7 +268,7 @@ class SessionStateMiddleware(fmw.Middleware):
             # so that clients can discover available tools even when the configured branch ID doesn't
             # exist yet. For these requests the client is created without a branch ID. Otherwise, the branch is
             # validated via a SAPI call.
-            if context.method.endswith('/list'):
+            if is_list:
                 if config.branch_id:
                     LOG.info(f'Skipping branch validation for {context.method} request.')
                 config = dataclasses.replace(config, branch_id=None)
