@@ -41,6 +41,10 @@ _PAT_PATH = 'v1/auth/pat'
 _REFRESH_SKEW_SECONDS = 60
 _PAT_DEFAULT_EXPIRES_SECONDS = 30 * 24 * 60 * 60  # ~1 month
 _CREDENTIALS_PATH = Path.home() / '.keboola' / 'mcp' / 'credentials.json'
+# Short connect timeout so an unreachable stack (e.g. VPN off — internal `.dev` stacks resolve to a
+# private 10.x IP) fails in a few seconds with a clear ConnectTimeout instead of blocking the full
+# window. A longer read timeout still tolerates a slow-but-reachable Connection.
+_AUTH_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 
 
 def _client_id() -> str:
@@ -123,7 +127,7 @@ async def introspect_token(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> Introspection:
     """Enumerates the projects a programmatic token can reach via /v1/auth/token/introspect."""
-    async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
+    async with httpx.AsyncClient(timeout=_AUTH_TIMEOUT, transport=transport) as client:
         response = await client.get(
             f'{_base_url(storage_api_url)}/{_INTROSPECT_PATH}',
             headers={'Authorization': f'Bearer {subject_token}'},
@@ -164,7 +168,7 @@ async def exchange_scoped_token(
         'expiresIn': expires_in,
         'scope': {'projects': [str(p) for p in project_ids], 'readOnly': read_only or None},
     }
-    async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
+    async with httpx.AsyncClient(timeout=_AUTH_TIMEOUT, transport=transport) as client:
         response = await client.post(
             f'{_base_url(storage_api_url)}/{_EXCHANGE_PATH}',
             headers={'Authorization': f'Bearer {subject_token}'},
@@ -200,7 +204,7 @@ async def elevate_session(
     if bool(totp_code) == bool(recovery_code):
         raise ValueError('Provide exactly one of totp_code or recovery_code.')
     payload = {'totpCode': totp_code} if totp_code else {'recoveryCode': recovery_code}
-    async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
+    async with httpx.AsyncClient(timeout=_AUTH_TIMEOUT, transport=transport) as client:
         response = await client.post(
             f'{_base_url(storage_api_url)}/{_SUDO_PATH}',
             headers={'Authorization': f'Bearer {subject_token}'},
@@ -234,7 +238,7 @@ async def create_pat(
         'expiresIn': expires_in,
         'scope': {'projects': [str(p) for p in project_ids]},
     }
-    async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
+    async with httpx.AsyncClient(timeout=_AUTH_TIMEOUT, transport=transport) as client:
         response = await client.post(
             f'{_base_url(storage_api_url)}/{_PAT_PATH}',
             headers={'Authorization': f'Bearer {subject_token}'},
@@ -302,7 +306,7 @@ async def exchange_code(
         'redirectUri': redirect_uri,
         'codeVerifier': code_verifier,
     }
-    async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
+    async with httpx.AsyncClient(timeout=_AUTH_TIMEOUT, transport=transport) as client:
         response = await client.post(f'{_base_url(storage_api_url)}/{_TOKEN_PATH}', json=payload)
         response.raise_for_status()
         return _parse_token_response(cast(dict, response.json()))
@@ -315,7 +319,7 @@ async def refresh_tokens(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> TokenSet:
     """Exchanges a refresh token for a new (rotated) session token set."""
-    async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
+    async with httpx.AsyncClient(timeout=_AUTH_TIMEOUT, transport=transport) as client:
         response = await client.post(
             f'{_base_url(storage_api_url)}/{_REFRESH_PATH}', json={'refreshToken': refresh_token}
         )

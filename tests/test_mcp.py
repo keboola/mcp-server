@@ -417,6 +417,24 @@ class TestToolsFilteringMiddleware:
         assert 'other_tool' in result_names
 
     @pytest.mark.asyncio
+    async def test_list_tools_programmatic_pre_scope_skips_verify(self, mcp_context_client) -> None:
+        # Programmatic session with no confirmed scope: tools/list must not call verify_token (it would
+        # block connecting on a slow stack). Advertise the superset; on_call_tool still enforces.
+        client = KeboolaClient.from_state(mcp_context_client.session.state)
+        client.storage_client.verify_token = AsyncMock(side_effect=AssertionError('verify must not run pre-scope'))
+
+        tools = [_tool('get_tables', read_only=True), _tool('create_flow'), _tool('get_semantic_context')]
+
+        async def call_next(_):
+            return tools
+
+        context = SimpleNamespace(fastmcp_context=mcp_context_client)
+        # programmatic token + no confirmed scope → filtering skipped, verify_token not called
+        with patch('keboola_mcp_server.mcp.is_programmatic_token', return_value=True):
+            result = await ToolsFilteringMiddleware().on_list_tools(context, call_next)
+        assert {t.name for t in result} == {'get_tables', 'create_flow', 'get_semantic_context'}
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('token_role', 'bearer_token', 'hidden_tools', 'visible_tools'),
         [
@@ -867,6 +885,18 @@ class TestMaybeUseStoredSession:
         with patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(side_effect=AssertionError('must not read'))):
             out = await SessionStateMiddleware._maybe_use_stored_session(config)
         assert out is config
+
+    @pytest.mark.asyncio
+    async def test_list_request_uses_stored_token_without_network_refresh(self, monkeypatch) -> None:
+        # /list must not do a network refresh: read the stored token as-is via load_tokens.
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com')
+        with (
+            patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(side_effect=AssertionError('no network'))),
+            patch('keboola_mcp_server.mcp.load_tokens', return_value=SimpleNamespace(access_token='kbc_at_file')),
+        ):
+            out = await SessionStateMiddleware._maybe_use_stored_session(config, refresh=False)
+        assert out.storage_token == 'kbc_at_file'
 
     @pytest.mark.asyncio
     async def test_deployed_is_noop(self, monkeypatch) -> None:

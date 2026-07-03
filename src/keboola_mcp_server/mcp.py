@@ -31,7 +31,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token
+from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token, load_tokens
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
@@ -276,23 +276,28 @@ class SessionStateMiddleware(fmw.Middleware):
             if http_rq := get_http_request_or_none():
                 config = self.apply_request_config(http_rq, config, own_stack_storage_api_url=own_stack_storage_api_url)
 
+            # Capability-discovery requests (tools/list, prompts/list, resources/list) MUST be fast and
+            # network-free: a client fetches all three on connect, so any Connection round-trip here
+            # (token introspect, refresh, or scoped-exchange) makes connecting hang until the client's
+            # 30s timeout. For /list we do zero network in on_request — no auto-lease, no token refresh,
+            # no scoped re-mint — and use the stored session token as-is (no refresh). The scope and
+            # fresh tokens are established on the first real (non-list) tool call.
+            is_list = context.method.endswith('/list')
+
             # Local streamable-HTTP with no token supplied (no header / env): fall back to the stored
-            # PKCE session and keep it fresh. Lets you `login` once, run the HTTP server, and connect
-            # with NO auth header — the server reads ~/.keboola/mcp/credentials.json, refreshes the
-            # access token when it nears expiry, and persists the rotated pair (so refresh-token
-            # rotation is handled, which a static header could never do). No-op when a token is already
-            # provided or on the deployed server (KBC_KUBERNETES_TOKEN_PATH set).
-            config = await self._maybe_use_stored_session(config)
+            # PKCE session. For non-list requests keep it fresh (refresh + persist rotation); for /list
+            # read it without a network refresh. No-op when a token is provided or on the deployed
+            # server (KBC_KUBERNETES_TOKEN_PATH set).
+            config = await self._maybe_use_stored_session(config, refresh=not is_list)
 
             # In-conversation multi-project scope persists on the session across this per-request
-            # state rebuild. Read it before the state is overwritten, refresh the stored token during
-            # usage, and re-mint the scoped token when it nears expiry. With no scope and no preset
-            # project, auto-lease ALL accessible projects (multi-project mode) so the session
-            # bootstraps without a hand-picked project and read tools fan out across everything.
+            # state rebuild. With no scope and no preset project, auto-lease ALL accessible projects
+            # (multi-project mode) so read tools fan out across everything — but never on /list.
             scope = self._read_persisted_scope(ctx.session)
-            if scope is None and not config.project_id:
+            if scope is None and not config.project_id and not is_list:
                 scope = await self._autolease_default_scope(config)
-            config, scope = await self._resolve_local_tokens(config, scope)
+            if not is_list:
+                config, scope = await self._resolve_local_tokens(config, scope)
 
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
@@ -301,7 +306,7 @@ class SessionStateMiddleware(fmw.Middleware):
             # so that clients can discover available tools even when the configured branch ID doesn't
             # exist yet. For these requests the client is created without a branch ID. Otherwise, the branch is
             # validated via a SAPI call.
-            if context.method.endswith('/list'):
+            if is_list:
                 if config.branch_id:
                     LOG.info(f'Skipping branch validation for {context.method} request.')
                 config = dataclasses.replace(config, branch_id=None)
@@ -403,21 +408,29 @@ class SessionStateMiddleware(fmw.Middleware):
         )
 
     @classmethod
-    async def _maybe_use_stored_session(cls, config: Config) -> Config:
+    async def _maybe_use_stored_session(cls, config: Config, *, refresh: bool = True) -> Config:
         """Populate the token from the stored PKCE session for a local, tokenless request.
 
-        Only when: no token is set, a stack URL is known, and this is not the deployed server. Reads
-        (and refreshes + persists) the session leased by ``keboola-mcp-server login``. If there is no
-        stored session, leaves the config unchanged (a clear "no token" error surfaces downstream).
+        Only when: no token is set, a stack URL is known, and this is not the deployed server. With
+        ``refresh=True`` reads (and refreshes + persists) the session leased by
+        ``keboola-mcp-server login``. With ``refresh=False`` (capability-discovery /list requests)
+        reads the stored token WITHOUT any network refresh, so listing never blocks on Connection.
+        If there is no stored session, leaves the config unchanged.
         """
         if config.storage_token or not config.storage_api_url:
             return config
         if os.environ.get('KBC_KUBERNETES_TOKEN_PATH'):
             return config
-        try:
-            access_token = await get_access_token(config.storage_api_url)
-        except RuntimeError:
-            return config
+        if refresh:
+            try:
+                access_token = await get_access_token(config.storage_api_url)
+            except RuntimeError:
+                return config
+        else:
+            tokens = load_tokens(config.storage_api_url)
+            if not tokens:
+                return config
+            access_token = tokens.access_token
         return dataclasses.replace(config, storage_token=access_token)
 
     @classmethod
@@ -682,6 +695,18 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
     ) -> list[Tool]:
         tools = await call_next(context)
+
+        # Feature/role filtering needs verify_token (a Connection round-trip). For a programmatic
+        # (kbc_*) session that has NOT confirmed a scope yet there is no single project to evaluate
+        # features against, and doing the call on tools/list would block connecting on a slow stack.
+        # Skip list-time filtering there and advertise the superset; the on_call_tool guards still
+        # enforce every feature/role/branch rule per project when a tool is actually invoked.
+        client = KeboolaClient.from_state(context.fastmcp_context.session.state)
+        scope = context.fastmcp_context.session.state.get(SCOPE_KEY)
+        scope_confirmed = isinstance(scope, SessionScope) and scope.confirmed
+        if is_programmatic_token(client.token) and not scope_confirmed:
+            return tools
+
         token_info = await self.get_token_info(context.fastmcp_context)
         features = self.get_project_features(token_info)
         token_role = self.get_token_role(token_info).lower()
