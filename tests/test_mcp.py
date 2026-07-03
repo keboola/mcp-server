@@ -1136,6 +1136,50 @@ class TestMultiProjectMiddleware:
         assert merged.structured_content == {'buckets': [0, 1, 0, 1, 2], 'total': 5}
         assert [c.text for c in merged.content] == ['=== project 11 ===', '2 items', '=== project 22 ===', '3 items']
 
+    @pytest.mark.asyncio
+    async def test_fan_out_partial_failure_returns_successes_with_retry_hint(self) -> None:
+        scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_s', confirmed=True)
+        context, state = self._ctx(scope, 'get_tables', read_only=True)
+
+        async def call_next(_):
+            if state[KeboolaClient.STATE_KEY] == 'client-22':
+                raise RuntimeError('boom-22')
+            return self._result('rows')
+
+        with (
+            patch.object(
+                MultiProjectMiddleware,
+                '_client_for_project',
+                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+            ),
+            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
+        ):
+            result = await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        # Project 11 succeeded; project 22's failure is a retry hint, not a total failure.
+        assert result.structured_content == {'rows': ['rows']}
+        texts = [c.text for c in result.content]
+        assert any('project 22 failed' in t and 'project_ids=[22]' in t for t in texts)
+
+    @pytest.mark.asyncio
+    async def test_fan_out_all_failed_raises_aggregate(self) -> None:
+        scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_s', confirmed=True)
+        context, _ = self._ctx(scope, 'get_tables', read_only=True)
+
+        async def call_next(_):
+            raise RuntimeError('down')
+
+        with (
+            patch.object(
+                MultiProjectMiddleware,
+                '_client_for_project',
+                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+            ),
+            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
+        ):
+            with pytest.raises(ToolError, match='failed for all 2 scoped'):
+                await MultiProjectMiddleware().on_call_tool(context, call_next)
+
     def test_merge_large_degrades_to_count_first(self, monkeypatch) -> None:
         # Lower the cap so a modest result trips the count-first path.
         monkeypatch.setattr(MultiProjectMiddleware, '_FANOUT_MAX_ITEMS', 3)

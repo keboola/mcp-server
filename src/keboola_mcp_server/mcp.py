@@ -784,15 +784,29 @@ class MultiProjectMiddleware(fmw.Middleware):
                 state[WorkspaceManager.STATE_KEY] = original_workspace
 
         results: list[tuple[int, ToolResult]] = []
+        errors: list[tuple[int, str]] = []
         try:
             for project_id in targets:
                 await self._swap_project(state, server_state, base_token, project_id, scope.read_only)
-                results.append((project_id, await call_next(context)))
+                # Isolate per-project failures: one project's error (e.g. Queue 401, a transient 5xx)
+                # must not discard the other projects' good results. Collect it and keep going, so the
+                # agent gets a partial response plus a retry hint. CancelledError is BaseException, so
+                # `except Exception` lets client cancellation propagate.
+                try:
+                    results.append((project_id, await call_next(context)))
+                except Exception as e:
+                    LOG.warning(f'Fan-out call failed for project {project_id}: {e}')
+                    errors.append((project_id, str(e)))
         finally:
             state[KeboolaClient.STATE_KEY] = original_client
             state[WorkspaceManager.STATE_KEY] = original_workspace
 
-        return self._merge(results)
+        # Every project failed → nothing partial to return; surface a single aggregate error.
+        if not results and errors:
+            detail = '; '.join(f'project {pid}: {msg}' for pid, msg in errors)
+            raise ToolError(f'The tool failed for all {len(errors)} scoped project(s): {detail}')
+
+        return self._merge(results, errors)
 
     async def on_list_tools(
         self,
@@ -923,10 +937,19 @@ class MultiProjectMiddleware(fmw.Middleware):
         return sc
 
     @staticmethod
-    def _merge(results: list[tuple[int, 'ToolResult']]) -> 'ToolResult':
+    def _merge(results: list[tuple[int, 'ToolResult']], errors: 'list[tuple[int, str]] | None' = None) -> 'ToolResult':
         # Deep-merge the per-project structured payloads into one schema-valid object (lists concatenated
         # across projects). Counters (e.g. bucket_counts, search total) are summed by _deep_merge, so they
         # keep reflecting the true totals even if the item lists get truncated below.
+        # Per-project failures (partial success) are surfaced as retry-hint notes in the text content,
+        # so the model can re-run just the failed project(s) via the project_ids filter.
+        error_notes = [
+            mt.TextContent(
+                type='text',
+                text=f'project {pid} failed (retry with project_ids=[{pid}]): {msg}',
+            )
+            for pid, msg in (errors or [])
+        ]
         merged_structured: Any = None
         per_project_counts: list[tuple[int, int]] = []
         total_items = 0
@@ -941,7 +964,7 @@ class MultiProjectMiddleware(fmw.Middleware):
 
         # Small enough: full detail with per-project text envelopes (attribution the model can read).
         if total_items <= MultiProjectMiddleware._FANOUT_MAX_ITEMS:
-            content: list[Any] = []
+            content: list[Any] = list(error_notes)
             for project_id, result in results:
                 content.append(mt.TextContent(type='text', text=f'=== project {project_id} ==='))
                 content.extend(result.content or [])
@@ -957,7 +980,7 @@ class MultiProjectMiddleware(fmw.Middleware):
             f'search tool to find specific items.'
         )
         truncated = MultiProjectMiddleware._truncate_lists(merged_structured, MultiProjectMiddleware._FANOUT_MAX_ITEMS)
-        return ToolResult(content=[mt.TextContent(type='text', text=note)], structured_content=truncated)
+        return ToolResult(content=error_notes + [mt.TextContent(type='text', text=note)], structured_content=truncated)
 
 
 def _to_python(data: Any, exclude_none: bool = True) -> Any | None:
