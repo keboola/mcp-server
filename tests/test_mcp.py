@@ -849,6 +849,41 @@ class TestProgrammaticTokenExchange:
         resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
 
 
+class TestMaybeUseStoredSession:
+    """Local HTTP with no token falls back to the stored PKCE session (PSGO-261)."""
+
+    @pytest.mark.asyncio
+    async def test_no_token_loads_stored_session(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com')  # no token
+        with patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_stored')):
+            out = await SessionStateMiddleware._maybe_use_stored_session(config)
+        assert out.storage_token == 'kbc_at_stored'
+
+    @pytest.mark.asyncio
+    async def test_existing_token_is_noop(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_hdr')
+        with patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(side_effect=AssertionError('must not read'))):
+            out = await SessionStateMiddleware._maybe_use_stored_session(config)
+        assert out is config
+
+    @pytest.mark.asyncio
+    async def test_deployed_is_noop(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com')
+        out = await SessionStateMiddleware._maybe_use_stored_session(config)
+        assert out is config
+
+    @pytest.mark.asyncio
+    async def test_no_stored_session_is_noop(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com')
+        with patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(side_effect=RuntimeError('no creds'))):
+            out = await SessionStateMiddleware._maybe_use_stored_session(config)
+        assert out.storage_token is None
+
+
 class TestResolveLocalTokens:
     """SessionStateMiddleware keeps local tokens fresh and re-mints the scoped token (PSGO-261)."""
 
