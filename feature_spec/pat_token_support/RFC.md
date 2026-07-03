@@ -508,3 +508,76 @@ data-science already use the bearer/PAT path, so no change was needed there.
   `with_llm_instruction`.
 - **Queue / AI / SyncActions PAT support is deferred** and documented above; metastore + data-science
   already satisfy the PAT/bearer + `X-KBC-ProjectId` contract.
+
+# Extension: scope-first tool visibility + reviewer feedback (PSGO-261, increment 4)
+
+## Context — reviewer feedback vs. PR #451
+
+An earlier MPA attempt (PR #451, `davidesner`) took a different shape: static numbered SAPI tokens
+(`KBC_STORAGE_TOKEN_1..N`) in `.mcp.json`, a middleware that injects a `project_id`/`branch_id`
+parameter into every tool schema, and the **agent** passing `project_id` per call (so covering N
+projects means the agent calls the tool N times). Two critiques of our fan-out/scope model were
+raised against that backdrop. Verdict after analysis:
+
+- **"Fan-out is worse than N explicit calls."** Partly conceded, partly not:
+  - *Relevance / context bloat* — not a real differentiator: the user can scope the token or use the
+    `project_ids` filter to target one project, and a genuine all-projects request bloats context in
+    either design.
+  - *Latency* — fixable: the fan-out loop should run **concurrently** (it is currently sequential).
+  - *Attribution & error isolation* — the one real gap (see below). Kept as follow-up.
+- **"Active project while unscoped feels weird; expect tools to load after the first scope."** —
+  Accepted. Implemented as scope-first tool visibility (below).
+
+## Attribution & error isolation (the remaining fan-out gap)
+
+Concrete, with a 2-project read:
+
+- **Attribution.** `get_buckets` fan-out concatenates both projects' `buckets` lists via
+  `_deep_merge`; each bucket has `source_project: null`, so the merged `structured_content` cannot
+  say which project a bucket came from (only the `=== project N ===` text envelope can, which
+  structured-output clients don't parse). Two explicit calls each carry their project by construction.
+- **Error isolation.** The fan-out loop is `for p in targets: results.append(await call_next())` —
+  if one project raises (e.g. `get_jobs` → Queue 401 on project 95 while 86 succeeds), the exception
+  propagates and the **whole** call fails, discarding project 86's good result. Two explicit calls
+  isolate the failure (86 returns jobs, 95 returns its 401).
+
+Follow-up (not in this increment): make fan-out concurrent, catch per-project errors into a
+per-project `{project_id, ok|error}` envelope, and stamp `source_project` on merged rows.
+
+## Scope-first tool visibility (implemented)
+
+Replaces the "auto-lease a phantom active project + block data tools at call-time" UX with a
+list-time gate:
+
+- A **programmatic (`kbc_*`) session** auto-leases an *unconfirmed* scope. While unconfirmed,
+  `on_list_tools` advertises **only** the scoping tools (`get_accessible_projects`,
+  `set_project_scope`). Data tools are not shown.
+- `set_project_scope` confirms the scope and emits `notifications/tools/list_changed`, so the client
+  re-fetches and the full tool set appears. (Best-effort: the data tools are also no longer gated at
+  call-time once scope is confirmed, so a client that ignores `list_changed` still works.)
+- The call-time ask-first gate is retained as defense in depth.
+
+### Backward compatibility — the gate is `kbc_*`-only
+This is safe precisely because the gate keys on the presence of an (unconfirmed) `SessionScope`,
+which **only** programmatic/PKCE sessions ever get:
+
+- **Legacy Storage-token sessions** (`1234-…`, not `kbc_*`) have no `SessionScope` → `on_list_tools`
+  is an unchanged passthrough: every tool is advertised from connect, no gate, single project. Zero
+  BC impact — no existing integration relying on "all tools at connect" breaks.
+- **Deployed programmatic** sessions resolve to a single configured project (no auto-lease) → no
+  gate, single-project behavior.
+- Only **local multi-project `kbc_*`** sessions (a new capability with no prior integrations) see the
+  hide-then-reveal flow, so there is nothing to break.
+
+The remaining risk is a client that ignores `tools/list_changed`; those still function (post-scope
+calls are ungated) but won't visually refresh the tool list until reconnect.
+
+## Decisions (increment 4)
+
+- **Scope-first tool visibility** for `kbc_*` sessions; legacy Storage-token sessions unchanged
+  (gate keyed on `SessionScope` presence, which is equivalent to the `kbc_*` prefix).
+- **No phantom active project** surfaced before a scope is confirmed (tools that need one are hidden).
+- **Fan-out stays**, with the relevance/latency critiques answered by the `project_ids` filter and a
+  (follow-up) concurrent loop; attribution + per-project error isolation are the tracked follow-ups.
+- Fixed a latent bug: `set_project_scope` referenced `minted.read_only` on the exchange-failure path
+  where `minted` is unbound — now uses the stored scope's `read_only`.
