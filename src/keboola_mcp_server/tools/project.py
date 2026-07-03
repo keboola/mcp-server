@@ -493,10 +493,18 @@ async def set_project_scope(
         scope = SessionScope(project_ids=ids, read_only=read_only, confirmed=True)
     ctx.session.state[SCOPE_KEY] = scope
 
+    # Scope-first UX: the tool list is filtered to scoping-only until a scope is confirmed. Now that
+    # it is, tell the client to re-fetch so the full tool set appears. Best-effort — clients that
+    # don't act on list_changed still work (the data tools are no longer gated once scope is set).
+    try:
+        await ctx.session.send_tool_list_changed()
+    except Exception as e:
+        LOG.debug(f'Could not send tools/list_changed after scoping: {e}')
+
     multi = len(ids) > 1
     return ProjectScope(
         project_ids=ids,
-        read_only=minted.read_only,
+        read_only=scope.read_only,
         active_project_id=scope.active_project_id,
         llm_instruction=(
             (

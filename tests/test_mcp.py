@@ -1093,3 +1093,32 @@ class TestMultiProjectMiddleware:
         assert 'project_ids' in by_name['get_tables'].parameters['properties']
         assert 'project_ids' not in by_name['get_project_info'].parameters['properties']
         assert 'project_ids' not in by_name['update_config'].parameters['properties']
+
+    @pytest.mark.asyncio
+    async def test_on_list_tools_scope_first_hides_data_tools_until_confirmed(self) -> None:
+        # Unconfirmed (auto-leased) scope: only the scoping tools are advertised; data tools appear
+        # after set_project_scope confirms. Legacy sessions (no scope) are covered by the passthrough.
+        scope = SessionScope(project_ids=[11, 22], confirmed=False)
+        context, _ = self._ctx(scope, 'x', read_only=True)
+
+        async def call_next(_):
+            return [
+                _tool('get_accessible_projects', read_only=True),
+                _tool('set_project_scope', read_only=True),
+                _tool('get_tables', read_only=True),
+                _tool('update_config', read_only=False),
+            ]
+
+        tools = await MultiProjectMiddleware().on_list_tools(context, call_next)
+        assert {t.name for t in tools} == {'get_accessible_projects', 'set_project_scope'}
+
+    @pytest.mark.asyncio
+    async def test_on_list_tools_no_scope_is_passthrough(self) -> None:
+        # Legacy Storage-token session (no SessionScope): every tool stays advertised, unchanged.
+        context, _ = self._ctx(None, 'x', read_only=True)
+
+        async def call_next(_):
+            return [_tool('get_tables', read_only=True), _tool('update_config', read_only=False)]
+
+        tools = await MultiProjectMiddleware().on_list_tools(context, call_next)
+        assert {t.name for t in tools} == {'get_tables', 'update_config'}

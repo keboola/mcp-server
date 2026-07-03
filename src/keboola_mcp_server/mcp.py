@@ -806,6 +806,15 @@ class MultiProjectMiddleware(fmw.Middleware):
         ctx = context.fastmcp_context
         state = getattr(ctx.session, 'state', None)
         scope = state.get(SCOPE_KEY) if isinstance(state, dict) else None
+
+        # Scope-first UX (programmatic / kbc_* sessions only — those are the ones that get an
+        # auto-leased scope): until the user confirms a scope via set_project_scope, expose ONLY the
+        # scoping tools. The full tool set is revealed after confirmation (set_project_scope emits
+        # notifications/tools/list_changed). Legacy Storage-token sessions have no SessionScope, so
+        # they keep advertising every tool unchanged — no BC impact.
+        if isinstance(scope, SessionScope) and not scope.confirmed:
+            return [t for t in tools if t.name in _BOOTSTRAP_TOOLS]
+
         if not (isinstance(scope, SessionScope) and len(scope.project_ids) > 1):
             return tools
 
