@@ -435,6 +435,24 @@ def _forget(storage_api_url: str) -> None:
         _write_store(store)
 
 
+def forget_tokens(storage_api_url: str | None = None) -> bool:
+    """Deletes the stored PKCE session — for one stack, or all when ``storage_api_url`` is None.
+
+    Returns True if anything was removed. Used by the ``logout`` command so the next ``login`` starts
+    a fresh browser flow (e.g. to switch user/token) instead of refreshing the old session.
+    """
+    store = _read_store()
+    if not store:
+        return False
+    if storage_api_url is None:
+        _write_store({})
+        return True
+    if store.pop(_store_key(storage_api_url), None) is not None:
+        _write_store(store)
+        return True
+    return False
+
+
 # --- interactive browser login (not unit-tested; exercises a real browser + loopback) ---
 
 
