@@ -100,6 +100,23 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         default='keboola-mcp-server',
         help='Name for the leased PAT (--pat).',
     )
+    login_parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Force a fresh browser login even if a valid stored session exists (e.g. to switch '
+        'user/token). Without it, login refreshes the existing session.',
+    )
+
+    logout_parser = subparsers.add_parser(
+        'logout',
+        help='Delete the stored PKCE session so the next login starts fresh (switch user/token).',
+    )
+    logout_parser.add_argument(
+        '--api-url',
+        metavar='URL',
+        help='Stack to log out of (default: KBC_STORAGE_API_URL). Use --all to clear every stack.',
+    )
+    logout_parser.add_argument('--all', action='store_true', help='Delete stored sessions for all stacks.')
 
     return parser.parse_args(args)
 
@@ -150,6 +167,7 @@ async def _run_login(
     recovery: str | None = None,
     pat_name: str = 'keboola-mcp-server',
     show_token: bool = False,
+    force: bool = False,
 ) -> None:
     """Establishes a stored session and, with ``pat=True``, leases a PAT.
 
@@ -160,7 +178,7 @@ async def _run_login(
     With ``pat=True``, additionally leases a Personal Access Token over all accessible projects
     (introspect → sudo with the MFA code → create PAT) and prints it.
     """
-    from keboola_mcp_server.auth_login import ensure_access_token, lease_pat, load_tokens
+    from keboola_mcp_server.auth_login import ensure_access_token, forget_tokens, lease_pat, load_tokens, perform_login
 
     storage_api_url = api_url or os.environ.get('KBC_STORAGE_API_URL')
     if not storage_api_url:
@@ -169,8 +187,13 @@ async def _run_login(
     if pat and bool(totp) == bool(recovery):
         raise RuntimeError('Leasing a PAT (--pat) requires exactly one MFA code: pass --totp or --recovery.')
 
-    # Refresh-first, browser only when dead (interactive: this is the terminal `login` command).
-    access_token = await ensure_access_token(storage_api_url, allow_interactive=True)
+    if force:
+        # Drop any stored session and always run the browser flow (e.g. to switch user/token).
+        forget_tokens(storage_api_url)
+        access_token = (await perform_login(storage_api_url)).access_token
+    else:
+        # Refresh-first, browser only when dead (interactive: this is the terminal `login` command).
+        access_token = await ensure_access_token(storage_api_url, allow_interactive=True)
     tokens = load_tokens(storage_api_url)
     remaining = max(0, int(tokens.expires_at - time.time())) if tokens else 0
     print(f'\n✓ Session ready for {storage_api_url} (access token expires in ~{remaining}s).')
@@ -188,6 +211,23 @@ async def _run_login(
             name=pat_name,
         )
         print(f'\n✓ Personal Access Token (valid ~1 month, all accessible projects):\n\n  {pat_token}\n')
+
+
+async def _run_logout(api_url: str | None, *, all_stacks: bool = False) -> None:
+    """Deletes the stored PKCE session so the next login starts fresh."""
+    from keboola_mcp_server.auth_login import forget_tokens
+
+    if all_stacks:
+        removed = forget_tokens(None)
+        print('✓ Logged out of all stacks.' if removed else 'No stored sessions to remove.')
+        return
+    storage_api_url = api_url or os.environ.get('KBC_STORAGE_API_URL')
+    if not storage_api_url:
+        raise RuntimeError(
+            'A Storage API URL is required for logout: pass --api-url, set KBC_STORAGE_API_URL, or use --all.'
+        )
+    removed = forget_tokens(storage_api_url)
+    print(f'✓ Logged out of {storage_api_url}.' if removed else f'No stored session for {storage_api_url}.')
 
 
 async def run_server(args: list[str] | None = None) -> None:
@@ -224,7 +264,12 @@ async def run_server(args: list[str] | None = None) -> None:
             recovery=getattr(parsed_args, 'recovery', None),
             pat_name=getattr(parsed_args, 'pat_name', 'keboola-mcp-server'),
             show_token=getattr(parsed_args, 'show_token', False),
+            force=getattr(parsed_args, 'force', False),
         )
+        return
+
+    if parsed_args.command == 'logout':
+        await _run_logout(getattr(parsed_args, 'api_url', None), all_stacks=getattr(parsed_args, 'all', False))
         return
 
     # Create config from the CLI arguments

@@ -18,6 +18,7 @@ from keboola_mcp_server.auth_login import (
     ensure_access_token,
     exchange_code,
     exchange_scoped_token,
+    forget_tokens,
     get_access_token,
     introspect_token,
     lease_pat,
@@ -79,6 +80,22 @@ async def test_refresh_tokens_rotates_pair() -> None:
     tokens = await refresh_tokens(STACK, refresh_token='kbc_rt_old', transport=_token_response())
     assert tokens.access_token == 'kbc_at_new'
     assert tokens.refresh_token == 'kbc_rt_new'
+
+
+def test_forget_tokens_one_stack_and_all(creds_file: Path) -> None:
+    save_tokens(STACK, TokenSet('kbc_at_a', 'kbc_rt_a', expires_at=time.time() + 3600))
+    other = 'https://connection.other.keboola.com'
+    save_tokens(other, TokenSet('kbc_at_b', 'kbc_rt_b', expires_at=time.time() + 3600))
+
+    # forget one stack leaves the other intact
+    assert forget_tokens(STACK) is True
+    assert load_tokens(STACK) is None
+    assert load_tokens(other) is not None
+    assert forget_tokens(STACK) is False  # already gone
+
+    # forget all clears everything
+    assert forget_tokens(None) is True
+    assert load_tokens(other) is None
 
 
 def test_save_and_load_round_trip_mode_600(creds_file: Path) -> None:
