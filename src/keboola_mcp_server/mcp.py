@@ -237,6 +237,14 @@ class SessionStateMiddleware(fmw.Middleware):
             if http_rq := get_http_request_or_none():
                 config = self.apply_request_config(http_rq, config)
 
+            # Local streamable-HTTP with no token supplied (no header / env): fall back to the stored
+            # PKCE session and keep it fresh. Lets you `login` once, run the HTTP server, and connect
+            # with NO auth header — the server reads ~/.keboola/mcp/credentials.json, refreshes the
+            # access token when it nears expiry, and persists the rotated pair (so refresh-token
+            # rotation is handled, which a static header could never do). No-op when a token is already
+            # provided or on the deployed server (KBC_KUBERNETES_TOKEN_PATH set).
+            config = await self._maybe_use_stored_session(config)
+
             # In-conversation multi-project scope persists on the session across this per-request
             # state rebuild. Read it before the state is overwritten, refresh the stored token during
             # usage, and re-mint the scoped token when it nears expiry. With no scope and no preset
@@ -327,6 +335,24 @@ class SessionStateMiddleware(fmw.Middleware):
             and bool(config.storage_api_url)
             and is_programmatic_token(config.storage_token)
         )
+
+    @classmethod
+    async def _maybe_use_stored_session(cls, config: Config) -> Config:
+        """Populate the token from the stored PKCE session for a local, tokenless request.
+
+        Only when: no token is set, a stack URL is known, and this is not the deployed server. Reads
+        (and refreshes + persists) the session leased by ``keboola-mcp-server login``. If there is no
+        stored session, leaves the config unchanged (a clear "no token" error surfaces downstream).
+        """
+        if config.storage_token or not config.storage_api_url:
+            return config
+        if os.environ.get('KBC_KUBERNETES_TOKEN_PATH'):
+            return config
+        try:
+            access_token = await get_access_token(config.storage_api_url)
+        except RuntimeError:
+            return config
+        return dataclasses.replace(config, storage_token=access_token)
 
     @classmethod
     async def _autolease_default_scope(cls, config: Config) -> 'SessionScope | None':
