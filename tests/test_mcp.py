@@ -1122,3 +1122,30 @@ class TestMultiProjectMiddleware:
 
         tools = await MultiProjectMiddleware().on_list_tools(context, call_next)
         assert {t.name for t in tools} == {'get_tables', 'update_config'}
+
+    @staticmethod
+    def _items_result(n: int) -> ToolResult:
+        return ToolResult(
+            content=[mt.TextContent(type='text', text=f'{n} items')],
+            structured_content={'buckets': list(range(n)), 'total': n},
+        )
+
+    def test_merge_small_keeps_full_detail(self) -> None:
+        merged = MultiProjectMiddleware._merge([(11, self._items_result(2)), (22, self._items_result(3))])
+        # Under the cap: per-project text envelopes + fully merged lists; counters summed.
+        assert merged.structured_content == {'buckets': [0, 1, 0, 1, 2], 'total': 5}
+        assert [c.text for c in merged.content] == ['=== project 11 ===', '2 items', '=== project 22 ===', '3 items']
+
+    def test_merge_large_degrades_to_count_first(self, monkeypatch) -> None:
+        # Lower the cap so a modest result trips the count-first path.
+        monkeypatch.setattr(MultiProjectMiddleware, '_FANOUT_MAX_ITEMS', 3)
+        merged = MultiProjectMiddleware._merge([(11, self._items_result(2)), (22, self._items_result(3))])
+        # Single guidance note (no per-project full dump), lists truncated, counters preserved.
+        assert len(merged.content) == 1
+        note = merged.content[0].text
+        assert 'project 11: 2' in note
+        assert 'project 22: 3' in note
+        assert 'search tool' in note
+        assert 'project_ids' in note
+        assert len(merged.structured_content['buckets']) == 3  # truncated to the cap
+        assert merged.structured_content['total'] == 5  # true total preserved
