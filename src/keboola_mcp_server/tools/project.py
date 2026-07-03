@@ -280,9 +280,6 @@ class AccessibleProject(BaseModel):
     name: str | None = Field(default=None, description='The project name.')
     role: str | None = Field(default=None, description='The user role in this project (e.g. "admin").')
     in_scope: bool = Field(default=False, description='Whether the session is currently scoped to this project.')
-    is_active: bool = Field(
-        default=False, description='Whether this is the active project (write / single-project tool target).'
-    )
     sql_dialect: str | None = Field(
         default=None, description='The SQL dialect of the project ("Snowflake" or "BigQuery").'
     )
@@ -303,9 +300,6 @@ class AccessibleProjects(BaseModel):
         default=None,
         description='The projects the session is currently scoped to, or null if no scope has been confirmed yet.',
     )
-    active_project_id: int | None = Field(
-        default=None, description='The active project that write operations and single-project tools target.'
-    )
     read_only: bool | None = Field(default=None, description='Whether the current scoped token is read-only.')
     base_instructions: list[BaseInstructionGroup] | None = Field(
         default=None,
@@ -323,10 +317,6 @@ class AccessibleProjects(BaseModel):
 class ProjectScope(BaseModel):
     project_ids: list[int] = Field(description='The projects the session is now scoped to.')
     read_only: bool = Field(description='Whether the scoped token is read-only.')
-    active_project_id: int | None = Field(
-        default=None,
-        description='The project that write operations and single-project tools target.',
-    )
     llm_instruction: str = Field(description='Guidance for the assistant on the new scope.')
 
 
@@ -374,7 +364,6 @@ async def get_accessible_projects(
 
     scope = ctx.session.state.get(SCOPE_KEY)
     scoped_ids = scope.project_ids if isinstance(scope, SessionScope) and scope.confirmed else None
-    active_id = scope.active_project_id if scoped_ids else None
 
     # Enrich each project with its SQL dialect (concurrently). Best-effort: a project whose verify
     # fails simply keeps sql_dialect=None rather than failing the whole listing.
@@ -397,7 +386,6 @@ async def get_accessible_projects(
             name=p.name,
             role=p.role,
             in_scope=scoped_ids is not None and p.id in scoped_ids,
-            is_active=p.id == active_id,
             sql_dialect=dialects.get(p.id),
         )
         for p in introspection.projects
@@ -427,14 +415,13 @@ async def get_accessible_projects(
         )
     else:
         instruction = (
-            f'Session is currently scoped to {len(scoped_ids)} project(s); the active project is {active_id}. '
+            f'Session is currently scoped to {len(scoped_ids)} project(s). '
             'Call "set_project_scope" to change the scope.'
         )
     return AccessibleProjects(
         user_email=introspection.user_email,
         projects=projects,
         scoped_project_ids=scoped_ids,
-        active_project_id=active_id,
         read_only=scope.read_only if scoped_ids is not None else None,
         base_instructions=base_instructions,
         llm_instruction=instruction,
@@ -505,12 +492,11 @@ async def set_project_scope(
     return ProjectScope(
         project_ids=ids,
         read_only=scope.read_only,
-        active_project_id=scope.active_project_id,
         llm_instruction=(
             (
-                f'Session scoped to {len(ids)} projects. Read-only tools now return results per project. '
-                f'Write operations target the active project {scope.active_project_id} only; to write to a '
-                'different project, re-scope or confirm with the user first.'
+                f'Session scoped to {len(ids)} projects. Read-only tools return results per project. '
+                'Write operations are not fanned out — they target the first scoped project; to write '
+                'elsewhere, re-scope to that project first (confirm with the user).'
             )
             if multi
             else f'Session scoped to project {ids[0]}.'

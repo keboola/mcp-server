@@ -847,15 +847,12 @@ class MultiProjectMiddleware(fmw.Middleware):
         state = getattr(ctx.session, 'state', None)
         scope = state.get(SCOPE_KEY) if isinstance(state, dict) else None
 
-        # Scope-first UX (programmatic / kbc_* sessions only — those are the ones that get an
-        # auto-leased scope): until the user confirms a scope via set_project_scope, expose ONLY the
-        # scoping tools. The full tool set is revealed after confirmation (set_project_scope emits
-        # notifications/tools/list_changed). Legacy Storage-token sessions have no SessionScope, so
-        # they keep advertising every tool unchanged — no BC impact.
-        if isinstance(scope, SessionScope) and not scope.confirmed:
-            return [t for t in tools if t.name in _BOOTSTRAP_TOOLS]
-
-        if not (isinstance(scope, SessionScope) and len(scope.project_ids) > 1):
+        # NOTE: we intentionally do NOT hide data tools before a scope is confirmed. Hiding relied on
+        # the client re-fetching the tool list after notifications/tools/list_changed, which Claude Code
+        # (and others) don't do mid-session — that left the newly-unlocked tools invisible until a
+        # reconnect. Instead every tool stays listed and the call-time ask-first gate (on_call_tool)
+        # steers the user to set_project_scope first; once scoped, the already-listed tools just work.
+        if not (isinstance(scope, SessionScope) and scope.confirmed and len(scope.project_ids) > 1):
             return tools
 
         patched: list[Tool] = []

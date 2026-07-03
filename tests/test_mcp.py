@@ -1130,9 +1130,10 @@ class TestMultiProjectMiddleware:
         assert 'project_ids' not in by_name['update_config'].parameters['properties']
 
     @pytest.mark.asyncio
-    async def test_on_list_tools_scope_first_hides_data_tools_until_confirmed(self) -> None:
-        # Unconfirmed (auto-leased) scope: only the scoping tools are advertised; data tools appear
-        # after set_project_scope confirms. Legacy sessions (no scope) are covered by the passthrough.
+    async def test_on_list_tools_unconfirmed_scope_lists_all_tools(self) -> None:
+        # Data tools are NOT hidden before scope is confirmed: hiding relied on the client re-fetching
+        # after tools/list_changed, which Claude Code doesn't do mid-session. All tools stay listed;
+        # the call-time ask-first gate steers to set_project_scope instead.
         scope = SessionScope(project_ids=[11, 22], confirmed=False)
         context, _ = self._ctx(scope, 'x', read_only=True)
 
@@ -1145,7 +1146,12 @@ class TestMultiProjectMiddleware:
             ]
 
         tools = await MultiProjectMiddleware().on_list_tools(context, call_next)
-        assert {t.name for t in tools} == {'get_accessible_projects', 'set_project_scope'}
+        assert {t.name for t in tools} == {
+            'get_accessible_projects',
+            'set_project_scope',
+            'get_tables',
+            'update_config',
+        }
 
     @pytest.mark.asyncio
     async def test_on_list_tools_no_scope_is_passthrough(self) -> None:
