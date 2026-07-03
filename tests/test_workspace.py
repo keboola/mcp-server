@@ -172,6 +172,27 @@ async def test_workspace_creation_cleans_up_config_on_failure():
 
 
 @pytest.mark.asyncio
+async def test_workspace_creation_stops_on_terminal_error_status():
+    """A job that reaches a terminal failure status must stop polling at once, not spin to timeout."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+
+    mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': 'snowflake'}}
+    mock_storage_client.configuration_create.return_value = {'id': 'cfg-1', 'name': 'test'}
+    mock_storage_client.workspace_create_for_config.return_value = {'id': 999}
+    mock_storage_client.job_detail.return_value = {'status': 'error'}
+
+    manager = WorkspaceManager(mock_client)
+    result = await manager._create_ws()
+
+    assert result is None
+    # Polled exactly once — the terminal 'error' status short-circuits the loop.
+    mock_storage_client.job_detail.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('input_branch_id', 'has_sb_feature', 'workspace_schema', 'expected_bound_branch_id'),
     [

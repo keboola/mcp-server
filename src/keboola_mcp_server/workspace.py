@@ -786,6 +786,12 @@ class WorkspaceManager:
                 LOG.info(f'Created workspace: {workspace_id}')
                 return await self._find_ws_by_id(workspace_id)
 
+            elif job_status in ('error', 'warning', 'terminated', 'cancelled', 'canceled'):
+                # Terminal failure states: the job will never reach 'success', so stop polling
+                # immediately instead of spinning until the timeout.
+                LOG.warning(f'Workspace creation job failed: job_id={job_id}, status={job_status}')
+                return None
+
             elif duration > timeout_sec:
                 LOG.info(f'Workspace creation timed out after {duration:.2f} seconds.')
                 return None
