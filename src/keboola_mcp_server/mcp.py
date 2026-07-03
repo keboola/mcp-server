@@ -984,23 +984,66 @@ class MultiProjectMiddleware(fmw.Middleware):
             return a + b  # counters like search "total"
         return a
 
+    # Total list items across projects before a fanned-out result degrades to count-first: instead of
+    # dumping every project's full listing (which, on big projects, overflows the context window in a
+    # single tool result), return per-project counts + a truncated sample + guidance to narrow. Small
+    # multi-project results stay fully detailed. Class attribute so tests can lower it.
+    _FANOUT_MAX_ITEMS = 200
+
+    @staticmethod
+    def _largest_list_len(sc: Any) -> int:
+        """Item count of a structured payload = the length of its largest top-level list (buckets/tables/hits)."""
+        if isinstance(sc, dict):
+            return max((len(v) for v in sc.values() if isinstance(v, list)), default=0)
+        if isinstance(sc, list):
+            return len(sc)
+        return 0
+
+    @staticmethod
+    def _truncate_lists(sc: Any, limit: int) -> Any:
+        """Truncate every top-level list to `limit` (schema-safe: a shorter list still validates)."""
+        if isinstance(sc, dict):
+            return {k: (v[:limit] if isinstance(v, list) else v) for k, v in sc.items()}
+        if isinstance(sc, list):
+            return sc[:limit]
+        return sc
+
     @staticmethod
     def _merge(results: list[tuple[int, 'ToolResult']]) -> 'ToolResult':
-        # Label each project's output in the text content (attribution the model can read) and, when the
-        # tool declares structured output, deep-merge the per-project structured payloads into a single
-        # schema-valid object (lists concatenated across projects) so the client's output-schema
-        # validation passes.
-        content: list[Any] = []
+        # Deep-merge the per-project structured payloads into one schema-valid object (lists concatenated
+        # across projects). Counters (e.g. bucket_counts, search total) are summed by _deep_merge, so they
+        # keep reflecting the true totals even if the item lists get truncated below.
         merged_structured: Any = None
+        per_project_counts: list[tuple[int, int]] = []
+        total_items = 0
         for project_id, result in results:
-            content.append(mt.TextContent(type='text', text=f'=== project {project_id} ==='))
-            content.extend(result.content or [])
             sc = result.structured_content
+            per_project_counts.append((project_id, MultiProjectMiddleware._largest_list_len(sc)))
+            total_items += MultiProjectMiddleware._largest_list_len(sc)
             if sc is not None:
                 merged_structured = (
                     sc if merged_structured is None else MultiProjectMiddleware._deep_merge(merged_structured, sc)
                 )
-        return ToolResult(content=content, structured_content=merged_structured)
+
+        # Small enough: full detail with per-project text envelopes (attribution the model can read).
+        if total_items <= MultiProjectMiddleware._FANOUT_MAX_ITEMS:
+            content: list[Any] = []
+            for project_id, result in results:
+                content.append(mt.TextContent(type='text', text=f'=== project {project_id} ==='))
+                content.extend(result.content or [])
+            return ToolResult(content=content, structured_content=merged_structured)
+
+        # Count-first: the combined listing is too large for one result. Return per-project counts, a
+        # truncated sample (first _FANOUT_MAX_ITEMS), and guidance — instead of every project's full dump.
+        summary = ', '.join(f'project {pid}: {n}' for pid, n in per_project_counts)
+        note = (
+            f'Multi-project result is large — {total_items} items across {len(results)} project(s) '
+            f'({summary}). Showing the first {MultiProjectMiddleware._FANOUT_MAX_ITEMS} in structured_content; '
+            f'counters reflect the true totals. Narrow with project_ids=[...] on this tool, or use the '
+            f'search tool to find specific items.'
+        )
+        truncated = MultiProjectMiddleware._truncate_lists(merged_structured, MultiProjectMiddleware._FANOUT_MAX_ITEMS)
+        return ToolResult(content=[mt.TextContent(type='text', text=note)], structured_content=truncated)
 
 
 def _to_python(data: Any, exclude_none: bool = True) -> Any | None:

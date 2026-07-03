@@ -581,3 +581,32 @@ calls are ungated) but won't visually refresh the tool list until reconnect.
   (follow-up) concurrent loop; attribution + per-project error isolation are the tracked follow-ups.
 - Fixed a latent bug: `set_project_scope` referenced `minted.read_only` on the exchange-failure path
   where `minted` is unbound — now uses the stored scope's `read_only`.
+
+## Scale: count-first fan-out with a safety cap
+
+Fan-out's saving is a *fixed* structural overhead (deduped envelopes/wrappers/turns, ~a few hundred
+tokens across N projects) — it does **not** compress data. So as projects grow, the percentage cut
+trends to zero and the binding cost becomes raw **data volume**:
+
+| buckets/proj (×6) | data | fan-out | explicit | cut % |
+|---|--:|--:|--:|--:|
+| 5 | 3,375 tok | 3,658 | 3,978 | 8.0% |
+| 50 | 33,750 | 34,033 | 34,353 | 0.9% |
+| 500 | 337,500 | 337,783 | 338,103 | 0.1% |
+
+An unbounded enumerator (`get_buckets`/`get_tables` have no `limit`/`offset`) fanned out across N
+big projects returns hundreds of thousands of tokens in one tool result — overflowing the context
+window in *either* model. Fan-out is a round-trip/turn optimizer, not a data-volume one.
+
+**Fix — `MultiProjectMiddleware._merge` degrades to count-first past a cap** (`_FANOUT_MAX_ITEMS`,
+default 200 total items across projects):
+- Under the cap: unchanged — per-project text envelopes + fully merged lists.
+- Over the cap: return a single guidance note with **per-project item counts**, a **truncated sample**
+  (first `_FANOUT_MAX_ITEMS`, schema-safe — a shorter list still validates), and steer the agent to
+  **narrow with `project_ids`** or **use `search`**. Counters (e.g. `bucket_counts`, search `total`)
+  are summed by `_deep_merge`, so they keep reflecting the true totals even when the item lists are
+  truncated. The per-project full text dumps are dropped in this path (that is the context saving).
+
+This makes the multi-project path safe on humongous projects: it can never wedge the session, and it
+nudges toward the scalable access patterns (search / per-project drill-down) instead of bulk-listing.
+Follow-up: real `limit`/`offset` pagination on the enumerators, and concurrent fan-out.
