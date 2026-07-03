@@ -605,3 +605,19 @@ default 200 total items across projects):
 This makes the multi-project path safe on humongous projects: it can never wedge the session, and it
 nudges toward the scalable access patterns (search / per-project drill-down) instead of bulk-listing.
 Follow-up: real `limit`/`offset` pagination on the enumerators, and concurrent fan-out.
+
+## Transport note: multi-project scope needs a stateful session
+
+Multi-project scope lives in the MCP **session** state (`ctx.session.state[SCOPE_KEY]`), read back on
+each request. This only persists when the transport keeps the session alive across requests:
+
+- **stdio** — one long-lived session per process → scope persists (this is how MPA was developed/tested).
+- **streamable-HTTP, stateless** (`stateless_http=True`, the deployed default for horizontal scaling)
+  → every request is an independent session (`Terminating session: None`), so `set_project_scope`'s
+  state never reaches the next call and data tools keep reporting "no scope confirmed".
+- **streamable-HTTP, stateful** (`--no-stateless-http`) → the server issues an `Mcp-Session-Id` the
+  client echoes back, the `ServerSession` is reused, and scope persists.
+
+So to run MPA locally over HTTP: `keboola-mcp-server --transport streamable-http --no-stateless-http`.
+Deployed multi-replica MPA over stateless HTTP would need a shared/sticky scope store (out of scope
+here; deployed sessions today are single-project via the resolver + `KBC_PROJECT_ID`).
