@@ -58,6 +58,14 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument('--workspace-schema', metavar='STR', help='Keboola Storage API workspace schema.')
     parser.add_argument('--host', default='localhost', metavar='STR', help='The host to listen on.')
     parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
+    parser.add_argument(
+        '--stateless-http',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Streamable-HTTP session mode. Stateless (default) suits scaled/deployed servers where '
+        'any replica handles any request. Use --no-stateless-http for a local server so in-session '
+        'state — notably multi-project scope from set_project_scope — persists across requests.',
+    )
     parser.add_argument('--log-config', type=pathlib.Path, metavar='PATH', help='Logging config file.')
 
     subparsers = parser.add_subparsers(dest='command')
@@ -275,7 +283,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
                 http_app: StarletteWithLifespan = mcp_server.http_app(
                     path='/',
                     transport='streamable-http',
-                    stateless_http=True,
+                    stateless_http=parsed_args.stateless_http,
                 )
                 mount_paths['/mcp'] = http_app
                 transports.append('Streamable-HTTP')
