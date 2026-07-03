@@ -136,12 +136,16 @@ async def _run_login(
     recovery: str | None = None,
     pat_name: str = 'keboola-mcp-server',
 ) -> None:
-    """Runs the interactive browser PKCE login and stores the leased tokens.
+    """Establishes a stored session and, with ``pat=True``, leases a PAT.
+
+    Refresh-first: if a stored session exists and its refresh token is still valid, this refreshes
+    (no browser) — so re-running `login` an hour later just leases a fresh access token. A browser
+    PKCE login runs only when there is no stored session or the refresh token itself is dead.
 
     With ``pat=True``, additionally leases a Personal Access Token over all accessible projects
     (introspect → sudo with the MFA code → create PAT) and prints it.
     """
-    from keboola_mcp_server.auth_login import lease_pat, perform_login
+    from keboola_mcp_server.auth_login import ensure_access_token, lease_pat, load_tokens
 
     storage_api_url = api_url or os.environ.get('KBC_STORAGE_API_URL')
     if not storage_api_url:
@@ -150,14 +154,16 @@ async def _run_login(
     if pat and bool(totp) == bool(recovery):
         raise RuntimeError('Leasing a PAT (--pat) requires exactly one MFA code: pass --totp or --recovery.')
 
-    tokens = await perform_login(storage_api_url)
-    remaining = max(0, int(tokens.expires_at - time.time()))
-    print(f'\n✓ Session stored for {storage_api_url} (access token expires in ~{remaining}s).')
+    # Refresh-first, browser only when dead (interactive: this is the terminal `login` command).
+    access_token = await ensure_access_token(storage_api_url, allow_interactive=True)
+    tokens = load_tokens(storage_api_url)
+    remaining = max(0, int(tokens.expires_at - time.time())) if tokens else 0
+    print(f'\n✓ Session ready for {storage_api_url} (access token expires in ~{remaining}s).')
 
     if pat:
         pat_token = await lease_pat(
             storage_api_url,
-            subject_token=tokens.access_token,
+            subject_token=access_token,
             totp_code=totp,
             recovery_code=recovery,
             name=pat_name,
