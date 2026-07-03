@@ -544,41 +544,36 @@ Concrete, with a 2-project read:
 Follow-up (not in this increment): make fan-out concurrent, catch per-project errors into a
 per-project `{project_id, ok|error}` envelope, and stamp `source_project` on merged rows.
 
-## Scope-first tool visibility (implemented)
+## Tool gating: call-time, not list-time (why hide-then-reveal was reverted)
 
-Replaces the "auto-lease a phantom active project + block data tools at call-time" UX with a
-list-time gate:
+We first tried **scope-first tool visibility**: while a programmatic session's scope was unconfirmed,
+`on_list_tools` advertised only the scoping tools, and `set_project_scope` emitted
+`notifications/tools/list_changed` to reveal the rest. **This does not work on Claude Code** (and
+likely other clients): the client does **not re-fetch the tool list** after `list_changed`
+mid-session, so the newly-unlocked tools never enter its inventory (and `ToolSearch` can't find them)
+until a reconnect. Hiding therefore left the session stuck with only two tools.
 
-- A **programmatic (`kbc_*`) session** auto-leases an *unconfirmed* scope. While unconfirmed,
-  `on_list_tools` advertises **only** the scoping tools (`get_accessible_projects`,
-  `set_project_scope`). Data tools are not shown.
-- `set_project_scope` confirms the scope and emits `notifications/tools/list_changed`, so the client
-  re-fetches and the full tool set appears. (Best-effort: the data tools are also no longer gated at
-  call-time once scope is confirmed, so a client that ignores `list_changed` still works.)
-- The call-time ask-first gate is retained as defense in depth.
+**Reverted to call-time gating** (robust on every client, no reconnect):
+- **All tools stay listed** from connect. No hide.
+- The **call-time ask-first gate** (`on_call_tool`) blocks data tools with a "confirm a scope first"
+  error until `set_project_scope` is called. After scoping, the already-listed tools just work.
+- `set_project_scope` still emits `notifications/tools/list_changed` — now only meaningful because a
+  **confirmed multi-project scope adds the `project_ids` filter param** to read tools (a real schema
+  change); clients that honor it refresh, clients that don't still work (the param is optional).
+- The `project_ids` filter is injected only for a **confirmed** scope of >1 project.
 
-### Backward compatibility — the gate is `kbc_*`-only
-This is safe precisely because the gate keys on the presence of an (unconfirmed) `SessionScope`,
-which **only** programmatic/PKCE sessions ever get:
-
-- **Legacy Storage-token sessions** (`1234-…`, not `kbc_*`) have no `SessionScope` → `on_list_tools`
-  is an unchanged passthrough: every tool is advertised from connect, no gate, single project. Zero
-  BC impact — no existing integration relying on "all tools at connect" breaks.
-- **Deployed programmatic** sessions resolve to a single configured project (no auto-lease) → no
-  gate, single-project behavior.
-- Only **local multi-project `kbc_*`** sessions (a new capability with no prior integrations) see the
-  hide-then-reveal flow, so there is nothing to break.
-
-The remaining risk is a client that ignores `tools/list_changed`; those still function (post-scope
-calls are ungated) but won't visually refresh the tool list until reconnect.
+This keeps the reviewer's other win (no phantom active project *before* a scope exists) without
+depending on a client capability that isn't there. The "tools appear after scope" ideal is only
+achievable on clients that re-fetch on `list_changed`; we don't rely on it.
 
 ## Decisions (increment 4)
 
-- **Scope-first tool visibility** for `kbc_*` sessions; legacy Storage-token sessions unchanged
-  (gate keyed on `SessionScope` presence, which is equivalent to the `kbc_*` prefix).
-- **No phantom active project** surfaced before a scope is confirmed (tools that need one are hidden).
+- **Call-time gate, not list-time hiding** — hide-then-reveal needs client `list_changed` re-fetch
+  (absent in Claude Code mid-session), so all tools stay listed and data tools are gated at call time.
+- **No phantom active project before a scope is confirmed**; after `set_project_scope` the
+  `active_project_id` is the write / `query_data`-default target and is surfaced intentionally.
 - **Fan-out stays**, with the relevance/latency critiques answered by the `project_ids` filter and a
-  (follow-up) concurrent loop; attribution + per-project error isolation are the tracked follow-ups.
+  (follow-up) concurrent loop; per-project error isolation is now implemented (partial results).
 - Fixed a latent bug: `set_project_scope` referenced `minted.read_only` on the exchange-failure path
   where `minted` is unbound — now uses the stored scope's `read_only`.
 

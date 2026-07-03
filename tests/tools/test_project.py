@@ -298,18 +298,16 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
         (83, 'B', 'admin', 'Snowflake'),
     ]
     assert result.scoped_project_ids is None
-    assert result.active_project_id is None
     assert result.read_only is None
     assert result.base_instructions is None  # not requested
-    assert all(not p.in_scope and not p.is_active for p in result.projects)
+    assert all(not p.in_scope for p in result.projects)
 
     # Once scoped, the current scope is surfaced on the projects and at the top level.
     mcp_context_client.session.state[SCOPE_KEY] = SessionScope(project_ids=[83], read_only=True, confirmed=True)
     result = await get_accessible_projects(mcp_context_client)
     assert result.scoped_project_ids == [83]
-    assert result.active_project_id == 83
     assert result.read_only is True
-    assert [(p.id, p.in_scope, p.is_active) for p in result.projects] == [(18, False, False), (83, True, True)]
+    assert [(p.id, p.in_scope) for p in result.projects] == [(18, False), (83, True)]
 
 
 @pytest.mark.asyncio
@@ -356,7 +354,6 @@ async def test_set_project_scope_subset_exchanges_and_stores(
 
     exch.assert_awaited_once_with(STACK, subject_token='kbc_at_parent', project_ids=[18, 83], read_only=False)
     assert result.project_ids == [18, 83]
-    assert result.active_project_id == 18
     scope = mcp_context_client.session.state[SCOPE_KEY]
     assert scope.scoped_token == 'kbc_at_scoped'
     assert scope.project_ids == [18, 83]
