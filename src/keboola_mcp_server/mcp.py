@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 import toon_format
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.server import middleware as fmw
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import CallNext, MiddlewareContext
@@ -26,6 +27,7 @@ from fastmcp.tools.tool import ToolResult
 from mcp import types as mt
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel
+from pydantic import ValidationError as PydanticValidationError
 from pydantic_core import to_json
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -931,6 +933,11 @@ class MultiProjectMiddleware(fmw.Middleware):
                 # `except Exception` lets client cancellation propagate.
                 try:
                     results.append((project_id, await call_next(context)))
+                except (FastMCPValidationError, PydanticValidationError):
+                    # Argument-level validation error: the same bad arguments fail identically in
+                    # every project, so fanning out would emit N identical copies plus a confusing
+                    # "failed for all N projects" aggregate. Abort and surface the single clean error.
+                    raise
                 except Exception as e:
                     LOG.warning(f'Fan-out call failed for project {project_id}: {e}')
                     errors.append((project_id, str(e)))

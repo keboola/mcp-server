@@ -10,6 +10,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools.tool import ToolResult
 from mcp import types as mt
 from pydantic import BaseModel, Field
+from pydantic import ValidationError as PydanticValidationError
 from starlette.requests import Request
 
 from keboola_mcp_server.clients.client import KeboolaClient
@@ -1329,6 +1330,32 @@ class TestMultiProjectMiddleware:
         ):
             with pytest.raises(ToolError, match='failed for all 2 scoped'):
                 await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+    @pytest.mark.asyncio
+    async def test_fan_out_validation_error_raised_once_not_per_project(self) -> None:
+        # A bad argument (e.g. get_components with no component_ids) fails identically in every
+        # project, so it must surface as ONE clean validation error, not N copies + an aggregate.
+        scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_s', confirmed=True)
+        context, state = self._ctx(scope, 'get_tables', read_only=True)
+        calls = []
+
+        async def call_next(_):
+            calls.append(state[KeboolaClient.STATE_KEY])
+            raise PydanticValidationError.from_exception_data('get_tables', [])
+
+        with (
+            patch.object(
+                MultiProjectMiddleware,
+                '_client_for_project',
+                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+            ),
+            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
+        ):
+            with pytest.raises(PydanticValidationError):
+                await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        # Aborted after the first project; not retried across the rest.
+        assert calls == ['client-11']
 
     def test_merge_large_degrades_to_count_first(self, monkeypatch) -> None:
         # Lower the cap so a modest result trips the count-first path.
