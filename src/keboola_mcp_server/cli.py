@@ -77,6 +77,12 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
         help='After the browser login, lease a Personal Access Token (kbc_pat_) over all accessible '
         'projects and print it. Requires an MFA code (--totp or --recovery).',
     )
+    login_parser.add_argument(
+        '--show-token',
+        action='store_true',
+        help='Also print the session access token (kbc_at_) to stdout — e.g. to pass as a header to a '
+        'locally-run streamable-HTTP server. Note: it expires in ~1 hour.',
+    )
     login_parser.add_argument('--totp', metavar='CODE', help='TOTP MFA code for the sudo elevation (--pat).')
     login_parser.add_argument(
         '--recovery', metavar='CODE', help='Recovery MFA code for the sudo elevation (--pat); alternative to --totp.'
@@ -136,6 +142,7 @@ async def _run_login(
     totp: Optional[str] = None,
     recovery: Optional[str] = None,
     pat_name: str = 'keboola-mcp-server',
+    show_token: bool = False,
 ) -> None:
     """Establishes a stored session and, with ``pat=True``, leases a PAT.
 
@@ -160,6 +167,10 @@ async def _run_login(
     tokens = load_tokens(storage_api_url)
     remaining = max(0, int(tokens.expires_at - time.time())) if tokens else 0
     print(f'\n✓ Session ready for {storage_api_url} (access token expires in ~{remaining}s).')
+
+    if show_token:
+        # Explicitly requested (e.g. to pass as a header to a local streamable-HTTP server).
+        print(f'\nAccess token (kbc_at_, expires in ~{remaining}s):\n\n  {access_token}\n')
 
     if pat:
         pat_token = await lease_pat(
@@ -205,6 +216,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             totp=getattr(parsed_args, 'totp', None),
             recovery=getattr(parsed_args, 'recovery', None),
             pat_name=getattr(parsed_args, 'pat_name', 'keboola-mcp-server'),
+            show_token=getattr(parsed_args, 'show_token', False),
         )
         return
 
