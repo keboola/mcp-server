@@ -424,6 +424,24 @@ class TestToolsFilteringMiddleware:
         assert 'other_tool' in result_names
 
     @pytest.mark.asyncio
+    async def test_list_tools_programmatic_pre_scope_skips_verify(self, mcp_context_client) -> None:
+        # Programmatic session with no confirmed scope: tools/list must not call verify_token (it would
+        # block connecting on a slow stack). Advertise the superset; on_call_tool still enforces.
+        client = KeboolaClient.from_state(mcp_context_client.session.state)
+        client.storage_client.verify_token = AsyncMock(side_effect=AssertionError('verify must not run pre-scope'))
+
+        tools = [_tool('get_tables', read_only=True), _tool('create_flow'), _tool('get_semantic_context')]
+
+        async def call_next(_):
+            return tools
+
+        context = SimpleNamespace(fastmcp_context=mcp_context_client)
+        # programmatic token + no confirmed scope → filtering skipped, verify_token not called
+        with patch('keboola_mcp_server.mcp.is_programmatic_token', return_value=True):
+            result = await ToolsFilteringMiddleware().on_list_tools(context, call_next)
+        assert {t.name for t in result} == {'get_tables', 'create_flow', 'get_semantic_context'}
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('token_role', 'bearer_token', 'hidden_tools', 'visible_tools'),
         [
