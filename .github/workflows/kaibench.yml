@@ -86,7 +86,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build MCP server from branch
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v7.2.0
         with:
           load: true
           tags: keboola/mcp-server:kaibench-test
