@@ -45,17 +45,25 @@ Assign each instruction category one owner and forbid the others from restating 
 | Domain how-to (building data apps, storage patterns, SQL patterns) | `ai-kit` skills | Runtime layers link to the skill, not re-explain it |
 | Runtime + persona (Kai identity, sandbox, skill gate, credential flow) | `keboola/ui` `prompt-builder.ts` + `kai-extras` | ai-kit stays runtime-agnostic; Kai-specific rules live here |
 
-Add `CODEOWNERS` entries per prompt surface so edits get the right review. Where layers legitimately overlap, the more specific (runtime) overlay wins **and says so explicitly**. Most of the 19 conflicts are one layer asserting something another layer owns; the contract dictates which side each fix lands on.
+Add `CODEOWNERS` entries per prompt surface so edits get the right review. Where layers legitimately overlap, the more specific (runtime) overlay wins **and says so explicitly**. Most of the 19 conflicts are one layer asserting something another layer owns; the contract dictates which side each fix lands on. This contract can be *distributed* rather than merely enforced by convention — see §6.
 
-### 2. Runtime-scoped overlays
+### 2. Runtime-scoped overlays (minimal, last resort)
 
-ai-kit skills gain frontmatter runtime targeting (e.g. `targets: [claude-code, kai-sandbox, mcp-only]`) and use explicit `In Kai:` / `In standalone CLI:` callouts for content that diverges. Base content = shared core; overlays = runtime specifics — the model is base + overlay (like kustomize overlays or the CSS cascade), not copy-and-diverge. The existing vendoring step (`packages/kai-agent-sandbox/scripts/vendor-external-skills.ts`) selects/strips sections by target at vendor time. This directly resolves the Streamlit-first-vs-never-Streamlit, CDN-vs-React, and cache-vs-live-query conflicts: the base stops asserting a universal default that Kai contradicts.
+Some content genuinely differs by runtime and cannot be single-sourced — Streamlit-allowed-vs-not, CDN-vs-React, cache-vs-live-query. For only these true forks, ai-kit skills carry an explicit `In Kai:` / `In standalone CLI:` callout (or frontmatter `targets:`), and the vendoring step (`packages/kai-agent-sandbox/scripts/vendor-external-skills.ts`) selects the right variant. This is deliberately scoped small: broad per-runtime tagging across every skill is manual discipline that rots — a form of the very problem this RFC addresses. The scalable backbone is distribution (§6) plus the composed-prompt artifact (§3) and evals (§5) catching divergence automatically; overlays cover only the residue those cannot.
 
 ### 3. Composed-prompt build artifact
 
 Today the live prompt is assembled at runtime from four sources — `prompt-builder.ts` (base identity + skill gate + platform `llm_instruction` + per-request context), the vendored ai-kit skill markdown, the first-party `kai-extras` skill, and the MCP tool docstrings injected by the client — and **no human or test ever sees the whole assembled string**. Each fragment is reviewed in isolation, in a different repo, which is exactly how the high-severity contradictions slipped through.
 
 Proposal: a generator + CI check that assembles and emits the composed prompt as a committed artifact, mirroring the pattern `mcp-server` already uses for tool docs (`python -m keboola_mcp_server.generate_tool_docs` → `TOOLS.md`, gated by `tox -e check-tools-docs`, which runs the generator then `git diff --exit-code TOOLS.md` so CI fails if it is stale).
+
+How it works, concretely:
+
+1. A generator script calls the **same** `buildSystemPrompt` the runtime uses (not a reimplementation) with checked-in fixture inputs — a canned platform `llm_instruction`, a sample project context, both skills loaded from the vendored dir.
+2. It writes the assembled prompt to a committed file (`apps/kai-agent/COMPOSED_PROMPT.md`), one snapshot per distinct state (default, data-app-gated).
+3. CI reruns the generator and `git diff --exit-code`s the snapshot. If the committed file no longer matches what today's code + skills + injected tool-docs produce, CI fails and the author commits the regenerated file — surfacing the change as a reviewable diff on the PR that caused it.
+
+This is byte-for-byte the mechanism this repo already runs for `TOOLS.md` (`tox -e check-tools-docs`), pointed at the prompt instead — not new infrastructure.
 
 - A generator runs `prompt-builder`'s assembly with representative fixtures (a canned platform `llm_instruction`, a sample project context, both skills loaded) and writes e.g. `apps/kai-agent/COMPOSED_PROMPT.md` — ideally one snapshot per distinct state (default, data-app-gated).
 - CI runs it and `git diff --exit-code`: any change to the composed prompt — including one flowing in from a bumped vendored skill or a changed tool docstring — appears as a **reviewable diff on the PR that causes it**, so cross-repo drift becomes visible at the moment it lands.
@@ -102,6 +110,18 @@ Plus a **fixture-seeding helper**: several behavioral cases assume pre-seeded ob
 
 **(d) True prompt-regression needs one dependency.** KaiBench cannot currently see or pin the *composed system prompt* — `KaiSession` sends only user text; the composed prompt lives on the backend and is not in `ConversationTrace`. So today prompt regression is observable only *indirectly*, via behavior + image/ref pinning. To assert on or diff the prompt text itself, the Kai backend must expose the composed prompt (a debug echo endpoint), after which KaiBench adds a trace field + snapshot assertion. This is the **same artifact as §3**, so the generator and this share a source. It is a cross-team dependency on the kai-assistant / kai-agent team, not something KaiBench can add alone.
 
+### 6. Distribute the canonical guidance as a plugin companion
+
+An alternative — and likely stronger — backbone for §1–§2: rather than enforcing single-ownership by convention and syncing via build-time vendoring, package the canonical guidance as a **plugin companion to the MCP server** and distribute it as one versioned artifact. This is the pattern Slack, Linear, and others use — the connector ships its agent-facing skills/prompts alongside it, and every client consumes one published bundle instead of hand-authoring or vendoring its own copy. It removes the drift class at the source.
+
+Ownership still applies, but as *packaging* boundaries:
+
+- Capability/tool guidance ships from **mcp-server** (this repo), physically next to the tools it describes so it cannot drift from the code — generated where possible (the `TOOLS.md` generator is the seed of this).
+- Domain how-to skills stay in **ai-kit**, which is already a Claude plugin marketplace (`.claude-plugin/marketplace.json`).
+- The published "Keboola" plugin is a thin bundle referencing both plus the MCP server connection config.
+
+Caveat for Kai: Kai does not install plugins the way Claude Code does — it vendors skills and connects the MCP server directly — so adopting this means Kai consumes the *published* bundle instead of a raw ai-kit subpath. That is still a net improvement (single, versioned distribution), but Kai continues to need a small runtime overlay (§2) for genuinely runtime-specific content (React sandbox, no kbagent). The plugin shrinks the overlay surface; it does not fully remove it. Where the plugin bundle itself lives (mcp-server vs ai-kit's marketplace) is an open question — see below.
+
 ## Scope
 
 **In scope:** the governance model (ownership contract + `CODEOWNERS`, runtime overlays), the two CI mechanisms (composed-prompt artifact, cross-reference linter), and the KaiBench prompt-consistency track design plus the enabling framework changes.
@@ -120,3 +140,4 @@ Plus a **fixture-seeding helper**: several behavioral cases assume pre-seeded ob
 - Where does the composed-prompt generator live, given the prompt spans repos plus runtime-injected tool docs — in `keboola/ui` with a pinned `mcp-server` tool snapshot, or a small shared package?
 - Do we eventually want a shared "prompt core" package the three repos consume, or is contract + vendoring + CI enough? Recommendation: start with the latter; revisit only if drift persists despite the checks.
 - Who owns the shared cross-repo linter rule set, and who runs the KaiBench prompt-consistency track on **ai-kit** PRs (ai-kit has no Kai backend in its CI)?
+- Which repo owns and publishes the "Keboola plugin" bundle — mcp-server (coupled to the tools) or ai-kit's existing plugin marketplace (already the skills home)? (Raised in review.)
