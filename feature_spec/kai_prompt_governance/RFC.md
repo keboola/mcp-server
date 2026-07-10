@@ -35,6 +35,8 @@ The target end-state, treating prompts as a versioned, tested interface with own
 
 ## Resolution Strategy
 
+**This is staged, not a build-everything plan.** The 80/20 is §1 (the specification of what goes where in each layer) plus a one-time reconciliation of the audit's 19 findings to that spec — that is cheap and it is most of the value, so it ships now. §3, §4, and §6 are prevention *infrastructure*; build them only if drift recurs after the spec+fix lands, cheapest-first, and stop as soon as it is enough. Do the cheap high-value work first and measure before building guards. The full sequencing is in [Sequencing](#sequencing) below.
+
 ### 1. Ownership contract
 
 Assign each instruction category one owner and forbid the others from restating it:
@@ -122,9 +124,29 @@ Ownership still applies, but as *packaging* boundaries:
 
 Caveat for Kai: Kai does not install plugins the way Claude Code does — it vendors skills and connects the MCP server directly — so adopting this means Kai consumes the *published* bundle instead of a raw ai-kit subpath. That is still a net improvement (single, versioned distribution), but Kai continues to need a small runtime overlay (§2) for genuinely runtime-specific content (React sandbox, no kbagent). The plugin shrinks the overlay surface; it does not fully remove it. Where the plugin bundle itself lives (mcp-server vs ai-kit's marketplace) is an open question — see below.
 
+## Sequencing
+
+**Ship now — the 80/20.**
+
+1. Adopt §1's layer-ownership spec (what each of the three surfaces owns, and that the others link/derive rather than restate) + `CODEOWNERS` per surface.
+2. Reconcile the audit's 19 conflicts to that spec in a single interactive pass — most are one-line moves of a claim to its owning layer. The first fix (the stale "Python/JS can't deploy via MCP" claim) is already in flight in ai-kit; the rest is the same exercise.
+
+That is the bulk of the value and it needs no new infrastructure.
+
+**Then measure.** Run Kai for a while and watch whether the conflicts recur. If the spec + one-time fix holds, stop here.
+
+**Only if drift recurs — add guards cheapest-first, and stop when it's enough:**
+
+1. §4 cross-reference linter — cheapest, and it catches a class a spec cannot (a dangling skill/tool/file reference that no one typed correctly). This is the first thing to reach for.
+2. §3 composed-prompt build artifact — a generator + `git diff` gate; more setup than the linter.
+3. §6 plugin-companion distribution — a structural change with the highest ceiling (removes the drift class at the source), but the largest investment; worth it only if per-layer drift keeps recurring.
+4. §5 KaiBench prompt-consistency track — highest value for *behavioral* regressions specifically; adopt when prompt edits start silently changing behavior.
+
+The guards are real infrastructure. Build them against evidence, not speculatively.
+
 ## Scope
 
-**In scope:** the governance model (ownership contract + `CODEOWNERS`, runtime overlays), the two CI mechanisms (composed-prompt artifact, cross-reference linter), and the KaiBench prompt-consistency track design plus the enabling framework changes.
+**In scope:** the governance model (ownership contract + `CODEOWNERS`, runtime overlays). The immediate deliverable is §1's layer-ownership spec plus the one-time reconciliation of the audit's 19 conflicts to it; the two CI mechanisms (composed-prompt artifact, cross-reference linter) and the KaiBench prompt-consistency track plus its enabling framework changes are sequenced — deferred until drift recurs — per [Sequencing](#sequencing).
 
 **Out of scope:** consolidating the three repos into one — explicitly rejected; ai-kit serves standalone/kbagent users, `mcp-server` is a product with its own consumers, and the Kai app is a third runtime, so merging would move the coupling inward rather than remove it. The fix is boundaries + automation. Also out of scope: rewriting the KaiBench judge, and implementing the kai-assistant composed-prompt debug endpoint (a dependency, tracked separately). Fixing the 19 individual conflicts is tracked by the audit; this RFC governs *which side* each fix lands on and how recurrence is prevented.
 
