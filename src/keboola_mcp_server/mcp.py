@@ -44,7 +44,11 @@ T = TypeVar('T')
 
 DEFAULT_CONCURRENCY = 10
 
-SEMANTIC_TOOLING_FEATURE = 'mcp-semantic-tooling'
+# Metastore object type used to detect whether a project already has any semantic models.
+SEMANTIC_MODEL_OBJECT_TYPE = 'semantic-model'
+# Session-state key caching the per-project semantic-model detection result so that repeated
+# on_list_tools()/on_call_tool() requests in the same session don't each hit the metastore.
+HAS_SEMANTIC_MODELS_STATE_KEY = 'has_semantic_models'
 SEMANTIC_TOOL_NAMES = {
     'search_semantic_context',
     'get_semantic_context',
@@ -74,6 +78,35 @@ def is_read_only_tool(tool: Tool) -> bool:
 def is_semantic_tool(tool: Tool) -> bool:
     """Check whether a tool belongs to semantic tooling."""
     return SEMANTIC_TOOLS_TAG in (tool.tags or set()) or tool.name in SEMANTIC_TOOL_NAMES
+
+
+async def project_has_semantic_models(client: KeboolaClient, state: dict[str, Any] | None = None) -> bool:
+    """
+    Detect whether the project has at least one semantic model, so that the semantic tools can be
+    shown/allowed dynamically instead of behind a project feature flag.
+
+    The result is cached on the session ``state`` (under :data:`HAS_SEMANTIC_MODELS_STATE_KEY`) so that
+    repeated ``on_list_tools()``/``on_call_tool()`` requests in the same session don't each make a
+    metastore round-trip.
+
+    Fails closed: if the metastore call raises (e.g. the project is not provisioned for the semantic
+    layer, or the API returns a 5xx), we treat it as "no semantic models" so the tools stay hidden.
+    This preserves the previous default-off behavior for projects that cannot use the semantic layer.
+    """
+    if state is not None and HAS_SEMANTIC_MODELS_STATE_KEY in state:
+        return bool(state[HAS_SEMANTIC_MODELS_STATE_KEY])
+
+    try:
+        objects = await client.metastore_client.list_objects(SEMANTIC_MODEL_OBJECT_TYPE, limit=1)
+        has_models = bool(objects)
+    except Exception as e:
+        LOG.debug(f'Failed to detect semantic models, assuming none are available: {e}')
+        has_models = False
+
+    if state is not None:
+        state[HAS_SEMANTIC_MODELS_STATE_KEY] = has_models
+
+    return has_models
 
 
 @dataclasses.dataclass(frozen=True)
@@ -395,7 +428,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             tools = [t for t in tools if is_read_only_tool(t)]
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
 
-        if SEMANTIC_TOOLING_FEATURE not in features:
+        client = KeboolaClient.from_state(context.fastmcp_context.session.state)
+        has_semantic_models = await project_has_semantic_models(client, context.fastmcp_context.session.state)
+        if not has_semantic_models:
             tools = [t for t in tools if not is_semantic_tool(t)]
 
         return tools
@@ -406,6 +441,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         tool_name: str,
         is_read_only: bool,
         is_semantic: bool,
+        has_semantic_models: bool,
         token_role: str,
         features: set[str],
         is_oauth: bool,
@@ -430,10 +466,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                 f'Contact your administrator to request write access.'
             )
 
-        if SEMANTIC_TOOLING_FEATURE not in features and is_semantic:
+        if is_semantic and not has_semantic_models:
             return (
                 f'The tool "{tool_name}" is not available in this project. '
-                'Please ask Keboola support to enable "Semantic Layer Tooling" feature.'
+                'This project has no semantic models, so semantic tools are unavailable.'
             )
 
         if 'hide-conditional-flows' in features:
@@ -477,10 +513,16 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
         token_info = await self.get_token_info(context.fastmcp_context)
 
+        has_semantic_models = False
+        if is_semantic_tool(tool):
+            client = KeboolaClient.from_state(context.fastmcp_context.session.state)
+            has_semantic_models = await project_has_semantic_models(client, context.fastmcp_context.session.state)
+
         denial = self.authorize_tool_call(
             tool_name=tool.name,
             is_read_only=is_read_only_tool(tool),
             is_semantic=is_semantic_tool(tool),
+            has_semantic_models=has_semantic_models,
             token_role=self.get_token_role(token_info),
             features=self.get_project_features(token_info),
             is_oauth=self._is_oauth_authenticated(context.fastmcp_context),

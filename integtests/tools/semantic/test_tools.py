@@ -19,8 +19,6 @@ from keboola_mcp_server.tools.semantic.tools import (
 )
 from keboola_mcp_server.workspace import WorkspaceManager
 
-SEMANTIC_TOOLING_FEATURE = 'mcp-semantic-tooling'
-
 
 @dataclass(frozen=True)
 class SemanticTestSetup:
@@ -75,12 +73,14 @@ def _require_metastore_available(
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def semantic_tools_enabled(keboola_client: KeboolaClient) -> None:
-    token_info = await keboola_client.storage_client.verify_token()
-    owner = token_info.get('owner', {})
-    features = owner.get('features', []) if isinstance(owner, dict) else []
-    if SEMANTIC_TOOLING_FEATURE not in features:
-        pytest.skip(f'Semantic tooling feature "{SEMANTIC_TOOLING_FEATURE}" is not enabled in this environment.')
+async def semantic_layer_available(keboola_client: KeboolaClient) -> None:
+    # Semantic tools are now gated on the project being able to serve semantic models rather than on a
+    # project feature flag. If the metastore cannot serve the semantic-model repository (e.g. the project
+    # is not provisioned for the semantic layer), skip — this mirrors the server's fail-closed gating.
+    try:
+        await keboola_client.metastore_client.list_objects(SemanticObjectType.SEMANTIC_MODEL.value, limit=1)
+    except Exception as exc:
+        pytest.skip(f'Semantic layer is not available in this environment: {exc}')
 
 
 @pytest_asyncio.fixture
@@ -275,6 +275,7 @@ async def test_get_semantic_context(
 @pytest.mark.asyncio
 async def test_get_semantic_schema(
     mcp_client: Client,
+    semantic_test_setup: SemanticTestSetup,
 ) -> None:
     schema_result = await mcp_client.call_tool(
         'get_semantic_schema',
