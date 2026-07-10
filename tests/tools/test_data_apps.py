@@ -1144,6 +1144,7 @@ from keboola_mcp_server.tools.data_apps import (  # noqa: E402
     ModifiedPythonJsDataAppOutput,
     _is_draft_config,
     _update_existing_code_data_app_config,
+    _validate_branch_update,
     create_python_js_data_app_git_credential,
     modify_python_js_data_app,
 )
@@ -1402,6 +1403,119 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     # KBC_TOKEN / KBC_URL / BRANCH_ID are injected by the platform at runtime — the MCP must
     # not write them back into the stored config on update either.
     assert 'secrets' not in new_cfg['parameters']['dataApp']
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_update_repoints_external_git_branch(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """Update path repoints an external-git app's branch: the PATCH carries the new
+    `parameters.dataApp.git.branch`, the encrypted `#password`/`repository`/`username` are
+    preserved, no re-encryption happens, and the change_summary hints at redeploy (CFTL-714)."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    git_block = {
+        'repository': 'https://github.com/org/repo.git',
+        'username': 'kai',
+        '#password': 'KBC::cipher::secret',
+        'branch': 'main',
+    }
+    existing_data_app = DataApp(
+        name='Repo App',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='2',
+        type='python-js',
+        configuration={
+            'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'repo-app', 'git': git_block}},
+        },
+        state='stopped',
+    )
+    updated_data_app = existing_data_app.model_copy(update={'config_version': '3'})
+
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(side_effect=[existing_data_app, updated_data_app]),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(ssh_url=None, https_url=None, is_managed_git_repo=False)
+    )
+    # Encryption must NOT be called on a branch-only repoint (the token stays encrypted verbatim).
+    keboola_client.encryption_client = mocker.AsyncMock()
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='',
+        description='',
+        configuration_id='cfg-1',
+        change_description='Flip to feature branch',
+        branch='feature-x',
+    )
+
+    assert isinstance(result, ModifiedPythonJsDataAppOutput)
+    assert result.response == 'updated'
+    new_cfg = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
+    assert new_cfg['parameters']['dataApp']['git'] == {
+        'repository': 'https://github.com/org/repo.git',
+        'username': 'kai',
+        '#password': 'KBC::cipher::secret',
+        'branch': 'feature-x',
+    }
+    keboola_client.encryption_client.encrypt.assert_not_called()
+    assert result.change_summary is not None
+    assert 'feature-x' in result.change_summary
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_update_branch_rejected_on_managed_repo_app(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """A managed-repo prod app has no `parameters.dataApp.git` block, so a branch repoint is
+    rejected with a clear message and nothing is written (CFTL-714)."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    managed_repo_app = DataApp(
+        name='Prod App',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='2',
+        type='python-js',
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'prod-app'}}},
+        state='stopped',
+    )
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(return_value=managed_repo_app),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+
+    with pytest.raises(ValueError, match='not an external-git data app'):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='',
+            description='',
+            configuration_id='cfg-1',
+            branch='feature-x',
+        )
+    keboola_client.storage_client.configuration_update.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1808,6 +1922,71 @@ def test_update_existing_code_data_app_config_storage_semantics(
         assert new['storage'] == expected_storage
 
 
+def test_update_existing_code_data_app_config_repoints_git_branch() -> None:
+    """`branch` rewrites only `parameters.dataApp.git.branch`; the encrypted `#password`,
+    `repository`, and `username` are preserved verbatim (no re-encryption). CFTL-714."""
+    existing = {
+        'parameters': {
+            'autoSuspendAfterSeconds': 900,
+            'dataApp': {
+                'slug': 'x',
+                'git': {
+                    'repository': 'https://github.com/org/repo.git',
+                    'username': 'kai',
+                    '#password': 'KBC::cipher::secret',
+                    'branch': 'main',
+                },
+            },
+        },
+    }
+    new = _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=900, branch='feature-x')
+    assert new['parameters']['dataApp']['git'] == {
+        'repository': 'https://github.com/org/repo.git',
+        'username': 'kai',
+        '#password': 'KBC::cipher::secret',
+        'branch': 'feature-x',
+    }
+    # branch=None must leave the existing branch untouched.
+    unchanged = _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=900)
+    assert unchanged['parameters']['dataApp']['git']['branch'] == 'main'
+    # original must not be mutated
+    assert existing['parameters']['dataApp']['git']['branch'] == 'main'
+
+
+def test_update_existing_code_data_app_config_branch_without_git_block_raises() -> None:
+    """Setting `branch` on a config without a git block is a programming error the helper rejects
+    (the tool validates external-git-ness first, but the invariant holds here too)."""
+    existing = {'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}}}
+    with pytest.raises(ValueError, match='no parameters.dataApp.git block'):
+        _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=900, branch='feature-x')
+
+
+@pytest.mark.parametrize('bad_branch', ['   ', 'has space', '\t'])
+def test_validate_branch_update_rejects_invalid_branch_name(bad_branch: str) -> None:
+    """On the update path an external-git app rejects an empty/whitespace-containing branch name."""
+    app = DataApp(
+        name='Repo App',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='python-js',
+        configuration={
+            'parameters': {
+                'dataApp': {
+                    'slug': 'repo-app',
+                    'git': {'repository': 'r', 'username': 'kai', '#password': 'p', 'branch': 'main'},
+                }
+            }
+        },
+        state='stopped',
+    )
+    with pytest.raises(ValueError, match='not a valid git branch name'):
+        _validate_branch_update(bad_branch, app, 'cfg-1')
+
+
 # ===== Tests for deploy_data_app with mode and python-js =====
 
 
@@ -2087,16 +2266,6 @@ async def test_modify_python_js_data_app_create_draft_still_requires_slug(
             },
             'parent_configuration_id is only valid when creating a draft',
         ),
-        (
-            'branch',
-            {
-                'name': 'A',
-                'description': '',
-                'configuration_id': 'cfg-1',
-                'branch': 'add-revenue-filter',
-            },
-            'branch is only valid when creating a draft',
-        ),
     ],
 )
 async def test_modify_python_js_data_app_update_rejects_draft_args(
@@ -2105,7 +2274,8 @@ async def test_modify_python_js_data_app_update_rejects_draft_args(
     kwargs: dict,
     error_match: str,
 ) -> None:
-    """The update path rejects draft-only args (`parent_configuration_id`, `branch`)."""
+    """The update path rejects create-only draft args (`parent_configuration_id`). `branch` is
+    NOT rejected here — on update it repoints an external-git app's branch (CFTL-714)."""
     with pytest.raises(ValueError, match=error_match):
         await modify_python_js_data_app(ctx=mcp_context_client, **kwargs)
 

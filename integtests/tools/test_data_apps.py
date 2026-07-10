@@ -441,6 +441,41 @@ async def test_python_js_data_app_prod_and_draft_lifecycle(
         # Drafts of a draft are always empty.
         assert draft_detail_app.drafts == []
 
+        # Step 4b: repoint the draft's external-git branch via the update path (CFTL-714) and
+        # confirm the stored config now pins the new branch while the encrypted credential,
+        # repository, and username are preserved verbatim.
+        repointed_branch = f'repoint-{unique}'
+        repoint_result = await mcp_client.call_tool(
+            name='modify_python_js_data_app',
+            arguments={
+                'name': '',
+                'description': '',
+                'configuration_id': draft_output.data_app.configuration_id,
+                'branch': repointed_branch,
+                'change_description': 'CFTL-714 repoint git branch',
+            },
+        )
+        assert repoint_result.structured_content is not None
+        repoint_output = ModifiedPythonJsDataAppOutput.model_validate(repoint_result.structured_content)
+        assert repoint_output.response.startswith('updated')
+        assert repoint_output.change_summary is not None
+        assert repointed_branch in repoint_output.change_summary
+
+        repointed_detail = await mcp_client.call_tool(
+            name='get_data_apps',
+            arguments={'configuration_ids': [draft_output.data_app.configuration_id]},
+        )
+        assert repointed_detail.structured_content is not None
+        repointed_apps = GetDataAppsOutput.model_validate(repointed_detail.structured_content)
+        repointed_app = repointed_apps.data_apps[0]
+        assert isinstance(repointed_app, DataApp)
+        repointed_git_block = repointed_app.configuration.get('parameters', {}).get('dataApp', {}).get('git', {})
+        assert repointed_git_block.get('branch') == repointed_branch
+        # Untouched fields survive the repoint (only `branch` is rewritten; no re-encryption).
+        assert repointed_git_block.get('repository') == prod_output.repo_url
+        assert repointed_git_block.get('username') == 'kai'
+        assert repointed_git_block.get('#password', '').startswith('KBC::')
+
         # Step 5: merge into main and push.
         _git('checkout', 'main', cwd=repo_dir)
         _git('merge', '--no-ff', '-m', f'Merge {draft_output.branch}', draft_output.branch, cwd=repo_dir)
