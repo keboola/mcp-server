@@ -74,6 +74,10 @@ export type DocsSearch = {
 
 const DEFAULT_K = 15;
 const DEFAULT_MIN_SIMILARITY = 0.25;
+// LLM-less `docs_query`: how many top docs to extract and how much of each, so the tool
+// payload stays bounded (~a few KB) instead of dumping full pages (RFC trade-off).
+const EXTRACT_DOC_COUNT = 5;
+const EXTRACT_SNIPPET_CHARS = 800;
 
 // ---------------------------------------------------------------------------
 // Retrieval (vendored from @keboola/docs-search)
@@ -315,13 +319,25 @@ const buildDocsSearch = (pool: Pool, embedder: Embedder, llm: Llm | null): DocsS
   recommendComponents: (query, opts) =>
     search(pool, embedder, query, { ...opts, componentOnly: true }),
   answerQuestion: async (question, opts) => {
-    const docs = await search(pool, embedder, question, opts);
+    // Without an LLM we return bounded extracts (not full pages), so fetch fewer parents.
+    const k = opts?.k ?? (llm ? DEFAULT_K : EXTRACT_DOC_COUNT);
+    const docs = await search(pool, embedder, question, { ...opts, k });
     const sourceUrls = [...new Set(docs.map((d) => d.sourceUrl))];
     if (!llm) {
-      // No LLM configured: fall back to returning the retrieved snippets (RFC trade-off).
-      const text = docs.length
-        ? docs.map((d) => d.content).join('\n\n---\n\n')
-        : 'No relevant documentation was found.';
+      // No LLM configured: return the top matches as short, titled extracts (RFC trade-off).
+      // Cap per-doc length + doc count so a real (long) page can't blow up the response —
+      // full pages are the LLM's job, not the raw tool payload.
+      if (docs.length === 0) return { text: 'No relevant documentation was found.', sourceUrls };
+      const text = docs
+        .slice(0, EXTRACT_DOC_COUNT)
+        .map((d) => {
+          const body =
+            d.content.length > EXTRACT_SNIPPET_CHARS
+              ? `${d.content.slice(0, EXTRACT_SNIPPET_CHARS).trimEnd()}…`
+              : d.content;
+          return d.title ? `## ${d.title}\n${body}` : body;
+        })
+        .join('\n\n---\n\n');
       return { text, sourceUrls };
     }
     const { answer } = await llm.answer({ question, context: formatContext(docs) });
