@@ -294,10 +294,14 @@ class AppGitRepoResponse(BaseModel):
             'HTTPS clone URL (without embedded credentials). `null` for externally configured SSH repositories.'
         ),
     )
-    is_managed_git_repo: bool = Field(
+    is_managed_git_repo: bool | None = Field(
         validation_alias=AliasChoices('isManagedGitRepo', 'is_managed_git_repo'),
-        default=False,
-        description='Whether the repository is a managed git repository provisioned by the service.',
+        default=None,
+        description=(
+            'Whether the repository is a managed git repository provisioned by the service. '
+            'None when the field is absent from the response (spec drift / older service); '
+            'callers must treat None as "unknown" and fail closed.'
+        ),
     )
 
 
