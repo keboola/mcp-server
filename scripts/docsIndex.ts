@@ -157,8 +157,32 @@ export const migrateDocsIndex = async (pool: Pool, dim: number = DEFAULT_DIM): P
 };
 
 /**
- * Wipes and re-seeds the index from `sources` using `embedder` (one chunk per doc), then
- * stamps `index_meta` so the availability probe reports the index as ready. Returns counts.
+ * Splits `text` into ~`size`-char windows with `overlap` chars of carry-over, breaking on
+ * whitespace so words aren't cut. Short text yields a single chunk. Keeps long real docs
+ * retrievable (each chunk is embedded + searched independently, then collapsed to its parent).
+ */
+export const chunkText = (text: string, size = 1000, overlap = 100): string[] => {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (clean.length <= size) return clean ? [clean] : [];
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < clean.length) {
+    let end = Math.min(start + size, clean.length);
+    if (end < clean.length) {
+      const nextSpace = clean.lastIndexOf(' ', end);
+      if (nextSpace > start) end = nextSpace;
+    }
+    chunks.push(clean.slice(start, end).trim());
+    if (end >= clean.length) break;
+    start = Math.max(end - overlap, start + 1);
+  }
+  return chunks;
+};
+
+/**
+ * Wipes and re-seeds the index from `sources` using `embedder`: each doc is chunked
+ * (see {@link chunkText}) into one-or-more `doc_chunk` rows, all pointing at the parent
+ * `doc`. Stamps `index_meta` so the availability probe reports ready. Returns counts.
  */
 export const seedDocsIndex = async (
   pool: Pool,
@@ -170,22 +194,29 @@ export const seedDocsIndex = async (
     await client.query('BEGIN');
     await client.query('TRUNCATE doc, doc_chunk, index_manifest, index_meta RESTART IDENTITY');
 
-    const embedInputs = sources.map((d) => `${d.title}\n${d.content}`);
-    const vectors = await embedder.embed(embedInputs);
-
+    let chunkCount = 0;
     for (let i = 0; i < sources.length; i++) {
       const doc = sources[i]!;
+      const chunks = chunkText(doc.content);
+      if (chunks.length === 0) continue;
+      // Prefix each chunk with the title (parity with the SDK's embed_input) and embed the batch.
+      const embedInputs = chunks.map((c) => `${doc.title}\n${c}`);
+      const vectors = await embedder.embed(embedInputs);
+
       const docId = randomUUID();
       await client.query(
         `INSERT INTO doc (id, source_key, source_type, source_url, title, content, component_type, content_hash)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [docId, doc.sourceKey, doc.sourceType, doc.sourceUrl, doc.title, doc.content, doc.componentType, String(i)],
       );
-      await client.query(
-        `INSERT INTO doc_chunk (id, doc_id, ordinal, embed_input, embedding)
-         VALUES ($1, $2, 0, $3, $4::halfvec)`,
-        [randomUUID(), docId, embedInputs[i]!, vectorLiteral(vectors[i]!)],
-      );
+      for (let j = 0; j < chunks.length; j++) {
+        await client.query(
+          `INSERT INTO doc_chunk (id, doc_id, ordinal, embed_input, embedding)
+           VALUES ($1, $2, $3, $4, $5::halfvec)`,
+          [randomUUID(), docId, j, embedInputs[j]!, vectorLiteral(vectors[j]!)],
+        );
+        chunkCount++;
+      }
       await client.query(
         `INSERT INTO index_manifest (source_key, content_hash, doc_id) VALUES ($1, $2, $3)`,
         [doc.sourceKey, String(i), docId],
@@ -194,11 +225,11 @@ export const seedDocsIndex = async (
 
     await client.query(
       `INSERT INTO index_meta (id, embedding_model, embedding_dim, last_success_at, doc_count, chunk_count)
-       VALUES (true, $1, $2, now(), $3, $3)`,
-      [embedder.model, embedder.dim, sources.length],
+       VALUES (true, $1, $2, now(), $3, $4)`,
+      [embedder.model, embedder.dim, sources.length, chunkCount],
     );
     await client.query('COMMIT');
-    return { docCount: sources.length, chunkCount: sources.length };
+    return { docCount: sources.length, chunkCount };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
