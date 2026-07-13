@@ -1,6 +1,6 @@
 import sys
 from types import ModuleType
-from typing import Literal, cast
+from typing import Literal, Optional, cast
 
 import pytest
 from fastmcp import Context
@@ -1437,6 +1437,7 @@ async def test_modify_python_js_data_app_update_repoints_external_git_branch(
             'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'repo-app', 'git': git_block}},
         },
         state='stopped',
+        is_managed_git_repo=False,
     )
     updated_data_app = existing_data_app.model_copy(update={'config_version': '3'})
 
@@ -1483,8 +1484,9 @@ async def test_modify_python_js_data_app_update_branch_rejected_on_managed_repo_
     mcp_context_client: Context,
     workspace_manager,
 ) -> None:
-    """A managed-repo prod app has no `parameters.dataApp.git` block, so a branch repoint is
-    rejected with a clear message and nothing is written (CFTL-714)."""
+    """A Keboola-managed-repo app is rejected on the gate `is_managed_git_repo=True`, NOT on the
+    git block — it carries one here to prove block-presence is no longer the discriminator. Nothing
+    is written (CFTL-714 review)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
@@ -1498,8 +1500,17 @@ async def test_modify_python_js_data_app_update_branch_rejected_on_managed_repo_
         branch_id='branch-1',
         config_version='2',
         type='python-js',
-        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'prod-app'}}},
+        configuration={
+            'parameters': {
+                'autoSuspendAfterSeconds': 900,
+                'dataApp': {
+                    'slug': 'prod-app',
+                    'git': {'repository': 'r', 'username': 'kai', '#password': 'p', 'branch': 'main'},
+                },
+            }
+        },
         state='stopped',
+        is_managed_git_repo=True,
     )
     mocker.patch(
         'keboola_mcp_server.tools.data_apps._fetch_data_app',
@@ -1507,7 +1518,7 @@ async def test_modify_python_js_data_app_update_branch_rejected_on_managed_repo_
     )
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
 
-    with pytest.raises(ValueError, match='not an external-git data app'):
+    with pytest.raises(ValueError, match='Keboola-managed git repo'):
         await modify_python_js_data_app(
             ctx=mcp_context_client,
             name='',
@@ -1961,10 +1972,9 @@ def test_update_existing_code_data_app_config_branch_without_git_block_raises() 
         _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=900, branch='feature-x')
 
 
-@pytest.mark.parametrize('bad_branch', ['   ', 'has space', '\t'])
-def test_validate_branch_update_rejects_invalid_branch_name(bad_branch: str) -> None:
-    """On the update path an external-git app rejects an empty/whitespace-containing branch name."""
-    app = DataApp(
+def _make_external_git_data_app(*, is_managed_git_repo: Optional[bool] = False) -> DataApp:
+    """A python-js DataApp with an external-git block, as `_fetch_data_app` would return it."""
+    return DataApp(
         name='Repo App',
         component_id=DATA_APP_COMPONENT_ID,
         configuration_id='cfg-1',
@@ -1982,9 +1992,34 @@ def test_validate_branch_update_rejects_invalid_branch_name(bad_branch: str) -> 
             }
         },
         state='stopped',
+        is_managed_git_repo=is_managed_git_repo,
     )
+
+
+@pytest.mark.parametrize('bad_branch', ['   ', 'has space', '\t'])
+def test_validate_branch_update_rejects_invalid_branch_name(bad_branch: str) -> None:
+    """On the update path an external-git app rejects an empty/whitespace-containing branch name."""
+    app = _make_external_git_data_app(is_managed_git_repo=False)
     with pytest.raises(ValueError, match='not a valid git branch name'):
         _validate_branch_update(bad_branch, app, 'cfg-1')
+
+
+@pytest.mark.parametrize(
+    ('is_managed_git_repo', 'error_match'),
+    [
+        (True, 'Keboola-managed git repo'),
+        (None, 'could not determine'),
+    ],
+)
+def test_validate_branch_update_rejects_managed_and_unknown(
+    is_managed_git_repo: Optional[bool], error_match: str
+) -> None:
+    """The repoint is gated on `is_managed_git_repo`, NOT on the presence of a git block: a managed
+    app (which can carry a git block too) is rejected, and an undetermined flag is refused rather
+    than risking a change to a managed app (CFTL-714 review)."""
+    app = _make_external_git_data_app(is_managed_git_repo=is_managed_git_repo)
+    with pytest.raises(ValueError, match=error_match):
+        _validate_branch_update('feature-x', app, 'cfg-1')
 
 
 # ===== Tests for deploy_data_app with mode and python-js =====

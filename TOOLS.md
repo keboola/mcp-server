@@ -2255,10 +2255,10 @@ draft handle.
 - `slug` is required on create and immutable after.
 - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
   `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or
-  a draft, and for repointing an **external-git** app's `branch` (drafts, or apps bound to
-  an external repository — a managed-repo prod app has no editable branch). Source code
-  changes go through the git flow above, not this tool. After a `branch` repoint, call
-  `deploy_data_app` to serve the new branch.
+  a draft, and for repointing an **external-git** app's `branch` (a draft, or an app bound
+  to an external repository — an app on a Keboola-managed git repo is rejected, its branch
+  is owned by the platform). Source code changes go through the git flow above, not this
+  tool. After a `branch` repoint, call `deploy_data_app` to serve the new branch.
 
 ## Authentication
 
@@ -2330,7 +2330,7 @@ short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its
         }
       ],
       "default": null,
-      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to `init` when unset (a sensible name for the first draft of a brand-new prod app). For subsequent edit-existing drafts, pass a descriptive name like 'add-revenue-filter'. Must not be `main` (reserved for the prod app). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for apps that already have a `parameters.dataApp.git` block (drafts, or apps bound to an external repository); rejected for managed-repo prod apps, which always track the default branch of their repo. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
+      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to `init` when unset (a sensible name for the first draft of a brand-new prod app). For subsequent edit-existing drafts, pass a descriptive name like 'add-revenue-filter'. Must not be `main` (reserved for the prod app). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
     },
     "authentication_type": {
       "default": "default",
