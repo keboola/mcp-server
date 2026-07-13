@@ -1,7 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
 import { Config } from '@/config';
-import { applyDeploymentDefaults, parseEnv } from '@/env';
+import { applyDeploymentDefaults, parseEnv, redactedEnv } from '@/env';
+
+describe('redactedEnv', () => {
+  it('masks secrets, strips DATABASE_URL credentials, and keeps non-secrets', () => {
+    const dump = redactedEnv(
+      parseEnv({
+        DATABASE_URL: 'postgres://mcp:s3cret@db.internal:5432/docs',
+        DOCS_EMBEDDER_MODEL: 'local',
+        DOCS_EMBEDDER_DIM: '384',
+        DOCS_EMBEDDER_API_KEY: 'sk-abc',
+        KBC_JWT_SECRET: 'jwt-xyz',
+        KBC_OAUTH_CLIENT_ID: 'client-123',
+      }),
+    );
+    // Credentials stripped, host/db preserved.
+    expect(dump.DATABASE_URL).toBe('postgres://***:***@db.internal:5432/docs');
+    // Secrets masked.
+    expect(dump.DOCS_EMBEDDER_API_KEY).toBe('***');
+    expect(dump.KBC_JWT_SECRET).toBe('***');
+    // Non-secrets visible — this is the whole point (see the embedder config at a glance).
+    expect(dump.DOCS_EMBEDDER_MODEL).toBe('local');
+    expect(dump.DOCS_EMBEDDER_DIM).toBe(384);
+    expect(dump.KBC_OAUTH_CLIENT_ID).toBe('client-123');
+    // Unset values shown as null so the dump is complete.
+    expect(dump.HOSTNAME_SUFFIX).toBeNull();
+  });
+});
 
 describe('parseEnv', () => {
   it('applies defaults and coerces PORT', () => {

@@ -132,3 +132,37 @@ export const applyDeploymentDefaults = (config: Config, env: Env): Config => {
 
   return Object.keys(patch).length > 0 ? config.replaceBy(patch) : config;
 };
+
+// Keys whose values must never be logged (matched case-insensitively on the env name).
+const SECRET_ENV_KEY = /token|secret|password|api[_-]?key|\bkey\b|jwt/i;
+
+/** Masks the credentials in a `postgres://user:pass@host/db` URL, keeping host/db visible. */
+const maskDbUrl = (url: string): string => {
+  try {
+    const u = new URL(url);
+    if (u.username) u.username = '***';
+    if (u.password) u.password = '***';
+    return u.toString();
+  } catch {
+    return '***';
+  }
+};
+
+/**
+ * A redacted, log-safe view of the deployment env for the startup dump: secret values
+ * masked (`***`), `DATABASE_URL` credentials stripped, unset values shown as `null` so the
+ * dump is complete. Never logs a raw token/key/password.
+ */
+export const redactedEnv = (env: Env): Record<string, string | number | boolean | null> => {
+  const out: Record<string, string | number | boolean | null> = {};
+  // Iterate every schema key (not just the ones present) so the dump is complete: an unset
+  // optional shows as null rather than silently vanishing.
+  for (const key of Object.keys(envSchema.shape)) {
+    const value = (env as Record<string, unknown>)[key];
+    if (value === undefined || value === null) out[key] = null;
+    else if (key === 'DATABASE_URL' && typeof value === 'string') out[key] = maskDbUrl(value);
+    else if (SECRET_ENV_KEY.test(key)) out[key] = '***';
+    else out[key] = value as string | number | boolean;
+  }
+  return out;
+};
