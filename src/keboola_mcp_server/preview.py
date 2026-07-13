@@ -296,7 +296,7 @@ async def preview_config_diff(rq: Request) -> Response:
     semantic_tools = getattr(rq.app.state, 'mcp_semantic_tools', set())
     is_semantic = preview_rq.tool_name in semantic_tools
     token_info = await client.storage_client.verify_token()
-    has_semantic_models = await project_has_semantic_models(client, state) if is_semantic else False
+    has_semantic_models = await project_has_semantic_models(client) if is_semantic else False
     denial = ToolsFilteringMiddleware.authorize_tool_call(
         tool_name=preview_rq.tool_name,
         is_read_only=is_read_only,

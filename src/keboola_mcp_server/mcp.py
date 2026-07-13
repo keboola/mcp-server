@@ -46,9 +46,6 @@ DEFAULT_CONCURRENCY = 10
 
 # Metastore object type used to detect whether a project already has any semantic models.
 SEMANTIC_MODEL_OBJECT_TYPE = 'semantic-model'
-# Session-state key caching the per-project semantic-model detection result so that repeated
-# on_list_tools()/on_call_tool() requests in the same session don't each hit the metastore.
-HAS_SEMANTIC_MODELS_STATE_KEY = 'has_semantic_models'
 SEMANTIC_TOOL_NAMES = {
     'search_semantic_context',
     'get_semantic_context',
@@ -80,33 +77,21 @@ def is_semantic_tool(tool: Tool) -> bool:
     return SEMANTIC_TOOLS_TAG in (tool.tags or set()) or tool.name in SEMANTIC_TOOL_NAMES
 
 
-async def project_has_semantic_models(client: KeboolaClient, state: dict[str, Any] | None = None) -> bool:
+async def project_has_semantic_models(client: KeboolaClient) -> bool:
     """
-    Detect whether the project has at least one semantic model, so that the semantic tools can be
+    Detect whether the project has at least one semantic model, so the semantic tools can be
     shown/allowed dynamically instead of behind a project feature flag.
 
-    The result is cached on the session ``state`` (under :data:`HAS_SEMANTIC_MODELS_STATE_KEY`) so that
-    repeated ``on_list_tools()``/``on_call_tool()`` requests in the same session don't each make a
-    metastore round-trip.
-
-    Fails closed: if the metastore call raises (e.g. the project is not provisioned for the semantic
-    layer, or the API returns a 5xx), we treat it as "no semantic models" so the tools stay hidden.
-    This preserves the previous default-off behavior for projects that cannot use the semantic layer.
+    Fails closed: if the metastore call raises (e.g. the project is not provisioned for the
+    semantic layer, or the API returns a 5xx), we treat it as "no semantic models" so the tools
+    stay hidden. This preserves the previous default-off behavior.
     """
-    if state is not None and HAS_SEMANTIC_MODELS_STATE_KEY in state:
-        return bool(state[HAS_SEMANTIC_MODELS_STATE_KEY])
-
     try:
         objects = await client.metastore_client.list_objects(SEMANTIC_MODEL_OBJECT_TYPE, limit=1)
-        has_models = bool(objects)
+        return bool(objects)
     except Exception as e:
         LOG.debug(f'Failed to detect semantic models, assuming none are available: {e}')
-        has_models = False
-
-    if state is not None:
-        state[HAS_SEMANTIC_MODELS_STATE_KEY] = has_models
-
-    return has_models
+        return False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -429,7 +414,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
 
         client = KeboolaClient.from_state(context.fastmcp_context.session.state)
-        has_semantic_models = await project_has_semantic_models(client, context.fastmcp_context.session.state)
+        has_semantic_models = await project_has_semantic_models(client)
         if not has_semantic_models:
             tools = [t for t in tools if not is_semantic_tool(t)]
 
@@ -516,7 +501,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         has_semantic_models = False
         if is_semantic_tool(tool):
             client = KeboolaClient.from_state(context.fastmcp_context.session.state)
-            has_semantic_models = await project_has_semantic_models(client, context.fastmcp_context.session.state)
+            has_semantic_models = await project_has_semantic_models(client)
 
         denial = self.authorize_tool_call(
             tool_name=tool.name,
