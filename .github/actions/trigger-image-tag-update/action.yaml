@@ -7,10 +7,6 @@ inputs:
   image-tag:
     description: "The image tag to update to"
     required: true
-  automerge:
-    description: "Automatically merge PRs"
-    required: false
-    default: "true"
   dry-run:
     description: "Do a dry run"
     required: false
@@ -64,7 +60,6 @@ runs:
         -r main \
         -f helm-chart=${{ inputs.helm-chart }} \
         -f image-tag=${{ inputs.image-tag }} \
-        -f automerge=${{ inputs.automerge }} \
         -f dry-run=${{ inputs.dry-run }} \
         -f commit-sha=${{ inputs.commit-sha }} \
         -f metadata="$ENCODED_METADATA"
