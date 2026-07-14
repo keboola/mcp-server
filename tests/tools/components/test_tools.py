@@ -527,6 +527,31 @@ def test_configuration_root_processors_normalization(processors_value: Any, expe
 
 
 @pytest.mark.parametrize(
+    ('runtime_value', 'expected'),
+    [
+        ({'parallelism': 5}, {'parallelism': 5}),
+        (None, None),
+        ('omit', None),
+    ],
+    ids=['parallelism_passthrough', 'none_passthrough', 'field_omitted'],
+)
+def test_configuration_root_runtime_passthrough(runtime_value: Any, expected: Any) -> None:
+    """ConfigurationRoot.from_api_response surfaces the runtime section (e.g. parallelism)."""
+    api_config = ConfigurationAPIResponse.model_validate(
+        {
+            'componentId': 'keboola.ex-onedrive',
+            'id': '123',
+            'name': 'My Config',
+            'version': 1,
+            'configuration': {'runtime': runtime_value} if runtime_value != 'omit' else {},
+            'metadata': [],
+        }
+    )
+    root = ConfigurationRoot.from_api_response(api_config)
+    assert root.runtime == expected
+
+
+@pytest.mark.parametrize(
     'invalid_processors',
     [
         ['unexpected'],
