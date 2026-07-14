@@ -227,6 +227,12 @@ async def test_get_app_git_repo_returns_urls() -> None:
     client.get.assert_awaited_once_with(endpoint='apps/app-123/git-repo')
 
 
+def test_app_git_repo_response_missing_managed_flag_defaults_to_none() -> None:
+    """Fail-closed: a git-repo response without `isManagedGitRepo` yields None, not False, so
+    callers gating on it (branch repoint) refuse rather than assume "external" on spec drift."""
+    assert AppGitRepoResponse.model_validate({'httpsUrl': 'https://x/y.git'}).is_managed_git_repo is None
+
+
 def test_code_data_app_config_serializes_to_expected_shape() -> None:
     """CodeDataAppConfig must match the data-science API payload exactly (aliased keys)."""
     config = _code_app_config()
