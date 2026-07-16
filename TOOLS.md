@@ -212,7 +212,7 @@ SHARED CODE:
   CONFIGURATION ROOT for shared-code (not nested under `parameters`); this tool unwraps the
   provided parameters dict accordingly. The conventional `configuration_id` is required —
   auto-generated IDs are not recognised by the runtime expansion.
-- For Python/R/DuckDB transformations that should reuse shared snippets, set `shared_code_id` and
+- For Python/R transformations that should reuse shared snippets, set `shared_code_id` and
   `shared_code_row_ids` and embed `{{ rowId }}` Mustache placeholders in the component's script.
 
 WHEN NOT TO USE:
@@ -310,7 +310,7 @@ EXAMPLES:
     },
     "shared_code_id": {
       "default": "",
-      "description": "Optional. The configuration ID of the parent `keboola.shared-code` library this configuration references at the root level. Useful when creating Python (`keboola.python-transformation-v2`), R (`keboola.r-transformation-v2`) or DuckDB transformation configurations that need to reuse shared snippets. Must be paired with `shared_code_row_ids` and matching `{{ rowId }}` placeholders in the component's script. Leave empty when not using shared code.",
+      "description": "Optional. The configuration ID of the parent `keboola.shared-code` library this configuration references at the root level. Useful when creating Python (`keboola.python-transformation-v2`), R (`keboola.r-transformation-v2`) transformation configurations that need to reuse shared snippets. Must be paired with `shared_code_row_ids` and matching `{{ rowId }}` placeholders in the component's script. Leave empty when not using shared code.",
       "type": "string"
     },
     "shared_code_row_ids": {
@@ -835,7 +835,7 @@ WHEN TO USE:
 - Modifying configuration parameters (credentials, settings, API keys, etc.)
 - Updating storage mappings (input/output tables or files)
 - Changing configuration name or description
-- Adding/removing shared-code linkage on Python/R/DuckDB transformations (via `shared_code_id`)
+- Adding/removing shared-code linkage on Python/R transformations (via `shared_code_id`)
 - Any combination of the above
 
 WHEN NOT TO USE:
@@ -1092,7 +1092,7 @@ WORKFLOW:
         }
       ],
       "default": null,
-      "description": "Optional. Updates the shared-code linkage on the configuration root. Non-empty string: sets `shared_code_id` (parent `keboola.shared-code` config ID) and replaces `shared_code_row_ids` with the value below. Empty string `\"\"`: clears the linkage (removes both root fields). `None` (default): leaves the existing linkage untouched. Use for Python/R/DuckDB transformations; SQL transformations use update_sql_transformation."
+      "description": "Optional. Updates the shared-code linkage on the configuration root. Non-empty string: sets `shared_code_id` (parent `keboola.shared-code` config ID) and replaces `shared_code_row_ids` with the value below. Empty string `\"\"`: clears the linkage (removes both root fields). `None` (default): leaves the existing linkage untouched. Use for Python/R transformations; SQL transformations use update_sql_transformation."
     },
     "shared_code_row_ids": {
       "default": [],

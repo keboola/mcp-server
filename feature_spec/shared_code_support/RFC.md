@@ -291,7 +291,7 @@ maintain the marker invariant.
 
 #### 4c. `create_config` (`tools.py:1005`)
 
-For Python, R, and DuckDB transformations (and any other component) created via the
+For Python and R transformations (and any other component) created via the
 generic tool, add:
 
 ```python
@@ -302,14 +302,14 @@ shared_code_row_ids: Sequence[str] = tuple()
 Include them in `configuration_payload` when non-empty. When the target `component_id`
 is a transformation backend that supports shared code, also auto-emit marker code blocks
 via `sync_shared_code_markers_in_dict` (aa8fc636) — same UI-canonical behavior as the
-SQL path, so Python/R/DuckDB don't need a separate authoring pattern.
+SQL path, so Python/R don't need a separate authoring pattern.
 
 #### 4d. `update_config` (`tools.py:1291`)
 
 Add the same two optional parameters. Write them to the configuration root (not to
 `parameters`) during the update; also auto-emit marker blocks for transformation
 components (aa8fc636). This handles adding, changing, or clearing shared code linkage on
-existing Python/R/DuckDB transformation configurations.
+existing Python/R transformation configurations.
 
 ### 5. `TransformationConfiguration` Model (`model.py`)
 
@@ -347,7 +347,7 @@ just supplies the linkage fields.
 Implementations:
 - `apply_shared_code_markers(tf_cfg, sid, row_ids)` — Pydantic-model path (create)
 - `sync_shared_code_markers_in_dict(updated_configuration)` — raw-dict path (update,
-  also used by `create_config` / `update_config` for Python/R/DuckDB)
+  also used by `create_config` / `update_config` for Python/R)
 - `build_shared_code_marker_codes(sid, row_ids)`, `shared_code_marker_code_name(sid, rid)`,
   `is_shared_code_marker(name, script)` — shared helpers
 

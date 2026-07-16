@@ -3711,3 +3711,101 @@ async def test_get_shared_codes_rejects_unknown_component_id(
         await get_shared_codes(ctx=context, transformation_component_ids=['nonsense.component'])
 
     keboola_client.storage_client.configuration_list.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_config_shared_code_parent_requires_conventional_id(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """Creating a `keboola.shared-code` parent without an explicit `configuration_id` must be rejected
+    before hitting SAPI — an auto-assigned UUID is invisible to the UI and runtime expansion."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    shared_code_component = {**mock_component, 'id': SHARED_CODE_COMPONENT_ID}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match='requires an explicit `configuration_id`'):
+        await create_config(
+            ctx=context,
+            name='Shared codes for Snowflake',
+            description='reusable snippets',
+            component_id=SHARED_CODE_COMPONENT_ID,
+            parameters={'componentId': SNOWFLAKE_TRANSFORMATION_ID},
+        )
+
+    keboola_client.storage_client.configuration_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_shared_codes_skips_disabled_rows(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+):
+    """Disabled shared-code rows (the documented soft-delete path) must not be surfaced as reusable snippets."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(
+        return_value=[
+            {
+                'id': 'shared-codes.snowflake-transformation',
+                'name': 'Snowflake snippets',
+                'configuration': {'componentId': SNOWFLAKE_TRANSFORMATION_ID},
+            }
+        ]
+    )
+    detail = {
+        'rows': [
+            {'id': 'active', 'name': 'Active', 'configuration': {'code_content': ['SELECT 1']}},
+            {'id': 'disabled', 'name': 'Disabled', 'isDisabled': True, 'configuration': {'code_content': ['SELECT 2']}},
+        ],
+    }
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        side_effect=lambda component_id, configuration_id, include=None: detail
+    )
+
+    result = await get_shared_codes(ctx=context)
+    row_ids = [row.row_id for cfg in result.shared_codes for row in cfg.rows]
+    assert row_ids == ['active'], f'disabled rows must be filtered out; got {row_ids}'
+
+
+@pytest.mark.asyncio
+async def test_update_config_row_shared_code_applies_updates_to_flat_root(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """Editing a shared-code row must write `code_content` at the row root (where `get_shared_codes` reads it),
+    not under `parameters` — otherwise the edit is silently invisible."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    shared_code_component = {**mock_component, 'id': SHARED_CODE_COMPONENT_ID}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.configuration_row_detail = mocker.AsyncMock(
+        return_value={'id': 'dumpfiles', 'configuration': {'code_content': ['SELECT 1']}}
+    )
+    keboola_client.storage_client.configuration_row_update = mocker.AsyncMock(return_value={'version': 2})
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    await update_config_row(
+        ctx=context,
+        change_description='update snippet',
+        component_id=SHARED_CODE_COMPONENT_ID,
+        configuration_id='shared-codes.snowflake-transformation',
+        configuration_row_id='dumpfiles',
+        parameter_updates=[ConfigParamSet(op='set', path='code_content', value=['SELECT 2'])],
+    )
+
+    call = keboola_client.storage_client.configuration_row_update.call_args
+    sent = call.kwargs['configuration']
+    assert sent.get('code_content') == ['SELECT 2'], 'shared-code edit must land at the flat root'
+    assert 'code_content' not in sent.get('parameters', {}), 'shared-code edit must not be nested under parameters'

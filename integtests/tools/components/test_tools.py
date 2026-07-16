@@ -1152,6 +1152,7 @@ async def test_add_config_row_forwards_row_id_to_shared_code_parent(
     detail = await client.storage_client.configuration_detail(
         component_id=SHARED_CODE_COMPONENT_ID,
         configuration_id=parent.configuration_id,
+        include=['rows'],
     )
     rows = cast(list, detail.get('rows') or [])
     assert any(

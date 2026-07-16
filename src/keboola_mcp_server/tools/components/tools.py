@@ -462,6 +462,10 @@ async def get_shared_codes(
         )
         rows: list[SharedCodeRow] = []
         for raw_row in cast(list[dict[str, Any]], detail.get('rows') or []):
+            # Disabled snippets are the documented soft-delete path (`update_config_row(is_disabled=True)`);
+            # skip them so callers never link a transformation to a disabled shared-code row.
+            if raw_row.get('isDisabled'):
+                continue
             row_config = cast(dict[str, Any], raw_row.get('configuration') or {})
             row_parameters = cast(dict[str, Any], row_config.get('parameters') or {})
             code_content = row_config.get('code_content')
@@ -1313,7 +1317,7 @@ async def create_config(
             description=(
                 'Optional. The configuration ID of the parent `keboola.shared-code` library this configuration '
                 'references at the root level. Useful when creating Python (`keboola.python-transformation-v2`), '
-                'R (`keboola.r-transformation-v2`) or DuckDB transformation configurations that need to reuse '
+                'R (`keboola.r-transformation-v2`) transformation configurations that need to reuse '
                 'shared snippets. Must be paired with `shared_code_row_ids` and matching `{{ rowId }}` placeholders '
                 "in the component's script. Leave empty when not using shared code."
             ),
@@ -1376,7 +1380,7 @@ async def create_config(
       CONFIGURATION ROOT for shared-code (not nested under `parameters`); this tool unwraps the
       provided parameters dict accordingly. The conventional `configuration_id` is required —
       auto-generated IDs are not recognised by the runtime expansion.
-    - For Python/R/DuckDB transformations that should reuse shared snippets, set `shared_code_id` and
+    - For Python/R transformations that should reuse shared snippets, set `shared_code_id` and
       `shared_code_row_ids` and embed `{{ rowId }}` Mustache placeholders in the component's script.
 
     WHEN NOT TO USE:
@@ -1414,6 +1418,16 @@ async def create_config(
     # and runtime expansion read `componentId` at the configuration root, not under `parameters`.
     # For every other component the generic wrapper applies.
     if component_id == SHARED_CODE_COMPONENT_ID:
+        # The UI and runtime expansion only recognise shared-code libraries by the conventional
+        # `shared-codes.<transformation-component-id>` ID — a SAPI-auto-assigned UUID would create
+        # an orphaned library that never resolves. Require the caller to pass it explicitly.
+        if not configuration_id:
+            raise ValueError(
+                'Creating a `keboola.shared-code` library requires an explicit `configuration_id` using the '
+                'conventional `shared-codes.<transformation-component-id>` value (e.g. '
+                '`shared-codes.snowflake-transformation`). Auto-assigned IDs are not recognised by the runtime '
+                'expansion or the UI.'
+            )
         configuration_payload: dict[str, Any] = dict(parameters or {})
     else:
         configuration_payload = {'storage': storage_cfg, 'parameters': parameters}
@@ -1439,7 +1453,7 @@ async def create_config(
         configuration_payload['shared_code_row_ids'] = list(shared_code_row_ids)
 
     # Symmetry with `create_sql_transformation`: when the target is a transformation backend
-    # that supports shared code (Python/R/DuckDB/SQL via the generic create_config path),
+    # that supports shared code (Python/R/SQL via the generic create_config path),
     # auto-emit the UI-canonical `Shared Code (...)` marker code blocks and validate the
     # placeholder linkage so the runtime expansion can resolve every `{{rowId}}` reference.
     if component_id in SHARED_CODE_TRANSFORMATION_IDS:
@@ -1765,7 +1779,7 @@ async def update_config(
                 'Non-empty string: sets `shared_code_id` (parent `keboola.shared-code` config ID) and replaces '
                 '`shared_code_row_ids` with the value below. Empty string `""`: clears the linkage (removes '
                 'both root fields). `None` (default): leaves the existing linkage untouched. '
-                'Use for Python/R/DuckDB transformations; SQL transformations use update_sql_transformation.'
+                'Use for Python/R transformations; SQL transformations use update_sql_transformation.'
             ),
         ),
     ] = None,
@@ -1801,7 +1815,7 @@ async def update_config(
     - Modifying configuration parameters (credentials, settings, API keys, etc.)
     - Updating storage mappings (input/output tables or files)
     - Changing configuration name or description
-    - Adding/removing shared-code linkage on Python/R/DuckDB transformations (via `shared_code_id`)
+    - Adding/removing shared-code linkage on Python/R transformations (via `shared_code_id`)
     - Any combination of the above
 
     WHEN NOT TO USE:
@@ -2237,17 +2251,30 @@ async def update_config_row_internal(
         set_nested_value(configuration_payload, 'processors.after', processors_after)
 
     if parameter_updates:
-        current_params = configuration_payload.get('parameters', {})
-        updated_params = update_params(current_params, parameter_updates)
+        if component_id == SHARED_CODE_COMPONENT_ID:
+            # Shared-code rows use a flat body — `code_content` lives at the row root, not under
+            # `parameters`, and `get_shared_codes` reads the root first. Apply updates against the
+            # root (mirroring `add_config_row`) so an edit to e.g. `code_content` is actually visible.
+            updated_root = update_params(configuration_payload, parameter_updates)
+            configuration_payload = validate_row_parameters_configuration(
+                component=component,
+                parameters=updated_root,
+                initial_message='Applying the "parameter_updates" resulted in an invalid row configuration.',
+                configuration_id=configuration_id,
+                configuration_row_id=configuration_row_id,
+            )
+        else:
+            current_params = configuration_payload.get('parameters', {})
+            updated_params = update_params(current_params, parameter_updates)
 
-        parameters_cfg = validate_row_parameters_configuration(
-            component=component,
-            parameters=updated_params,
-            initial_message='Applying the "parameter_updates" resulted in an invalid row configuration.',
-            configuration_id=configuration_id,
-            configuration_row_id=configuration_row_id,
-        )
-        configuration_payload['parameters'] = parameters_cfg
+            parameters_cfg = validate_row_parameters_configuration(
+                component=component,
+                parameters=updated_params,
+                initial_message='Applying the "parameter_updates" resulted in an invalid row configuration.',
+                configuration_id=configuration_id,
+                configuration_row_id=configuration_row_id,
+            )
+            configuration_payload['parameters'] = parameters_cfg
 
     return current_row, configuration_payload
 
