@@ -443,6 +443,19 @@ def user_substitution_eligible_row_ids(blocks: Sequence[Any]) -> set[str]:
     return referenced
 
 
+def validate_shared_code_params(shared_code_id: str | None, shared_code_row_ids: Sequence[str]) -> None:
+    """
+    Enforces the documented contract that `shared_code_id` and `shared_code_row_ids` are set
+    together: passing row IDs without a `shared_code_id` is a no-op that silently drops them,
+    so reject it explicitly instead of quietly ignoring the input.
+    """
+    if shared_code_row_ids and not shared_code_id:
+        raise ValueError(
+            f'`shared_code_row_ids={list(shared_code_row_ids)}` was provided without a `shared_code_id`. '
+            f'Set `shared_code_id` to the parent `keboola.shared-code` library ID, or omit the row IDs.'
+        )
+
+
 def validate_shared_code_linkage(
     parameters: Mapping[str, Any] | None,
     shared_code_id: str,
@@ -547,9 +560,16 @@ def sync_shared_code_markers_in_dict(updated_configuration: dict[str, Any]) -> N
             return
         blocks.append({'name': 'Blocks', 'codes': []})
 
+    # Strip existing shared-code markers from EVERY block, not just the first — markers may
+    # have been moved into another block during manual reordering; leaving stale copies would
+    # execute the same snippet twice at run time. The canonical set is re-inserted below into
+    # the first block only.
+    for block in blocks:
+        block['codes'] = [
+            c for c in block.get('codes', []) if not is_shared_code_marker(c.get('name', ''), c.get('script'))
+        ]
+
     target_block = blocks[0]
-    codes = target_block.setdefault('codes', [])
-    user_codes = [c for c in codes if not is_shared_code_marker(c.get('name', ''), c.get('script'))]
     marker_codes: list[dict[str, Any]] = []
     if shared_code_id and row_ids:
         # Skip rows the user already references as a pure-placeholder script element
@@ -564,7 +584,7 @@ def sync_shared_code_markers_in_dict(updated_configuration: dict[str, Any]) -> N
             for rid in row_ids
             if rid not in already_substituted
         ]
-    target_block['codes'] = user_codes + marker_codes
+    target_block['codes'] = target_block['codes'] + marker_codes
 
 
 def apply_shared_code_markers(

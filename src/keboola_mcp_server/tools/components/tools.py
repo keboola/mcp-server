@@ -101,6 +101,7 @@ from keboola_mcp_server.tools.components.utils import (
     update_params,
     update_transformation_parameters,
     validate_shared_code_linkage,
+    validate_shared_code_params,
 )
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.tools.validation import (
@@ -623,6 +624,7 @@ async def create_sql_transformation(
     transformation_configuration_payload = await create_transformation_configuration(
         codes=sql_code_blocks, transformation_name=name, output_tables=created_table_names, sql_dialect=sql_dialect
     )
+    validate_shared_code_params(shared_code_id, shared_code_row_ids)
     if shared_code_id:
         transformation_configuration_payload.shared_code_id = shared_code_id
         transformation_configuration_payload.shared_code_row_ids = list(shared_code_row_ids)
@@ -1448,6 +1450,7 @@ async def create_config(
         )
         set_nested_value(configuration_payload, 'processors.after', processors_after)
 
+    validate_shared_code_params(shared_code_id, shared_code_row_ids)
     if shared_code_id:
         configuration_payload['shared_code_id'] = shared_code_id
         configuration_payload['shared_code_row_ids'] = list(shared_code_row_ids)

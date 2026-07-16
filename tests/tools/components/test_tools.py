@@ -3340,6 +3340,36 @@ async def test_create_sql_transformation_rejects_placeholder_missing_from_row_id
 
 
 @pytest.mark.asyncio
+async def test_create_sql_transformation_rejects_row_ids_without_shared_code_id(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """Passing `shared_code_row_ids` without a `shared_code_id` is a silent no-op — reject it."""
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    component = {**mock_component, 'id': SNOWFLAKE_TRANSFORMATION_ID}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
+
+    with pytest.raises(ValueError, match='without a `shared_code_id`'):
+        await create_sql_transformation(
+            ctx=context,
+            name='orphan_row_ids',
+            description='row ids but no library id',
+            sql_code_blocks=[SimplifiedTfBlocks.Block.Code(name='Q', script='SELECT 1')],
+            shared_code_row_ids=['dumpfiles'],
+        )
+    keboola_client.storage_client.configuration_create.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_create_sql_transformation_allows_inline_config_variable_without_linkage(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
