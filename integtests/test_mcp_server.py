@@ -185,6 +185,7 @@ async def _assert_basic_setup(client: Client):
         'get_flows',
         'get_jobs',
         'get_project_info',
+        'get_shared_codes',
         'get_tables',
         'modify_flow',
         'modify_python_js_data_app',

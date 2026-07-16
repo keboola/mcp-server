@@ -32,9 +32,11 @@ from keboola_mcp_server.tools.components.utils import (
     create_transformation_configuration,
     expand_component_types,
     get_config_folders,
+    is_shared_code_marker,
     set_configuration_folder_metadata,
     set_nested_value,
     structure_summary,
+    sync_shared_code_markers_in_dict,
     update_params,
     update_transformation_parameters,
 )
@@ -1569,3 +1571,60 @@ async def test_clear_configuration_folder_metadata(
             configuration_id='cfg-1',
             metadata_id=metadata_id,
         )
+
+
+@pytest.mark.parametrize(
+    ('name', 'script', 'expected'),
+    [
+        ('Shared Code (sid-rid)', ['{{rid}}'], True),
+        ('Shared Code (sid-rid)', '{{ rid }}', True),
+        # Multiple placeholders in one element must NOT be treated as a marker.
+        ('Shared Code (sid-rid)', ['{{ a }}\n{{ b }}'], False),
+        # Placeholder plus surrounding SQL must NOT be a marker.
+        ('Shared Code (sid-rid)', ["SELECT '{{ rid }}'"], False),
+        # Right script shape but wrong name prefix.
+        ('User code', ['{{rid}}'], False),
+        # More than one script element.
+        ('Shared Code (sid-rid)', ['{{a}}', '{{b}}'], False),
+    ],
+    ids=['list-pure', 'str-pure', 'two-placeholders', 'inline', 'wrong-name', 'two-elements'],
+)
+def test_is_shared_code_marker(name: str, script: Any, expected: bool) -> None:
+    """Only a name-prefixed block whose single script element is exactly one Mustache placeholder
+    is a marker — otherwise marker sync would strip legitimate user code."""
+    assert is_shared_code_marker(name, script) is expected
+
+
+def test_sync_shared_code_markers_strips_markers_from_all_blocks() -> None:
+    """Stale `Shared Code (...)` markers in any block (e.g. moved during reordering) must be removed
+    before the canonical set is re-inserted into the first block — otherwise the snippet runs twice."""
+    config = {
+        'shared_code_id': 'shared-codes.snowflake-transformation',
+        'shared_code_row_ids': ['dumpfiles'],
+        'parameters': {
+            'blocks': [
+                {'name': 'First', 'codes': [{'name': 'User query', 'script': ['SELECT 1']}]},
+                {
+                    'name': 'Second',
+                    'codes': [
+                        {
+                            'name': 'Shared Code (shared-codes.snowflake-transformation-dumpfiles)',
+                            'script': ['{{dumpfiles}}'],
+                        },
+                        {'name': 'Other user code', 'script': ['SELECT 2']},
+                    ],
+                },
+            ],
+        },
+    }
+
+    sync_shared_code_markers_in_dict(config)
+
+    blocks = config['parameters']['blocks']
+    # The stale marker in the second block must be gone; its user code stays.
+    second_names = [c['name'] for c in blocks[1]['codes']]
+    assert second_names == ['Other user code'], f'stale marker not stripped from non-first block: {second_names}'
+    # Exactly one canonical marker exists, in the first block.
+    all_markers = [c['name'] for block in blocks for c in block['codes'] if c['name'].startswith('Shared Code (')]
+    assert all_markers == ['Shared Code (shared-codes.snowflake-transformation-dumpfiles)']
+    assert blocks[0]['codes'][-1]['name'] == 'Shared Code (shared-codes.snowflake-transformation-dumpfiles)'

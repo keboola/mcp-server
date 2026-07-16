@@ -34,3 +34,5 @@ test-results.xml
 .tox/
 local_testing
 .mcp.json
+# Local feature-e2e planning scratch (never committed)
+.feature-e2e/

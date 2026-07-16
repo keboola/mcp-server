@@ -66,6 +66,52 @@ See the [Development Branches](#development-branches) section for more details.
       test changes in other tables, a branch-specific FQN may be used temporarily, but it must be switched back to the
       production path before merging.
 
+### Shared Code
+
+**Shared code** is Keboola's reusable-snippet primitive for transformations. Snippets live under the
+`keboola.shared-code` component (one parent library per transformation backend, rows are individual snippets);
+transformations link to them via `shared_code_id` + `shared_code_row_ids` at the configuration root.
+
+**Before writing transformation code:** call `get_shared_codes(transformation_component_ids=[…])` and reuse an
+existing snippet whenever the same logic would appear in two or more transformations.
+
+**Wire format (canonical IDs and required fields):**
+
+| Operation | Tool call |
+|---|---|
+| Create parent library | `create_config(component_id="keboola.shared-code", configuration_id="shared-codes.<transformation-id>", parameters={"componentId":"<transformation-id>"})` — `configuration_id` MUST be the conventional `shared-codes.<keboola.snowflake-transformation\|…bigquery…\|…python-transformation-v2\|…r-transformation-v2>`. Auto-generated UUIDs are not recognised by the runtime. |
+| Add a row | `add_config_row(component_id="keboola.shared-code", row_id="<mustache-key>", parameters={"code_content":["<complete-statement>"]})` — `row_id` is the case-sensitive Mustache key. |
+| Edit a snippet | `update_config_row(parameter_updates=[{"op":"set","path":"code_content","value":["<new>"]}])`. Disable with `is_disabled=True` (no delete-row tool). |
+| Reference from a SQL transformation | `create_sql_transformation` / `update_sql_transformation` with `shared_code_id` + `shared_code_row_ids`. The tool auto-emits a `Shared Code (<sid>-<rid>)` marker per row — skipped when a user-authored code block already has `["{{ rowId }}"]` as its own pure script element. |
+| Reference from Python / R | `create_config` / `update_config` with the same `shared_code_id` + `shared_code_row_ids`. Same auto-emit + skip-if-already-referenced behavior as the SQL path. |
+| Change linkage on an existing SQL transformation | `update_sql_transformation(parameter_updates=[{"op":"set_shared_code","shared_code_id":"…","shared_code_row_ids":["…"]}])`, or `{"op":"remove_shared_code"}` to unlink. |
+
+**Tool-enforced rules** — the tool rejects the call otherwise:
+
+- **A pure `{{ rowId }}` placeholder requires linkage** — when a script array element is *exactly*
+  `["{{ rowId }}"]`, `shared_code_id` must be set and that row must appear in `shared_code_row_ids`,
+  or the call is rejected. (Inline `{{ rowId }}` occurrences *inside* a larger string are NOT rejected —
+  see the runtime note below.)
+- **`shared_code_row_ids` requires `shared_code_id`** — passing row IDs without a library ID is rejected.
+- **Row IDs are case-sensitive.**
+
+**Runtime requirements** — not checked by the tool, but the snippet fails at run time if violated:
+
+- **Row content must be a complete executable statement** (e.g. `CREATE OR REPLACE TABLE …`,
+  `from datetime import …`). The runtime substitutes a pure `{{ rowId }}` script array element with the
+  row's `code_content` array and runs the result as its own query. Fragments (column-list, `WHERE`
+  clause, sub-expression) will fail at run time.
+- **Only a pure `["{{ rowId }}"]` array element is substituted.** A `{{ rowId }}` embedded inline inside
+  a larger SQL string is left as literal text (it shares Mustache syntax with configuration variables),
+  so keep placeholders on their own script element.
+- **Marker ordering** — the tool appends one auto-emitted `Shared Code (<sid>-<rid>)` marker per linked
+  row *after* the user-authored code in the first parameters block, and on every sync it strips ALL
+  recognised marker blocks and re-appends the canonical set there. So you cannot reorder an auto-emitted
+  marker with `remove_code`/`add_code` — it will be moved back. If your user code depends on a shared
+  snippet running first (e.g. it sets a variable or creates a temp table your code reads), author your own
+  **non-marker** code block whose script is the pure placeholder `["{{ rowId }}"]` at the desired position;
+  the tool recognises it as already-referenced and skips emitting a duplicate marker for that row.
+
 ### Development Branches
 
 When working in development branches the storage objects (tables, buckets) created or edited in the branch will have different FQNs than in production. 
