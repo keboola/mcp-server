@@ -244,6 +244,10 @@ class ConfigurationRoot(BaseModel):
     processors: Optional[dict[str, Any]] = Field(
         default=None, description='The processors that run before or after the configured component.'
     )
+    runtime: Optional[dict[str, Any]] = Field(
+        default=None,
+        description='Runtime settings such as "parallelism" (parallel row processing) and backend configuration.',
+    )
     variables_id: Optional[str] = Field(default=None, description='ID of the linked keboola.variables configuration')
     variables_values_id: Optional[str] = Field(
         default=None, description='ID of the Default Values row in the linked keboola.variables configuration'
@@ -288,6 +292,7 @@ class ConfigurationRoot(BaseModel):
             parameters=redact_secrets(api_config.configuration.get('parameters', {})),
             storage=api_config.configuration.get('storage'),
             processors=redact_secrets(api_config.configuration.get('processors')),
+            runtime=api_config.configuration.get('runtime'),
             variables_id=api_config.configuration.get('variables_id'),
             variables_values_id=api_config.configuration.get('variables_values_id'),
             variables=api_config.configuration.get('variables'),
