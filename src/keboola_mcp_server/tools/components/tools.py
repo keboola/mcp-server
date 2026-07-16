@@ -1184,6 +1184,12 @@ async def update_sql_transformation_internal(
 
         for update in root_updates:
             if isinstance(update, TfSetSharedCode):
+                if not update.shared_code_id:
+                    raise ValueError(
+                        'The `set_shared_code` operation requires a non-empty `shared_code_id`. '
+                        'Use the `remove_shared_code` operation to clear an existing linkage instead of '
+                        'passing an empty ID.'
+                    )
                 updated_configuration['shared_code_id'] = update.shared_code_id
                 updated_configuration['shared_code_row_ids'] = list(update.shared_code_row_ids)
                 shared_code_messages.append(

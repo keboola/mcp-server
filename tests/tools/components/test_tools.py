@@ -3280,6 +3280,43 @@ async def test_update_sql_transformation_set_then_remove_shared_code_syncs_marke
 
 
 @pytest.mark.asyncio
+async def test_update_sql_transformation_set_shared_code_rejects_empty_id(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """`set_shared_code` with an empty `shared_code_id` must be rejected — callers must use
+    `remove_shared_code` to clear linkage, not write an inconsistent empty-id root."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+
+    component = {**mock_component, 'id': SNOWFLAKE_TRANSFORMATION_ID}
+    existing_configuration = {
+        'id': 'tf-empty',
+        'name': 'tf',
+        'description': 'd',
+        'configuration': {'parameters': {'blocks': []}, 'storage': {'input': {'tables': []}}},
+        'version': 1,
+    }
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=existing_configuration)
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match='requires a non-empty `shared_code_id`'):
+        await update_sql_transformation(
+            context,
+            change_description='bad set',
+            configuration_id='tf-empty',
+            parameter_updates=[TfSetSharedCode(op='set_shared_code', shared_code_id='', shared_code_row_ids=['x'])],
+        )
+    keboola_client.storage_client.configuration_update.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_create_sql_transformation_rejects_placeholder_without_linkage(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
