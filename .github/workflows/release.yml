@@ -140,6 +140,57 @@ jobs:
           image-tag: dev-${{ github.sha }}
           github-app-private-key: ${{ secrets.GITOPS_KBC_STACKS_TRIGGER_APP_PVK }}
 
+  # Only for production MCP-server releases (vX.Y.Z): create a GitHub Release with
+  # auto-generated notes (all PRs merged since the previous tag), then comment on
+  # each referenced PR that it shipped in this release. The `startsWith(refs/tags/v)`
+  # guard excludes agent-v*, canary-orion-*, and dev-* tags.
+  release-notes:
+    name: Release notes
+    needs: build-and-push
+    if: needs.build-and-push.result == 'success' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev.')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the GitHub Release
+      pull-requests: write   # comment on referenced PRs
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release with generated notes
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Idempotent: a re-run (or partial retry) must not fail just because the
+          # release already exists — and must not re-comment on the PRs either.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, skipping."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            gh release create "$TAG" --verify-tag --generate-notes
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment on PRs included in the release
+        if: steps.release.outputs.created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          notes=$(gh release view "$TAG" --json body -q .body)
+          # Auto-generated notes reference each PR as ".../pull/123" (and sometimes #123).
+          prs=$(printf '%s\n' "$notes" | grep -oE '(/pull/|#)[0-9]+' | grep -oE '[0-9]+' | sort -un) || true
+          for pr in $prs; do
+            gh pr comment "$pr" \
+              --body "🚀 Shipped in release [\`$TAG\`](https://github.com/$REPO/releases/tag/$TAG)."
+          done
+
   kaibench:
     name: KaiBench Evaluation
     needs: build-and-push
