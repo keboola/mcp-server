@@ -3873,6 +3873,36 @@ async def test_create_config_shared_code_parent_rejects_nonconventional_id(
 
 
 @pytest.mark.asyncio
+async def test_create_config_shared_code_parent_requires_component_id(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """A shared-code parent created without `parameters.componentId` has no backend association and
+    must be rejected before hitting SAPI."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    shared_code_component = {**mock_component, 'id': SHARED_CODE_COMPONENT_ID}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match='requires `parameters=.*componentId'):
+        await create_config(
+            ctx=context,
+            name='Shared codes',
+            description='reusable snippets',
+            component_id=SHARED_CODE_COMPONENT_ID,
+            parameters={},
+            configuration_id='shared-codes.snowflake-transformation',
+        )
+
+    keboola_client.storage_client.configuration_create.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_shared_codes_skips_disabled_rows(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
@@ -3978,3 +4008,39 @@ async def test_update_config_row_shared_code_applies_updates_to_flat_root(
     assert sent.get('code_content') == ['SELECT 2'], 'shared-code edit must land at the flat root'
     assert 'code_content' not in sent.get('parameters', {}), 'shared-code edit must not be nested under parameters'
     assert sent.get('storage') == {'input': {'tables': []}}, 'structural storage sibling must be preserved'
+
+
+@pytest.mark.asyncio
+async def test_update_config_row_shared_code_flattens_legacy_parameters_wrapper(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """A legacy shared-code row that nests the snippet under `parameters` must be flattened: a flat-root
+    `code_content` update must stick (the validator unwraps `parameters` and would otherwise drop it)."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    shared_code_component = {**mock_component, 'id': SHARED_CODE_COMPONENT_ID}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.configuration_row_detail = mocker.AsyncMock(
+        # Legacy wrapper shape: code_content nested under `parameters`.
+        return_value={'id': 'dumpfiles', 'configuration': {'parameters': {'code_content': ['SELECT 1']}}}
+    )
+    keboola_client.storage_client.configuration_row_update = mocker.AsyncMock(return_value={'version': 2})
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    await update_config_row(
+        ctx=context,
+        change_description='update legacy snippet',
+        component_id=SHARED_CODE_COMPONENT_ID,
+        configuration_id='shared-codes.snowflake-transformation',
+        configuration_row_id='dumpfiles',
+        parameter_updates=[ConfigParamSet(op='set', path='code_content', value=['SELECT 2'])],
+    )
+
+    sent = keboola_client.storage_client.configuration_row_update.call_args.kwargs['configuration']
+    assert sent.get('code_content') == ['SELECT 2'], 'flat-root update must stick even for a legacy wrapper row'
+    assert 'parameters' not in sent, 'legacy `parameters` wrapper must be flattened away'

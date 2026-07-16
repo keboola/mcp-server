@@ -1440,9 +1440,13 @@ async def create_config(
         # would create an orphaned library that never resolves. Require the caller to pass the
         # exact conventional ID derived from the target `componentId`.
         target_component_id = str((parameters or {}).get('componentId') or '')
-        expected_configuration_id = (
-            f'shared-codes.{target_component_id.split(".", 1)[-1]}' if target_component_id else ''
-        )
+        if not target_component_id:
+            raise ValueError(
+                'Creating a `keboola.shared-code` library requires `parameters={"componentId": '
+                '"<transformation-component-id>"}` — the target transformation the library belongs to. '
+                'Without it the library has no backend association and cannot be resolved.'
+            )
+        expected_configuration_id = f'shared-codes.{target_component_id.split(".", 1)[-1]}'
         if not configuration_id:
             raise ValueError(
                 'Creating a `keboola.shared-code` library requires an explicit `configuration_id` using the '
@@ -1450,7 +1454,7 @@ async def create_config(
                 '`shared-codes.snowflake-transformation`). Auto-assigned IDs are not recognised by the runtime '
                 'expansion or the UI.'
             )
-        if expected_configuration_id and configuration_id != expected_configuration_id:
+        if configuration_id != expected_configuration_id:
             raise ValueError(
                 f'`configuration_id={configuration_id!r}` does not match the conventional shared-code library ID '
                 f'for `componentId={target_component_id!r}`. Use {expected_configuration_id!r} — the UI and runtime '
@@ -2291,6 +2295,13 @@ async def update_config_row_internal(
             updated_root = update_params(configuration_payload, parameter_updates)
             siblings = {key: updated_root[key] for key in ('storage', 'processors') if key in updated_root}
             flat_body = {key: value for key, value in updated_root.items() if key not in siblings}
+            # Legacy shared-code rows may still nest the snippet under `parameters` (wrapper-created
+            # configs). validate_row_parameters_configuration unwraps a `parameters` key and returns
+            # only its contents, which would drop the flat-root fields we just updated. Flatten any
+            # such wrapper into the root first (root wins), so the validated body stays flat.
+            legacy_params = flat_body.pop('parameters', None)
+            if isinstance(legacy_params, dict):
+                flat_body = {**legacy_params, **flat_body}
             validated_flat = validate_row_parameters_configuration(
                 component=component,
                 parameters=flat_body,
