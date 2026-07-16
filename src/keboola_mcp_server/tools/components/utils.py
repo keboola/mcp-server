@@ -381,10 +381,6 @@ async def create_transformation_configuration(
     return TransformationConfiguration(parameters=raw_parameters, storage=storage)
 
 
-# Regex for shared-code Mustache placeholders inside a script array element.
-# Matches `{{ rowId }}` (case-sensitive payload, optional inner whitespace).
-SHARED_CODE_PLACEHOLDER_RE = re.compile(r'\{\{\s*([A-Za-z0-9_-]+)\s*\}\}')
-
 # Matches a script element whose ENTIRE content is a single `{{ rowId }}` placeholder
 # (allowing surrounding whitespace, including trailing `\n` injected by the SQL joiner).
 # Only such elements are substituted by the platform's runtime expansion — so a code block
@@ -396,6 +392,12 @@ def extract_shared_code_row_ids_from_blocks(blocks: Sequence[Any]) -> set[str]:
     """
     Walks `parameters.blocks[*].codes[*].script` and returns the set of shared-code row IDs
     referenced by `{{ rowId }}` placeholders. Tolerates `script` being a string or a list.
+
+    Only placeholders that are the SOLE content of a script element (e.g. `["{{ dumpfiles }}"]`)
+    are treated as shared-code references — that is the only form the platform substitutes for
+    shared code. Inline occurrences such as `["token={{ api_token }}"]` are ignored: Keboola
+    configuration variables reuse the same Mustache syntax, so treating every `{{...}}` as a
+    shared-code row would wrongly block transformations that legitimately use variables.
     """
     referenced: set[str] = set()
     for block in blocks or ():
@@ -406,7 +408,9 @@ def extract_shared_code_row_ids_from_blocks(blocks: Sequence[Any]) -> set[str]:
             for item in items:
                 if not isinstance(item, str):
                     continue
-                referenced.update(SHARED_CODE_PLACEHOLDER_RE.findall(item))
+                m = PURE_SHARED_CODE_PLACEHOLDER_RE.match(item)
+                if m:
+                    referenced.add(m.group(1))
     return referenced
 
 
@@ -446,11 +450,12 @@ def validate_shared_code_linkage(
 ) -> None:
     """
     Enforces the platform's shared-code linkage rule on a transformation configuration:
-    if any `{{ rowId }}` placeholder appears in `parameters.blocks[*].codes[*].script`,
-    then `shared_code_id` must be non-empty AND every referenced `rowId` must be present
-    in `shared_code_row_ids`. Inline placeholders (e.g. `["SELECT 1, {{ rowId }};"]`) are
-    NOT substituted by the platform; the LLM must let the SQL transformation tools emit
-    the marker code blocks via `shared_code_id` + `shared_code_row_ids` instead.
+    if a `{{ rowId }}` placeholder is the sole content of any `parameters.blocks[*].codes[*].script`
+    element, then `shared_code_id` must be non-empty AND every referenced `rowId` must be present
+    in `shared_code_row_ids`. Inline placeholders (e.g. `["SELECT 1, {{ rowId }};"]`) are NOT
+    treated as shared-code references — they share the same Mustache syntax as configuration
+    variables and are not natively substituted; the SQL transformation tools emit marker code
+    blocks for those via `shared_code_id` + `shared_code_row_ids` separately.
 
     Raises `ValueError` with a precise message when the rule is violated.
     """

@@ -3340,6 +3340,39 @@ async def test_create_sql_transformation_rejects_placeholder_missing_from_row_id
 
 
 @pytest.mark.asyncio
+async def test_create_sql_transformation_allows_inline_config_variable_without_linkage(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    mock_configuration: dict[str, Any],
+):
+    """An inline `{{ variable }}` (Keboola config variable, not the sole content of a script
+    element) must NOT be mistaken for a shared-code reference — it shares Mustache syntax but is
+    not natively substituted, so creation must succeed without `shared_code_id`."""
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    component = {**mock_component, 'id': SNOWFLAKE_TRANSFORMATION_ID}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_configuration)
+    keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
+
+    result = await create_sql_transformation(
+        ctx=context,
+        name='tf_with_variable',
+        description='uses a config variable inline',
+        sql_code_blocks=[SimplifiedTfBlocks.Block.Code(name='Query', script="SELECT '{{ api_token }}' AS t")],
+    )
+
+    assert result.success is True
+    keboola_client.storage_client.configuration_create.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_create_config_emits_markers_for_python_transformation(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,

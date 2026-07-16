@@ -1077,12 +1077,17 @@ async def shared_code_parent_factory(mcp_context: Context) -> AsyncGenerator[Any
     created: list[tuple[str, str]] = []  # (component_id, configuration_id)
 
     async def make(target_component_id: str, name: str = '') -> ConfigToolOutput:
+        # Shared-code parents must be created with the conventional
+        # `shared-codes.<transformation-component-id>` ID — create_config now rejects an
+        # empty configuration_id since an auto-assigned UUID is invisible to the UI/runtime.
+        conventional_id = f'shared-codes.{target_component_id.split(".", 1)[-1]}'
         config = await create_config(
             ctx=mcp_context,
             name=name or f'Shared Codes for {target_component_id}',
             description='Created by integtest — safe to delete',
             component_id=SHARED_CODE_COMPONENT_ID,
             parameters={'componentId': target_component_id},
+            configuration_id=conventional_id,
         )
         created.append((SHARED_CODE_COMPONENT_ID, config.configuration_id))
         return config
