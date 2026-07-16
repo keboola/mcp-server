@@ -63,6 +63,7 @@ class TestServer:
             'get_project_info',
             'get_semantic_context',
             'get_semantic_schema',
+            'get_shared_codes',
             'get_tables',
             'modify_flow',
             'modify_python_js_data_app',

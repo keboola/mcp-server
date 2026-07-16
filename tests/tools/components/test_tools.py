@@ -2676,8 +2676,6 @@ async def test_update_config_variables(
         assert 'variables_id' not in main_cfg
 
 
-
-
 # ============================================================================
 # SHARED CODE TESTS
 # ============================================================================
@@ -3429,9 +3427,10 @@ async def test_create_sql_transformation_skips_marker_when_user_code_is_pure_pla
 
     sent = keboola_client.storage_client.configuration_create.call_args.kwargs['configuration']
     codes = sent['parameters']['blocks'][0]['codes']
-    assert [c['name'] for c in codes] == ['Audit (shared)', 'Summary'], (
-        'user code preserved verbatim; no auto-emitted marker for a row already referenced as a pure placeholder'
-    )
+    assert [c['name'] for c in codes] == [
+        'Audit (shared)',
+        'Summary',
+    ], 'user code preserved verbatim; no auto-emitted marker for a row already referenced as a pure placeholder'
     assert sent['shared_code_id'] == shared_code_id
     assert sent['shared_code_row_ids'] == ['audit_columns']
 
@@ -3524,9 +3523,9 @@ async def test_create_config_python_skips_marker_when_user_code_is_pure_placehol
 
     sent = keboola_client.storage_client.configuration_create.call_args.kwargs['configuration']
     first_block_codes = sent['parameters']['blocks'][0]['codes']
-    assert [c['name'] for c in first_block_codes] == ['shared imports'], (
-        'no auto-emitted marker should appear next to a user code whose script is a pure placeholder'
-    )
+    assert [c['name'] for c in first_block_codes] == [
+        'shared imports'
+    ], 'no auto-emitted marker should appear next to a user code whose script is a pure placeholder'
     # No marker should leak into the second block either.
     second_block_codes = sent['parameters']['blocks'][1]['codes']
     assert all('Shared Code (' not in c['name'] for c in second_block_codes)
