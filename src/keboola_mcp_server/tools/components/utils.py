@@ -514,7 +514,10 @@ def is_shared_code_marker(code_name: str, code_script: Any) -> bool:
         script_text = str(code_script[0])
     else:
         script_text = str(code_script or '')
-    return script_text.strip().startswith('{{') and script_text.strip().endswith('}}')
+    # Require the script to be EXACTLY one Mustache placeholder. A loose startswith('{{')/
+    # endswith('}}') check would misclassify a multi-placeholder element like "{{ a }}\n{{ b }}"
+    # as a marker and strip user-authored code during marker sync.
+    return PURE_SHARED_CODE_PLACEHOLDER_RE.match(script_text) is not None
 
 
 def build_shared_code_marker_codes(

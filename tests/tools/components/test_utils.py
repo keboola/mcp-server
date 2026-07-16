@@ -32,6 +32,7 @@ from keboola_mcp_server.tools.components.utils import (
     create_transformation_configuration,
     expand_component_types,
     get_config_folders,
+    is_shared_code_marker,
     set_configuration_folder_metadata,
     set_nested_value,
     structure_summary,
@@ -1570,6 +1571,28 @@ async def test_clear_configuration_folder_metadata(
             configuration_id='cfg-1',
             metadata_id=metadata_id,
         )
+
+
+@pytest.mark.parametrize(
+    ('name', 'script', 'expected'),
+    [
+        ('Shared Code (sid-rid)', ['{{rid}}'], True),
+        ('Shared Code (sid-rid)', '{{ rid }}', True),
+        # Multiple placeholders in one element must NOT be treated as a marker.
+        ('Shared Code (sid-rid)', ['{{ a }}\n{{ b }}'], False),
+        # Placeholder plus surrounding SQL must NOT be a marker.
+        ('Shared Code (sid-rid)', ["SELECT '{{ rid }}'"], False),
+        # Right script shape but wrong name prefix.
+        ('User code', ['{{rid}}'], False),
+        # More than one script element.
+        ('Shared Code (sid-rid)', ['{{a}}', '{{b}}'], False),
+    ],
+    ids=['list-pure', 'str-pure', 'two-placeholders', 'inline', 'wrong-name', 'two-elements'],
+)
+def test_is_shared_code_marker(name: str, script: Any, expected: bool) -> None:
+    """Only a name-prefixed block whose single script element is exactly one Mustache placeholder
+    is a marker — otherwise marker sync would strip legitimate user code."""
+    assert is_shared_code_marker(name, script) is expected
 
 
 def test_sync_shared_code_markers_strips_markers_from_all_blocks() -> None:
