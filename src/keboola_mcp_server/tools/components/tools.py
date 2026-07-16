@@ -1427,14 +1427,25 @@ async def create_config(
     # For every other component the generic wrapper applies.
     if component_id == SHARED_CODE_COMPONENT_ID:
         # The UI and runtime expansion only recognise shared-code libraries by the conventional
-        # `shared-codes.<transformation-component-id>` ID — a SAPI-auto-assigned UUID would create
-        # an orphaned library that never resolves. Require the caller to pass it explicitly.
+        # `shared-codes.<transformation-component-id>` ID — a SAPI-auto-assigned UUID (or a typo)
+        # would create an orphaned library that never resolves. Require the caller to pass the
+        # exact conventional ID derived from the target `componentId`.
+        target_component_id = str((parameters or {}).get('componentId') or '')
+        expected_configuration_id = (
+            f'shared-codes.{target_component_id.split(".", 1)[-1]}' if target_component_id else ''
+        )
         if not configuration_id:
             raise ValueError(
                 'Creating a `keboola.shared-code` library requires an explicit `configuration_id` using the '
                 'conventional `shared-codes.<transformation-component-id>` value (e.g. '
                 '`shared-codes.snowflake-transformation`). Auto-assigned IDs are not recognised by the runtime '
                 'expansion or the UI.'
+            )
+        if expected_configuration_id and configuration_id != expected_configuration_id:
+            raise ValueError(
+                f'`configuration_id={configuration_id!r}` does not match the conventional shared-code library ID '
+                f'for `componentId={target_component_id!r}`. Use {expected_configuration_id!r} — the UI and runtime '
+                f'expansion look libraries up by this exact ID.'
             )
         configuration_payload: dict[str, Any] = dict(parameters or {})
     else:
@@ -1669,7 +1680,8 @@ async def add_config_row(
         )
 
     LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".'
+        f'Created new configuration row "{assigned_row_id}" for component "{component_id}" '
+        f'in configuration "{configuration_id}".'
     )
 
     await set_cfg_update_metadata(

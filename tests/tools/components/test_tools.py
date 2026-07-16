@@ -3843,6 +3843,36 @@ async def test_create_config_shared_code_parent_requires_conventional_id(
 
 
 @pytest.mark.asyncio
+async def test_create_config_shared_code_parent_rejects_nonconventional_id(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+):
+    """A `configuration_id` that doesn't match `shared-codes.<componentId-suffix>` must be rejected —
+    the UI/runtime look libraries up by the exact conventional ID, so a typo would orphan the config."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    shared_code_component = {**mock_component, 'id': SHARED_CODE_COMPONENT_ID}
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=shared_code_component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match='does not match the conventional shared-code library ID'):
+        await create_config(
+            ctx=context,
+            name='Shared codes for Snowflake',
+            description='reusable snippets',
+            component_id=SHARED_CODE_COMPONENT_ID,
+            parameters={'componentId': SNOWFLAKE_TRANSFORMATION_ID},
+            configuration_id='shared-codes.snowflake-typo',
+        )
+
+    keboola_client.storage_client.configuration_create.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_shared_codes_skips_disabled_rows(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
