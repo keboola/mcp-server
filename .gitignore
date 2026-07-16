@@ -18,6 +18,7 @@ wheels/
 # Virtual environments
 .venv
 venv
+*.venv
 
 # Environment variables
 .env
