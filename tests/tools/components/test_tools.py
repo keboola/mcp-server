@@ -3906,6 +3906,40 @@ async def test_get_shared_codes_skips_disabled_rows(
 
 
 @pytest.mark.asyncio
+async def test_get_shared_codes_skips_config_without_component_id(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+):
+    """A shared-code parent with no `componentId` is malformed and must be skipped, not surfaced
+    with an empty transformation_component_id."""
+    context = mcp_context_components_configs
+    keboola_client = KeboolaClient.from_state(context.session.state)
+
+    keboola_client.storage_client.configuration_list = mocker.AsyncMock(
+        return_value=[
+            # Malformed: no componentId anywhere.
+            {'id': 'orphan', 'name': 'No component', 'configuration': {}},
+            # Valid one alongside it.
+            {
+                'id': 'shared-codes.snowflake-transformation',
+                'name': 'Snowflake snippets',
+                'configuration': {'componentId': SNOWFLAKE_TRANSFORMATION_ID},
+            },
+        ]
+    )
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        side_effect=lambda component_id, configuration_id, include=None: {'rows': []}
+    )
+
+    result = await get_shared_codes(ctx=context)
+    config_ids = [cfg.config_id for cfg in result.shared_codes]
+    assert config_ids == [
+        'shared-codes.snowflake-transformation'
+    ], f'malformed parent must be skipped; got {config_ids}'
+    assert all(cfg.transformation_component_id for cfg in result.shared_codes), 'no empty transformation IDs allowed'
+
+
+@pytest.mark.asyncio
 async def test_update_config_row_shared_code_applies_updates_to_flat_root(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,

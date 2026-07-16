@@ -453,6 +453,15 @@ async def get_shared_codes(
         transformation_component_id = cast(
             str, parent_configuration.get('componentId') or parent_parameters.get('componentId') or ''
         )
+        if not transformation_component_id:
+            # A shared-code parent with no `componentId` (neither at root nor under `parameters`) is
+            # malformed — its backend transformation type is ambiguous. Skip it rather than emit a
+            # config with an empty transformation_component_id that breaks filtering/consumption.
+            LOG.warning(
+                'Skipping shared-code config %r: no `componentId` at the configuration root or under `parameters`.',
+                parent.get('id'),
+            )
+            return None
         if filter_set and transformation_component_id not in filter_set:
             return None
 
