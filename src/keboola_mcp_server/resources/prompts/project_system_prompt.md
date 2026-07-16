@@ -86,23 +86,31 @@ existing snippet whenever the same logic would appear in two or more transformat
 | Reference from Python / R | `create_config` / `update_config` with the same `shared_code_id` + `shared_code_row_ids`. Same auto-emit + skip-if-already-referenced behavior as the SQL path. |
 | Change linkage on an existing SQL transformation | `update_sql_transformation(parameter_updates=[{"op":"set_shared_code","shared_code_id":"…","shared_code_row_ids":["…"]}])`, or `{"op":"remove_shared_code"}` to unlink. |
 
-**Hard rules** — the tool will reject the call otherwise:
+**Tool-enforced rules** — the tool rejects the call otherwise:
 
-- **Row content must be a complete executable statement** (e.g. `CREATE OR REPLACE TABLE …`, `from datetime import …`).
-  The runtime substitutes a `{{ rowId }}` script array element with the row's `code_content` array and runs the
-  result as its own query. Fragments (column-list, `WHERE` clause, sub-expression) will fail at run time.
-- **A `{{ rowId }}` placeholder requires linkage** — every referenced row must appear in `shared_code_row_ids` and
-  `shared_code_id` must be set. Without the linkage the platform cannot resolve the placeholder. The tool emits
-  one marker block per linked row (or skips it when your own code already has `["{{ rowId }}"]` as a standalone
-  script element — no duplicate); **do NOT embed `{{ rowId }}` inline inside another SQL string** — inline
-  placeholders are not substituted (only `["{{ rowId }}"]` as its own array element is).
+- **A pure `{{ rowId }}` placeholder requires linkage** — when a script array element is *exactly*
+  `["{{ rowId }}"]`, `shared_code_id` must be set and that row must appear in `shared_code_row_ids`,
+  or the call is rejected. (Inline `{{ rowId }}` occurrences *inside* a larger string are NOT rejected —
+  see the runtime note below.)
+- **`shared_code_row_ids` requires `shared_code_id`** — passing row IDs without a library ID is rejected.
 - **Row IDs are case-sensitive.**
-- **Marker ordering** — the auto-emitted marker is appended *after* the user-authored code in
-  the first parameters block. If your user code depends on the shared snippet's side-effect
-  (e.g. shared code does `SET (region) = ('EU')` and your code reads `$region`, or shared code
-  creates a temp table/view your code selects from), the marker must run first. Reorder via
-  `update_sql_transformation` with `remove_code` + `add_code(position="start")`, or author the
-  marker yourself as a pure `["{{ rowId }}"]` script block at the start (the tool de-duplicates).
+
+**Runtime requirements** — not checked by the tool, but the snippet fails at run time if violated:
+
+- **Row content must be a complete executable statement** (e.g. `CREATE OR REPLACE TABLE …`,
+  `from datetime import …`). The runtime substitutes a pure `{{ rowId }}` script array element with the
+  row's `code_content` array and runs the result as its own query. Fragments (column-list, `WHERE`
+  clause, sub-expression) will fail at run time.
+- **Only a pure `["{{ rowId }}"]` array element is substituted.** A `{{ rowId }}` embedded inline inside
+  a larger SQL string is left as literal text (it shares Mustache syntax with configuration variables),
+  so keep placeholders on their own script element.
+- **Marker ordering** — the tool appends one auto-emitted `Shared Code (<sid>-<rid>)` marker per linked
+  row *after* the user-authored code in the first parameters block, and on every sync it strips ALL
+  recognised marker blocks and re-appends the canonical set there. So you cannot reorder an auto-emitted
+  marker with `remove_code`/`add_code` — it will be moved back. If your user code depends on a shared
+  snippet running first (e.g. it sets a variable or creates a temp table your code reads), author your own
+  **non-marker** code block whose script is the pure placeholder `["{{ rowId }}"]` at the desired position;
+  the tool recognises it as already-referenced and skips emitting a duplicate marker for that row.
 
 ### Development Branches
 
