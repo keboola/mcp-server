@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 from keboola_mcp_server import cli
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.mcp import ServerState, is_read_only_tool, is_semantic_tool
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.utils import get_nested, set_nested_value
@@ -30,13 +30,27 @@ async def starlette_app() -> Starlette:
 
     app = Starlette(exception_handlers=cli._exception_handlers)
     app.state.server_state = server_state
-    app.state.mcp_tools_input_schema = {
-        tool.name: tool.parameters for tool in await mcp_server.list_tools(run_middleware=False)
-    }
+    _tools = await mcp_server.list_tools(run_middleware=False)
+    app.state.mcp_tools_input_schema = {tool.name: tool.parameters for tool in _tools}
+    app.state.mcp_read_only_tools = {tool.name for tool in _tools if is_read_only_tool(tool)}
+    app.state.mcp_semantic_tools = {tool.name for tool in _tools if is_semantic_tool(tool)}
 
     app.add_route('/preview/configuration', preview_config_diff, methods=['POST'])
 
     return app
+
+
+def _configure_preview_auth(mock_client, mocker, *, role='admin', features=(), bearer_token=None, branch_id=None):
+    """Configure the auth signals the preview endpoint reads for ToolsFilteringMiddleware-parity gating.
+
+    Defaults to an admin SAPI token on the main/production branch, which clears the project-feature /
+    token-role / branch gates for ordinary write tools.
+    """
+    mock_client.bearer_token = bearer_token
+    mock_client.branch_id = branch_id
+    mock_client.storage_client.verify_token = mocker.AsyncMock(
+        return_value={'owner': {'features': list(features)}, 'admin': {'role': role}}
+    )
 
 
 @pytest.fixture
@@ -48,6 +62,93 @@ def test_client(starlette_app: Starlette) -> Generator[TestClient, None, None]:
 
 class TestPreviewConfigDiff:
     """Tests for the POST /preview/configuration endpoint."""
+
+    @pytest.mark.parametrize(
+        ('headers', 'expected_status'),
+        [
+            # No authorization headers -> allowed (reaches the mutator path).
+            ({}, 200),
+            # Tool explicitly allowed.
+            ({'X-Allowed-Tools': 'update_config,get_tables'}, 200),
+            # Tool not in the allow-list -> denied.
+            ({'X-Allowed-Tools': 'get_tables,get_buckets'}, 403),
+            # Tool explicitly disallowed -> denied.
+            ({'X-Disallowed-Tools': 'update_config'}, 403),
+            # Read-only mode denies a mutator preview.
+            ({'X-Read-Only-Mode': 'true'}, 403),
+        ],
+    )
+    def test_preview_tool_authorization(self, test_client: TestClient, mocker, headers, expected_status):
+        """The preview endpoint enforces the same tool-authorization headers as the MCP middleware."""
+        from keboola_mcp_server.clients.storage import ComponentAPIResponse
+
+        async def mock_fetch_component(**kwargs):
+            return ComponentAPIResponse.model_validate(
+                {
+                    'id': 'keboola.ex-test',
+                    'name': 'Test Extractor',
+                    'type': 'extractor',
+                    'configurationSchema': {},
+                    'component_flags': [],
+                }
+            )
+
+        mocker.patch(
+            'keboola_mcp_server.tools.components.tools.fetch_component',
+            side_effect=mock_fetch_component,
+        )
+        mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
+
+        async def mock_config_detail(**kwargs):
+            return {'id': 'config-123', 'name': 'C', 'configuration': {'parameters': {}}}
+
+        mock_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_config_detail)
+        mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
+
+        request_payload = {
+            'toolName': 'update_config',
+            'toolParams': {
+                'component_id': 'keboola.ex-test',
+                'configuration_id': 'config-123',
+                'change_description': 'Test change',
+            },
+        }
+
+        response = test_client.post('/preview/configuration', json=request_payload, headers=headers)
+        assert response.status_code == expected_status
+        if expected_status == 403:
+            assert 'not authorized' in response.json()['message']
+
+    @pytest.mark.parametrize(
+        ('tool_name', 'role', 'branch_id', 'expected_fragment'),
+        [
+            # Read-only token role cannot drive a write tool's preview.
+            ('update_config', 'readOnly', None, 'read-only operations'),
+            # Data app tools are gated to the main/production branch.
+            ('modify_streamlit_data_app', 'admin', 'dev-123', 'main production branch'),
+            # update_flow is not available to admin/OAuth tokens (they use modify_flow).
+            ('update_flow', 'admin', None, 'admin/OAuth'),
+        ],
+    )
+    def test_preview_project_role_branch_authorization(
+        self, test_client: TestClient, mocker, tool_name, role, branch_id, expected_fragment
+    ):
+        """The preview endpoint mirrors ToolsFilteringMiddleware: token-role, feature and branch gating.
+
+        The denial happens before the mutator path runs, so no component/config mocks are needed.
+        """
+        mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
+        _configure_preview_auth(mock_client, mocker, role=role, branch_id=branch_id)
+        mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
+
+        response = test_client.post(
+            '/preview/configuration',
+            json={'toolName': tool_name, 'toolParams': {'configuration_id': 'cfg-1'}},
+        )
+        assert response.status_code == 403
+        assert expected_fragment in response.json()['message']
 
     def test_preview_update_config_success(self, test_client: TestClient, mocker):
         """Test successful preview of update_config tool."""
@@ -85,6 +186,7 @@ class TestPreviewConfigDiff:
 
         # Mock the KeboolaClient.from_state to return a mocked client
         mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
 
         # Properly mock async method
         async def mock_config_detail(**kwargs):
@@ -152,6 +254,7 @@ class TestPreviewConfigDiff:
         """Test preview with validation error."""
         # Mock the storage client to raise a validation error
         mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
 
         # Properly mock async method that raises an error
         async def mock_config_detail(**kwargs):
@@ -191,6 +294,7 @@ class TestPreviewConfigDiff:
     def test_preview_invalid_tool_name(self, test_client: TestClient, mocker):
         """Test preview with invalid tool name."""
         mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
         mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
 
         # Request payload with invalid tool name
@@ -236,6 +340,7 @@ class TestPreviewConfigDiff:
         )
 
         mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
 
         # Properly mock async method
         async def mock_config_detail(**kwargs):
@@ -305,6 +410,7 @@ class TestPreviewConfigDiff:
 
         # Mock the KeboolaClient
         mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
 
         # Mock async method for configuration row detail
         async def mock_row_detail(**kwargs):
@@ -392,6 +498,7 @@ class TestPreviewConfigDiff:
 
         # Mock the KeboolaClient
         mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
 
         async def mock_config_detail(**kwargs):
             return copy.deepcopy(original_config_data)
@@ -484,11 +591,14 @@ class TestPreviewConfigDiff:
 
         # Mock the KeboolaClient
         mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
 
         async def mock_config_detail(**kwargs):
             return copy.deepcopy(original_config_data)
 
         mock_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_config_detail)
+        # update_flow is the flow tool exposed to non-admin/non-OAuth tokens, so preview it as one.
+        _configure_preview_auth(mock_client, mocker, role='')
 
         mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
 
@@ -612,9 +722,12 @@ class TestPreviewConfigDiff:
         }
 
         mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
         mock_client.storage_client.configuration_detail = mocker.AsyncMock(
             side_effect=lambda **_: copy.deepcopy(original_config_data)
         )
+        # modify_flow is the flow tool exposed to admin/OAuth tokens, so preview it as an admin.
+        _configure_preview_auth(mock_client, mocker, role='admin')
         mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
 
         existing_schedules = [
@@ -713,9 +826,12 @@ class TestPreviewConfigDiff:
         }
 
         mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
         mock_client.storage_client.configuration_detail = mocker.AsyncMock(
             side_effect=lambda **_: copy.deepcopy(original_config_data)
         )
+        # modify_flow is the flow tool exposed to admin/OAuth tokens, so preview it as an admin.
+        _configure_preview_auth(mock_client, mocker, role='admin')
         mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
 
         existing_schedules = [
@@ -751,8 +867,8 @@ class TestPreviewConfigDiff:
         assert result['isValid'] is False
         assert expected_error_fragment in str(result.get('validationErrors', ''))
 
-    def test_preview_modify_data_app_success(self, test_client: TestClient, mocker):
-        """Test successful preview of modify_data_app tool."""
+    def test_preview_modify_streamlit_data_app_success(self, test_client: TestClient, mocker):
+        """Test successful preview of modify_streamlit_data_app tool."""
         from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID
 
         # Mock the data app configuration data
@@ -775,6 +891,9 @@ class TestPreviewConfigDiff:
 
         # Mock the KeboolaClient
         mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
+        mock_client.token = 'test-token'
+        mock_client.storage_api_url = 'https://connection.test.keboola.com'
 
         async def mock_config_detail(**kwargs):
             return copy.deepcopy(original_config_data)
@@ -785,6 +904,8 @@ class TestPreviewConfigDiff:
         mock_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_config_detail)
         mock_client.storage_client.project_id = mocker.AsyncMock(return_value='test-project')
         mock_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=mock_encrypt)
+        # Data app tools are allowed only on the main/production branch (branch_id=None).
+        _configure_preview_auth(mock_client, mocker, role='admin', branch_id=None)
 
         mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
 
@@ -837,7 +958,7 @@ class TestPreviewConfigDiff:
 
         # Request payload
         request_payload = {
-            'toolName': 'modify_data_app',
+            'toolName': 'modify_streamlit_data_app',
             'toolParams': {
                 'configuration_id': 'app-123',
                 'change_description': 'Update data app',
@@ -876,13 +997,19 @@ class TestPreviewConfigDiff:
                 'parameters': {
                     'dataApp': {
                         'slug': 'updated-data-app',
-                        'secrets': {'FOO': 'old', 'KEEP': 'x', 'BRANCH_ID': '456', 'WORKSPACE_ID': '123'},
+                        'secrets': {
+                            'FOO': 'old',
+                            'KEEP': 'x',
+                            'BRANCH_ID': '456',
+                            'WORKSPACE_ID': '123',
+                        },
                     },
                     'script': [],
                     'packages': ['httpx', 'pandas', 'streamlit'],
                 },
                 'authorization': {},
-                'storage': {},
+                # The empty `storage: {}` from the original config is pruned on re-save so it is
+                # never persisted as `[]` (which breaks the Writable Tables editor, AI-3135).
             },
         }
         # check the script
@@ -891,8 +1018,11 @@ class TestPreviewConfigDiff:
         assert len(actual_script) == 1
         assert cast(str, actual_script[0]).endswith('print("Hello World")')
 
-    def test_preview_validation_missing_required_param(self, test_client: TestClient):
+    def test_preview_validation_missing_required_param(self, test_client: TestClient, mocker):
         """Test validation error for missing required parameter."""
+        mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)
+        mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
         # Request missing required 'configuration_id'
         request_payload = {
             'toolName': 'update_config',
@@ -924,6 +1054,9 @@ class TestPreviewConfigDiff:
         Note: Type validation errors at the API level return 400 Bad Request
         rather than 200 with validation errors, as they represent malformed requests.
         """
+        mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)
+        mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
         request_payload = {
             'toolName': 'update_config',
             'toolParams': {
@@ -983,6 +1116,7 @@ class TestPreviewConfigDiff:
 
         # Mock the KeboolaClient
         mock_client = mocker.AsyncMock(KeboolaClient)
+        _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
 
         async def mock_config_detail(**kwargs):
             return copy.deepcopy(original_config_data)

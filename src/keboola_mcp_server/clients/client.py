@@ -1,6 +1,7 @@
 """Keboola Storage API client wrapper."""
 
 import logging
+from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence, TypeVar
 from urllib.parse import urlparse, urlunparse
 
@@ -12,7 +13,7 @@ from keboola_mcp_server.clients.encryption import EncryptionClient
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
 from keboola_mcp_server.clients.metastore import MetastoreClient
 from keboola_mcp_server.clients.scheduler import SchedulerClient
-from keboola_mcp_server.clients.storage import AsyncStorageClient
+from keboola_mcp_server.clients.storage import AsyncStorageClient, JsonDict
 from keboola_mcp_server.clients.sync_actions import SyncActionsClient
 
 LOG = logging.getLogger(__name__)
@@ -147,6 +148,9 @@ class KeboolaClient:
         self._branch_id = branch_id
         self._headers = dict(headers) if headers else None
         self._features_cache: set[str] | None = None
+        # Session-scoped cache of flow configuration schemas keyed by flow type (component id).
+        # Mirrors _features_cache: fetched once per session so it is never stale across runs.
+        self._flow_schema_cache: dict[str, JsonDict] = {}
 
         sapi_url_parsed = urlparse(storage_api_url)
         if not sapi_url_parsed.hostname or not sapi_url_parsed.hostname.startswith('connection.'):
@@ -164,12 +168,17 @@ class KeboolaClient:
 
         # Initialize clients for individual services
         bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
+        # The encryption service does not require an authorization header, so we pass None as the token
+        self._encryption_client = EncryptionClient.create(
+            root_url=encryption_api_url, token=None, headers=self._headers
+        )
         self._storage_client = AsyncStorageClient.create(
             root_url=self._storage_api_url,
             token=bearer_or_sapi_token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
+            encryption_client=self._encryption_client,
         )
         self._jobs_queue_client = JobsQueueClient.create(
             root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._headers, readonly=readonly
@@ -177,16 +186,17 @@ class KeboolaClient:
         self._ai_service_client = AIServiceClient.create(
             root_url=ai_service_api_url, token=self._token, headers=self._headers, readonly=readonly
         )
+        # Data-science (sandboxes-service) git-repo credential endpoints require an admin-context
+        # token (CanManageAppRepoCredentials -> StorageApiToken::isAdminToken()). The OAuth bearer
+        # token carries admin context; the SAPI token minted for OAuth sessions does not. Pass the
+        # bearer token when available so credential minting works for OAuth clients (falls back to
+        # the SAPI token otherwise). See AI-3398.
         self._data_science_client = DataScienceClient.create(
             root_url=data_science_api_url,
-            token=self._token,
+            token=bearer_or_sapi_token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
-        )
-        # The encryption service does not require an authorization header, so we pass None as the token
-        self._encryption_client = EncryptionClient.create(
-            root_url=encryption_api_url, token=None, headers=self._headers
         )
         self._scheduler_client = SchedulerClient.create(
             root_url=scheduler_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
@@ -200,7 +210,7 @@ class KeboolaClient:
         )
         self._metastore_client = MetastoreClient.create(
             root_url=metastore_api_url,
-            token=self._token,
+            token=bearer_or_sapi_token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
@@ -242,6 +252,14 @@ class KeboolaClient:
             self._features_cache = set(owner.get('features', []) if isinstance(owner, dict) else [])
         return feature in self._features_cache
 
+    def get_cached_flow_schema(self, flow_type: str) -> JsonDict | None:
+        """Return the cached configuration schema for the given flow type, or None if not cached."""
+        return self._flow_schema_cache.get(flow_type)
+
+    def cache_flow_schema(self, flow_type: str, schema: JsonDict) -> None:
+        """Cache the configuration schema for the given flow type for the rest of the session."""
+        self._flow_schema_cache[flow_type] = schema
+
     @property
     def headers(self) -> dict[str, Any] | None:
         return dict(self._headers) if self._headers else None
@@ -249,6 +267,35 @@ class KeboolaClient:
     @property
     def storage_client(self) -> 'AsyncStorageClient':
         return self._storage_client
+
+    def step_up_storage_client(self, kubernetes_token_path: str) -> 'AsyncStorageClient':
+        """
+        Returns a Storage client that keeps this client's user token and additionally
+        sends the projected Kubernetes ServiceAccount JWT as the X-Kubernetes-Authorization
+        step-up header. Connection waives the permissions the user's token lacks on the
+        step-up-enabled actions (workspace / config / event creation) when the
+        ServiceAccount is authorized for them — no privileged token is minted and the
+        user's token stays the audited principal. The read-only write guard of the user's
+        Storage client is preserved; the header only widens server-side permissions.
+
+        The token file is read on each call so kubelet rotation needs no restart.
+
+        :param kubernetes_token_path: Path to the projected ServiceAccount token file.
+        :raises ValueError: If the token file is empty.
+        """
+        jwt = Path(kubernetes_token_path).read_text().strip()
+        if not jwt:
+            raise ValueError(f'Kubernetes ServiceAccount token file is empty: {kubernetes_token_path}')
+
+        headers = dict(self._headers or {})
+        headers['X-Kubernetes-Authorization'] = f'Bearer {jwt}'
+        return AsyncStorageClient.create(
+            root_url=self._storage_api_url,
+            token=self._token,
+            branch_id=self._branch_id,
+            headers=headers,
+            readonly=self._storage_client.raw_client.readonly,
+        )
 
     @property
     def jobs_queue_client(self) -> 'JobsQueueClient':

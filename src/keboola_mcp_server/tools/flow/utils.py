@@ -15,6 +15,7 @@ from keboola_mcp_server.clients.client import (
 )
 from keboola_mcp_server.clients.storage import APIFlowResponse, JsonDict
 from keboola_mcp_server.mcp import process_concurrently
+from keboola_mcp_server.tools.components.utils import fetch_component
 from keboola_mcp_server.tools.flow.model import (
     ConditionalFlowPhase,
     ConditionalFlowTask,
@@ -28,7 +29,6 @@ LOG = logging.getLogger(__name__)
 
 RESOURCES = 'keboola_mcp_server.resources'
 FLOW_SCHEMAS: Mapping[FlowType, str] = {
-    CONDITIONAL_FLOW_COMPONENT_ID: 'conditional-flow-schema.json',
     ORCHESTRATOR_COMPONENT_ID: 'flow-schema.json',
 }
 
@@ -39,9 +39,51 @@ def _load_schema(flow_type: FlowType) -> JsonDict:
         return json.load(f)
 
 
-def get_schema_as_markdown(flow_type: FlowType) -> str:
+async def resolve_flow_schema(client: KeboolaClient, flow_type: FlowType) -> JsonDict:
+    """
+    Resolve the JSON schema for a flow type.
+
+    Conditional flows (``keboola.flow``) are sourced live from the Developer Portal via
+    ``fetch_component`` and cached per session. Legacy orchestrator flows stay bundled.
+
+    :param client: Authenticated Keboola client instance.
+    :param flow_type: The flow type / component id to resolve the schema for.
+    :return: The configuration schema as a JSON dict.
+    :raises ValueError: If the live conditional schema cannot be retrieved or is empty.
+    """
+    if flow_type != CONDITIONAL_FLOW_COMPONENT_ID:
+        return _load_schema(flow_type)  # legacy orchestrator stays bundled
+
+    cached = client.get_cached_flow_schema(flow_type)
+    if cached is not None:
+        return cached
+
+    failure_message = (
+        'Could not retrieve the conditional flow (keboola.flow) configuration schema from the '
+        'Developer Portal. The schema is required to create or validate conditional flows. '
+        'Please retry; if this persists the keboola.flow component schema may be unavailable on '
+        'this stack.'
+    )
+    try:
+        component = await fetch_component(client, CONDITIONAL_FLOW_COMPONENT_ID)
+    except Exception as e:
+        # Any failure to fetch the live schema must surface as the recoverable message: non-404
+        # HTTPStatusError (re-raised by fetch_component), transport/network errors, and unexpected
+        # payloads (e.g. a pydantic ValidationError when the AI Service returns a malformed response)
+        # all map to the same hard-fail so the agent gets actionable guidance, never a raw traceback.
+        raise ValueError(failure_message) from e
+
+    schema = component.configuration_schema
+    if not schema:
+        raise ValueError(failure_message)
+
+    client.cache_flow_schema(flow_type, schema)
+    return schema
+
+
+async def get_schema_as_markdown(client: KeboolaClient, flow_type: FlowType) -> str:
     """Return the flow schema as a markdown formatted string."""
-    schema = _load_schema(flow_type=flow_type)
+    schema = await resolve_flow_schema(client, flow_type)
     return f'```json\n{json.dumps(schema, indent=2)}\n```'
 
 

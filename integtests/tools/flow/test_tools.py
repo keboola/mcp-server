@@ -658,6 +658,12 @@ async def test_get_flow_schema(mcp_context: Context) -> None:
         conditional_tasks = parsed_conditional_schema['properties']['tasks']['items']['properties']['task']
         assert 'oneOf' in conditional_tasks  # Conditional flows have structured task types
 
+        # The conditional schema is sourced live from the Developer Portal — it must be non-empty
+        # and structurally a flow schema (not a stale/empty bundled placeholder).
+        assert parsed_conditional_schema  # non-empty dict
+        assert parsed_conditional_schema['properties']['phases']['items']['properties']
+        assert parsed_conditional_schema['properties']['tasks']['items']['properties']
+
 
 @pytest.mark.asyncio
 async def test_create_legacy_flow_invalid_structure(mcp_context: Context, configs: list[ConfigDef]) -> None:

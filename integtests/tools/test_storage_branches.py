@@ -1,11 +1,13 @@
-"""Integration tests for branched storage — validates deference mechanism for both old-style and storage-branches."""
+"""Integration tests for branched storage — validates the storage-branches deference mechanism."""
 
+import csv
 import json
 import logging
 import os
 import time
 import uuid
 from dataclasses import dataclass
+from io import StringIO
 from typing import Any, Generator
 
 import httpx
@@ -19,6 +21,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.mcp import ServerRuntimeInfo, ServerState
 from keboola_mcp_server.tools.project import get_project_info
+from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
 from keboola_mcp_server.tools.storage.tools import get_buckets, get_tables
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -26,7 +29,6 @@ LOG = logging.getLogger(__name__)
 
 PYTHON_TRANSFORMATION_COMPONENT = 'keboola.python-transformation-v2'
 STORAGE_BRANCHES_TOKEN_ENV_VAR = 'INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES'
-OLD_BRANCHES_TOKEN_ENV_VAR = 'INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES'
 
 
 # --- Helper functions ---
@@ -218,7 +220,6 @@ class BranchTestProject:
 
     storage_api_url: str
     storage_api_token: str
-    has_storage_branches: bool
     branch_a_id: str
     branch_b_id: str
     label: str
@@ -245,8 +246,9 @@ def _setup_branch_test_project(
     token_info = _api_request('GET', f'{storage_api_url}/v2/storage/tokens/verify', token)
     project_name = token_info['owner']['name']
     features = token_info.get('owner', {}).get('features', [])
-    has_sb = 'storage-branches' in features
-    LOG.info(f'[{label}] Setting up project {project_name!r} (storage-branches={has_sb})')
+    if 'storage-branches' not in features:
+        pytest.fail(f'[{label}] project {project_name!r} must have the storage-branches feature enabled')
+    LOG.info(f'[{label}] Setting up project {project_name!r}')
 
     _ensure_bucket(storage_api_url, token, 'test_bucket_01')
     _ensure_table(
@@ -302,7 +304,6 @@ def _setup_branch_test_project(
     return BranchTestProject(
         storage_api_url=storage_api_url,
         storage_api_token=token,
-        has_storage_branches=has_sb,
         branch_a_id=branch_a_id,
         branch_b_id=branch_b_id,
         label=label,
@@ -320,65 +321,31 @@ def _teardown_branch_test_project(project: BranchTestProject) -> None:
 
 
 @pytest.fixture(scope='session')
-def branch_test_projects(
+def branch_project(
     storage_api_url: str,
     env_file_loaded: bool,
-) -> Generator[list[BranchTestProject], Any, None]:
+) -> Generator[BranchTestProject, Any, None]:
     """
-    Sets up branch tests on two dedicated projects (outside the pool):
-    - One with the storage-branches feature (INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES)
-    - One without it (INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES)
+    Sets up a dedicated project (outside the pool) with the `storage-branches`
+    feature enabled.
 
-    Both use idempotent production data setup and unique branch names,
-    so multiple concurrent sessions can safely share the same projects.
+    Idempotent production data setup and unique branch names allow multiple
+    concurrent sessions to safely share the same project.
     """
-    sb_token = os.getenv(STORAGE_BRANCHES_TOKEN_ENV_VAR, '').strip()
-    if not sb_token:
+    token = os.getenv(STORAGE_BRANCHES_TOKEN_ENV_VAR, '').strip()
+    if not token:
         pytest.fail(
             f'{STORAGE_BRANCHES_TOKEN_ENV_VAR} must be set to a storage token '
             f'for a project WITH the storage-branches feature'
         )
 
-    old_token = os.getenv(OLD_BRANCHES_TOKEN_ENV_VAR, '').strip()
-    if not old_token:
-        pytest.fail(
-            f'{OLD_BRANCHES_TOKEN_ENV_VAR} must be set to a storage token '
-            f'for a project WITHOUT the storage-branches feature'
-        )
-
-    projects: list[BranchTestProject] = []
+    project: BranchTestProject | None = None
     try:
-        sb_project = _setup_branch_test_project(storage_api_url, sb_token, 'storage-branches')
-        projects.append(sb_project)
-
-        old_project = _setup_branch_test_project(storage_api_url, old_token, 'old-branches')
-        projects.append(old_project)
-
-        # Verify features match expectations
-        if not sb_project.has_storage_branches:
-            pytest.fail(
-                f'{STORAGE_BRANCHES_TOKEN_ENV_VAR} must point to a project ' f'WITH the storage-branches feature'
-            )
-        if old_project.has_storage_branches:
-            pytest.fail(
-                f'{OLD_BRANCHES_TOKEN_ENV_VAR} must point to a project ' f'WITHOUT the storage-branches feature'
-            )
-
-        yield projects
-
+        project = _setup_branch_test_project(storage_api_url, token, 'storage-branches')
+        yield project
     finally:
-        for p in projects:
-            _teardown_branch_test_project(p)
-
-
-@pytest.fixture(scope='session', params=['storage-branches', 'old-branches'])
-def branch_project(request, branch_test_projects: list[BranchTestProject]) -> BranchTestProject:
-    """Parametrized fixture: yields each project type in turn."""
-    want_sb = request.param == 'storage-branches'
-    for p in branch_test_projects:
-        if p.has_storage_branches == want_sb:
-            return p
-    pytest.skip(f'No project matching {request.param}')
+        if project is not None:
+            _teardown_branch_test_project(project)
 
 
 async def _build_context(
@@ -512,3 +479,72 @@ async def test_get_project_info_reports_default_branch(
     # Sanity: the default branch must not be the dev branch we created for this session.
     assert str(result.branch_id) != str(branch_project.branch_a_id)
     assert str(result.branch_id) != str(branch_project.branch_b_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('table_id', 'description'),
+    [
+        ('in.c-test_branch.test_table_branch', 'branch-only table created via transformation'),
+        ('in.c-test_bucket_01.test_table_01', 'production table (also has a branched version in Branch A)'),
+    ],
+    ids=['branch_only_table', 'production_table'],
+)
+async def test_query_data_from_dev_branch_reaches_both_kinds_of_tables(
+    branch_context: Context,
+    branch_project: BranchTestProject,
+    table_id: str,
+    description: str,
+) -> None:
+    """
+    From a dev-branch MCP context, `query_data` must successfully execute SELECT against
+    both a table that exists only in the branch and a table that exists in production.
+    Verifies the branch-aware workspace selection unblocks SQL on both kinds of tables.
+    """
+    tables_listing = await get_tables(branch_context, table_ids=[table_id])
+    assert len(tables_listing.tables) == 1, f'Expected exactly one table for {table_id}'
+    table = tables_listing.tables[0]
+    assert table.fully_qualified_name, f'{description}: table {table_id} has no FQN, cannot query'
+
+    sql_query = f'SELECT COUNT(*) AS row_count FROM {table.fully_qualified_name}'
+    result = await query_data(
+        sql_query=sql_query,
+        query_name=f'Row count for {table_id}',
+        ctx=branch_context,
+    )
+
+    assert isinstance(result, QueryDataOutput)
+    assert result.csv_data, f'{description}: query returned no CSV data'
+
+    # Sanity-check: COUNT(*) returns a numeric value. Specific row count varies by data
+    # (fixture writes 1 row to each branched table; the production source table has 2 rows).
+    csv_reader = csv.reader(StringIO(result.csv_data))
+    rows = list(csv_reader)
+    assert len(rows) == 2, f'{description}: COUNT query should return header + 1 data row, got {rows}'
+    count_value = rows[1][0]
+    assert count_value.isdigit(), f'{description}: expected numeric row count, got {count_value!r}'
+    assert int(count_value) >= 1, f'{description}: expected positive row count, got {count_value!r}'
+
+
+@pytest.mark.asyncio
+async def test_workspace_id_is_branch_aware(
+    branch_context: Context,
+    default_branch_context: Context,
+    branch_project: BranchTestProject,
+) -> None:
+    """
+    On a `storage-branches` project, the dev-branch context must return a DIFFERENT
+    workspace than the default branch.
+    """
+    dev_result = await get_project_info(branch_context)
+    default_result = await get_project_info(default_branch_context)
+
+    assert isinstance(dev_result.workspace_id, int)
+    assert dev_result.workspace_id > 0
+    assert isinstance(default_result.workspace_id, int)
+    assert default_result.workspace_id > 0
+
+    assert dev_result.workspace_id != default_result.workspace_id, (
+        f'storage-branches project expected per-branch workspace, '
+        f'got the same id {dev_result.workspace_id} from both contexts'
+    )

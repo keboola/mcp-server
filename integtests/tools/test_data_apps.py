@@ -1,5 +1,8 @@
 import logging
+import os
+import subprocess
 import uuid
+from pathlib import Path
 from typing import Any, AsyncGenerator, Mapping, cast
 
 import pytest
@@ -16,6 +19,7 @@ from keboola_mcp_server.tools.data_apps import (
     DataAppSummary,
     GetDataAppsOutput,
     ModifiedDataAppOutput,
+    ModifiedPythonJsDataAppOutput,
     _get_query_function_code,
 )
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -85,7 +89,7 @@ async def initial_data_app(
     try:
         # Create
         created_result = await mcp_client.call_tool(
-            name='modify_data_app',
+            name='modify_streamlit_data_app',
             arguments={
                 'name': app_name,
                 'description': app_description,
@@ -204,7 +208,7 @@ async def test_data_app_lifecycle(
     updated_description = 'Data app updated by integration test'
     updated_source_code = 'import numpy as np\n\n'
     updated_result = await mcp_client.call_tool(
-        name='modify_data_app',
+        name='modify_streamlit_data_app',
         arguments={
             'name': updated_name,
             'description': updated_description,
@@ -251,3 +255,290 @@ async def test_data_app_lifecycle(
     assert streamlit_app_entrypoint not in fetched_data_app_parameters['script'][0]
     # Check that the packages are updated
     assert set(fetched_data_app_parameters['packages']) == set(['streamlit'] + _DEFAULT_PACKAGES)
+
+
+# ===== python-js data app: prod + external-git draft (AI-3005 / AI-3286) =====
+
+
+@pytest.fixture
+def python_js_app_py() -> str:
+    """Minimal python-js entrypoint: a tiny HTTP server returning a fixed string."""
+    return (
+        'from http.server import BaseHTTPRequestHandler, HTTPServer\n'
+        'import os\n\n'
+        'class H(BaseHTTPRequestHandler):\n'
+        '    def do_GET(self):\n'
+        '        self.send_response(200)\n'
+        '        self.end_headers()\n'
+        "        self.wfile.write(b'integration-test-ok')\n\n"
+        "if __name__ == '__main__':\n"
+        "    port = int(os.environ.get('PORT', '8000'))\n"
+        "    HTTPServer(('0.0.0.0', port), H).serve_forever()\n"
+    )
+
+
+def _git(*args: str, cwd: Path) -> None:
+    """Run a git subcommand inside `cwd`, failing loudly on non-zero exit."""
+    subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+
+@pytest.mark.asyncio
+async def test_python_js_data_app_prod_and_draft_lifecycle(
+    mcp_client: Client,
+    keboola_client: KeboolaClient,
+    tmp_path: Path,
+    python_js_app_py: str,
+) -> None:
+    """End-to-end on canary-orion: create prod (managed repo), create draft
+    (external-git pointing at prod's repo), push branch, deploy draft in mode='dev',
+    merge into main, redeploy prod, then delete the draft via the new MCP tool.
+
+    Also asserts that fetching the prod's detail surfaces the draft in `drafts: [...]`
+    before deletion and returns an empty `drafts` array after.
+    """
+
+    unique = uuid.uuid4().hex[:8]
+    prod_slug = f'int-prod-{unique}'
+    draft_slug = f'int-draft-{unique}'
+    prod_output: ModifiedPythonJsDataAppOutput | None = None
+    draft_output: ModifiedPythonJsDataAppOutput | None = None
+    draft_deleted_via_tool = False
+
+    try:
+        # Step 1: create prod (managed repo).
+        prod_result = await mcp_client.call_tool(
+            name='modify_python_js_data_app',
+            arguments={
+                'name': f'Integration prod {unique}',
+                'description': 'AI-3286 prod app integration test',
+                'slug': prod_slug,
+                'authentication_type': 'no-auth',
+            },
+        )
+        assert prod_result.structured_content is not None
+        prod_output = ModifiedPythonJsDataAppOutput.model_validate(prod_result.structured_content)
+        assert prod_output.response == 'created'
+        assert prod_output.repo_url is not None
+        assert prod_output.repo_url.startswith('https://')
+        assert prod_output.git_clone_url is None
+        assert prod_output.branch is None
+
+        # Step 2: create draft pointing at prod's repo. Branch defaults to 'init'.
+        draft_result = await mcp_client.call_tool(
+            name='modify_python_js_data_app',
+            arguments={
+                'name': f'Integration draft {unique}',
+                'description': 'AI-3286 draft integration test',
+                'slug': draft_slug,
+                'parent_configuration_id': prod_output.data_app.configuration_id,
+                'authentication_type': 'no-auth',
+            },
+        )
+        assert draft_result.structured_content is not None
+        draft_output = ModifiedPythonJsDataAppOutput.model_validate(draft_result.structured_content)
+        assert draft_output.response == 'created'
+        assert draft_output.repo_url == prod_output.repo_url
+        assert draft_output.git_clone_url is not None
+        assert draft_output.git_clone_url.startswith('https://kai:')
+        assert draft_output.branch == 'init'
+
+        # Step 3: clone via the embedded credential. Initialize main if the freshly provisioned
+        # repo is empty, then branch off and push the draft branch.
+        repo_dir = tmp_path / 'repo'
+        env = {**os.environ, 'GIT_TERMINAL_PROMPT': '0'}
+        subprocess.run(
+            ['git', 'clone', draft_output.git_clone_url, str(repo_dir)],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        _git('config', 'user.email', 'mcp-integration@keboola.com', cwd=repo_dir)
+        _git('config', 'user.name', 'MCP Integration Test', cwd=repo_dir)
+        # The platform-provisioned repo may be empty. Make sure `main` exists with at least one
+        # commit so the post-merge push has somewhere to land.
+        has_main = (
+            subprocess.run(
+                ['git', 'rev-parse', '--verify', 'refs/heads/main'],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+            ).returncode
+            == 0
+        )
+        if not has_main:
+            _git('checkout', '-b', 'main', cwd=repo_dir)
+            (repo_dir / 'README.md').write_text(f'# integration test {unique}\n')
+            _git('add', 'README.md', cwd=repo_dir)
+            _git('commit', '-m', 'init main', cwd=repo_dir)
+            subprocess.run(
+                ['git', 'push', '-u', 'origin', 'main'],
+                cwd=repo_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+        _git('checkout', '-b', draft_output.branch, 'main', cwd=repo_dir)
+        (repo_dir / 'app.py').write_text(python_js_app_py)
+        _git('add', 'app.py', cwd=repo_dir)
+        _git('commit', '-m', f'AI-3286 integration test commit {unique}', cwd=repo_dir)
+        subprocess.run(
+            ['git', 'push', '-u', 'origin', draft_output.branch],
+            cwd=repo_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        # Step 4: deploy draft in mode='dev'.
+        draft_deploy = await mcp_client.call_tool(
+            name='deploy_data_app',
+            arguments={
+                'action': 'deploy',
+                'configuration_id': draft_output.data_app.configuration_id,
+                'mode': 'dev',
+            },
+        )
+        assert draft_deploy.structured_content is not None
+        # The data-app runtime is async — we only assert the deploy call was accepted; not its
+        # eventual state, since CI cannot afford to poll the full startup loop.
+
+        # Fetching the prod's detail must now list the draft under `drafts`.
+        prod_detail_before = await mcp_client.call_tool(
+            name='get_data_apps',
+            arguments={'configuration_ids': [prod_output.data_app.configuration_id]},
+        )
+        assert prod_detail_before.structured_content is not None
+        prod_apps_before = GetDataAppsOutput.model_validate(prod_detail_before.structured_content)
+        assert len(prod_apps_before.data_apps) == 1
+        prod_app_before = prod_apps_before.data_apps[0]
+        assert isinstance(prod_app_before, DataApp)
+        draft_cfg_ids_before = [d.configuration_id for d in prod_app_before.drafts]
+        assert draft_output.data_app.configuration_id in draft_cfg_ids_before
+
+        # Confirm the draft's stored config carries the external-git block we sent and the
+        # parent linkage we expect.
+        draft_detail = await mcp_client.call_tool(
+            name='get_data_apps',
+            arguments={'configuration_ids': [draft_output.data_app.configuration_id]},
+        )
+        assert draft_detail.structured_content is not None
+        draft_apps = GetDataAppsOutput.model_validate(draft_detail.structured_content)
+        assert len(draft_apps.data_apps) == 1
+        draft_detail_app = draft_apps.data_apps[0]
+        assert isinstance(draft_detail_app, DataApp)
+        draft_data_app_block = draft_detail_app.configuration.get('parameters', {}).get('dataApp', {})
+        draft_git_block = draft_data_app_block.get('git', {})
+        assert draft_git_block.get('repository') == prod_output.repo_url
+        assert draft_git_block.get('branch') == draft_output.branch
+        assert draft_git_block.get('username') == 'kai'
+        encrypted_pw = draft_git_block.get('#password', '')
+        assert encrypted_pw.startswith('KBC::'), f'expected encrypted #password, got {encrypted_pw!r}'
+        assert draft_data_app_block.get('isDraft') is True
+        assert draft_data_app_block.get('parentConfigurationId') == prod_output.data_app.configuration_id
+        # Drafts of a draft are always empty.
+        assert draft_detail_app.drafts == []
+
+        # Step 4b: repoint the draft's external-git branch via the update path (CFTL-714) and
+        # confirm the stored config now pins the new branch while the encrypted credential,
+        # repository, and username are preserved verbatim.
+        repointed_branch = f'repoint-{unique}'
+        repoint_result = await mcp_client.call_tool(
+            name='modify_python_js_data_app',
+            arguments={
+                'name': '',
+                'description': '',
+                'configuration_id': draft_output.data_app.configuration_id,
+                'branch': repointed_branch,
+                'change_description': 'CFTL-714 repoint git branch',
+            },
+        )
+        assert repoint_result.structured_content is not None
+        repoint_output = ModifiedPythonJsDataAppOutput.model_validate(repoint_result.structured_content)
+        assert repoint_output.response.startswith('updated')
+        assert repoint_output.change_summary is not None
+        assert repointed_branch in repoint_output.change_summary
+
+        repointed_detail = await mcp_client.call_tool(
+            name='get_data_apps',
+            arguments={'configuration_ids': [draft_output.data_app.configuration_id]},
+        )
+        assert repointed_detail.structured_content is not None
+        repointed_apps = GetDataAppsOutput.model_validate(repointed_detail.structured_content)
+        repointed_app = repointed_apps.data_apps[0]
+        assert isinstance(repointed_app, DataApp)
+        repointed_git_block = repointed_app.configuration.get('parameters', {}).get('dataApp', {}).get('git', {})
+        assert repointed_git_block.get('branch') == repointed_branch
+        # Untouched fields survive the repoint (only `branch` is rewritten; no re-encryption).
+        assert repointed_git_block.get('repository') == prod_output.repo_url
+        assert repointed_git_block.get('username') == 'kai'
+        assert repointed_git_block.get('#password', '').startswith('KBC::')
+
+        # Step 5: merge into main and push.
+        _git('checkout', 'main', cwd=repo_dir)
+        _git('merge', '--no-ff', '-m', f'Merge {draft_output.branch}', draft_output.branch, cwd=repo_dir)
+        subprocess.run(
+            ['git', 'push', 'origin', 'main'],
+            cwd=repo_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        # Step 6: redeploy prod (no mode, no branch).
+        prod_deploy = await mcp_client.call_tool(
+            name='deploy_data_app',
+            arguments={
+                'action': 'deploy',
+                'configuration_id': prod_output.data_app.configuration_id,
+            },
+        )
+        assert prod_deploy.structured_content is not None
+
+        # Step 7: delete the draft via the new MCP tool, then verify it's gone from prod's drafts.
+        # Stop the draft first — DSAPI delete requires desiredState == currentState.
+        try:
+            await keboola_client.data_science_client.suspend_data_app(draft_output.data_app.data_app_id)
+        except Exception as exc:
+            LOG.info(f'suspend failed for {draft_output.data_app.data_app_id}: {exc}')
+        delete_result = await mcp_client.call_tool(
+            name='delete_python_js_data_app_draft',
+            arguments={'configuration_id': draft_output.data_app.configuration_id},
+        )
+        assert delete_result.structured_content is not None
+        deleted = delete_result.structured_content
+        assert deleted['response'] == 'deleted'
+        assert deleted['configuration_id'] == draft_output.data_app.configuration_id
+        assert deleted['parent_configuration_id'] == prod_output.data_app.configuration_id
+        draft_deleted_via_tool = True
+
+        prod_detail_after = await mcp_client.call_tool(
+            name='get_data_apps',
+            arguments={'configuration_ids': [prod_output.data_app.configuration_id]},
+        )
+        assert prod_detail_after.structured_content is not None
+        prod_apps_after = GetDataAppsOutput.model_validate(prod_detail_after.structured_content)
+        prod_app_after = prod_apps_after.data_apps[0]
+        assert isinstance(prod_app_after, DataApp)
+        draft_cfg_ids_after = [d.configuration_id for d in prod_app_after.drafts]
+        assert draft_output.data_app.configuration_id not in draft_cfg_ids_after
+
+    finally:
+        # Teardown: best-effort cleanup. Skip draft if the test already deleted it via the tool.
+        cleanup_targets = [(prod_output, 'prod')]
+        if not draft_deleted_via_tool:
+            cleanup_targets.insert(0, (draft_output, 'draft'))
+        for app, role in cleanup_targets:
+            if app is None:
+                continue
+            try:
+                await keboola_client.data_science_client.suspend_data_app(app.data_app.data_app_id)
+            except Exception as exc:
+                LOG.info(f'suspend failed for {role} {app.data_app.data_app_id}: {exc}')
+            try:
+                await keboola_client.data_science_client.delete_data_app(app.data_app.data_app_id)
+            except Exception as exc:
+                LOG.error(f'delete failed for {role} {app.data_app.data_app_id}: {exc}')

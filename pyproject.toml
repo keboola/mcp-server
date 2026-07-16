@@ -4,22 +4,22 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.61.1"
+version = "1.74.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
-    "fastmcp == 3.2.0",
-    "mcp == 1.27.0",
+    "fastmcp == 3.4.2",
+    "mcp == 1.27.2",
     "httpx ~= 0.28",
-    "httpx-retries~=0.4",
+    "httpx-retries~=0.5",
     "jsonpath-ng ~= 1.8",
     "jsonschema ~= 4.26",
-    "pyjwt ~= 2.12",
+    "pyjwt ~= 2.13",
     "json-log-formatter ~= 1.1",
-    "cryptography ~= 46.0",
+    "cryptography ~= 48.0",
     "pydantic ~= 2.13.0",
     "sqlglot ~= 30.0",
     "toon-format ~= 0.9.0b1",
@@ -41,7 +41,7 @@ codestyle = [
 ]
 tests = [
     "pytest ~= 9.0",
-    "pytest-asyncio ~= 1.3",
+    "pytest-asyncio ~= 1.4",
     "pytest-cov ~= 7.0",
     "pytest-datadir ~= 1.8",
     "pytest-mock ~= 3.15",
@@ -50,7 +50,7 @@ tests = [
 ]
 integtests = [
     "kbcstorage ~= 0.9",
-    "requests ~= 2.32",
+    "requests ~= 2.34",
 ]
 dev = [
     "tox ~= 4.35",
@@ -88,6 +88,17 @@ profile = "black"
 line_length = 120
 multi_line_output = 3
 use_parentheses = true
+
+[tool.uv]
+# Dependency cooldown (supply-chain hardening): never resolve a package version
+# published within the last 7 days. Freshly published malicious releases are
+# typically detected and yanked within hours to a few days, so a 7-day buffer
+# removes most of that attack window before a version can reach our lock file.
+# This is a resolution-time filter — it applies whenever `uv lock` regenerates
+# the lock; CI installs with `uv sync --frozen` and is unaffected.
+# Temporarily relax this (e.g. `--exclude-newer` on the CLI) when an urgent
+# security fix needs to be picked up before the window elapses.
+exclude-newer = "7 days"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/keboola_mcp_server"]
@@ -153,7 +164,6 @@ pass_env = [
     "INTEGTEST_STORAGE_TOKEN_PRJ2",
     "INTEGTEST_WORKSPACE_SCHEMA_PRJ2",
     "INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES",
-    "INTEGTEST_STORAGE_TOKEN_OLD_BRANCHES",
     "INTEGTEST_LOCK_TTL_MINUTES",
     "INTEGTEST_LOCK_POLL_INTERVAL_SECONDS",
     "INTEGTEST_LOCK_MAX_WAIT_MINUTES",

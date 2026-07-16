@@ -97,6 +97,17 @@ class QueryServiceClient(KeboolaServiceClient):
         payload: JsonDict = {'reason': reason}
         return cast(JsonDict, await self.post(endpoint=f'queries/{job_id}/cancel', data=payload))
 
+    def build_cancel_url(self, job_id: str) -> str:
+        """
+        Returns the absolute URL clients should POST to in order to cancel the given query job.
+
+        Used to surface the cancellation handle to MCP clients via a progress notification so
+        that they can cancel the query directly against Query Service without routing through
+        the originating MCP server replica. The endpoint accepts the same auth header the client
+        already uses to talk to the MCP server (`X-StorageAPI-Token` or `Authorization: Bearer`).
+        """
+        return f'{self.raw_client.base_api_url}/queries/{job_id}/cancel'
+
     async def get_job_results(
         self, job_id: str, statement_id: str, *, offset: int | None = None, limit: int | None = None
     ) -> JsonDict:

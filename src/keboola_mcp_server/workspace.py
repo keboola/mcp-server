@@ -2,21 +2,44 @@ import abc
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
-from typing import Any, Literal, Mapping, Sequence, cast
+from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence, cast
 from urllib.parse import urlunparse
 
-import httpx
 from httpx import HTTPStatusError
-from pydantic import Field, TypeAdapter
+from pydantic import Field
 from pydantic.dataclasses import dataclass
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
+from keboola_mcp_server.clients.storage import AsyncStorageClient
+from keboola_mcp_server.tools.storage_helpers import has_storage_branches
 
 LOG = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class JobSubmittedInfo:
+    """Information surfaced to the tool layer the moment a backend job becomes addressable.
+
+    This fires immediately after Query Service returns a `queryJobId`. The tool layer turns
+    this into an MCP `notifications/progress` so clients (e.g. Kai, Claude Code) can record
+    the handle and use it to cancel out-of-band by POSTing to `cancellation_url` themselves,
+    regardless of which MCP replica the cancel lands on.
+    """
+
+    job_id: str
+    cancellation_url: str | None
+    backend: str
+
+
+# Async callback invoked exactly once per execute_query, immediately after the backend
+# returns a job handle. Callbacks are best-effort: any exception raised inside is suppressed
+# so a failed progress notification cannot abort the underlying query.
+JobSubmittedCallback = Callable[[JobSubmittedInfo], Awaitable[None]]
 
 
 def get_backend_path(table: Mapping[str, Any]) -> list[str] | None:
@@ -34,8 +57,10 @@ class TableFqn:
     """The properly quoted parts of a fully qualified table name."""
 
     # TODO: refactor this and probably use just a simple string
-    db_name: str  # project_id in a BigQuery
-    schema_name: str  # dataset in a BigQuery
+    # Snowflake FQNs are database.schema.table. BigQuery has no cross-project access, so the
+    # database tier is meaningless there — `db_name` is empty and the FQN is just dataset.table.
+    db_name: str  # database (Snowflake); empty for BigQuery
+    schema_name: str  # schema (Snowflake); dataset (BigQuery)
     table_name: str
     quote_char: str = ''
 
@@ -43,7 +68,7 @@ class TableFqn:
     def identifier(self) -> str:
         """Returns the properly quoted database identifier."""
         return '.'.join(
-            f'{self.quote_char}{n}{self.quote_char}' for n in [self.db_name, self.schema_name, self.table_name]
+            f'{self.quote_char}{n}{self.quote_char}' for n in [self.db_name, self.schema_name, self.table_name] if n
         )
 
     def __repr__(self) -> str:
@@ -101,9 +126,12 @@ class _Workspace(abc.ABC):
     _QUERY_TIMEOUT = 300.0  # 5 minutes
     _CANCELLATION_TIMEOUT = 30.0  # 30 seconds to wait for cancellation
     _SELECTED_ROWS_MSG = 'Returning {rows} of {total} selected rows.'
+    _PAGE_SIZE = 1_000
 
-    def __init__(self, workspace_id: int) -> None:
+    def __init__(self, workspace_id: int, client: KeboolaClient) -> None:
         self._workspace_id = workspace_id
+        self._client = client
+        self._qsclient: QueryServiceClient | None = None
 
     @property
     def id(self) -> int:
@@ -118,50 +146,9 @@ class _Workspace(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def get_table_info(
-        self, table: Mapping[str, Any], backend_path: list[str] | None = None
-    ) -> DbTableInfo | None:
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         # TODO: use a pydantic class for the 'table' param
         pass
-
-    @abc.abstractmethod
-    async def execute_query(
-        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
-    ) -> QueryResult:
-        """
-        Runs a given SQL query.
-
-        :param sql_query: The SQL query to be executed.
-        :param max_rows: The maximum number of rows to fetch from the query results. If None, no limit is applied.
-        :param max_chars: The maximum number of chars to fetch from the query results. If None, no limit is applied.
-        :return: The result of the executed query.
-        """
-        pass
-
-    @abc.abstractmethod
-    async def get_branch_id(self) -> str:
-        """Returns the branch ID."""
-        pass
-
-    @classmethod
-    def _dump(cls, json_data: Mapping[str, Any]) -> str:
-        return json.dumps(json_data, ensure_ascii=False, separators=(',', ':'))
-
-
-class _SnowflakeWorkspace(_Workspace):
-    _PAGE_SIZE = 1_000
-
-    def __init__(self, workspace_id: int, schema: str, client: KeboolaClient):
-        super().__init__(workspace_id)
-        self._schema = schema  # default schema created for the workspace
-        self._client = client
-        self._qsclient: QueryServiceClient | None = None
-
-    def get_sql_dialect(self) -> str:
-        return 'Snowflake'
-
-    def get_quoted_name(self, name: str) -> str:
-        return f'"{name}"'  # wrap name in double quotes
 
     async def _cancel_job_with_timeout(self, job_id: str, reason: str) -> tuple[bool, bool]:
         """
@@ -214,38 +201,28 @@ class _SnowflakeWorkspace(_Workspace):
             LOG.exception(f'Unexpected error during query cancellation: job_id={job_id}')
             return (False, False)
 
-    async def get_table_info(
-        self, table: Mapping[str, Any], backend_path: list[str] | None = None
-    ) -> DbTableInfo | None:
-        table_id = table['id']
-
-        if source_table := table.get('sourceTable'):
-            # Cross-project linked table — prefer caller-supplied backend_path, fall back to sourceTable
-            bp = backend_path or get_backend_path(source_table)
-            if not bp or len(bp) < 2:
-                LOG.warning(f'No backendPath in sourceTable for {table_id}, cannot construct FQN')
-                return None
-            db_name = bp[0]
-            schema_name = bp[1]
-            table_name = source_table['id'].rsplit(sep='.', maxsplit=1)[1]
-        else:
-            bp = backend_path or get_backend_path(table)
-            if not bp or len(bp) < 2:
-                LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
-                return None
-            db_name = bp[0]
-            schema_name = bp[1]
-            table_name = table['name']
-
-        return DbTableInfo(
-            id=table_id,
-            fqn=TableFqn(db_name, schema_name, table_name, quote_char='"'),
-            columns={},
-        )
-
     async def execute_query(
-        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
+        self,
+        sql_query: str,
+        *,
+        max_rows: int | None = None,
+        max_chars: int | None = None,
+        on_job_submitted: JobSubmittedCallback | None = None,
     ) -> QueryResult:
+        """
+        Runs a given SQL query through the Query Service.
+
+        The Query Service is backend-agnostic; the SQL itself must follow the dialect of the
+        workspace backend (see :meth:`get_sql_dialect` / :meth:`get_quoted_name`).
+
+        :param sql_query: The SQL query to be executed.
+        :param max_rows: The maximum number of rows to fetch from the query results. If None, no limit is applied.
+        :param max_chars: The maximum number of chars to fetch from the query results. If None, no limit is applied.
+        :param on_job_submitted: Optional async callback invoked with the backend job handle as soon as the job is
+            registered with the Query Service. Exceptions raised inside the callback are suppressed so a failed
+            notification cannot abort the query.
+        :return: The result of the executed query.
+        """
         if max_rows is not None and max_rows <= 0:
             raise ValueError('The "max_rows" must be a positive integer or None.')
         if max_chars is not None and max_chars <= 0:
@@ -256,38 +233,89 @@ class _SnowflakeWorkspace(_Workspace):
 
         ts_start = time.perf_counter()
         job_id = await self._qsclient.submit_job(statements=[sql_query], workspace_id=str(self.id))
-        while (job_status := await self._qsclient.get_job_status(job_id)) and job_status['status'] not in [
-            'completed',
-            'failed',
-            'canceled',
-            'cancelled',
-        ]:
-            await asyncio.sleep(1)
-            elapsed_time = time.perf_counter() - ts_start
-            if elapsed_time > self._QUERY_TIMEOUT:
-                # Cancel the query before raising timeout error
-                reason = f'Query timeout exceeded after {elapsed_time:.2f} seconds'
-                cancellation_confirmed, query_completed = await self._cancel_job_with_timeout(job_id, reason)
-
-                # If query completed during cancellation, fetch and return results
-                if query_completed:
-                    LOG.info(f'Query completed during cancellation polling, returning results: job_id={job_id}')
-                    # Break out of the polling loop to fetch results below
-                    job_status = await self._qsclient.get_job_status(job_id)
-                    break
-
-                # Query did not complete - raise timeout error
-                if cancellation_confirmed:
-                    raise RuntimeError(
-                        f'Query execution timed out after {elapsed_time:.2f} seconds. '
-                        f'The query has been cancelled: job_id={job_id}'
+        # The job is now registered with Query Service, so everything from here on must run under
+        # the CancelledError handler below: if the client cancels while we are still in the
+        # `on_job_submitted` callback (e.g. emitting the progress notification), we must still
+        # propagate the cancel to the backend rather than leak a running QS job.
+        try:
+            if on_job_submitted is not None:
+                info = JobSubmittedInfo(
+                    job_id=job_id,
+                    cancellation_url=self._qsclient.build_cancel_url(job_id),
+                    backend=self.get_sql_dialect().lower(),
+                )
+                # Best-effort: a failed progress notification must not kill the running query.
+                # CancelledError is `BaseException` since Python 3.8, so `except Exception` already
+                # lets it propagate on the supported Python (>=3.10). The explicit branch below
+                # documents intent and re-raises so the outer CancelledError handler can cancel the
+                # backend job; it also guards against a future refactor that might widen the catch
+                # to `BaseException` and silently swallow cancellation.
+                try:
+                    await on_job_submitted(info)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    LOG.warning(f'on_job_submitted callback raised for job_id={job_id}: {exc!r} — continuing')
+            while (job_status := await self._qsclient.get_job_status(job_id)) and job_status['status'] not in [
+                'completed',
+                'failed',
+                'canceled',
+                'cancelled',
+            ]:
+                await asyncio.sleep(1)
+                elapsed_time = time.perf_counter() - ts_start
+                if elapsed_time > self._QUERY_TIMEOUT:
+                    # Cancel the query before raising timeout error. Inline the reason (rather than
+                    # binding a `reason` local) so it can't be mistaken for an in-scope variable by
+                    # the `except asyncio.CancelledError` handler below, which uses its own reason.
+                    cancellation_confirmed, query_completed = await self._cancel_job_with_timeout(
+                        job_id, f'Query timeout exceeded after {elapsed_time:.2f} seconds'
                     )
-                else:
-                    raise RuntimeError(
-                        f'Query execution timed out after {elapsed_time:.2f} seconds. '
-                        f'Cancellation was attempted but could not be confirmed. '
-                        f'The query may still be running on the server: job_id={job_id}'
-                    )
+
+                    # If query completed during cancellation, fetch and return results
+                    if query_completed:
+                        LOG.info(f'Query completed during cancellation polling, returning results: job_id={job_id}')
+                        # Break out of the polling loop to fetch results below
+                        job_status = await self._qsclient.get_job_status(job_id)
+                        break
+
+                    # Query did not complete - raise timeout error
+                    if cancellation_confirmed:
+                        raise RuntimeError(
+                            f'Query execution timed out after {elapsed_time:.2f} seconds. '
+                            f'The query has been cancelled: job_id={job_id}'
+                        )
+                    else:
+                        raise RuntimeError(
+                            f'Query execution timed out after {elapsed_time:.2f} seconds. '
+                            f'Cancellation was attempted but could not be confirmed. '
+                            f'The query may still be running on the server: job_id={job_id}'
+                        )
+        except asyncio.CancelledError:
+            # Client (e.g. MCP `notifications/cancelled`) cancelled the in-flight tool call.
+            # Propagate the cancel to the backend so the query doesn't keep scanning data.
+            # `asyncio.shield` keeps the cancel HTTP call alive even though our own task
+            # is being cancelled; without it the request would be torn down immediately.
+            LOG.info(f'Query cancelled by client: job_id={job_id}')
+            try:
+                await asyncio.shield(self._cancel_job_with_timeout(job_id, reason='Client cancelled the request'))
+            except asyncio.CancelledError:
+                # Outer scope was cancelled again while the shielded cancel was still running;
+                # we did our best — let the original CancelledError propagate below.
+                pass
+            raise
+
+        # Short-circuit when the poll loop exited because the job was cancelled out-of-band
+        # (e.g. the user clicked STOP and the kai-agent backend POSTed
+        # `POST /api/v1/queries/{job_id}/cancel` directly to Query Service, or the in-flight
+        # request itself was aborted with notifications/cancelled). Going through the results
+        # fetch path here surfaces QS's generic "Job is still running or not completed yet"
+        # message, which is misleading — we already know the job reached a terminal CANCELLED
+        # state. Return a clear cancel result instead and skip the results fetch entirely.
+        terminal_status = job_status['status']
+        if terminal_status in ('canceled', 'cancelled'):
+            LOG.info(f'Query was cancelled (terminal status={terminal_status}): job_id={job_id}')
+            return QueryResult(status='error', data=None, message='Query was cancelled')
 
         statement_id = cast(list[JsonDict], job_status['statements'])[0]['id']
 
@@ -323,7 +351,7 @@ class _SnowflakeWorkspace(_Workspace):
                 total_query_rows = results.get('numberOfRows')
 
                 if status in ['failed', 'canceled', 'cancelled']:
-                    return QueryResult(status='error', data=None, message=message)
+                    return QueryResult(status='error', data=None, message=self._format_error_message(message))
                 elif status != 'completed':
                     raise ValueError(f'Unexpected query status: {status}')
 
@@ -334,6 +362,7 @@ class _SnowflakeWorkspace(_Workspace):
                 break
 
             page_data = page_data[:rows_to_fetch]
+            char_limit_reached = False
             if max_chars is not None:
                 for row in page_data:
                     chars = sum(len(str(v)) for v in row if v is not None)
@@ -341,6 +370,10 @@ class _SnowflakeWorkspace(_Workspace):
                         all_rows.append(row)
                         all_rows_chars += chars
                     else:
+                        # The first row that does not fit ends pagination so that the result
+                        # is a contiguous prefix; we must not skip this row and then append
+                        # later smaller rows that happen to fit.
+                        char_limit_reached = True
                         break
             else:
                 all_rows.extend(page_data)
@@ -351,7 +384,7 @@ class _SnowflakeWorkspace(_Workspace):
             if max_rows is not None and len(all_rows) >= max_rows:
                 break
 
-            if max_chars is not None and all_rows_chars >= max_chars:
+            if char_limit_reached or (max_chars is not None and all_rows_chars >= max_chars):
                 break
 
             offset += len(page_data)
@@ -400,15 +433,59 @@ class _SnowflakeWorkspace(_Workspace):
             headers=self._client.headers,
         )
 
+    def _format_error_message(self, message: str | None) -> str | None:
+        """
+        Normalizes a failed-query error message returned by the Query Service into a clean,
+        human-readable string. The base implementation passes the message through unchanged;
+        backends whose Query Service responses wrap the error may override this.
+        """
+        return message
+
+    @classmethod
+    def _dump(cls, json_data: Mapping[str, Any]) -> str:
+        return json.dumps(json_data, ensure_ascii=False, separators=(',', ':'))
+
+
+class _SnowflakeWorkspace(_Workspace):
+    def __init__(self, workspace_id: int, schema: str, client: KeboolaClient):
+        super().__init__(workspace_id, client)
+        self._schema = schema  # default schema created for the workspace
+
+    def get_sql_dialect(self) -> str:
+        return 'Snowflake'
+
+    def get_quoted_name(self, name: str) -> str:
+        return f'"{name}"'  # wrap name in double quotes
+
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
+        table_id = table['id']
+
+        # The table's own bucket backendPath resolves to the database + schema where the table
+        # physically lives. For a linked bucket — including a materialized alias shared from another
+        # project — Storage propagates that backendPath onto the linked table itself, so the FQN is
+        # directly queryable from this workspace.
+        bp = get_backend_path(table)
+        if not bp or len(bp) < 2:
+            LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
+            return None
+
+        return DbTableInfo(
+            id=table_id,
+            fqn=TableFqn(bp[0], bp[1], table['name'], quote_char='"'),
+            columns={},
+        )
+
 
 class _BigQueryWorkspace(_Workspace):
-    _BQ_FIELDS = {'_timestamp'}
+    # The Query Service surfaces BigQuery errors as a serialized error object, e.g.
+    #   {Location: "query"; Message: "Syntax error: Unexpected identifier ..."; Reason: "invalidQuery"}
+    # Extract the human-readable `Message: "..."` part so the error reads like Snowflake's plain text.
+    _BQ_ERROR_MESSAGE_RE = re.compile(r'Message:\s*"((?:[^"\\]|\\.)*)"')
 
     def __init__(self, workspace_id: int, dataset_id: str, project_id: str, client: KeboolaClient):
-        super().__init__(workspace_id)
+        super().__init__(workspace_id, client)
         self._dataset_id = dataset_id  # default dataset created for the workspace
         self._project_id = project_id
-        self._client = client
 
     def get_sql_dialect(self) -> str:
         return 'BigQuery'
@@ -416,66 +493,36 @@ class _BigQueryWorkspace(_Workspace):
     def get_quoted_name(self, name: str) -> str:
         return f'`{name}`'  # wrap name in back tick
 
-    async def get_table_info(
-        self, table: Mapping[str, Any], backend_path: list[str] | None = None
-    ) -> DbTableInfo | None:
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
         table_id = table['id']
 
-        bp = backend_path or get_backend_path(table)
+        # BigQuery has no cross-project data sharing: a table that is an alias in its source project
+        # (sourceTable.isAlias) is not materialized into this project's dataset and cannot be queried
+        # from this workspace. Materialized aliases are a Snowflake-only capability.
+        if table.get('sourceTable', {}).get('isAlias'):
+            return None
+
+        bp = get_backend_path(table)
         if not bp:
             LOG.warning(f'No backendPath available for table {table_id}, cannot construct FQN')
             return None
 
-        # BigQuery backendPath[0] is the dataset name; normalize separators for BQ dataset naming
+        # BigQuery backendPath[0] is the dataset name; normalize separators for BQ dataset naming.
+        # BigQuery has no cross-project access, so the FQN is dataset.table with no project/database
+        # tier (db_name is left empty) — see editor-service SapiDataProvider::parseBackendPath.
         schema_name = bp[0].replace('.', '_').replace('-', '_')
         table_name = table['name']
 
         return DbTableInfo(
             id=table_id,
-            fqn=TableFqn(self._project_id, schema_name, table_name, quote_char='`'),
+            fqn=TableFqn(db_name='', schema_name=schema_name, table_name=table_name, quote_char='`'),
             columns={},
         )
 
-    async def execute_query(
-        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
-    ) -> QueryResult:
-        if max_rows is not None and max_rows <= 0:
-            raise ValueError('The "max_rows" must be a positive integer or None.')
-        if max_chars is not None and max_chars <= 0:
-            raise ValueError('The "max_chars" must be a positive integer or None.')
-
-        resp = await self._client.storage_client.workspace_query(
-            workspace_id=self.id,
-            query=sql_query,
-            timeout=httpx.Timeout(connect=5.0, read=self._QUERY_TIMEOUT, write=10.0, pool=5.0),
-        )
-        qr = cast(QueryResult, TypeAdapter(QueryResult).validate_python(resp))
-        if qr.data:
-            total_query_rows = len(qr.data.rows)
-            max_rows = max_rows or total_query_rows
-            if max_chars is not None:
-                rows: list[SqlSelectDataRow] = []
-                total_chars = 0
-                for row in qr.data.rows[:max_rows]:
-                    chars = sum(len(str(v)) for v in row.values() if v is not None)
-                    if total_chars + chars <= max_chars:
-                        rows.append(row)
-                        total_chars += chars
-            else:
-                rows = cast(list[SqlSelectDataRow], qr.data.rows[:max_rows])
-
-            qr = QueryResult(
-                status=qr.status,
-                data=SqlSelectData(columns=qr.data.columns, rows=rows),
-                message=' '.join(
-                    filter(None, [qr.message, self._SELECTED_ROWS_MSG.format(rows=len(rows), total=total_query_rows)])
-                ),
-            )
-
-        return qr
-
-    async def get_branch_id(self) -> str:
-        return self._client.branch_id or 'default'
+    def _format_error_message(self, message: str | None) -> str | None:
+        if message and (m := self._BQ_ERROR_MESSAGE_RE.search(message)):
+            return m.group(1).replace('\\"', '"')
+        return message
 
 
 @dataclass(frozen=True)
@@ -498,7 +545,6 @@ class _WspInfo:
 
 class WorkspaceManager:
     STATE_KEY = 'workspace_manager'
-    MCP_META_KEY = 'KBC.McpServer.v2.workspaceId'
     MCP_WORKSPACE_COMPONENT_ID = 'keboola.mcp-server-tool'
 
     @classmethod
@@ -508,27 +554,77 @@ class WorkspaceManager:
         return instance
 
     @classmethod
-    async def create(cls, client: KeboolaClient, workspace_schema: str | None = None) -> 'WorkspaceManager':
-        # We use the read-only workspace with access to all project data which lives in the production branch.
-        # Hence, we need KeboolaClient bound to the production/default branch.
+    async def create(
+        cls,
+        client: KeboolaClient,
+        workspace_schema: str | None = None,
+        kubernetes_token_path: str | None = None,
+    ) -> 'WorkspaceManager':
+        # On projects with the `storage-branches` feature, each dev branch needs its own
+        # workspace so the agent's queries (FQN paths, `query_data`) see that branch's
+        # table versions. The workspace ID is stored under the same metadata key but in
+        # the branch's own metadata, which is per-branch (`branch/{id}/metadata`).
+        # On legacy projects (no `storage-branches`) and on the default branch, fall back
+        # to the production-branch workspace shared by the whole project.
+        # `has_storage_branches` already requires `branch_id is not None`, so the default
+        # branch always takes the prod-client path.
+        if await has_storage_branches(client):
+            return cls(client, workspace_schema, kubernetes_token_path=kubernetes_token_path)
         prod_client = await client.with_branch_id(None)
-        return cls(prod_client, workspace_schema)
+        return cls(prod_client, workspace_schema, kubernetes_token_path=kubernetes_token_path)
 
-    def __init__(self, client: KeboolaClient, workspace_schema: str | None = None):
+    def __init__(
+        self,
+        client: KeboolaClient,
+        workspace_schema: str | None = None,
+        kubernetes_token_path: str | None = None,
+    ):
         """
         Initializes the WorkspaceManager.
 
-        :param client: The KeboolaClient bound to the production/default branch.
+        :param client: The KeboolaClient bound to the branch whose workspace this manager
+            owns. On default-branch or legacy-project paths this is the production-branch
+            client; on a `storage-branches` project bound to a dev branch this is the
+            dev-branch client (see :meth:`create`).
         :param workspace_schema: The schema of the workspace to use.
+        :param kubernetes_token_path: Optional path to the projected Kubernetes
+            ServiceAccount token. When set, workspace provisioning requests carry the
+            JWT as the X-Kubernetes-Authorization step-up header alongside the user's
+            own token, so Connection can waive permissions the user's token lacks
+            (e.g. read-only users).
         """
-        if client.branch_id is not None:
-            raise ValueError(
-                'WorkspaceManager cannot be created for a branch other than the production/default branch.'
-            )
         self._client = client
         self._workspace_schema = workspace_schema
+        self._kubernetes_token_path = kubernetes_token_path
+        self._provisioning_client: AsyncStorageClient | None = None
         self._workspace: _Workspace | None = None
         self._table_info_cache: dict[str, DbTableInfo] = {}
+
+    async def _provisioning_storage_client(self) -> AsyncStorageClient:
+        """
+        Returns the Storage client used for workspace provisioning (configuration and
+        workspace creation).
+
+        When a Kubernetes ServiceAccount token path is configured (Keboola-deployed MCP
+        server), the provisioning client keeps the user's own Storage token and
+        additionally sends the projected SA JWT as the X-Kubernetes-Authorization
+        step-up header — Connection waives permissions the user's token lacks when the
+        ServiceAccount is authorized for workspace provisioning. No privileged token
+        is ever minted; the audit trail stays on the user's token.
+        Otherwise the user's own Storage client is used unchanged.
+
+        The step-up client is cached for this manager's lifetime, so the token file is
+        read once — when the client is first built — not on every provisioning attempt.
+        Provisioning happens at most once per manager, well within the projected token's
+        rotation window; a fresh manager (new session) re-reads the file, so kubelet
+        rotation is picked up without restarting the server.
+        """
+        if not self._kubernetes_token_path:
+            return self._client.storage_client
+        if self._provisioning_client is None:
+            self._provisioning_client = self._client.step_up_storage_client(self._kubernetes_token_path)
+            LOG.debug('Workspace provisioning will send the Kubernetes step-up header.')
+        return self._provisioning_client
 
     async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
         """Finds the workspace info by its schema."""
@@ -561,13 +657,23 @@ class WorkspaceManager:
                 raise e
 
     async def _find_ws_in_branch(self) -> _WspInfo | None:
-        """Finds the workspace info in the current branch."""
+        """Finds the shared read-only MCP workspace in the current branch.
 
-        meta_key = self.MCP_META_KEY
-        metadata = await self._client.storage_client.branch_metadata_get()
-        for m in metadata:
-            if m.get('key') == meta_key and (raw_value := m.get('value')):
-                if (info := await self._find_ws_by_id(raw_value)) and info.readonly:
+        The MCP server creates its workspace under a configuration of the
+        MCP_WORKSPACE_COMPONENT_ID component, so it is rediscovered by listing that
+        component's configurations and fetching each config's workspaces through the
+        config-scoped endpoint, then matching read-only storage access. This needs only
+        read access to the MCP component's own configs — no project-wide workspace
+        listing, no branch-metadata pointer, and therefore no elevated metadata write
+        that a read-only user's token would be denied.
+        """
+        component_id = self.MCP_WORKSPACE_COMPONENT_ID
+        for config in await self._client.storage_client.configuration_list(component_id):
+            config_id = str(config['id'])
+            for sapi_wsp_info in await self._client.storage_client.workspace_list_for_config(component_id, config_id):
+                assert isinstance(sapi_wsp_info, dict)
+                info = _WspInfo.from_sapi_info(sapi_wsp_info)
+                if info.id and info.backend and info.schema and info.readonly:
                     return info
 
         return None
@@ -598,9 +704,11 @@ class WorkspaceManager:
         else:
             raise ValueError(f'Unexpected default backend: {default_backend}')
 
+        provisioning_client = await self._provisioning_storage_client()
+
         component_id = self.MCP_WORKSPACE_COMPONENT_ID
         config_name = f'mcp-workspace-{uuid.uuid4().hex[:8]}'
-        config_resp = await self._client.storage_client.configuration_create(
+        config_resp = await provisioning_client.configuration_create(
             component_id=component_id,
             name=config_name,
             description='Auto-created by MCP server for workspace billing.',
@@ -609,7 +717,7 @@ class WorkspaceManager:
         config_id = str(config_resp['id'])
 
         try:
-            resp = await self._client.storage_client.workspace_create_for_config(
+            resp = await provisioning_client.workspace_create_for_config(
                 component_id=component_id,
                 config_id=config_id,
                 login_type=login_type,
@@ -619,7 +727,7 @@ class WorkspaceManager:
             )
         except Exception:
             try:
-                await self._client.storage_client.configuration_delete(component_id, config_id)
+                await provisioning_client.configuration_delete(component_id, config_id)
             except Exception as cleanup_err:
                 LOG.warning(
                     f'Failed to clean up configuration {component_id}/{config_id} '
@@ -711,38 +819,44 @@ class WorkspaceManager:
             self._workspace = self._init_workspace(info)
             return self._workspace
 
-        # create a new workspace and note its ID to the branch
+        # create a new workspace under the MCP component
         LOG.info('Creating workspace in the default branch.')
         if info := await self._create_ws():
-            # All tokens share the same read-only workspace
-            # Race conditions during initialization are acceptable (last-write-wins)
-            meta = await self._client.storage_client.branch_metadata_update({self.MCP_META_KEY: info.id})
-            LOG.info(f'Set metadata in the default branch: {meta}')
-            # use the newly created workspace
+            # All tokens share the same read-only workspace, rediscovered by its
+            # component id (see _find_ws_in_branch) — no branch-metadata pointer is
+            # written, so no elevated metadata write is needed. Concurrent first-use
+            # may create more than one workspace; that is acceptable, _find_ws_in_branch
+            # returns the first match on the next lookup.
             self._workspace = self._init_workspace(info)
             return self._workspace
         else:
             raise ValueError('Failed to initialize Keboola Workspace.')
 
     async def execute_query(
-        self, sql_query: str, *, max_rows: int | None = None, max_chars: int | None = None
+        self,
+        sql_query: str,
+        *,
+        max_rows: int | None = None,
+        max_chars: int | None = None,
+        on_job_submitted: JobSubmittedCallback | None = None,
     ) -> QueryResult:
         workspace = await self._get_workspace()
-        return await workspace.execute_query(sql_query, max_rows=max_rows, max_chars=max_chars)
+        return await workspace.execute_query(
+            sql_query,
+            max_rows=max_rows,
+            max_chars=max_chars,
+            on_job_submitted=on_job_submitted,
+        )
 
-    async def get_table_info(
-        self, table: Mapping[str, Any], backend_path: list[str] | None = None
-    ) -> DbTableInfo | None:
-        # Alias tables (isAlias=true in the source project) are not queryable from any workspace backend
-        if table.get('sourceTable', {}).get('isAlias'):
-            return None
-
+    async def get_table_info(self, table: Mapping[str, Any]) -> DbTableInfo | None:
+        # Whether an alias table is queryable depends on the backend (Snowflake materializes aliases
+        # from linked buckets, BigQuery does not), so each workspace implementation makes that call.
         table_id = table['id']
         if table_id in self._table_info_cache:
             return self._table_info_cache[table_id]
 
         workspace = await self._get_workspace()
-        if info := await workspace.get_table_info(table, backend_path=backend_path):
+        if info := await workspace.get_table_info(table):
             self._table_info_cache[table_id] = info
 
         return info

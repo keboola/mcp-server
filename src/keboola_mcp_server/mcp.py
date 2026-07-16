@@ -8,6 +8,7 @@ and other utilities for the MCP server.
 import asyncio
 import dataclasses
 import logging
+import os
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, TypeVar
@@ -49,6 +50,17 @@ SEMANTIC_TOOL_NAMES = {
     'get_semantic_context',
     'get_semantic_schema',
     'validate_semantic_query',
+}
+# Data app tools are supported only in the main/production branch. This single set is the source of
+# truth for both the on_list_tools filter and the on_call_tool guard — keeping them in sync is what
+# prevents a new (possibly destructive) data app tool from leaking onto non-main branches.
+DATA_APP_BRANCH_GATED_TOOLS = {
+    'modify_streamlit_data_app',
+    'modify_python_js_data_app',
+    'create_python_js_data_app_git_credential',
+    'get_data_apps',
+    'deploy_data_app',
+    'delete_python_js_data_app_draft',
 }
 
 
@@ -272,7 +284,14 @@ class SessionStateMiddleware(fmw.Middleware):
             raise
 
         try:
-            workspace_manager = await WorkspaceManager.create(client, config.workspace_schema)
+            # The Kubernetes ServiceAccount token path is read from the process environment
+            # only (KBC_KUBERNETES_TOKEN_PATH), never from `Config`/HTTP headers — it is a
+            # deployment-level credential of the MCP server itself and must not be
+            # overridable per request.
+            kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
+            workspace_manager = await WorkspaceManager.create(
+                client, config.workspace_schema, kubernetes_token_path=kubernetes_token_path
+            )
             state[WorkspaceManager.STATE_KEY] = workspace_manager
             LOG.info('Successfully initialized Storage API Workspace manager.')
         except Exception as e:
@@ -370,7 +389,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
         if not self.is_client_using_main_branch(context.fastmcp_context):
             # Filter out data app tools when the client is not using the main/production branch
-            tools = [t for t in tools if t.name not in {'modify_data_app', 'get_data_apps', 'deploy_data_app'}]
+            tools = [t for t in tools if t.name not in DATA_APP_BRANCH_GATED_TOOLS]
 
         if token_role == 'readonly':
             tools = [t for t in tools if is_read_only_tool(t)]
@@ -381,6 +400,75 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
         return tools
 
+    @staticmethod
+    def authorize_tool_call(
+        *,
+        tool_name: str,
+        is_read_only: bool,
+        is_semantic: bool,
+        token_role: str,
+        features: set[str],
+        is_oauth: bool,
+        is_main_branch: bool,
+    ) -> str | None:
+        """
+        Decide whether a call to ``tool_name`` is allowed given the project features, the token role,
+        the authentication mode and the branch.
+
+        This is the single source of truth for the project-feature / token-role / branch gating.
+        :meth:`on_call_tool` applies it to MCP tool calls; the raw ``/preview/configuration`` Starlette
+        route reuses it (see ``preview.py``) so the preview path enforces exactly the same rules.
+
+        :return: A denial message if the call is not allowed, or ``None`` if it is allowed.
+        """
+        token_role = token_role.lower()
+
+        if token_role == 'readonly' and not is_read_only:
+            return (
+                f'Access denied: The tool "{tool_name}" requires write permissions. '
+                f'Your current role ({token_role}) only allows read-only operations. '
+                f'Contact your administrator to request write access.'
+            )
+
+        if SEMANTIC_TOOLING_FEATURE not in features and is_semantic:
+            return (
+                f'The tool "{tool_name}" is not available in this project. '
+                'Please ask Keboola support to enable "Semantic Layer Tooling" feature.'
+            )
+
+        if 'hide-conditional-flows' in features:
+            if tool_name == 'create_conditional_flow':
+                return (
+                    'The "create_conditional_flow" tool is not available in this project. '
+                    'Please ask Keboola support to enable "Conditional Flows" feature '
+                    'or use "create_flow" tool instead.'
+                )
+        else:
+            if tool_name == 'create_flow':
+                return (
+                    'The "create_flow" tool is not available in this project. '
+                    'This project uses "Conditional Flows", '
+                    'please use "create_conditional_flow" tool instead.'
+                )
+
+        if token_role in ('admin', 'share') or is_oauth:
+            if tool_name == UPDATE_FLOW_TOOL_NAME:
+                return (
+                    'The "update_flow" tool is not available for admin/OAuth tokens. '
+                    f'Use "{MODIFY_FLOW_TOOL_NAME}" to manage schedules instead.'
+                )
+        else:
+            if tool_name == MODIFY_FLOW_TOOL_NAME:
+                return (
+                    f'The "{MODIFY_FLOW_TOOL_NAME}" tool is not available for this token. '
+                    f'Use "{UPDATE_FLOW_TOOL_NAME}" to update flow configuration instead.'
+                )
+
+        if tool_name in DATA_APP_BRANCH_GATED_TOOLS and not is_main_branch:
+            return 'Data apps are supported only in the main production branch.'
+
+        return None
+
     async def on_call_tool(
         self,
         context: MiddlewareContext[mt.CallToolRequestParams],
@@ -388,56 +476,18 @@ class ToolsFilteringMiddleware(fmw.Middleware):
     ) -> mt.CallToolResult:
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
         token_info = await self.get_token_info(context.fastmcp_context)
-        features = self.get_project_features(token_info)
-        token_role = self.get_token_role(token_info).lower()
 
-        if token_role == 'readonly':
-            if not is_read_only_tool(tool):
-                raise ToolError(
-                    f'Access denied: The tool "{tool.name}" requires write permissions. '
-                    f'Your current role ({token_role}) only allows read-only operations. '
-                    f'Contact your administrator to request write access.'
-                )
-
-        if SEMANTIC_TOOLING_FEATURE not in features:
-            if is_semantic_tool(tool):
-                raise ToolError(
-                    f'The tool "{tool.name}" is not available in this project. '
-                    'Please ask Keboola support to enable "Semantic Layer Tooling" feature.'
-                )
-
-        if 'hide-conditional-flows' in features:
-            if tool.name == 'create_conditional_flow':
-                raise ToolError(
-                    'The "create_conditional_flow" tool is not available in this project. '
-                    'Please ask Keboola support to enable "Conditional Flows" feature '
-                    'or use "create_flow" tool instead.'
-                )
-        else:
-            if tool.name == 'create_flow':
-                raise ToolError(
-                    'The "create_flow" tool is not available in this project. '
-                    'This project uses "Conditional Flows", '
-                    'please use"create_conditional_flow" tool instead.'
-                )
-
-        is_oauth = self._is_oauth_authenticated(context.fastmcp_context)
-        if token_role in ('admin', 'share') or is_oauth:
-            if tool.name == UPDATE_FLOW_TOOL_NAME:
-                raise ToolError(
-                    'The "update_flow" tool is not available for admin/OAuth tokens. '
-                    f'Use "{MODIFY_FLOW_TOOL_NAME}" to manage schedules instead.'
-                )
-        else:
-            if tool.name == MODIFY_FLOW_TOOL_NAME:
-                raise ToolError(
-                    f'The "{MODIFY_FLOW_TOOL_NAME}" tool is not available for this token. '
-                    f'Use "{UPDATE_FLOW_TOOL_NAME}" to update flow configuration instead.'
-                )
-
-        if tool.name in ('modify_data_app', 'get_data_apps', 'deploy_data_app'):
-            if not self.is_client_using_main_branch(context.fastmcp_context):
-                raise ToolError('Data apps are supported only in the main production branch.')
+        denial = self.authorize_tool_call(
+            tool_name=tool.name,
+            is_read_only=is_read_only_tool(tool),
+            is_semantic=is_semantic_tool(tool),
+            token_role=self.get_token_role(token_info),
+            features=self.get_project_features(token_info),
+            is_oauth=self._is_oauth_authenticated(context.fastmcp_context),
+            is_main_branch=self.is_client_using_main_branch(context.fastmcp_context),
+        )
+        if denial:
+            raise ToolError(denial)
 
         return await call_next(context)
 

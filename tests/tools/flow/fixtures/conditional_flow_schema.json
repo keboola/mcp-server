@@ -392,8 +392,7 @@
         },
         "function": {
           "type": "string",
-          "enum": ["COUNT", "DATE"],
-          "description": "Function type: 'COUNT' (counts elements in array, requires 1 operand), 'DATE' (formats current date/time using PHP DateTime::format, requires 1 operand with format string)"
+          "description": "Function name. Supported values: 'COUNT' (returns the number of elements in its single array operand) and 'DATE' (returns the current date/time formatted via PHP DateTime::format; takes one operand that resolves to a format string such as 'Y', 'm', 'd', 'H', 'i', 's', or 'U'). The enum is intentionally omitted so unknown server-side values do not break flow listing; only the two values above are accepted at execution time."
         },
         "operands": {
           "type": "array",

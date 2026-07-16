@@ -56,6 +56,7 @@ from keboola_mcp_server.tools.flow.utils import (
     get_flow_configuration,
     get_schema_as_markdown,
     resolve_flow_by_id,
+    resolve_flow_schema,
     validate_flow_structure,
 )
 from keboola_mcp_server.tools.project import get_project_info
@@ -147,7 +148,8 @@ async def get_flow_schema(
         )
 
     LOG.info(f'Returning flow configuration schema for flow type: {flow_type}')
-    return get_schema_as_markdown(flow_type=flow_type)
+    client = KeboolaClient.from_state(ctx.session.state)
+    return await get_schema_as_markdown(client, flow_type)
 
 
 @tool_errors()
@@ -182,13 +184,15 @@ async def create_flow(
     flow_type = ORCHESTRATOR_COMPONENT_ID
     flow_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
 
+    LOG.info(f'Creating new flow: {name} (type: {ORCHESTRATOR_COMPONENT_ID})')
+    client = KeboolaClient.from_state(ctx.session.state)
+
     # Validate flow structure before to catch semantic errors in the structure
     validate_flow_structure(cast(JsonDict, flow_configuration), flow_type=flow_type)
     # Validate flow configuration against schema to catch syntax errors in the configuration
-    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
+    schema = await resolve_flow_schema(client, flow_type)
+    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type, schema=schema)
 
-    LOG.info(f'Creating new flow: {name} (type: {ORCHESTRATOR_COMPONENT_ID})')
-    client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     new_raw_configuration = await client.storage_client.configuration_create(
         component_id=flow_type,
@@ -276,13 +280,15 @@ async def create_conditional_flow(
     flow_type = CONDITIONAL_FLOW_COMPONENT_ID
     flow_configuration = get_flow_configuration(phases=phases, tasks=tasks, flow_type=flow_type)
 
+    LOG.info(f'Creating flow: {name} (type: {flow_type})')
+    client = KeboolaClient.from_state(ctx.session.state)
+
     # Validate flow structure to catch semantic errors in the structure
     validate_flow_structure(flow_configuration=flow_configuration, flow_type=flow_type)
     # Validate flow configuration against schema to catch syntax errors in the configuration
-    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
+    schema = await resolve_flow_schema(client, flow_type)
+    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type, schema=schema)
 
-    LOG.info(f'Creating new enhanced conditional flow: {name} (type: {flow_type})')
-    client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
     new_raw_configuration = await client.storage_client.configuration_create(
         component_id=flow_type,
@@ -619,7 +625,8 @@ async def update_flow_internal(
     # Validate flow structure to catch semantic errors in the structure
     validate_flow_structure(flow_configuration=flow_configuration, flow_type=flow_type)
     # Validate flow configuration against schema to catch syntax errors in the configuration
-    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type)
+    schema = await resolve_flow_schema(client, flow_type)
+    validate_flow_configuration_against_schema(cast(JsonDict, flow_configuration), flow_type=flow_type, schema=schema)
 
     mutator_preview: dict[str, Any] | None = None
     if schedules is not None and len(schedules) > 0:

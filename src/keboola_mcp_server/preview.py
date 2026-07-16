@@ -9,10 +9,11 @@ from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, field_validato
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
 from keboola_mcp_server.clients import KeboolaClient
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, get_metadata_property
 from keboola_mcp_server.config import MetadataField
-from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
+from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
 from keboola_mcp_server.tools import data_apps as data_app_tools
 from keboola_mcp_server.tools.components import tools as components_tools
 from keboola_mcp_server.tools.components.model import ConfigParamUpdate, TfParamUpdate
@@ -112,7 +113,7 @@ async def _extract_coordinates(
             component_id=tool_params.get('flow_type'),
             configuration_id=tool_params.get('configuration_id'),
         )
-    elif tool_name == 'modify_data_app':
+    elif tool_name == 'modify_streamlit_data_app':
         return ConfigCoordinates(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=tool_params.get('configuration_id'),
@@ -246,8 +247,8 @@ def _prepare_mutator(
             type_adapter = TypeAdapter(list[ScheduleRequest])
             mutator_params['schedules'] = type_adapter.validate_python(schedules)
 
-    elif preview_rq.tool_name == 'modify_data_app':
-        mutator_fn = data_app_tools.modify_data_app_internal
+    elif preview_rq.tool_name == 'modify_streamlit_data_app':
+        mutator_fn = data_app_tools.modify_streamlit_data_app_internal
         mutator_params['workspace_manager'] = workspace_manager
 
     else:
@@ -259,16 +260,48 @@ def _prepare_mutator(
 async def preview_config_diff(rq: Request) -> Response:
     preview_rq = PreviewConfigDiffRq.model_validate(await rq.json())
 
-    LOG.info(f'[preview_config_diff] {preview_rq}')
-    LOG.info(f'[preview_config_diff] rq.app={rq.app}')
-    LOG.info(f'[preview_config_diff] rq.app.state={rq.app.state} vars={vars(rq.app.state)}')
-    LOG.info(f'[preview_config_diff] rq.state={rq.state} vars={vars(rq.state)}')
+    # This route is a raw Starlette route outside the FastMCP middleware chain, so the tool
+    # authorization that ToolAuthorizationMiddleware applies to MCP tool calls does not run here.
+    # Enforce the same X-Allowed-Tools / X-Disallowed-Tools / X-Read-Only-Mode headers explicitly
+    # so a restricted client cannot drive the mutator-preview path for a tool it cannot call.
+    read_only_tools = getattr(rq.app.state, 'mcp_read_only_tools', set())
+    is_read_only = preview_rq.tool_name in read_only_tools
+    allowed, disallowed, read_only_mode = ToolAuthorizationMiddleware._get_authorization_config(rq)
+    if not ToolAuthorizationMiddleware._is_tool_name_authorized(
+        preview_rq.tool_name, is_read_only, allowed, disallowed, read_only_mode
+    ):
+        LOG.info(f'[preview_config_diff] Tool authorization denied (headers): {preview_rq.tool_name}')
+        return JSONResponse(
+            status_code=403,
+            content={'message': f'The tool "{preview_rq.tool_name}" is not authorized for this client.'},
+        )
+
+    # Log only non-sensitive metadata; tool_params can carry user-supplied secrets.
+    LOG.info(f'[preview_config_diff] tool_name={preview_rq.tool_name} param_keys={sorted(preview_rq.tool_params)}')
 
     server_state = ServerState.from_starlette(rq.app)
     config = SessionStateMiddleware.apply_request_config(rq, server_state.config)
     state = await SessionStateMiddleware.create_session_state(config, server_state.runtime_info, readonly=True)
     client = KeboolaClient.from_state(state)
     workspace_manager = WorkspaceManager.from_state(state)
+
+    # Apply the same project-feature / token-role / branch gating that ToolsFilteringMiddleware applies
+    # to MCP tool calls. Header authorization above does not cover these, so without this a caller could
+    # preview e.g. a data-app tool on a non-main branch, or a write tool with a read-only token.
+    semantic_tools = getattr(rq.app.state, 'mcp_semantic_tools', set())
+    token_info = await client.storage_client.verify_token()
+    denial = ToolsFilteringMiddleware.authorize_tool_call(
+        tool_name=preview_rq.tool_name,
+        is_read_only=is_read_only,
+        is_semantic=preview_rq.tool_name in semantic_tools,
+        token_role=ToolsFilteringMiddleware.get_token_role(token_info),
+        features=ToolsFilteringMiddleware.get_project_features(token_info),
+        is_oauth=bool(client.bearer_token),
+        is_main_branch=client.branch_id is None,
+    )
+    if denial:
+        LOG.info(f'[preview_config_diff] Tool authorization denied (project/role/branch): {preview_rq.tool_name}')
+        return JSONResponse(status_code=403, content={'message': denial})
 
     coordinates = await _extract_coordinates(preview_rq.tool_name, preview_rq.tool_params, workspace_manager)
 

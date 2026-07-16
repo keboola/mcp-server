@@ -6,7 +6,7 @@ from typing import Optional
 import jsonschema
 import pytest
 
-from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, JsonDict
 from keboola_mcp_server.tools import validation
 from keboola_mcp_server.tools.components.model import Component
@@ -39,13 +39,15 @@ def test_load_schema(schema_name, expected_keywords):
         ('tests/resources/storage/storage_valid_3.json'),
         # 4. Input table with where_column and where_values, output table with schema
         ('tests/resources/storage/storage_valid_4.json'),
+        # 5. Output table with unload_strategy='direct-grant' and no 'source' (data apps with Storage Access)
+        ('tests/resources/storage/storage_valid_5.json'),
     ],
 )
 def test_validate_storage_valid(valid_storage_path: str):
     with open(valid_storage_path, 'r') as f:
         valid_storage = json.load(f)
     # returns the same valid storage no exception is raised
-    assert validation._validate_storage_configuration_against_schema(valid_storage) == valid_storage
+    assert validation.validate_storage_configuration_against_schema(valid_storage) == valid_storage
 
 
 @pytest.mark.parametrize(
@@ -78,7 +80,7 @@ def test_validate_storage_invalid(invalid_storage_path: str):
     with open(invalid_storage_path, 'r') as f:
         invalid_storage = json.load(f)
     with pytest.raises(validation.RecoverableValidationError) as exc_info:
-        validation._validate_storage_configuration_against_schema(
+        validation.validate_storage_configuration_against_schema(
             invalid_storage, initial_message='This is a test message'
         )
     err = exc_info.value
@@ -97,7 +99,7 @@ def test_validate_storage_invalid(invalid_storage_path: str):
 def test_validate_storage_output_format(input_storage, output_storage):
     """Test that storage configuration validation preserves the input format - whether the input contains a 'storage'
     key or not, the output will match the input structure exactly."""
-    result = validation._validate_storage_configuration_against_schema(input_storage)
+    result = validation.validate_storage_configuration_against_schema(input_storage)
     assert result == output_storage
 
 
@@ -827,3 +829,42 @@ def test_validate_parameters_root_real_scenario(
         with pytest.raises(validation.RecoverableValidationError) as exception:
             validation.validate_root_parameters_configuration(modified_input_parameters, component, 'test oops')
         assert 'test oops' in str(exception.value)
+
+
+def test_validate_conditional_flow_with_explicit_schema():
+    """A conditional flow validates against an explicitly provided schema."""
+    with open('tests/tools/flow/fixtures/conditional_flow_schema.json', 'r') as f:
+        schema = json.load(f)
+    valid_flow = {
+        'phases': [
+            {
+                'id': 'p1',
+                'name': 'Phase 1',
+                'next': [{'id': 't1', 'name': 'End', 'goto': None}],
+            },
+        ],
+        'tasks': [
+            {
+                'id': 'task1',
+                'name': 'Notify',
+                'phase': 'p1',
+                'task': {
+                    'type': 'notification',
+                    'title': 'Done',
+                    'recipients': [{'channel': 'email', 'address': 'ops@example.com'}],
+                },
+            }
+        ],
+    }
+    result = validation.validate_flow_configuration_against_schema(
+        valid_flow, flow_type=CONDITIONAL_FLOW_COMPONENT_ID, schema=schema
+    )
+    assert result == valid_flow
+
+
+def test_validate_flow_conditional_without_schema_raises():
+    """Conditional flow without an explicit schema is a programming error (no bundled fallback)."""
+    with pytest.raises(ValueError, match='No schema provided for flow type'):
+        validation.validate_flow_configuration_against_schema(
+            {'phases': [], 'tasks': []}, flow_type=CONDITIONAL_FLOW_COMPONENT_ID
+        )

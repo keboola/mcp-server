@@ -3,8 +3,15 @@ name: Build and Push Docker Image
 on:
   push:
     tags:
-      - 'v*'
-      - 'agent-v*'
+      # Production releases (deployed to production stacks).
+      - 'v*'         # MCP server, e.g. v1.70.0
+      - 'agent-v*'   # In Platform Agent, e.g. agent-v1.70.0
+      # Canary releases (deployed to canary-orion stacks).
+      - 'canary-orion-v*'      # MCP server canary, e.g. canary-orion-v1.70.0-dev.1
+      - 'canary-orion-agent*'  # In Platform Agent canary, e.g. canary-orion-agent-v1.70.0-dev.1
+      # Dev releases (deployed to testing stacks).
+      - 'dev-v*'       # MCP server dev, e.g. dev-v1.70.0-dev.1
+      - 'dev-agent*'   # In Platform Agent dev, e.g. dev-agent-v1.70.0-dev.1
 
 permissions:
   contents: read
@@ -23,32 +30,36 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: |
             ${{ env.SERVICE_IMAGE_NAME }}
           tags: |
             type=sha,format=long
+            # Production: clean v* / agent-v* tags -> production stacks.
             type=raw,value=production-${{ github.sha }},enable=${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/agent-v')) && !contains(github.ref, '-dev.') }}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev.') }}
-            type=raw,value=canary-orion-${{ github.sha }},enable=${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/agent-v')) && contains(github.ref, '-dev.') }}
+            # Canary: canary-orion-v* / canary-orion-agent* tags -> canary-orion stacks.
+            type=raw,value=canary-orion-${{ github.sha }},enable=${{ startsWith(github.ref, 'refs/tags/canary-orion-') }}
+            # Dev: dev-v* / dev-agent* tags -> testing stacks.
+            type=raw,value=dev-${{ github.sha }},enable=${{ startsWith(github.ref, 'refs/tags/dev-') }}
 
       - name: Docker login
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_PUSH_USER }}
           password: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
 
       # Build for tests (single-arch, load into daemon)
       - name: Build Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.2.0
         with:
           context: .
           file: ./Dockerfile # Explicitly specify the Dockerfile path
@@ -61,18 +72,16 @@ jobs:
       - name: Run simple e2e test
         env:
           INTEGTEST_STORAGE_TOKENS: ${{ secrets.INTEGTEST_STORAGE_TOKENS }}
-          INTEGTEST_WORKSPACE_SCHEMAS: ${{ vars.INTEGTEST_WORKSPACE_SCHEMAS }}
           INTEGTEST_POOL_STORAGE_API_URL: ${{ vars.INTEGTEST_POOL_STORAGE_API_URL }}
         run: |
           set -euo pipefail
           STORAGE_API_TOKEN=$(echo "$INTEGTEST_STORAGE_TOKENS" | cut -d' ' -f1) \
           STORAGE_API_URL="$INTEGTEST_POOL_STORAGE_API_URL" \
-          WORKSPACE_SCHEMA=$(echo "$INTEGTEST_WORKSPACE_SCHEMAS" | cut -d' ' -f1) \
           ./tests/docker/ci.sh
 
       # Push multi-arch image (no load)
       - name: Push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.2.0
         with:
           context: .
           file: ./Dockerfile
@@ -85,7 +94,7 @@ jobs:
 
       - name: Trigger image tag update for canary-orion
         uses: ./.github/actions/trigger-image-tag-update
-        if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-dev.')
+        if: startsWith(github.ref, 'refs/tags/canary-orion-v')
         with:
           helm-chart: "mcp-server"
           image-tag: canary-orion-${{ github.sha }}
@@ -99,9 +108,17 @@ jobs:
           image-tag: production-${{ github.sha }}
           github-app-private-key: ${{ secrets.GITOPS_KBC_STACKS_TRIGGER_APP_PVK }}
 
+      - name: Trigger image tag update for testing (dev)
+        uses: ./.github/actions/trigger-image-tag-update
+        if: startsWith(github.ref, 'refs/tags/dev-v')
+        with:
+          helm-chart: "mcp-server"
+          image-tag: dev-${{ github.sha }}
+          github-app-private-key: ${{ secrets.GITOPS_KBC_STACKS_TRIGGER_APP_PVK }}
+
       - name: Trigger image tag update for canary-orion (agent)
         uses: ./.github/actions/trigger-image-tag-update
-        if: startsWith(github.ref, 'refs/tags/agent-v') && contains(github.ref, '-dev.')
+        if: startsWith(github.ref, 'refs/tags/canary-orion-agent')
         with:
           helm-chart: "mcp-server-agent"
           image-tag: canary-orion-${{ github.sha }}
@@ -113,6 +130,14 @@ jobs:
         with:
           helm-chart: "mcp-server-agent"
           image-tag: production-${{ github.sha }}
+          github-app-private-key: ${{ secrets.GITOPS_KBC_STACKS_TRIGGER_APP_PVK }}
+
+      - name: Trigger image tag update for testing (agent dev)
+        uses: ./.github/actions/trigger-image-tag-update
+        if: startsWith(github.ref, 'refs/tags/dev-agent')
+        with:
+          helm-chart: "mcp-server-agent"
+          image-tag: dev-${{ github.sha }}
           github-app-private-key: ${{ secrets.GITOPS_KBC_STACKS_TRIGGER_APP_PVK }}
 
   kaibench:

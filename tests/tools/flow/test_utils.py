@@ -1,14 +1,18 @@
 from typing import Any
 
 import pytest
+from httpx import ConnectError, HTTPStatusError, Request, Response
 
 from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID
+from keboola_mcp_server.clients.storage import APIFlowResponse
+from keboola_mcp_server.tools.flow.model import Flow
 from keboola_mcp_server.tools.flow.utils import (
     _check_legacy_circular_dependencies,
     _reachable_ids,
     ensure_legacy_phase_ids,
     ensure_legacy_task_ids,
     get_flow_configuration,
+    resolve_flow_schema,
     validate_flow_structure,
 )
 
@@ -557,3 +561,219 @@ class TestReachableIds:
 
         assert result == expected
         assert visited == expected_visited
+
+
+class TestResolveFlowSchema:
+    """Tests for resolve_flow_schema."""
+
+    @pytest.mark.asyncio
+    async def test_returns_live_schema_for_conditional(self, mocker, conditional_flow_schema):
+        client = mocker.Mock()
+        client.get_cached_flow_schema.return_value = None
+        component = mocker.Mock()
+        component.configuration_schema = conditional_flow_schema
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(return_value=component),
+        )
+
+        result = await resolve_flow_schema(client, CONDITIONAL_FLOW_COMPONENT_ID)
+
+        assert result == conditional_flow_schema
+        client.cache_flow_schema.assert_called_once_with(CONDITIONAL_FLOW_COMPONENT_ID, conditional_flow_schema)
+
+    @pytest.mark.asyncio
+    async def test_uses_cache_and_does_not_refetch(self, mocker, conditional_flow_schema):
+        client = mocker.Mock()
+        client.get_cached_flow_schema.return_value = conditional_flow_schema
+        fetch = mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(),
+        )
+
+        result = await resolve_flow_schema(client, CONDITIONAL_FLOW_COMPONENT_ID)
+
+        assert result == conditional_flow_schema
+        fetch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_raises_on_empty_schema(self, mocker):
+        client = mocker.Mock()
+        client.get_cached_flow_schema.return_value = None
+        component = mocker.Mock()
+        component.configuration_schema = None
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(return_value=component),
+        )
+
+        with pytest.raises(ValueError, match='Could not retrieve the conditional flow'):
+            await resolve_flow_schema(client, CONDITIONAL_FLOW_COMPONENT_ID)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'error',
+        [
+            # non-404 HTTP status error re-raised by fetch_component
+            HTTPStatusError('boom', request=Request('GET', 'https://ai.keboola.com'), response=Response(500)),
+            # transport/network error
+            ConnectError('connection refused', request=Request('GET', 'https://ai.keboola.com')),
+            # unexpected non-HTTP failure (e.g. a malformed AI Service payload failing model validation)
+            RuntimeError('unexpected AI Service payload'),
+        ],
+        ids=['http_status_error', 'network_error', 'unexpected_error'],
+    )
+    async def test_raises_recoverable_error_on_fetch_failure(self, mocker, error):
+        client = mocker.Mock()
+        client.get_cached_flow_schema.return_value = None
+        mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(side_effect=error),
+        )
+
+        with pytest.raises(ValueError, match='Could not retrieve the conditional flow'):
+            await resolve_flow_schema(client, CONDITIONAL_FLOW_COMPONENT_ID)
+
+    @pytest.mark.asyncio
+    async def test_returns_bundled_schema_for_legacy(self, mocker):
+        client = mocker.Mock()
+        fetch = mocker.patch(
+            'keboola_mcp_server.tools.flow.utils.fetch_component',
+            mocker.AsyncMock(),
+        )
+
+        result = await resolve_flow_schema(client, ORCHESTRATOR_COMPONENT_ID)
+
+        assert result['properties']['phases']['items']['properties']  # bundled legacy schema
+        assert 'dependsOn' in result['properties']['phases']['items']['properties']
+        fetch.assert_not_called()
+
+
+# --- Conditional flow variables (variableOverrides + JMESPath) round-trip ---
+
+# JMESPath expression over a prior job's result; not one of the legacy enumerated `value` paths.
+_JMESPATH_VALUE = "sum(job.result.output.tables[].metrics[?name=='importedRowsCount'][].value)"
+
+
+def _variables_flow() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """A conditional flow that sets a flow variable from a JMESPath over a job result, consumes it via
+    `variableOverrides`, and branches on a JMESPath-driven condition (mirrors a real CF-variables flow)."""
+    phases = [
+        {
+            'id': 'extract',
+            'name': 'Extract',
+            'next': [
+                {
+                    'id': 'cond',
+                    'name': 'Has rows',
+                    'condition': {
+                        'type': 'operator',
+                        'operator': 'GREATER_THAN',
+                        'operands': [
+                            {'type': 'task', 'task': 'extract_task', 'value': _JMESPATH_VALUE},
+                            {'type': 'const', 'value': 0},
+                        ],
+                    },
+                    'goto': 'transform',
+                },
+                {'id': 'cond_default', 'goto': 'transform'},
+            ],
+        },
+        {'id': 'transform', 'name': 'Transform', 'next': [{'id': 'end', 'goto': None}]},
+    ]
+    tasks = [
+        {
+            'id': 'extract_task',
+            'name': 'Extract',
+            'phase': 'extract',
+            'task': {'type': 'job', 'mode': 'run', 'componentId': 'keboola.ex-google-drive', 'configId': '123'},
+        },
+        {
+            'id': 'set_var',
+            'name': 'importedRowsSum',
+            'phase': 'transform',
+            'task': {
+                'type': 'variable',
+                'name': 'importedRowsSum',
+                'source': {'type': 'task', 'task': 'extract_task', 'value': _JMESPATH_VALUE},
+            },
+        },
+        {
+            'id': 'use_var',
+            'name': 'Transform',
+            'phase': 'transform',
+            'task': {
+                'type': 'job',
+                'mode': 'run',
+                'componentId': 'keboola.snowflake-transformation',
+                'configId': 'abc',
+                'variableOverrides': ['importedRowsSum'],
+            },
+        },
+    ]
+    return phases, tasks
+
+
+class TestConditionalFlowVariablesRoundTrip:
+    """get_flow_configuration must faithfully carry the CF-variables fields the live schema allows."""
+
+    def test_variable_overrides_preserved_on_job_task(self):
+        phases, tasks = _variables_flow()
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        job_task = next(t for t in cfg['tasks'] if t['id'] == 'use_var')['task']
+        assert job_task['variableOverrides'] == ['importedRowsSum']
+
+    def test_jmespath_value_preserved_in_variable_source(self):
+        phases, tasks = _variables_flow()
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        var_task = next(t for t in cfg['tasks'] if t['id'] == 'set_var')['task']
+        assert var_task['source']['value'] == _JMESPATH_VALUE
+
+    def test_jmespath_value_preserved_in_phase_condition(self):
+        phases, tasks = _variables_flow()
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        condition = cfg['phases'][0]['next'][0]['condition']
+        assert condition['operands'][0]['value'] == _JMESPATH_VALUE
+
+    def test_validate_flow_structure_accepts_variables_flow(self):
+        phases, tasks = _variables_flow()
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        # Should not raise.
+        validate_flow_structure(cfg, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+
+    def test_unknown_future_job_field_is_preserved(self):
+        """extra='allow' keeps fields the live schema may add instead of silently dropping them."""
+        phases, tasks = _variables_flow()
+        tasks[0]['task']['someFutureField'] = {'k': 'v'}
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        extract_task = next(t for t in cfg['tasks'] if t['id'] == 'extract_task')['task']
+        assert extract_task['someFutureField'] == {'k': 'v'}
+
+    def test_unknown_future_condition_field_is_preserved(self):
+        """extra='allow' applies to condition nodes too (not just task configs) via BaseExtraModel."""
+        phases, tasks = _variables_flow()
+        phases[0]['next'][0]['condition']['someFutureField'] = 'keep-me'
+        cfg = get_flow_configuration(phases=phases, tasks=tasks, flow_type=CONDITIONAL_FLOW_COMPONENT_ID)
+        condition = cfg['phases'][0]['next'][0]['condition']
+        assert condition['someFutureField'] == 'keep-me'
+
+    def test_read_path_preserves_variables_via_from_api_response(self):
+        """The READ/display path (Flow.from_api_response, used by get_flows) must also carry the
+        variables fields — it routes through the same conditional-flow models as the write path."""
+        phases, tasks = _variables_flow()
+        api_config = APIFlowResponse.model_validate(
+            {
+                'id': 'flow-1',
+                'name': 'Variables flow',
+                'version': 1,
+                'configuration': {'phases': phases, 'tasks': tasks},
+            }
+        )
+
+        flow = Flow.from_api_response(api_config=api_config, flow_component_id=CONDITIONAL_FLOW_COMPONENT_ID)
+
+        job_task = next(t for t in flow.configuration.tasks if t.id == 'use_var')
+        assert job_task.task.variable_overrides == ['importedRowsSum']
+        var_task = next(t for t in flow.configuration.tasks if t.id == 'set_var')
+        assert var_task.task.source.value == _JMESPATH_VALUE
+        assert flow.configuration.phases[0].next[0].condition.operands[0].value == _JMESPATH_VALUE
