@@ -3854,7 +3854,11 @@ async def test_update_config_row_shared_code_applies_updates_to_flat_root(
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=shared_code_component)
     keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=shared_code_component)
     keboola_client.storage_client.configuration_row_detail = mocker.AsyncMock(
-        return_value={'id': 'dumpfiles', 'configuration': {'code_content': ['SELECT 1']}}
+        return_value={
+            'id': 'dumpfiles',
+            # A structural `storage` sibling that must survive a flat-root parameter update.
+            'configuration': {'code_content': ['SELECT 1'], 'storage': {'input': {'tables': []}}},
+        }
     )
     keboola_client.storage_client.configuration_row_update = mocker.AsyncMock(return_value={'version': 2})
     keboola_client.storage_client.configuration_metadata_update = mocker.AsyncMock()
@@ -3872,3 +3876,4 @@ async def test_update_config_row_shared_code_applies_updates_to_flat_root(
     sent = call.kwargs['configuration']
     assert sent.get('code_content') == ['SELECT 2'], 'shared-code edit must land at the flat root'
     assert 'code_content' not in sent.get('parameters', {}), 'shared-code edit must not be nested under parameters'
+    assert sent.get('storage') == {'input': {'tables': []}}, 'structural storage sibling must be preserved'

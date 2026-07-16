@@ -2258,14 +2258,20 @@ async def update_config_row_internal(
             # Shared-code rows use a flat body — `code_content` lives at the row root, not under
             # `parameters`, and `get_shared_codes` reads the root first. Apply updates against the
             # root (mirroring `add_config_row`) so an edit to e.g. `code_content` is actually visible.
+            # `storage`/`processors` are structural siblings, not shared-code parameters: hold them
+            # aside so they are neither validated against the row parameter schema nor dropped by the
+            # validator (which returns only the parameter body), then re-attach them afterwards.
             updated_root = update_params(configuration_payload, parameter_updates)
-            configuration_payload = validate_row_parameters_configuration(
+            siblings = {key: updated_root[key] for key in ('storage', 'processors') if key in updated_root}
+            flat_body = {key: value for key, value in updated_root.items() if key not in siblings}
+            validated_flat = validate_row_parameters_configuration(
                 component=component,
-                parameters=updated_root,
+                parameters=flat_body,
                 initial_message='Applying the "parameter_updates" resulted in an invalid row configuration.',
                 configuration_id=configuration_id,
                 configuration_row_id=configuration_row_id,
             )
+            configuration_payload = {**validated_flat, **siblings}
         else:
             current_params = configuration_payload.get('parameters', {})
             updated_params = update_params(current_params, parameter_updates)
