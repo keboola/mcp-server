@@ -307,6 +307,7 @@ class ValidateSemanticQueryOutput(BaseModel):
         default_factory=list,
         description='Detected semantic objects that fall outside the expected semantic scope.',
     )
+    query_ref: str | None = Field(default=None, description='Correlation token echoed from the request.')
 
 
 def _compact_semantic_object(obj: semantic_service.SemanticServiceData) -> CompactSemanticObject:
@@ -767,6 +768,16 @@ async def validate_semantic_query(
             )
         ),
     ] = tuple(),
+    query_ref: Annotated[
+        str | None,
+        Field(
+            description=(
+                'Opaque correlation token chosen by the agent. Pass the SAME value to validate_semantic_query and '
+                'cite it as [[q:<query_ref>]] so the UI can link this result to its semantic validation. Purely a '
+                'passthrough; does not affect execution.'
+            )
+        ),
+    ] = None,
 ) -> ValidateSemanticQueryOutput:
     """
     Performs best-effort semantic validation of an SQL query against one or more semantic models and compares it with
@@ -876,4 +887,5 @@ async def validate_semantic_query(
         matched_expected_objects=matched_expected_objects,
         missing_expected_objects=missing_expected_objects,
         unexpected_detected_objects=unexpected_detected_objects,
+        query_ref=query_ref,
     )
