@@ -25,6 +25,13 @@ class TestValidateCronTab:
             pytest.param('0 0 L * *', id='last_day_of_month_midnight'),
             pytest.param('0 10 L 1,6 *', id='last_day_jan_and_june'),
             pytest.param('0 10 l * *', id='last_day_lowercase'),
+            # ranges, steps and lists combining specific days-of-month with a weekday
+            pytest.param('12 6 1,2,3,4,5,6,7,15,28,31 * 1', id='dom_list_with_weekday'),
+            pytest.param('0 8 * * 1-5', id='weekdays_range_mon_to_fri'),
+            pytest.param('*/2 * * * *', id='every_2_minutes_step'),
+            pytest.param('0 9 * * 1-5', id='weekly_range_9am'),
+            pytest.param('0 10 1-15/2 * *', id='dom_range_with_step'),
+            pytest.param('0 9 * * 7', id='sunday_as_7'),
         ],
     )
     def test_valid_cron_tab(self, cron_tab: str | None):
@@ -57,29 +64,29 @@ class TestValidateCronTab:
             pytest.param('0 8 * 13 *', 'Months of year.*must be between 1 and 12', id='months_too_high'),
             pytest.param('0 8 * -1 *', 'Months of year.*must be between 1 and 12', id='months_negative'),
             pytest.param('0 8 * abc *', 'Cron expression must have only digits', id='months_non_digit'),
-            pytest.param('0 8 * * 7', 'Days of week.*must be between 0=Sunday and 6=Saturday', id='weekdays_too_high'),
-            pytest.param('0 8 * * -1', 'Days of week.*must be between 0=Sunday and 6=Saturday', id='weekdays_negative'),
+            pytest.param('0 9 * * 8', 'Days of week.*must be between 0 and 7', id='weekdays_too_high'),
+            pytest.param('0 8 * * -1', 'Days of week.*must be between 0 and 7', id='weekdays_negative'),
             pytest.param('0 8 * * abc', 'Cron expression must have only digits', id='weekdays_non_digit'),
             pytest.param('* 1,3 * *', 'Cron expression must have exactly 5 parts', id='missing_weekday'),
             pytest.param(
                 '0 8 * 1,3 *', 'Months of year must be specified with days of month', id='months_without_days'
             ),
             pytest.param('0 * 1,3 * *', 'Days of month must be specified with hours of day', id='days_without_hours'),
+            pytest.param('* * 5 * *', 'Days of month must be specified with hours of day', id='dom_without_hours'),
             pytest.param(
                 '* 8 * * *', 'Hours of day must be specified with minutes of hour', id='hours_without_minutes'
             ),
             pytest.param('* * * * 0', 'Days of week must be specified with hours of day', id='weekdays_without_hours'),
-            pytest.param('0 8 1 * 0', 'Days of week must not be specified with days of month', id='weekdays_with_days'),
-            pytest.param(
-                '0 8 1,3 1,3 0', 'Days of week must not be specified with days of month', id='weekdays_with_both'
-            ),
+            # out-of-bounds ranges
+            pytest.param('0 9 40-50 * *', 'Days of month.*must be between 1 and 31', id='dom_range_too_high'),
+            # malformed steps / ranges
+            pytest.param('0 9 */ * *', 'Cron expression must have only digits', id='malformed_step'),
+            pytest.param('0 9 5- * *', 'Cron expression must have only digits', id='malformed_range'),
             # L not allowed in fields other than day-of-month
             pytest.param('L 8 * * *', 'Cron expression must have only digits', id='L_in_minutes'),
             pytest.param('0 L * * *', 'Cron expression must have only digits', id='L_in_hours'),
             pytest.param('0 8 * L *', 'Cron expression must have only digits', id='L_in_months'),
             pytest.param('0 8 * * L', 'Cron expression must have only digits', id='L_in_weekdays'),
-            # L with weekdays not allowed
-            pytest.param('0 8 L * 0', 'Days of week must not be specified with days of month', id='L_with_weekdays'),
             pytest.param(
                 '0 10 1,L * *', 'Day of month must use either `L` or numeric values, not both', id='L_with_days'
             ),
@@ -101,7 +108,7 @@ class TestValidateCronTab:
         assert '2. Hour (0-23)' in error_message
         assert '3. Day of month (1-31, or L for last day of month)' in error_message
         assert '4. Month (1-12)' in error_message
-        assert '5. Day of week (0-6, where 0 = Sunday)' in error_message
+        assert '5. Day of week (0-7, where 0 or 7 = Sunday and 6 = Saturday)' in error_message
 
     def test_cron_tab_with_whitespace(self):
         """Test that cron tab handles whitespace correctly."""

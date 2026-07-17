@@ -293,6 +293,15 @@ class DataApp(BaseModel):
             '`create_python_js_data_app_git_credential` to authenticate.'
         ),
     )
+    is_managed_git_repo: Optional[bool] = Field(
+        default=None,
+        description=(
+            'For python-js data apps: True when the app runs on a Keboola-managed git repo, False when it '
+            'is bound to an external repository (a draft, or an app pointing at its own external repo). '
+            'None when it is not a python-js app or the git-repo lookup failed. Sourced from the '
+            'data-science `.../git-repo` endpoint.'
+        ),
+    )
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters, storage and authorization'
     )
@@ -894,11 +903,18 @@ async def modify_python_js_data_app(
         Optional[str],
         Field(
             description=(
-                'Draft branch to pin the new draft to. Only valid on the draft create path '
-                '(when `parent_configuration_id` is set). Defaults to `init` when unset (a sensible '
-                'name for the first draft of a brand-new prod app). For subsequent edit-existing '
-                "drafts, pass a descriptive branch name like 'add-revenue-filter'. Must not be `main` "
-                '(reserved for the prod app). Rejected on prod create and on update.'
+                'Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n'
+                '- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft '
+                'to. Defaults to `init` when unset (a sensible name for the first draft of a brand-new '
+                'prod app). For subsequent edit-existing drafts, pass a descriptive name like '
+                "'add-revenue-filter'. Must not be `main` (reserved for the prod app). Rejected on prod "
+                'create.\n'
+                '- **On update** (with `configuration_id`): repoints an existing **external-git** app to '
+                'a different branch (e.g. flip a repo-backed app from `main` to a feature branch for '
+                'testing, then back). Only valid for external-git apps — a draft, or an app bound to an '
+                'external repository. Rejected for apps on a Keboola-managed git repo, whose branch is '
+                'owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve '
+                'the new branch.'
             ),
         ),
     ] = None,
@@ -1012,12 +1028,16 @@ async def modify_python_js_data_app(
     ## Argument rules
 
     - `parent_configuration_id` is **create-only**. Rejected on update.
-    - `branch` is **create-only** and only valid when `parent_configuration_id` is set.
-      Defaults to `'init'`. Must not be `'main'`. Rejected on prod create and on update.
+    - `branch` on **create** is only valid when `parent_configuration_id` is set (pins the new
+      draft's branch). Defaults to `'init'`. Must not be `'main'`. Rejected on prod create.
+      On **update** `branch` repoints an existing **external-git** app's pinned branch (see below).
     - `slug` is required on create and immutable after.
     - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
       `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or
-      a draft. Source code changes go through the git flow above, not this tool.
+      a draft, and for repointing an **external-git** app's `branch` (a draft, or an app bound
+      to an external repository — an app on a Keboola-managed git repo is rejected, its branch
+      is owned by the platform). Source code changes go through the git flow above, not this
+      tool. After a `branch` repoint, call `deploy_data_app` to serve the new branch.
 
     ## Authentication
 
@@ -1036,8 +1056,8 @@ async def modify_python_js_data_app(
             raise ValueError('slug cannot be changed after the data app is created.')
         if parent_configuration_id:
             raise ValueError('parent_configuration_id is only valid when creating a draft (no configuration_id).')
-        if branch:
-            raise ValueError('branch is only valid when creating a draft (no configuration_id).')
+        # `branch` IS allowed on update — it repoints an external-git app's pinned branch
+        # (validated against the app's git block below).
     else:
         if not slug:
             raise ValueError('slug is required when creating a python-js data app.')
@@ -1060,12 +1080,14 @@ async def modify_python_js_data_app(
     if configuration_id:
         # Update existing python-js data app
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        normalized_branch = _validate_branch_update(branch, data_app, configuration_id) if branch else None
         updated_config = _update_existing_code_data_app_config(
             existing_config=data_app.configuration,
             auto_suspend_after_seconds=auto_suspend_after_seconds,
             authentication_type=authentication_type,
             secrets=legacy_secrets,
             storage=validated_storage,
+            branch=normalized_branch,
         )
         await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
@@ -1085,6 +1107,13 @@ async def modify_python_js_data_app(
         folder_hint = await apply_folder_metadata(
             client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
         )
+        branch_hint = (
+            f"Repointed the external-git branch to '{normalized_branch}'. Redeploy the app "
+            '(deploy_data_app) to serve the new branch.'
+            if normalized_branch is not None
+            else None
+        )
+        change_summary = '\n'.join(note for note in (folder_hint, branch_hint) if note) or None
         repo_url = data_app.repo_url
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
@@ -1101,7 +1130,7 @@ async def modify_python_js_data_app(
         data_app_summary.repo_url = repo_url
         return ModifiedPythonJsDataAppOutput(
             response=response,
-            change_summary=folder_hint,
+            change_summary=change_summary,
             data_app=data_app_summary,
             repo_url=repo_url,
             links=links,
@@ -1442,6 +1471,7 @@ def _update_existing_code_data_app_config(
     authentication_type: AuthenticationType = 'default',
     secrets: Optional[dict[str, Any]] = None,
     storage: Optional[dict[str, Any]] = None,
+    branch: Optional[str] = None,
 ) -> dict[str, Any]:
     """Apply requested updates to the existing python-js data app storage configuration.
 
@@ -1457,12 +1487,26 @@ def _update_existing_code_data_app_config(
     an empty dict — or one that prunes down to nothing — is an explicit wipe that removes the
     `storage` key entirely). Whatever storage ends up in the config is normalized so empty mapping
     containers never persist as `[]` and break the Writable Tables editor (AI-3135).
+    `branch` repoints the external-git binding's `parameters.dataApp.git.branch` (None leaves it
+    untouched). Only the `branch` field is rewritten — the encrypted `#password`, `repository`, and
+    `username` are preserved verbatim via the deepcopy, so no re-encryption is needed. The caller
+    must have verified the app is external-git; if the git block is missing this raises, so the
+    invariant holds even when the helper is called directly.
     """
     new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
     new_config.setdefault('parameters', {})
     new_config['parameters']['autoSuspendAfterSeconds'] = auto_suspend_after_seconds
     if authentication_type != 'default':
         new_config['authorization'] = _get_authorization(authentication_type == 'basic-auth')
+    if branch is not None:
+        data_app_block = new_config['parameters'].get('dataApp')
+        git_block = data_app_block.get('git') if isinstance(data_app_block, dict) else None
+        if not isinstance(git_block, dict):
+            raise ValueError(
+                'Cannot set branch: the configuration has no parameters.dataApp.git block '
+                '(not an external-git data app).'
+            )
+        git_block['branch'] = branch
     if secrets:
         data_app = new_config['parameters'].setdefault('dataApp', {})
         updated_secrets = dict(data_app.get('secrets') or {})
@@ -1831,8 +1875,9 @@ async def _build_data_app_with_repo(
         try:
             repo_resp = await client.data_science_client.get_app_git_repo(data_app_science.id)
             data_app.repo_url = repo_resp.https_url
+            data_app.is_managed_git_repo = repo_resp.is_managed_git_repo
         except Exception as exc:
-            LOG.warning(f'Could not fetch git repo URL for python-js app {data_app_science.id}: {exc}')
+            LOG.warning(f'Could not fetch git repo info for python-js app {data_app_science.id}: {exc}')
     return data_app
 
 
@@ -1881,6 +1926,39 @@ def _is_draft_config(configuration: Mapping[str, Any]) -> bool:
     if not isinstance(data_app, Mapping):
         return False
     return data_app.get('isDraft') is True
+
+
+def _validate_branch_update(branch: str, data_app: 'DataApp', configuration_id: str) -> str:
+    """Validate a `branch` repoint requested on the update path and return the normalized name.
+
+    The repoint is only for **external-git** python-js apps — a draft, or an app bound to an
+    external repository. An app on a **Keboola-managed** git repo is rejected: its branch is
+    owned by the platform (prod is expected to track the platform default), and this tool must
+    not change that behavior. The authoritative signal is `is_managed_git_repo` from the
+    data-science `.../git-repo` endpoint, NOT the presence of a `parameters.dataApp.git` block
+    (managed apps can carry one too). When the flag could not be determined (`None` — e.g. the
+    lookup failed, or the app is not python-js), the repoint is refused rather than risking a
+    change to a managed app.
+
+    Unlike the draft create path, `main` is allowed here — repointing a repo-backed app back to
+    `main` is a normal operation.
+    """
+    if data_app.is_managed_git_repo is None:
+        raise ValueError(
+            f'Cannot change branch on configuration "{configuration_id}": could not determine whether it '
+            'is an external-git app (the git-repo lookup failed or it is not a python-js app). Not changing '
+            'the branch — retry, or verify the configuration.'
+        )
+    if data_app.is_managed_git_repo:
+        raise ValueError(
+            f'Cannot change branch on configuration "{configuration_id}": it runs on a Keboola-managed git '
+            'repo, whose branch is owned by the platform and cannot be repointed with this tool. Only '
+            'external-git apps — a draft, or an app bound to an external repository — can be repointed.'
+        )
+    normalized = branch.strip()
+    if not normalized or any(c.isspace() for c in normalized):
+        raise ValueError(f'branch "{branch}" is not a valid git branch name.')
+    return normalized
 
 
 async def _fetch_prod_drafts(client: KeboolaClient, *, prod_configuration_id: str) -> tuple[list[DataAppSummary], int]:
