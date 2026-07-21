@@ -31,7 +31,7 @@ _PASS_THROUGH_STATUSES = frozenset(
 )
 
 
-def _strip_bearer(token: str) -> str:
+def strip_bearer(token: str) -> str:
     """Removes a leading case-insensitive ``Bearer `` scheme from a token, if present."""
     if token[:7].lower() == 'bearer ':
         return token[7:].strip()
@@ -42,7 +42,7 @@ def is_programmatic_token(token: str | None) -> bool:
     """True if ``token`` is a Keboola programmatic bearer token (``kbc_at_`` / ``kbc_pat_``)."""
     if not token:
         return False
-    bare = _strip_bearer(token)
+    bare = strip_bearer(token)
     return bare.startswith(_ACCESS_TOKEN_PREFIX) or bare.startswith(_PAT_PREFIX)
 
 
@@ -98,7 +98,7 @@ class StorageTokenResolver:
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'X-Kubernetes-Authorization': f'Bearer {self._read_sa_jwt()}',
-            'X-Subject-Token': f'Bearer {_strip_bearer(subject_token)}',
+            'X-Subject-Token': f'Bearer {strip_bearer(subject_token)}',
         }
         try:
             async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:

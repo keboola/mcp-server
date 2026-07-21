@@ -989,6 +989,25 @@ class TestResolveLocalTokens:
         assert out_config.storage_token == 'kbc_at_fresh_scoped'
 
     @pytest.mark.asyncio
+    async def test_bearer_prefixed_token_is_stripped_before_exchange(self, monkeypatch) -> None:
+        # A programmatic token supplied with an explicit `Bearer ` scheme (tolerated on input) must be
+        # normalized to bare form; the exchange/introspect helpers add the scheme themselves, so a
+        # pre-prefixed value would otherwise become `Authorization: Bearer Bearer …` (PSGO-261).
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='Bearer kbc_pat_x')
+        scope = SessionScope(project_ids=[11], scoped_token='kbc_at_stale', scoped_expires_at=time.time() - 1)
+        minted = SimpleNamespace(access_token='kbc_at_fresh_scoped', expires_at=time.time() + 900)
+        exch = AsyncMock(return_value=minted)
+        with (
+            # No stored PKCE session → falls back to the directly-supplied config token.
+            patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(side_effect=RuntimeError)),
+            patch('keboola_mcp_server.mcp.exchange_scoped_token', exch),
+        ):
+            await SessionStateMiddleware._resolve_local_tokens(config, scope)
+        exch.assert_awaited_once()
+        assert exch.await_args.kwargs['subject_token'] == 'kbc_pat_x'  # bare, no `Bearer ` prefix
+
+    @pytest.mark.asyncio
     async def test_autolease_scopes_all_accessible_projects(self, monkeypatch) -> None:
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
         config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')

@@ -33,7 +33,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token, load_tokens
-from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token
+from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, deployed_sa_token_path, is_same_stack
@@ -450,7 +450,7 @@ class SessionStateMiddleware(fmw.Middleware):
         try:
             parent = await get_access_token(config.storage_api_url)
         except RuntimeError:
-            parent = config.storage_token
+            parent = strip_bearer(config.storage_token)
         try:
             introspection = await introspect_token(config.storage_api_url, subject_token=parent)
         except Exception as e:
@@ -479,7 +479,9 @@ class SessionStateMiddleware(fmw.Middleware):
         if not cls._is_local_programmatic(config):
             return config, scope
 
-        parent = config.storage_token
+        # Strip any inbound `Bearer ` scheme; introspect/exchange helpers add the scheme themselves,
+        # so a pre-prefixed token would produce an `Authorization: Bearer Bearer …` header.
+        parent = strip_bearer(config.storage_token)
         try:
             # Refreshes (and persists the rotated pair) when near expiry; raises if no stored creds.
             parent = await get_access_token(config.storage_api_url)
@@ -587,8 +589,9 @@ class SessionStateMiddleware(fmw.Middleware):
                 else:
                     # Local: no projected SA token to reach the resolver. Forward the programmatic token
                     # downstream as a Bearer and let PAT-aware services exchange it; name the target
-                    # project when one has been selected.
-                    bearer_token = storage_token
+                    # project when one has been selected. Strip any inbound `Bearer ` scheme so the
+                    # client's own `Bearer ` prefixing can't produce `Authorization: Bearer Bearer …`.
+                    bearer_token = strip_bearer(storage_token)
                     if config.project_id:
                         extra_headers['X-KBC-ProjectId'] = config.project_id
 
@@ -844,10 +847,11 @@ class MultiProjectMiddleware(fmw.Middleware):
 
     Single-project (or no) scope is an unchanged passthrough. With >1 project selected, a read-only
     tool runs once per project — the active ``KeboolaClient`` in session state is swapped to each
-    project's client and the per-project results are labelled and concatenated (no structured-content
-    merge, so each tool keeps its native output shape). Write tools never fan out: they target the
-    active project only, so the agent can never write to multiple projects without the user explicitly
-    re-scoping (PSGO-261 decision D8).
+    project's client and the per-project results are labelled with a per-project text envelope. Their
+    structured content is deep-merged (lists concatenated across projects, counters summed) into one
+    schema-valid object, degrading to count-first with a truncated sample past ``_FANOUT_MAX_ITEMS``.
+    Write tools never fan out: they target the active project only, so the agent can never write to
+    multiple projects without the user explicitly re-scoping (PSGO-261 decision D8).
     """
 
     async def on_call_tool(
@@ -1019,6 +1023,9 @@ class MultiProjectMiddleware(fmw.Middleware):
     async def _client_for_project(
         server_state: ServerState, token: str, project_id: int, read_only: bool
     ) -> KeboolaClient:
+        # Normalize any inbound `Bearer ` scheme; KeboolaClient adds it back for bearer tokens,
+        # so a pre-prefixed value would otherwise become `Authorization: Bearer Bearer …`.
+        token = strip_bearer(token)
         return await KeboolaClient(
             storage_api_url=server_state.config.storage_api_url,
             storage_api_token=token,
