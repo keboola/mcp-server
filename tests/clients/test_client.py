@@ -407,41 +407,6 @@ class TestKeboolaClient:
                 await keboola_client.with_branch_id('non-existent-branch')
             mock_client.get.assert_called_once()
 
-    @pytest.mark.parametrize(
-        ('bearer_token', 'storage_token', 'expected_scheduler_token'),
-        [
-            ('oauth_bearer_123', 'sapi_token_456', 'Bearer oauth_bearer_123'),
-            (None, 'sapi_token_456', 'sapi_token_456'),
-            ('', 'sapi_token_456', 'sapi_token_456'),
-        ],
-        ids=['with_bearer_token', 'without_bearer_token', 'empty_bearer_token'],
-    )
-    def test_scheduler_client_token_selection(
-        self, bearer_token: str | None, storage_token: str, expected_scheduler_token: str
-    ):
-        """Test SchedulerClient uses bearer token when available, falls back to storage token."""
-        # Create KeboolaClient with different token configurations
-        client = KeboolaClient(
-            storage_api_url='https://connection.keboola.com',
-            storage_api_token=storage_token,
-            bearer_token=bearer_token,
-        )
-
-        # Verify scheduler client was initialized with correct token
-        # Check the headers of the underlying RawKeboolaClient
-        scheduler_headers = client.scheduler_client.raw_client.headers
-
-        if expected_scheduler_token.startswith('Bearer '):
-            # Should use Authorization header for bearer token
-            assert 'Authorization' in scheduler_headers
-            assert scheduler_headers['Authorization'] == expected_scheduler_token
-            assert 'X-StorageAPI-Token' not in scheduler_headers
-        else:
-            # Should use X-StorageAPI-Token header for storage token
-            assert 'X-StorageAPI-Token' in scheduler_headers
-            assert scheduler_headers['X-StorageAPI-Token'] == expected_scheduler_token
-            assert 'Authorization' not in scheduler_headers
-
     def test_metastore_client_url_derivation(self) -> None:
         client = KeboolaClient(
             storage_api_url='https://connection.canary-orion.keboola.dev',
@@ -451,8 +416,25 @@ class TestKeboolaClient:
         assert client.metastore_client.raw_client.base_api_url == 'https://metastore.canary-orion.keboola.dev'
         assert client.metastore_client.raw_client.headers['X-StorageAPI-Token'] == 'sapi_token_456'
 
+    # All clients below use the bearer token (Authorization header) when one is available and fall
+    # back to the raw storage token (X-StorageAPI-Token) otherwise. The jobs-queue/ai-service/
+    # sync-actions clients were switched onto the bearer token so PAT (kbc_at_/kbc_pat_) sessions
+    # work end-to-end — the queue accepts `Authorization: Bearer kbc_at_...` + X-KBC-ProjectId but
+    # rejects the PAT sent as X-StorageAPI-Token (PSGO-261). Data-science needs it for admin-context
+    # git-credential endpoints (AI-3398).
     @pytest.mark.parametrize(
-        ('bearer_token', 'storage_token', 'expected_metastore_token'),
+        'client_attr',
+        [
+            'scheduler_client',
+            'metastore_client',
+            'data_science_client',
+            'jobs_queue_client',
+            'ai_service_client',
+            'sync_actions_client',
+        ],
+    )
+    @pytest.mark.parametrize(
+        ('bearer_token', 'storage_token', 'expected_token'),
         [
             ('oauth_bearer_123', 'sapi_token_456', 'Bearer oauth_bearer_123'),
             (None, 'sapi_token_456', 'sapi_token_456'),
@@ -460,61 +442,24 @@ class TestKeboolaClient:
         ],
         ids=['with_bearer_token', 'without_bearer_token', 'empty_bearer_token'],
     )
-    def test_metastore_client_token_selection(
-        self, bearer_token: str | None, storage_token: str, expected_metastore_token: str
+    def test_client_bearer_token_selection(
+        self, client_attr: str, bearer_token: str | None, storage_token: str, expected_token: str
     ):
-        """Test MetastoreClient uses bearer token when available, falls back to storage token."""
+        """Clients use the bearer token when available, falling back to the storage token."""
         client = KeboolaClient(
             storage_api_url='https://connection.keboola.com',
             storage_api_token=storage_token,
             bearer_token=bearer_token,
         )
 
-        metastore_headers = client.metastore_client.raw_client.headers
+        headers = getattr(client, client_attr).raw_client.headers
 
-        if expected_metastore_token.startswith('Bearer '):
-            assert 'Authorization' in metastore_headers
-            assert metastore_headers['Authorization'] == expected_metastore_token
-            assert 'X-StorageAPI-Token' not in metastore_headers
+        if expected_token.startswith('Bearer '):
+            assert headers.get('Authorization') == expected_token
+            assert 'X-StorageAPI-Token' not in headers
         else:
-            assert 'X-StorageAPI-Token' in metastore_headers
-            assert metastore_headers['X-StorageAPI-Token'] == expected_metastore_token
-            assert 'Authorization' not in metastore_headers
-
-    @pytest.mark.parametrize(
-        ('bearer_token', 'storage_token', 'expected_data_science_token'),
-        [
-            ('oauth_bearer_123', 'sapi_token_456', 'Bearer oauth_bearer_123'),
-            (None, 'sapi_token_456', 'sapi_token_456'),
-            ('', 'sapi_token_456', 'sapi_token_456'),
-        ],
-        ids=['with_bearer_token', 'without_bearer_token', 'empty_bearer_token'],
-    )
-    def test_data_science_client_token_selection(
-        self, bearer_token: str | None, storage_token: str, expected_data_science_token: str
-    ):
-        """DataScienceClient uses the bearer token when available, falls back to the storage token.
-
-        The sandboxes-service git-repo credential endpoints require an admin-context token
-        (CanManageAppRepoCredentials -> isAdminToken()); the OAuth bearer token carries it while the
-        minted SAPI token does not (AI-3398).
-        """
-        client = KeboolaClient(
-            storage_api_url='https://connection.keboola.com',
-            storage_api_token=storage_token,
-            bearer_token=bearer_token,
-        )
-
-        data_science_headers = client.data_science_client.raw_client.headers
-
-        if expected_data_science_token.startswith('Bearer '):
-            assert 'Authorization' in data_science_headers
-            assert data_science_headers['Authorization'] == expected_data_science_token
-            assert 'X-StorageAPI-Token' not in data_science_headers
-        else:
-            assert 'X-StorageAPI-Token' in data_science_headers
-            assert data_science_headers['X-StorageAPI-Token'] == expected_data_science_token
-            assert 'Authorization' not in data_science_headers
+            assert headers.get('X-StorageAPI-Token') == expected_token
+            assert 'Authorization' not in headers
 
 
 def test_flow_schema_cache_roundtrip():
