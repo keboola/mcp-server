@@ -277,12 +277,14 @@ class SessionStateMiddleware(fmw.Middleware):
             if http_rq := get_http_request_or_none():
                 config = self.apply_request_config(http_rq, config, own_stack_storage_api_url=own_stack_storage_api_url)
 
-            # Capability-discovery requests (tools/list, prompts/list, resources/list) MUST be fast and
-            # network-free: a client fetches all three on connect, so any Connection round-trip here
-            # (token introspect, refresh, or scoped-exchange) makes connecting hang until the client's
-            # 30s timeout. For /list we do zero network in on_request — no auto-lease, no token refresh,
-            # no scoped re-mint — and use the stored session token as-is (no refresh). The scope and
-            # fresh tokens are established on the first real (non-list) tool call.
+            # Capability-discovery requests (tools/list, prompts/list, resources/list) MUST be fast: a
+            # client fetches all three on connect, so any Connection AUTH round-trip here (token
+            # introspect, refresh, or scoped-exchange) makes connecting hang until the client's 30s
+            # timeout. For /list we skip all that extra auth work — no auto-lease, no token refresh, no
+            # scoped re-mint — and use the stored session token as-is. (create_session_state below may
+            # still make ordinary Storage calls, e.g. WorkspaceManager.create; the point is /list adds
+            # none of the introspect/refresh/exchange round-trips.) Scope and fresh tokens are
+            # established on the first real (non-list) tool call.
             is_list = context.method.endswith('/list')
 
             # Local streamable-HTTP with no token supplied (no header / env): fall back to the stored

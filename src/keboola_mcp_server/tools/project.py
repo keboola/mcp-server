@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Annotated, Optional, cast
 
@@ -374,6 +375,8 @@ async def get_accessible_projects(
         lambda pid: _project_sql_dialect(server_state, subject_token, pid),
     )
     for result in results:
+        if isinstance(result, asyncio.CancelledError):
+            raise result  # never swallow cancellation — let it propagate
         if isinstance(result, BaseException):
             LOG.warning(f'Could not resolve SQL dialect for a project: {result}')
             continue
