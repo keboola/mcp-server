@@ -41,6 +41,9 @@ _EXCHANGE_PATH = 'v1/auth/pat/exchange'
 _SUDO_PATH = 'v1/auth/sudo'
 _PAT_PATH = 'v1/auth/pat'
 _REFRESH_SKEW_SECONDS = 60
+# Max time to wait for the browser to hit the loopback /callback. Generous enough for SSO/MFA, but
+# bounded so a closed tab or blocked browser can't hang `login` (and stdio auto-login) forever.
+_LOGIN_CALLBACK_TIMEOUT_SECONDS = 300
 _PAT_DEFAULT_EXPIRES_SECONDS = 30 * 24 * 60 * 60  # ~1 month
 _CREDENTIALS_PATH = Path.home() / '.keboola' / 'mcp' / 'credentials.json'
 # Short connect timeout so an unreachable stack (e.g. VPN off — internal `.dev` stacks resolve to a
@@ -492,10 +495,18 @@ async def perform_login(storage_api_url: str, *, open_browser=webbrowser.open) -
     open_browser(authorize_url)
 
     _CallbackHandler.result = {}
-    server.handle_request()  # blocks until the browser hits /callback
+    # Bound the wait: handle_request() returns after `timeout` seconds even if no callback arrives,
+    # so a closed tab / blocked browser fails with a clear error instead of hanging indefinitely.
+    server.timeout = _LOGIN_CALLBACK_TIMEOUT_SECONDS
+    server.handle_request()  # blocks until the browser hits /callback or the timeout elapses
     server.server_close()
     result = _CallbackHandler.result
 
+    if not result:
+        raise RuntimeError(
+            f'Timed out after {_LOGIN_CALLBACK_TIMEOUT_SECONDS}s waiting for the browser sign-in callback. '
+            'Re-run the login and complete authentication in the opened browser window.'
+        )
     if result.get('error'):
         raise RuntimeError(f'Authorization failed: {result.get("error")} {result.get("errorDescription", "")}'.strip())
     if not secrets.compare_digest(result.get('state', ''), state):
