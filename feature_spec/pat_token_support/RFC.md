@@ -72,7 +72,7 @@ Response 200 (AuthBridgeStorageTokenResolveResponse):
 
 Requirements (from acceptance criteria):
 
-- `Authorization: Bearer kbc_pat_*` **or** `kbc_at_*` + `X-KBC-ProjectId` is accepted wherever a legacy Storage token works today, and resolves to that project's Storage token.
+- A programmatic token — `Authorization: Bearer kbc_pat_*` **or** `kbc_at_*` — **together with** `X-KBC-ProjectId` (both token kinds need it; the resolver body always requires `projectId`) is accepted wherever a legacy Storage token works today, and resolves to that project's Storage token.
 - Legacy `X-StorageAPI-Token` traffic is unaffected.
 - The server reads its **own** projected SA JWT from the file path **per request** (kubelet rotation); the SA subject is mapped to `internal:auth-bridge:resolve-storage-token` in kbc-stacks (Part 2, separate repo).
 - Resolver error mapping: `400→400`, `401→401`, `403→403`, `5xx/timeout/network→502`.
@@ -102,15 +102,15 @@ POST {url}/v1/auth/token/refresh   body { "refreshToken": "<rt>" }
 → { accessToken, refreshToken, expiresIn, sessionId, user }   # rotating refresh — persist both
 ```
 
-The resulting `accessToken` is then the subject token for the Part A resolver exchange. **When the token is dead** (refresh token expired/revoked → refresh returns `invalid_grant`/`401`), the server clears the stored credentials and **enforces re-login** (surfaces a clear "run `login` again" error rather than silently failing).
+The resulting `accessToken` is then the session's programmatic token: on the **deployed** server it is the subject token for the Part A resolver exchange; on the **local** server (no projected SA token) it is forwarded downstream as a Bearer and the Keboola services exchange it — see _Architecture: hybrid (Option C)_. **When the token is dead** (refresh token expired/revoked → refresh returns `invalid_grant`/`401`), the server clears the stored credentials and **enforces re-login** (surfaces a clear "run `login` again" error rather than silently failing).
 
 ### Mode matrix
 
-| Mode | Inbound credential | How token reaches resolver |
+| Mode | Inbound credential | How the token is used |
 | --- | --- | --- |
 | stdio (legacy) | `KBC_STORAGE_TOKEN` | no exchange — used directly (unchanged) |
-| stdio (new) | stored PKCE creds (Part B) | load → refresh-if-needed → exchange (Part A) |
-| HTTP / remote | `Authorization: Bearer kbc_*` per request | exchange per request (Part A); refresh is the client's job, not ours |
+| stdio (new, local) | stored PKCE creds (Part B) | load → refresh-if-needed → forward the bearer downstream + `X-KBC-ProjectId`; services exchange (local has no SA token — see hybrid) |
+| HTTP / remote (deployed) | `Authorization: Bearer kbc_*` per request | exchange per request via the Part A resolver; refresh is the client's job, not ours |
 | HTTP OAuth (existing) | `SimpleOAuthProvider` session | unchanged for now (see Scope) |
 
 ### Connection endpoints used _(as-built)_
