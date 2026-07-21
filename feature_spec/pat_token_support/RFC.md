@@ -245,7 +245,8 @@ This is the discovery endpoint. It works for any programmatic token and is the s
 ```
 POST {connection}/v1/auth/pat/exchange
 Headers: Authorization: Bearer <current subject token>
-Body:    { "expiresIn": null|<int>, "scope": { "projects": [<int>,...]|null, "readOnly": true|null } }
+Body:    { "expiresIn": null|<int>, "scope": { "projects": ["<id>",...]|null, "readOnly": true|null } }
+         # NB: project ids are sent as STRINGS — the exchange API 400s on integers (auth_login.py:166)
 
 201:
 { "accessToken": "<scoped kbc_at_*>", "tokenType": "Bearer", "expiresIn": <int>,
@@ -308,9 +309,13 @@ the session's subject token for all downstream exchange/forwarding.
   *active* session token is the scoped one, so a tool can no longer reach an out-of-scope project even
   by bug. Strictly stronger than the original advisory model.
 - **D2 (extended) — `project_id` → project scope (a set).** Still explicit session state, never
-  silently derived. Default scope = `[KBC_PROJECT_ID]` / `X-KBC-ProjectId` (today's single-project
-  behavior, backward compatible). `get_accessible_projects` + `set_project_scope` replace the
-  previously-hypothetical "select-project tool"; introspect closes the open enumeration question.
+  silently derived. An explicit `KBC_PROJECT_ID` / `X-KBC-ProjectId` pins a single project
+  (backward compatible). _(as-built: when a local programmatic session sets **no** explicit project,
+  `SessionStateMiddleware._autolease_default_scope` introspects and defaults to **all** reachable
+  projects — multi-project by default — gated by an ask-first confirmation (`SessionScope.confirmed`,
+  `_BOOTSTRAP_TOOLS`); it is not single-project-by-default.)_ `get_accessible_projects` +
+  `set_project_scope` replace the previously-hypothetical "select-project tool"; introspect closes
+  the open enumeration question.
 - **D6 (new) — transparent fan-out via active-project indirection.** Tools take no `projects[]` arg;
   the dispatch wrapper swaps `active_project_id` and the per-project client cache. Multi-project
   results use a per-project envelope, never a semantic merge. Zero changes to the 43 `from_state`
@@ -484,16 +489,18 @@ services that read that header work under header-narrowing. Current wiring (`cli
 | Metastore (semantic) | `bearer_or_sapi_token` | ✅ PAT/bearer-first, SAPI fallback (guarded); feature-gated, untested on stacks without `mcp-semantic-tooling` |
 | Data Science (sandboxes) | `bearer_or_sapi_token` + `X-KBC-ProjectId` | ✅ PAT + project header (verified: data-app create + deploy) |
 | Scheduler | `bearer_or_sapi_token` | ✅ bearer-first (writes only) |
-| **Jobs Queue** | `self._token` (raw → `X-StorageAPI-Token`) | ❌ 401 under PAT fan-out — **future PAT work** |
-| **AI Service** | `self._token` | ⚠️ raw token — **future PAT work** |
-| **Sync Actions** | `self._token` | ⚠️ raw token — **future PAT work** |
+| **Jobs Queue** | `bearer_or_sapi_token` + `X-KBC-ProjectId` | ✅ bearer/PAT-first, SAPI fallback |
+| **AI Service** | `bearer_or_sapi_token` | ✅ bearer/PAT-first, SAPI fallback |
+| **Sync Actions** | `bearer_or_sapi_token` + `X-KBC-ProjectId` | ✅ bearer/PAT-first, SAPI fallback |
 
-### Future PAT work (not in this increment)
-`jobs_queue`, `ai_service`, and `sync_actions` still pass the raw `self._token`, so under a
-PAT/multi-project session the satellite service rejects it (verified: `get_jobs` → 401 "Invalid
-access token" from the Queue API). To support PAT they must use the bearer/PAT token (like
-metastore/data-science/scheduler) or be handed a per-project minted token. Metastore and
-data-science already use the bearer/PAT path, so no change was needed there.
+### Resolved: Queue / AI / Sync-Actions now speak bearer/PAT
+`jobs_queue`, `ai_service`, and `sync_actions` originally passed the raw `self._token`, so under a
+PAT/multi-project session the satellite service rejected it (`get_jobs` → 401 "Invalid access
+token" from the Queue API). Fixed in commit `5b8c65ed`: all three are now wired with
+`bearer_or_sapi_token` (`clients/client.py:169,184,190,209`), which forwards `Authorization:
+Bearer <token>` for programmatic sessions and falls back to `X-StorageAPI-Token` for legacy SAPI —
+matching metastore/data-science/scheduler. The queue accepts `Authorization: Bearer kbc_at_…` +
+`X-KBC-ProjectId` (verified by hand against the Queue API).
 
 ## Decisions (increment 3)
 
@@ -503,8 +510,8 @@ data-science already use the bearer/PAT path, so no change was needed there.
 - **`get_accessible_projects` is the multi-project bootstrap**: per-project dialect via token verify
   (no workspace), current scope surfaced, base instructions grouped by dialect behind
   `with_llm_instruction`.
-- **Queue / AI / SyncActions PAT support is deferred** and documented above; metastore + data-science
-  already satisfy the PAT/bearer + `X-KBC-ProjectId` contract.
+- **Queue / AI / SyncActions now use the bearer/PAT path** (commit `5b8c65ed`), joining
+  metastore + data-science in satisfying the PAT/bearer + `X-KBC-ProjectId` contract.
 
 # Extension: scope-first tool visibility + reviewer feedback (PSGO-261, increment 4)
 
