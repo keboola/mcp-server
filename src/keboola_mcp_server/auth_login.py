@@ -355,7 +355,7 @@ def _write_store(store: dict) -> None:
     _CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(_CREDENTIALS_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'w') as f:
-        json.dump(store, f, indent=2)
+        json.dump(store, f, indent=2, ensure_ascii=False)
     # O_CREAT honors the mode only when creating; chmod covers a pre-existing file.
     _CREDENTIALS_PATH.chmod(0o600)
 
@@ -417,7 +417,8 @@ async def ensure_access_token(
     ``allow_interactive`` MUST be false unless a real terminal is attached. When the stdio server
     is launched by an MCP client its stdout is the JSON-RPC channel and there is no TTY, so an
     interactive login would both corrupt the protocol stream and block the initialize handshake
-    (the loopback wait has no timeout). In that case this raises the same "run login" guidance as
+    (and the loopback wait, though bounded by ``_LOGIN_CALLBACK_TIMEOUT_SECONDS``, would still stall
+    the handshake for its duration). In that case this raises the same "run login" guidance as
     ``get_access_token`` instead of attempting a browser login. Remote/deployed servers must use
     client-driven OAuth regardless.
     """

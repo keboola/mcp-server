@@ -1015,12 +1015,12 @@ class MultiProjectMiddleware(fmw.Middleware):
         Note: rebuilt per call; caching across calls would need a store that survives the
         per-request state rebuild — add if provisioning latency shows up in practice.
         """
-        client = await cls._client_for_project(server_state, base_token, project_id, read_only)
+        client = await cls.client_for_project(server_state, base_token, project_id, read_only)
         state[KeboolaClient.STATE_KEY] = client
         state[WorkspaceManager.STATE_KEY] = await WorkspaceManager.create(client, server_state.config.workspace_schema)
 
     @staticmethod
-    async def _client_for_project(
+    async def client_for_project(
         server_state: ServerState, token: str, project_id: int, read_only: bool
     ) -> KeboolaClient:
         # Normalize any inbound `Bearer ` scheme; KeboolaClient adds it back for bearer tokens,
