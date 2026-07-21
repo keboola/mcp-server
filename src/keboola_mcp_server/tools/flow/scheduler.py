@@ -28,7 +28,10 @@ Field order:
 2. Hour (0-23)
 3. Day of month (1-31, or L for last day of month)
 4. Month (1-12)
-5. Day of week (0-6, where 0 = Sunday)
+5. Day of week (0-7, where 0 or 7 = Sunday and 6 = Saturday)
+
+Each field accepts `*` (any value), a single number, a range (`a-b`), a step (`*/n`, `a-b/n`, `a/n`),
+or a comma-separated list combining these (e.g. `1-5,10,*/15`).
 
 Examples:
 1. schedule daily at 1:00 PM and 1:00 AM would be `0 1,13 * * *`
@@ -37,6 +40,8 @@ Examples:
 4. schedule yearly on the 1st of january and august at 11:00 AM would be `0 11 1 1,8 *`
 5. schedule hourly every 15 minutes would be `0,15,30,45 * * * *`
 6. schedule monthly on the last day of the month at 10:00 AM would be `0 10 L * *`
+7. schedule on weekdays (Monday to Friday) at 8:00 AM would be `0 8 * * 1-5`
+8. schedule every 15 minutes would be `*/15 * * * *`
 """
 
 
@@ -51,53 +56,79 @@ def validate_cron_tab(cron_tab: str | None) -> None:
                 f'Cron expression must have exactly 5 parts got: {cron_tab} which has {len(split_cron_tab)} parts.'
             )
 
-        def to_int_list(field: str, allow_l: bool = False) -> tuple[list[int], bool]:
-            """Parse a cron field into a list of integers and a flag indicating if L was found."""
-            if field == '*':
-                return [], False
+        def parse_field(raw: str, min_val: int, max_val: int, bounds_msg: str, allow_l: bool = False) -> bool:
+            """Validate a single cron field and report whether it is a bare wildcard (`*`).
+
+            Each comma-separated token may be `*`, an integer, a range `a-b`, or any of those with a
+            `/n` step suffix (n a positive integer), plus `L` where allowed. Numeric values are
+            bounds-checked against [min_val, max_val].
+            """
+            digits_msg = f'Cron expression must have only digits got: {raw} in "{cron_tab}".'
             has_l = False
-            parts = []
-            for x in field.split(','):
-                x = x.strip()
-                if allow_l and x.upper() == 'L':
+            has_numeric = False
+            for token in raw.split(','):
+                token = token.strip()
+                if allow_l and token.upper() == 'L':
                     has_l = True
-                else:
+                    continue
+                base, sep, step = token.partition('/')
+                if sep and (not step.isdigit() or int(step) < 1):
+                    raise ValueError(digits_msg)  # step must be a positive integer
+                if base == '*':
+                    continue  # wildcard base (optionally stepped) has no value to bounds-check
+                try:
+                    endpoints = [int(base)]  # single value; negatives fall through to the bounds check
+                except ValueError:
+                    low_str, dash, high_str = base.partition('-')  # range `a-b`
+                    if not dash:
+                        raise ValueError(digits_msg) from None
                     try:
-                        parts.append(int(x))
+                        endpoints = [int(low_str), int(high_str)]
                     except ValueError:
-                        raise ValueError(f'Cron expression must have only digits got: {field} in "{cron_tab}".')
-            if allow_l and has_l and parts:
+                        raise ValueError(digits_msg) from None
+                    if endpoints[0] > endpoints[1]:
+                        raise ValueError(bounds_msg)
+                if any(v < min_val or v > max_val for v in endpoints):
+                    raise ValueError(bounds_msg)
+                has_numeric = True
+            if allow_l and has_l and has_numeric:
                 raise ValueError('Day of month must use either `L` or numeric values, not both.')
-            return parts, has_l
+            return raw == '*'
 
-        minutes, _ = to_int_list(split_cron_tab[0].strip())
-        hours, _ = to_int_list(split_cron_tab[1].strip())
-        days, has_last_day = to_int_list(split_cron_tab[2].strip(), allow_l=True)
-        months, _ = to_int_list(split_cron_tab[3].strip())
-        weekdays, _ = to_int_list(split_cron_tab[4].strip())
+        minute_wild = parse_field(
+            split_cron_tab[0], 0, 59, f'Minutes of hour `M _ _ _ _` must be between 0 and 59, got: {split_cron_tab[0]}'
+        )
+        hour_wild = parse_field(
+            split_cron_tab[1], 0, 23, f'Hours of day `_ H _ _ _` must be between 0 and 23, got: {split_cron_tab[1]}'
+        )
+        day_wild = parse_field(
+            split_cron_tab[2],
+            1,
+            31,
+            f'Days of month `_ _ D _ _` must be between 1 and 31, got: {split_cron_tab[2]}',
+            allow_l=True,
+        )
+        month_wild = parse_field(
+            split_cron_tab[3], 1, 12, f'Months of year `_ _ _ M _` must be between 1 and 12, got: {split_cron_tab[3]}'
+        )
+        weekday_wild = parse_field(
+            split_cron_tab[4],
+            0,
+            7,
+            f'Days of week `_ _ _ _ W` must be between 0 and 7 (0 or 7=Sunday, 6=Saturday), got: {split_cron_tab[4]}',
+        )
 
-        if any(x < 0 or x > 59 for x in minutes):
-            raise ValueError(f'Minutes of hour `M _ _ _ _` must be between 0 and 59, got: {split_cron_tab[0]}')
-        if any(x < 0 or x > 23 for x in hours):
-            raise ValueError(f'Hours of day `_ H _ _ _` must be between 0 and 23, got: {split_cron_tab[1]}')
-        if any(x < 1 or x > 31 for x in days):
-            raise ValueError(f'Days of month `_ _ D _ _`must be between 1 and 31, got: {split_cron_tab[2]}')
-        if any(x < 1 or x > 12 for x in months):
-            raise ValueError(f'Months of year `_ _ _ M _` must be between 1 and 12, got: {split_cron_tab[3]}')
-        if any(x < 0 or x > 6 for x in weekdays):
-            raise ValueError(
-                f'Days of week `_ _ _ _ W` must be between 0=Sunday and 6=Saturday, got: {split_cron_tab[4]}'
-            )
-        if months and not days and not has_last_day:
+        # A field is "set" (a real constraint) when it is not a bare `*`; `*/15` counts as set.
+        minutes_set, hours_set = not minute_wild, not hour_wild
+        days_set, months_set, weekdays_set = not day_wild, not month_wild, not weekday_wild
+        if months_set and not days_set:
             raise ValueError('Months of year must be specified with days of month. Example: `35 12 31 1,3 *`')
-        if (days or has_last_day) and not hours:
+        if days_set and not hours_set:
             raise ValueError('Days of month must be specified with hours of day. Example: `55 12 31 * *`')
-        if hours and not minutes:
+        if hours_set and not minutes_set:
             raise ValueError('Hours of day must be specified with minutes of hour. Example: `55 12 * * *`')
-        if weekdays and not hours:
+        if weekdays_set and not hours_set:
             raise ValueError('Days of week must be specified with hours of day. Example: `55 12 * * 0`')
-        if weekdays and (days or months or has_last_day):
-            raise ValueError('Days of week must not be specified with days of month nor months of year.')
     except ValueError as e:
         raise ValueError(f'Invalid cron tab expression: {str(e)}.\n{CRON_TAB_INSTRUCTIONS}') from e
 

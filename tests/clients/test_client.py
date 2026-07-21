@@ -481,6 +481,54 @@ class TestKeboolaClient:
             assert metastore_headers['X-StorageAPI-Token'] == expected_metastore_token
             assert 'Authorization' not in metastore_headers
 
+    @pytest.mark.parametrize(
+        ('bearer_token', 'storage_token', 'expected_data_science_token'),
+        [
+            ('oauth_bearer_123', 'sapi_token_456', 'Bearer oauth_bearer_123'),
+            (None, 'sapi_token_456', 'sapi_token_456'),
+            ('', 'sapi_token_456', 'sapi_token_456'),
+        ],
+        ids=['with_bearer_token', 'without_bearer_token', 'empty_bearer_token'],
+    )
+    def test_data_science_client_token_selection(
+        self, bearer_token: str | None, storage_token: str, expected_data_science_token: str
+    ):
+        """DataScienceClient uses the bearer token when available, falls back to the storage token.
+
+        The sandboxes-service git-repo credential endpoints require an admin-context token
+        (CanManageAppRepoCredentials -> isAdminToken()); the OAuth bearer token carries it while the
+        minted SAPI token does not (AI-3398).
+        """
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token=storage_token,
+            bearer_token=bearer_token,
+        )
+
+        data_science_headers = client.data_science_client.raw_client.headers
+
+        if expected_data_science_token.startswith('Bearer '):
+            assert 'Authorization' in data_science_headers
+            assert data_science_headers['Authorization'] == expected_data_science_token
+            assert 'X-StorageAPI-Token' not in data_science_headers
+        else:
+            assert 'X-StorageAPI-Token' in data_science_headers
+            assert data_science_headers['X-StorageAPI-Token'] == expected_data_science_token
+            assert 'Authorization' not in data_science_headers
+
+
+def test_flow_schema_cache_roundtrip():
+    client = KeboolaClient(
+        storage_api_url='https://connection.keboola.com',
+        storage_api_token='dummy-token',
+    )
+    assert client.get_cached_flow_schema('keboola.flow') is None
+    schema = {'type': 'object'}
+    client.cache_flow_schema('keboola.flow', schema)
+    assert client.get_cached_flow_schema('keboola.flow') is schema
+    # other flow types are independent
+    assert client.get_cached_flow_schema('keboola.orchestrator') is None
+
 
 @pytest.mark.parametrize(
     ('metadata', 'key', 'provider', 'preferred_providers', 'default', 'expected'),
@@ -711,3 +759,54 @@ def test_get_metadata_property(
         default=default,
     )
     assert result == expected
+
+
+class TestStepUpStorageClient:
+    """KeboolaClient.step_up_storage_client builds the Kubernetes step-up Storage client."""
+
+    def test_attaches_step_up_header_and_keeps_user_token(self, tmp_path):
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt\n')
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token='user-token',
+            headers={'User-Agent': 'test'},
+        )
+
+        stepped = client.step_up_storage_client(str(token_file))
+
+        headers = stepped.raw_client.headers
+        # The SA JWT rides as the step-up header ...
+        assert headers['X-Kubernetes-Authorization'] == 'Bearer sa-jwt'
+        # ... alongside the user's own token (no privileged token is minted) ...
+        assert headers['X-StorageAPI-Token'] == 'user-token'
+        # ... and pre-existing headers are preserved.
+        assert headers['User-Agent'] == 'test'
+
+    @pytest.mark.parametrize('readonly', [None, True, False])
+    def test_propagates_readonly_guard(self, tmp_path, readonly):
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt')
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token='user-token',
+            readonly=readonly,
+        )
+
+        stepped = client.step_up_storage_client(str(token_file))
+
+        assert stepped.raw_client.readonly == client.storage_client.raw_client.readonly
+
+    def test_fails_loudly_on_empty_token_file(self, tmp_path):
+        token_file = tmp_path / 'token'
+        token_file.write_text('  \n')
+        client = KeboolaClient(storage_api_url='https://connection.keboola.com', storage_api_token='user-token')
+
+        with pytest.raises(ValueError, match='token file is empty'):
+            client.step_up_storage_client(str(token_file))
+
+    def test_fails_loudly_on_missing_token_file(self, tmp_path):
+        client = KeboolaClient(storage_api_url='https://connection.keboola.com', storage_api_token='user-token')
+
+        with pytest.raises(FileNotFoundError):
+            client.step_up_storage_client(str(tmp_path / 'missing'))

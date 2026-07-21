@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Optional, Sequence, cast
 
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import FunctionTool
 from httpx import HTTPStatusError
 from mcp.types import ToolAnnotations
@@ -62,12 +63,16 @@ from keboola_mcp_server.tools.components.model import (
     SimplifiedTfBlocks,
     TfParamUpdate,
     TransformationConfiguration,
+    VariableDefinition,
 )
 from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
     FOLDER_SUPPORTING_COMPONENT_IDS,
     SNOWFLAKE_TRANSFORMATION_ID,
+    VARIABLES_COMPONENT_ID,
+    _apply_vars_to_parent_cfg,
     add_ids,
+    apply_configuration_variables,
     apply_folder_metadata,
     build_folder_hint,
     check_suitable,
@@ -418,6 +423,18 @@ async def create_sql_transformation(
         str,
         Field(description=folder_field_description('transformation', 'transformations')),
     ] = '',
+    variables: Annotated[
+        Optional[list[VariableDefinition]],
+        Field(
+            description=(
+                'Variable definitions to attach to this transformation. '
+                'Each entry specifies a name, type ("string" or "vault"), and an optional default value. '
+                'On creation, both `None` (omitted) and `[]` (empty list) mean "do not attach variables" — '
+                'no `keboola.variables` config is created. To remove variables from an existing transformation, '
+                'use `update_sql_transformation` with `variables=[]`.'
+            ),
+        ),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
@@ -515,6 +532,12 @@ async def create_sql_transformation(
 
     LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
 
+    vars_result = None
+    if variables:
+        vars_result = await apply_configuration_variables(client, component_id, configuration_id, variables)
+        if vars_result is not None:
+            await set_cfg_update_metadata(client, component_id, configuration_id, vars_result['version'])
+
     links = links_manager.get_transformation_links(
         transformation_type=component_id,
         transformation_id=configuration_id,
@@ -528,7 +551,7 @@ async def create_sql_transformation(
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
-        version=new_raw_transformation_configuration['version'],
+        version=(vars_result or new_raw_transformation_configuration)['version'],
         change_summary=change_summary,
     )
 
@@ -625,6 +648,17 @@ async def update_sql_transformation(
         Optional[str],
         Field(description=folder_field_description('transformation', 'transformations')),
     ] = None,
+    variables: Annotated[
+        Optional[list[VariableDefinition]],
+        Field(
+            description=(
+                'Variable definitions for this transformation. '
+                'Provide a non-empty list to create or replace all variable definitions. '
+                'Provide an empty list ([]) to remove all variables. '
+                'Omit (None) to leave existing variables unchanged.'
+            ),
+        ),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
@@ -635,6 +669,7 @@ async def update_sql_transformation(
     Use this for modifying SQL transformations created with create_sql_transformation.
 
     WHEN TO USE:
+    - SQL transformations only (Snowflake/BigQuery); use update_config for Python/R transformations
     - Modifying SQL queries in transformation (add/edit/remove SQL statements)
     - Updating transformation block or code block names
     - Changing input/output table mappings for the transformation
@@ -814,11 +849,11 @@ async def update_sql_transformation(
       )
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    links_manager = await ProjectLinksManager.from_client(client)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     sql_dialect = await workspace_manager.get_sql_dialect()
-
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
+
+    links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(
         f'Updating transformation: {sql_transformation_id} with config ID: {configuration_id}. '
@@ -835,6 +870,13 @@ async def update_sql_transformation(
         parameter_updates=parameter_updates,
         storage=storage,
     )
+
+    vars_config_id_to_delete: str | None = None
+    if variables is not None:
+        _, vars_config_id_to_delete = await _apply_vars_to_parent_cfg(
+            client, sql_transformation_id, configuration_id, variables, updated_configuration
+        )
+
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=sql_transformation_id,
         configuration_id=configuration_id,
@@ -844,12 +886,12 @@ async def update_sql_transformation(
         updated_description=description,
     )
 
-    await set_cfg_update_metadata(
-        client=client,
-        component_id=sql_transformation_id,
-        configuration_id=configuration_id,
-        configuration_version=updated_raw_configuration.get('version'),
-    )
+    if vars_config_id_to_delete:
+        await client.storage_client.configuration_delete(
+            component_id=VARIABLES_COMPONENT_ID,
+            configuration_id=vars_config_id_to_delete,
+            skip_trash=True,
+        )
 
     folder_hint = None
     if folder is None:
@@ -893,6 +935,13 @@ async def update_sql_transformation(
                     exc_info=exc,
                 )
 
+    await set_cfg_update_metadata(
+        client=client,
+        component_id=sql_transformation_id,
+        configuration_id=configuration_id,
+        configuration_version=updated_raw_configuration.get('version'),
+    )
+
     change_summary = ' '.join(filter(None, [msg, folder_hint])) or None
 
     links = links_manager.get_transformation_links(
@@ -934,9 +983,19 @@ async def update_sql_transformation_internal(
 ) -> tuple[JsonDict, JsonDict, str, dict | None]:
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
-    config_details = await client.storage_client.configuration_detail(
-        component_id=sql_transformation_id, configuration_id=configuration_id
-    )
+    try:
+        config_details = await client.storage_client.configuration_detail(
+            component_id=sql_transformation_id, configuration_id=configuration_id
+        )
+    except HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise ToolError(
+                f"Configuration '{configuration_id}' was not found under SQL transformation component "
+                f"'{sql_transformation_id}'. If this is a Python or R transformation, use 'update_config' "
+                f"with component_id 'keboola.python-transformation-v2' or 'keboola.r-transformation-v2' "
+                f"instead of 'update_sql_transformation'."
+            ) from e
+        raise
     api_component = await fetch_component(client=client, component_id=sql_transformation_id)
     transformation = Component.from_api_response(api_component)
 
@@ -1042,6 +1101,18 @@ async def create_config(
         list[dict[str, Any]],
         Field(description='The list of processors that will run after the configured component runs.'),
     ] = None,
+    variables: Annotated[
+        Optional[list[VariableDefinition]],
+        Field(
+            description=(
+                'Variable definitions to attach to this configuration. '
+                'Each entry specifies a name, type ("string" or "vault"), and an optional default value. '
+                'On creation, both `None` (omitted) and `[]` (empty list) mean "do not attach variables" — '
+                'no `keboola.variables` config is created. To remove variables from an existing configuration, '
+                'use `update_config` with `variables=[]`.'
+            ),
+        ),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -1121,6 +1192,12 @@ async def create_config(
 
     await set_cfg_creation_metadata(client, component_id, configuration_id)
 
+    vars_result = None
+    if variables:
+        vars_result = await apply_configuration_variables(client, component_id, configuration_id, variables)
+        if vars_result is not None:
+            await set_cfg_update_metadata(client, component_id, configuration_id, vars_result['version'])
+
     links = links_manager.get_configuration_links(
         component_id=component_id, configuration_id=configuration_id, configuration_name=name
     )
@@ -1129,7 +1206,7 @@ async def create_config(
         component_id=component_id,
         configuration_id=configuration_id,
         description=description,
-        version=new_raw_configuration['version'],
+        version=(vars_result or new_raw_configuration)['version'],
         timestamp=datetime.now(timezone.utc),
         success=True,
         links=links,
@@ -1372,6 +1449,17 @@ async def update_config(
         Optional[str],
         Field(description=folder_field_description('configuration', 'configurations')),
     ] = None,
+    variables: Annotated[
+        Optional[list[VariableDefinition]],
+        Field(
+            description=(
+                'Variable definitions for this configuration. '
+                'Provide a non-empty list to create or replace all variable definitions. '
+                'Provide an empty list ([]) to remove all variables. '
+                'Omit (None) to leave existing variables unchanged.'
+            ),
+        ),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
@@ -1411,6 +1499,7 @@ async def update_config(
     4. Call update_config with only the fields to change
     """
     client = KeboolaClient.from_state(ctx.session.state)
+
     links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(f'Updating configuration for component: {component_id} and configuration ID {configuration_id}.')
@@ -1427,6 +1516,13 @@ async def update_config(
         processors_before=processors_before,
         processors_after=processors_after,
     )
+
+    vars_config_id_to_delete: str | None = None
+    if variables is not None:
+        _, vars_config_id_to_delete = await _apply_vars_to_parent_cfg(
+            client, component_id, configuration_id, variables, configuration_payload
+        )
+
     updated_raw_configuration = await client.storage_client.configuration_update(
         component_id=component_id,
         configuration_id=configuration_id,
@@ -1436,19 +1532,26 @@ async def update_config(
         updated_description=description,
     )
 
-    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
+    if vars_config_id_to_delete:
+        await client.storage_client.configuration_delete(
+            component_id=VARIABLES_COMPONENT_ID,
+            configuration_id=vars_config_id_to_delete,
+            skip_trash=True,
+        )
 
-    await set_cfg_update_metadata(
-        client=client,
-        component_id=component_id,
-        configuration_id=configuration_id,
-        configuration_version=updated_raw_configuration['version'],
-    )
+    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
 
     folder_hint = (
         await apply_folder_metadata(client, component_id, configuration_id, folder, 'configurations', 'update_config')
         if component_id in FOLDER_SUPPORTING_COMPONENT_IDS
         else None
+    )
+
+    await set_cfg_update_metadata(
+        client=client,
+        component_id=component_id,
+        configuration_id=configuration_id,
+        configuration_version=updated_raw_configuration.get('version'),
     )
 
     links = links_manager.get_configuration_links(
@@ -1886,6 +1989,12 @@ async def run_sync_action(
     root_configuration = config_response.configuration
     parameters = root_configuration.get('parameters') or {}
     storage = root_configuration.get('storage') or {}
+    # `runtime` and `authorization` live only on the root configuration in the docker-runner's
+    # contract — rows do not override them. `authorization.oauth_api.id` is a broker reference
+    # that the sync-actions service resolves and decrypts before invoking the component; without
+    # it, OAuth/Service-Account components reject the call with "Missing authorization data".
+    runtime = root_configuration.get('runtime') or {}
+    authorization = root_configuration.get('authorization') or {}
 
     if configuration_row_id:
         row_detail = await client.storage_client.configuration_row_detail(
@@ -1901,6 +2010,10 @@ async def run_sync_action(
         'parameters': parameters,
         'storage': storage,
     }
+    if runtime:
+        config_data['runtime'] = runtime
+    if authorization:
+        config_data['authorization'] = authorization
 
     result = await client.sync_actions_client.execute_action(
         component_id=component_id,

@@ -1,8 +1,10 @@
 import logging
 
+import httpx
 import pytest
 import toon_format
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from integtests.conftest import BucketDef, ConfigDef, TableDef
 from keboola_mcp_server.tools.search import SearchHit, SuggestedComponentOutput
@@ -30,15 +32,15 @@ async def test_search_end_to_end(
     )
     assert full_result.structured_content is not None
     LOG.info(f'result: {full_result.structured_content}')
-    result = [SearchHit.model_validate(hit) for hit in full_result.structured_content['result']]
-    assert len(result) == len(full_result.structured_content['result'])
+    # The search tool returns a SearchOutput envelope: {'hits': [...], 'total', 'by_type', 'branch_scope'}.
+    result = [SearchHit.model_validate(hit) for hit in full_result.structured_content['hits']]
 
     # check validity of the TOON formatted unstructured result
     assert len(full_result.content) == 1
     assert full_result.content[0].type == 'text'
     decoded_toon = toon_format.decode(full_result.content[0].text)
-    assert isinstance(decoded_toon, list)
-    toon_result = [SearchHit.model_validate(hit) for hit in decoded_toon]
+    assert isinstance(decoded_toon, dict)
+    toon_result = [SearchHit.model_validate(hit) for hit in decoded_toon['hits']]
     assert toon_result == result
 
     # filter out data apps that seem to often be left behind in the testing project
@@ -87,7 +89,16 @@ async def test_find_component_id(mcp_client: Client):
     query = 'generic extractor - extract data from many APIs'
     generic_extractor_id = 'ex-generic-v2'
 
-    full_result = await mcp_client.call_tool('find_component_id', {'query': query})
+    try:
+        full_result = await mcp_client.call_tool('find_component_id', {'query': query})
+    except (httpx.ReadTimeout, ToolError) as e:
+        # The AI service backing `find_component_id` can exceed its read timeout in CI. The timeout
+        # surfaces either as a raw httpx.ReadTimeout or, when it round-trips through the MCP tool, as
+        # a ToolError carrying an "...timed out..." message. Tolerate only that timeout signature; any
+        # other ToolError is a real failure and must propagate.
+        if isinstance(e, httpx.ReadTimeout) or 'timed out' in str(e).lower():
+            pytest.xfail(f'AI service exceeded read timeout in CI: {e}')
+        raise
 
     assert full_result.structured_content is not None
     result = full_result.structured_content['result']
@@ -127,7 +138,7 @@ async def test_search_config_based_simple_query(
     )
 
     assert full_result.structured_content is not None
-    result = [SearchHit.model_validate(hit) for hit in full_result.structured_content['result']]
+    result = [SearchHit.model_validate(hit) for hit in full_result.structured_content['hits']]
 
     assert any(
         hit.component_id == 'ex-generic-v2' and hit.configuration_id == config.configuration_id for hit in result

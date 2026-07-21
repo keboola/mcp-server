@@ -3,10 +3,15 @@ import math
 from datetime import datetime
 from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, cast
 
-import httpx
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.clients.base import JsonDict, KeboolaServiceClient, RawKeboolaClient
+from keboola_mcp_server.clients.encryption import (
+    REDACTED_SECRET_VALUE,
+    EncryptionClient,
+    is_encrypted_value,
+    iter_secret_items,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -56,6 +61,22 @@ class GlobalSearchResponse(BaseModel):
         project_id: int = Field(description='The id of the project the item belongs to.', alias='projectId')
         project_name: str = Field(description='The name of the project the item belongs to.', alias='projectName')
         created: datetime = Field(description='The date and time the item was created in ISO format.')
+
+        @property
+        def branch_id(self) -> str | None:
+            """The id of the branch the item belongs to, extracted from the full path."""
+            branch = self.full_path.get('branch')
+            if isinstance(branch, dict) and branch.get('id') is not None:
+                return str(branch['id'])
+            return None
+
+        @property
+        def branch_name(self) -> str | None:
+            """The name of the branch the item belongs to, extracted from the full path."""
+            branch = self.full_path.get('branch')
+            if isinstance(branch, dict) and branch.get('name'):
+                return str(branch['name'])
+            return None
 
     all: int = Field(description='Total number of found results.')
     items: list[Item] = Field(description='List of search results of the GlobalSearchType.')
@@ -283,15 +304,24 @@ class CreateConfigurationAPIResponse(BaseModel):
 
 class AsyncStorageClient(KeboolaServiceClient):
 
-    def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
+    def __init__(
+        self,
+        raw_client: RawKeboolaClient,
+        branch_id: str | None = None,
+        encryption_client: EncryptionClient | None = None,
+    ) -> None:
         """
         Creates an AsyncStorageClient from a RawKeboolaClient and a branch id.
 
         :param raw_client: The raw client to use
         :param branch_id: The id of the Keboola project branch to work on
+        :param encryption_client: The encryption service client used to encrypt '#'-prefixed secret values
+            before they are written to the Storage API. If None, writing a configuration that contains
+            plaintext secrets raises an error (fail-closed).
         """
         super().__init__(raw_client=raw_client)
         self._branch_id: str = branch_id or 'default'
+        self._encryption_client = encryption_client
 
     @classmethod
     def create(
@@ -303,6 +333,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         branch_id: str | None = None,
         headers: dict[str, Any] | None = None,
         readonly: bool | None = None,
+        encryption_client: EncryptionClient | None = None,
     ) -> 'AsyncStorageClient':
         """
         Creates an AsyncStorageClient from a Keboola Storage API token.
@@ -313,6 +344,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param branch_id: The id of the Keboola project branch to work on
         :param headers: Additional headers for the requests
         :param readonly: If True, the client will only use HTTP GET, HEAD operations.
+        :param encryption_client: The encryption service client used to encrypt '#'-prefixed secret values
+            before they are written to the Storage API.
         :return: A new instance of AsyncStorageClient
         """
         return cls(
@@ -323,7 +356,45 @@ class AsyncStorageClient(KeboolaServiceClient):
                 readonly=readonly,
             ),
             branch_id=branch_id,
+            encryption_client=encryption_client,
         )
+
+    async def _encrypt_secrets(self, component_id: str, configuration: dict[str, Any]) -> dict[str, Any]:
+        """
+        Encrypts plaintext '#'-prefixed secret values in the configuration using the Encryption API
+        before the configuration is written to the Storage API. The Storage API does not encrypt
+        '#'-values server-side, so without this step the secrets would be stored in plaintext.
+
+        Fail-closed: if the configuration contains plaintext secrets and they cannot be encrypted,
+        this raises an error rather than letting the plaintext be stored.
+
+        :param component_id: The id of the component the configuration belongs to.
+        :param configuration: The configuration definition as a dictionary.
+        :return: The configuration with all '#'-prefixed values encrypted.
+        """
+        plaintext_keys = [key for key, value in iter_secret_items(configuration) if not is_encrypted_value(value)]
+        if not plaintext_keys:
+            return configuration
+
+        redacted_keys = [key for key, value in iter_secret_items(configuration) if value == REDACTED_SECRET_VALUE]
+        if redacted_keys:
+            raise ValueError(
+                f'The configuration contains redacted secret values for keys: {sorted(set(redacted_keys))}. '
+                f'These are placeholders returned on configuration reads, not the actual secret values. '
+                f'Either leave the existing secret values untouched or ask the user to provide new ones.'
+            )
+
+        if self._encryption_client is None:
+            raise ValueError(
+                f'The configuration contains plaintext secret values for keys: {sorted(set(plaintext_keys))}, '
+                f'but no encryption client is available. Refusing to store secrets in plaintext.'
+            )
+
+        project_id = await self.project_id()
+        encrypted = await self._encryption_client.encrypt(
+            configuration, component_id=component_id, project_id=project_id
+        )
+        return cast(dict[str, Any], encrypted)
 
     async def branches_list(self) -> list[JsonDict]:
         """
@@ -506,7 +577,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         payload = {
             'name': name,
             'description': description,
-            'configuration': configuration,
+            'configuration': await self._encrypt_secrets(component_id, configuration),
         }
         return cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
 
@@ -562,23 +633,23 @@ class AsyncStorageClient(KeboolaServiceClient):
         metadata_keys: list[str] | None = None,
     ) -> list[JsonDict]:
         """
-        Searches component configurations by metadata keys.
+        Searches component configurations by component and metadata keys.
+        All filters are applied server-side by the SAPI search endpoint.
 
         :param component_id: Optional component ID to filter results.
         :param metadata_keys: List of metadata keys to filter by — returns only configurations
             that have at least one of the specified metadata keys set.
         :return: List of matching configurations as dictionaries.
         """
-        if not metadata_keys:
+        if not (component_id or metadata_keys):
             return []
         endpoint = f'branch/{self._branch_id}/search/component-configurations'
         params: dict[str, Any] = {}
-        for i, key in enumerate(metadata_keys):
-            params[f'metadataKeys[{i}]'] = key
-        results = cast(list[JsonDict], await self.get(endpoint=endpoint, params=params))
         if component_id:
-            results = [r for r in results if r.get('componentId') == component_id]
-        return results
+            params['componentId'] = component_id
+        for i, key in enumerate(metadata_keys or []):
+            params[f'metadataKeys[{i}]'] = key
+        return cast(list[JsonDict], await self.get(endpoint=endpoint, params=params))
 
     async def configuration_metadata_get(self, component_id: str, configuration_id: str) -> list[JsonDict]:
         """
@@ -647,7 +718,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
 
         payload: dict[str, Any] = {
-            'configuration': configuration,
+            'configuration': await self._encrypt_secrets(component_id, configuration),
             'changeDescription': change_description,
         }
         if updated_name:
@@ -682,7 +753,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         payload = {
             'name': name,
             'description': description,
-            'configuration': configuration,
+            'configuration': await self._encrypt_secrets(component_id, configuration),
         }
 
         return cast(
@@ -721,7 +792,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
 
         payload: dict[str, Any] = {
-            'configuration': configuration,
+            'configuration': await self._encrypt_secrets(component_id, configuration),
             'changeDescription': change_description,
         }
         if updated_name:
@@ -790,16 +861,19 @@ class AsyncStorageClient(KeboolaServiceClient):
         limit: int = 100,
         offset: int = 0,
         types: Sequence[ItemType] = tuple(),
+        branch_scope: Literal['current', 'all'] = 'current',
     ) -> GlobalSearchResponse:
         """
-        Searches for items in the storage. It allows you to search for entities by name across all projects within an
-        organization, even those you do not have direct access to. The search is conducted only through entity names to
-        ensure confidentiality. We restrict the search to the project and branch production type of the user.
+        Searches for items in the storage by name. The search is conducted only through entity names to ensure
+        confidentiality. The request is always scoped to the current project via `projectIds[]`.
 
         :param query: The query to search for.
         :param limit: The maximum number of items to return.
         :param offset: The offset to start from, pagination parameter.
         :param types: The types of items to search for.
+        :param branch_scope: 'current' restricts the search to the branch this client operates on
+            (production branches on the default branch, the specific dev branch otherwise);
+            'all' searches the whole project across all branches.
         """
         params: dict[str, Any] = {
             'query': query,
@@ -808,11 +882,12 @@ class AsyncStorageClient(KeboolaServiceClient):
             'limit': limit,
             'offset': offset,
         }
-        if self._branch_id == 'default':
-            params['branchTypes[]'] = 'production'
-        else:
-            params['branchTypes[]'] = 'development'
-            params['branchIds[]'] = self._branch_id
+        if branch_scope == 'current':
+            if self._branch_id == 'default':
+                params['branchTypes[]'] = 'production'
+            else:
+                params['branchTypes[]'] = 'development'
+                params['branchIds[]'] = self._branch_id
         params = {k: v for k, v in params.items() if v}
         raw_resp = await self.get(endpoint='global-search', params=params)
         return GlobalSearchResponse.model_validate(raw_resp)
@@ -985,28 +1060,6 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         return cast(JsonDict, await self.get(endpoint=f'branch/{self._branch_id}/workspaces/{workspace_id}'))
 
-    # TODO: The /v2/storage/branch/{self._branch_id}/workspaces/{workspace_id}/query endpoint is deprecated
-    #  and replaced by QueryService.
-    #  Unfortunately the QueryService supports only Snowflake backends. We use it in _SnowflakeWorkspace implementation,
-    #  but not in _BigQueryWorkspace implementation, which still uses this function.
-    async def workspace_query(self, workspace_id: int, query: str, timeout: httpx.Timeout | None = None) -> JsonDict:
-        """
-        Executes a query in a given workspace.
-
-        :param workspace_id: The id of the workspace
-        :param query: The query to execute
-        :param timeout: Optional per-call timeout override; falls back to the client default when None
-        :return: The SAPI call response - query result or raise an error.
-        """
-        return cast(
-            JsonDict,
-            await self.post(
-                endpoint=f'branch/{self._branch_id}/workspaces/{workspace_id}/query',
-                data={'query': query},
-                timeout=timeout,
-            ),
-        )
-
     async def workspace_list(self) -> list[JsonDict]:
         """
         Lists all workspaces in the project.
@@ -1014,6 +1067,25 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: List of workspaces
         """
         return cast(list[JsonDict], await self.get(endpoint=f'branch/{self._branch_id}/workspaces'))
+
+    async def workspace_list_for_config(self, component_id: str, config_id: str) -> list[JsonDict]:
+        """
+        Lists the workspaces belonging to a single component configuration.
+
+        Thin wrapper for GET /branch/{branch_id}/components/{component_id}/configs/{config_id}/workspaces.
+        Scoped to one config, so it needs only that config's read access — no project-wide
+        workspace listing.
+
+        :param component_id: The id of the component.
+        :param config_id: The id of the configuration.
+        :return: List of workspaces for the configuration.
+        """
+        return cast(
+            list[JsonDict],
+            await self.get(
+                endpoint=f'branch/{self._branch_id}/components/{component_id}/configs/{config_id}/workspaces'
+            ),
+        )
 
     async def verify_token(self) -> JsonDict:
         """

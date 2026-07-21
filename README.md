@@ -463,12 +463,13 @@ VsCode or Cursor to check the code or run tests during development.
 To run integration tests locally, use `uv run tox -e integtests`.
 NOTE: You will need to set the following environment variables:
 
-- `INTEGTEST_STORAGE_API_URL`
+- `INTEGTEST_POOL_STORAGE_API_URL`
 - `INTEGTEST_STORAGE_TOKENS`
-- `INTEGTEST_WORKSPACE_SCHEMAS`
+- `INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES`
 
-In order to get these values, you need a dedicated Keboola project for integration tests.
-See `integtests/README.md` for detailed setup instructions and design documentation.
+In order to get these values, you need dedicated Keboola projects for integration tests.
+Each test session creates its own read-only workspace, so no workspace schema needs to be
+configured. See `integtests/README.md` for detailed setup instructions and design documentation.
 
 ### Updating `uv.lock`
 
@@ -482,6 +483,22 @@ When you make changes to any tool descriptions (docstrings in tool functions), y
 ```bash
 uv run python -m src.keboola_mcp_server.generate_tool_docs
 ```
+
+### Releasing
+
+We do **not** cut a release for every merged PR. Work lands on the trunk (`main`)
+continuously, and we release periodically once changes have been re-tested together —
+this avoids breaking working setups for users.
+
+A release is made by pushing **one or two git tags**:
+
+- `vX.Y.Z` — the MCP server release (always)
+- `agent-vX.Y.Z` — the In Platform Agent release (only when the agent is being released too)
+
+Either tag triggers `release.yml` CI, which builds and publishes the Docker image. KaiBench
+runs only on production `vX.Y.Z` tags (not `agent-vX.Y.Z`, and not `-dev.` prereleases). Use
+the `release-notes` skill — it prepares the release notes and draft PR and walks through
+tagging both `vX.Y.Z` and `agent-vX.Y.Z`.
 
 ## Support and Feedback
 

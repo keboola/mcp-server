@@ -38,11 +38,16 @@ name or description.
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
 ### Other Tools
-- [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
-and the configuration ID.
+- [create_python_js_data_app_git_credential](#create_python_js_data_app_git_credential): Mints a one-time HTTPS token on a python-js **prod** data app so the caller can clone, pull,
+and push to the app's managed git repo over HTTPS.
+- [delete_python_js_data_app_draft](#delete_python_js_data_app_draft): Deletes a python-js DRAFT data app — both the data-app instance (DSAPI) and its Storage
+configuration.
+- [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
+action and the configuration ID.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
-- [modify_data_app](#modify_data_app): Creates or updates a Streamlit data app.
+- [modify_python_js_data_app](#modify_python_js_data_app): Creates or updates a python-js data app.
+- [modify_streamlit_data_app](#modify_streamlit_data_app): Creates or updates a Streamlit data app.
 
 ### Project Tools
 - [get_project_info](#get_project_info): Retrieves structured information about the current project,
@@ -204,6 +209,42 @@ EXAMPLES:
 **Input JSON Schema**:
 ```json
 {
+  "$defs": {
+    "VariableDefinition": {
+      "description": "A single variable definition to attach to a configuration.",
+      "properties": {
+        "name": {
+          "description": "Variable name.",
+          "type": "string"
+        },
+        "type": {
+          "default": "string",
+          "description": "Variable type: \"string\" or \"vault\".",
+          "enum": [
+            "string",
+            "vault"
+          ],
+          "type": "string"
+        },
+        "default_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional default value bound at creation time."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "name": {
@@ -246,6 +287,21 @@ EXAMPLES:
         "type": "object"
       },
       "type": "array"
+    },
+    "variables": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/VariableDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Variable definitions to attach to this configuration. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value. On creation, both `None` (omitted) and `[]` (empty list) mean \"do not attach variables\" \u2014 no `keboola.variables` config is created. To remove variables from an existing configuration, use `update_config` with `variables=[]`."
     }
   },
   "required": [
@@ -320,6 +376,40 @@ EXAMPLES:
         "script"
       ],
       "type": "object"
+    },
+    "VariableDefinition": {
+      "description": "A single variable definition to attach to a configuration.",
+      "properties": {
+        "name": {
+          "description": "Variable name.",
+          "type": "string"
+        },
+        "type": {
+          "default": "string",
+          "description": "Variable type: \"string\" or \"vault\".",
+          "enum": [
+            "string",
+            "vault"
+          ],
+          "type": "string"
+        },
+        "default_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional default value bound at creation time."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -351,6 +441,21 @@ EXAMPLES:
       "default": "",
       "description": "Folder name to organize this transformation in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose.",
       "type": "string"
+    },
+    "variables": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/VariableDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Variable definitions to attach to this transformation. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value. On creation, both `None` (omitted) and `[]` (empty list) mean \"do not attach variables\" \u2014 no `keboola.variables` config is created. To remove variables from an existing transformation, use `update_sql_transformation` with `variables=[]`."
     }
   },
   "required": [
@@ -671,8 +776,7 @@ WORKFLOW:
           "type": "string"
         },
         "value": {
-          "description": "Value to append to the list",
-          "title": "Value"
+          "description": "Value to append to the list"
         }
       },
       "required": [
@@ -740,14 +844,47 @@ WORKFLOW:
           "type": "string"
         },
         "value": {
-          "description": "New value to set",
-          "title": "Value"
+          "description": "New value to set"
         }
       },
       "required": [
         "op",
         "path",
         "value"
+      ],
+      "type": "object"
+    },
+    "VariableDefinition": {
+      "description": "A single variable definition to attach to a configuration.",
+      "properties": {
+        "name": {
+          "description": "Variable name.",
+          "type": "string"
+        },
+        "type": {
+          "default": "string",
+          "description": "Variable type: \"string\" or \"vault\".",
+          "enum": [
+            "string",
+            "vault"
+          ],
+          "type": "string"
+        },
+        "default_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional default value bound at creation time."
+        }
+      },
+      "required": [
+        "name"
       ],
       "type": "object"
     }
@@ -841,6 +978,21 @@ WORKFLOW:
       ],
       "default": null,
       "description": "Folder name to organize this configuration in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more configurations in the project. If there are 20 or more configurations, you should assign one of the existing folders or create a new one that clearly reflects the configuration purpose."
+    },
+    "variables": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/VariableDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Variable definitions for this configuration. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged."
     }
   },
   "required": [
@@ -916,8 +1068,7 @@ WORKFLOW:
           "type": "string"
         },
         "value": {
-          "description": "Value to append to the list",
-          "title": "Value"
+          "description": "Value to append to the list"
         }
       },
       "required": [
@@ -985,8 +1136,7 @@ WORKFLOW:
           "type": "string"
         },
         "value": {
-          "description": "New value to set",
-          "title": "Value"
+          "description": "New value to set"
         }
       },
       "required": [
@@ -1119,6 +1269,7 @@ the operations you want to perform. All other fields will remain unchanged.
 Use this for modifying SQL transformations created with create_sql_transformation.
 
 WHEN TO USE:
+- SQL transformations only (Snowflake/BigQuery); use update_config for Python/R transformations
 - Modifying SQL queries in transformation (add/edit/remove SQL statements)
 - Updating transformation block or code block names
 - Changing input/output table mappings for the transformation
@@ -1603,6 +1754,40 @@ Example 4 - Update storage mappings:
         "replace_with"
       ],
       "type": "object"
+    },
+    "VariableDefinition": {
+      "description": "A single variable definition to attach to a configuration.",
+      "properties": {
+        "name": {
+          "description": "Variable name.",
+          "type": "string"
+        },
+        "type": {
+          "default": "string",
+          "description": "Variable type: \"string\" or \"vault\".",
+          "enum": [
+            "string",
+            "vault"
+          ],
+          "type": "string"
+        },
+        "default_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional default value bound at creation time."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -1692,6 +1877,21 @@ Example 4 - Update storage mappings:
       ],
       "default": null,
       "description": "Folder name to organize this transformation in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more transformations in the project. If there are 20 or more transformations, you should assign one of the existing folders or create a new one that clearly reflects the transformation purpose."
+    },
+    "variables": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/VariableDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Variable definitions for this transformation. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged."
     }
   },
   "required": [
@@ -1705,6 +1905,122 @@ Example 4 - Update storage mappings:
 ---
 
 # Other Tools
+<a name="create_python_js_data_app_git_credential"></a>
+## create_python_js_data_app_git_credential
+**Annotations**: 
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Mints a one-time HTTPS token on a python-js **prod** data app so the caller can clone, pull,
+and push to the app's managed git repo over HTTPS.
+
+**Always call against the prod app's configuration_id** — drafts have no managed repo of their
+own, so calling this on a draft fails. The prod app is the canonical repo owner; drafts
+iterate against branches of that same repo.
+
+**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
+branch-delete — is yours. This tool only mints credentials.
+
+Returns a ready-to-use `git_clone_url` of the form `https://kai:<secret>@<host>/<path>.git`
+plus the raw `secret`. The token is returned **only** at creation — the platform cannot return
+it again on any subsequent read. Stash the URL (or the secret) somewhere the LLM can reuse for
+the rest of the session.
+
+The data-science API accepts multiple credentials per app, so calling this again mints an
+additional token without invalidating any tokens already held by other clients.
+
+## When to call
+
+1. **Right after `modify_python_js_data_app` create of a prod app** — the new prod has a
+   managed repo but no credentials yet. Call this tool with the new app's `configuration_id`
+   to enable git access. (Note: when creating a **draft**, the prod-side token is minted and
+   embedded into the returned `git_clone_url` automatically — no separate call needed.)
+
+2. **Recovery when the cached token is gone / continuing an unfinished draft** — e.g., a fresh
+   sandbox continuing yesterday's work, with the previous sandbox's filesystem wiped. The
+   cached `git_clone_url` is lost; the configuration ID for the prod app is all you have.
+   Call this tool with the **prod app's** `configuration_id` to mint a fresh token (drafts
+   have no managed repo, so always mint against prod). Existing credentials remain valid, so
+   other clients are not disrupted.
+
+## Constraints
+- Only python-js prod data apps have a managed git repo. Streamlit apps reject the call with
+  a clear error.
+- Permissions are always `readWrite` — the LLM virtually always needs push access. The
+  data-science API supports read-only credentials, but the tool does not expose that knob;
+  revisit once a real use case appears.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "configuration_id": {
+      "description": "Storage configuration ID of the python-js data app.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="delete_python_js_data_app_draft"></a>
+## delete_python_js_data_app_draft
+**Annotations**: `destructive`
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Deletes a python-js DRAFT data app — both the data-app instance (DSAPI) and its Storage
+configuration.
+
+**MCP never runs git on your behalf.** Deleting the feature branch on the remote is your job;
+this tool only tears down the draft config and its data-app instance.
+
+WHEN TO CALL: at the end of a promote-to-prod sequence, after you have merged the draft's
+branch into `main`, pushed, deleted the feature branch from the remote, and redeployed the
+prod app. The Keboola UI lists drafts under their parent prod app; once you call this tool,
+the draft disappears from that list.
+
+WHAT THIS TOOL REFUSES:
+  - prod apps (no `isDraft` flag) — protects against accidental prod deletion;
+  - Streamlit apps — they have no draft concept.
+
+WHAT THIS TOOL DOES NOT DO:
+  - Run git. Deleting the feature branch on the remote is your job.
+  - Revoke the prod-side git credential minted when the draft was created. Credential
+    rotation is the user's job via the Keboola UI.
+
+After a successful call, pivot back to the parent prod app (its configuration_id is returned
+in the response) or to `get_data_apps` for further work.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "configuration_id": {
+      "description": "Storage configuration ID of the python-js draft data app to delete.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
 <a name="deploy_data_app"></a>
 ## deploy_data_app
 **Annotations**: 
@@ -1713,13 +2029,33 @@ Example 4 - Update storage mappings:
 
 **Description**:
 
-Deploys/redeploys a data app or stops running data app in the Keboola environment asynchronously given the action
-and the configuration ID.
+Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
+action and the configuration ID.
 
-Considerations:
-- Redeploying a data app takes some time, and the app temporarily may have status "stopped" during this process
-because it needs to restart.
-- After deployment, the deployment info includes the app URL and the latest logs to diagnose in-app errors.
+**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
+branch-delete — is yours. This tool only triggers deploys against existing git state.
+
+## Mode (python-js apps)
+- `mode='dev'` deploys the target as a **dev version of the data app** — the runtime uses a
+  development `setup.sh` (hot reload) and the data-app proxy enables an auto-auth path so an
+  iframe preview can render without a manual login. Only meaningful on **draft** configs
+  (python-js apps with `isDraft=true`).
+- For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
+  the prod app picks up the current `main`.
+- The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
+  there is no deploy-time override.
+- python-js apps do NOT fetch a Storage `configVersion` for deployment (their source lives in
+  git, not in the Storage configuration); this is handled automatically.
+
+## Streamlit apps
+Streamlit apps have no managed git repo, so `mode` has no effect on the deployed app.
+`mode=None` is the expected call shape.
+
+## General considerations
+- Redeploying a data app takes some time, and the app may temporarily report status "stopped" during the
+  restart.
+- After deployment, the deployment info includes the app URL and the latest logs to help diagnose in-app
+  errors.
 
 
 **Input JSON Schema**:
@@ -1738,6 +2074,22 @@ because it needs to restart.
     "configuration_id": {
       "description": "The ID of the data app configuration.",
       "type": "string"
+    },
+    "mode": {
+      "anyOf": [
+        {
+          "enum": [
+            "dev",
+            "production"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Deployment mode. Set to \"dev\" to deploy a python-js draft as a **dev version of the data app** \u2014 the runtime uses a development `setup.sh` (hot reload), and the data-app proxy enables an auto-auth path so an iframe preview can render without a manual login. Only meaningful on **draft** configs (python-js apps with `isDraft=true`). Leave None (default) for prod redeploys and for Streamlit apps."
     }
   },
   "required": [
@@ -1770,6 +2122,20 @@ Considerations:
 - If no configuration_ids are provided, the tool will list all data apps in the project given the limit and offset.
 - Data App detail contains configuration, metadata, source code, links, and deployment info along with the latest
 data app logs to investigate in-app errors. The logs may be updated after opening the data app URL.
+- `deployment_info.last_run` carries the outcome of the most recent deployment attempt. For an app
+  that fails to start, check its `failure_reason`/`failure_message` FIRST — they cover setup-phase
+  failures (e.g. invalid secrets, git clone errors, failing setup scripts) that happen before the
+  container starts and therefore never appear in the regular logs.
+- `repo_url` (managed git repo URL for python-js apps) is ONLY populated on the detail path
+  (when `configuration_ids` is provided). The inventory list always returns `repo_url=None`,
+  even for python-js apps with a managed repo — to retrieve the URL, call this tool again
+  with the target `configuration_ids`.
+- When called with `configuration_ids=[<prod-cfg>]` for a python-js **prod** app, the response
+  includes a `drafts: [...]` array of every draft (configs with `isDraft=true` and
+  `parentConfigurationId == <prod-cfg>`) currently in the project. Drafts in trash are not
+  included. Use this to discover existing drafts when continuing a previously abandoned
+  iteration (Scenario C in `modify_python_js_data_app`). The array is empty for drafts
+  themselves and for Streamlit apps.
 
 
 **Input JSON Schema**:
@@ -1801,8 +2167,223 @@ data app logs to investigate in-app errors. The logs may be updated after openin
 ```
 
 ---
-<a name="modify_data_app"></a>
-## modify_data_app
+<a name="modify_python_js_data_app"></a>
+## modify_python_js_data_app
+**Annotations**: `destructive`
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Creates or updates a python-js data app.
+
+Two-app project model. Every python-js project has a persistent **prod app** that owns the
+only managed git repository for the project, and zero or more **drafts** parented to that
+prod app. A draft is a Storage configuration with `parameters.dataApp.isDraft=true` and
+`parameters.dataApp.parentConfigurationId=<prod cfg id>`; it's an *external-git* app that
+clones the parent prod's repo at a pinned branch on every deploy. Drafts are surfaced in the
+Keboola UI under their parent prod app. Use `deploy_data_app(mode='dev')` to deploy a draft
+as a dev version of the data app (hot reload + auto-auth for iframe preview); use
+`delete_python_js_data_app_draft` to tear a draft down after its branch has been promoted.
+
+**MCP never runs git on your behalf.** All git work — clone, branch, commit, push, merge,
+branch-delete — is yours. MCP gives you authenticated clone URLs and manages configs/deploys;
+it never invokes git.
+
+**The draft flow below is mandatory — never edit prod source directly.** Every source-code
+change goes through a draft branch that the user previews and explicitly approves first. NEVER
+push directly to `main`: `main` only ever advances by merging an approved draft branch, and
+only after the user has approved that draft's preview.
+
+Three scenarios the agent has to distinguish:
+
+## Scenario A — Create a brand-new data app
+
+1. `modify_python_js_data_app(slug='demo')` → `(configuration_id=PROD, repo_url=R)`.
+   PROD owns the only managed repo for this app.
+2. `modify_python_js_data_app(slug='demo-draft', parent_configuration_id=PROD)`
+   → `(configuration_id=DRAFT, repo_url=R, git_clone_url=U, branch='init')`.
+   Default draft branch is `'init'`. Override with `branch=<name>` for a descriptive name.
+3. YOU: `git clone U`; `git checkout init` (creating it if the repo is empty); write source;
+   `git push origin init`.
+4. `deploy_data_app(action='deploy', configuration_id=DRAFT, mode='dev')`
+   → preview URL serving the `init` branch as a dev version. Iterate with the user.
+5. Once approved — YOU: `git checkout main`; `git merge init`; `git push origin main`;
+   `git push origin --delete init`.
+6. `deploy_data_app(action='deploy', configuration_id=PROD)`
+   → prod URL now serves the merged `main`.
+7. `delete_python_js_data_app_draft(configuration_id=DRAFT)`
+   → tears down the draft's config + data-app instance. Always run this once promoted.
+
+## Scenario B — Edit an existing data app
+
+You already have PROD's `configuration_id` (from `get_data_apps` or earlier conversation).
+
+1. `create_python_js_data_app_git_credential(configuration_id=PROD)`
+   → fresh `git_clone_url U` with an embedded one-time token.
+2. `modify_python_js_data_app(
+        slug='demo-draft-<short suffix>',
+        parent_configuration_id=PROD,
+        branch='<describes-the-change>',   # e.g. 'add-revenue-filter'
+   )` → `(DRAFT, R, U2, branch)`. Use U2 (it has its own fresh token).
+3. YOU: `git clone U2`; `git checkout <branch>` (creating it from `main`); edit source;
+   `git push origin <branch>`.
+4–7. Same as Scenario A steps 4–7.
+
+## Scenario C — Continue an unfinished draft
+
+The previous sandbox is gone. You have PROD's `configuration_id` but no working clone and no
+draft handle.
+
+1. `get_data_apps(configuration_ids=[PROD])` → returns PROD's detail including `drafts: [...]`.
+   Pick the draft the user means (ask if multiple and unclear). Each entry exposes its
+   `configuration_id`, slug, and pinned branch.
+2. `create_python_js_data_app_git_credential(configuration_id=PROD)`
+   → fresh `git_clone_url U` (the previous one was minted in a wiped sandbox and is lost).
+   Drafts have no managed repo of their own — always mint against PROD.
+3. YOU: `git clone U`; `git checkout <draft's pinned branch>`; resume work; `git push`.
+4. `deploy_data_app(action='deploy', configuration_id=<DRAFT>, mode='dev')` → preview URL.
+   The draft's branch is already pinned in its config.
+5–7. Same promote/cleanup sequence as Scenario A steps 5–7.
+
+## Argument rules
+
+- `parent_configuration_id` is **create-only**. Rejected on update.
+- `branch` on **create** is only valid when `parent_configuration_id` is set (pins the new
+  draft's branch). Defaults to `'init'`. Must not be `'main'`. Rejected on prod create.
+  On **update** `branch` repoints an existing **external-git** app's pinned branch (see below).
+- `slug` is required on create and immutable after.
+- The **update path** (passing `configuration_id`) is for changing `name`, `description`,
+  `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or
+  a draft, and for repointing an **external-git** app's `branch` (a draft, or an app bound
+  to an external repository — an app on a Keboola-managed git repo is rejected, its branch
+  is owned by the platform). Source code changes go through the git flow above, not this
+  tool. After a `branch` repoint, call `deploy_data_app` to serve the new branch.
+
+## Authentication
+
+New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
+to expose publicly. On update, `authentication_type='default'` preserves the existing
+`authorization` block (including OIDC setups configured outside the MCP); `'basic-auth'` /
+`'no-auth'` overwrite it.
+
+## Slug constraint
+
+Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). For drafts, append a
+short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its drafts.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "description": "Name of the data app (max ~50 chars to fit DNS label limit).",
+      "type": "string"
+    },
+    "description": {
+      "description": "Description of the data app.",
+      "type": "string"
+    },
+    "configuration_id": {
+      "default": "",
+      "description": "The ID of existing data app configuration when updating, otherwise empty string.",
+      "type": "string"
+    },
+    "change_description": {
+      "default": "",
+      "description": "The description of the change when updating (e.g. \"Bump image\"), otherwise empty string.",
+      "type": "string"
+    },
+    "slug": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "URL-safe slug for the data app (used as a subdomain). Required when creating; immutable after."
+    },
+    "parent_configuration_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Storage configuration ID of the prod python-js data app this draft will iterate against. When set on create, the new app is created as a **draft**: no managed repo is provisioned for it; instead its `parameters.dataApp.git` block is populated to point at the prod app's managed repo, with a freshly-minted prod-app HTTPS token and the chosen draft branch. Leave None on create to make a **prod app** (which gets its own managed repo). Rejected on update."
+    },
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to `init` when unset (a sensible name for the first draft of a brand-new prod app). For subsequent edit-existing drafts, pass a descriptive name like 'add-revenue-filter'. Must not be `main` (reserved for the prod app). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
+    },
+    "authentication_type": {
+      "default": "default",
+      "description": "Authentication type. \"no-auth\" removes authentication completely, \"basic-auth\" secures the data app via HTTP basic authentication, and \"default\" means: on create, apply basic auth (safe default for new apps); on update, keep the existing authentication configuration (including OIDC setups configured outside the MCP).",
+      "enum": [
+        "no-auth",
+        "basic-auth",
+        "default"
+      ],
+      "type": "string"
+    },
+    "auto_suspend_after_seconds": {
+      "default": 900,
+      "description": "Number of seconds after which the running data app is automatically suspended.",
+      "type": "integer"
+    },
+    "storage": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Complete storage configuration for the data app (input/output table mappings). Validated against the storage JSON schema. Replaces the ENTIRE storage block when updating an existing app. For data apps with Storage Access, declare output tables with `unload_strategy: \"direct-grant\"` (in that case `source` is not required and the workspace is granted direct SELECT/INSERT/UPDATE/DELETE/TRUNCATE on the destination Storage table). Leave unset (None) to preserve the existing storage configuration; pass an empty dict to explicitly clear it."
+    },
+    "folder": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Folder name to organize this data app in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose."
+    }
+  },
+  "required": [
+    "name",
+    "description"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="modify_streamlit_data_app"></a>
+## modify_streamlit_data_app
 **Annotations**: `destructive`
 
 **Tags**: `config-diff-preview, data-apps`
@@ -2907,12 +3488,15 @@ in the current project and returns matching ID + metadata.
 This tool supports two complementary search types:
 
 1) textual
-- Searches item metadata fields by matching patterns against id, name, displayName, and description.
-- For tables, also searches column names and column descriptions.
+- Searches items by name, server-side (fast, independent of project size).
+- Tokenized full-text name matching, case- and diacritics-insensitive. Pass the plain name; do NOT build
+  regex (rejected). It is NOT typo-corrected — misspellings may not match.
+- Prefers the current branch context; when nothing is found there, automatically widens the search to all
+  branches of the project — such hits carry `branch_id`/`branch_name` so you can tell where they live.
 
 2) config-based
 - Searches item configurations (JSON objects) by matching patterns against the configuration values ​​converted
-to a string, optionally narrowed by JSON path `scopes`.
+  to a string, optionally narrowed by JSON path `scopes`.
 - Returns also `match_scopes` with JSON paths and matched patterns per scope.
 
 THIS IS THE PRIMARY DISCOVERY TOOL. Always use it BEFORE any get_* tool when you need to find items
@@ -2935,26 +3519,33 @@ data-apps, flows, or transformations
 
 HOW IT WORKS:
 - Supports two types:
-  - search_type="textual": matches against id, name, displayName, and description, for tables also column names
-  and column descriptions
+  - search_type="textual": tokenized full-text name search, server-side. Names only — descriptions, column
+    names, IDs and configuration contents are NOT searched (use config-based search for configuration contents,
+    or get_tables for columns). Matching is case- and diacritics-insensitive but NOT typo-corrected.
   - search_type="config-based": matches inside configuration JSON objects, optionally narrowed by JSON path `scopes`
 - case-insensitive search
-- mode for pattern search: `literal` (default) or `regex`
+- mode for pattern search: applies to config-based only — `literal` (default) or `regex`. Textual search ignores
+  `mode` (always full-text) and rejects `regex`.
 - Multiple patterns work as OR condition - matches items containing ANY of the patterns
-- Each result includes the item's ID, name, creation date, and relevant metadata
+- Each result includes the item's ID, name, creation date, and relevant metadata; the response also carries
+  `total` and `by_type` counts and the `branch_scope` the hits come from
+- textual search prefers the current branch; on zero hits it automatically retries across all branches of the
+  project and marks the response with branch_scope="all-branches"
 - scopes (config-based) narrow matching to specific JSONPath areas within configurations; matching is performed
-against the stringified JSON node content in those areas.
+  against the stringified JSON node content in those areas.
 - config-based always returns all matched paths per item in `match_scopes` (including matched patterns)
 
 IMPORTANT:
 - Always use this tool when the user mentions a name but you don't have the exact ID
 - The search returns IDs that you can use with other tools (e.g., get_tables, get_configs, get_flows)
-- Results are ordered by update time. The most recently updated items are returned first.
-- Fill `item_types` to make the search more efficient when you know the item type; scanning buckets and tables can
-be expensive
+- Results are ordered by the `updated` field, most recent first. `updated` is the item's last update time
+  when available, or its creation time otherwise (textual/global-search hits expose only the creation time).
+- Textual search matches names only, with tokenized full-text matching (case/diacritics-insensitive; not
+  typo-corrected; no regex). It may not return every item the legacy enumeration did. To find items by
+  description or by table column, use get_tables; to find items by configuration content, use config-based search.
 - For exact ID lookups, use specific tools like get_tables, get_configs, get_flows instead
 - Use specific `scopes` only when you know the config structure (schema or real example); otherwise run config-based
-search without scopes.
+  search without scopes.
 - Use find_component_id and get_configs tools to find configurations related to a specific component
 - If results are too numerous or empty, ask the user to refine their query rather than enumerating all items.
 
@@ -2962,23 +3553,19 @@ USAGE EXAMPLES:
 1) textual search examples:
 - user_input: "Find all tables with 'customer' in the name"
     → patterns=["customer"], item_types=["table"]
-    → Returns all tables whose id, name, displayName, or description contains "customer"
-
-- user_input: "Find tables with 'email' column"
-    → patterns=["email"], item_types=["table"]
-    → Returns all tables that have a column named "email" or with "email" in column description
+    → Returns all tables whose name matches "customer"
 
 - user_input: "Search for the sales transformation"
     → patterns=["sales"], item_types=["transformation"]
-    → Returns transformations with "sales" in any searchable field
+    → Returns transformations with "sales" in the name
 
 - user_input: "Find items named 'daily report' or 'weekly summary'"
-    → patterns=["daily.*report", "weekly.*summary"], item_types=[], mode="regex"
+    → patterns=["daily report", "weekly summary"], item_types=[]
     → Returns all items matching any of these patterns
 
 - user_input: "Show me all configurations related to Google Analytics"
-    → patterns=["google.*analytics"], item_types=["configuration"], mode="regex"
-    → Returns configurations with matching patterns
+    → patterns=["google analytics"], item_types=["configuration"]
+    → Returns configurations with matching names
 
 2) config-based search examples:
 - user_input: "Find transformations/configs/components referencing table in.c-prod.customers"
@@ -3026,7 +3613,7 @@ scopes=["storage"]
   "additionalProperties": false,
   "properties": {
     "patterns": {
-      "description": "One or more search patterns to match against item ID, name, display name, description, or configuration JSON objects. Case-insensitive by default. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"my_bucket\"]. Do not use empty strings or empty lists.",
+      "description": "One or more search patterns. For textual search they match item names (server-side, tokenized full-text); for config-based search they match the configuration JSON content. Case-insensitive by default. Examples: [\"customer\"], [\"sales\", \"revenue\"], [\"my_bucket\"]. Do not use empty strings or empty lists.",
       "items": {
         "type": "string"
       },
@@ -3073,7 +3660,7 @@ scopes=["storage"]
     },
     "mode": {
       "default": "literal",
-      "description": "How to interpret patterns: \"regex\" for regular expressions or \"literal\" for exact text (default: \"literal\").",
+      "description": "How to interpret patterns. Applies to config-based search only: \"regex\" for regular expressions or \"literal\" for exact text (default: \"literal\"). Ignored by textual search, which is always a tokenized full-text name query (not typo-corrected) and rejects \"regex\".",
       "enum": [
         "regex",
         "literal"

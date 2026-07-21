@@ -29,7 +29,10 @@ _OAUTH_LOG_ALL = bool(os.getenv('KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL'))
 _RE_LOCALHOST = re.compile(r'^(localhost|127\.0\.0\.1|\[::1]|::1)$', re.IGNORECASE)
 _ALLOWED_DOMAINS = {
     'https': [
-        re.compile(r'^.+\.keboola\.(com|dev)$', re.IGNORECASE),
+        # Any keboola.com/dev subdomain EXCEPT user-deployable data-app subdomains, which live under a
+        # '*.hub.<stack>.keboola.com' host. A free-trial user can deploy a data app whose '/callback' would
+        # otherwise capture the OAuth code, so we reject any host that contains a 'hub' DNS label (RISK-76).
+        re.compile(r'^(?!(?:.*\.)?hub\.).+\.keboola\.(com|dev)$', re.IGNORECASE),
         re.compile(r'^(.*\.)?chatgpt\.com$', re.IGNORECASE),
         re.compile(r'^(.*\.)?claude\.ai$', re.IGNORECASE),
         re.compile(r'^librechat\.glami-ml\.com$', re.IGNORECASE),  # no subdomains allowed

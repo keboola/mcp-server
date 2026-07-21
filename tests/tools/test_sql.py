@@ -1,16 +1,18 @@
+import asyncio
+import contextlib
 import json
 from typing import Any
-from unittest.mock import call
+from unittest.mock import AsyncMock, MagicMock, Mock, call
 
-import httpx
 import pytest
 from mcp.server.fastmcp import Context
-from pydantic import TypeAdapter
+from mcp.types import ProgressNotification
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
-from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
+from keboola_mcp_server.tools.sql import QueryDataOutput, _watch_for_http_disconnect, query_data
 from keboola_mcp_server.workspace import (
+    JobSubmittedInfo,
     QueryResult,
     SqlSelectData,
     TableFqn,
@@ -84,6 +86,127 @@ async def test_query_data(
     assert result.csv_data == expected_csv
 
 
+@pytest.mark.asyncio
+async def test_query_data_emits_progress_notification_with_job_id(mcp_context_client: Context, mocker):
+    """When the client supplied a progressToken in the original tools/call, query_data must surface
+    the backend job id to the client by sending a `notifications/progress` whose `params._meta`
+    carries `keboola.queryJobId`, the backend name, and the absolute cancel URL. Without this,
+    clients cannot cancel a long-running query out-of-band against Query Service directly.
+    """
+    info = JobSubmittedInfo(
+        job_id='job-xyz',
+        cancellation_url='https://query.keboola.com/api/v1/queries/job-xyz/cancel',
+        backend='snowflake',
+    )
+
+    async def fake_execute_query(sql_query, *, max_rows, max_chars, on_job_submitted=None):
+        if on_job_submitted is not None:
+            await on_job_submitted(info)
+        return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
+
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.execute_query.side_effect = fake_execute_query
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+    mcp_context_client.request_context.meta = mocker.MagicMock()
+    mcp_context_client.request_context.meta.progressToken = 'tkn-1'
+    mcp_context_client.request_context.request_id = 'req-99'
+    mcp_context_client.session.send_notification = AsyncMock()
+
+    await query_data('select 1;', 'q', mcp_context_client)
+
+    # We bypass FastMCP's ctx.send_notification() because it does not set
+    # `related_request_id` -- and without that, the streamable_http router (mcp/server/
+    # streamable_http.py:~1004) cannot route the notification to the originating
+    # tools/call SSE stream in stateless_http mode. The notification gets silently
+    # dropped onto GET_STREAM_KEY. Call the low-level session API with the request id
+    # so the notification reaches the correct response stream.
+    mcp_context_client.session.send_notification.assert_awaited_once()
+    call_args = mcp_context_client.session.send_notification.await_args
+    sent = call_args.args[0]
+    assert (
+        call_args.kwargs.get('related_request_id') == 'req-99'
+    ), f'related_request_id missing or wrong: {call_args.kwargs!r}'
+    # The wrapper is ServerNotification(root=ProgressNotification(...)); both .root and
+    # the wrapper's model_dump should expose the progress notification shape.
+    progress = sent.root if hasattr(sent, 'root') else sent
+    assert isinstance(progress, ProgressNotification)
+    assert progress.params.progressToken == 'tkn-1'
+    on_wire = json.loads(progress.model_dump_json(by_alias=True, exclude_none=True))
+    assert on_wire['method'] == 'notifications/progress'
+    assert on_wire['params']['_meta'] == {
+        'keboola.queryJobId': 'job-xyz',
+        'keboola.backend': 'snowflake',
+        'keboola.cancellationUrl': 'https://query.keboola.com/api/v1/queries/job-xyz/cancel',
+    }
+
+
+@pytest.mark.asyncio
+async def test_query_data_skips_progress_when_no_token(mcp_context_client: Context, mocker):
+    """Per MCP spec, the server must only emit progress notifications when the client provided a
+    progressToken. Without one we must stay silent — sending unsolicited progress can break clients
+    that strictly validate the protocol."""
+
+    async def fake_execute_query(sql_query, *, max_rows, max_chars, on_job_submitted=None):
+        # The tool should not even hand us a callback when no token is set.
+        assert on_job_submitted is None
+        return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
+
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.execute_query.side_effect = fake_execute_query
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+    # empty_context fixture defaults meta to None, which is the "no progressToken" shape.
+    assert mcp_context_client.request_context.meta is None
+    mcp_context_client.session.send_notification = AsyncMock()
+
+    await query_data('select 1;', 'q', mcp_context_client)
+
+    mcp_context_client.session.send_notification.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_query_data_skips_progress_when_request_id_missing(mcp_context_client: Context, mocker, caplog):
+    """If the request id is unavailable, the streamable_http router has no way to attach the
+    notification to the originating tools/call SSE stream — it would silently fall through to
+    GET_STREAM_KEY (which doesn't exist in stateless_http) and be dropped. The notification
+    emitter must detect this and skip emitting, logging a warning so the failure mode is visible
+    instead of swallowed. The underlying query still completes normally.
+
+    Note we null out `request_context.request_id` (not the `ctx.request_id` property, which raises
+    RuntimeError when the context is missing) — that is the field the emitter actually reads.
+    """
+    info = JobSubmittedInfo(job_id='job-no-rid', cancellation_url='https://q/cancel', backend='snowflake')
+
+    async def fake_execute_query(sql_query, *, max_rows, max_chars, on_job_submitted=None):
+        if on_job_submitted is not None:
+            await on_job_submitted(info)
+        return QueryResult(status='ok', data=SqlSelectData(columns=['a'], rows=[{'a': 1}]), message=None)
+
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.execute_query.side_effect = fake_execute_query
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+    mcp_context_client.request_context.meta = mocker.MagicMock()
+    mcp_context_client.request_context.meta.progressToken = 'tkn-1'
+    mcp_context_client.request_context.request_id = None  # the case under test
+    mcp_context_client.session.send_notification = AsyncMock()
+
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger='keboola_mcp_server.tools.sql'):
+        result = await query_data('select 1;', 'q', mcp_context_client)
+
+    # Query itself completes normally — guarding the notification must not abort the call.
+    assert isinstance(result, QueryDataOutput)
+    # No notification was sent (would have been dropped on GET_STREAM_KEY anyway).
+    mcp_context_client.session.send_notification.assert_not_called()
+    # The warning must mention the job id so the operator can correlate against Snowflake.
+    assert any(
+        'job-no-rid' in r.getMessage() and 'request id is unavailable' in r.getMessage() for r in caplog.records
+    ), f'expected warning mentioning job_id and request id; got: {[r.getMessage() for r in caplog.records]}'
+
+
 class TestWorkspaceManagerSnowflake:
 
     @pytest.fixture
@@ -131,20 +254,17 @@ class TestWorkspaceManagerSnowflake:
                 TableFqn(db_name='db_xyz', schema_name='in.c-foo', table_name='bar', quote_char='"'),
             ),
             (
-                # table out.c-baz.bam exported from project 1234
-                # and imported as table in.c-foo.bar in some other project (isAlias=False = regular shared table)
-                # db_name comes from sourceTable.bucket.backendPath[0] — no SQL needed
+                # linked (non-alias) table shared from project 153: Storage propagates the linked
+                # bucket's backendPath onto the table itself, so db_name/schema come from the table's
+                # own bucket.backendPath and the table name from the linked table.
                 {
-                    'id': 'in.c-foo.bar',
-                    'name': 'bar',
-                    'sourceTable': {
-                        'project': {'id': '1234'},
-                        'id': 'out.c-baz.bam',
-                        'isAlias': False,
-                        'bucket': {'id': 'out.c-baz', 'backendPath': ['sapi_1234', 'out.c-baz']},
-                    },
+                    'id': 'in.c-acc.ccc',
+                    'name': 'ccc',
+                    'isAlias': True,
+                    'bucket': {'id': 'in.c-acc', 'backendPath': ['KBC_EUW3_153', 'out.c-acc']},
+                    'sourceTable': {'id': 'out.c-acc.ccc', 'project': {'id': 153}, 'isAlias': False},
                 },
-                TableFqn(db_name='sapi_1234', schema_name='out.c-baz', table_name='bam', quote_char='"'),
+                TableFqn(db_name='KBC_EUW3_153', schema_name='out.c-acc', table_name='ccc', quote_char='"'),
             ),
             (
                 # storage-branches: backendPath present → db_name from backendPath[0]
@@ -165,6 +285,30 @@ class TestWorkspaceManagerSnowflake:
                     'bucket': {'id': 'in.c-shopify', 'backendPath': ['KBC_USE4_3047', 'in.c-shopify']},
                 },
                 TableFqn(db_name='KBC_USE4_3047', schema_name='in.c-shopify', table_name='orders', quote_char='"'),
+            ),
+            (
+                # materialized alias from a linked bucket: the source table is an alias in the source
+                # project (sourceTable.isAlias=True), but with materialized aliases enabled it is
+                # physically present in the shared database. The table's own bucket.backendPath resolves
+                # to that shared db+schema, so the FQN is queryable — db_name/schema from backendPath,
+                # table name from the linked table itself.
+                {
+                    'id': 'in.c-acc.sample_customers_alias',
+                    'name': 'sample_customers_alias',
+                    'isAlias': True,
+                    'bucket': {'id': 'in.c-acc', 'backendPath': ['KBC_EUW3_153', 'out.c-acc']},
+                    'sourceTable': {
+                        'id': 'out.c-acc.sample_customers_alias',
+                        'project': {'id': 153},
+                        'isAlias': True,
+                    },
+                },
+                TableFqn(
+                    db_name='KBC_EUW3_153',
+                    schema_name='out.c-acc',
+                    table_name='sample_customers_alias',
+                    quote_char='"',
+                ),
             ),
         ],
     )
@@ -190,13 +334,13 @@ class TestWorkspaceManagerSnowflake:
         [
             # no backendPath — returns None without any SQL
             {'id': 'in.c-foo.bar', 'name': 'bar'},
-            # alias table (sourceTable.isAlias=True) — blocked at WorkspaceManager level, no SQL
+            # linked alias table without its own bucket.backendPath — not reachable, no FQN
             {
                 'id': 'in.c-foo.bar',
                 'name': 'bar',
                 'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
             },
-            # linked non-alias table — no backendPath in sourceTable → cannot construct FQN
+            # linked non-alias table without its own bucket.backendPath — not reachable, no FQN
             {
                 'id': 'in.c-foo.bar',
                 'name': 'bar',
@@ -402,6 +546,52 @@ class TestWorkspaceManagerSnowflake:
             ]
         )
 
+    @pytest.mark.asyncio
+    async def test_execute_query_max_chars_stops_on_first_rejection(
+        self, keboola_client: KeboolaClient, context: Context, mocker
+    ):
+        """
+        max_chars must yield a contiguous prefix across pages: once a row would exceed the
+        budget, pagination stops — later (smaller) rows that happen to fit must not sneak in.
+        """
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-1234'
+        qsclient.get_job_status.return_value = {
+            'status': 'completed',
+            'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
+        }
+        # Page 1: John (17 chars) fits, Joe (16 chars) does not (17+16=33 > 20) → pagination
+        # must stop here. The page 2 row (5 chars) would fit individually, but appending it
+        # would break the contiguous-prefix semantic and must not happen.
+        qsclient.get_job_results.side_effect = [
+            {
+                'status': 'completed',
+                'data': [[1, 'John', 'john@foo.com'], [2, 'Joe', 'joe@bar.com']],
+                'columns': [{'name': 'id'}, {'name': 'name'}, {'name': 'email'}],
+                'message': None,
+                'numberOfRows': 3,
+            },
+            {
+                'status': 'completed',
+                'data': [[3, 'X', 'x@y']],
+                'columns': [{'name': 'id'}, {'name': 'name'}, {'name': 'email'}],
+                'message': None,
+                'numberOfRows': 3,
+            },
+        ]
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
+        mocker.patch.object(_SnowflakeWorkspace, '_PAGE_SIZE', 2)
+
+        m = WorkspaceManager.from_state(context.session.state)
+        actual = await m.execute_query('select id, name, email from user;', max_chars=20)
+
+        assert actual.data is not None
+        assert actual.data.rows == [{'id': 1, 'name': 'John', 'email': 'john@foo.com'}]
+        # Page 2 must not be fetched once page 1 hit the char budget.
+        qsclient.get_job_results.assert_called_once()
+
 
 class TestWorkspaceManagerBigQuery:
     @pytest.fixture
@@ -437,7 +627,7 @@ class TestWorkspaceManagerBigQuery:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('table', 'expected'),
+        ('table', 'expected', 'expected_identifier'),
         [
             (
                 # storage-branches: backendPath with branch-prefixed dataset name (1 element in BQ)
@@ -447,11 +637,12 @@ class TestWorkspaceManagerBigQuery:
                     'bucket': {'id': 'out.c-model', 'backendPath': ['35403_out_c_model']},
                 },
                 TableFqn(
-                    db_name='project_1234',
+                    db_name='',
                     schema_name='35403_out_c_model',
                     table_name='customers',
                     quote_char='`',
                 ),
+                '`35403_out_c_model`.`customers`',
             ),
             (
                 # production bucket — backendPath is single dataset name
@@ -461,11 +652,12 @@ class TestWorkspaceManagerBigQuery:
                     'bucket': {'id': 'in.c-shopify', 'backendPath': ['in_c_shopify']},
                 },
                 TableFqn(
-                    db_name='project_1234',
+                    db_name='',
                     schema_name='in_c_shopify',
                     table_name='orders',
                     quote_char='`',
                 ),
+                '`in_c_shopify`.`orders`',
             ),
             (
                 # linked (non-alias) bucket — data copied to destination dataset, queryable via backendPath FQN
@@ -476,22 +668,32 @@ class TestWorkspaceManagerBigQuery:
                     'sourceTable': {'project': {'id': '9999'}, 'id': 'in.c-abc.customers', 'isAlias': False},
                 },
                 TableFqn(
-                    db_name='project_1234',
+                    db_name='',
                     schema_name='in_c_abc',
                     table_name='customers',
                     quote_char='`',
                 ),
+                '`in_c_abc`.`customers`',
             ),
         ],
     )
     async def test_get_table_fqn(
-        self, table: dict[str, Any], expected: TableFqn, keboola_client: KeboolaClient, context: Context
+        self,
+        table: dict[str, Any],
+        expected: TableFqn,
+        expected_identifier: str,
+        keboola_client: KeboolaClient,
+        context: Context,
+        mocker,
     ):
+        mocker.patch.object(QueryServiceClient, 'create', side_effect=AssertionError('no SQL should be issued'))
+
         m = WorkspaceManager.from_state(context.session.state)
         info = await m.get_table_info(table)
         assert info is not None
         assert info.fqn == expected
-        keboola_client.storage_client.workspace_query.assert_not_called()
+        # BigQuery FQN has no project/database tier — just dataset.table.
+        assert info.fqn.identifier == expected_identifier
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -499,21 +701,24 @@ class TestWorkspaceManagerBigQuery:
         [
             # no backendPath — returns None without any SQL
             {'id': 'in.c-foo.bar', 'name': 'bar'},
-            # alias linked table (sourceTable.isAlias=True) — blocked at WorkspaceManager level, no SQL
+            # alias linked table (sourceTable.isAlias=True) — BigQuery has no cross-project sharing and
+            # does not materialize aliases, so it is never queryable even when a backendPath is present
             {
                 'id': 'in.c-foo.bar',
                 'name': 'bar',
+                'bucket': {'id': 'in.c-foo', 'backendPath': ['in_c_foo']},
                 'sourceTable': {'project': {'id': '1234'}, 'id': 'out.c-baz.bam', 'isAlias': True},
             },
         ],
     )
     async def test_get_table_info_returns_none(
-        self, table: dict[str, Any], keboola_client: KeboolaClient, context: Context
+        self, table: dict[str, Any], keboola_client: KeboolaClient, context: Context, mocker
     ):
+        mocker.patch.object(QueryServiceClient, 'create', side_effect=AssertionError('no SQL should be issued'))
+
         m = WorkspaceManager.from_state(context.session.state)
         info = await m.get_table_info(table)
         assert info is None
-        keboola_client.storage_client.workspace_query.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -581,8 +786,25 @@ class TestWorkspaceManagerBigQuery:
         max_chars: int | None,
         keboola_client: KeboolaClient,
         context: Context,
+        mocker,
     ):
-        keboola_client.storage_client.workspace_query.return_value = TypeAdapter(QueryResult).dump_python(db_data)
+        # BigQuery now runs queries through the backend-agnostic Query Service, just like Snowflake.
+        keboola_client.storage_client.branches_list.return_value = [{'id': 1234, 'isDefault': True}]
+
+        qsclient = mocker.AsyncMock(QueryServiceClient)
+        qsclient.submit_job.return_value = 'qs-job-1234'
+        qsclient.get_job_status.return_value = {
+            'status': 'completed',
+            'statements': [{'id': 'qs-job-statement-1234', 'status': 'completed'}],
+        }
+        qsclient.get_job_results.return_value = {
+            'status': 'completed' if db_data.is_ok else 'failed',
+            'data': [list(row.values()) for row in db_data.data.rows] if db_data.data else [],
+            'columns': [{'name': col_name} for col_name in db_data.data.columns] if db_data.data else [],
+            'message': db_data.message,
+            'numberOfRows': len(db_data.data.rows) if db_data.data else None,
+        }
+        mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
 
         if db_data.data is not None:
             expected = _truncate_data(db_data, max_rows, max_chars)
@@ -593,11 +815,40 @@ class TestWorkspaceManagerBigQuery:
         actual = await m.execute_query(query, max_rows=max_rows, max_chars=max_chars)
 
         assert actual == expected
-        keboola_client.storage_client.workspace_query.assert_called_once_with(
-            workspace_id=1234,
-            query=query,
-            timeout=httpx.Timeout(connect=5.0, read=_BigQueryWorkspace._QUERY_TIMEOUT, write=10.0, pool=5.0),
+
+        keboola_client.storage_client.branches_list.assert_called_once()
+        qsclient.submit_job.assert_called_once()
+        qsclient.get_job_status.assert_called_once_with('qs-job-1234')
+        qsclient.get_job_results.assert_called_once_with(
+            'qs-job-1234', 'qs-job-statement-1234', offset=0, limit=1000 if max_rows is None else max(max_rows, 100)
         )
+
+    @pytest.mark.parametrize(
+        ('raw_message', 'expected'),
+        [
+            # Query Service wraps BigQuery errors as a serialized error object; we extract `Message`.
+            (
+                '{Location: "query"; Message: "Syntax error: Unexpected identifier \\"INVALID\\" at [1:1]"; '
+                'Reason: "invalidQuery"}',
+                'Syntax error: Unexpected identifier "INVALID" at [1:1]',
+            ),
+            (
+                '{Location: ""; Message: "Access Denied: Table foo: User does not have permission to query '
+                'table foo, or perhaps it does not exist."; Reason: "accessDenied"}',
+                'Access Denied: Table foo: User does not have permission to query table foo, '
+                'or perhaps it does not exist.',
+            ),
+            # A plain message (no wrapper) is passed through unchanged.
+            ('400 Invalid SQL...', '400 Invalid SQL...'),
+            (None, None),
+        ],
+        ids=['syntax_error', 'access_denied', 'plain_message', 'none'],
+    )
+    def test_format_error_message_unwraps_bigquery_error(self, raw_message: str | None, expected: str | None):
+        workspace = _BigQueryWorkspace(
+            workspace_id=1234, dataset_id='workspace_1234', project_id='project_1234', client=Mock(spec=KeboolaClient)
+        )
+        assert workspace._format_error_message(raw_message) == expected
 
 
 class TestQueryCancellation:
@@ -892,6 +1143,137 @@ class TestQueryCancellation:
 
         # Verify cancellation was attempted
         qsclient.cancel_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_query_data_cancels_on_http_disconnect(self, mcp_context_client: Context, mocker) -> None:
+        """When the underlying HTTP request disconnects mid-flight, `query_data` must
+        cancel the workspace task so its CancelledError branch can fire `cancel_job`."""
+
+        # Workspace task that never completes — simulates a long-running query.
+        async def never_returns(*_a, **_kw):
+            await asyncio.Event().wait()
+
+        manager = AsyncMock(WorkspaceManager)
+        manager.execute_query.side_effect = never_returns
+        mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+        # Fake HTTP request: not disconnected for the first poll, then disconnected.
+        fake_request = MagicMock()
+        disconnect_states = iter([False, True])
+        fake_request.is_disconnected = AsyncMock(side_effect=lambda: next(disconnect_states))
+        mocker.patch('keboola_mcp_server.tools.sql.get_http_request_or_none', return_value=fake_request)
+        # Speed the poll up so the test doesn't have to wait a full second.
+        mocker.patch('keboola_mcp_server.tools.sql._DISCONNECT_POLL_INTERVAL', 0.01)
+
+        # A disconnect surfaces as a plain ValueError (not CancelledError) so it stays on the
+        # `@tool_errors` path — logged as an error, not a success, and a response reaches the client.
+        with pytest.raises(ValueError, match='Query was cancelled'):
+            await query_data('SELECT 1', 'test', mcp_context_client)
+
+        manager.execute_query.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_query_data_logs_when_disconnect_watcher_raises(
+        self, mcp_context_client: Context, mocker, caplog
+    ) -> None:
+        """If the disconnect watcher finishes with an exception (rather than returning on a
+        detected disconnect), `query_data` must still cancel the query and surface the watcher
+        error in the logs — never leak a "Task exception was never retrieved" warning."""
+
+        async def never_returns(*_a, **_kw):
+            await asyncio.Event().wait()
+
+        manager = AsyncMock(WorkspaceManager)
+        manager.execute_query.side_effect = never_returns
+        mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+        async def boom(*_a, **_kw):
+            raise RuntimeError('watcher blew up')
+
+        # An HTTP request must be bound for the watcher race to run at all.
+        mocker.patch('keboola_mcp_server.tools.sql.get_http_request_or_none', return_value=MagicMock())
+        mocker.patch('keboola_mcp_server.tools.sql._watch_for_http_disconnect', side_effect=boom)
+
+        with caplog.at_level('WARNING'), pytest.raises(ValueError, match='Query was cancelled'):
+            await query_data('SELECT 1', 'test', mcp_context_client)
+
+        manager.execute_query.assert_called_once()
+        assert any('disconnect watcher' in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_query_data_propagates_cancel_during_post_query_drain(
+        self, mcp_context_client: Context, mocker
+    ) -> None:
+        """If `query_data` is cancelled while draining the disconnect watcher after the query
+        completed, the `CancelledError` must propagate (not be swallowed by `_cancel_and_drain`
+        and cause a result to be returned), while the shielded drain still runs to completion."""
+        manager = AsyncMock(WorkspaceManager)
+        manager.execute_query.return_value = QueryResult(
+            status='ok',
+            data=SqlSelectData(columns=['a'], rows=[{'a': 1}]),
+            message=None,
+        )
+        mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+        # HTTP mode with a request that never disconnects: the query wins the race, leaving the
+        # disconnect watcher as the pending task drained once the query completes.
+        fake_request = MagicMock()
+        fake_request.is_disconnected = AsyncMock(return_value=False)
+        mocker.patch('keboola_mcp_server.tools.sql.get_http_request_or_none', return_value=fake_request)
+
+        drain_started = asyncio.Event()
+        drain_finished = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_drain(task: asyncio.Task) -> None:
+            task.cancel()
+            drain_started.set()
+            await release.wait()
+            # Mirror the real `_cancel_and_drain`: actually await the cancelled task so it does
+            # not linger as a pending task and emit "Task exception was never retrieved" warnings.
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            drain_finished.set()
+
+        mocker.patch('keboola_mcp_server.tools.sql._cancel_and_drain', side_effect=slow_drain)
+
+        task = asyncio.create_task(query_data('SELECT 1', 'test', mcp_context_client))
+        # Wait until query_data reaches the shielded post-query drain, then cancel it there.
+        await asyncio.wait_for(drain_started.wait(), timeout=1.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The shield kept the drain alive: let it complete and confirm it finished despite the
+        # outer cancellation that already propagated out of query_data.
+        release.set()
+        await asyncio.wait_for(drain_finished.wait(), timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_query_data_no_disconnect_watcher_in_stdio_mode(self, mcp_context_client: Context, mocker) -> None:
+        """When there is no HTTP request bound (stdio transport), the disconnect race is skipped
+        entirely and the query runs directly to completion."""
+        manager = AsyncMock(WorkspaceManager)
+        manager.execute_query.return_value = QueryResult(
+            status='ok',
+            data=SqlSelectData(columns=['a'], rows=[{'a': 1}]),
+            message=None,
+        )
+        mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+        mocker.patch('keboola_mcp_server.tools.sql.get_http_request_or_none', return_value=None)
+
+        result = await query_data('SELECT 1', 'test', mcp_context_client)
+        assert isinstance(result, QueryDataOutput)
+        assert result.csv_data == 'a\r\n1\r\n'
+
+    @pytest.mark.asyncio
+    async def test_watch_for_http_disconnect_treats_errors_as_connected(self, mocker) -> None:
+        """A transient is_disconnected() failure must not be treated as a disconnect."""
+        fake_request = MagicMock()
+        # First call errors (still treated as connected); second call signals disconnect.
+        fake_request.is_disconnected = AsyncMock(side_effect=[RuntimeError('asgi hiccup'), True])
+
+        await asyncio.wait_for(_watch_for_http_disconnect(fake_request, poll_interval=0.01), timeout=1.0)
+        assert fake_request.is_disconnected.await_count == 2
 
     @pytest.mark.asyncio
     async def test_query_completes_just_before_timeout(

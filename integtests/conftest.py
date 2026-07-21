@@ -42,7 +42,6 @@ _project_info_printed: bool = False
 
 POOL_STORAGE_API_URL_ENV_VAR = 'INTEGTEST_POOL_STORAGE_API_URL'
 STORAGE_API_TOKENS_ENV_VAR = 'INTEGTEST_STORAGE_TOKENS'  # space-separated pool of tokens
-WORKSPACE_SCHEMAS_ENV_VAR = 'INTEGTEST_WORKSPACE_SCHEMAS'  # space-separated, same order as tokens
 # The second pair of token/schema for testing simultaneous access to two different projects.
 STORAGE_API_TOKEN_ENV_VAR_2 = 'INTEGTEST_STORAGE_TOKEN_PRJ2'
 WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
@@ -167,8 +166,43 @@ def mcp_config(storage_api_token: str, storage_api_url: str) -> Config:
 
 
 @pytest.fixture(scope='session')
-def workspace_schema(project_lock: AcquiredProject) -> str:
-    return project_lock.endpoint.workspace_schema
+def workspace_schema(_clean_project: None, storage_api_token: str, storage_api_url: str) -> Generator[str, Any, None]:
+    """
+    Create one read-only workspace for the whole test session and yield its schema.
+
+    The workspace is created once (session scope), reused across all tests, and deleted
+    on teardown.
+    """
+    # sync_storage_client is function-scoped; build a session-scoped client here.
+    storage_client = _sync_storage_client(storage_api_token, storage_api_url)
+    token_info = storage_client.tokens.verify()
+    backend = token_info['owner'].get('defaultBackend')
+    # Mirror the MCP server's own per-backend workspace login type (see WorkspaceManager._create_ws).
+    if backend == 'snowflake':
+        login_type = 'snowflake-person-sso'
+    elif backend == 'bigquery':
+        login_type = 'default'
+    else:
+        raise RuntimeError(f'Unexpected project default backend: {backend!r} (expected snowflake or bigquery)')
+
+    LOG.info(f'Creating a read-only {backend} workspace for the test session')
+    workspace = storage_client.workspaces.create(
+        backend=backend,
+        login_type=login_type,
+        # kbcstorage maps read_all_objects to the readOnlyStorageAccess flag (read-only storage access).
+        read_all_objects=True,
+    )
+    workspace_id = workspace['id']
+    schema = workspace['connection']['schema']
+    LOG.info(f'Created read-only workspace {workspace_id} (schema {schema})')
+    try:
+        yield schema
+    finally:
+        LOG.info(f'Deleting test-session workspace {workspace_id}')
+        try:
+            storage_client.workspaces.delete(workspace_id)
+        except Exception:
+            LOG.exception(f'Failed to delete test-session workspace {workspace_id}')
 
 
 @pytest.fixture(scope='session')
@@ -273,39 +307,107 @@ def _sync_storage_client(storage_api_token: str, storage_api_url: str) -> SyncSt
     return client
 
 
+# Buckets the integration fixtures/tests create are all stage-prefixed "c-test*". A real
+# (non-dedicated) project's buckets won't match, so this doubles as a safety guard against a
+# misconfigured INTEGTEST_STORAGE_TOKENS pointing at a project whose data must not be wiped.
+_TEST_BUCKET_ID_PREFIXES = ('in.c-test', 'out.c-test', 'sys.c-test')
+
+# Workspaces not created by the tests that must never be deleted (matched on the creator token).
+_STATIC_WORKSPACE_CREATORS = frozenset({'Background Indexing Token'})
+
+
+def _guard_dedicated_test_project(storage_client: SyncStorageClient, project_id: str) -> None:
+    """Refuse to reset the project unless it looks like a dedicated integtest project.
+
+    The integ fixtures/tests only ever create stage-prefixed ``*.c-test*`` buckets, so a project
+    holding any other bucket is almost certainly not a dedicated test project. Failing here (instead
+    of deleting) protects against a misconfigured ``INTEGTEST_STORAGE_TOKENS`` that points at a
+    project whose data must not be wiped.
+    """
+    foreign = [b['id'] for b in storage_client.buckets.list() if not b['id'].startswith(_TEST_BUCKET_ID_PREFIXES)]
+    if foreign:
+        pytest.fail(
+            f'Refusing to reset project {project_id}: found non-test buckets {foreign}. '
+            f'INTEGTEST_STORAGE_TOKENS may be pointing at a non-dedicated project.'
+        )
+
+
+def _purge_project(storage_client: SyncStorageClient, project_id: str) -> None:
+    """Reset a dedicated integtest project to a clean state.
+
+    Integration tests run against a shared pool of projects acquired per run. A prior session that
+    was cancelled (a new push/rebase cancels the in-flight CI run) or timed out before its teardown
+    leaves buckets, configurations, workspaces and branch metadata behind. The next run that locks
+    the project would then fail an empty-project assertion *before* its own teardown runs, so the
+    project stays dirty and wedges every subsequent run. Purging here lets the shared pool self-heal.
+    """
+    _guard_dedicated_test_project(storage_client, project_id)
+
+    buckets = storage_client.buckets.list()
+    workspaces = [
+        w
+        for w in storage_client.workspaces.list()
+        if w.get('creatorToken', {}).get('description') not in _STATIC_WORKSPACE_CREATORS
+    ]
+    components = storage_client.components.list(include=['configuration'])
+
+    if buckets or workspaces or any(c.get('configurations') for c in components):
+        LOG.warning(
+            f'Project {project_id} was not clean: {len(buckets)} bucket(s), {len(workspaces)} workspace(s), '
+            f'{sum(len(c.get("configurations", [])) for c in components)} config(s) '
+            '— likely an interrupted prior run. Purging.'
+        )
+
+    for bucket in buckets:
+        storage_client.buckets.delete(bucket['id'], force=True)
+
+    # MCP workspaces (incl. the shared read-only one created under keboola.mcp-server-tool) are
+    # returned here and removed along with any other leftover workspace. The MCP server no longer
+    # stamps a branch-metadata pointer, so there is nothing to clean up in branch metadata.
+    for workspace in workspaces:
+        storage_client.workspaces.delete(workspace['id'])
+
+    for component in components:
+        component_id = component['id']
+        for config in component.get('configurations', []):
+            # Double delete because the first delete only moves the configuration to the trash.
+            storage_client.configurations.delete(component_id, config['id'])
+            storage_client.configurations.delete(component_id, config['id'])
+
+
 @pytest.fixture(scope='session')
-def keboola_project(env_init: bool, storage_api_token: str, storage_api_url: str) -> Generator[ProjectDef, Any, None]:
+def _clean_project(storage_api_token: str, storage_api_url: str) -> None:
+    """Reset the acquired pool project before any other fixture creates resources, so an interrupted
+    prior run can't wedge the shared pool. Other session fixtures depend on this to order it first.
+
+    Side-effect only (no return value), so the leading underscore is kept per pytest-style PT005.
+    """
+    storage_client = _sync_storage_client(storage_api_token, storage_api_url)
+    project_id: str = storage_client.tokens.verify()['owner']['id']
+    _purge_project(storage_client, project_id)
+
+
+@pytest.fixture(scope='session')
+def keboola_project(
+    _clean_project: None, env_init: bool, storage_api_token: str, storage_api_url: str
+) -> Generator[ProjectDef, Any, None]:
     """
     Sets up a Keboola project with items needed for integration tests,
     such as buckets, tables and configurations.
-    After the tests, the project is cleaned up.
+    The project is reset to a clean state first (see _clean_project) and cleaned up after the tests.
     """
     # Cannot use keboola_client fixture because it is function-scoped
     storage_client = _sync_storage_client(storage_api_token, storage_api_url)
     token_info = storage_client.tokens.verify()
     project_id: str = token_info['owner']['id']
 
-    current_buckets = storage_client.buckets.list()
-    if current_buckets:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_buckets)} buckets')
-
     buckets = _create_buckets(storage_client)
-
-    current_tables = storage_client.tables.list()
-    if current_tables:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_tables)} tables')
-
     tables = _create_tables(storage_client)
-
-    current_configs = storage_client.configurations.list(component_id='ex-generic-v2')
-    if current_configs:
-        pytest.fail(f'Expecting empty Keboola project {project_id}, but found {len(current_configs)} configs')
-
     configs = _create_configs(storage_client)
 
-    if 'global-search' in token_info['owner'].get('fetaures', []):
+    if 'global-search' in token_info['owner'].get('features', []):
         # Give the global search time to catch up on the changes done in the testing project.
-        # See https://help.keboola.com/management/global-search/#limitations for moe info.
+        # See https://help.keboola.com/management/global-search/#limitations for more info.
         time.sleep(10)
 
     LOG.info(f'Test setup for project {project_id} complete')
@@ -333,23 +435,7 @@ def _setup_pool(storage_api_url: str) -> tuple[ProjectPool, AcquiredProject]:
         )
     tokens = tokens_raw.split()
 
-    schemas_raw = os.getenv(WORKSPACE_SCHEMAS_ENV_VAR, '').strip()
-    if not schemas_raw:
-        raise RuntimeError(
-            f'{WORKSPACE_SCHEMAS_ENV_VAR} must be set to a non-empty space-separated list of workspace schemas'
-        )
-    schemas = schemas_raw.split()
-
-    if len(tokens) != len(schemas):
-        raise RuntimeError(
-            f'{STORAGE_API_TOKENS_ENV_VAR} has {len(tokens)} token(s) but '
-            f'{WORKSPACE_SCHEMAS_ENV_VAR} has {len(schemas)} schema(s) — '
-            f'they must have the same number of entries'
-        )
-
-    endpoints = []
-    for t, s in zip(tokens, schemas):
-        endpoints.append(verify_project_endpoint(storage_api_url, t, s))
+    endpoints = [verify_project_endpoint(storage_api_url, t) for t in tokens]
 
     pool = ProjectPool(
         endpoints=endpoints,
@@ -409,14 +495,12 @@ def project_lock(env_file_loaded: bool, storage_api_url: str) -> Generator[Acqui
     """
     Acquires a distributed lock on a Keboola test project via branch metadata.
 
-    Requires INTEGTEST_STORAGE_TOKENS and INTEGTEST_WORKSPACE_SCHEMAS to be set.
-    The tokens and schemas must be space-separated lists of equal length, one entry
-    per project in the pool. The Storage API URL is provided by the storage_api_url
-    fixture (INTEGTEST_POOL_STORAGE_API_URL).
+    Requires INTEGTEST_STORAGE_TOKENS to be set to a space-separated list of project
+    tokens, one per project in the pool. The Storage API URL is provided by the
+    storage_api_url fixture (INTEGTEST_POOL_STORAGE_API_URL).
 
     Yields AcquiredProject(endpoint, lock_info) so callers know which project was
-    selected. storage_api_token and workspace_schema fixtures read their values from
-    the acquired endpoint.
+    selected. The storage_api_token fixture reads its value from the acquired endpoint.
 
     The project lock is normally acquired eagerly in pytest_collection_finish before
     tests start. This fixture falls back to acquiring it lazily if that hook did not run.
@@ -520,6 +604,10 @@ def mcp_context(
     client_context.session_id = None
     client_context.request_context = mocker.MagicMock(RequestContext)
     client_context.request_context.lifespan_context = ServerState(mcp_config, ServerRuntimeInfo(transport='stdio'))
+    # `meta` is an instance attribute of RequestContext (set in __init__), not a class attribute,
+    # so MagicMock(spec=RequestContext) doesn't expose it. Default it to None so tools that read
+    # the progressToken (e.g. query_data) don't trip AttributeError; individual tests can override.
+    client_context.request_context.meta = None
 
     return client_context
 

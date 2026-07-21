@@ -27,6 +27,10 @@ def keboola_client(mocker) -> KeboolaClient:
     client.hostname_suffix = 'test.keboola.com'
     client.headers = {}
     client.with_branch_id = mocker.AsyncMock(return_value=client)
+    # New per-session flow-schema cache: default to "empty cache" so resolve_flow_schema()
+    # always exercises the (patched) fetch_component in tests instead of returning a MagicMock.
+    client.get_cached_flow_schema = mocker.Mock(return_value=None)
+    client.cache_flow_schema = mocker.Mock()
 
     # Mock API clients
     client.storage_client = mocker.AsyncMock(AsyncStorageClient)
@@ -62,6 +66,10 @@ def empty_context(mocker) -> Context:
     ctx.client_id = None
     ctx.request_context = mocker.MagicMock(RequestContext)
     ctx.request_context.lifespan_context = ServerState(Config(), ServerRuntimeInfo(transport='stdio'))
+    # `meta` is an instance attribute of RequestContext (set in __init__), not a class attribute,
+    # so MagicMock(spec=RequestContext) doesn't expose it. Default it to None so tools that read
+    # the progressToken don't trip AttributeError; individual tests can override.
+    ctx.request_context.meta = None
     return ctx
 
 
