@@ -193,10 +193,14 @@ class KeboolaClient:
             encryption_client=self._encryption_client,
         )
         self._jobs_queue_client = JobsQueueClient.create(
-            root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._headers, readonly=readonly
+            root_url=queue_api_url,
+            token=bearer_or_sapi_token,
+            branch_id=branch_id,
+            headers=self._headers,
+            readonly=readonly,
         )
         self._ai_service_client = AIServiceClient.create(
-            root_url=ai_service_api_url, token=self._token, headers=self._headers, readonly=readonly
+            root_url=ai_service_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
         )
         # Data-science (sandboxes-service) git-repo credential endpoints require an admin-context
         # token (CanManageAppRepoCredentials -> StorageApiToken::isAdminToken()). The OAuth bearer
@@ -215,7 +219,7 @@ class KeboolaClient:
         )
         self._sync_actions_client = SyncActionsClient.create(
             root_url=sync_actions_api_url,
-            token=self._token,
+            token=bearer_or_sapi_token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
