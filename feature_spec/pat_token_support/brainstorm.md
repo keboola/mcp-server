@@ -98,7 +98,7 @@ Core question: how does MCP turn an inbound `kbc_at_*` / `kbc_pat_*` into authen
 
 ## 5. Impact analysis
 
-> Adapted to `keboola-mcp-server` (Python). The skill's connection/platform-wiki checklist (Doctrine, Zend, storage-driver protobuf) does not apply here; the cross-cutting table below is the mcp-server equivalent. File:line refs verified against current `main`.
+> Adapted to `keboola-mcp-server` (Python). The skill's connection/platform-wiki checklist (Doctrine, Zend, storage-driver protobuf) does not apply here; the cross-cutting table below is the mcp-server equivalent. File:line refs are relative to `src/keboola_mcp_server/` and were verified against current `main`.
 
 ### Files / symbols touched
 | File / symbol | Change |

@@ -126,6 +126,9 @@ Beyond the resolver and the two PKCE endpoints above, the shipped code also call
 
 ## Resolution Strategy
 
+> Code `file:line` references below are relative to `src/keboola_mcp_server/` (e.g.
+> `clients/client.py` is `src/keboola_mcp_server/clients/client.py`).
+
 ### Detection + exchange client (Part A)
 
 - **New** `clients/auth_bridge.py`: `StorageTokenResolver` with `async def resolve(subject_token: str, project_id: int) -> str`. Builds the resolver URL from the stack host suffix (same derivation as `KeboolaClient.__init__`, `clients/client.py:154-166`). Reads the SA JWT from a path env var **per call** (no caching). Redacts all token material from logs/exceptions; maps status codes per the table.
