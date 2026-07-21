@@ -809,16 +809,35 @@ class TestMaybeUseStoredSession:
         assert out is config
 
     @pytest.mark.asyncio
-    async def test_list_request_uses_stored_token_without_network_refresh(self, monkeypatch) -> None:
-        # /list must not do a network refresh: read the stored token as-is via load_tokens.
+    async def test_list_request_uses_valid_stored_token_without_network_refresh(self, monkeypatch) -> None:
+        # /list with a still-valid stored token must not do a network refresh: read it as-is.
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
         config = Config(storage_api_url='https://connection.keboola.com')
         with (
             patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(side_effect=AssertionError('no network'))),
-            patch('keboola_mcp_server.mcp.load_tokens', return_value=SimpleNamespace(access_token='kbc_at_file')),
+            patch(
+                'keboola_mcp_server.mcp.load_tokens',
+                return_value=SimpleNamespace(access_token='kbc_at_file', is_near_expiry=False),
+            ),
         ):
             out = await SessionStateMiddleware._maybe_use_stored_session(config, refresh=False)
         assert out.storage_token == 'kbc_at_file'
+
+    @pytest.mark.asyncio
+    async def test_list_request_refreshes_only_an_expired_stored_token(self, monkeypatch) -> None:
+        # /list with an EXPIRED stored token refreshes (once) so session-state Storage calls don't fail.
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com')
+        with (
+            patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_fresh')) as gat,
+            patch(
+                'keboola_mcp_server.mcp.load_tokens',
+                return_value=SimpleNamespace(access_token='kbc_at_stale', is_near_expiry=True),
+            ),
+        ):
+            out = await SessionStateMiddleware._maybe_use_stored_session(config, refresh=False)
+        gat.assert_awaited_once()
+        assert out.storage_token == 'kbc_at_fresh'
 
     @pytest.mark.asyncio
     async def test_deployed_is_noop(self, monkeypatch) -> None:

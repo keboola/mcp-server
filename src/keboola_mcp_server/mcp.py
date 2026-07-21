@@ -367,7 +367,16 @@ class SessionStateMiddleware(fmw.Middleware):
             tokens = load_tokens(config.storage_api_url)
             if not tokens:
                 return config
-            access_token = tokens.access_token
+            if tokens.is_near_expiry:
+                # The stored access token is (near) expired; using it as-is would make the /list
+                # session-state build fail its Storage calls. Refresh only this case via the network —
+                # valid tokens still take the network-free fast path so /list never blocks on connect.
+                try:
+                    access_token = await get_access_token(config.storage_api_url)
+                except RuntimeError:
+                    return config
+            else:
+                access_token = tokens.access_token
         return dataclasses.replace(config, storage_token=access_token)
 
     @classmethod
