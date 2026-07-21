@@ -926,7 +926,7 @@ class MultiProjectMiddleware(fmw.Middleware):
         Swaps in a per-project `KeboolaClient` AND a `WorkspaceManager` built on it, so
         workspace-bound reads (query_data) run against *this* project's workspace rather than the
         active project's. The workspace is provisioned lazily on first use per project.
-        ponytail: rebuilt per call; caching across calls would need a store that survives the
+        Note: rebuilt per call; caching across calls would need a store that survives the
         per-request state rebuild — add if provisioning latency shows up in practice.
         """
         client = await cls._client_for_project(server_state, base_token, project_id, read_only)
