@@ -328,7 +328,7 @@ async def _project_sql_dialect(
     No workspace is provisioned — the dialect comes from the token's owner.defaultBackend, so this is
     a single cheap Storage API call per project.
     """
-    per_client = await MultiProjectMiddleware._client_for_project(
+    per_client = await MultiProjectMiddleware.client_for_project(
         server_state, subject_token, project_id, read_only=True
     )
     token_data = await per_client.storage_client.verify_token()

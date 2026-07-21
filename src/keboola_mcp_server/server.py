@@ -226,16 +226,20 @@ def create_server(
     mcp = KeboolaMcpServer(
         name='Keboola MCP Server',
         instructions=(
-            'This server runs in multi-project mode. When the user logs in with a stack-wide Keboola '
-            'token, data tools are BLOCKED until a project scope is confirmed. So at the very START of '
-            'the conversation, before doing anything else: call "get_accessible_projects", show the user '
-            'their projects, and ASK whether to work across ALL of them or a subset. Do not decide for '
-            'them. Then call "set_project_scope" with their answer (no arguments = all projects, or the '
-            'chosen project ids, optionally read_only=true). After that, read-only tools return results '
-            'per project. Never write to more than one project without explicit user confirmation — '
-            'write operations target the active (first-scoped) project only. Note: outside the Storage '
-            'API, some tools may need per-project token support not yet available on every stack; '
-            'surface such errors plainly rather than retrying.'
+            'This server supports multi-project mode for stack-wide Keboola programmatic tokens '
+            '(kbc_at_/kbc_pat_). When the session uses such a token, data tools are BLOCKED until a '
+            'project scope is confirmed. So at the very START of the conversation, before doing anything '
+            'else: call "get_accessible_projects", show the user their projects, and ASK whether to work '
+            'across ALL of them or a subset. Do not decide for them. Then call "set_project_scope" with '
+            'their answer (no arguments = all projects, or the chosen project ids, optionally '
+            'read_only=true). After that, read-only tools return results per project. Never write to '
+            'more than one project without explicit user confirmation — write operations target the '
+            'active (first-scoped) project only. If instead the session uses a legacy project-scoped '
+            'Storage API token, it is already bound to a single project: use the tools directly — '
+            '"get_accessible_projects" / "set_project_scope" do not apply (they will report that no '
+            'programmatic token is present). Note: outside the Storage API, some tools may need '
+            'per-project token support not yet available on every stack; surface such errors plainly '
+            'rather than retrying.'
         ),
         lifespan=create_keboola_lifespan(server_state),
         auth=oauth_provider,

@@ -1048,7 +1048,7 @@ class TestMultiProjectMiddleware:
         with (
             patch.object(
                 MultiProjectMiddleware,
-                '_client_for_project',
+                'client_for_project',
                 AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
             ),
             patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
@@ -1082,7 +1082,7 @@ class TestMultiProjectMiddleware:
         with (
             patch.object(
                 MultiProjectMiddleware,
-                '_client_for_project',
+                'client_for_project',
                 AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
             ),
             patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
@@ -1109,7 +1109,7 @@ class TestMultiProjectMiddleware:
         with (
             patch.object(
                 MultiProjectMiddleware,
-                '_client_for_project',
+                'client_for_project',
                 AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
             ),
             patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
@@ -1135,7 +1135,7 @@ class TestMultiProjectMiddleware:
         with (
             patch.object(
                 MultiProjectMiddleware,
-                '_client_for_project',
+                'client_for_project',
                 AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
             ),
             patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
@@ -1240,7 +1240,7 @@ class TestMultiProjectMiddleware:
         with (
             patch.object(
                 MultiProjectMiddleware,
-                '_client_for_project',
+                'client_for_project',
                 AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
             ),
             patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
@@ -1263,7 +1263,7 @@ class TestMultiProjectMiddleware:
         with (
             patch.object(
                 MultiProjectMiddleware,
-                '_client_for_project',
+                'client_for_project',
                 AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
             ),
             patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
@@ -1286,7 +1286,7 @@ class TestMultiProjectMiddleware:
         with (
             patch.object(
                 MultiProjectMiddleware,
-                '_client_for_project',
+                'client_for_project',
                 AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
             ),
             patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
