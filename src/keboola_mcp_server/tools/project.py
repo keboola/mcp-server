@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Annotated, Optional, cast
 
+import httpx
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
@@ -485,7 +486,17 @@ async def set_project_scope(
             scoped_expires_at=minted.expires_at,
             confirmed=True,
         )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code in (400, 401, 403):
+            # Client error (bad project_ids, invalid/insufficient token): the input or auth is wrong,
+            # not the exchange endpoint — surface it instead of silently downgrading to an unscoped
+            # whole-stack token, which would mislead the caller about what was actually scoped.
+            raise
+        LOG.warning('Scoped-token exchange failed; scoping with the whole-stack token instead.', exc_info=True)
+        scope = SessionScope(project_ids=ids, read_only=read_only, confirmed=True)
     except Exception:
+        # Network/timeout/unavailable exchange endpoint: fall back so scoping still works, narrowed
+        # per request by X-KBC-ProjectId, without the extra token-scoping security narrowing.
         LOG.warning('Scoped-token exchange failed; scoping with the whole-stack token instead.', exc_info=True)
         scope = SessionScope(project_ids=ids, read_only=read_only, confirmed=True)
     ctx.session.state[SCOPE_KEY] = scope

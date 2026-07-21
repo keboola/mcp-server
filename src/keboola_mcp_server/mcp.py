@@ -465,7 +465,7 @@ class SessionStateMiddleware(fmw.Middleware):
         try:
             introspection = await introspect_token(config.storage_api_url, subject_token=parent)
         except Exception as e:
-            LOG.warning(f'Could not auto-lease projects from token introspection: {e}')
+            LOG.warning(f'Could not auto-lease projects from token introspection: {e}', exc_info=True)
             return None
         project_ids = [p.id for p in introspection.projects]
         if not project_ids:
@@ -517,7 +517,7 @@ class SessionStateMiddleware(fmw.Middleware):
                         )
                     except Exception as e:
                         # Don't break the session if re-minting fails; fall back to the parent token.
-                        LOG.warning(f'Could not refresh the scoped token; using the parent token: {e}')
+                        LOG.warning(f'Could not refresh the scoped token; using the parent token: {e}', exc_info=True)
                         scope = dataclasses.replace(scope, scoped_token=None, scoped_expires_at=None)
                 token = scope.scoped_token or parent
 

@@ -145,7 +145,7 @@ Sign in once with your browser; the server stores the session and refreshes it a
 uvx keboola_mcp_server login --api-url https://connection.YOUR_REGION.keboola.com
 ```
 
-This opens your browser to sign in to Keboola and pick a project, then saves the session to `~/.keboola/mcp/credentials.json` (readable only by you, one entry per stack). Afterwards, start the server with only `KBC_STORAGE_API_URL` set — no token required.
+This opens your browser to sign in to Keboola, then saves the stack-wide session to `~/.keboola/mcp/credentials.json` (readable only by you, one entry per stack). Afterwards, start the server with only `KBC_STORAGE_API_URL` set — no token required. Which project(s) to work on is chosen afterwards, in the conversation (`get_accessible_projects` / `set_project_scope`), not during login.
 
 | Command | What it does |
 |---------|--------------|

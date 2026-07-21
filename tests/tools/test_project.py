@@ -1,6 +1,7 @@
 import time
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
@@ -405,6 +406,61 @@ async def test_set_project_scope_all_introspects_then_exchanges(
 
     exch.assert_awaited_once_with(STACK, subject_token='kbc_at_parent', project_ids=[18, 83], read_only=False)
     assert result.project_ids == [18, 83]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status_code', [400, 401, 403])
+async def test_set_project_scope_reraises_client_error(
+    mcp_context_client: Context, mocker: MockerFixture, status_code: int
+) -> None:
+    # A 400/401/403 from the exchange means bad input/auth, not an unavailable endpoint — it must
+    # surface to the caller rather than silently downgrading to an unscoped whole-stack token.
+    _prep_client(mcp_context_client, mocker)
+    response = httpx.Response(status_code, request=httpx.Request('POST', 'https://x/v1/auth/pat/exchange'))
+    mocker.patch(
+        'keboola_mcp_server.tools.project.exchange_scoped_token',
+        new=mocker.AsyncMock(side_effect=httpx.HTTPStatusError('bad', request=response.request, response=response)),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await set_project_scope(mcp_context_client, project_ids=[18])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status_code', [500, 502, 503])
+async def test_set_project_scope_falls_back_on_server_error(
+    mcp_context_client: Context, mocker: MockerFixture, status_code: int
+) -> None:
+    # A 5xx (endpoint unavailable) still falls back to the whole-stack token so scoping keeps working.
+    _prep_client(mcp_context_client, mocker)
+    response = httpx.Response(status_code, request=httpx.Request('POST', 'https://x/v1/auth/pat/exchange'))
+    mocker.patch(
+        'keboola_mcp_server.tools.project.exchange_scoped_token',
+        new=mocker.AsyncMock(side_effect=httpx.HTTPStatusError('down', request=response.request, response=response)),
+    )
+
+    result = await set_project_scope(mcp_context_client, project_ids=[18])
+
+    assert result.project_ids == [18]
+    scope = mcp_context_client.session.state[SCOPE_KEY]
+    assert scope.scoped_token is None
+
+
+@pytest.mark.asyncio
+async def test_set_project_scope_falls_back_on_network_error(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    _prep_client(mcp_context_client, mocker)
+    mocker.patch(
+        'keboola_mcp_server.tools.project.exchange_scoped_token',
+        new=mocker.AsyncMock(side_effect=httpx.ConnectTimeout('timed out')),
+    )
+
+    result = await set_project_scope(mcp_context_client, project_ids=[18])
+
+    assert result.project_ids == [18]
+    scope = mcp_context_client.session.state[SCOPE_KEY]
+    assert scope.scoped_token is None
 
 
 @pytest.mark.asyncio
