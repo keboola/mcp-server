@@ -856,7 +856,7 @@ class MultiProjectMiddleware(fmw.Middleware):
                     # "failed for all N projects" aggregate. Abort and surface the single clean error.
                     raise
                 except Exception as e:
-                    LOG.warning(f'Fan-out call failed for project {project_id}: {e}')
+                    LOG.warning(f'Fan-out call failed for project {project_id}: {e}', exc_info=True)
                     errors.append((project_id, str(e)))
         finally:
             state[KeboolaClient.STATE_KEY] = original_client

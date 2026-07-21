@@ -341,6 +341,33 @@ async def test_get_accessible_projects_llm_instructions_grouped_by_dialect(
 
 
 @pytest.mark.asyncio
+async def test_get_accessible_projects_unknown_dialect_omits_snowflake_guidance(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    # A project whose dialect can't be resolved (None) must NOT fall back to Snowflake guidance —
+    # that would mislead the assistant into Snowflake-specific SQL for a non-Snowflake project.
+    from keboola_mcp_server.resources.prompts import get_project_system_prompt
+
+    _prep_client(mcp_context_client, mocker)
+    introspection = SimpleNamespace(user_email='m@k.com', projects=[SimpleNamespace(id=42, name='X', role='admin')])
+    mocker.patch('keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection))
+    mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
+    mocker.patch(
+        'keboola_mcp_server.tools.project._project_sql_dialect',
+        new=mocker.AsyncMock(side_effect=lambda _ss, _tok, pid: (pid, None)),
+    )
+
+    result = await get_accessible_projects(mcp_context_client, with_llm_instruction=True)
+
+    assert result.base_instructions is not None
+    (group,) = result.base_instructions
+    assert group.sql_dialect is None
+    # The unknown-dialect group gets the no-dialect prompt, not the Snowflake one.
+    assert group.instructions == get_project_system_prompt('')
+    assert group.instructions != get_project_system_prompt('Snowflake')
+
+
+@pytest.mark.asyncio
 async def test_set_project_scope_subset_exchanges_and_stores(
     mcp_context_client: Context, mocker: MockerFixture
 ) -> None:

@@ -402,7 +402,9 @@ async def get_accessible_projects(
             BaseInstructionGroup(
                 project_ids=ids,
                 sql_dialect=dialect,
-                instructions=get_project_system_prompt(dialect or 'Snowflake'),
+                # No/unknown dialect -> pass '' so the prompt omits dialect-specific guidance rather
+                # than defaulting to Snowflake (which would mislead a BigQuery/unknown project).
+                instructions=get_project_system_prompt(dialect or ''),
             )
             for dialect, ids in by_dialect.items()
         ]
@@ -475,8 +477,8 @@ async def set_project_scope(
             scoped_expires_at=minted.expires_at,
             confirmed=True,
         )
-    except Exception as e:
-        LOG.warning(f'Scoped-token exchange failed ({e}); scoping with the whole-stack token instead.')
+    except Exception:
+        LOG.warning('Scoped-token exchange failed; scoping with the whole-stack token instead.', exc_info=True)
         scope = SessionScope(project_ids=ids, read_only=read_only, confirmed=True)
     ctx.session.state[SCOPE_KEY] = scope
 
