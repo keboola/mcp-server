@@ -43,8 +43,8 @@ Notes:
 - The image version is whatever `pyproject.toml` said **at that commit**; the latest production tag can lag behind `main` HEAD (merged but not yet deployed).
 
 ## Testing
-- **All tox checks must pass before pushing** — CI runs the same checks (pytest, black, flake8, check-tools-docs) and will fail the build if any of them fail
-- **Use tox** for final testing - it runs pytest, black (formatting), flake8 (linter), and check-tools-docs (verifies TOOLS.md is up-to-date)
+- **All tox checks must pass before pushing** — CI runs the same checks (pytest, black, isort, flake8, check-tools-docs) and will fail the build if any of them fail
+- **Use tox** for final testing - it runs pytest, black (formatting), isort (import ordering), flake8 (linter), and check-tools-docs (verifies TOOLS.md is up-to-date)
 - It's OK to use pytest directly for running individual tests during development
 - Activate the virtual environment first (e.g., `source <venv>/bin/activate`)
 - Run specific tests: `tox -e py310 -- tests/test_file.py -v`
@@ -76,7 +76,7 @@ uv sync --active --extra dev --extra tests
 # 4. Verify everything works
 tox
 ```
-All four tox environments (pytest, black, flake8, check-tools-docs) should exit 0.
+All five tox environments (pytest, black, isort, flake8, check-tools-docs) should exit 0.
 
 ## Integration Tests
 
