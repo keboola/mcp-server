@@ -1,7 +1,6 @@
 import inspect
 import json
 import logging
-import os
 import time
 from collections.abc import Callable, Mapping
 from functools import wraps
@@ -21,6 +20,7 @@ from pydantic_core import ErrorDetails
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import StorageEventType
+from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, get_http_request_or_none
 
 LOG = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ async def _trigger_event(
     # the user's own client otherwise — this code runs in a `finally:` block that swallows its
     # errors, so it must not depend on anything failing loudly.
     storage_client = client.storage_client
-    if kubernetes_token_path := os.environ.get('KBC_KUBERNETES_TOKEN_PATH'):
+    if kubernetes_token_path := deployed_sa_token_path():
         storage_client = client.step_up_storage_client(kubernetes_token_path)
     resp = await storage_client.trigger_event(
         message=message,

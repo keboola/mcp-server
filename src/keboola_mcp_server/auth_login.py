@@ -24,9 +24,11 @@ from dataclasses import asdict, dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import cast
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 import httpx
+
+from keboola_mcp_server.clients.base import normalize_storage_api_url
 
 LOG = logging.getLogger(__name__)
 
@@ -53,10 +55,7 @@ def _client_id() -> str:
 
 
 def _base_url(storage_api_url: str) -> str:
-    parsed = urlparse(storage_api_url)
-    if not parsed.hostname or not parsed.hostname.startswith('connection.'):
-        raise ValueError(f'Invalid Keboola Storage API URL: {storage_api_url}')
-    return urlunparse(('https', parsed.hostname, '', '', '', ''))
+    return normalize_storage_api_url(storage_api_url)
 
 
 def _b64url(data: bytes) -> str:

@@ -8,7 +8,6 @@ and other utilities for the MCP server.
 import asyncio
 import dataclasses
 import logging
-import os
 import textwrap
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -37,7 +36,7 @@ from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_toke
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeInfo, is_same_stack
+from keboola_mcp_server.config import Config, ServerRuntimeInfo, deployed_sa_token_path, is_same_stack
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, SEMANTIC_TOOLS_TAG, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -403,7 +402,7 @@ class SessionStateMiddleware(fmw.Middleware):
     def _is_local_programmatic(cls, config: Config) -> bool:
         """True for a local (non-deployed) session carrying a Keboola programmatic token."""
         return (
-            not os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
+            not deployed_sa_token_path()
             and bool(config.storage_token)
             and bool(config.storage_api_url)
             and is_programmatic_token(config.storage_token)
@@ -421,7 +420,7 @@ class SessionStateMiddleware(fmw.Middleware):
         """
         if config.storage_token or not config.storage_api_url:
             return config
-        if os.environ.get('KBC_KUBERNETES_TOKEN_PATH'):
+        if deployed_sa_token_path():
             return config
         if refresh:
             try:
@@ -522,7 +521,7 @@ class SessionStateMiddleware(fmw.Middleware):
         environment only, never from per-request config). A project id is required because
         a programmatic token is not project-bound.
         """
-        kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
+        kubernetes_token_path = deployed_sa_token_path()
         if not kubernetes_token_path:
             raise ValueError(
                 'Received a Keboola programmatic token (kbc_at_/kbc_pat_) but KBC_KUBERNETES_TOKEN_PATH '
@@ -580,7 +579,7 @@ class SessionStateMiddleware(fmw.Middleware):
             bearer_token = config.bearer_token
             extra_headers: dict[str, Any] = {}
             if is_programmatic_token(storage_token):
-                if os.environ.get('KBC_KUBERNETES_TOKEN_PATH'):
+                if deployed_sa_token_path():
                     # Deployed: exchange the programmatic token (kbc_at_/kbc_pat_) for the project's
                     # legacy Storage token via the auth-bridge resolver, then use it downstream unchanged.
                     storage_token = await cls._exchange_programmatic_token(config)
@@ -615,7 +614,7 @@ class SessionStateMiddleware(fmw.Middleware):
             # overridable per request. An unforgeable path is not enough on its own, because the
             # destination can come from a header — `KeboolaClient.step_up_storage_client()`
             # therefore attaches the JWT only when the target is this server's own stack.
-            kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
+            kubernetes_token_path = deployed_sa_token_path()
             workspace_manager = await WorkspaceManager.create(
                 client, config.workspace_schema, kubernetes_token_path=kubernetes_token_path
             )
@@ -1096,8 +1095,9 @@ class MultiProjectMiddleware(fmw.Middleware):
         total_items = 0
         for project_id, result in results:
             sc = result.structured_content
-            per_project_counts.append((project_id, MultiProjectMiddleware._largest_list_len(sc)))
-            total_items += MultiProjectMiddleware._largest_list_len(sc)
+            item_count = MultiProjectMiddleware._largest_list_len(sc)
+            per_project_counts.append((project_id, item_count))
+            total_items += item_count
             if sc is not None:
                 merged_structured = (
                     sc if merged_structured is None else MultiProjectMiddleware._deep_merge(merged_structured, sc)

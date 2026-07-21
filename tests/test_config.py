@@ -34,6 +34,14 @@ class TestConfig:
                 {'X-Conversation-ID': '1234'},
                 Config(conversation_id='1234'),
             ),
+            (
+                {'KBC_PROJECT_ID': '1888'},
+                Config(project_id='1888'),
+            ),
+            (
+                {'X-KBC-ProjectId': '1888'},
+                Config(project_id='1888'),
+            ),
         ],
     )
     def test_from_dict(self, d: Mapping[str, str], expected: Config) -> None:

@@ -15,6 +15,17 @@ _NO_VALUE_MARKER = '__NO_VALUE_MARKER__'
 Transport = Literal['stdio', 'streamable-http', 'http-compat/streamable-http']
 
 
+def deployed_sa_token_path() -> str | None:
+    """
+    Path to the deployed server's projected Kubernetes ServiceAccount token, or None when running locally.
+
+    The presence of the ``KBC_KUBERNETES_TOKEN_PATH`` env var is the single signal that this process is
+    the Keboola-deployed MCP server (able to reach the auth-bridge resolver) rather than a local session.
+    Read from the process environment only, never from per-request config.
+    """
+    return os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
+
+
 @dataclass(frozen=True)
 class Config:
     """Server configuration."""
