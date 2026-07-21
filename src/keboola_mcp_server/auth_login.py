@@ -355,9 +355,11 @@ def _write_store(store: dict) -> None:
     _CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(_CREDENTIALS_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'w') as f:
+        # O_CREAT only applies the mode when creating; a pre-existing file could be world-readable.
+        # fchmod BEFORE writing any token material so there is no exposure window (O_TRUNC already
+        # emptied the file, so nothing sensitive exists until json.dump runs after this).
+        os.fchmod(f.fileno(), 0o600)
         json.dump(store, f, indent=2, ensure_ascii=False)
-    # O_CREAT honors the mode only when creating; chmod covers a pre-existing file.
-    _CREDENTIALS_PATH.chmod(0o600)
 
 
 def load_tokens(storage_api_url: str) -> TokenSet | None:

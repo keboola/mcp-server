@@ -412,3 +412,13 @@ async def test_scope_requires_programmatic_token(mcp_context_client: Context, mo
     _prep_client(mcp_context_client, mocker, bearer=None)
     with pytest.raises(ValueError, match='programmatic token'):
         await get_accessible_projects(mcp_context_client)
+
+
+@pytest.mark.asyncio
+async def test_set_project_scope_rejects_explicit_empty_list(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    # An explicit [] must NOT be treated like null (all projects) — it's almost certainly a mistake.
+    _prep_client(mcp_context_client, mocker)
+    with pytest.raises(ValueError, match='non-empty'):
+        await set_project_scope(mcp_context_client, project_ids=[])
