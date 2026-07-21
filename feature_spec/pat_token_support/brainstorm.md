@@ -124,7 +124,7 @@ Core question: how does MCP turn an inbound `kbc_at_*` / `kbc_pat_*` into authen
 ### Cross-cutting checklist (mcp-server)
 | Dimension | Touched? | Detail |
 |---|---|---|
-| Transports (stdio / streamable-http) | Yes | stdio gets login path; http/OAuth path unchanged this PR |
+| Transports (stdio / streamable-http) | Yes | stdio gets login path; http/OAuth path unchanged by the implementation |
 | OAuth provider (`SimpleOAuthProvider`) | No | left intact; OAuth→PAT exchange is a separate PR |
 | Both deployments (mcp-server + mcp-server-agent) | Yes | one image; agent's direct-Storage-token path must not regress |
 | Legacy `X-StorageAPI-Token` path | No (must stay) | only `kbc_at_`/`kbc_pat_` prefixes trigger new behavior |
@@ -132,7 +132,7 @@ Core question: how does MCP turn an inbound `kbc_at_*` / `kbc_pat_*` into authen
 | `TOOLS.md` / tool signatures | No | no tool signature change expected |
 | Config / env vars | Yes | `project_id`, `KBC_PKCE_CLIENT_ID`, SA-token path var |
 | Unit + integration tests | Yes | new resolver, login, refresh, regression for legacy token |
-| Version bump + `uv.lock` | Yes | minor (new capability) |
+| Version bump + `uv.lock` | Yes | implementation PR: minor (new capability); this docs PR: patch, to merge cleanly ahead of it |
 
 ## 6. Security pass
 

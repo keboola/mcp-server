@@ -8,7 +8,7 @@ Reference implementations:
 - Go SDK exchange resolver: [keboola/keboola-sdk-go#90](https://github.com/keboola/keboola-sdk-go/pull/90)
 - Go services consumption (Query/Metastore): [keboola/go-monorepo#540](https://github.com/keboola/go-monorepo/pull/540)
 - UI PKCE login + `/v1/auth/*` client: [keboola/ui#6061](https://github.com/keboola/ui/pull/6061)
-- PHP reference (decentralized exchange): keboola/platform-libraries#507
+- PHP reference (decentralized exchange): [keboola/platform-libraries#507](https://github.com/keboola/platform-libraries/pull/507)
 - Auth-bridge-proxy RFC: `go-monorepo/docs/rfcs/2026-05-18-auth-bridge-proxy.md`
 
 ---
