@@ -4048,6 +4048,18 @@ EXAMPLES:
         "$ref": "#/$defs/SemanticObjectTypeSelection"
       },
       "type": "array"
+    },
+    "query_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Opaque correlation token chosen by the agent. Pass the SAME value to validate_semantic_query and cite it as [[q:<query_ref>]] so the UI can link this result to its semantic validation. Purely a passthrough; does not affect execution."
     }
   },
   "required": [
@@ -4122,6 +4134,18 @@ DATA VALIDATION:
     "query_name": {
       "description": "A concise, human-readable name for this query based on its purpose and what data it retrieves. Use normal words with spaces (e.g., \"Customer Orders Last Month\", \"Top Selling Products\", \"User Activity Summary\").",
       "type": "string"
+    },
+    "query_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Opaque correlation token chosen by the agent. Pass the SAME value to validate_semantic_query and cite it as [[q:<query_ref>]] so the UI can link this result to its semantic validation. Purely a passthrough; does not affect execution."
     }
   },
   "required": [
