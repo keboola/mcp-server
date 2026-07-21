@@ -13,11 +13,11 @@ No token material is ever logged or placed in exception messages.
 
 import logging
 from http import HTTPStatus
-from pathlib import Path
 from typing import cast
-from urllib.parse import urlparse, urlunparse
 
 import httpx
+
+from keboola_mcp_server.clients.base import normalize_storage_api_url, read_service_account_jwt
 
 LOG = logging.getLogger(__name__)
 
@@ -78,20 +78,14 @@ class StorageTokenResolver:
         :param timeout: Optional HTTP timeout override.
         :param transport: Optional httpx transport (for testing).
         """
-        parsed = urlparse(storage_api_url)
-        if not parsed.hostname or not parsed.hostname.startswith('connection.'):
-            raise ValueError(f'Invalid Keboola Storage API URL: {storage_api_url}')
-        self._base_url = urlunparse(('https', parsed.hostname, '', '', '', ''))
+        self._base_url = normalize_storage_api_url(storage_api_url)
         self._kubernetes_token_path = kubernetes_token_path
         self._timeout = timeout or httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
         self._transport = transport
 
     def _read_sa_jwt(self) -> str:
         # Read per call — the kubelet rotates the projected token in place.
-        jwt = Path(self._kubernetes_token_path).read_text().strip()
-        if not jwt:
-            raise ValueError(f'Kubernetes ServiceAccount token file is empty: {self._kubernetes_token_path}')
-        return jwt
+        return read_service_account_jwt(self._kubernetes_token_path)
 
     async def resolve(self, *, subject_token: str, project_id: int) -> str:
         """
@@ -130,8 +124,14 @@ class StorageTokenResolver:
                 status_code=mapped,
             )
 
-        body = cast(dict, response.json())
-        storage_token = body.get('storageToken')
+        try:
+            body = response.json()
+        except ValueError:
+            raise StorageTokenExchangeError(
+                'Auth-bridge token exchange returned a non-JSON body.',
+                status_code=int(HTTPStatus.BAD_GATEWAY),
+            ) from None
+        storage_token = body.get('storageToken') if isinstance(body, dict) else None
         if not storage_token:
             raise StorageTokenExchangeError(
                 'Auth-bridge token exchange returned no storageToken.',

@@ -1,13 +1,13 @@
 """Keboola Storage API client wrapper."""
 
 import logging
-from pathlib import Path
-from typing import Any, Literal, Mapping, Sequence, TypeVar
+from typing import Any, Literal, Mapping, Sequence, TypeVar, cast
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 from keboola_mcp_server.clients.ai_service import AIServiceClient
+from keboola_mcp_server.clients.base import normalize_storage_api_url, read_service_account_jwt
 from keboola_mcp_server.clients.data_science import DataScienceClient
 from keboola_mcp_server.clients.encryption import EncryptionClient
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
@@ -152,12 +152,8 @@ class KeboolaClient:
         # Mirrors _features_cache: fetched once per session so it is never stale across runs.
         self._flow_schema_cache: dict[str, JsonDict] = {}
 
-        sapi_url_parsed = urlparse(storage_api_url)
-        if not sapi_url_parsed.hostname or not sapi_url_parsed.hostname.startswith('connection.'):
-            raise ValueError(f'Invalid Keboola Storage API URL: {storage_api_url}')
-
-        self._hostname_suffix = sapi_url_parsed.hostname.split('connection.')[1]
-        self._storage_api_url = urlunparse(('https', f'connection.{self._hostname_suffix}', '', '', '', ''))
+        self._storage_api_url = normalize_storage_api_url(storage_api_url)
+        self._hostname_suffix = cast(str, urlparse(self._storage_api_url).hostname).split('connection.')[1]
         metastore_api_url = urlunparse(('https', f'metastore.{self._hostname_suffix}', '', '', '', ''))
         queue_api_url = urlunparse(('https', f'queue.{self._hostname_suffix}', '', '', '', ''))
         ai_service_api_url = urlunparse(('https', f'ai.{self._hostname_suffix}', '', '', '', ''))
@@ -287,9 +283,7 @@ class KeboolaClient:
         :param kubernetes_token_path: Path to the projected ServiceAccount token file.
         :raises ValueError: If the token file is empty.
         """
-        jwt = Path(kubernetes_token_path).read_text().strip()
-        if not jwt:
-            raise ValueError(f'Kubernetes ServiceAccount token file is empty: {kubernetes_token_path}')
+        jwt = read_service_account_jwt(kubernetes_token_path)
 
         headers = dict(self._headers or {})
         headers['X-Kubernetes-Authorization'] = f'Bearer {jwt}'

@@ -1,7 +1,9 @@
 import json
 import logging
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any, Optional, Union, cast
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 from httpx_retries import Retry, RetryTransport
@@ -12,6 +14,32 @@ JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
 JsonStruct = Union[JsonDict, JsonList]
 
 LOG = logging.getLogger(__name__)
+
+
+def normalize_storage_api_url(storage_api_url: str) -> str:
+    """
+    Validates a Keboola Storage API URL and returns its canonical ``https://connection.<suffix>`` base.
+
+    :raises ValueError: if the host is missing or is not a ``connection.*`` host.
+    """
+    parsed = urlparse(storage_api_url)
+    if not parsed.hostname or not parsed.hostname.startswith('connection.'):
+        raise ValueError(f'Invalid Keboola Storage API URL: {storage_api_url}')
+    return urlunparse(('https', parsed.hostname, '', '', '', ''))
+
+
+def read_service_account_jwt(path: str) -> str:
+    """
+    Reads the projected Kubernetes ServiceAccount JWT from ``path``.
+
+    Read per call so kubelet rotation of the projected token is honored.
+
+    :raises ValueError: if the token file is empty.
+    """
+    jwt = Path(path).read_text().strip()
+    if not jwt:
+        raise ValueError(f'Kubernetes ServiceAccount token file is empty: {path}')
+    return jwt
 
 
 class RawKeboolaClient:
