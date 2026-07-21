@@ -811,7 +811,14 @@ class MultiProjectMiddleware(fmw.Middleware):
             requested = args.pop(_PROJECT_FILTER_ARG, None)
 
         targets = list(scope.project_ids)
-        if requested:
+        if requested is not None:
+            # Omit the filter to run across the full scope; an explicit empty list is a caller mistake
+            # (it must not silently fall through to the whole scope).
+            if not requested:
+                raise ToolError(
+                    f'"{_PROJECT_FILTER_ARG}" must be a non-empty list of project ids, '
+                    'or omitted to run across the full scope.'
+                )
             outside = [p for p in requested if p not in scope.project_ids]
             if outside:
                 raise ToolError(

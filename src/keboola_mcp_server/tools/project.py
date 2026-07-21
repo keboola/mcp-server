@@ -459,6 +459,11 @@ async def set_project_scope(
     client = KeboolaClient.from_state(ctx.session.state)
     parent_token = await _parent_subject_token(client)
 
+    # Distinguish "omit/null" (scope to all) from an explicit empty list, which is almost certainly a
+    # caller mistake and must not silently broaden the scope to every project.
+    if project_ids is not None and len(project_ids) == 0:
+        raise ValueError('project_ids must be a non-empty list of project ids, or omitted/null to scope to all.')
+
     ids = list(project_ids or [])
     if not ids:
         introspection = await introspect_token(client.storage_api_url, subject_token=parent_token)
