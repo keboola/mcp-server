@@ -92,8 +92,10 @@ const main = async (): Promise<void> => {
     throw new Error('No embedder configured (set DOCS_EMBEDDER_MODEL=local for a no-key local build).');
   }
   const limit = values.limit ? Number(values.limit) : Infinity;
-  const chosen =
-    values.source === 'all' ? Object.values(SOURCES) : [SOURCES[values.source ?? 'all']].filter(Boolean);
+  const chosen: Source[] =
+    values.source === 'all'
+      ? Object.values(SOURCES)
+      : [SOURCES[values.source ?? 'all']].filter((s): s is Source => s !== undefined);
   if (chosen.length === 0) throw new Error(`Unknown --source "${values.source}" (help|dev|all).`);
 
   const { load } = await import('cheerio').catch(() => {

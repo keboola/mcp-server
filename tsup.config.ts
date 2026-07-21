@@ -4,10 +4,17 @@ import { defineConfig } from 'tsup';
 // deps stay external (this ships as an npm package), but the `@/*` source alias
 // is resolved at build time.
 export default defineConfig({
-  // `index` is the npx/bin server entry; `docs-build` is the docs-index migrate+seed
-  // CLI, emitted so it runs in the production image (which has no tsx/scripts/) as
-  // `node dist/docs-build.js` — used by the docker-compose docs-seed service.
-  entry: { index: 'src/index.ts', 'docs-build': 'scripts/docs-build.ts' },
+  // `index` is the npx/bin server entry. `docs-build` (fixture seed) and `docs-crawl`
+  // (real crawl of the public help+dev docs → migrate + embed + seed) are docs-index
+  // CLIs emitted so they run in the production image (which has no tsx/scripts/) as
+  // `node dist/docs-build.js` / `node dist/docs-crawl.js` — used by the docker-compose
+  // docs-seed service and the kbc-stacks index-build CronJob. cheerio ships as an
+  // optionalDependency (installed by `npm ci --omit=dev`), so the crawl runs in-image.
+  entry: {
+    index: 'src/index.ts',
+    'docs-build': 'scripts/docs-build.ts',
+    'docs-crawl': 'scripts/docs-crawl.ts',
+  },
   format: ['esm'],
   target: 'node22',
   platform: 'node',
