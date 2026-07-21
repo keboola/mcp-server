@@ -48,10 +48,10 @@ Implications:
 - Soft dependencies that gate the production rollout (not local dev): kbc-stacks must map `mcp-server`'s SA subject to `internal:auth-bridge:resolve-storage-token` and mount the projected token (PSGO-261 Part 2); the Connection resolver and `/admin/auth/pkce/authorize` must be enabled on the target production stacks.
 
 ### Prior art
-- **`auth-demo-cli/pkce.ts` (ui#6061)** — the reference PKCE client to mirror for the new local `login` command.
+- **`auth-demo-cli/pkce.ts` ([ui#6061](https://github.com/keboola/ui/pull/6061))** — the reference PKCE client to mirror for the new local `login` command.
 - **`SimpleOAuthProvider` (`oauth.py`)** — existing PKCE + SAPI-mint patterns to follow for token handling/storage.
 - **k8s SA step-up header (`b971146f`)** — the projected-SA-token mechanism; it is the mechanism the resolver's `X-Kubernetes-Authorization` exchange must reuse on the **deployed** mcp-server (in-k8s only).
-- **platform-libraries#507** — PHP decentralized-exchange reference for exchange + error mapping.
+- **[platform-libraries#507](https://github.com/keboola/platform-libraries/pull/507)** — PHP decentralized-exchange reference for exchange + error mapping.
 
 ### Scope split (user-stated, verbatim)
 > "I think we cannot get rid of OAuth because it's MCP protocol build on top of it. We can have login separate when not having oauth — instead of passing headers just stack is enough. The OAuth exchange will be done separately as separate PR."
