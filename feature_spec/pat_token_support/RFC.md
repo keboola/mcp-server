@@ -6,10 +6,20 @@ Related: [PSGO-263](https://linear.app/keboola/issue/PSGO-263/support-pat-tokens
 
 Reference implementations:
 - Go SDK exchange resolver: [keboola/keboola-sdk-go#90](https://github.com/keboola/keboola-sdk-go/pull/90)
-- Go services consumption (Query/Metastore): [keboola/go-monorepo#540](https://github.com/keboola/go-monorepo#540)
+- Go services consumption (Query/Metastore): [keboola/go-monorepo#540](https://github.com/keboola/go-monorepo/pull/540)
 - UI PKCE login + `/v1/auth/*` client: [keboola/ui#6061](https://github.com/keboola/ui/pull/6061)
 - PHP reference (decentralized exchange): keboola/platform-libraries#507
 - Auth-bridge-proxy RFC: `go-monorepo/docs/rfcs/2026-05-18-auth-bridge-proxy.md`
+
+---
+
+> **As-built status.** This is the original design RFC. During implementation the scope grew
+> beyond Parts A/B: the shipped server adds **multi-project session scope** with per-project
+> fan-out (`get_accessible_projects` / `set_project_scope`), a **scoped-token exchange**
+> (`POST v1/auth/pat/exchange`), and **PAT/MFA leasing** (`v1/auth/sudo`, `v1/auth/pat`, exposed
+> via `login --pat/--totp/--recovery`), plus `logout` and `login --force/--show-token`. The
+> paragraphs below marked _(as-built)_ have been reconciled with the code; the authoritative,
+> fully expanded description lives in the as-built RFC carried by the implementation PR.
 
 ---
 
@@ -63,7 +73,7 @@ Response 200 (AuthBridgeStorageTokenResolveResponse):
 Requirements (from acceptance criteria):
 
 - `Authorization: Bearer kbc_pat_*` **or** `kbc_at_*` + `X-KBC-ProjectId` is accepted wherever a legacy Storage token works today, and resolves to that project's Storage token.
-- Legacy `X-StorageApi-Token` traffic is unaffected.
+- Legacy `X-StorageAPI-Token` traffic is unaffected.
 - The server reads its **own** projected SA JWT from the file path **per request** (kubelet rotation); the SA subject is mapped to `internal:auth-bridge:resolve-storage-token` in kbc-stacks (Part 2, separate repo).
 - Resolver error mapping: `400→400`, `401→401`, `403→403`, `5xx/timeout/network→502`.
 - **No token material** (subject token, resolved Storage token, SA JWT) is ever logged or put in exception messages.
@@ -74,7 +84,7 @@ Requirements (from acceptance criteria):
 For local/stdio use we add a `login` flow that obtains and persists programmatic tokens so the server can run without a hand-pasted Storage token.
 
 ```
-keboola-mcp-server login --storage-api-url https://connection.<stack>.keboola.com
+keboola-mcp-server login --api-url https://connection.<stack>.keboola.com
 ```
 
 1. Generate PKCE verifier/challenge (S256) + `state`; start a loopback listener on `127.0.0.1:<port>/callback`.
@@ -103,21 +113,32 @@ The resulting `accessToken` is then the subject token for the Part A resolver ex
 | HTTP / remote | `Authorization: Bearer kbc_*` per request | exchange per request (Part A); refresh is the client's job, not ours |
 | HTTP OAuth (existing) | `SimpleOAuthProvider` session | unchanged for now (see Scope) |
 
+### Connection endpoints used _(as-built)_
+
+Beyond the resolver and the two PKCE endpoints above, the shipped code also calls:
+
+| Method + path | Purpose |
+| --- | --- |
+| `GET v1/auth/token/introspect` | enumerate the projects a token can reach (drives default multi-project scope) |
+| `POST v1/auth/pat/exchange` | mint a session-scoped child token narrowed to selected project(s) |
+| `POST v1/auth/sudo` | MFA elevation (TOTP / recovery code) ahead of PAT creation |
+| `POST v1/auth/pat` | create a personal access token (`login --pat`) |
+
 ## Resolution Strategy
 
 ### Detection + exchange client (Part A)
 
 - **New** `clients/auth_bridge.py`: `StorageTokenResolver` with `async def resolve(subject_token: str, project_id: int) -> str`. Builds the resolver URL from the stack host suffix (same derivation as `KeboolaClient.__init__`, `clients/client.py:154-166`). Reads the SA JWT from a path env var **per call** (no caching). Redacts all token material from logs/exceptions; maps status codes per the table.
 - **Reuse the existing projected-SA-token mechanism** already added for workspace step-up (commit `b971146f`, workspace provisioning header). Same projected file, same per-request read — factor the file-read into one helper so both call sites share it.
-- **Helper** `is_programmatic_token(token: str) -> bool` (prefix check, `Bearer ` tolerant) in `config.py` or a small `auth.py`.
-- **Wire-in point:** `SessionStateMiddleware.apply_request_config` (`mcp.py:229-245`) and/or `create_session_state` (`mcp.py:248-294`). Today `apply_request_config` pulls `storage_token` from `user.access_token.sapi_token` (OAuth). New branch: if `config.bearer_token` / inbound bearer is programmatic, call the resolver to obtain the Storage token and set `config.storage_token` to the resolved value before `KeboolaClient` is built. Everything downstream (`client.py:169` `bearer_or_sapi_token`, `base.py:38-42` header selection) then uses the legacy Storage token unchanged.
+- **Helper** `is_programmatic_token(token: str) -> bool` (prefix check, `Bearer ` tolerant). _(as-built: lives in `clients/auth_bridge.py`, not `config.py`/`auth.py`.)_
+- **Wire-in point:** `create_session_state` in `mcp.py`. _(as-built: the programmatic token arrives as `config.storage_token`; `create_session_state` branches on `is_programmatic_token(config.storage_token)` — deployed exchanges it via the resolver, local forwards it as a Bearer with `X-KBC-ProjectId`. It is not triggered off `config.bearer_token`.)_ Everything downstream (`client.py:169` `bearer_or_sapi_token`, `base.py:38-42` header selection) then uses the resolved/forwarded token unchanged.
   - Note: with a resolved legacy Storage token we should set `storage_token` and leave `bearer_token` unset, so all service clients (including Queue/AI/sync-actions that don't speak Bearer) work uniformly. The programmatic token never goes downstream.
 - **Project id:** required by the resolver, resolved **per request/session**, not a single static config value. It comes from a session→project mapping injected in middleware (`SessionStateMiddleware`), driven by user/query filtering — the same place that will later host **token-scoping tooling** (issue increasingly tight PATs scoped to a project/session on top of the session mapping). Source order for v1: `X-KBC-ProjectId` header (HTTP) → session mapping → `KBC_PROJECT_ID` env / CLI (stdio) → from `tokenDetail`/login `user` if unambiguous. Add `project_id` to `Config` (`config.py:17-138`, same `KBC_*` / `X-*` resolution pattern) as the plumbing; the mapping/scoping tooling is a follow-up.
 
 ### PKCE login + storage + refresh (Part B)
 
 - **New** `auth_login.py`: PKCE crypto (stdlib `hashlib`, `secrets`, `base64`), loopback `http.server` callback, the two HTTP calls (`/admin/auth/pkce/authorize` open-in-browser, `POST /v1/auth/pkce/token`). Mirror `scripts/auth-demo-cli/pkce.ts` from ui#6061. `clientId` is configurable via env/secret (`KBC_PKCE_CLIENT_ID`), defaulting to the demo value `keboola-cli-demo` for now; tolerate a blank value (injected as a secret later) and swap the real MCP client id when allocated.
-- **New** `credentials.py`: load/save the mode-`600` JSON file; `async def get_access_token()` that refreshes via `POST /v1/auth/token/refresh` when within skew of `expiresAt` and persists the rotated pair. ponytail: file-based store, single-user; no keyring/DB until a real multi-account need appears.
+- **Credential store + refresh:** load/save the mode-`600` JSON file; `async def get_access_token()` that refreshes via `POST /v1/auth/token/refresh` when within skew of `expiresAt` and persists the rotated pair. _(as-built: this lives in `auth_login.py` alongside the PKCE flow — no separate `credentials.py` module.)_ Note: file-based store, single-user; no keyring/DB until a real multi-account need appears.
 - **CLI:** add `login` subcommand in `cli.py` (`parse_args` `cli.py:28-61`, `run_server` dispatch). On normal server start, if no `KBC_STORAGE_TOKEN` and no inbound bearer, load stored creds → refresh-if-needed → feed the access token into the Part A path.
 - Refresh concurrency: guard with an `asyncio.Lock` so concurrent sessions don't double-refresh and invalidate each other's rotated token.
 
@@ -136,12 +157,16 @@ The resulting `accessToken` is then the subject token for the Part A resolver ex
 - `project_id` config plumbing.
 - Unit + integration tests; `TOOLS.md` regen only if tool signatures change (they shouldn't).
 
+**Delivered beyond the original Part A/B design** _(as-built — originally listed out of scope, since built)_
+- Multi-project session scope with per-project fan-out and the `get_accessible_projects` / `set_project_scope` tools.
+- Session-scoped token exchange (`v1/auth/pat/exchange`) for narrowing scope at runtime.
+- MFA / sudo flow (`v1/auth/sudo`) and PAT creation (`v1/auth/pat`) behind `login --pat/--totp/--recovery`.
+
 **Out of scope**
 - kbc-stacks SA-subject → `internal:auth-bridge:resolve-storage-token` mapping and projected-token mount (PSGO-261 Part 2, **separate repo**).
 - Replacing/retiring `SimpleOAuthProvider` OAuth flow.
 - Caching exchange results; keyring/DB credential storage.
-- MFA / sudo / device-code flows, PAT create/list/revoke management endpoints.
-- Multi-project / project-switching UX beyond a single `project_id`.
+- Device-code flow; PAT list/revoke management endpoints.
 
 ## Testing / Verification
 
@@ -154,11 +179,11 @@ The resulting `accessToken` is then the subject token for the Part A resolver ex
 **Integration** (`integtests/`, real stack)
 - Tool call authenticated with a `kbc_pat_*` token + `X-KBC-ProjectId` succeeds and hits the right project.
 - Same with `kbc_at_*`.
-- Legacy `X-StorageApi-Token` path still works (regression).
+- Legacy `X-StorageAPI-Token` path still works (regression).
 - Each resolver error path surfaces the mapped client status.
 
 **Manual**
-- `keboola-mcp-server login --storage-api-url https://connection.<stack>.keboola.com` → browser → tokens stored; start server with no `KBC_STORAGE_TOKEN`; run a tool; let the access token expire and confirm transparent refresh.
+- `keboola-mcp-server login --api-url https://connection.<stack>.keboola.com` → browser → tokens stored; start server with no `KBC_STORAGE_TOKEN`; run a tool; let the access token expire and confirm transparent refresh.
 
 ---
 
@@ -172,8 +197,8 @@ OAuth is **not** removed (the MCP protocol needs it for HTTP transport). The OAu
 
 ## Decisions
 
-1. **`project_id` is explicit session state (D2)** — not derived from the token (a whole-stack PAT has no implicit project; today `StorageClient.project_id()` reads `tokens/verify`, which only works for project-bound legacy tokens). Default from CLI/env (`KBC_PROJECT_ID`) or HTTP `X-KBC-ProjectId`; a new chat may start full-scope and narrow via a **select-project tool** (mirrors the `get_project_info` discovery pattern). Storage-touching tools require a selected project when none is set (clear error, no silent wrong-project resolution).
-1b. **No minting; whole-stack on-disk credential (D1)** — login does not mint a project-scoped PAT. The stored credential is the whole-stack session token; scope narrowing is runtime-only session state. Mitigations: mode-600 file, refresh rotation, never logged.
+1. **`project_id` is explicit session state (D2)** — not derived from the token (a whole-stack PAT has no implicit project; today `StorageClient.project_id()` reads `tokens/verify`, which only works for project-bound legacy tokens). Default from CLI/env (`KBC_PROJECT_ID`) or HTTP `X-KBC-ProjectId`. _(as-built: rather than a single "select-project tool", the server ships two tools — `get_accessible_projects` (introspect-backed discovery) and `set_project_scope` (narrowing) — and, for local programmatic sessions with no explicit project, auto-leases **all** reachable projects as the default scope, gated by an ask-first confirmation.)_
+1b. **Whole-stack on-disk credential; scoped minting at runtime (D1)** — the persisted PKCE credential is the whole-stack session token (mode-600, refresh-rotated, never logged); it is never a project-scoped PAT on disk. _(as-built: `set_project_scope` **does** mint a scoped child token via `v1/auth/pat/exchange`, but only in memory as session state — it is never persisted — and `login --pat` can mint a real PAT on explicit request.)_
 2. **`clientId` for PKCE** — use the demo value `keboola-cli-demo` for now, configurable via `KBC_PKCE_CLIENT_ID` (blank-tolerant, injectable as a secret later); swap the real MCP client id when allocated.
 3. **Refresh token** — treated as an opaque string (no prefix assumptions).
 4. **SA token path env var** — align with the workspace step-up var (`b971146f`) and the Go services' `*_KUBERNETES_TOKEN_PATH` convention; share one file-read helper.
