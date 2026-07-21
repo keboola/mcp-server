@@ -16,7 +16,7 @@ Reference implementations:
 > **As-built status.** This is the original design RFC. During implementation the scope grew
 > beyond Parts A/B: the shipped server adds **multi-project session scope** with per-project
 > fan-out (`get_accessible_projects` / `set_project_scope`), a **scoped-token exchange**
-> (`POST v1/auth/pat/exchange`), and **PAT/MFA leasing** (`v1/auth/sudo`, `v1/auth/pat`, exposed
+> (`POST /v1/auth/pat/exchange`), and **PAT/MFA leasing** (`/v1/auth/sudo`, `/v1/auth/pat`, exposed
 > via `login --pat/--totp/--recovery`), plus `logout` and `login --force/--show-token`. The
 > paragraphs below marked _(as-built)_ have been reconciled with the code; the authoritative,
 > fully expanded description lives in the as-built RFC carried by the implementation PR.
@@ -119,10 +119,10 @@ Beyond the resolver and the two PKCE endpoints above, the shipped code also call
 
 | Method + path | Purpose |
 | --- | --- |
-| `GET v1/auth/token/introspect` | enumerate the projects a token can reach (drives default multi-project scope) |
-| `POST v1/auth/pat/exchange` | mint a session-scoped child token narrowed to selected project(s) |
-| `POST v1/auth/sudo` | MFA elevation (TOTP / recovery code) ahead of PAT creation |
-| `POST v1/auth/pat` | create a personal access token (`login --pat`) |
+| `GET /v1/auth/token/introspect` | enumerate the projects a token can reach (drives default multi-project scope) |
+| `POST /v1/auth/pat/exchange` | mint a session-scoped child token narrowed to selected project(s) |
+| `POST /v1/auth/sudo` | MFA elevation (TOTP / recovery code) ahead of PAT creation |
+| `POST /v1/auth/pat` | create a personal access token (`login --pat`) |
 
 ## Resolution Strategy
 
@@ -159,8 +159,8 @@ Beyond the resolver and the two PKCE endpoints above, the shipped code also call
 
 **Delivered beyond the original Part A/B design** _(as-built — originally listed out of scope, since built)_
 - Multi-project session scope with per-project fan-out and the `get_accessible_projects` / `set_project_scope` tools.
-- Session-scoped token exchange (`v1/auth/pat/exchange`) for narrowing scope at runtime.
-- MFA / sudo flow (`v1/auth/sudo`) and PAT creation (`v1/auth/pat`) behind `login --pat/--totp/--recovery`.
+- Session-scoped token exchange (`/v1/auth/pat/exchange`) for narrowing scope at runtime.
+- MFA / sudo flow (`/v1/auth/sudo`) and PAT creation (`/v1/auth/pat`) behind `login --pat/--totp/--recovery`.
 
 **Out of scope**
 - kbc-stacks SA-subject → `internal:auth-bridge:resolve-storage-token` mapping and projected-token mount (PSGO-261 Part 2, **separate repo**).
@@ -198,7 +198,7 @@ OAuth is **not** removed (the MCP protocol needs it for HTTP transport). The OAu
 ## Decisions
 
 1. **`project_id` is explicit session state (D2)** — not derived from the token (a whole-stack PAT has no implicit project; today `StorageClient.project_id()` reads `tokens/verify`, which only works for project-bound legacy tokens). Default from CLI/env (`KBC_PROJECT_ID`) or HTTP `X-KBC-ProjectId`. _(as-built: rather than a single "select-project tool", the server ships two tools — `get_accessible_projects` (introspect-backed discovery) and `set_project_scope` (narrowing) — and, for local programmatic sessions with no explicit project, auto-leases **all** reachable projects as the default scope, gated by an ask-first confirmation.)_
-1b. **Whole-stack on-disk credential; scoped minting at runtime (D1)** — the persisted PKCE credential is the whole-stack session token (mode-600, refresh-rotated, never logged); it is never a project-scoped PAT on disk. _(as-built: `set_project_scope` **does** mint a scoped child token via `v1/auth/pat/exchange`, but only in memory as session state — it is never persisted — and `login --pat` can mint a real PAT on explicit request.)_
+1b. **Whole-stack on-disk credential; scoped minting at runtime (D1)** — the persisted PKCE credential is the whole-stack session token (mode-600, refresh-rotated, never logged); it is never a project-scoped PAT on disk. _(as-built: `set_project_scope` **does** mint a scoped child token via `/v1/auth/pat/exchange`, but only in memory as session state — it is never persisted — and `login --pat` can mint a real PAT on explicit request.)_
 2. **`clientId` for PKCE** — use the demo value `keboola-cli-demo` for now, configurable via `KBC_PKCE_CLIENT_ID` (blank-tolerant, injectable as a secret later); swap the real MCP client id when allocated.
 3. **Refresh token** — treated as an opaque string (no prefix assumptions).
 4. **SA token path env var** — align with the workspace step-up var (`b971146f`) and the Go services' `*_KUBERNETES_TOKEN_PATH` convention; share one file-read helper.
