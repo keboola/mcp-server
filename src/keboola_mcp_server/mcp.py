@@ -377,16 +377,14 @@ class SessionStateMiddleware(fmw.Middleware):
             config = dataclasses.replace(config, storage_api_url=own_stack_storage_api_url)
 
         if user := http_rq.scope.get('user'):
-            LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
+            LOG.debug(f'Injecting exchanged session token: user={user}, access_token={user.access_token}')
             assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
             assert isinstance(user.access_token, ProxyAccessToken), (
                 f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
             )
-            config = dataclasses.replace(
-                config,
-                storage_token=user.access_token.sapi_token,
-                bearer_token=user.access_token.delegate.token,
-            )
+            # The exchanged kbc_at_ token is a Keboola programmatic token; is_programmatic_token()
+            # detects it downstream and the full PSGO-261 multi-project machinery applies unchanged.
+            config = dataclasses.replace(config, storage_token=user.access_token.kbc_access_token)
 
         return config
 

@@ -1,14 +1,18 @@
-"""Exchange Keboola programmatic tokens for legacy Storage tokens (PSGO-261).
+"""Auth-bridge exchanges against Connection's internal endpoints (PSGO-261).
 
-Implements the decentralized auth-bridge exchange: a programmatic bearer token
-(`kbc_at_*` access token or `kbc_pat_*` personal access token) presented to the MCP
-server is exchanged at Connection for a legacy Storage token, which is then used for
-all downstream Storage-token APIs exactly as before.
+Two exchanges live here, both authenticating to Connection with the MCP server's own
+projected Kubernetes ServiceAccount JWT (`X-Kubernetes-Authorization`):
 
-The MCP server authenticates to the resolver with its own projected Kubernetes
-ServiceAccount JWT (`X-Kubernetes-Authorization`); the user's token travels as
-`X-Subject-Token`. The SA token file is read per call so kubelet rotation is honored.
-No token material is ever logged or placed in exception messages.
+- `StorageTokenResolver`: a programmatic bearer token (`kbc_at_*`/`kbc_pat_*`) presented
+  to the MCP server is exchanged for a legacy Storage token, used for all downstream
+  Storage-token APIs exactly as before.
+- `OAuthSessionExchanger`: a league OAuth access token from the remote/HTTP OAuth login
+  flow (`oauth.py`) is exchanged for a whole-stack Keboola programmatic session, which
+  then feeds into the same downstream pipe as a directly-supplied `kbc_at_*` token.
+
+In both cases the user's token travels as `X-Subject-Token`. The SA token file is read
+per call so kubelet rotation is honored. No token material is ever logged or placed in
+exception messages.
 """
 
 import logging
@@ -24,6 +28,7 @@ LOG = logging.getLogger(__name__)
 _ACCESS_TOKEN_PREFIX = 'kbc_at_'
 _PAT_PREFIX = 'kbc_pat_'
 _RESOLVE_ENDPOINT = 'manage/internal/auth-bridge/resolve-storage-token'
+_EXCHANGE_OAUTH_ENDPOINT = 'manage/internal/auth-bridge/exchange-oauth-token'
 # Resolver statuses passed through to the client verbatim; anything else (incl. 5xx,
 # timeouts, network failures) is mapped to 502 Bad Gateway.
 _PASS_THROUGH_STATUSES = frozenset(
@@ -138,3 +143,95 @@ class StorageTokenResolver:
                 status_code=int(HTTPStatus.BAD_GATEWAY),
             )
         return cast(str, storage_token)
+
+
+class OAuthTokenExchangeError(RuntimeError):
+    """Raised when the auth-bridge fails to exchange a league OAuth token for a programmatic session.
+
+    :ivar status_code: The client-facing HTTP status (resolver 401/403 pass through; 5xx/timeout/
+        network map to 502).
+    """
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message, status_code)
+        self.status_code = status_code
+
+    def __str__(self) -> str:
+        return self.args[0]
+
+
+class OAuthSessionExchanger:
+    """Exchanges a league OAuth access token (``claudai projectless`` scope) for a whole-stack
+    Keboola programmatic session (PSGO-261 oauth_session_exchange RFC).
+
+    Sibling of `StorageTokenResolver`, reusing the same SA-JWT / ``X-Subject-Token`` mechanism.
+    """
+
+    def __init__(
+        self,
+        *,
+        storage_api_url: str,
+        kubernetes_token_path: str,
+        timeout: httpx.Timeout | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        """
+        :param storage_api_url: Connection Storage API URL (``https://connection.<stack>``).
+        :param kubernetes_token_path: Path to the projected ServiceAccount token file.
+        :param timeout: Optional HTTP timeout override.
+        :param transport: Optional httpx transport (for testing).
+        """
+        self._base_url = normalize_storage_api_url(storage_api_url)
+        self._kubernetes_token_path = kubernetes_token_path
+        self._timeout = timeout or httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
+        self._transport = transport
+
+    async def exchange(self, *, oauth_access_token: str) -> dict:
+        """
+        Exchanges ``oauth_access_token`` for a ``CliTokenResponse`` (same shape as a PKCE login).
+
+        :return: The raw response body (``accessToken``/``refreshToken``/``expiresIn``/``sessionId``).
+        :raises OAuthTokenExchangeError: On any exchange failure (status carried on the error).
+        """
+        # Connection's E2E test for this endpoint sends X-KBC-ManageApiToken alongside
+        # X-Kubernetes-Authorization; send both since the sibling resolve-storage-token
+        # endpoint only needs the latter (unconfirmed whether this one needs both too).
+        sa_jwt = read_service_account_jwt(self._kubernetes_token_path)
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-Kubernetes-Authorization': f'Bearer {sa_jwt}',
+            'X-KBC-ManageApiToken': sa_jwt,
+            'X-Subject-Token': f'Bearer {strip_bearer(oauth_access_token)}',
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
+                response = await client.post(f'{self._base_url}/{_EXCHANGE_OAUTH_ENDPOINT}', headers=headers, json={})
+        except httpx.HTTPError as e:
+            raise OAuthTokenExchangeError(
+                f'OAuth-token exchange could not reach Connection ({type(e).__name__}).',
+                status_code=int(HTTPStatus.BAD_GATEWAY),
+            ) from None
+
+        if response.status_code != HTTPStatus.OK:
+            status = response.status_code
+            mapped = status if status in _PASS_THROUGH_STATUSES else int(HTTPStatus.BAD_GATEWAY)
+            LOG.error(f'OAuth-token exchange failed: resolver status {status}, mapped to {mapped}.')
+            raise OAuthTokenExchangeError(
+                f'OAuth-token exchange was rejected (resolver status {status}).',
+                status_code=mapped,
+            )
+
+        try:
+            body = response.json()
+        except ValueError:
+            raise OAuthTokenExchangeError(
+                'OAuth-token exchange returned a non-JSON body.',
+                status_code=int(HTTPStatus.BAD_GATEWAY),
+            ) from None
+        if not isinstance(body, dict) or not body.get('accessToken') or not body.get('refreshToken'):
+            raise OAuthTokenExchangeError(
+                'OAuth-token exchange returned an incomplete response.',
+                status_code=int(HTTPStatus.BAD_GATEWAY),
+            )
+        return cast(dict, body)

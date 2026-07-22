@@ -25,6 +25,10 @@ from mcp.server.auth.settings import ClientRegistrationOptions
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl, AnyUrl
 
+from keboola_mcp_server.auth_login import TokenSet, parse_token_response, refresh_tokens
+from keboola_mcp_server.clients.auth_bridge import OAuthSessionExchanger, OAuthTokenExchangeError
+from keboola_mcp_server.config import deployed_sa_token_path
+
 LOG = logging.getLogger(__name__)
 _OAUTH_LOG_ALL = bool(os.getenv('KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL'))
 _RE_LOCALHOST = re.compile(r'^(localhost|127\.0\.0\.1|\[::1]|::1)$', re.IGNORECASE)
@@ -113,14 +117,18 @@ class _ExtendedAuthorizationCode(AuthorizationCode):
 
 
 class ProxyAccessToken(AccessToken):
-    delegate: AccessToken
-    # This token is created by the MCP server and used for calling AI Service and Jobs Queue,
-    # which do not support 'Authorization: Bearer <access-token>' header yet.
-    sapi_token: str
+    # The whole-stack Keboola programmatic session obtained by exchanging the league OAuth
+    # access token (`oauth_session_exchange` RFC). `kbc_access_token` is forwarded downstream
+    # as `config.storage_token`, exactly like a directly-supplied `kbc_at_*` token.
+    kbc_access_token: str
+    kbc_refresh_token: str
+    session_id: str | None = None
 
 
 class ProxyRefreshToken(RefreshToken):
-    delegate: RefreshToken
+    # The refresh side of the same exchanged session; used to refresh independently of the
+    # (single-use, discarded) league OAuth token pair.
+    kbc_refresh_token: str
 
 
 class SimpleOAuthProvider(OAuthProvider):
@@ -153,11 +161,11 @@ class SimpleOAuthProvider(OAuthProvider):
             client_registration_options=ClientRegistrationOptions(enabled=True),
         )
 
-        self._sapi_tokens_url = urljoin(storage_api_url, '/v2/storage/tokens')
+        self._storage_api_url = storage_api_url
         self._mcp_callback_url = urljoin(mcp_server_url, callback_endpoint)
         self._oauth_client_id = client_id
         self._oauth_client_secret = client_secret
-        self._oauth_server_auth_url = urljoin(server_url, '/oauth/authorize')
+        self._oauth_server_auth_url = urljoin(server_url, '/oauth/consent')
         self._oauth_server_token_url = urljoin(server_url, '/oauth/token')
         self._oauth_scope = scope
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
@@ -228,7 +236,9 @@ class SimpleOAuthProvider(OAuthProvider):
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
             'state': state_jwt,
-            # send no scopes to Keboola OAuth server and let it use its own default scope
+            # 'claudai' satisfies the exchange endpoint's MissingClaudaiScopeException guard;
+            # 'projectless' makes the exchanged session whole-stack instead of project-pinned.
+            'scope': 'claudai projectless',
         }
 
         auth_url = construct_redirect_uri(self._oauth_server_auth_url, **url_params)
@@ -379,30 +389,27 @@ class SimpleOAuthProvider(OAuthProvider):
         # Check that we get the instance loaded by load_authorization_code() function.
         assert isinstance(authorization_code, _ExtendedAuthorizationCode)
 
-        expires_in = max(0, int(authorization_code.oauth_access_token.expires_at - time.time()))  # seconds
-        sapi_token = await self._create_sapi_token(
-            oauth_access_token=authorization_code.oauth_access_token.token,
-            expires_in=self._ceil_to_hour(expires_in * 2),  # twice as much as the access token's time out
-        )
+        # Exchange the league OAuth access token for a whole-stack Keboola programmatic session.
+        # The league token is used exactly once, here, and then never referenced again.
+        token_set = await self._exchange_oauth_for_session(authorization_code.oauth_access_token.token)
 
-        # wrap the access_token from the OAuth into our own access_token
         access_token = ProxyAccessToken(
             token=f'mcp_{secrets.token_hex(32)}',
             client_id=client.client_id,
             scopes=authorization_code.scopes,
-            expires_at=authorization_code.oauth_access_token.expires_at,
-            delegate=authorization_code.oauth_access_token,
-            sapi_token=sapi_token,
+            expires_at=int(token_set.expires_at),
+            kbc_access_token=token_set.access_token,
+            kbc_refresh_token=token_set.refresh_token,
+            session_id=token_set.session_id,
         )
         access_token_jwt = self._encode(access_token.model_dump())
 
-        # wrap the refresh_token from the OAuth into our own refresh_token
         refresh_token = ProxyRefreshToken(
             token=f'mcp_{secrets.token_hex(32)}',
             client_id=client.client_id,
             scopes=authorization_code.scopes,
-            expires_at=authorization_code.oauth_refresh_token.expires_at,
-            delegate=authorization_code.oauth_refresh_token,
+            expires_at=int(token_set.expires_at),
+            kbc_refresh_token=token_set.refresh_token,
         )
         refresh_token_jwt = self._encode(refresh_token.model_dump())
 
@@ -410,7 +417,7 @@ class SimpleOAuthProvider(OAuthProvider):
             access_token=access_token_jwt,
             refresh_token=refresh_token_jwt,
             token_type='Bearer',
-            expires_in=expires_in,
+            expires_in=max(0, int(token_set.expires_at - time.time())),
             scope=' '.join(access_token.scopes),
         )
 
@@ -486,8 +493,9 @@ class SimpleOAuthProvider(OAuthProvider):
         scopes: list[str],
     ) -> OAuthToken:
         """
-        Swaps the refresh token for a new access and refresh tokens from the OAuth server. The function also creates
-        a new Storage API token for accessing the AI Service and Jobs Queue APIs.
+        Refreshes the exchanged Keboola programmatic session directly (PSGO-261
+        oauth_session_exchange RFC) — no round-trip to the league OAuth server: that token pair
+        was used once, at initial exchange, and is never touched again.
 
         :param client: The OAuth client details.
         :param refresh_token: The refresh token to use for renewing the tokens.
@@ -496,7 +504,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :return: A new OAuthToken containing the access and refresh tokens.
 
-        :raises HTTPException: If the OAuth server response indicates an error.
+        :raises HTTPException: If the session-refresh call indicates an error.
         """
         _log_debug(
             f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, scopes={scopes}'
@@ -504,62 +512,32 @@ class SimpleOAuthProvider(OAuthProvider):
 
         assert isinstance(refresh_token, ProxyRefreshToken), f'Expected ProxyRefreshToken, got {type(refresh_token)}'
 
-        # get new access and refresh tokens from the OAuth server
-        async with self._create_http_client() as http_client:
-            response = await http_client.post(
-                self._oauth_server_token_url,
-                data={
-                    'client_id': self._oauth_client_id,
-                    'client_secret': self._oauth_client_secret,
-                    'grant_type': 'refresh_token',
-                    'refresh_token': refresh_token.delegate.token,
-                },
-                headers={'Accept': 'application/json'},
-            )
+        try:
+            token_set = await refresh_tokens(self._storage_api_url, refresh_token=refresh_token.kbc_refresh_token)
+        except httpx.HTTPStatusError as e:
+            LOG.exception(f'[exchange_refresh_token] Failed to refresh session: status={e.response.status_code}')
+            raise HTTPException(400, f'Failed to refresh token: status={e.response.status_code}') from e
 
-            if response.status_code != 200:
-                LOG.exception(
-                    '[exchange_refresh_token] Failed to refresh token, '
-                    f'OAuth server response: status={response.status_code}, text={response.text}'
-                )
-                raise HTTPException(
-                    400, f'Failed to refresh token: status={response.status_code}, text={response.text}'
-                )
-
-            data = response.json()
-            _log_debug(f'[exchange_refresh_token] OAuth server response: {data}')
-
-            if 'error' in data:
-                LOG.exception(f'[exchange_refresh_token] Error when refreshing token: data={data}')
-                raise HTTPException(400, data.get('error_description', data['error']))
-
-        oauth_access_token, oauth_refresh_token = self._read_oauth_tokens(data, scopes or refresh_token.scopes)
-        expires_in = max(0, int(oauth_access_token.expires_at - time.time()))  # seconds
-        sapi_token = await self._create_sapi_token(
-            oauth_access_token=oauth_access_token.token,
-            expires_in=self._ceil_to_hour(expires_in * 2),  # twice as much as the access token's time out
-        )
-
-        # wrap the access_token from the OAuth into our own access_token
+        new_scopes = scopes or refresh_token.scopes
         access_token = ProxyAccessToken(
             token=f'mcp_{secrets.token_hex(32)}',
             client_id=client.client_id,
-            scopes=oauth_access_token.scopes,
-            expires_at=oauth_access_token.expires_at,
-            delegate=oauth_access_token,
-            sapi_token=sapi_token,
+            scopes=new_scopes,
+            expires_at=int(token_set.expires_at),
+            kbc_access_token=token_set.access_token,
+            kbc_refresh_token=token_set.refresh_token,
+            session_id=token_set.session_id,
         )
         access_token_jwt = self._encode(access_token.model_dump())
 
-        # wrap the refresh_token from the OAuth into our own refresh_token
-        refresh_token = ProxyRefreshToken(
+        new_refresh_token = ProxyRefreshToken(
             token=f'mcp_{secrets.token_hex(32)}',
             client_id=client.client_id,
-            scopes=oauth_refresh_token.scopes,
-            expires_at=oauth_refresh_token.expires_at,
-            delegate=oauth_refresh_token,
+            scopes=new_scopes,
+            expires_at=int(token_set.expires_at),
+            kbc_refresh_token=token_set.refresh_token,
         )
-        refresh_token_jwt = self._encode(refresh_token.model_dump())
+        refresh_token_jwt = self._encode(new_refresh_token.model_dump())
 
         oauth_token = OAuthToken(
             access_token=access_token_jwt,
@@ -570,7 +548,7 @@ class SimpleOAuthProvider(OAuthProvider):
         )
 
         _log_debug(
-            f'[exchange_refresh_token] access_token={access_token}, refresh_token={refresh_token}, '
+            f'[exchange_refresh_token] access_token={access_token}, refresh_token={new_refresh_token}, '
             f'oauth_token={oauth_token}'
         )
 
@@ -622,39 +600,29 @@ class SimpleOAuthProvider(OAuthProvider):
 
         return access_token, refresh_token
 
-    async def _create_sapi_token(self, oauth_access_token: str, expires_in: int) -> str:
+    async def _exchange_oauth_for_session(self, oauth_access_token: str) -> TokenSet:
         """
-        Creates a new Storage API token for accessing AI and Jobs Queue services that do not support bearer tokens yet.
+        Exchanges a league OAuth access token (``claudai projectless`` scope) for a whole-stack
+        Keboola programmatic session via ``manage/internal/auth-bridge/exchange-oauth-token``.
         """
-        async with self._create_http_client() as http_client:
-            response = await http_client.post(
-                self._sapi_tokens_url,
-                json={
-                    'description': 'Created by the MCP server.',
-                    'expiresIn': expires_in,
-                    'canReadAllFileUploads': True,
-                    'canManageBuckets': True,
-                },
-                headers={
-                    'Accept': 'application/json',
-                    'Authorization': f'Bearer {oauth_access_token}',
-                },
-            )
+        kubernetes_token_path = deployed_sa_token_path()
+        if not kubernetes_token_path:
+            # OAuth login only runs on the deployed server; a missing SA token path means
+            # KBC_KUBERNETES_TOKEN_PATH isn't set there, which is a deployment misconfiguration.
+            raise HTTPException(500, 'OAuth login is misconfigured: no Kubernetes ServiceAccount token available.')
 
-            if response.status_code != 200:
-                LOG.error(
-                    '[_create_sapi_token] Failed to create Storage API token, '
-                    f'Storage API response: status={response.status_code}, text={response.text}'
-                )
-                raise HTTPException(
-                    response.status_code,
-                    f'Failed to create Storage API token: status={response.status_code}, text={response.text}',
-                )
+        exchanger = OAuthSessionExchanger(
+            storage_api_url=self._storage_api_url,
+            kubernetes_token_path=kubernetes_token_path,
+        )
+        try:
+            body = await exchanger.exchange(oauth_access_token=oauth_access_token)
+        except OAuthTokenExchangeError as e:
+            LOG.error(f'[_exchange_oauth_for_session] {e}')
+            raise HTTPException(e.status_code, str(e)) from e
 
-            data = response.json()
-            _log_debug(f'[_create_sapi_token] Storage API response: {data}')
-
-            return data['token']
+        _log_debug(f'[_exchange_oauth_for_session] exchange response: {body}')
+        return parse_token_response(body)
 
     @staticmethod
     def _ceil_to_hour(seconds: int) -> int:

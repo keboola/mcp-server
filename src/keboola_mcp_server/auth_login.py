@@ -79,7 +79,7 @@ class TokenSet:
         return time.time() >= (self.expires_at - _REFRESH_SKEW_SECONDS)
 
 
-def _parse_token_response(body: dict, *, now: float | None = None) -> TokenSet:
+def parse_token_response(body: dict, *, now: float | None = None) -> TokenSet:
     now = time.time() if now is None else now
     return TokenSet(
         access_token=cast(str, body['accessToken']),
@@ -311,7 +311,7 @@ async def exchange_code(
     async with httpx.AsyncClient(timeout=_AUTH_TIMEOUT, transport=transport) as client:
         response = await client.post(f'{_base_url(storage_api_url)}/{_TOKEN_PATH}', json=payload)
         response.raise_for_status()
-        return _parse_token_response(cast(dict, response.json()))
+        return parse_token_response(cast(dict, response.json()))
 
 
 async def refresh_tokens(
@@ -326,7 +326,7 @@ async def refresh_tokens(
             f'{_base_url(storage_api_url)}/{_REFRESH_PATH}', json={'refreshToken': refresh_token}
         )
         response.raise_for_status()
-        return _parse_token_response(cast(dict, response.json()))
+        return parse_token_response(cast(dict, response.json()))
 
 
 # --- credential storage (mode-600 file, keyed by stack host) ---

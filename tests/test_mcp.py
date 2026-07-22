@@ -824,6 +824,30 @@ class TestSessionStateMiddleware:
         assert applied.storage_token == headers.get('X-Storage-Api-Token', 'server-token')
         assert applied.branch_id == headers.get('X-Branch-Id')
 
+    def test_apply_request_config_injects_exchanged_session_token(self):
+        from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+        from starlette.requests import Request
+
+        from keboola_mcp_server.clients.auth_bridge import is_programmatic_token
+        from keboola_mcp_server.oauth import ProxyAccessToken
+
+        access_token = ProxyAccessToken(
+            token='mcp_proxy',
+            client_id='claude.ai',
+            scopes=['claudai', 'projectless'],
+            expires_at=int(time.time() + 3600),
+            kbc_access_token='kbc_at_exchanged',
+            kbc_refresh_token='kbc_rt_exchanged',
+            session_id='session-1',
+        )
+        http_rq = Request({'type': 'http', 'headers': [], 'user': AuthenticatedUser(access_token)})
+        config = Config(storage_api_url='https://connection.test.keboola.com')
+
+        out_config = SessionStateMiddleware.apply_request_config(http_rq, config)
+
+        assert out_config.storage_token == 'kbc_at_exchanged'
+        assert is_programmatic_token(out_config.storage_token)
+
 
 class TestProgrammaticTokenExchange:
     """SessionStateMiddleware exchanges programmatic tokens via the auth-bridge resolver (PSGO-261)."""

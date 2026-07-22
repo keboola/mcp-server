@@ -1,13 +1,21 @@
 import time
 from collections.abc import Mapping
+from http import HTTPStatus
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
-from mcp.server.auth.provider import AccessToken, RefreshToken
+from mcp.server.auth.provider import AccessToken, AuthorizationParams, RefreshToken
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull
 from pydantic import AnyHttpUrl, AnyUrl
 
-from keboola_mcp_server.oauth import SimpleOAuthProvider, _ExtendedAuthorizationCode, _OAuthClientInformationFull
+from keboola_mcp_server.clients.auth_bridge import OAuthTokenExchangeError
+from keboola_mcp_server.oauth import (
+    ProxyRefreshToken,
+    SimpleOAuthProvider,
+    _ExtendedAuthorizationCode,
+    _OAuthClientInformationFull,
+)
 
 JWT_KEY = 'secret'
 
@@ -217,3 +225,135 @@ class TestSimpleOAuthProvider:
         else:
             with pytest.raises(InvalidRedirectUriError):
                 info.validate_redirect_uri(uri)
+
+    @pytest.mark.asyncio
+    async def test_authorize_redirects_to_consent_with_claudai_projectless_scope(
+        self, oauth_provider: SimpleOAuthProvider
+    ):
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('http://foo/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+        auth_url = await oauth_provider.authorize(client, params)
+
+        parsed = urlparse(auth_url)
+        assert parsed.path == '/oauth/consent'
+        query = parse_qs(parsed.query)
+        assert query['scope'] == ['claudai projectless']
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_exchanges_for_session(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+
+        class _FakeExchanger:
+            def __init__(self, **kwargs):
+                captured['init_kwargs'] = kwargs
+
+            async def exchange(self, *, oauth_access_token: str):
+                captured['oauth_access_token'] = oauth_access_token
+                return {'accessToken': 'kbc_at_new', 'refreshToken': 'kbc_rt_new', 'expiresIn': 3600}
+
+        monkeypatch.setattr(oauth_module, 'OAuthSessionExchanger', _FakeExchanger)
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+
+        oauth_token = await oauth_provider.exchange_authorization_code(client, auth_code)
+
+        assert captured['oauth_access_token'] == 'oauth-access-token'
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.kbc_access_token == 'kbc_at_new'
+        assert loaded.kbc_refresh_token == 'kbc_rt_new'
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_maps_exchange_error(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from http.client import HTTPException
+
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+
+        class _FailingExchanger:
+            def __init__(self, **kwargs):
+                pass
+
+            async def exchange(self, *, oauth_access_token: str):
+                raise OAuthTokenExchangeError('rejected', status_code=int(HTTPStatus.FORBIDDEN))
+
+        monkeypatch.setattr(oauth_module, 'OAuthSessionExchanger', _FailingExchanger)
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+
+        with pytest.raises(HTTPException) as exc:
+            await oauth_provider.exchange_authorization_code(client, auth_code)
+        assert exc.value.args[0] == int(HTTPStatus.FORBIDDEN)
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_missing_sa_token_path(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from http.client import HTTPException
+
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: None)
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+
+        with pytest.raises(HTTPException) as exc:
+            await oauth_provider.exchange_authorization_code(client, auth_code)
+        assert exc.value.args[0] == 500
+
+    @pytest.mark.asyncio
+    async def test_exchange_refresh_token_calls_refresh_tokens_directly(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.auth_login import TokenSet
+
+        captured: dict[str, Any] = {}
+
+        async def _fake_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
+            captured['storage_api_url'] = storage_api_url
+            captured['refresh_token'] = refresh_token
+            return TokenSet(
+                access_token='kbc_at_rotated', refresh_token='kbc_rt_rotated', expires_at=time.time() + 3600
+            )
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _fake_refresh_tokens)
+        # If exchange_refresh_token ever called Connection's league OAuth server, this transport
+        # would raise, proving the refresh is fully decoupled from it (RFC Decision §4).
+        oauth_provider._create_http_client = lambda: (_ for _ in ()).throw(  # type: ignore[method-assign]
+            AssertionError('exchange_refresh_token must not call the league OAuth server')
+        )
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        refresh_token = ProxyRefreshToken(
+            token='mcp_old',
+            client_id='foo-client-id',
+            scopes=['claudai', 'projectless'],
+            expires_at=int(time.time() + 3600),
+            kbc_refresh_token='kbc_rt_old',
+        )
+
+        oauth_token = await oauth_provider.exchange_refresh_token(client, refresh_token, [])
+
+        assert captured['refresh_token'] == 'kbc_rt_old'
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.kbc_access_token == 'kbc_at_rotated'
+        assert loaded.kbc_refresh_token == 'kbc_rt_rotated'
