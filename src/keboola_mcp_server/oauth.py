@@ -392,41 +392,7 @@ class SimpleOAuthProvider(OAuthProvider):
         # Exchange the league OAuth access token for a whole-stack Keboola programmatic session.
         # The league token is used exactly once, here, and then never referenced again.
         token_set = await self._exchange_oauth_for_session(authorization_code.oauth_access_token.token)
-
-        access_token = ProxyAccessToken(
-            token=f'mcp_{secrets.token_hex(32)}',
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
-            expires_at=int(token_set.expires_at),
-            kbc_access_token=token_set.access_token,
-            kbc_refresh_token=token_set.refresh_token,
-            session_id=token_set.session_id,
-        )
-        access_token_jwt = self._encode(access_token.model_dump())
-
-        refresh_token = ProxyRefreshToken(
-            token=f'mcp_{secrets.token_hex(32)}',
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
-            expires_at=int(token_set.expires_at),
-            kbc_refresh_token=token_set.refresh_token,
-        )
-        refresh_token_jwt = self._encode(refresh_token.model_dump())
-
-        oauth_token = OAuthToken(
-            access_token=access_token_jwt,
-            refresh_token=refresh_token_jwt,
-            token_type='Bearer',
-            expires_in=max(0, int(token_set.expires_at - time.time())),
-            scope=' '.join(access_token.scopes),
-        )
-
-        _log_debug(
-            f'[exchange_authorization_code] access_token={access_token}, refresh_token={refresh_token},'
-            f'oauth_token={oauth_token}'
-        )
-
-        return oauth_token
+        return self._wrap_session_as_oauth_token(client, token_set, authorization_code.scopes)
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         """
@@ -518,12 +484,20 @@ class SimpleOAuthProvider(OAuthProvider):
         except httpx.HTTPStatusError as e:
             LOG.exception(f'[exchange_refresh_token] Failed to refresh session: status={e.response.status_code}')
             raise HTTPException(400, f'Failed to refresh token: status={e.response.status_code}') from e
+        except httpx.HTTPError as e:
+            LOG.exception(f'[exchange_refresh_token] Could not reach Connection to refresh session: {e}')
+            raise HTTPException(502, f'Failed to refresh token: could not reach Connection ({e}).') from e
 
-        new_scopes = scopes or refresh_token.scopes
+        return self._wrap_session_as_oauth_token(client, token_set, scopes or refresh_token.scopes)
+
+    def _wrap_session_as_oauth_token(
+        self, client: OAuthClientInformationFull, token_set: TokenSet, scopes: list[str]
+    ) -> OAuthToken:
+        """Wraps an exchanged Keboola session (`TokenSet`) into our own proxy access/refresh tokens."""
         access_token = ProxyAccessToken(
             token=f'mcp_{secrets.token_hex(32)}',
             client_id=client.client_id,
-            scopes=new_scopes,
+            scopes=scopes,
             expires_at=int(token_set.expires_at),
             kbc_access_token=token_set.access_token,
             kbc_refresh_token=token_set.refresh_token,
@@ -531,28 +505,26 @@ class SimpleOAuthProvider(OAuthProvider):
         )
         access_token_jwt = self._encode(access_token.model_dump())
 
-        new_refresh_token = ProxyRefreshToken(
+        refresh_token = ProxyRefreshToken(
             token=f'mcp_{secrets.token_hex(32)}',
             client_id=client.client_id,
-            scopes=new_scopes,
+            scopes=scopes,
             expires_at=int(token_set.expires_at),
             kbc_refresh_token=token_set.refresh_token,
         )
-        refresh_token_jwt = self._encode(new_refresh_token.model_dump())
+        refresh_token_jwt = self._encode(refresh_token.model_dump())
 
         oauth_token = OAuthToken(
             access_token=access_token_jwt,
             refresh_token=refresh_token_jwt,
             token_type='Bearer',
-            expires_in=max(0, int(access_token.expires_at - time.time())),
-            scope=' '.join(access_token.scopes),
+            expires_in=max(0, int(token_set.expires_at - time.time())),
+            scope=' '.join(scopes),
         )
-
         _log_debug(
-            f'[exchange_refresh_token] access_token={access_token}, refresh_token={new_refresh_token}, '
+            f'[_wrap_session_as_oauth_token] access_token={access_token}, refresh_token={refresh_token}, '
             f'oauth_token={oauth_token}'
         )
-
         return oauth_token
 
     async def revoke_token(self, token: str, token_type_hint: str | None = None) -> None:
@@ -610,6 +582,7 @@ class SimpleOAuthProvider(OAuthProvider):
         if not kubernetes_token_path:
             # OAuth login only runs on the deployed server; a missing SA token path means
             # KBC_KUBERNETES_TOKEN_PATH isn't set there, which is a deployment misconfiguration.
+            LOG.error('[_exchange_oauth_for_session] KBC_KUBERNETES_TOKEN_PATH is not set; cannot exchange session.')
             raise HTTPException(500, 'OAuth login is misconfigured: no Kubernetes ServiceAccount token available.')
 
         exchanger = OAuthSessionExchanger(
