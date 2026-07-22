@@ -2219,6 +2219,72 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
 
 
 @pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_draft_rejects_main_branch(
+    mcp_context_client: Context,
+    mocker,
+) -> None:
+    """A draft create on `main` is rejected by default — `main` is the prod app's branch."""
+    parent = _make_python_js_parent_data_app()
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
+
+    with pytest.raises(ValueError, match='reserved for the prod app'):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='View',
+            description='view draft',
+            slug='demo-view',
+            parent_configuration_id='cfg-prod-1',
+            branch='main',
+        )
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_draft_allows_main_branch_with_flag(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """`allow_main_branch=True` lets the platform create a read-only view draft pinned to `main`
+    (the AI workspace preview needs a deployable draft that tracks the published app)."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    parent = _make_python_js_parent_data_app()
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
+    keboola_client.data_science_client.create_app_git_credential = mocker.AsyncMock(
+        return_value=CreatedGitCredentialResponse(
+            id='cred-1', type='http_token', permissions='readWrite', secret='token-xyz'
+        )
+    )
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
+        return_value=_make_python_js_data_app_response()
+    )
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda v, **_: v)
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='View',
+        description='view draft',
+        slug='demo-view',
+        parent_configuration_id='cfg-prod-1',
+        branch='main',
+        allow_main_branch=True,
+    )
+
+    assert result.branch == 'main'
+    create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
+    serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
+    assert serialized['parameters']['dataApp']['git']['branch'] == 'main'
+    assert serialized['parameters']['dataApp']['parentConfigurationId'] == 'cfg-prod-1'
+
+
+@pytest.mark.asyncio
 async def test_modify_python_js_data_app_create_draft_defaults_branch_to_init(
     mocker,
     mcp_context_client: Context,
