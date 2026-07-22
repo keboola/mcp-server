@@ -377,10 +377,15 @@ class SessionStateMiddleware(fmw.Middleware):
             config = dataclasses.replace(config, storage_api_url=own_stack_storage_api_url)
 
         if user := http_rq.scope.get('user'):
-            LOG.debug(f'Injecting exchanged session token: user={user}, access_token={user.access_token}')
             assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
             assert isinstance(user.access_token, ProxyAccessToken), (
                 f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
+            )
+            # Log only non-sensitive identifiers; ProxyAccessToken's default repr includes the raw
+            # kbc_access_token/kbc_refresh_token, which must never be logged.
+            LOG.debug(
+                f'Injecting exchanged session token: client_id={user.access_token.client_id}, '
+                f'session_id={user.access_token.session_id}'
             )
             # The exchanged kbc_at_ token is a Keboola programmatic token; is_programmatic_token()
             # detects it downstream and the full PSGO-261 multi-project machinery applies unchanged.
@@ -590,16 +595,18 @@ class SessionStateMiddleware(fmw.Middleware):
             bearer_token = config.bearer_token
             extra_headers: dict[str, Any] = {}
             if is_programmatic_token(storage_token):
-                if deployed_sa_token_path():
-                    # Deployed: exchange the programmatic token (kbc_at_/kbc_pat_) for the project's
-                    # legacy Storage token via the auth-bridge resolver, then use it downstream unchanged.
+                if deployed_sa_token_path() and config.project_id:
+                    # Deployed, and a project is already known (header, or a prior scope selection):
+                    # exchange the programmatic token for that project's legacy Storage token via the
+                    # auth-bridge resolver, then use it downstream unchanged.
                     storage_token = await cls._exchange_programmatic_token(config)
                     bearer_token = None
                 else:
-                    # Local: no projected SA token to reach the resolver. Forward the programmatic token
-                    # downstream as a Bearer and let PAT-aware services exchange it; name the target
-                    # project when one has been selected. Strip any inbound `Bearer ` scheme so the
-                    # client's own `Bearer ` prefixing can't produce `Authorization: Bearer Bearer …`.
+                    # No projected SA token to reach the resolver (local), OR no project is known yet
+                    # (deployed, e.g. a freshly-exchanged whole-stack OAuth session pre-scoping): forward
+                    # the programmatic token downstream as a Bearer so get_accessible_projects/
+                    # set_project_scope can introspect/scope it directly. Strip any inbound `Bearer `
+                    # scheme so the client's own `Bearer ` prefixing can't produce `Bearer Bearer …`.
                     bearer_token = strip_bearer(storage_token)
                     if config.project_id:
                         extra_headers['X-KBC-ProjectId'] = config.project_id

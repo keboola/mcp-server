@@ -891,6 +891,29 @@ class TestProgrammaticTokenExchange:
         )
         resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
 
+    @pytest.mark.asyncio
+    async def test_deployed_without_project_id_forwards_bearer_instead_of_exchanging(self, monkeypatch) -> None:
+        """A deployed OAuth session starts whole-stack (no project_id yet, RFC decision §2); it must
+        forward the programmatic token as a Bearer for get_accessible_projects/set_project_scope to
+        introspect, not fail by attempting a resolver exchange that requires a project id."""
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc')
+        runtime_info = ServerRuntimeInfo(transport='http')
+
+        with (
+            patch.object(
+                SessionStateMiddleware,
+                '_exchange_programmatic_token',
+                AsyncMock(side_effect=AssertionError('must not exchange without a known project_id')),
+            ),
+            patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')),
+        ):
+            state = await SessionStateMiddleware.create_session_state(config, runtime_info)
+
+        client = state[KeboolaClient.STATE_KEY]
+        assert client.bearer_token == 'kbc_at_abc'
+        assert client.token == 'kbc_at_abc'
+
 
 class TestMaybeUseStoredSession:
     """Local HTTP with no token falls back to the stored PKCE session (PSGO-261)."""
