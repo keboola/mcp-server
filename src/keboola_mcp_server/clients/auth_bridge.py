@@ -51,8 +51,8 @@ def is_programmatic_token(token: str | None) -> bool:
     return bare.startswith(_ACCESS_TOKEN_PREFIX) or bare.startswith(_PAT_PREFIX)
 
 
-class StorageTokenExchangeError(RuntimeError):
-    """Raised when the auth-bridge resolver fails to exchange a programmatic token.
+class _AuthBridgeExchangeError(RuntimeError):
+    """Base for auth-bridge exchange failures.
 
     :ivar status_code: The client-facing HTTP status (resolver 400/401/403 pass through;
         5xx/timeout/network map to 502).
@@ -66,8 +66,12 @@ class StorageTokenExchangeError(RuntimeError):
         return self.args[0]
 
 
-class StorageTokenResolver:
-    """Exchanges a programmatic token for a legacy Storage token via the Connection resolver."""
+class StorageTokenExchangeError(_AuthBridgeExchangeError):
+    """Raised when the auth-bridge resolver fails to exchange a programmatic token."""
+
+
+class _AuthBridgeClient:
+    """Shared setup for auth-bridge clients: base URL, SA-token path, timeout, transport."""
 
     def __init__(
         self,
@@ -91,6 +95,10 @@ class StorageTokenResolver:
     def _read_sa_jwt(self) -> str:
         # Read per call — the kubelet rotates the projected token in place.
         return read_service_account_jwt(self._kubernetes_token_path)
+
+
+class StorageTokenResolver(_AuthBridgeClient):
+    """Exchanges a programmatic token for a legacy Storage token via the Connection resolver."""
 
     async def resolve(self, *, subject_token: str, project_id: int) -> str:
         """
@@ -145,46 +153,16 @@ class StorageTokenResolver:
         return cast(str, storage_token)
 
 
-class OAuthTokenExchangeError(RuntimeError):
-    """Raised when the auth-bridge fails to exchange a league OAuth token for a programmatic session.
-
-    :ivar status_code: The client-facing HTTP status (resolver 401/403 pass through; 5xx/timeout/
-        network map to 502).
-    """
-
-    def __init__(self, message: str, status_code: int) -> None:
-        super().__init__(message, status_code)
-        self.status_code = status_code
-
-    def __str__(self) -> str:
-        return self.args[0]
+class OAuthTokenExchangeError(_AuthBridgeExchangeError):
+    """Raised when the auth-bridge fails to exchange a league OAuth token for a programmatic session."""
 
 
-class OAuthSessionExchanger:
+class OAuthSessionExchanger(_AuthBridgeClient):
     """Exchanges a league OAuth access token (``claudai projectless`` scope) for a whole-stack
     Keboola programmatic session (PSGO-261 oauth_session_exchange RFC).
 
     Sibling of `StorageTokenResolver`, reusing the same SA-JWT / ``X-Subject-Token`` mechanism.
     """
-
-    def __init__(
-        self,
-        *,
-        storage_api_url: str,
-        kubernetes_token_path: str,
-        timeout: httpx.Timeout | None = None,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
-        """
-        :param storage_api_url: Connection Storage API URL (``https://connection.<stack>``).
-        :param kubernetes_token_path: Path to the projected ServiceAccount token file.
-        :param timeout: Optional HTTP timeout override.
-        :param transport: Optional httpx transport (for testing).
-        """
-        self._base_url = normalize_storage_api_url(storage_api_url)
-        self._kubernetes_token_path = kubernetes_token_path
-        self._timeout = timeout or httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
-        self._transport = transport
 
     async def exchange(self, *, oauth_access_token: str) -> dict:
         """
@@ -196,7 +174,7 @@ class OAuthSessionExchanger:
         # Connection's E2E test for this endpoint sends X-KBC-ManageApiToken alongside
         # X-Kubernetes-Authorization; send both since the sibling resolve-storage-token
         # endpoint only needs the latter (unconfirmed whether this one needs both too).
-        sa_jwt = read_service_account_jwt(self._kubernetes_token_path)
+        sa_jwt = self._read_sa_jwt()
         headers = {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
