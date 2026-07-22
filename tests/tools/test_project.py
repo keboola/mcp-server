@@ -369,6 +369,29 @@ async def test_get_accessible_projects_unknown_dialect_omits_snowflake_guidance(
 
 
 @pytest.mark.asyncio
+async def test_get_accessible_projects_logs_dialect_failure_with_traceback(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    # A per-project dialect-resolution failure is swallowed (best-effort), but must still log with
+    # exc_info so the traceback isn't lost.
+    _prep_client(mcp_context_client, mocker)
+    introspection = SimpleNamespace(user_email='m@k.com', projects=[SimpleNamespace(id=42, name='X', role='admin')])
+    mocker.patch('keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection))
+    mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
+    mocker.patch(
+        'keboola_mcp_server.tools.project._project_sql_dialect',
+        new=mocker.AsyncMock(side_effect=RuntimeError('verify failed')),
+    )
+    log_warning = mocker.patch('keboola_mcp_server.tools.project.LOG.warning')
+
+    result = await get_accessible_projects(mcp_context_client)
+
+    assert result.projects[0].sql_dialect is None
+    log_warning.assert_called_once()
+    assert log_warning.call_args.kwargs.get('exc_info') is not None
+
+
+@pytest.mark.asyncio
 async def test_set_project_scope_subset_exchanges_and_stores(
     mcp_context_client: Context, mocker: MockerFixture
 ) -> None:

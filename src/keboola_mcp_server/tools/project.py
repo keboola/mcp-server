@@ -344,7 +344,7 @@ async def get_accessible_projects(
         bool,
         Field(
             description=(
-                'If true, include the base working instructions (llm_instructions), grouped by SQL dialect. '
+                'If true, include the base working instructions (base_instructions), grouped by SQL dialect. '
                 'Request this once at the very start of a conversation; omit it on later calls.'
             )
         ),
@@ -379,7 +379,7 @@ async def get_accessible_projects(
         if isinstance(result, asyncio.CancelledError):
             raise result  # never swallow cancellation — let it propagate
         if isinstance(result, BaseException):
-            LOG.warning(f'Could not resolve SQL dialect for a project: {result}')
+            LOG.warning(f'Could not resolve SQL dialect for a project: {result}', exc_info=result)
             continue
         pid, dialect = result
         dialects[pid] = dialect
