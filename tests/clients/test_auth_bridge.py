@@ -7,6 +7,8 @@ import httpx
 import pytest
 
 from keboola_mcp_server.clients.auth_bridge import (
+    OAuthSessionExchanger,
+    OAuthTokenExchangeError,
     StorageTokenExchangeError,
     StorageTokenResolver,
     is_programmatic_token,
@@ -121,3 +123,80 @@ async def test_resolve_empty_sa_token_file_fails_loudly(tmp_path: Path) -> None:
 def test_invalid_storage_api_url_rejected(sa_token_file: Path) -> None:
     with pytest.raises(ValueError, match='Invalid Keboola Storage API URL'):
         StorageTokenResolver(storage_api_url='https://example.com', kubernetes_token_path=str(sa_token_file))
+
+
+def _exchanger(sa_token_file: Path, handler) -> OAuthSessionExchanger:
+    return OAuthSessionExchanger(
+        storage_api_url=STORAGE_API_URL,
+        kubernetes_token_path=str(sa_token_file),
+        transport=httpx.MockTransport(handler),
+    )
+
+
+@pytest.mark.asyncio
+async def test_exchange_success_sends_expected_request(sa_token_file: Path) -> None:
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured['request'] = request
+        return httpx.Response(
+            HTTPStatus.OK,
+            json={'accessToken': 'kbc_at_new', 'refreshToken': 'kbc_rt_new', 'expiresIn': 3600, 'sessionId': 's1'},
+        )
+
+    exchanger = _exchanger(sa_token_file, handler)
+    body = await exchanger.exchange(oauth_access_token='Bearer league-oauth-token')
+
+    assert body == {'accessToken': 'kbc_at_new', 'refreshToken': 'kbc_rt_new', 'expiresIn': 3600, 'sessionId': 's1'}
+    rq = captured['request']
+    assert rq.url.path == '/manage/internal/auth-bridge/exchange-oauth-token'
+    assert rq.headers['X-Kubernetes-Authorization'] == 'Bearer sa-jwt-value'
+    assert rq.headers['X-KBC-ManageApiToken'] == 'sa-jwt-value'
+    # Subject token is normalized to a single Bearer scheme regardless of inbound form.
+    assert rq.headers['X-Subject-Token'] == 'Bearer league-oauth-token'
+
+
+@pytest.mark.parametrize('status', [HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN])
+@pytest.mark.asyncio
+async def test_exchange_passes_through_client_errors(sa_token_file: Path, status: HTTPStatus) -> None:
+    exchanger = _exchanger(sa_token_file, lambda rq: httpx.Response(status, json={'error': 'nope'}))
+    with pytest.raises(OAuthTokenExchangeError) as exc:
+        await exchanger.exchange(oauth_access_token='league-oauth-token')
+    assert exc.value.status_code == int(status)
+
+
+@pytest.mark.parametrize('status', [HTTPStatus.INTERNAL_SERVER_ERROR, HTTPStatus.BAD_GATEWAY, HTTPStatus.NOT_FOUND])
+@pytest.mark.asyncio
+async def test_exchange_maps_other_statuses_to_502(sa_token_file: Path, status: HTTPStatus) -> None:
+    exchanger = _exchanger(sa_token_file, lambda rq: httpx.Response(status))
+    with pytest.raises(OAuthTokenExchangeError) as exc:
+        await exchanger.exchange(oauth_access_token='league-oauth-token')
+    assert exc.value.status_code == int(HTTPStatus.BAD_GATEWAY)
+
+
+@pytest.mark.asyncio
+async def test_exchange_maps_network_error_to_502(sa_token_file: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError('boom', request=request)
+
+    exchanger = _exchanger(sa_token_file, handler)
+    with pytest.raises(OAuthTokenExchangeError) as exc:
+        await exchanger.exchange(oauth_access_token='league-oauth-token')
+    assert exc.value.status_code == int(HTTPStatus.BAD_GATEWAY)
+    assert 'league-oauth-token' not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        {'projectId': 1},  # missing both tokens
+        {'accessToken': 'kbc_at_new'},  # missing refreshToken
+        {'refreshToken': 'kbc_rt_new'},  # missing accessToken
+    ],
+)
+@pytest.mark.asyncio
+async def test_exchange_incomplete_response_maps_to_502(sa_token_file: Path, body: dict) -> None:
+    exchanger = _exchanger(sa_token_file, lambda rq: httpx.Response(HTTPStatus.OK, json=body))
+    with pytest.raises(OAuthTokenExchangeError) as exc:
+        await exchanger.exchange(oauth_access_token='league-oauth-token')
+    assert exc.value.status_code == int(HTTPStatus.BAD_GATEWAY)
