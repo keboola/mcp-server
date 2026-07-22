@@ -4,6 +4,7 @@ from http import HTTPStatus
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
 from mcp.server.auth.provider import AccessToken, AuthorizationParams, RefreshToken
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull
@@ -357,3 +358,31 @@ class TestSimpleOAuthProvider:
         assert loaded is not None
         assert loaded.kbc_access_token == 'kbc_at_rotated'
         assert loaded.kbc_refresh_token == 'kbc_rt_rotated'
+
+    @pytest.mark.asyncio
+    async def test_exchange_refresh_token_maps_network_error_to_http_exception(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from http.client import HTTPException
+
+        from keboola_mcp_server import oauth as oauth_module
+
+        async def _failing_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
+            raise httpx.ConnectError('boom')
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _failing_refresh_tokens)
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        refresh_token = ProxyRefreshToken(
+            token='mcp_old',
+            client_id='foo-client-id',
+            scopes=['claudai', 'projectless'],
+            expires_at=int(time.time() + 3600),
+            kbc_refresh_token='kbc_rt_old',
+        )
+
+        # A network failure talking to Connection must surface as a clean HTTPException, not
+        # propagate as a raw httpx error (which the caller has no reason to expect/handle).
+        with pytest.raises(HTTPException) as exc:
+            await oauth_provider.exchange_refresh_token(client, refresh_token, [])
+        assert exc.value.args[0] == 502
