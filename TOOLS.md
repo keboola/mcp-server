@@ -3579,7 +3579,7 @@ call to also receive the base working instructions grouped by dialect.
   "properties": {
     "with_llm_instruction": {
       "default": false,
-      "description": "If true, include the base working instructions (llm_instructions), grouped by SQL dialect. Request this once at the very start of a conversation; omit it on later calls.",
+      "description": "If true, include the base working instructions (base_instructions), grouped by SQL dialect. Request this once at the very start of a conversation; omit it on later calls.",
       "type": "boolean"
     }
   },
