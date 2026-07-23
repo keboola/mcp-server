@@ -151,7 +151,9 @@ async def test_exchange_success_sends_expected_request(sa_token_file: Path) -> N
     rq = captured['request']
     assert rq.url.path == '/manage/internal/auth-bridge/exchange-oauth-token'
     assert rq.headers['X-Kubernetes-Authorization'] == 'Bearer sa-jwt-value'
-    assert rq.headers['X-KBC-ManageApiToken'] == 'sa-jwt-value'
+    # X-KBC-ManageApiToken is a distinct, mutually-exclusive authenticator -- must never be sent
+    # alongside X-Kubernetes-Authorization (confirmed against Connection's source).
+    assert 'X-KBC-ManageApiToken' not in rq.headers
     # Subject token is normalized to a single Bearer scheme regardless of inbound form.
     assert rq.headers['X-Subject-Token'] == 'Bearer league-oauth-token'
 
