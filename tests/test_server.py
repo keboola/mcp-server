@@ -13,11 +13,13 @@ from fastmcp.client import StreamableHttpTransport
 from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
+from starlette.exceptions import HTTPException
+from starlette.requests import Request
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState, _exclude_none_serializer, toon_serializer, toon_serializer_compact
-from keboola_mcp_server.server import create_server
+from keboola_mcp_server.server import CustomRoutes, create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.tools.data_apps import DATA_APP_TOOLS_TAG
@@ -544,3 +546,20 @@ async def test_json_logging():
 
     missing_top_names = {'fastmcp', 'keboola_mcp_server', 'uvicorn'} - top_names
     assert not missing_top_names, f'Missing logger names: {missing_top_names}'
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_handler_propagates_http_exception(mocker) -> None:
+    # handle_oauth_callback() raises starlette.exceptions.HTTPException; oauth_callback_handler must
+    # re-raise it as-is (so Starlette renders the real status/detail) rather than falling through to
+    # the generic except-Exception branch, which would mask it as an opaque 500.
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    oauth_provider = mocker.Mock()
+    oauth_provider.handle_oauth_callback = mocker.AsyncMock(side_effect=HTTPException(400, 'Invalid state parameter'))
+    routes = CustomRoutes(server_state=server_state, oauth_provider=oauth_provider)
+
+    request = Request({'type': 'http', 'headers': [], 'query_string': b'code=abc&state=xyz'})
+    with pytest.raises(HTTPException) as exc:
+        await routes.oauth_callback_handler(request)
+    assert exc.value.status_code == 400
+    assert exc.value.detail == 'Invalid state parameter'

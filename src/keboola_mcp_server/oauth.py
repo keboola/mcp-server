@@ -6,7 +6,6 @@ import os
 import re
 import secrets
 import time
-from http.client import HTTPException
 from typing import Any, Mapping, cast
 from urllib.parse import urljoin
 
@@ -18,11 +17,13 @@ from mcp.server.auth.provider import (
     AuthorizationCode,
     AuthorizationParams,
     RefreshToken,
+    TokenError,
     construct_redirect_uri,
 )
 from mcp.server.auth.settings import ClientRegistrationOptions
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl, AnyUrl
+from starlette.exceptions import HTTPException
 
 from keboola_mcp_server.auth_login import TokenSet, parse_token_response, refresh_tokens
 from keboola_mcp_server.clients.auth_bridge import OAuthSessionExchanger, OAuthTokenExchangeError
@@ -481,14 +482,23 @@ class SimpleOAuthProvider(OAuthProvider):
 
         assert isinstance(refresh_token, ProxyRefreshToken), f'Expected ProxyRefreshToken, got {type(refresh_token)}'
 
+        # Raised as TokenError (not HTTPException): this method is invoked by the mcp SDK's own
+        # /token endpoint handler, which only recognizes TokenError and formats it into a spec-
+        # compliant TokenErrorResponse body ({"error": ..., "error_description": ...}) -- an
+        # HTTPException here would bubble up uncaught and reach the client as an opaque, non-OAuth
+        # shaped error.
         try:
             token_set = await refresh_tokens(self._storage_api_url, refresh_token=refresh_token.kbc_refresh_token)
         except httpx.HTTPStatusError as e:
             LOG.exception(f'[exchange_refresh_token] Failed to refresh session: status={e.response.status_code}')
-            raise HTTPException(400, f'Failed to refresh token: status={e.response.status_code}') from e
+            raise TokenError(
+                error='invalid_grant', error_description=f'Failed to refresh token: status={e.response.status_code}'
+            ) from e
         except httpx.HTTPError as e:
             LOG.exception(f'[exchange_refresh_token] Could not reach Connection to refresh session: {e}')
-            raise HTTPException(502, f'Failed to refresh token: could not reach Connection ({e}).') from e
+            raise TokenError(
+                error='invalid_grant', error_description=f'Failed to refresh token: could not reach Connection ({e}).'
+            ) from e
 
         return self._wrap_session_as_oauth_token(client, token_set, scopes or refresh_token.scopes)
 
@@ -585,13 +595,21 @@ class SimpleOAuthProvider(OAuthProvider):
         """
         Exchanges a league OAuth access token (``claudai projectless`` scope) for a whole-stack
         Keboola programmatic session via ``manage/internal/auth-bridge/exchange-oauth-token``.
+
+        Raised as ``TokenError`` (not ``HTTPException``): this runs inside ``exchange_authorization_code``,
+        invoked by the mcp SDK's own ``/token`` endpoint handler, which only recognizes ``TokenError``
+        and formats it into a spec-compliant ``TokenErrorResponse`` body. An ``HTTPException`` here
+        would bubble up uncaught and reach the client as an opaque, non-OAuth-shaped error.
         """
         kubernetes_token_path = deployed_sa_token_path()
         if not kubernetes_token_path:
             # OAuth login only runs on the deployed server; a missing SA token path means
             # KBC_KUBERNETES_TOKEN_PATH isn't set there, which is a deployment misconfiguration.
             LOG.error('[_exchange_oauth_for_session] KBC_KUBERNETES_TOKEN_PATH is not set; cannot exchange session.')
-            raise HTTPException(500, 'OAuth login is misconfigured: no Kubernetes ServiceAccount token available.')
+            raise TokenError(
+                error='invalid_request',
+                error_description='OAuth login is misconfigured: no Kubernetes ServiceAccount token available.',
+            )
 
         exchanger = OAuthSessionExchanger(
             storage_api_url=self._storage_api_url,
@@ -601,7 +619,7 @@ class SimpleOAuthProvider(OAuthProvider):
             body = await exchanger.exchange(oauth_access_token=oauth_access_token)
         except OAuthTokenExchangeError as e:
             LOG.error(f'[_exchange_oauth_for_session] {e}')
-            raise HTTPException(e.status_code, str(e)) from e
+            raise TokenError(error='invalid_grant', error_description=str(e)) from e
 
         _log_debug(f'[_exchange_oauth_for_session] exchange response: {body}')
         return parse_token_response(body)
