@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
-from mcp.server.auth.provider import AccessToken, AuthorizationParams, RefreshToken
+from mcp.server.auth.provider import AccessToken, AuthorizationParams, RefreshToken, TokenError
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull
 from pydantic import AnyHttpUrl, AnyUrl
 
@@ -289,8 +289,6 @@ class TestSimpleOAuthProvider:
     async def test_exchange_authorization_code_maps_exchange_error(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
-        from http.client import HTTPException
-
         from keboola_mcp_server import oauth as oauth_module
 
         monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
@@ -307,16 +305,16 @@ class TestSimpleOAuthProvider:
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
 
-        with pytest.raises(HTTPException) as exc:
+        # Raised as TokenError (not HTTPException): the mcp SDK's /token handler only recognizes
+        # TokenError and turns it into a spec-compliant TokenErrorResponse body.
+        with pytest.raises(TokenError) as exc:
             await oauth_provider.exchange_authorization_code(client, auth_code)
-        assert exc.value.args[0] == int(HTTPStatus.FORBIDDEN)
+        assert exc.value.error == 'invalid_grant'
 
     @pytest.mark.asyncio
     async def test_exchange_authorization_code_missing_sa_token_path(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
-        from http.client import HTTPException
-
         from keboola_mcp_server import oauth as oauth_module
 
         monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: None)
@@ -324,9 +322,9 @@ class TestSimpleOAuthProvider:
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(TokenError) as exc:
             await oauth_provider.exchange_authorization_code(client, auth_code)
-        assert exc.value.args[0] == 500
+        assert exc.value.error == 'invalid_request'
 
     @pytest.mark.asyncio
     async def test_exchange_refresh_token_calls_refresh_tokens_directly(
@@ -371,11 +369,9 @@ class TestSimpleOAuthProvider:
         assert loaded_refresh.kbc_refresh_token == 'kbc_rt_rotated'
 
     @pytest.mark.asyncio
-    async def test_exchange_refresh_token_maps_network_error_to_http_exception(
+    async def test_exchange_refresh_token_maps_network_error_to_token_error(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
-        from http.client import HTTPException
-
         from keboola_mcp_server import oauth as oauth_module
 
         async def _failing_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
@@ -392,8 +388,8 @@ class TestSimpleOAuthProvider:
             kbc_refresh_token='kbc_rt_old',
         )
 
-        # A network failure talking to Connection must surface as a clean HTTPException, not
-        # propagate as a raw httpx error (which the caller has no reason to expect/handle).
-        with pytest.raises(HTTPException) as exc:
+        # A network failure talking to Connection must surface as a clean TokenError, not
+        # propagate as a raw httpx error (which the mcp SDK's /token handler can't format).
+        with pytest.raises(TokenError) as exc:
             await oauth_provider.exchange_refresh_token(client, refresh_token, [])
-        assert exc.value.args[0] == 502
+        assert exc.value.error == 'invalid_grant'
