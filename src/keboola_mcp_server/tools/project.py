@@ -9,6 +9,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token
+from keboola_mcp_server.clients.auth_bridge import is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField
@@ -73,7 +74,7 @@ async def _parent_subject_token(client: KeboolaClient) -> str:
     from the parent, never from an already-narrowed scoped token); falls back to whatever bearer the
     client currently carries (a directly-supplied PAT, or an HTTP bearer).
     """
-    if client.bearer_token is None:
+    if not is_programmatic_token(client.bearer_token):
         raise ValueError(
             'Project scoping requires a Keboola programmatic token (kbc_at_/kbc_pat_). '
             'Run "keboola-mcp-server login --api-url <url>" first, or supply such a token.'
@@ -81,7 +82,7 @@ async def _parent_subject_token(client: KeboolaClient) -> str:
     try:
         return await get_access_token(client.storage_api_url)
     except RuntimeError:
-        return client.bearer_token
+        return strip_bearer(cast(str, client.bearer_token))
 
 
 async def _resolve_branch_context(client: KeboolaClient) -> tuple[str | int, str, bool]:

@@ -487,10 +487,32 @@ async def test_set_project_scope_falls_back_on_network_error(
 
 
 @pytest.mark.asyncio
-async def test_scope_requires_programmatic_token(mcp_context_client: Context, mocker: MockerFixture) -> None:
-    _prep_client(mcp_context_client, mocker, bearer=None)
-    with pytest.raises(ValueError, match='programmatic token'):
+@pytest.mark.parametrize(
+    'bearer',
+    [
+        None,  # no bearer at all
+        'legacy-sapi-token-123',  # a non-programmatic bearer must not be accepted either
+        'Bearer kbc_at_prefixed',  # accepted, but exercises the strip_bearer normalization path
+    ],
+    ids=['no_bearer', 'non_programmatic_bearer', 'bearer_prefixed'],
+)
+async def test_scope_requires_programmatic_token(
+    mcp_context_client: Context, mocker: MockerFixture, bearer: str | None
+) -> None:
+    _prep_client(mcp_context_client, mocker, bearer=bearer)
+    mocker.patch('keboola_mcp_server.tools.project.get_access_token', new=mocker.AsyncMock(side_effect=RuntimeError))
+    if bearer == 'Bearer kbc_at_prefixed':
+        introspection = SimpleNamespace(user_email='m@k.com', projects=[])
+        introspect = mocker.patch(
+            'keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection)
+        )
+        mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
         await get_accessible_projects(mcp_context_client)
+        # The inbound bearer's `Bearer ` scheme must be stripped before use as a subject token.
+        introspect.assert_awaited_once_with(STACK, subject_token='kbc_at_prefixed')
+    else:
+        with pytest.raises(ValueError, match='programmatic token'):
+            await get_accessible_projects(mcp_context_client)
 
 
 @pytest.mark.asyncio
