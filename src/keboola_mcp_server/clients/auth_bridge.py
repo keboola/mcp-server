@@ -171,15 +171,15 @@ class OAuthSessionExchanger(_AuthBridgeClient):
         :return: The raw response body (``accessToken``/``refreshToken``/``expiresIn``/``sessionId``).
         :raises OAuthTokenExchangeError: On any exchange failure (status carried on the error).
         """
-        # Connection's E2E test for this endpoint sends X-KBC-ManageApiToken alongside
-        # X-Kubernetes-Authorization; send both since the sibling resolve-storage-token
-        # endpoint only needs the latter (unconfirmed whether this one needs both too).
+        # X-KBC-ManageApiToken is a DIFFERENT, mutually-exclusive authenticator (a real Manage
+        # token lookup) -- confirmed against Connection's source that it must never be sent
+        # alongside X-Kubernetes-Authorization; the k8s JWT alone authorizes this endpoint,
+        # exactly like the sibling resolve-storage-token endpoint.
         sa_jwt = self._read_sa_jwt()
         headers = {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'X-Kubernetes-Authorization': f'Bearer {sa_jwt}',
-            'X-KBC-ManageApiToken': sa_jwt,
             'X-Subject-Token': f'Bearer {strip_bearer(oauth_access_token)}',
         }
         try:
