@@ -323,7 +323,7 @@ class ProjectScope(BaseModel):
 
 
 async def _project_sql_dialect(
-    server_state: ServerState, subject_token: str, project_id: int
+    server_state: ServerState, storage_api_url: str, subject_token: str, project_id: int
 ) -> tuple[int, str | None]:
     """Fetches one project's SQL dialect by verifying the parent token narrowed with X-KBC-ProjectId.
 
@@ -331,7 +331,7 @@ async def _project_sql_dialect(
     a single cheap Storage API call per project.
     """
     per_client = await MultiProjectMiddleware.client_for_project(
-        server_state, subject_token, project_id, read_only=True
+        server_state, storage_api_url, subject_token, project_id, read_only=True
     )
     token_data = await per_client.storage_client.verify_token()
     return project_id, _sql_dialect_from_token(token_data)
@@ -373,7 +373,7 @@ async def get_accessible_projects(
     dialects: dict[int, str | None] = {}
     results = await process_concurrently(
         [p.id for p in introspection.projects],
-        lambda pid: _project_sql_dialect(server_state, subject_token, pid),
+        lambda pid: _project_sql_dialect(server_state, client.storage_api_url, subject_token, pid),
     )
     for result in results:
         if isinstance(result, asyncio.CancelledError):

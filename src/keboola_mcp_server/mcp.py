@@ -846,8 +846,12 @@ class MultiProjectMiddleware(fmw.Middleware):
         server_state = ServerState.from_context(ctx)
         original_client = state.get(KeboolaClient.STATE_KEY)
         original_workspace = state.get(WorkspaceManager.STATE_KEY)
+        is_real_client = isinstance(original_client, KeboolaClient)
         # Default (auto-leased) scope carries no minted token; fall back to the active client's token.
-        base_token = scope.scoped_token or (original_client.token if isinstance(original_client, KeboolaClient) else '')
+        base_token = scope.scoped_token or (original_client.token if is_real_client else '')
+        # The active client's own URL — the current request/session's, not the startup config's
+        # (which can differ or be unset for streamable-HTTP setups that supply it per request).
+        storage_api_url = original_client.storage_api_url if is_real_client else server_state.config.storage_api_url
 
         # A single target (scope of one, or narrowed to one via the filter) runs once against that
         # project only — one call, that project's X-KBC-ProjectId, no per-project envelope.
@@ -856,7 +860,7 @@ class MultiProjectMiddleware(fmw.Middleware):
             if target == scope.active_project_id:
                 return await call_next(context)
             try:
-                await self._swap_project(state, server_state, base_token, target, scope.read_only)
+                await self._swap_project(state, server_state, storage_api_url, base_token, target, scope.read_only)
                 return await call_next(context)
             finally:
                 state[KeboolaClient.STATE_KEY] = original_client
@@ -866,7 +870,7 @@ class MultiProjectMiddleware(fmw.Middleware):
         errors: list[tuple[int, str]] = []
         try:
             for project_id in targets:
-                await self._swap_project(state, server_state, base_token, project_id, scope.read_only)
+                await self._swap_project(state, server_state, storage_api_url, base_token, project_id, scope.read_only)
                 # Isolate per-project failures: one project's error (e.g. Queue 401, a transient 5xx)
                 # must not discard the other projects' good results. Collect it and keep going, so the
                 # agent gets a partial response plus a retry hint. CancelledError is BaseException, so
@@ -940,6 +944,7 @@ class MultiProjectMiddleware(fmw.Middleware):
         cls,
         state: dict[str, Any],
         server_state: ServerState,
+        storage_api_url: str,
         base_token: str,
         project_id: int,
         read_only: bool,
@@ -952,19 +957,24 @@ class MultiProjectMiddleware(fmw.Middleware):
         Note: rebuilt per call; caching across calls would need a store that survives the
         per-request state rebuild — add if provisioning latency shows up in practice.
         """
-        client = await cls.client_for_project(server_state, base_token, project_id, read_only)
+        client = await cls.client_for_project(server_state, storage_api_url, base_token, project_id, read_only)
         state[KeboolaClient.STATE_KEY] = client
-        state[WorkspaceManager.STATE_KEY] = await WorkspaceManager.create(client, server_state.config.workspace_schema)
+        state[WorkspaceManager.STATE_KEY] = await WorkspaceManager.create(
+            client, server_state.config.workspace_schema, kubernetes_token_path=deployed_sa_token_path()
+        )
 
     @staticmethod
     async def client_for_project(
-        server_state: ServerState, token: str, project_id: int, read_only: bool
+        server_state: ServerState, storage_api_url: str, token: str, project_id: int, read_only: bool
     ) -> KeboolaClient:
+        # `storage_api_url` is the current request/session URL (e.g. the active `KeboolaClient`'s),
+        # not `server_state.config.storage_api_url` — that's the startup/lifespan config, which can
+        # differ (or be unset) for streamable-HTTP setups that supply the URL per request.
         # Normalize any inbound `Bearer ` scheme; KeboolaClient adds it back for bearer tokens,
         # so a pre-prefixed value would otherwise become `Authorization: Bearer Bearer …`.
         token = strip_bearer(token)
         return await KeboolaClient(
-            storage_api_url=server_state.config.storage_api_url,
+            storage_api_url=storage_api_url,
             storage_api_token=token,
             bearer_token=token,
             headers={

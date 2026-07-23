@@ -286,7 +286,7 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
     dialects = {18: 'BigQuery', 83: 'Snowflake'}
     mocker.patch(
         'keboola_mcp_server.tools.project._project_sql_dialect',
-        new=mocker.AsyncMock(side_effect=lambda _ss, _tok, pid: (pid, dialects[pid])),
+        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, dialects[pid])),
     )
 
     # No scope confirmed yet.
@@ -329,7 +329,7 @@ async def test_get_accessible_projects_llm_instructions_grouped_by_dialect(
     dialects = {18: 'BigQuery', 86: 'BigQuery', 95: 'Snowflake'}
     mocker.patch(
         'keboola_mcp_server.tools.project._project_sql_dialect',
-        new=mocker.AsyncMock(side_effect=lambda _ss, _tok, pid: (pid, dialects[pid])),
+        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, dialects[pid])),
     )
 
     result = await get_accessible_projects(mcp_context_client, with_llm_instruction=True)
@@ -355,7 +355,7 @@ async def test_get_accessible_projects_unknown_dialect_omits_snowflake_guidance(
     mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
     mocker.patch(
         'keboola_mcp_server.tools.project._project_sql_dialect',
-        new=mocker.AsyncMock(side_effect=lambda _ss, _tok, pid: (pid, None)),
+        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, None)),
     )
 
     result = await get_accessible_projects(mcp_context_client, with_llm_instruction=True)
