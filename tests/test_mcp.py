@@ -837,7 +837,6 @@ class TestSessionStateMiddleware:
             scopes=['claudai', 'projectless'],
             expires_at=int(time.time() + 3600),
             kbc_access_token='kbc_at_exchanged',
-            kbc_refresh_token='kbc_rt_exchanged',
             session_id='session-1',
         )
         http_rq = Request({'type': 'http', 'headers': [], 'user': AuthenticatedUser(access_token)})
@@ -1194,9 +1193,13 @@ class TestMultiProjectMiddleware:
             patch.object(
                 MultiProjectMiddleware,
                 'client_for_project',
-                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+                AsyncMock(side_effect=lambda _ss, _url, _token, pid, _ro: f'client-{pid}'),
             ),
-            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
+            patch.object(
+                WorkspaceManager,
+                'create',
+                AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
+            ),
         ):
             result = await MultiProjectMiddleware().on_call_tool(context, call_next)
 
@@ -1211,6 +1214,40 @@ class TestMultiProjectMiddleware:
         assert texts == ['=== project 11 ===', 'rows', '=== project 22 ===', 'rows']
         # Structured output is deep-merged (list fields concatenated) so it still validates the schema.
         assert result.structured_content == {'rows': ['rows', 'rows']}
+
+    @pytest.mark.asyncio
+    async def test_swap_project_uses_active_client_url_and_sa_token_path(self, monkeypatch) -> None:
+        # _swap_project must use the CURRENT request's Storage API URL (the active client's), not
+        # server_state.config's startup/lifespan URL, and must pass the deployed SA token path
+        # through to WorkspaceManager.create exactly like create_session_state does.
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_s', confirmed=True)
+        context, state = self._ctx(scope, 'get_tables', read_only=True)
+        # server_state.config carries a different (stale/absent) URL than the active request client.
+        state[KeboolaClient.STATE_KEY] = KeboolaClient(
+            storage_api_url='https://connection.request.keboola.com', storage_api_token='kbc_at_s'
+        )
+        seen_calls: list = []
+
+        async def fake_client_for_project(_ss, storage_api_url, _token, pid, _ro):
+            seen_calls.append((storage_api_url, pid))
+            return f'client-{pid}'
+
+        async def call_next(_):
+            return self._result('rows')
+
+        with (
+            patch.object(MultiProjectMiddleware, 'client_for_project', AsyncMock(side_effect=fake_client_for_project)),
+            patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')) as ws_create,
+        ):
+            await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        assert seen_calls == [
+            ('https://connection.request.keboola.com', 11),
+            ('https://connection.request.keboola.com', 22),
+        ]
+        for call in ws_create.await_args_list:
+            assert call.kwargs.get('kubernetes_token_path') == '/var/run/secrets/token'
 
     @pytest.mark.asyncio
     async def test_query_data_targets_single_project_workspace(self) -> None:
@@ -1228,9 +1265,13 @@ class TestMultiProjectMiddleware:
             patch.object(
                 MultiProjectMiddleware,
                 'client_for_project',
-                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+                AsyncMock(side_effect=lambda _ss, _url, _token, pid, _ro: f'client-{pid}'),
             ),
-            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
+            patch.object(
+                WorkspaceManager,
+                'create',
+                AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
+            ),
         ):
             result = await MultiProjectMiddleware().on_call_tool(context, call_next)
 
@@ -1255,9 +1296,13 @@ class TestMultiProjectMiddleware:
             patch.object(
                 MultiProjectMiddleware,
                 'client_for_project',
-                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+                AsyncMock(side_effect=lambda _ss, _url, _token, pid, _ro: f'client-{pid}'),
             ),
-            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
+            patch.object(
+                WorkspaceManager,
+                'create',
+                AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
+            ),
         ):
             result = await MultiProjectMiddleware().on_call_tool(context, call_next)
 
@@ -1281,9 +1326,13 @@ class TestMultiProjectMiddleware:
             patch.object(
                 MultiProjectMiddleware,
                 'client_for_project',
-                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+                AsyncMock(side_effect=lambda _ss, _url, _token, pid, _ro: f'client-{pid}'),
             ),
-            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
+            patch.object(
+                WorkspaceManager,
+                'create',
+                AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
+            ),
         ):
             await MultiProjectMiddleware().on_call_tool(context, call_next)
 
@@ -1386,9 +1435,13 @@ class TestMultiProjectMiddleware:
             patch.object(
                 MultiProjectMiddleware,
                 'client_for_project',
-                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+                AsyncMock(side_effect=lambda _ss, _url, _token, pid, _ro: f'client-{pid}'),
             ),
-            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
+            patch.object(
+                WorkspaceManager,
+                'create',
+                AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
+            ),
         ):
             result = await MultiProjectMiddleware().on_call_tool(context, call_next)
 
@@ -1409,9 +1462,13 @@ class TestMultiProjectMiddleware:
             patch.object(
                 MultiProjectMiddleware,
                 'client_for_project',
-                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+                AsyncMock(side_effect=lambda _ss, _url, _token, pid, _ro: f'client-{pid}'),
             ),
-            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
+            patch.object(
+                WorkspaceManager,
+                'create',
+                AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
+            ),
         ):
             with pytest.raises(ToolError, match='failed for all 2 scoped'):
                 await MultiProjectMiddleware().on_call_tool(context, call_next)
@@ -1432,9 +1489,13 @@ class TestMultiProjectMiddleware:
             patch.object(
                 MultiProjectMiddleware,
                 'client_for_project',
-                AsyncMock(side_effect=lambda _ss, _token, pid, _ro: f'client-{pid}'),
+                AsyncMock(side_effect=lambda _ss, _url, _token, pid, _ro: f'client-{pid}'),
             ),
-            patch.object(WorkspaceManager, 'create', AsyncMock(side_effect=lambda client, _schema: f'wsm-{client}')),
+            patch.object(
+                WorkspaceManager,
+                'create',
+                AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
+            ),
         ):
             with pytest.raises(PydanticValidationError):
                 await MultiProjectMiddleware().on_call_tool(context, call_next)

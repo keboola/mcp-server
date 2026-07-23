@@ -274,7 +274,12 @@ class TestSimpleOAuthProvider:
         loaded = await oauth_provider.load_access_token(oauth_token.access_token)
         assert loaded is not None
         assert loaded.kbc_access_token == 'kbc_at_new'
-        assert loaded.kbc_refresh_token == 'kbc_rt_new'
+        # The refresh token is carried on ProxyRefreshToken only, not duplicated onto the (more
+        # frequently sent/handled) access token.
+        assert not hasattr(loaded, 'kbc_refresh_token')
+        loaded_refresh = await oauth_provider.load_refresh_token(client, oauth_token.refresh_token)
+        assert loaded_refresh is not None
+        assert loaded_refresh.kbc_refresh_token == 'kbc_rt_new'
 
     @pytest.mark.asyncio
     async def test_exchange_authorization_code_maps_exchange_error(
@@ -357,7 +362,9 @@ class TestSimpleOAuthProvider:
         loaded = await oauth_provider.load_access_token(oauth_token.access_token)
         assert loaded is not None
         assert loaded.kbc_access_token == 'kbc_at_rotated'
-        assert loaded.kbc_refresh_token == 'kbc_rt_rotated'
+        loaded_refresh = await oauth_provider.load_refresh_token(client, oauth_token.refresh_token)
+        assert loaded_refresh is not None
+        assert loaded_refresh.kbc_refresh_token == 'kbc_rt_rotated'
 
     @pytest.mark.asyncio
     async def test_exchange_refresh_token_maps_network_error_to_http_exception(
