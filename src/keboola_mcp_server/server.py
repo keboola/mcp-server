@@ -251,8 +251,12 @@ def create_server(
             LoggingMiddleware(log_level=logging.DEBUG),
             SessionStateMiddleware(),
             ToolAuthorizationMiddleware(),
-            ToolsFilteringMiddleware(),
+            # MultiProjectMiddleware must wrap ToolsFilteringMiddleware (run first in this list =
+            # outer), not the reverse: it swaps the active KeboolaClient per project during fan-out,
+            # and ToolsFilteringMiddleware's per-project feature/role/branch checks must be
+            # re-evaluated against each swapped client — not just once against the pre-fan-out client.
             MultiProjectMiddleware(),
+            ToolsFilteringMiddleware(),
             ValidationErrorMiddleware(),
         ],
     )
