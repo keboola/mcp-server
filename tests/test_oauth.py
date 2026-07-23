@@ -280,6 +280,10 @@ class TestSimpleOAuthProvider:
         loaded_refresh = await oauth_provider.load_refresh_token(client, oauth_token.refresh_token)
         assert loaded_refresh is not None
         assert loaded_refresh.kbc_refresh_token == 'kbc_rt_new'
+        # The refresh token's own expiry must be much longer than the (1h) access token's -- it must
+        # not be tied to it, or the mcp SDK would force a re-login every ~1h even though the
+        # underlying Keboola refresh token can keep the session alive indefinitely.
+        assert loaded_refresh.expires_at - loaded.expires_at > 6 * 24 * 3600  # at least ~6 more days
 
     @pytest.mark.asyncio
     async def test_exchange_authorization_code_maps_exchange_error(

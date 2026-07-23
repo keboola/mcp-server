@@ -506,11 +506,18 @@ class SimpleOAuthProvider(OAuthProvider):
         )
         access_token_jwt = self._encode(access_token.model_dump())
 
+        # The proxy refresh token's own expiry must NOT be tied to the (short-lived) access token's:
+        # the underlying Keboola refresh token keeps the session alive indefinitely (RFC Decision §4),
+        # but the mcp SDK enforces `expires_at` on the object load_refresh_token() returns. Derive a
+        # longer window the same way the pre-exchange code did for the league OAuth refresh token
+        # (up to ~7 days), so a client that doesn't refresh for a while isn't forced to re-login.
+        access_expires_in = max(0, int(token_set.expires_at - time.time()))
+        refresh_expires_at = int(time.time()) + self._ceil_to_hour(min(168 * access_expires_in, 168 * 3600))
         refresh_token = ProxyRefreshToken(
             token=f'mcp_{secrets.token_hex(32)}',
             client_id=client.client_id,
             scopes=scopes,
-            expires_at=int(token_set.expires_at),
+            expires_at=refresh_expires_at,
             kbc_refresh_token=token_set.refresh_token,
         )
         refresh_token_jwt = self._encode(refresh_token.model_dump())
