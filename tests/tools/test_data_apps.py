@@ -1,3 +1,4 @@
+import re
 import sys
 from types import ModuleType
 from typing import Literal, Optional, cast
@@ -1170,24 +1171,53 @@ def _make_python_js_data_app_response(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('missing_arg', 'kwargs', 'error_match'),
+    ('name', 'slug_kwargs', 'expected_slug'),
     [
-        (
-            'slug',
-            {'name': 'A', 'description': ''},
-            'slug is required',
-        ),
+        # Explicit slug is honored verbatim (unchanged behavior).
+        ('My App', {'slug': 'custom-slug'}, 'custom-slug'),
+        # Omitted slug is auto-derived from `name` (AI-3634) — clean base on the prod path.
+        ('My App', {}, 'my-app'),
+        # Empty-string slug is treated as omitted and derived.
+        ('My App', {'slug': ''}, 'my-app'),
+        # Special characters collapse to single hyphens and leading/trailing hyphens are stripped.
+        ('  Sales & Revenue!! ', {}, 'sales-revenue'),
+        # A name that slugifies to nothing falls back to a sensible default slug.
+        ('!!!', {}, 'data-app'),
     ],
 )
-async def test_modify_python_js_data_app_create_validates_required_args(
+async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
+    mocker,
     mcp_context_client: Context,
-    missing_arg: str,
-    kwargs: dict,
-    error_match: str,
+    workspace_manager,
+    name: str,
+    slug_kwargs: dict,
+    expected_slug: str,
 ) -> None:
-    """Create path raises clear ValueError when slug is missing."""
-    with pytest.raises(ValueError, match=error_match):
-        await modify_python_js_data_app(ctx=mcp_context_client, **kwargs)
+    """Prod create path (no `parent_configuration_id`): an explicit slug is written verbatim, and an
+    omitted/empty slug is auto-derived from `name` as a clean DNS-label-safe slug (AI-3634)."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
+        return_value=_make_python_js_data_app_response()
+    )
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(
+            ssh_url='git@managed.repo:org/app.git',
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    await modify_python_js_data_app(ctx=mcp_context_client, name=name, description='desc', **slug_kwargs)
+
+    create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
+    serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
+    assert serialized['parameters']['dataApp']['slug'] == expected_slug
 
 
 @pytest.mark.asyncio
@@ -2265,26 +2295,59 @@ async def test_modify_python_js_data_app_create_draft_defaults_branch_to_init(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('kwargs', 'error_match'),
+    ('name', 'slug_kwargs', 'expected_slug_pattern'),
     [
-        (
-            {
-                'name': 'A',
-                'description': '',
-                'parent_configuration_id': 'cfg-prod-1',
-            },
-            'slug is required',
-        ),
+        # Explicit slug on the draft path is honored verbatim (unchanged behavior).
+        ('My Draft App', {'slug': 'demo-draft'}, r'^demo-draft$'),
+        # Omitted slug is derived from `name` plus a unique `-draft-<hex>` suffix so draft slugs
+        # don't collide with the parent prod app or with each other (AI-3634).
+        ('My Draft App', {}, r'^my-draft-app-draft-[0-9a-f]{6}$'),
+        # Degenerate name still yields a valid, suffixed draft slug.
+        ('!!!', {}, r'^data-app-draft-[0-9a-f]{6}$'),
     ],
 )
-async def test_modify_python_js_data_app_create_draft_still_requires_slug(
+async def test_modify_python_js_data_app_create_draft_auto_derives_slug(
+    mocker,
     mcp_context_client: Context,
-    kwargs: dict,
-    error_match: str,
+    workspace_manager,
+    name: str,
+    slug_kwargs: dict,
+    expected_slug_pattern: str,
 ) -> None:
-    """`parent_configuration_id` does not waive any required create-time argument."""
-    with pytest.raises(ValueError, match=error_match):
-        await modify_python_js_data_app(ctx=mcp_context_client, **kwargs)
+    """Draft create (with `parent_configuration_id`) no longer requires `slug`: it is auto-derived
+    from `name` with a unique `-draft-<hex>` suffix, while an explicit slug is honored (AI-3634)."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    parent = _make_python_js_parent_data_app()
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
+    keboola_client.data_science_client.create_app_git_credential = mocker.AsyncMock(
+        return_value=CreatedGitCredentialResponse(
+            id='cred-1', type='http_token', permissions='readWrite', secret='token-xyz'
+        )
+    )
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
+        return_value=_make_python_js_data_app_response()
+    )
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda v, **_: v)
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name=name,
+        description='draft iteration',
+        parent_configuration_id='cfg-prod-1',
+        **slug_kwargs,
+    )
+
+    create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
+    serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
+    assert re.match(expected_slug_pattern, serialized['parameters']['dataApp']['slug'])
 
 
 @pytest.mark.asyncio
