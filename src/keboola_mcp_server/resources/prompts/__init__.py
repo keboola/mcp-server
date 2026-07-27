@@ -10,6 +10,19 @@ _DIALECT_CONFIGS: dict[str, dict] = {
         'fqn': '`project`.`dataset`.`table`',
         'new_table': '`table_name`',
         'extra': [],
+        'functions': [
+            "Storage columns are untyped text (`STRING`), so empty cells are stored as `''` (not NULL). "
+            'Cast text to a typed value with `SAFE_CAST(x AS DATE|TIMESTAMP|NUMERIC)` **before** `DATE_TRUNC`, '
+            '`EXTRACT`, or numeric aggregation — passing raw text fails with `... does not support ... argument '
+            'type`. BigQuery has **no** `TRY_CAST`; use `SAFE_CAST`, which returns NULL on bad input (including '
+            'empty strings).',
+            'Window frames: a frame clause (`ROWS`/`RANGE BETWEEN ...`) requires an `ORDER BY` inside the '
+            '`OVER (...)` and is only valid on functions that accept a frame (aggregates such as `SUM`/`AVG`, '
+            'plus `FIRST_VALUE`/`LAST_VALUE`). Numbering and navigation functions (`ROW_NUMBER`, `RANK`, '
+            '`DENSE_RANK`, `LAG`, `LEAD`) take no frame — adding one raises `Syntax error: Unexpected keyword '
+            'ROWS`. Example: `SUM(SAFE_CAST(`amount` AS NUMERIC)) OVER (ORDER BY `created_at` ROWS BETWEEN '
+            'UNBOUNDED PRECEDING AND CURRENT ROW)`.',
+        ],
     },
     'Snowflake': {
         'delimiter': 'double quote (`"`)',
@@ -22,6 +35,18 @@ _DIALECT_CONFIGS: dict[str, dict] = {
             'Use `LISTAGG` instead of `STRING_AGG`.',
             'In CTEs, use delimited identifiers for every column alias so the name survives '
             'into the outer query unchanged.',
+        ],
+        'functions': [
+            "Storage columns are untyped text (`VARCHAR`), so empty cells are stored as `''` (not NULL). "
+            'Cast text to a typed value with `TRY_CAST(x AS DATE|TIMESTAMP|NUMBER)` (or `TRY_TO_DATE`/'
+            '`TRY_TO_NUMBER`) **before** `DATE_TRUNC`, `EXTRACT`, or numeric aggregation — passing raw text '
+            'fails with `... does not support VARCHAR argument type`. `TRY_CAST` returns NULL on bad input '
+            '(including empty strings) instead of erroring.',
+            'Window frames: a frame clause (`ROWS`/`RANGE BETWEEN ...`) requires an `ORDER BY` inside the '
+            '`OVER (...)` and is only valid on aggregate functions (`SUM`/`AVG`, etc.) and `FIRST_VALUE`/'
+            '`LAST_VALUE`. Ranking and navigation functions (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`) '
+            'take no frame. Example: `SUM(TRY_CAST("amount" AS NUMBER)) OVER (ORDER BY "created_at" ROWS '
+            'BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`.',
         ],
     },
 }
@@ -44,6 +69,13 @@ def _build_dialect_section(sql_dialect: str) -> str:
     ]
     for note in cfg['extra']:
         lines.append(f'- {note}')
+
+    functions = cfg.get('functions') or []
+    if functions:
+        lines.append('\n### SQL Functions & Casting\n')
+        for note in functions:
+            lines.append(f'- {note}')
+
     return '\n'.join(lines)
 
 

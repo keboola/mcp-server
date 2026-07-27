@@ -262,7 +262,12 @@ async def query_data(
     TABLE AND COLUMN REFERENCES:
     * Always use fully qualified table names in the exact FQN format provided by table information tools
     * Follow the identifier structure exactly as shown by table info tools for the current SQL dialect
-    * Always use delimited identifiers when referring to table columns
+    * For every column reference, call get_tables first and copy that column's `quotedName` value VERBATIM.
+      Do not guess the name, re-case it, or hand-quote it yourself — use the exact `quotedName` from get_tables.
+    * Snowflake case trap: unquoted identifiers fold to UPPERCASE while quoted identifiers are case-sensitive,
+      so hand-quoting a guessed lowercase name (e.g. "date") fails with `invalid identifier` even though the
+      column physically exists as DATE. The `quotedName` from get_tables already carries the correct case and
+      dialect quoting, so copying it avoids this.
 
     CTE (WITH CLAUSE) RULES:
     * ALL column references in main query MUST match exact case used in the CTE
@@ -275,9 +280,13 @@ async def query_data(
     * Cast VARCHAR columns to appropriate types before using in date/numeric functions
 
     ERROR PREVENTION:
-    * Never pass empty strings ('') where numeric or date values are expected
-    * Use NULLIF or CASE statements to handle empty values
-    * Always use TRY_CAST or similar safe casting functions when converting data types
+    * Keboola Storage stores empty cells as empty strings ('') rather than NULL — even for columns reported as
+      VARCHAR/STRING with nullable=false — so casting a text column straight to numeric/date/timestamp throws
+      (`Numeric value '' is not recognized` on Snowflake, `Bad double value` on BigQuery).
+    * When casting, use the dialect-safe cast: on Snowflake `TRY_CAST(x AS ...)` (or `TRY_TO_DATE`/`TRY_TO_NUMBER`),
+      which returns NULL instead of erroring; on BigQuery `SAFE_CAST(x AS ...)` — BigQuery has NO `TRY_CAST`.
+      Alternatively wrap the column with `NULLIF(col, '')` before CAST. This is defensive against empty strings,
+      not a guarantee for genuinely non-numeric or non-date values.
     * Check for division by zero using NULLIF(denominator, 0)
     * Always use the LIMIT clause in your SELECT statements when fetching data. There are hard limits imposed
       by this tool on the maximum number of rows that can be fetched and the maximum number of characters.
