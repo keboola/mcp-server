@@ -1183,6 +1183,9 @@ def _make_python_js_data_app_response(
         ('  Sales & Revenue!! ', {}, 'sales-revenue'),
         # A name that slugifies to nothing falls back to a sensible default slug.
         ('!!!', {}, 'data-app'),
+        # A long (~60-char) name is capped at MAX_DATA_APP_SLUG_LENGTH (50) so the derived slug
+        # stays within the data-app URL-prefix limit enforced by the UI (AI-3634).
+        ('a' * 60, {}, 'a' * 50),
     ],
 )
 async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
@@ -2304,6 +2307,10 @@ async def test_modify_python_js_data_app_create_draft_defaults_branch_to_init(
         ('My Draft App', {}, r'^my-draft-app-draft-[0-9a-f]{6}$'),
         # Degenerate name still yields a valid, suffixed draft slug.
         ('!!!', {}, r'^data-app-draft-[0-9a-f]{6}$'),
+        # A long (~60-char) name has its base truncated to 37 chars so that, with the 13-char
+        # `-draft-<hex>` suffix, the final slug is exactly 50 — within the data-app URL-prefix
+        # limit enforced by the UI (AI-3634). 37 + len('-draft-') + 6 == 50.
+        ('a' * 60, {}, r'^a{37}-draft-[0-9a-f]{6}$'),
     ],
 )
 async def test_modify_python_js_data_app_create_draft_auto_derives_slug(

@@ -1051,9 +1051,10 @@ async def modify_python_js_data_app(
 
     ## Slug constraint
 
-    Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). Optional on create: when
-    omitted it is auto-derived from `name` (drafts additionally get a short unique `-draft-<suffix>`
-    to keep slugs unique across the prod app and its drafts). Pass an explicit slug to override.
+    Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
+    is auto-derived from `name` and capped at 50 characters (the data-app URL-prefix limit enforced
+    by the UI; drafts additionally get a short unique `-draft-<suffix>`, still within 50, to keep
+    slugs unique across the prod app and its drafts). Pass an explicit slug to override.
     """
     if configuration_id:
         if slug:
@@ -2055,6 +2056,11 @@ def _get_authorization(auth_with_password: bool) -> dict[str, Any]:
 # Maximum length for DNS labels per RFC 1035
 MAX_DNS_LABEL_LENGTH = 63
 
+# Maximum length for a data-app URL prefix (`parameters.dataApp.slug`). The data-app UI enforces
+# this 50-char limit on the same field, so it is tighter than the 63-char DNS-label max — a slug
+# capped at 50 is valid under both limits and won't be rejected at deploy.
+MAX_DATA_APP_SLUG_LENGTH = 50
+
 
 class DataAppSlugTooLongError(ValueError):
     """Raised when the generated data app slug exceeds the DNS label length limit."""
@@ -2092,21 +2098,22 @@ def _derive_slug_from_name(name: str, *, draft: bool) -> str:
     succeed instead of raising.
 
     Lowercases the name, collapses every run of non `[a-z0-9]` characters into a single hyphen,
-    strips leading/trailing hyphens, and truncates to fit the DNS-label length limit. Falls back to
-    ``'data-app'`` when the name slugifies to empty. For drafts a short unique suffix
-    (``-draft-<hex>``) is appended so draft slugs don't collide with the parent prod app or with
-    each other.
+    strips leading/trailing hyphens, and truncates to fit the data-app URL-prefix length limit
+    (``MAX_DATA_APP_SLUG_LENGTH``). Falls back to ``'data-app'`` when the name slugifies to empty.
+    For drafts a short unique suffix (``-draft-<hex>``) is appended so draft slugs don't collide
+    with the parent prod app or with each other; the base is truncated so the suffixed slug still
+    fits the limit.
 
     :param name: The name of the data app
     :param draft: Whether this is a draft create (appends a unique ``-draft-<hex>`` suffix)
-    :return: A DNS-label-safe slug (lowercase letters, digits, hyphens, <=63 chars)
+    :return: A URL-safe slug (lowercase letters, digits, hyphens, <=50 chars)
     """
     base = re.sub(r'[^a-z0-9]+', '-', name.strip().lower()).strip('-')
     if draft:
         suffix = f'-draft-{secrets.token_hex(3)}'  # e.g. '-draft-a1b2c3'
-        base = base[: MAX_DNS_LABEL_LENGTH - len(suffix)].strip('-') or 'data-app'
+        base = base[: MAX_DATA_APP_SLUG_LENGTH - len(suffix)].strip('-') or 'data-app'
         return f'{base}{suffix}'
-    return base[:MAX_DNS_LABEL_LENGTH].strip('-') or 'data-app'
+    return base[:MAX_DATA_APP_SLUG_LENGTH].strip('-') or 'data-app'
 
 
 def _uses_basic_authentication(authorization: dict[str, Any]) -> bool:

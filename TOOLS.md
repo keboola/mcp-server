@@ -2270,9 +2270,10 @@ to expose publicly. On update, `authentication_type='default'` preserves the exi
 
 ## Slug constraint
 
-Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). Optional on create: when
-omitted it is auto-derived from `name` (drafts additionally get a short unique `-draft-<suffix>`
-to keep slugs unique across the prod app and its drafts). Pass an explicit slug to override.
+Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
+is auto-derived from `name` and capped at 50 characters (the data-app URL-prefix limit enforced
+by the UI; drafts additionally get a short unique `-draft-<suffix>`, still within 50, to keep
+slugs unique across the prod app and its drafts). Pass an explicit slug to override.
 
 
 **Input JSON Schema**:
