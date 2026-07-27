@@ -41,6 +41,7 @@ jobs:
       pass_rate: ${{ steps.parse.outputs.pass_rate }}
       duration: ${{ steps.parse.outputs.duration }}
       regressions: ${{ steps.parse.outputs.regressions }}
+      baseline_run: ${{ steps.parse.outputs.baseline_run }}
 
     services:
       postgres:
@@ -218,7 +219,9 @@ jobs:
             CMD_ARGS=(-t "Data Analysis Query" -t "Configuration Reasoning" -t "Storage Object Reasoning" -t "MCP Tool Validation")
           fi
           if [ "${{ inputs.regression_only }}" = "true" ]; then
-            CMD_ARGS+=(--regression-only)
+            # the CLI option is `--regression` (see kaibench/cli.py); `--regression-only` is rejected by
+            # typer as an unknown option, and because this step is continue-on-error it failed silently
+            CMD_ARGS+=(--regression)
           fi
           uv run kaibench run "${CMD_ARGS[@]}"
         continue-on-error: true
@@ -229,7 +232,31 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PREV_RUN_ID=$(gh run list --workflow kaibench.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          # Locate the baseline by artifact rather than by workflow name: this workflow is always invoked via
+          # `workflow_call` (from release.yml on tags, from ci.yml on labelled PRs), so the run is recorded
+          # under the *calling* workflow and `gh run list --workflow kaibench.yml` finds nothing.
+          # The artifact index is returned newest-first and must be paginated — the repo has thousands of
+          # artifacts, so the KaiBench ones are well past the first page.
+          CANDIDATES=$(gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts" --paginate \
+            --jq '.artifacts[]
+                  | select(.name | startswith("kaibench-results-"))
+                  | select(.expired == false)
+                  | select(.workflow_run.id != '"$GITHUB_RUN_ID"')
+                  | .workflow_run.id' | awk '!seen[$0]++')
+          PREV_RUN_ID=""
+          while IFS= read -r rid; do
+            [ -n "$rid" ] || continue
+            CONCLUSION=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$rid" --jq '.conclusion // empty')
+            if [ "$CONCLUSION" = "success" ]; then
+              PREV_RUN_ID="$rid"
+              echo "Baseline run: $rid"
+              break
+            fi
+            echo "Skipping run $rid (conclusion: ${CONCLUSION:-unknown})"
+          done <<< "$CANDIDATES"
+          if [ -z "$PREV_RUN_ID" ]; then
+            echo "::warning::No usable KaiBench baseline artifact found — regression comparison will be skipped"
+          fi
           echo "run_id=${PREV_RUN_ID}" >> $GITHUB_OUTPUT
 
       - name: Download previous run artifacts
