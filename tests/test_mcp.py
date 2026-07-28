@@ -538,6 +538,28 @@ class TestToolsFilteringMiddleware:
             assert result is expected
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize('tool_name', ['get_accessible_projects', 'set_project_scope'])
+    async def test_call_tool_bootstrap_tools_skip_verify(
+        self, mcp_context_client, keboola_client, tool_name: str
+    ) -> None:
+        # Bootstrap tools must work before any project is chosen (that's their purpose): calling
+        # verify_token() here -- which needs a single-project context (X-KBC-ProjectId) -- would 401
+        # before the tool's own body (which establishes that context) ever runs.
+        keboola_client.storage_client.verify_token = AsyncMock(side_effect=AssertionError('verify must not run'))
+
+        tool = _tool(tool_name)
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool_name))
+
+        expected = MagicMock()
+
+        async def call_next(_):
+            return expected
+
+        result = await ToolsFilteringMiddleware().on_call_tool(context, call_next)
+        assert result is expected
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         'tool_name',
         [

@@ -835,6 +835,15 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
     ) -> mt.CallToolResult:
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
+
+        # Bootstrap tools (get_accessible_projects/set_project_scope) must work before any project
+        # is chosen -- that's their entire purpose. verify_token() needs a single-project context
+        # (X-KBC-ProjectId); calling it here pre-scope would 401 before the tool's own body (which
+        # establishes that context, e.g. via introspect_token) ever runs. Mirrors the same exemption
+        # in on_list_tools and MultiProjectMiddleware.
+        if tool.name in _BOOTSTRAP_TOOLS:
+            return await call_next(context)
+
         token_info = await self.get_token_info(context.fastmcp_context)
 
         has_semantic_models = False
