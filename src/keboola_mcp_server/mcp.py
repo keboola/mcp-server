@@ -34,7 +34,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token, load_tokens
-from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token, strip_bearer
+from keboola_mcp_server.clients.auth_bridge import is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, deployed_sa_token_path
@@ -551,38 +551,6 @@ class SessionStateMiddleware(fmw.Middleware):
         return config, scope
 
     @classmethod
-    async def _exchange_programmatic_token(cls, config: Config) -> str:
-        """
-        Exchanges a programmatic token (kbc_at_/kbc_pat_) for the project's legacy Storage token.
-
-        The resolver is reached only on the deployed MCP server, which has a projected
-        ServiceAccount token at ``KBC_KUBERNETES_TOKEN_PATH`` (read from the process
-        environment only, never from per-request config). A project id is required because
-        a programmatic token is not project-bound.
-        """
-        kubernetes_token_path = deployed_sa_token_path()
-        if not kubernetes_token_path:
-            raise ValueError(
-                'Received a Keboola programmatic token (kbc_at_/kbc_pat_) but KBC_KUBERNETES_TOKEN_PATH '
-                'is not configured. Programmatic-token exchange is available only on the deployed MCP server.'
-            )
-        if not config.project_id:
-            raise ValueError(
-                'A project id is required to exchange a programmatic token. '
-                'Set the KBC_PROJECT_ID env var or the X-KBC-ProjectId header.'
-            )
-        try:
-            project_id = int(config.project_id)
-        except (TypeError, ValueError):
-            raise ValueError(f'Invalid project id for programmatic-token exchange: {config.project_id!r}')
-
-        resolver = StorageTokenResolver(
-            storage_api_url=config.storage_api_url,
-            kubernetes_token_path=kubernetes_token_path,
-        )
-        return await resolver.resolve(subject_token=config.storage_token, project_id=project_id)
-
-    @classmethod
     async def create_session_state(
         cls,
         config: Config,
@@ -610,21 +578,16 @@ class SessionStateMiddleware(fmw.Middleware):
             bearer_token = config.bearer_token
             extra_headers: dict[str, Any] = {}
             if is_programmatic_token(storage_token):
-                if deployed_sa_token_path() and config.project_id:
-                    # Deployed, and a project is already known (header, or a prior scope selection):
-                    # exchange the programmatic token for that project's legacy Storage token via the
-                    # auth-bridge resolver, then use it downstream unchanged.
-                    storage_token = await cls._exchange_programmatic_token(config)
-                    bearer_token = None
-                else:
-                    # No projected SA token to reach the resolver (local), OR no project is known yet
-                    # (deployed, e.g. a freshly-exchanged whole-stack OAuth session pre-scoping): forward
-                    # the programmatic token downstream as a Bearer so get_accessible_projects/
-                    # set_project_scope can introspect/scope it directly. Strip any inbound `Bearer `
-                    # scheme so the client's own `Bearer ` prefixing can't produce `Bearer Bearer …`.
-                    bearer_token = strip_bearer(storage_token)
-                    if config.project_id:
-                        extra_headers['X-KBC-ProjectId'] = config.project_id
+                # A programmatic token (kbc_at_/kbc_pat_) is forwarded downstream as a Bearer --
+                # KeboolaClient already sends it that way to every service it wraps (Storage, Queue,
+                # AI, etc.), so no legacy per-project Storage token needs to be minted for it. Strip
+                # any inbound `Bearer ` scheme so the client's own `Bearer ` prefixing can't produce
+                # `Bearer Bearer …`. Narrow to a specific project via X-KBC-ProjectId when known
+                # (header, or a prior scope selection) -- unset (whole-stack) is exactly what
+                # get_accessible_projects/set_project_scope need before a project is chosen.
+                bearer_token = strip_bearer(storage_token)
+                if config.project_id:
+                    extra_headers['X-KBC-ProjectId'] = config.project_id
 
             client = await KeboolaClient(
                 storage_api_url=config.storage_api_url,

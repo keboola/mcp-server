@@ -792,70 +792,37 @@ class TestSessionStateMiddleware:
         assert is_programmatic_token(out_config.storage_token)
 
 
-class TestProgrammaticTokenExchange:
-    """SessionStateMiddleware exchanges programmatic tokens via the auth-bridge resolver (PSGO-261)."""
+class TestProgrammaticTokenForwarding:
+    """A programmatic token (kbc_at_/kbc_pat_) is always forwarded downstream as a Bearer (PSGO-261).
+
+    KeboolaClient already sends a Bearer token to every service it wraps (Storage, Queue, AI,
+    etc.), so no legacy per-project Storage token needs to be minted via the auth-bridge resolver
+    -- that resolver call was removed entirely; see git history for the prior
+    `_exchange_programmatic_token`/`StorageTokenResolver` code this replaced.
+    """
 
     @pytest.mark.asyncio
-    async def test_missing_kubernetes_token_path_raises(self, monkeypatch) -> None:
-        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_pat_abc', project_id='1')
-        with pytest.raises(ValueError, match='KBC_KUBERNETES_TOKEN_PATH'):
-            await SessionStateMiddleware._exchange_programmatic_token(config)
-
-    @pytest.mark.asyncio
-    async def test_missing_project_id_raises(self, monkeypatch) -> None:
-        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_pat_abc')
-        with pytest.raises(ValueError, match='project id is required'):
-            await SessionStateMiddleware._exchange_programmatic_token(config)
-
-    @pytest.mark.asyncio
-    async def test_invalid_project_id_raises(self, monkeypatch) -> None:
-        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+    @pytest.mark.parametrize('kubernetes_token_path', [None, '/var/run/secrets/token'], ids=['local', 'deployed'])
+    @pytest.mark.parametrize('project_id', [None, '42'], ids=['no_project_id', 'with_project_id'])
+    async def test_forwards_bearer_regardless_of_deployment_or_project_id(
+        self, monkeypatch, kubernetes_token_path: str | None, project_id: str | None
+    ) -> None:
+        if kubernetes_token_path:
+            monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', kubernetes_token_path)
+        else:
+            monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
         config = Config(
-            storage_api_url='https://connection.keboola.com', storage_token='kbc_pat_abc', project_id='not-an-int'
+            storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc', project_id=project_id
         )
-        with pytest.raises(ValueError, match='Invalid project id'):
-            await SessionStateMiddleware._exchange_programmatic_token(config)
-
-    @pytest.mark.asyncio
-    async def test_happy_path_calls_resolver(self, monkeypatch) -> None:
-        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc', project_id='42')
-
-        resolver = MagicMock()
-        resolver.resolve = AsyncMock(return_value='legacy-storage-token')
-        with patch('keboola_mcp_server.mcp.StorageTokenResolver', return_value=resolver) as resolver_cls:
-            token = await SessionStateMiddleware._exchange_programmatic_token(config)
-
-        assert token == 'legacy-storage-token'
-        resolver_cls.assert_called_once_with(
-            storage_api_url='https://connection.keboola.com', kubernetes_token_path='/var/run/secrets/token'
-        )
-        resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
-
-    @pytest.mark.asyncio
-    async def test_deployed_without_project_id_forwards_bearer_instead_of_exchanging(self, monkeypatch) -> None:
-        """A deployed OAuth session starts whole-stack (no project_id yet, RFC decision §2); it must
-        forward the programmatic token as a Bearer for get_accessible_projects/set_project_scope to
-        introspect, not fail by attempting a resolver exchange that requires a project id."""
-        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc')
         runtime_info = ServerRuntimeInfo(transport='http')
 
-        with (
-            patch.object(
-                SessionStateMiddleware,
-                '_exchange_programmatic_token',
-                AsyncMock(side_effect=AssertionError('must not exchange without a known project_id')),
-            ),
-            patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')),
-        ):
+        with patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')):
             state = await SessionStateMiddleware.create_session_state(config, runtime_info)
 
         client = state[KeboolaClient.STATE_KEY]
         assert client.bearer_token == 'kbc_at_abc'
         assert client.token == 'kbc_at_abc'
+        assert client.headers.get('X-KBC-ProjectId') == project_id
 
 
 class TestMaybeUseStoredSession:

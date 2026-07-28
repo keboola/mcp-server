@@ -1,18 +1,16 @@
-"""Auth-bridge exchanges against Connection's internal endpoints (PSGO-261).
+"""Auth-bridge exchange against Connection's internal endpoint (PSGO-261).
 
-Two exchanges live here, both authenticating to Connection with the MCP server's own
-projected Kubernetes ServiceAccount JWT (`X-Kubernetes-Authorization`):
+`OAuthSessionExchanger` exchanges a league OAuth access token from the remote/HTTP OAuth
+login flow (`oauth.py`) for a whole-stack Keboola programmatic session (`kbc_at_*`),
+authenticating to Connection with the MCP server's own projected Kubernetes ServiceAccount
+JWT (`X-Kubernetes-Authorization`); the user's token travels as `X-Subject-Token`. The
+resulting `kbc_at_*` session feeds into the same downstream pipe as a directly-supplied
+one -- forwarded as a Bearer to every service `KeboolaClient` wraps (Storage, Queue, AI,
+etc.), narrowed to a project via `X-KBC-ProjectId` once known. No further exchange into a
+legacy per-project Storage token is needed or performed.
 
-- `StorageTokenResolver`: a programmatic bearer token (`kbc_at_*`/`kbc_pat_*`) presented
-  to the MCP server is exchanged for a legacy Storage token, used for all downstream
-  Storage-token APIs exactly as before.
-- `OAuthSessionExchanger`: a league OAuth access token from the remote/HTTP OAuth login
-  flow (`oauth.py`) is exchanged for a whole-stack Keboola programmatic session, which
-  then feeds into the same downstream pipe as a directly-supplied `kbc_at_*` token.
-
-In both cases the user's token travels as `X-Subject-Token`. The SA token file is read
-per call so kubelet rotation is honored. No token material is ever logged or placed in
-exception messages.
+The SA token file is read per call so kubelet rotation is honored. No token material is
+ever logged or placed in exception messages.
 """
 
 import logging
@@ -27,7 +25,6 @@ LOG = logging.getLogger(__name__)
 
 _ACCESS_TOKEN_PREFIX = 'kbc_at_'
 _PAT_PREFIX = 'kbc_pat_'
-_RESOLVE_ENDPOINT = 'manage/internal/auth-bridge/resolve-storage-token'
 _EXCHANGE_OAUTH_ENDPOINT = 'manage/internal/auth-bridge/exchange-oauth-token'
 # Resolver statuses passed through to the client verbatim; anything else (incl. 5xx,
 # timeouts, network failures) is mapped to 502 Bad Gateway.
@@ -66,10 +63,6 @@ class _AuthBridgeExchangeError(RuntimeError):
         return self.args[0]
 
 
-class StorageTokenExchangeError(_AuthBridgeExchangeError):
-    """Raised when the auth-bridge resolver fails to exchange a programmatic token."""
-
-
 class _AuthBridgeClient:
     """Shared setup for auth-bridge clients: base URL, SA-token path, timeout, transport."""
 
@@ -97,72 +90,13 @@ class _AuthBridgeClient:
         return read_service_account_jwt(self._kubernetes_token_path)
 
 
-class StorageTokenResolver(_AuthBridgeClient):
-    """Exchanges a programmatic token for a legacy Storage token via the Connection resolver."""
-
-    async def resolve(self, *, subject_token: str, project_id: int) -> str:
-        """
-        Exchanges ``subject_token`` for the legacy Storage token of ``project_id``.
-
-        :return: The legacy Storage token.
-        :raises StorageTokenExchangeError: On any resolver failure (status carried on the error).
-        """
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-Kubernetes-Authorization': f'Bearer {self._read_sa_jwt()}',
-            'X-Subject-Token': f'Bearer {strip_bearer(subject_token)}',
-        }
-        try:
-            async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
-                response = await client.post(
-                    f'{self._base_url}/{_RESOLVE_ENDPOINT}',
-                    headers=headers,
-                    json={'projectId': project_id},
-                )
-        except httpx.HTTPError as e:
-            # Network / timeout failure. Raise without chaining so no request (and thus no
-            # token material) can surface in a traceback.
-            raise StorageTokenExchangeError(
-                f'Auth-bridge token exchange could not reach Connection ({type(e).__name__}).',
-                status_code=int(HTTPStatus.BAD_GATEWAY),
-            ) from None
-
-        if response.status_code != HTTPStatus.OK:
-            status = response.status_code
-            mapped = status if status in _PASS_THROUGH_STATUSES else int(HTTPStatus.BAD_GATEWAY)
-            LOG.error(f'Auth-bridge token exchange failed: resolver status {status}, mapped to {mapped}.')
-            raise StorageTokenExchangeError(
-                f'Auth-bridge token exchange was rejected (resolver status {status}).',
-                status_code=mapped,
-            )
-
-        try:
-            body = response.json()
-        except ValueError:
-            raise StorageTokenExchangeError(
-                'Auth-bridge token exchange returned a non-JSON body.',
-                status_code=int(HTTPStatus.BAD_GATEWAY),
-            ) from None
-        storage_token = body.get('storageToken') if isinstance(body, dict) else None
-        if not storage_token:
-            raise StorageTokenExchangeError(
-                'Auth-bridge token exchange returned no storageToken.',
-                status_code=int(HTTPStatus.BAD_GATEWAY),
-            )
-        return cast(str, storage_token)
-
-
 class OAuthTokenExchangeError(_AuthBridgeExchangeError):
     """Raised when the auth-bridge fails to exchange a league OAuth token for a programmatic session."""
 
 
 class OAuthSessionExchanger(_AuthBridgeClient):
     """Exchanges a league OAuth access token (``claudai projectless`` scope) for a whole-stack
-    Keboola programmatic session (PSGO-261 oauth_session_exchange RFC).
-
-    Sibling of `StorageTokenResolver`, reusing the same SA-JWT / ``X-Subject-Token`` mechanism.
-    """
+    Keboola programmatic session (PSGO-261 oauth_session_exchange RFC)."""
 
     async def exchange(self, *, oauth_access_token: str) -> dict:
         """
@@ -173,8 +107,7 @@ class OAuthSessionExchanger(_AuthBridgeClient):
         """
         # X-KBC-ManageApiToken is a DIFFERENT, mutually-exclusive authenticator (a real Manage
         # token lookup) -- confirmed against Connection's source that it must never be sent
-        # alongside X-Kubernetes-Authorization; the k8s JWT alone authorizes this endpoint,
-        # exactly like the sibling resolve-storage-token endpoint.
+        # alongside X-Kubernetes-Authorization; the k8s JWT alone authorizes this endpoint.
         sa_jwt = self._read_sa_jwt()
         headers = {
             'Content-Type': 'application/json',
