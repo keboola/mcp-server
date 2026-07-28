@@ -251,3 +251,24 @@ class TestSharedBuckets:
         )
 
         assert raw_client.post.call_args.kwargs['data']['displayName'] == 'Linked Bucket'
+
+    @pytest.mark.asyncio
+    async def test_bucket_link_sends_explicit_empty_display_name(self, raw_client: RawKeboolaClient) -> None:
+        """An explicit empty string must still be sent, not dropped like the None default."""
+        raw_client.post.return_value = {'id': 'in.c-linked'}
+        client = AsyncStorageClient(raw_client=raw_client, branch_id='123')
+
+        await client.bucket_link(
+            name='linked', stage='in', source_project_id='proj-1', source_bucket_id='in.c-foo', display_name=''
+        )
+
+        assert raw_client.post.call_args.kwargs['data']['displayName'] == ''
+
+    @pytest.mark.asyncio
+    async def test_bucket_link_omits_display_name_when_not_given(self, raw_client: RawKeboolaClient) -> None:
+        raw_client.post.return_value = {'id': 'in.c-linked'}
+        client = AsyncStorageClient(raw_client=raw_client, branch_id='123')
+
+        await client.bucket_link(name='linked', stage='in', source_project_id='proj-1', source_bucket_id='in.c-foo')
+
+        assert 'displayName' not in raw_client.post.call_args.kwargs['data']

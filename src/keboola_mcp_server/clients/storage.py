@@ -498,7 +498,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             'sourceProjectId': source_project_id,
             'sourceBucketId': source_bucket_id,
         }
-        if display_name:
+        if display_name is not None:
             data['displayName'] = display_name
         return cast(JsonDict, await self.post(endpoint=f'branch/{bid}/buckets', data=data))
 

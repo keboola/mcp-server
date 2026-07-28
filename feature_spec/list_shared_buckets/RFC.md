@@ -66,27 +66,29 @@ class GetSharedBucketsOutput(BaseModel):
 
 ## Resolution Strategy
 
-1. **Client method** — `AsyncStorageClient.list_shared_buckets(branch_id=None)` in
+1. **Client method** — `AsyncStorageClient.shared_bucket_list(branch_id=None)` in
    `clients/storage.py`, modeled directly on `bucket_list` (`storage.py:442-454`):
    ```python
-   async def list_shared_buckets(self, branch_id: str | None = None) -> list[JsonDict]:
-       bid = branch_id or self.branch_id or 'default'
+   async def shared_bucket_list(self, branch_id: str | None = None) -> list[JsonDict]:
+       bid = branch_id or self._branch_id
        return cast(list[JsonDict], await self.get(endpoint=f'branch/{bid}/shared-buckets'))
    ```
    The endpoint itself has no server-side pagination (confirmed against the PHP client /
    `SharedBucketsListAction` — it returns the full list), so `limit`/`offset` are applied
    **tool-side**, same as `search.py:591`'s `all_hits[offset : offset + limit]`.
 
-2. **Model** — `SharedBucketDetail(BaseModel)` in `tools/storage/tools.py`, alongside
-   `BucketDetail`, with a `model_validator(mode='before')` to flatten `project.id`/`project.name`
-   into `project_id`/`project_name` (same flattening style as `set_source_project`,
-   `tools.py:242-245`).
+2. **Model** — `SharedBucketDetail(BaseModel)` in a new
+   `tools/storage/shared_buckets.py` module (kept separate from `tools/storage/tools.py`,
+   already 1000+ lines), with a `model_validator(mode='before')` to flatten
+   `project.id`/`project.name` into `project_id`/`project_name` (same flattening style as
+   `BucketDetail.set_source_project`, `tools.py:242-245`).
 
 3. **Tool** — `get_shared_buckets(limit: int = 50, offset: int = 0, ctx) -> GetSharedBucketsOutput`
-   in `tools/storage/tools.py`, registered in the `Storage Tools` category alongside
-   `get_buckets`/`get_tables`. Docstring explicitly states the pagination contract and default
-   limit, following the `query_data` precedent of documenting hard limits directly in the tool
-   description (`sql.py:282-284`) so the agent knows to page rather than assume completeness.
+   in `tools/storage/shared_buckets.py`, registered via its own `add_shared_bucket_tools(mcp)`
+   under the same `Storage Tools` category as `get_buckets`/`get_tables`. Docstring explicitly
+   states the pagination contract and default limit, following the `query_data` precedent of
+   documenting hard limits directly in the tool description (`sql.py:282-284`) so the agent
+   knows to page rather than assume completeness.
 
 4. **Sort order** — request the endpoint's natural order (no server-side sort param exists);
    apply `offset`/`limit` after a stable sort by `id` so pagination is deterministic across
@@ -129,7 +131,7 @@ In scope:
 - `get_shared_buckets` tool (read-only), `SharedBucketDetail` model, `GetSharedBucketsOutput`.
 - `link_shared_bucket` tool (write), wrapping the link endpoint, returning the resulting
   `BucketDetail`.
-- `AsyncStorageClient.list_shared_buckets` and `AsyncStorageClient.link_bucket`.
+- `AsyncStorageClient.shared_bucket_list` and `AsyncStorageClient.bucket_link`.
 - `limit`/`offset` pagination per above — this is the change that resolves the prior
   "non-pageable" objection.
 - Unit tests (client methods, tool pagination/clamping, model field mapping, link
@@ -157,11 +159,11 @@ Out of scope:
 
 ## Testing / Verification
 
-1. Unit tests in `tests/tools/storage/test_tools.py` (parametrized): default limit/offset,
-   clamping of invalid `limit` (`0`, negative, `> 100`), `offset` beyond total count (empty
-   result + accurate `message`), field mapping from a realistic raw payload fixture, and
-   `link_shared_bucket` success + already-linked/4xx-error paths.
-2. Unit tests for `AsyncStorageClient.list_shared_buckets` and `.link_bucket` in
+1. Unit tests in `tests/tools/storage/test_shared_buckets.py` (parametrized): default
+   limit/offset, clamping of invalid `limit` (`0`, negative, `> 100`), `offset` beyond total
+   count (empty result + accurate `message`), field mapping from a realistic raw payload
+   fixture, and `link_shared_bucket` success + stage-derivation/error paths.
+2. Unit tests for `AsyncStorageClient.shared_bucket_list` and `.bucket_link` in
    `tests/clients/test_storage.py` asserting correct endpoint/branch resolution and payload.
 3. Integration test in `integtests/tools/storage/` asserting `get_shared_buckets` executes
    end-to-end against a real project and the response validates against
