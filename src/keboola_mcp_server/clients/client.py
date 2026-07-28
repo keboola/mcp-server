@@ -175,7 +175,7 @@ class KeboolaClient:
         sync_actions_api_url = urlunparse(('https', f'sync-actions.{self._hostname_suffix}', '', '', '', ''))
 
         # Initialize clients for individual services
-        bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
+        bearer_or_sapi_token = self._bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
         # The encryption service does not require an authorization header, so we pass None as the token
         self._encryption_client = EncryptionClient.create(
             root_url=encryption_api_url, token=None, headers=self._headers
@@ -317,7 +317,10 @@ class KeboolaClient:
         headers['X-Kubernetes-Authorization'] = f'Bearer {jwt}'
         return AsyncStorageClient.create(
             root_url=self._storage_api_url,
-            token=self._token,
+            # Bearer, not the raw storage_api_token: for a programmatic (kbc_at_/kbc_pat_) session
+            # the raw token would be sent as X-StorageAPI-Token, which Storage API rejects outright
+            # -- it only accepts a programmatic token via Authorization: Bearer.
+            token=self._bearer_or_sapi_token,
             branch_id=self._branch_id,
             headers=headers,
             readonly=self._storage_client.raw_client.readonly,
