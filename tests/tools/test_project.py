@@ -13,6 +13,7 @@ from keboola_mcp_server.mcp import SCOPE_KEY, SessionScope
 from keboola_mcp_server.tools.project import (
     ProjectInfo,
     _get_toolset_restrictions,
+    _parent_subject_token,
     _resolve_branch_context,
     get_accessible_projects,
     get_project_info,
@@ -269,6 +270,26 @@ def _prep_client(mcp_context_client: Context, mocker: MockerFixture, *, bearer: 
         new=mocker.AsyncMock(return_value='kbc_at_parent'),
     )
     return client
+
+
+@pytest.mark.asyncio
+async def test_parent_subject_token_ignores_local_store_when_deployed(mocker: MockerFixture) -> None:
+    # On the deployed (multi-tenant) server, the local PKCE credential store must never be consulted
+    # -- it holds no session for this request's caller, and since it's shared across every concurrent
+    # request on the pod, reading (or refresh-writing) it here would risk leaking one tenant's session
+    # into another's. Only the request's own bearer token may be used.
+    mocker.patch('keboola_mcp_server.tools.project.deployed_sa_token_path', return_value='/var/run/secrets/token')
+    get_access_token = mocker.patch(
+        'keboola_mcp_server.tools.project.get_access_token',
+        new=mocker.AsyncMock(return_value='kbc_at_wrong_tenant'),
+    )
+    client = mocker.Mock()
+    client.bearer_token = 'Bearer kbc_at_this_request'
+
+    token = await _parent_subject_token(client)
+
+    assert token == 'kbc_at_this_request'
+    get_access_token.assert_not_called()
 
 
 @pytest.mark.asyncio
