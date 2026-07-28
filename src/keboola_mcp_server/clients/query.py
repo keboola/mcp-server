@@ -13,7 +13,7 @@ LOG = logging.getLogger(__name__)
 # 60s read timeout. Give the MCP server's own HTTP calls to QS more headroom.
 # Note: this does NOT change QS's own ~30s deadline for its internal call to Connection
 # (e.g. workspace credential fetch) - that timeout lives in Query Service, not here.
-# ponytail: fixed 120s bump, revisit with real config if per-deployment tuning is ever needed.
+# TODO: fixed 120s bump for now; move to a real config if per-deployment tuning is ever needed.
 _QS_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
 
 # submit_job is a POST, so the transport-level retry (base.py, GET/PUT/DELETE/etc only) never
