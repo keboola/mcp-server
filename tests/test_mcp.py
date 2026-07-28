@@ -25,6 +25,7 @@ from keboola_mcp_server.mcp import (
     _exclude_none_serializer,
     _filter_toon_nulls,
     process_concurrently,
+    resolve_scope_secret,
     toon_serializer,
     unwrap_results,
 )
@@ -1060,6 +1061,89 @@ class TestResolveLocalTokens:
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
         config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
         assert await SessionStateMiddleware._autolease_default_scope(config) is None
+
+
+class TestScopeToken:
+    """The multi-project scope is carried by the caller as the `scope_token` tool argument, not read
+    back from ctx.session.state -- which is rebuilt empty on every request under this server's
+    default stateless-HTTP transport, so nothing survives there between one tool call and the next.
+    """
+
+    def test_round_trip(self) -> None:
+        scope = SessionScope(
+            project_ids=[11, 22], read_only=True, scoped_token='kbc_at_s', scoped_expires_at=1234.0, confirmed=True
+        )
+        token = scope.to_token('secret')
+        assert SessionScope.from_token(token, 'secret') == scope
+
+    def test_wrong_secret_rejected(self) -> None:
+        token = SessionScope(project_ids=[11], confirmed=True).to_token('secret-a')
+        with pytest.raises(Exception, match='.+'):
+            SessionScope.from_token(token, 'secret-b')
+
+    def test_resolve_scope_secret_prefers_configured_jwt_secret(self) -> None:
+        assert resolve_scope_secret(Config(jwt_secret='shared-secret')) == 'shared-secret'
+
+    def test_resolve_scope_secret_fallback_is_stable_within_process(self) -> None:
+        config = Config()
+        assert resolve_scope_secret(config) == resolve_scope_secret(config)
+
+    @staticmethod
+    def _call_tool_context(arguments: dict) -> SimpleNamespace:
+        message = SimpleNamespace(name='get_tables', arguments=arguments)
+        return SimpleNamespace(message=message, method='tools/call')
+
+    def test_read_scope_from_request_decodes_and_pops_token(self) -> None:
+        config = Config(jwt_secret='shared-secret')
+        scope = SessionScope(project_ids=[11, 22], confirmed=True)
+        arguments = {'scope_token': scope.to_token('shared-secret'), 'other_arg': 1}
+
+        context = self._call_tool_context(arguments)
+        result = SessionStateMiddleware._read_scope_from_request(context, config)
+
+        assert result == scope
+        # Popped so the underlying tool function never sees it as an unexpected argument.
+        assert 'scope_token' not in arguments
+        assert arguments == {'other_arg': 1}
+
+    @pytest.mark.parametrize(
+        'arguments',
+        [{}, {'scope_token': None}, {'scope_token': ''}, {'scope_token': 'not-a-valid-jwt'}],
+        ids=['missing', 'none', 'empty', 'malformed'],
+    )
+    def test_read_scope_from_request_returns_none_when_absent_or_invalid(self, arguments: dict) -> None:
+        config = Config(jwt_secret='shared-secret')
+        context = self._call_tool_context(dict(arguments))
+        assert SessionStateMiddleware._read_scope_from_request(context, config) is None
+
+    def test_read_scope_from_request_ignores_non_call_tool_requests(self) -> None:
+        # tools/list (and other non-call requests) carry no `.arguments` at all.
+        context = SimpleNamespace(method='tools/list', fastmcp_context=None)
+        assert SessionStateMiddleware._read_scope_from_request(context, Config()) is None
+
+    def test_wrong_secret_falls_back_to_no_scope_via_read_scope_from_request(self) -> None:
+        # A token minted with a different secret (e.g. a replica whose fallback secret differs) must
+        # degrade to "no scope" rather than raise -- the ask-first gate then re-prompts the caller.
+        token = SessionScope(project_ids=[11], confirmed=True).to_token('secret-a')
+        context = self._call_tool_context({'scope_token': token})
+        assert SessionStateMiddleware._read_scope_from_request(context, Config(jwt_secret='secret-b')) is None
+
+    @pytest.mark.asyncio
+    async def test_on_list_tools_advertises_scope_token_unconditionally(self) -> None:
+        # Unlike MultiProjectMiddleware's `project_ids` filter, this must show up even with no scope
+        # confirmed yet (indeed, even before get_accessible_projects has ever been called) -- a
+        # tools/list request can't itself carry a scope_token, so scope state can't gate this.
+        tool = _tool('get_tables', read_only=True)
+        tool.parameters = {'type': 'object', 'properties': {}}
+        tool.model_copy = lambda update, _t=tool: SimpleNamespace(name=_t.name, parameters=update['parameters'])
+        context = SimpleNamespace(method='tools/list')
+
+        async def call_next(_):
+            return [tool]
+
+        tools = await SessionStateMiddleware().on_list_tools(context, call_next)
+
+        assert 'scope_token' in tools[0].parameters['properties']
 
 
 class TestMultiProjectMiddleware:
