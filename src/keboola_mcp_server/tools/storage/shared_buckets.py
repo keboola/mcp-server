@@ -132,10 +132,11 @@ async def get_shared_buckets(
 
     client = KeboolaClient.from_state(ctx.session.state)
     raw_shared_buckets = await client.storage_client.shared_bucket_list()
-    all_buckets = sorted((SharedBucketDetail.model_validate(raw) for raw in raw_shared_buckets), key=lambda b: b.id)
+    raw_shared_buckets = sorted(raw_shared_buckets, key=lambda raw: raw['id'])
 
-    total_count = len(all_buckets)
-    page = all_buckets[offset : offset + limit]
+    total_count = len(raw_shared_buckets)
+    raw_page = raw_shared_buckets[offset : offset + limit]
+    page = [SharedBucketDetail.model_validate(raw) for raw in raw_page]
 
     message: str | None = None
     if offset + len(page) < total_count:
