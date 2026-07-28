@@ -198,3 +198,56 @@ class TestSearchEndpoints:
         client = AsyncStorageClient(raw_client=raw_client)
         assert await client.component_configurations_search() == []
         raw_client.get.assert_not_called()
+
+
+class TestSharedBuckets:
+    @pytest.mark.asyncio
+    async def test_shared_bucket_list_uses_branch_scoped_endpoint(self, raw_client: RawKeboolaClient) -> None:
+        raw_client.get.return_value = [{'id': 'in.c-foo'}]
+        client = AsyncStorageClient(raw_client=raw_client, branch_id='123')
+
+        result = await client.shared_bucket_list()
+
+        raw_client.get.assert_called_once_with(endpoint='branch/123/shared-buckets', params=None)
+        assert result == [{'id': 'in.c-foo'}]
+
+    @pytest.mark.asyncio
+    async def test_shared_bucket_list_branch_id_override(self, raw_client: RawKeboolaClient) -> None:
+        raw_client.get.return_value = []
+        client = AsyncStorageClient(raw_client=raw_client, branch_id='123')
+
+        await client.shared_bucket_list(branch_id='456')
+
+        raw_client.get.assert_called_once_with(endpoint='branch/456/shared-buckets', params=None)
+
+    @pytest.mark.asyncio
+    async def test_bucket_link_posts_expected_payload(self, raw_client: RawKeboolaClient) -> None:
+        raw_client.post.return_value = {'id': 'in.c-linked'}
+        client = AsyncStorageClient(raw_client=raw_client, branch_id='123')
+
+        result = await client.bucket_link(
+            name='linked', stage='in', source_project_id='proj-1', source_bucket_id='in.c-foo'
+        )
+
+        raw_client.post.assert_called_once_with(
+            endpoint='branch/123/buckets',
+            data={'name': 'linked', 'stage': 'in', 'sourceProjectId': 'proj-1', 'sourceBucketId': 'in.c-foo'},
+            params=None,
+            timeout=None,
+        )
+        assert result == {'id': 'in.c-linked'}
+
+    @pytest.mark.asyncio
+    async def test_bucket_link_includes_optional_display_name(self, raw_client: RawKeboolaClient) -> None:
+        raw_client.post.return_value = {'id': 'in.c-linked'}
+        client = AsyncStorageClient(raw_client=raw_client, branch_id='123')
+
+        await client.bucket_link(
+            name='linked',
+            stage='in',
+            source_project_id='proj-1',
+            source_bucket_id='in.c-foo',
+            display_name='Linked Bucket',
+        )
+
+        assert raw_client.post.call_args.kwargs['data']['displayName'] == 'Linked Bucket'

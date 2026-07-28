@@ -73,8 +73,13 @@ the expected semantic objects provided.
 ### Storage Tools
 - [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including descriptions,
 lineage references (created/updated by), and links.
+- [get_shared_buckets](#get_shared_buckets): Lists buckets shared with this project by other Keboola projects that are not necessarily
+linked into this project yet (the Data Catalog "Shared with me" view).
 - [get_tables](#get_tables): Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
 column definitions, lineage references (created/updated by) and links.
+- [link_shared_bucket](#link_shared_bucket): Links a bucket shared with this project (found via `get_shared_buckets`) into this project
+as a new local bucket, so its tables become directly queryable/joinable like any other
+bucket in the project.
 - [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
 
 ---
@@ -4354,6 +4359,48 @@ EXAMPLES:
 ```
 
 ---
+<a name="get_shared_buckets"></a>
+## get_shared_buckets
+**Annotations**: `read-only`
+
+**Tags**: `storage`
+
+**Description**:
+
+Lists buckets shared with this project by other Keboola projects that are not necessarily
+linked into this project yet (the Data Catalog "Shared with me" view). Use this to answer
+"what data is shared with this project?" or "what could I link?" — `get_buckets` only
+returns buckets already in this project (including already-linked ones).
+
+Results are paginated (`limit`/`offset`) because the number of shared buckets can be large
+for projects in big organizations — always check `total_count` and the `message` to see
+whether more results exist, and page through with `offset` rather than assuming a single
+call returns everything.
+
+Use `link_shared_bucket` to link a shared bucket returned here into this project.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "limit": {
+      "default": 50,
+      "description": "Maximum number of shared buckets to return.",
+      "type": "integer"
+    },
+    "offset": {
+      "default": 0,
+      "description": "Number of shared buckets to skip, for pagination.",
+      "type": "integer"
+    }
+  },
+  "type": "object"
+}
+```
+
+---
 <a name="get_tables"></a>
 ## get_tables
 **Annotations**: `read-only`
@@ -4426,6 +4473,75 @@ EXAMPLES:
       "type": "boolean"
     }
   },
+  "type": "object"
+}
+```
+
+---
+<a name="link_shared_bucket"></a>
+## link_shared_bucket
+**Annotations**: 
+
+**Tags**: `storage`
+
+**Description**:
+
+Links a bucket shared with this project (found via `get_shared_buckets`) into this project
+as a new local bucket, so its tables become directly queryable/joinable like any other
+bucket in the project.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "source_project_id": {
+      "description": "The ID of the project the shared bucket belongs to.",
+      "type": "string"
+    },
+    "source_bucket_id": {
+      "description": "The ID of the shared bucket to link, from `get_shared_buckets`.",
+      "type": "string"
+    },
+    "target_bucket_name": {
+      "description": "The name the linked bucket should have in this project.",
+      "type": "string"
+    },
+    "target_stage": {
+      "anyOf": [
+        {
+          "enum": [
+            "in",
+            "out"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Stage for the linked bucket in this project. Defaults to the source bucket's own stage (parsed from its \"in.\"/\"out.\" ID prefix) \u2014 only pass this to deliberately re-stage on link."
+    },
+    "display_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional display name for the linked bucket."
+    }
+  },
+  "required": [
+    "source_project_id",
+    "source_bucket_id",
+    "target_bucket_name"
+  ],
   "type": "object"
 }
 ```
