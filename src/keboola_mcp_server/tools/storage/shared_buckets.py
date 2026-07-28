@@ -105,9 +105,19 @@ class GetSharedBucketsOutput(BaseModel):
 async def get_shared_buckets(
     ctx: Context,
     limit: Annotated[
-        int, Field(description='Maximum number of shared buckets to return.')
+        int,
+        Field(
+            description=(
+                f'Maximum number of shared buckets to return (default {DEFAULT_SHARED_BUCKETS_LIMIT}, '
+                f'max {MAX_SHARED_BUCKETS_LIMIT}). Values outside (0, {MAX_SHARED_BUCKETS_LIMIT}] are reset to the '
+                f'default rather than rejected.'
+            )
+        ),
     ] = DEFAULT_SHARED_BUCKETS_LIMIT,
-    offset: Annotated[int, Field(description='Number of shared buckets to skip, for pagination.')] = 0,
+    offset: Annotated[
+        int,
+        Field(description=('Number of shared buckets to skip, for pagination. Negative values are clamped to 0.')),
+    ] = 0,
 ) -> GetSharedBucketsOutput:
     """
     Lists buckets shared with this project by other Keboola projects that are not necessarily

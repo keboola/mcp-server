@@ -4387,12 +4387,12 @@ Use `link_shared_bucket` to link a shared bucket returned here into this project
   "properties": {
     "limit": {
       "default": 50,
-      "description": "Maximum number of shared buckets to return.",
+      "description": "Maximum number of shared buckets to return (default 50, max 100). Values outside (0, 100] are reset to the default rather than rejected.",
       "type": "integer"
     },
     "offset": {
       "default": 0,
-      "description": "Number of shared buckets to skip, for pagination.",
+      "description": "Number of shared buckets to skip, for pagination. Negative values are clamped to 0.",
       "type": "integer"
     }
   },
