@@ -276,8 +276,8 @@ class _Workspace(abc.ABC):
                 elapsed_time = time.perf_counter() - ts_start
                 # Back off polling frequency for long-running queries so a multi-minute query
                 # isn't status-checked hundreds of times. Sleep is clamped to the time left so
-                # it never overshoots the timeout, though the last poll before it can still be
-                # up to one full interval (max 20s) earlier than the deadline.
+                # it never overshoots the timeout, though the last status check before the
+                # deadline may still land up to one full interval (max 20s) early.
                 remaining = self._QUERY_TIMEOUT - elapsed_time
                 sleep_for = max(min(self._next_poll_interval(elapsed_time), remaining), 0.0)
                 await asyncio.sleep(sleep_for)
