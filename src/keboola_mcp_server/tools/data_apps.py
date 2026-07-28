@@ -884,7 +884,8 @@ async def modify_python_js_data_app(
         Field(
             description=(
                 'URL-safe slug for the data app (used as a subdomain). Optional on create — when omitted '
-                'it is auto-derived from `name` (drafts get a unique suffix). Immutable after create.'
+                'it is auto-derived from `name` (drafts get a unique suffix). An explicit slug must be at '
+                'most 63 characters (DNS-label max; the UI URL-prefix limit is 50). Immutable after create.'
             ),
         ),
     ] = None,
@@ -1054,7 +1055,9 @@ async def modify_python_js_data_app(
     Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
     is auto-derived from `name` and capped at 50 characters (the data-app URL-prefix limit enforced
     by the UI; drafts additionally get a short unique `-draft-<suffix>`, still within 50, to keep
-    slugs unique across the prod app and its drafts). Pass an explicit slug to override.
+    slugs unique across the prod app and its drafts). Pass an explicit slug to override; an explicit
+    slug must be at most 63 characters (the DNS-label max), and note the UI's own URL-prefix limit is
+    50, so an explicit slug of 51-63 characters may still be rejected at deploy time.
     """
     if configuration_id:
         if slug:
@@ -1069,6 +1072,15 @@ async def modify_python_js_data_app(
             # DNS-label-safe slug from `name` instead of raising; drafts get a unique suffix so
             # they don't collide with the parent prod app or with each other.
             slug = _derive_slug_from_name(name, draft=bool(parent_configuration_id))
+        elif len(slug) > MAX_DNS_LABEL_LENGTH:
+            # The derived path is length-capped, but an explicitly-passed slug is written through
+            # verbatim — so guard its length too. Use the DNS-label max (63) as the hard limit
+            # rather than the tighter 50-char UI limit: explicit slugs up to 63 are DNS-valid, but
+            # warn that 51-63 may still be rejected by the data-app URL-prefix UI at deploy time.
+            raise ValueError(
+                f'slug must be at most {MAX_DNS_LABEL_LENGTH} characters (got {len(slug)}); '
+                f'note the data-app URL-prefix UI limit is {MAX_DATA_APP_SLUG_LENGTH} characters.'
+            )
         if branch is not None and not parent_configuration_id:
             raise ValueError('branch is only valid on the draft create path (pair it with parent_configuration_id).')
 

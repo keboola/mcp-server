@@ -2273,7 +2273,9 @@ to expose publicly. On update, `authentication_type='default'` preserves the exi
 Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
 is auto-derived from `name` and capped at 50 characters (the data-app URL-prefix limit enforced
 by the UI; drafts additionally get a short unique `-draft-<suffix>`, still within 50, to keep
-slugs unique across the prod app and its drafts). Pass an explicit slug to override.
+slugs unique across the prod app and its drafts). Pass an explicit slug to override; an explicit
+slug must be at most 63 characters (the DNS-label max), and note the UI's own URL-prefix limit is
+50, so an explicit slug of 51-63 characters may still be rejected at deploy time.
 
 
 **Input JSON Schema**:
@@ -2309,7 +2311,7 @@ slugs unique across the prod app and its drafts). Pass an explicit slug to overr
         }
       ],
       "default": null,
-      "description": "URL-safe slug for the data app (used as a subdomain). Optional on create \u2014 when omitted it is auto-derived from `name` (drafts get a unique suffix). Immutable after create."
+      "description": "URL-safe slug for the data app (used as a subdomain). Optional on create \u2014 when omitted it is auto-derived from `name` (drafts get a unique suffix). An explicit slug must be at most 63 characters (DNS-label max; the UI URL-prefix limit is 50). Immutable after create."
     },
     "parent_configuration_id": {
       "anyOf": [

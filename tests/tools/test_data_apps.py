@@ -1171,21 +1171,26 @@ def _make_python_js_data_app_response(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('name', 'slug_kwargs', 'expected_slug'),
+    ('name', 'slug_kwargs', 'expected_slug', 'expected_error'),
     [
         # Explicit slug is honored verbatim (unchanged behavior).
-        ('My App', {'slug': 'custom-slug'}, 'custom-slug'),
+        ('My App', {'slug': 'custom-slug'}, 'custom-slug', None),
         # Omitted slug is auto-derived from `name` (AI-3634) — clean base on the prod path.
-        ('My App', {}, 'my-app'),
+        ('My App', {}, 'my-app', None),
         # Empty-string slug is treated as omitted and derived.
-        ('My App', {'slug': ''}, 'my-app'),
+        ('My App', {'slug': ''}, 'my-app', None),
         # Special characters collapse to single hyphens and leading/trailing hyphens are stripped.
-        ('  Sales & Revenue!! ', {}, 'sales-revenue'),
+        ('  Sales & Revenue!! ', {}, 'sales-revenue', None),
         # A name that slugifies to nothing falls back to a sensible default slug.
-        ('!!!', {}, 'data-app'),
+        ('!!!', {}, 'data-app', None),
         # A long (~60-char) name is capped at MAX_DATA_APP_SLUG_LENGTH (50) so the derived slug
         # stays within the data-app URL-prefix limit enforced by the UI (AI-3634).
-        ('a' * 60, {}, 'a' * 50),
+        ('a' * 60, {}, 'a' * 50, None),
+        # An explicit slug at the DNS-label max (63 chars) is accepted and written verbatim (AI-3634).
+        ('My App', {'slug': 'a' * 63}, 'a' * 63, None),
+        # An explicit slug over 63 chars is rejected with a clear length error (AI-3634); the message
+        # also flags the tighter 50-char UI URL-prefix limit.
+        ('My App', {'slug': 'a' * 64}, None, 'slug must be at most 63 characters'),
     ],
 )
 async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
@@ -1195,9 +1200,11 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
     name: str,
     slug_kwargs: dict,
     expected_slug: str,
+    expected_error: Optional[str],
 ) -> None:
-    """Prod create path (no `parent_configuration_id`): an explicit slug is written verbatim, and an
-    omitted/empty slug is auto-derived from `name` as a clean DNS-label-safe slug (AI-3634)."""
+    """Prod create path (no `parent_configuration_id`): an explicit slug is written verbatim (when it
+    is at most 63 chars, else rejected), and an omitted/empty slug is auto-derived from `name` as a
+    clean DNS-label-safe slug (AI-3634)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -1215,6 +1222,12 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    if expected_error is not None:
+        with pytest.raises(ValueError, match=expected_error):
+            await modify_python_js_data_app(ctx=mcp_context_client, name=name, description='desc', **slug_kwargs)
+        keboola_client.data_science_client.create_data_app.assert_not_awaited()
+        return
 
     await modify_python_js_data_app(ctx=mcp_context_client, name=name, description='desc', **slug_kwargs)
 
