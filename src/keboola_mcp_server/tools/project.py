@@ -12,7 +12,7 @@ from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_toke
 from keboola_mcp_server.clients.auth_bridge import is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import SCOPE_KEY, MultiProjectMiddleware, ServerState, SessionScope, process_concurrently
@@ -70,15 +70,21 @@ async def _parent_subject_token(client: KeboolaClient) -> str:
     """
     Resolves the whole-stack (parent) programmatic token used to introspect/scope.
 
-    Prefers the refreshable token from the local PKCE credential store (so re-scoping always starts
-    from the parent, never from an already-narrowed scoped token); falls back to whatever bearer the
-    client currently carries (a directly-supplied PAT, or an HTTP bearer).
+    On a local (non-deployed) session, prefers the refreshable token from the local PKCE
+    credential store (so re-scoping always starts from the parent, never from an already-narrowed
+    scoped token). On the deployed server the local store is never consulted: it holds no session
+    for the current request's caller, and -- since it's shared across every concurrent session on
+    the pod -- reading (or refreshing-and-writing) it here would risk leaking one tenant's session
+    into another's request. Falls back to whatever bearer the client currently carries (a
+    directly-supplied PAT, an HTTP bearer, or an OAuth-exchanged session token).
     """
     if not is_programmatic_token(client.bearer_token):
         raise ValueError(
             'Project scoping requires a Keboola programmatic token (kbc_at_/kbc_pat_). '
             'Run "keboola-mcp-server login --api-url <url>" first, or supply such a token.'
         )
+    if deployed_sa_token_path():
+        return strip_bearer(cast(str, client.bearer_token))
     try:
         return await get_access_token(client.storage_api_url)
     except RuntimeError:
