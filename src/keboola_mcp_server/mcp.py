@@ -8,6 +8,7 @@ and other utilities for the MCP server.
 import asyncio
 import dataclasses
 import logging
+import secrets
 import textwrap
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -37,6 +38,7 @@ from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_prog
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, deployed_sa_token_path, is_same_stack
+from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, SEMANTIC_TOOLS_TAG, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -61,6 +63,27 @@ _BOOTSTRAP_TOOLS = {'get_accessible_projects', 'set_project_scope'}
 # Optional per-call argument injected on fan-out-eligible read tools to restrict a single call to a
 # subset of the scoped projects (consumed and stripped by MultiProjectMiddleware.on_call_tool).
 _PROJECT_FILTER_ARG = 'project_ids'
+
+# Per-call argument that carries the confirmed multi-project scope forward (consumed and stripped
+# by SessionStateMiddleware.on_request). See SessionScope.to_token/from_token: under the server's
+# default stateless-HTTP transport a fresh, empty session is built for every request (the mcp
+# 2026-07-28 RC formalizes this across the spec, dropping Mcp-Session-Id/session pinning entirely),
+# so nothing survives in ctx.session.state between one tool call and the next -- on one replica or
+# many, even within a single process. A scope set via "set_project_scope" only persists if the
+# caller resends the token it returned.
+_SCOPE_TOKEN_ARG = 'scope_token'
+
+# Process-local fallback signing key for scope_token, used when no shared KBC_JWT_SECRET is
+# configured (e.g. local stdio/login sessions). A per-process secret is enough there since a stdio
+# process serves exactly one conversation end-to-end; deployed multi-replica setups already require
+# a shared jwt_secret for the OAuth-provider JWTs (see oauth.py), which this reuses.
+_FALLBACK_SCOPE_SECRET = secrets.token_hex(32)
+
+
+def resolve_scope_secret(config: Config) -> str:
+    """The HMAC key used to sign/verify ``scope_token`` -- shared across replicas when
+    ``config.jwt_secret`` (``KBC_JWT_SECRET``) is configured, otherwise a process-local fallback."""
+    return config.jwt_secret or _FALLBACK_SCOPE_SECRET
 
 
 @dataclasses.dataclass(frozen=True)
@@ -89,6 +112,16 @@ class SessionScope:
         if self.scoped_expires_at is None:
             return False
         return time.time() >= (self.scoped_expires_at - 60)
+
+    def to_token(self, secret: str) -> str:
+        """Signs this scope into the opaque ``scope_token`` a caller resends on later calls."""
+        return encode_jwt(dataclasses.asdict(self), secret)
+
+    @classmethod
+    def from_token(cls, token: str, secret: str) -> 'SessionScope':
+        """Inverse of ``to_token``. Raises on a missing/invalid/tampered token -- callers should
+        treat any exception as "no scope" rather than fail the request."""
+        return cls(**decode_jwt(token, secret))
 
 
 R = TypeVar('R')
@@ -293,10 +326,12 @@ class SessionStateMiddleware(fmw.Middleware):
             # server (KBC_KUBERNETES_TOKEN_PATH set).
             config = await self._maybe_use_stored_session(config, refresh=not is_list)
 
-            # In-conversation multi-project scope persists on the session across this per-request
-            # state rebuild. With no scope and no preset project, auto-lease ALL accessible projects
-            # (multi-project mode) so read tools fan out across everything — but never on /list.
-            scope = self._read_persisted_scope(ctx.session)
+            # In-conversation multi-project scope is carried by the caller as the `scope_token` tool
+            # argument (see SessionScope.to_token/from_token) rather than read back from
+            # ctx.session.state, which is rebuilt empty on every request under this server's default
+            # stateless-HTTP transport. With no scope and no preset project, auto-lease ALL accessible
+            # projects (multi-project mode) so read tools fan out across everything — but never on /list.
+            scope = self._read_scope_from_request(context, config)
             if scope is None and not config.project_id and not is_list:
                 scope = await self._autolease_default_scope(config)
             if not is_list:
@@ -327,6 +362,40 @@ class SessionStateMiddleware(fmw.Middleware):
             # NOTE: This line is commented following a bug related to session state clearance in Claude client
             # ctx.session.state = {}
             pass
+
+    async def on_list_tools(
+        self,
+        context: fmw.MiddlewareContext[mt.ListToolsRequest],
+        call_next: fmw.CallNext[mt.ListToolsRequest, list[Tool]],
+    ) -> list[Tool]:
+        """Advertises the optional `scope_token` argument on every tool.
+
+        Unconditional (unlike MultiProjectMiddleware's `_PROJECT_FILTER_ARG` patch, which is gated on
+        an active multi-project scope): a `tools/list` request cannot itself carry `scope_token`, so
+        whether a scope is currently confirmed can't be known while building this response. Showing
+        the parameter always costs nothing when unused and is what lets the caller learn about it
+        before ever calling `set_project_scope`.
+        """
+        tools = await call_next(context)
+        patched: list[Tool] = []
+        for tool in tools:
+            params = dict(tool.parameters or {})
+            props = dict(params.get('properties') or {})
+            if _SCOPE_TOKEN_ARG in props:
+                patched.append(tool)
+                continue
+            props[_SCOPE_TOKEN_ARG] = {
+                'type': 'string',
+                'description': (
+                    'Opaque token returned by "set_project_scope" (also echoed by '
+                    '"get_accessible_projects" once a scope is confirmed). The server does not '
+                    'remember the scope between calls -- resend this value on every tool call in '
+                    'this conversation once you have it.'
+                ),
+            }
+            params['properties'] = props
+            patched.append(tool.model_copy(update={'parameters': params}))
+        return patched
 
     @classmethod
     def _get_headers(cls, runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
@@ -393,15 +462,27 @@ class SessionStateMiddleware(fmw.Middleware):
 
         return config
 
-    @staticmethod
-    def _read_persisted_scope(session: Any) -> 'SessionScope | None':
-        """Reads the multi-project scope stashed in the prior request's session state, if any."""
-        prior = getattr(session, 'state', None)
-        if isinstance(prior, dict):
-            scope = prior.get(SCOPE_KEY)
-            if isinstance(scope, SessionScope):
-                return scope
-        return None
+    @classmethod
+    def _read_scope_from_request(cls, context: fmw.MiddlewareContext[Any], config: Config) -> 'SessionScope | None':
+        """Decodes the ``scope_token`` tool-call argument (if any) back into a SessionScope.
+
+        Pops the argument so it never reaches the tool function, matching how
+        MultiProjectMiddleware.on_call_tool consumes _PROJECT_FILTER_ARG. Absent, malformed, or
+        expired tokens are treated as "no scope yet" rather than an error -- the ask-first gate in
+        MultiProjectMiddleware then steers the caller back through get_accessible_projects /
+        set_project_scope.
+        """
+        args = getattr(getattr(context, 'message', None), 'arguments', None)
+        if not isinstance(args, dict):
+            return None
+        token = args.pop(_SCOPE_TOKEN_ARG, None)
+        if not token:
+            return None
+        try:
+            return SessionScope.from_token(token, resolve_scope_secret(config))
+        except Exception:
+            LOG.warning('Ignoring invalid or expired scope_token.', exc_info=True)
+            return None
 
     @classmethod
     def _is_local_programmatic(cls, config: Config) -> bool:

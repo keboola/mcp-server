@@ -3629,6 +3629,9 @@ rest of the conversation. Read-only tools then run against every scoped project 
 write operations target the active (first) project only. Call this when the user states which
 projects to work on; it can be called again any time to re-scope.
 
+The server does not remember this scope between calls: pass the returned `scope_token` as the
+`scope_token` argument on every subsequent tool call in this conversation to keep it in effect.
+
 
 **Input JSON Schema**:
 ```json

@@ -1,5 +1,3 @@
-import gzip
-import json
 import logging
 import math
 import os
@@ -11,7 +9,7 @@ from typing import Any, cast
 from urllib.parse import urljoin
 
 import httpx
-import jwt.api_jws
+import jwt
 from fastmcp.server.auth.auth import OAuthProvider
 from mcp.server.auth.provider import (
     AccessToken,
@@ -29,6 +27,7 @@ from starlette.exceptions import HTTPException
 from keboola_mcp_server.auth_login import TokenSet, parse_token_response, refresh_tokens
 from keboola_mcp_server.clients.auth_bridge import OAuthSessionExchanger, OAuthTokenExchangeError
 from keboola_mcp_server.config import deployed_sa_token_path
+from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
 
 LOG = logging.getLogger(__name__)
 _OAUTH_LOG_ALL = bool(os.getenv('KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL'))
@@ -632,15 +631,7 @@ class SimpleOAuthProvider(OAuthProvider):
         return httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30.0))
 
     def _encode(self, data: Mapping[str, Any], *, key: str | None = None) -> str:
-        json_str = json.dumps(data)
-        json_bytes = json_str.encode('utf-8')
-        json_gzip = gzip.compress(json_bytes)
-        json_encrypted = jwt.api_jws.encode(json_gzip, key or self._jwt_secret)
-        return json_encrypted
+        return encode_jwt(data, key or self._jwt_secret)
 
     def _decode(self, data: str, *, key: str | None = None) -> dict[str, Any]:
-        json_gzip = jwt.api_jws.decode(data, key or self._jwt_secret, algorithms=['HS256'])
-        json_bytes = gzip.decompress(json_gzip)
-        json_str = json_bytes.decode('utf-8')
-        json_obj = json.loads(json_str)
-        return json_obj
+        return decode_jwt(data, key or self._jwt_secret)

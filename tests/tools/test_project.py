@@ -7,9 +7,9 @@ from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import MetadataField
+from keboola_mcp_server.config import Config, MetadataField
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.mcp import SCOPE_KEY, SessionScope
+from keboola_mcp_server.mcp import SCOPE_KEY, SessionScope, resolve_scope_secret
 from keboola_mcp_server.tools.project import (
     ProjectInfo,
     _get_toolset_restrictions,
@@ -303,7 +303,9 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
         'keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection)
     )
     # Per-project SQL dialect is resolved via a token verify narrowed by X-KBC-ProjectId; mock that.
-    mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
+    mocker.patch(
+        'keboola_mcp_server.tools.project.ServerState.from_context', return_value=SimpleNamespace(config=Config())
+    )
     dialects = {18: 'BigQuery', 83: 'Snowflake'}
     mocker.patch(
         'keboola_mcp_server.tools.project._project_sql_dialect',
@@ -322,14 +324,20 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
     assert result.scoped_project_ids is None
     assert result.read_only is None
     assert result.base_instructions is None  # not requested
+    assert result.scope_token is None
     assert all(not p.in_scope for p in result.projects)
 
-    # Once scoped, the current scope is surfaced on the projects and at the top level.
+    # Once scoped, the current scope is surfaced on the projects and at the top level, and echoed
+    # back as a scope_token the caller must resend on later calls (the server does not remember it).
     mcp_context_client.session.state[SCOPE_KEY] = SessionScope(project_ids=[83], read_only=True, confirmed=True)
     result = await get_accessible_projects(mcp_context_client)
     assert result.scoped_project_ids == [83]
     assert result.read_only is True
     assert [(p.id, p.in_scope) for p in result.projects] == [(18, False), (83, True)]
+    assert result.scope_token is not None
+    assert SessionScope.from_token(result.scope_token, resolve_scope_secret(Config())) == SessionScope(
+        project_ids=[83], read_only=True, confirmed=True
+    )
 
 
 @pytest.mark.asyncio
@@ -429,6 +437,9 @@ async def test_set_project_scope_subset_exchanges_and_stores(
     scope = mcp_context_client.session.state[SCOPE_KEY]
     assert scope.scoped_token == 'kbc_at_scoped'
     assert scope.project_ids == [18, 83]
+    # The server does not remember this scope between calls; the caller must resend scope_token.
+    assert result.scope_token is not None
+    assert SessionScope.from_token(result.scope_token, resolve_scope_secret(Config())) == scope
 
 
 @pytest.mark.asyncio

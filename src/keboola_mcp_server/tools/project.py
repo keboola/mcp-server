@@ -15,7 +15,14 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import SCOPE_KEY, MultiProjectMiddleware, ServerState, SessionScope, process_concurrently
+from keboola_mcp_server.mcp import (
+    SCOPE_KEY,
+    MultiProjectMiddleware,
+    ServerState,
+    SessionScope,
+    process_concurrently,
+    resolve_scope_secret,
+)
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -310,6 +317,14 @@ class AccessibleProjects(BaseModel):
         description='The projects the session is currently scoped to, or null if no scope has been confirmed yet.',
     )
     read_only: bool | None = Field(default=None, description='Whether the current scoped token is read-only.')
+    scope_token: str | None = Field(
+        default=None,
+        description=(
+            'Opaque token encoding the confirmed scope, or null if none is confirmed yet. The server '
+            'does not remember the scope between calls -- pass this value as the "scope_token" '
+            'argument on every subsequent tool call in this conversation.'
+        ),
+    )
     base_instructions: list[BaseInstructionGroup] | None = Field(
         default=None,
         description=(
@@ -326,6 +341,12 @@ class AccessibleProjects(BaseModel):
 class ProjectScope(BaseModel):
     project_ids: list[int] = Field(description='The projects the session is now scoped to.')
     read_only: bool = Field(description='Whether the scoped token is read-only.')
+    scope_token: str = Field(
+        description=(
+            'Opaque token encoding this scope. The server does not remember it between calls -- pass '
+            'this value as the "scope_token" argument on every subsequent tool call in this conversation.'
+        ),
+    )
     llm_instruction: str = Field(description='Guidance for the assistant on the new scope.')
 
 
@@ -428,14 +449,15 @@ async def get_accessible_projects(
         )
     else:
         instruction = (
-            f'Session is currently scoped to {len(scoped_ids)} project(s). '
-            'Call "set_project_scope" to change the scope.'
+            f'Session is currently scoped to {len(scoped_ids)} project(s). Resend "scope_token" on every '
+            'subsequent tool call to keep it in effect; call "set_project_scope" to change the scope.'
         )
     return AccessibleProjects(
         user_email=introspection.user_email,
         projects=projects,
         scoped_project_ids=scoped_ids,
         read_only=scope.read_only if scoped_ids is not None else None,
+        scope_token=scope.to_token(resolve_scope_secret(server_state.config)) if scoped_ids is not None else None,
         base_instructions=base_instructions,
         llm_instruction=instruction,
     )
@@ -463,6 +485,9 @@ async def set_project_scope(
     rest of the conversation. Read-only tools then run against every scoped project in a single call;
     write operations target the active (first) project only. Call this when the user states which
     projects to work on; it can be called again any time to re-scope.
+
+    The server does not remember this scope between calls: pass the returned `scope_token` as the
+    `scope_token` argument on every subsequent tool call in this conversation to keep it in effect.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     parent_token = await _parent_subject_token(client)
@@ -517,16 +542,24 @@ async def set_project_scope(
         LOG.debug(f'Could not send tools/list_changed after scoping: {e}')
 
     multi = len(ids) > 1
+    scope_token = scope.to_token(resolve_scope_secret(ServerState.from_context(ctx).config))
     return ProjectScope(
         project_ids=ids,
         read_only=scope.read_only,
+        scope_token=scope_token,
         llm_instruction=(
             (
                 f'Session scoped to {len(ids)} projects. Read-only tools return results per project. '
                 'Write operations are not fanned out — they target the first scoped project; to write '
-                'elsewhere, re-scope to that project first (confirm with the user).'
+                'elsewhere, re-scope to that project first (confirm with the user). The server does not '
+                'remember this scope between calls -- pass "scope_token" as an argument on every '
+                'subsequent tool call in this conversation.'
             )
             if multi
-            else f'Session scoped to project {ids[0]}.'
+            else (
+                f'Session scoped to project {ids[0]}. The server does not remember this scope between '
+                'calls -- pass "scope_token" as an argument on every subsequent tool call in this '
+                'conversation.'
+            )
         ),
     )
