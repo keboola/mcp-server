@@ -106,8 +106,12 @@ class QueryServiceClient(KeboolaServiceClient):
                 if not is_transient_credentials_failure or attempt == _SUBMIT_JOB_MAX_ATTEMPTS:
                     raise
                 LOG.warning(
-                    f'Job submission failed to fetch workspace credentials '
-                    f'(attempt {attempt}/{_SUBMIT_JOB_MAX_ATTEMPTS}), retrying: workspace_id={workspace_id}'
+                    'Job submission failed to fetch workspace credentials '
+                    '(attempt %d/%d), retrying: workspace_id=%s',
+                    attempt,
+                    _SUBMIT_JOB_MAX_ATTEMPTS,
+                    workspace_id,
+                    exc_info=True,
                 )
                 await asyncio.sleep(_SUBMIT_JOB_RETRY_DELAY_SECONDS * attempt)
         raise AssertionError('unreachable: loop always returns or raises')
