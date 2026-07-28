@@ -4114,6 +4114,10 @@ ERROR PREVENTION:
   which returns NULL instead of erroring; on BigQuery `SAFE_CAST(x AS ...)` — BigQuery has NO `TRY_CAST`.
   Alternatively wrap the column with `NULLIF(col, '')` before CAST. This is defensive against empty strings,
   not a guarantee for genuinely non-numeric or non-date values.
+* For numeric casts always specify precision and scale so fractional values survive: on Snowflake use
+  `TRY_CAST(x AS NUMBER(38,9))` or `TRY_TO_NUMBER(x, 38, 9)` (never bare `NUMBER`/`DECIMAL`/`NUMERIC`, which
+  mean `NUMBER(38,0)` and silently round `'3.75'` to 4); on BigQuery use `NUMERIC`/`BIGNUMERIC` (never bare
+  `INT64`, which truncates). Use `FLOAT`/`DOUBLE`/`FLOAT64` only for ratios/averages.
 * Check for division by zero using NULLIF(denominator, 0)
 * Always use the LIMIT clause in your SELECT statements when fetching data. There are hard limits imposed
   by this tool on the maximum number of rows that can be fetched and the maximum number of characters.

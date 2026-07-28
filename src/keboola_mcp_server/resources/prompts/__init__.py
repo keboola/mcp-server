@@ -16,6 +16,9 @@ _DIALECT_CONFIGS: dict[str, dict] = {
             '`EXTRACT`, or numeric aggregation — passing raw text fails with `... does not support ... argument '
             'type`. BigQuery has **no** `TRY_CAST`; use `SAFE_CAST`, which returns NULL on bad input (including '
             'empty strings).',
+            'For numeric casts use `NUMERIC` (or `BIGNUMERIC`, or `FLOAT64` for ratios/averages), which keep '
+            'the fractional part. Never `SAFE_CAST` a possibly-fractional value to bare `INT64` — it '
+            'truncates/rounds to an integer and silently corrupts money and durations.',
             'Window frames: a frame clause (`ROWS`/`RANGE BETWEEN ...`) requires an `ORDER BY` inside the '
             '`OVER (...)` and is only valid on functions that accept a frame (aggregates such as `SUM`/`AVG`, '
             'plus `FIRST_VALUE`/`LAST_VALUE`). Numbering and navigation functions (`ROW_NUMBER`, `RANK`, '
@@ -38,14 +41,18 @@ _DIALECT_CONFIGS: dict[str, dict] = {
         ],
         'functions': [
             "Storage columns are untyped text (`VARCHAR`), so empty cells are stored as `''` (not NULL). "
-            'Cast text to a typed value with `TRY_CAST(x AS DATE|TIMESTAMP|NUMBER)` (or `TRY_TO_DATE`/'
-            '`TRY_TO_NUMBER`) **before** `DATE_TRUNC`, `EXTRACT`, or numeric aggregation — passing raw text '
-            'fails with `... does not support VARCHAR argument type`. `TRY_CAST` returns NULL on bad input '
-            '(including empty strings) instead of erroring.',
+            'Cast text to a typed value with `TRY_CAST(x AS DATE|TIMESTAMP)` (or `TRY_TO_DATE`) **before** '
+            '`DATE_TRUNC`, `EXTRACT`, or numeric aggregation — passing raw text fails with `... does not '
+            'support VARCHAR argument type`. `TRY_CAST` returns NULL on bad input (including empty strings) '
+            'instead of erroring.',
+            'For numeric casts always specify precision and scale — use `TRY_CAST(x AS NUMBER(38,9))` or '
+            '`TRY_TO_NUMBER(x, 38, 9)` (or `FLOAT`/`DOUBLE` for ratios/averages). Never cast to bare '
+            '`NUMBER`/`DECIMAL`/`NUMERIC`: bare `NUMBER` is `NUMBER(38,0)` (integer) and silently rounds '
+            "fractional values (`TRY_CAST('3.75' AS NUMBER)` → 4), corrupting money and durations.",
             'Window frames: a frame clause (`ROWS`/`RANGE BETWEEN ...`) requires an `ORDER BY` inside the '
             '`OVER (...)` and is only valid on aggregate functions (`SUM`/`AVG`, etc.) and `FIRST_VALUE`/'
             '`LAST_VALUE`. Ranking and navigation functions (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`) '
-            'take no frame. Example: `SUM(TRY_CAST("amount" AS NUMBER)) OVER (ORDER BY "created_at" ROWS '
+            'take no frame. Example: `SUM(TRY_CAST("amount" AS NUMBER(38,9))) OVER (ORDER BY "created_at" ROWS '
             'BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`.',
         ],
     },
