@@ -935,6 +935,31 @@ class TestResolveLocalTokens:
         assert out_scope is None
 
     @pytest.mark.asyncio
+    async def test_deployed_with_confirmed_scope_applies_active_project_id(self, monkeypatch) -> None:
+        # Deployed sessions skip token refresh/re-minting (the resolver-exchange path in
+        # create_session_state handles that once project_id is known) -- but a confirmed scope's
+        # active project id must still be threaded through, or every call after set_project_scope
+        # keeps building the active client from the unscoped whole-stack token (PSGO-261 regression:
+        # get_accessible_projects worked, every subsequent scoped call 401'd).
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        scope = SessionScope(project_ids=[18], scoped_token='kbc_at_scoped', confirmed=True)
+        with patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(side_effect=AssertionError('no PKCE store'))):
+            out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
+        assert out_config.project_id == '18'
+        assert out_config.storage_token == 'kbc_at_x'  # untouched; resolver-exchange narrows it
+        assert out_scope is scope  # untouched
+
+    @pytest.mark.asyncio
+    async def test_deployed_no_scope_or_already_set_project_id_is_noop(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x', project_id='7')
+        scope = SessionScope(project_ids=[18], confirmed=True)
+        out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
+        assert out_config is config  # project_id already set -- not overwritten
+        assert out_scope is scope
+
+    @pytest.mark.asyncio
     async def test_legacy_token_is_noop(self, monkeypatch) -> None:
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
         config = Config(storage_api_url='https://connection.keboola.com', storage_token='legacy-sapi-token')

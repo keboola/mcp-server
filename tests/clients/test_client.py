@@ -728,6 +728,23 @@ class TestStepUpStorageClient:
         # ... and pre-existing headers are preserved.
         assert headers['User-Agent'] == 'test'
 
+    def test_uses_bearer_for_programmatic_token(self, tmp_path):
+        # A programmatic (kbc_at_/kbc_pat_) session's token must ride as Authorization: Bearer, not
+        # X-StorageAPI-Token, which Storage API rejects outright for that token shape.
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt')
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token='kbc_at_abc',
+            bearer_token='kbc_at_abc',
+        )
+
+        stepped = client.step_up_storage_client(str(token_file))
+
+        headers = stepped.raw_client.headers
+        assert headers['Authorization'] == 'Bearer kbc_at_abc'
+        assert 'X-StorageAPI-Token' not in headers
+
     @pytest.mark.parametrize('readonly', [None, True, False])
     def test_propagates_readonly_guard(self, tmp_path, readonly):
         token_file = tmp_path / 'token'

@@ -422,9 +422,17 @@ class SessionStateMiddleware(fmw.Middleware):
         the parent when it nears expiry. The default (auto-leased) multi-project scope carries no
         minted token and simply uses the parent token, narrowed per request by ``X-KBC-ProjectId``.
         On the deployed server (``KBC_KUBERNETES_TOKEN_PATH`` set) the per-request resolver exchange
-        already handles freshness, so this is a no-op there.
+        already handles token freshness/narrowing once ``project_id`` is known -- but it only runs
+        once ``project_id`` is known, and nothing else threads a confirmed scope's active project id
+        into ``config`` for a deployed session. Without that, ``create_session_state`` keeps building
+        the active client from the unscoped whole-stack token with no ``X-KBC-ProjectId``, so every
+        call after ``set_project_scope`` 401s even though scoping itself succeeded. So still apply
+        just the active project id here for deployed sessions; the token itself is left alone since
+        the resolver-exchange path (keyed off that project id) handles narrowing it correctly.
         """
         if not cls._is_local_programmatic(config):
+            if scope and scope.project_ids and not config.project_id:
+                config = dataclasses.replace(config, project_id=str(scope.active_project_id))
             return config, scope
 
         # Strip any inbound `Bearer ` scheme; introspect/exchange helpers add the scheme themselves,
