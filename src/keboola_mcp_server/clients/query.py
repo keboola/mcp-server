@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from typing import Any, cast
 
 import httpx
@@ -5,12 +7,22 @@ import httpx
 from keboola_mcp_server.clients import KeboolaServiceClient, RawKeboolaClient
 from keboola_mcp_server.clients.base import JsonDict
 
+LOG = logging.getLogger(__name__)
+
 # Some Query Service calls (e.g. large result fetches) can exceed the base client's default
 # 60s read timeout. Give the MCP server's own HTTP calls to QS more headroom.
 # Note: this does NOT change QS's own ~30s deadline for its internal call to Connection
 # (e.g. workspace credential fetch) - that timeout lives in Query Service, not here.
 # ponytail: fixed 120s bump, revisit with real config if per-deployment tuning is ever needed.
 _QS_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
+
+# submit_job is a POST, so the transport-level retry (base.py, GET/PUT/DELETE/etc only) never
+# applies to it. Job submission can fail with 403 "Failed to get workspace credentials" when QS's
+# own deadline to Connection is shorter than actual credential-provisioning time - a transient
+# failure that happens before any job is created, so it's safe to retry. Scoped to this specific
+# message (not any 403) so a real auth/permission failure isn't masked by pointless retries.
+_SUBMIT_JOB_MAX_ATTEMPTS = 3
+_SUBMIT_JOB_RETRY_DELAY_SECONDS = 1.0
 
 
 class QueryServiceClient(KeboolaServiceClient):
@@ -81,11 +93,25 @@ class QueryServiceClient(KeboolaServiceClient):
             payload['actorType'] = actor_type
         if transactional is not None:
             payload['transactional'] = transactional
-        resp = cast(
-            JsonDict,
-            await self.post(endpoint=f'branches/{self._branch_id}/workspaces/{workspace_id}/queries', data=payload),
-        )
-        return resp['queryJobId']
+
+        endpoint = f'branches/{self._branch_id}/workspaces/{workspace_id}/queries'
+        last_error: httpx.HTTPStatusError | None = None
+        for attempt in range(1, _SUBMIT_JOB_MAX_ATTEMPTS + 1):
+            try:
+                resp = cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
+                return resp['queryJobId']
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code != httpx.codes.FORBIDDEN or 'workspace credentials' not in str(e).lower():
+                    raise
+                last_error = e
+                if attempt < _SUBMIT_JOB_MAX_ATTEMPTS:
+                    LOG.warning(
+                        f'Job submission failed to fetch workspace credentials '
+                        f'(attempt {attempt}/{_SUBMIT_JOB_MAX_ATTEMPTS}), retrying: workspace_id={workspace_id}'
+                    )
+                    await asyncio.sleep(_SUBMIT_JOB_RETRY_DELAY_SECONDS * attempt)
+        assert last_error is not None
+        raise last_error
 
     async def get_job_status(self, job_id: str) -> JsonDict:
         """
