@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.client import KeboolaClient
@@ -76,8 +77,9 @@ class TestGetSharedBuckets:
             (1, 0, ['in.c-a'], 'Returning 1 of 3 shared buckets. Use offset=1 to see more.'),
             (2, 1, ['in.c-b', 'in.c-c'], 'Returning 2 of 3 shared buckets.'),
             (10, 0, ['in.c-a', 'in.c-b', 'in.c-c'], 'Returning 3 of 3 shared buckets.'),
+            (10, 100, [], 'Returning 0 of 3 shared buckets.'),
         ],
-        ids=['first-page', 'second-page-exact-fit', 'limit-larger-than-total'],
+        ids=['first-page', 'second-page-exact-fit', 'limit-larger-than-total', 'offset-beyond-total'],
     )
     async def test_pagination(
         self,
@@ -199,7 +201,7 @@ class TestLinkSharedBucket:
         assert keboola_client.storage_client.bucket_link.call_args.kwargs['stage'] == 'out'
 
     async def test_unparseable_stage_raises(self, mcp_context_client: Context) -> None:
-        with pytest.raises(ValueError, match='Could not determine stage'):
+        with pytest.raises(ToolError, match='Could not determine stage'):
             await link_shared_bucket(
                 mcp_context_client,
                 source_project_id='proj-1',

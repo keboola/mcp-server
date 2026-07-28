@@ -6,6 +6,7 @@ import logging
 from typing import Annotated, Literal, cast
 
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import AliasChoices, BaseModel, Field, model_validator
@@ -185,7 +186,7 @@ async def link_shared_bucket(
     """
     stage = target_stage or (source_bucket_id.split('.', 1)[0] if '.' in source_bucket_id else None)
     if stage not in ('in', 'out'):
-        raise ValueError(
+        raise ToolError(
             f'Could not determine stage from source_bucket_id={source_bucket_id!r}; pass target_stage explicitly.'
         )
 

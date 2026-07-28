@@ -165,9 +165,10 @@ Out of scope:
    fixture, and `link_shared_bucket` success + stage-derivation/error paths.
 2. Unit tests for `AsyncStorageClient.shared_bucket_list` and `.bucket_link` in
    `tests/clients/test_storage.py` asserting correct endpoint/branch resolution and payload.
-3. Integration test in `integtests/tools/storage/` asserting `get_shared_buckets` executes
-   end-to-end against a real project and the response validates against
-   `GetSharedBucketsOutput`.
+3. Integration test in `integtests/tools/storage/` — **deferred**: no test project fixture
+   with a real pending share is available yet, so this PR ships without one; unit tests cover
+   the client/tool contract against realistic mocked payloads instead. Add this once a
+   suitable fixture project exists.
 4. `tox` — pytest, black, isort, flake8, check-tools-docs all exit 0.
 5. Manual smoke test via local `.mcp.json` against a project with at least one real
    organization-scope share, to confirm `sharing`/`linked_by` populate correctly and that
