@@ -1,7 +1,16 @@
 from typing import Any, cast
 
+import httpx
+
 from keboola_mcp_server.clients import KeboolaServiceClient, RawKeboolaClient
 from keboola_mcp_server.clients.base import JsonDict
+
+# Some Query Service calls (e.g. large result fetches) can exceed the base client's default
+# 60s read timeout. Give the MCP server's own HTTP calls to QS more headroom.
+# Note: this does NOT change QS's own ~30s deadline for its internal call to Connection
+# (e.g. workspace credential fetch) - that timeout lives in Query Service, not here.
+# ponytail: fixed 120s bump, revisit with real config if per-deployment tuning is ever needed.
+_QS_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
 
 
 class QueryServiceClient(KeboolaServiceClient):
@@ -50,6 +59,7 @@ class QueryServiceClient(KeboolaServiceClient):
                 base_api_url=f'{root_url}/api/{version}',
                 api_token=token,
                 headers=headers,
+                timeout=_QS_TIMEOUT,
             ),
             branch_id=branch_id,
         )
