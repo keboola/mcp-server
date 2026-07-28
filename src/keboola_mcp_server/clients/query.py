@@ -95,23 +95,22 @@ class QueryServiceClient(KeboolaServiceClient):
             payload['transactional'] = transactional
 
         endpoint = f'branches/{self._branch_id}/workspaces/{workspace_id}/queries'
-        last_error: httpx.HTTPStatusError | None = None
         for attempt in range(1, _SUBMIT_JOB_MAX_ATTEMPTS + 1):
             try:
                 resp = cast(JsonDict, await self.post(endpoint=endpoint, data=payload))
                 return resp['queryJobId']
             except httpx.HTTPStatusError as e:
-                if e.response.status_code != httpx.codes.FORBIDDEN or 'workspace credentials' not in str(e).lower():
+                is_transient_credentials_failure = (
+                    e.response.status_code == httpx.codes.FORBIDDEN and 'workspace credentials' in str(e).lower()
+                )
+                if not is_transient_credentials_failure or attempt == _SUBMIT_JOB_MAX_ATTEMPTS:
                     raise
-                last_error = e
-                if attempt < _SUBMIT_JOB_MAX_ATTEMPTS:
-                    LOG.warning(
-                        f'Job submission failed to fetch workspace credentials '
-                        f'(attempt {attempt}/{_SUBMIT_JOB_MAX_ATTEMPTS}), retrying: workspace_id={workspace_id}'
-                    )
-                    await asyncio.sleep(_SUBMIT_JOB_RETRY_DELAY_SECONDS * attempt)
-        assert last_error is not None
-        raise last_error
+                LOG.warning(
+                    f'Job submission failed to fetch workspace credentials '
+                    f'(attempt {attempt}/{_SUBMIT_JOB_MAX_ATTEMPTS}), retrying: workspace_id={workspace_id}'
+                )
+                await asyncio.sleep(_SUBMIT_JOB_RETRY_DELAY_SECONDS * attempt)
+        raise AssertionError('unreachable: loop always returns or raises')
 
     async def get_job_status(self, job_id: str) -> JsonDict:
         """
