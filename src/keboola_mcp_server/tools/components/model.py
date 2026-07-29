@@ -694,6 +694,16 @@ class SimplifiedTfBlocks(BaseModel):
 
     async def to_raw_parameters(self) -> TransformationConfiguration.Parameters:
         """Convert the simplified transformation parameters to raw (SAPI) parameters."""
+        # Avoid circular import
+        from keboola_mcp_server.tools.components.sql_utils import check_total_sql_length
+
+        # This is the single choke point shared by `create_sql_transformation`,
+        # `update_sql_transformation` and the `update_sql_transformation` config-diff preview, and
+        # it splits *every* code block of the request. Cap the aggregate size here, not just each
+        # script on its own, so that many medium blocks cannot add up to the same cost as one huge
+        # one.
+        check_total_sql_length(code.script for block in self.blocks for code in block.codes)
+
         return TransformationConfiguration.Parameters(
             blocks=[
                 TransformationConfiguration.Parameters.Block(
