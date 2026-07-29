@@ -78,13 +78,21 @@ confidential) via the `cryptography` package, already a pinned dependency (`pypr
 `~= 49.0`) — no new crypto library needed, just a new small module (`session_store/crypto.py`) wrapping
 `cryptography.hazmat.primitives.ciphers.aead.AESGCM`.
 
-### New env var
+### New env vars
 
 `KBC_SESSION_ENCRYPTION_KEY` — 32 raw bytes, base64-encoded for env-var transport (`base64.b64decode`
 on load, fail loudly at startup if it doesn't decode to exactly 32 bytes). Single static key for v1
 (see Open Questions on rotation). Mirrors how `KBC_JWT_SECRET` is already handled today
 (`config.jwt_secret`) — same "required in production, generate an ephemeral one locally if unset"
 posture, so local dev/tests work with zero setup.
+
+`config.postgres_dsn` — the infra-facing env var is **`MCP_DB_URL`** (aliased, matching the naming
+already used for other freshly-provisioned Postgres instances in this infra, e.g.
+`mcp_docs_database_init[0].postgresql_url`); `KBC_MCP_DB_URL`/`KBC_POSTGRES_DSN` also work via the
+same alias/prefix mechanism every other `Config` field already supports. A single connection-string
+value (`postgresql://user:pass@host:port/dbname`), not split host/port/user/password env vars —
+matches every other `Config` field (one env var, one value) and is exactly what
+`asyncpg.create_pool(dsn)` wants directly, no glue needed.
 
 ### Refresh strategy: lazy, on lookup — not a background job
 

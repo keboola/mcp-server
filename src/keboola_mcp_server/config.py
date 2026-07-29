@@ -50,9 +50,11 @@ class Config:
     """The URL where the MCP server si reachable."""
     jwt_secret: str | None = None
     """The secret key for encoding and decoding JWT tokens."""
-    postgres_dsn: str | None = None
+    postgres_dsn: str | None = field(default=None, metadata={'aliases': ['mcp_db_url']})
     """Connection string for the Postgres-backed OAuth session store (oauth_session_persistence RFC).
-    Required to enable OAuth login when oauth_client_id/oauth_client_secret are set."""
+    Required to enable OAuth login when oauth_client_id/oauth_client_secret are set.
+
+    Maps the `MCP_DB_URL` / `KBC_MCP_DB_URL` env var (via the alias) as well as `KBC_POSTGRES_DSN`."""
     session_encryption_key: str | None = None
     """Base64-encoded 32-byte AES-256 key used to encrypt OAuth session credentials at rest."""
     bearer_token: str | None = None
