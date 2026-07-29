@@ -563,34 +563,31 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('features', 'tool_name', 'expect_filtered'),
+        ('has_semantic_models', 'tool_name', 'expect_filtered'),
         [
-            ([], 'search_semantic_context', True),
-            ([], 'get_semantic_schema', True),
-            (['mcp-semantic-tooling'], 'search_semantic_context', False),
-            (['mcp-semantic-tooling'], 'get_semantic_schema', False),
-            (['other-feature'], 'search_semantic_context', True),
-            (['other-feature'], 'get_semantic_schema', True),
+            (False, 'search_semantic_context', True),
+            (False, 'get_semantic_schema', True),
+            (True, 'search_semantic_context', False),
+            (True, 'get_semantic_schema', False),
         ],
         ids=[
-            'no_feature_search',
-            'no_feature_schema',
-            'with_feature_search',
-            'with_feature_schema',
-            'unrelated_feature_search',
-            'unrelated_feature_schema',
+            'no_models_search',
+            'no_models_schema',
+            'with_models_search',
+            'with_models_schema',
         ],
     )
-    async def test_list_tools_filters_semantic_tools_by_feature(
+    async def test_list_tools_filters_semantic_tools_by_models(
         self,
         mcp_context_client,
-        features: list[str],
+        has_semantic_models: bool,
         tool_name: str,
         expect_filtered: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.verify_token = AsyncMock(
-            return_value={'owner': {'features': features}, 'admin': {}}
+        keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
+        keboola_client.metastore_client.list_objects = AsyncMock(
+            return_value=[MagicMock()] if has_semantic_models else []
         )
 
         tools = [
@@ -617,33 +614,34 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('features', 'tool_name', 'tool_tags', 'expect_error'),
+        ('has_semantic_models', 'tool_name', 'tool_tags', 'expect_error'),
         [
-            ([], 'search_semantic_context', {'semantic'}, True),
-            ([], 'get_semantic_schema', {'semantic'}, True),
-            (['mcp-semantic-tooling'], 'search_semantic_context', {'semantic'}, False),
-            (['mcp-semantic-tooling'], 'get_semantic_schema', {'semantic'}, False),
-            ([], 'other_tool', set(), False),
+            (False, 'search_semantic_context', {'semantic'}, True),
+            (False, 'get_semantic_schema', {'semantic'}, True),
+            (True, 'search_semantic_context', {'semantic'}, False),
+            (True, 'get_semantic_schema', {'semantic'}, False),
+            (False, 'other_tool', set(), False),
         ],
         ids=[
-            'no_feature_search_tool',
-            'no_feature_schema_tool',
-            'with_feature_search_tool',
-            'with_feature_schema_tool',
-            'no_feature_non_semantic_tool',
+            'no_models_search_tool',
+            'no_models_schema_tool',
+            'with_models_search_tool',
+            'with_models_schema_tool',
+            'no_models_non_semantic_tool',
         ],
     )
-    async def test_call_tool_blocks_semantic_tools_by_feature(
+    async def test_call_tool_blocks_semantic_tools_by_models(
         self,
         mcp_context_client,
-        features: list[str],
+        has_semantic_models: bool,
         tool_name: str,
         tool_tags: set[str],
         expect_error: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.verify_token = AsyncMock(
-            return_value={'owner': {'features': features}, 'admin': {}}
+        keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
+        keboola_client.metastore_client.list_objects = AsyncMock(
+            return_value=[MagicMock()] if has_semantic_models else []
         )
 
         tool = _tool(tool_name, tags=tool_tags)
@@ -657,7 +655,7 @@ class TestToolsFilteringMiddleware:
 
         middleware = ToolsFilteringMiddleware()
         if expect_error:
-            with pytest.raises(ToolError, match='Semantic Layer Tooling'):
+            with pytest.raises(ToolError, match='no semantic models'):
                 await middleware.on_call_tool(context, call_next)
         else:
             result = await middleware.on_call_tool(context, call_next)
