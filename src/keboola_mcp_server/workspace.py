@@ -128,6 +128,17 @@ class _Workspace(abc.ABC):
     _SELECTED_ROWS_MSG = 'Returning {rows} of {total} selected rows.'
     _PAGE_SIZE = 1_000
 
+    @staticmethod
+    def _next_poll_interval(elapsed_seconds: float) -> float:
+        """Job-status polling interval for `execute_query`: fast at first, capped at 20s."""
+        if elapsed_seconds < 10:
+            return 1.0
+        if elapsed_seconds < 30:
+            return 2.0
+        if elapsed_seconds < 120:
+            return 5.0
+        return 20.0
+
     def __init__(self, workspace_id: int, client: KeboolaClient) -> None:
         self._workspace_id = workspace_id
         self._client = client
@@ -262,7 +273,14 @@ class _Workspace(abc.ABC):
                 'canceled',
                 'cancelled',
             ]:
-                await asyncio.sleep(1)
+                elapsed_time = time.perf_counter() - ts_start
+                # Back off polling frequency for long-running queries so a multi-minute query
+                # isn't status-checked hundreds of times. Sleep is clamped to the time left so
+                # it never overshoots the timeout, though the last status check before the
+                # deadline may still land up to one full interval (max 20s) early.
+                remaining = self._QUERY_TIMEOUT - elapsed_time
+                sleep_for = max(min(self._next_poll_interval(elapsed_time), remaining), 0.0)
+                await asyncio.sleep(sleep_for)
                 elapsed_time = time.perf_counter() - ts_start
                 if elapsed_time > self._QUERY_TIMEOUT:
                     # Cancel the query before raising timeout error. Inline the reason (rather than

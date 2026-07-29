@@ -7,7 +7,12 @@ name: CI
 # - For pull requests from branches in this repository, the workflow is skipped to avoid running it twice (once for the
 #   push and once for the PR).
 # - The full workflow (including jobs requiring secrets) runs only on pushes events to branches in this repository
-on: [ push, pull_request ]
+# - KaiBench evaluation is opt-in per pull request: add the `run-kaibench` label. It is the one job that
+#   deliberately runs on `pull_request` (it needs the PR's labels), so it is not double-run by the push event.
+on:
+  push:
+  pull_request:
+    types: [ opened, synchronize, reopened, labeled ]
 concurrency: ci-${{ github.ref }}
 
 permissions:
@@ -17,8 +22,11 @@ permissions:
 jobs:
   build:
     name: Build, test and package
-    # run this job only for push (avoiding pull requests from the same repo) or for pull requests from different repo
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    # run this job only for push (avoiding pull requests from the same repo) or for pull requests from different repo;
+    # `labeled` events carry no code change, so skip them (they exist only to trigger the kaibench job below)
+    if: |
+      github.event.action != 'labeled' &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -150,6 +158,60 @@ jobs:
           name: Integration test results (${{ matrix.python-version }})
           path: ./integtest-results.xml
           reporter: 'java-junit'
+
+  kaibench:
+    name: KaiBench Evaluation
+    # Opt-in per PR via the `run-kaibench` label. A full evaluation takes ~30-60 minutes and spends real
+    # Vertex quota, so it must never run unconditionally. Forks are excluded: the evaluation needs secrets.
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'run-kaibench')
+    # A newer commit on the same PR supersedes an in-flight evaluation rather than queueing behind it
+    concurrency:
+      group: kaibench-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    # the reusable workflow declares these; a caller cannot grant more than it holds itself
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    uses: ./.github/workflows/kaibench.yml
+    secrets: inherit
+
+  kaibench_gate:
+    name: KaiBench regression gate
+    needs: kaibench
+    if: always() && needs.kaibench.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      # The evaluation suite does not pass 100% of questions, so absolute failures cannot gate a PR.
+      # A regression — a question that passed on the previous run but no longer does — can.
+      - name: Check for regressions
+        env:
+          EVAL_RESULT: ${{ needs.kaibench.result }}
+          REGRESSIONS: ${{ needs.kaibench.outputs.regressions }}
+          BASELINE_RUN: ${{ needs.kaibench.outputs.baseline_run }}
+          PASSED: ${{ needs.kaibench.outputs.passed }}
+          TOTAL: ${{ needs.kaibench.outputs.total }}
+          PASS_RATE: ${{ needs.kaibench.outputs.pass_rate }}
+        run: |
+          set -euo pipefail
+          if [ "$EVAL_RESULT" != "success" ]; then
+            echo "::error::KaiBench evaluation did not complete (job result: $EVAL_RESULT) — check the logs above"
+            exit 1
+          fi
+          echo "Pass rate: ${PASSED:-?}/${TOTAL:-?} (${PASS_RATE:-?}%)"
+          if [ -z "$BASELINE_RUN" ]; then
+            echo "::warning::No baseline artifact available, so no regression comparison was made — this check passing does NOT mean the PR is regression-free"
+            exit 0
+          fi
+          echo "Compared against baseline run: $BASELINE_RUN"
+          if [ "${REGRESSIONS:-0}" -gt 0 ]; then
+            echo "::error::$REGRESSIONS question(s) regressed vs the previous run — see the step summary for details"
+            exit 1
+          fi
+          echo "No regressions."
 
   deploy_to_pypi:
     name: Deploy to pypi.org
