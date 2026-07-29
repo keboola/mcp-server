@@ -42,6 +42,18 @@ class TestConfig:
                 {'X-KBC-ProjectId': '1888'},
                 Config(project_id='1888'),
             ),
+            (
+                {'MCP_DB_URL': 'postgresql://u:p@host/db'},
+                Config(postgres_dsn='postgresql://u:p@host/db'),
+            ),
+            (
+                {'KBC_MCP_DB_URL': 'postgresql://u:p@host/db'},
+                Config(postgres_dsn='postgresql://u:p@host/db'),
+            ),
+            (
+                {'KBC_POSTGRES_DSN': 'postgresql://u:p@host/db'},
+                Config(postgres_dsn='postgresql://u:p@host/db'),
+            ),
         ],
     )
     def test_from_dict(self, d: Mapping[str, str], expected: Config) -> None:
