@@ -217,6 +217,7 @@ class QueryDataOutput(BaseModel):
     query_name: str = Field(description='The name of the executed query')
     csv_data: str = Field(description='The retrieved data in CSV format')
     message: str | None = Field(default=None, description='A message from the query execution')
+    query_ref: str | None = Field(default=None, description='Correlation token echoed from the request.')
 
 
 def add_sql_tools(mcp: FastMCP) -> None:
@@ -245,6 +246,16 @@ async def query_data(
         ),
     ],
     ctx: Context,
+    query_ref: Annotated[
+        str | None,
+        Field(
+            description=(
+                'Opaque correlation token chosen by the agent. Pass the SAME value to validate_semantic_query and '
+                'cite it as [[q:<query_ref>]] so the UI can link this result to its semantic validation. Purely a '
+                'passthrough; does not affect execution.'
+            )
+        ),
+    ] = None,
 ) -> QueryDataOutput:
     """
     Executes an SQL SELECT query to get the data from the underlying database.
@@ -322,7 +333,9 @@ async def query_data(
         writer.writeheader()
         writer.writerows(data.rows)
 
-        return QueryDataOutput(query_name=query_name, csv_data=output.getvalue(), message=result.message)
+        return QueryDataOutput(
+            query_name=query_name, csv_data=output.getvalue(), message=result.message, query_ref=query_ref
+        )
 
     else:
         # Surface cancellation cleanly: the workspace already produced a precise message

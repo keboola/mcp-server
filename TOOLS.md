@@ -2330,7 +2330,12 @@ short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its
         }
       ],
       "default": null,
-      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to `init` when unset (a sensible name for the first draft of a brand-new prod app). For subsequent edit-existing drafts, pass a descriptive name like 'add-revenue-filter'. Must not be `main` (reserved for the prod app). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
+      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to `init` when unset (a sensible name for the first draft of a brand-new prod app). For subsequent edit-existing drafts, pass a descriptive name like 'add-revenue-filter'. Must not be `main` (reserved for the prod app) unless `allow_main_branch=True` (platform view-draft only). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
+    },
+    "allow_main_branch": {
+      "default": false,
+      "description": "Internal escape hatch for the platform to create a read-only **view draft** pinned directly to the prod app's `main` branch (used by the AI workspace in-platform preview, which needs a deployable draft that tracks the published app). Only affects the draft create path. Agents building or iterating on data apps must **not** set this \u2014 iteration drafts always live on their own feature branch, never `main`.",
+      "type": "boolean"
     },
     "authentication_type": {
       "default": "default",
@@ -4048,6 +4053,18 @@ EXAMPLES:
         "$ref": "#/$defs/SemanticObjectTypeSelection"
       },
       "type": "array"
+    },
+    "query_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Opaque correlation token chosen by the agent. Pass the SAME value to validate_semantic_query and cite it as [[q:<query_ref>]] so the UI can link this result to its semantic validation. Purely a passthrough; does not affect execution."
     }
   },
   "required": [
@@ -4122,6 +4139,18 @@ DATA VALIDATION:
     "query_name": {
       "description": "A concise, human-readable name for this query based on its purpose and what data it retrieves. Use normal words with spaces (e.g., \"Customer Orders Last Month\", \"Top Selling Products\", \"User Activity Summary\").",
       "type": "string"
+    },
+    "query_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Opaque correlation token chosen by the agent. Pass the SAME value to validate_semantic_query and cite it as [[q:<query_ref>]] so the UI can link this result to its semantic validation. Purely a passthrough; does not affect execution."
     }
   },
   "required": [
