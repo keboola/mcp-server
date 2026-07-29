@@ -49,6 +49,11 @@ class Config:
     """The URL where the MCP server si reachable."""
     jwt_secret: Optional[str] = None
     """The secret key for encoding and decoding JWT tokens."""
+    postgres_dsn: Optional[str] = None
+    """Connection string for the Postgres-backed OAuth session store (oauth_session_persistence RFC).
+    Required to enable OAuth login when oauth_client_id/oauth_client_secret are set."""
+    session_encryption_key: Optional[str] = None
+    """Base64-encoded 32-byte AES-256 key used to encrypt OAuth session credentials at rest."""
     bearer_token: Optional[str] = None
     """The access-token issued by Keboola OAuth server to be sent in 'Authorization: Bearer <access-token>' header."""
     conversation_id: Optional[str] = None
@@ -142,7 +147,7 @@ class Config:
         for f in dataclasses.fields(self):
             value = getattr(self, f.name)
             if value:
-                if 'token' in f.name or 'password' in f.name or 'secret' in f.name:
+                if any(kw in f.name for kw in ('token', 'password', 'secret', 'key', 'dsn')):
                     params.append(f"{f.name}='****'")
                 else:
                     if isinstance(value, str):

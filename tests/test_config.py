@@ -86,12 +86,13 @@ class TestConfig:
             assert getattr(config, f.name) is None, f'Expected default value for {f.name} to be None'
 
     def test_no_token_password_in_repr(self) -> None:
-        config = Config(storage_token='foo')
+        config = Config(storage_token='foo', postgres_dsn='postgresql://u:p@host/db', session_encryption_key='abc')
         assert str(config) == (
             "Config(storage_api_url=None, storage_token='****', branch_id=None, workspace_schema=None, "
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
-            'jwt_secret=None, bearer_token=None, conversation_id=None, project_id=None)'
+            "jwt_secret=None, postgres_dsn='****', session_encryption_key='****', "
+            'bearer_token=None, conversation_id=None, project_id=None)'
         )
 
     @pytest.mark.parametrize(
