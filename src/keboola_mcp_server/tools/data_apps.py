@@ -2,6 +2,7 @@ import copy
 import importlib.resources as resources
 import logging
 import re
+import secrets
 from typing import Annotated, Any, Literal, Mapping, Optional, Sequence, Union, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -882,7 +883,9 @@ async def modify_python_js_data_app(
         Optional[str],
         Field(
             description=(
-                'URL-safe slug for the data app (used as a subdomain). Required when creating; immutable after.'
+                'URL-safe slug for the data app (used as a subdomain). Optional on create — when omitted '
+                'it is auto-derived from `name` (drafts get a unique suffix). An explicit slug must be at '
+                'most 63 characters (DNS-label max; the UI URL-prefix limit is 50). Immutable after create.'
             ),
         ),
     ] = None,
@@ -1031,7 +1034,8 @@ async def modify_python_js_data_app(
     - `branch` on **create** is only valid when `parent_configuration_id` is set (pins the new
       draft's branch). Defaults to `'init'`. Must not be `'main'`. Rejected on prod create.
       On **update** `branch` repoints an existing **external-git** app's pinned branch (see below).
-    - `slug` is required on create and immutable after.
+    - `slug` is optional on create (auto-derived from `name` when omitted; drafts get a unique
+      suffix) and immutable after.
     - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
       `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or
       a draft, and for repointing an **external-git** app's `branch` (a draft, or an app bound
@@ -1048,8 +1052,12 @@ async def modify_python_js_data_app(
 
     ## Slug constraint
 
-    Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). For drafts, append a
-    short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its drafts.
+    Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
+    is auto-derived from `name` and capped at 50 characters (the data-app URL-prefix limit enforced
+    by the UI; drafts additionally get a short unique `-draft-<suffix>`, still within 50, to keep
+    slugs unique across the prod app and its drafts). Pass an explicit slug to override; an explicit
+    slug must be at most 63 characters (the DNS-label max), and note the UI's own URL-prefix limit is
+    50, so an explicit slug of 51-63 characters may still be rejected at deploy time.
     """
     if configuration_id:
         if slug:
@@ -1060,7 +1068,19 @@ async def modify_python_js_data_app(
         # (validated against the app's git block below).
     else:
         if not slug:
-            raise ValueError('slug is required when creating a python-js data app.')
+            # `slug` is schema-optional, so the calling LLM often omits it on create. Derive a
+            # DNS-label-safe slug from `name` instead of raising; drafts get a unique suffix so
+            # they don't collide with the parent prod app or with each other.
+            slug = _derive_slug_from_name(name, draft=bool(parent_configuration_id))
+        elif len(slug) > MAX_DNS_LABEL_LENGTH:
+            # The derived path is length-capped, but an explicitly-passed slug is written through
+            # verbatim — so guard its length too. Use the DNS-label max (63) as the hard limit
+            # rather than the tighter 50-char UI limit: explicit slugs up to 63 are DNS-valid, but
+            # warn that 51-63 may still be rejected by the data-app URL-prefix UI at deploy time.
+            raise ValueError(
+                f'slug must be at most {MAX_DNS_LABEL_LENGTH} characters (got {len(slug)}); '
+                f'note the data-app URL-prefix UI limit is {MAX_DATA_APP_SLUG_LENGTH} characters.'
+            )
         if branch is not None and not parent_configuration_id:
             raise ValueError('branch is only valid on the draft create path (pair it with parent_configuration_id).')
 
@@ -2048,6 +2068,11 @@ def _get_authorization(auth_with_password: bool) -> dict[str, Any]:
 # Maximum length for DNS labels per RFC 1035
 MAX_DNS_LABEL_LENGTH = 63
 
+# Maximum length for a data-app URL prefix (`parameters.dataApp.slug`). The data-app UI enforces
+# this 50-char limit on the same field, so it is tighter than the 63-char DNS-label max — a slug
+# capped at 50 is valid under both limits and won't be rejected at deploy.
+MAX_DATA_APP_SLUG_LENGTH = 50
+
 
 class DataAppSlugTooLongError(ValueError):
     """Raised when the generated data app slug exceeds the DNS label length limit."""
@@ -2075,6 +2100,32 @@ def _get_data_app_slug(name: str) -> str:
             f'converting to lowercase, replacing spaces with hyphens, and removing special characters.'
         )
     return slug
+
+
+def _derive_slug_from_name(name: str, *, draft: bool) -> str:
+    """Derive a DNS-label-safe slug from a data app name when the caller omits one.
+
+    Used on the create path to fill in `slug` for a python-js data app: the tool schema marks
+    `slug` optional, so the calling LLM frequently omits it — deriving from `name` lets the create
+    succeed instead of raising.
+
+    Lowercases the name, collapses every run of non `[a-z0-9]` characters into a single hyphen,
+    strips leading/trailing hyphens, and truncates to fit the data-app URL-prefix length limit
+    (``MAX_DATA_APP_SLUG_LENGTH``). Falls back to ``'data-app'`` when the name slugifies to empty.
+    For drafts a short unique suffix (``-draft-<hex>``) is appended so draft slugs don't collide
+    with the parent prod app or with each other; the base is truncated so the suffixed slug still
+    fits the limit.
+
+    :param name: The name of the data app
+    :param draft: Whether this is a draft create (appends a unique ``-draft-<hex>`` suffix)
+    :return: A URL-safe slug (lowercase letters, digits, hyphens, <=50 chars)
+    """
+    base = re.sub(r'[^a-z0-9]+', '-', name.strip().lower()).strip('-')
+    if draft:
+        suffix = f'-draft-{secrets.token_hex(3)}'  # e.g. '-draft-a1b2c3'
+        base = base[: MAX_DATA_APP_SLUG_LENGTH - len(suffix)].strip('-') or 'data-app'
+        return f'{base}{suffix}'
+    return base[:MAX_DATA_APP_SLUG_LENGTH].strip('-') or 'data-app'
 
 
 def _uses_basic_authentication(authorization: dict[str, Any]) -> bool:
