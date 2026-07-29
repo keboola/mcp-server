@@ -191,6 +191,9 @@ jobs:
         env:
           EVAL_RESULT: ${{ needs.kaibench.result }}
           REGRESSIONS: ${{ needs.kaibench.outputs.regressions }}
+          REGRESSED_QIDS: ${{ needs.kaibench.outputs.regressed_qids }}
+          FLAKY_REGRESSIONS: ${{ needs.kaibench.outputs.flaky_regressions }}
+          FLAKY_REGRESSED_QIDS: ${{ needs.kaibench.outputs.flaky_regressed_qids }}
           BASELINE_RUN: ${{ needs.kaibench.outputs.baseline_run }}
           PASSED: ${{ needs.kaibench.outputs.passed }}
           TOTAL: ${{ needs.kaibench.outputs.total }}
@@ -207,8 +210,13 @@ jobs:
             exit 0
           fi
           echo "Compared against baseline run: $BASELINE_RUN"
+          # Surface excluded questions every time, so coverage given up here stays visible
+          # instead of quietly shrinking what this check actually verifies.
+          if [ "${FLAKY_REGRESSIONS:-0}" -gt 0 ]; then
+            echo "::warning::Ignored $FLAKY_REGRESSIONS regression(s) on known-unstable question(s): ${FLAKY_REGRESSED_QIDS} — these are excluded via .github/kaibench-flaky-questions.txt and are NOT verified by this check"
+          fi
           if [ "${REGRESSIONS:-0}" -gt 0 ]; then
-            echo "::error::$REGRESSIONS question(s) regressed vs the previous run — see the step summary for details"
+            echo "::error::$REGRESSIONS question(s) regressed vs the previous run: ${REGRESSED_QIDS} — see the step summary for details"
             exit 1
           fi
           echo "No regressions."

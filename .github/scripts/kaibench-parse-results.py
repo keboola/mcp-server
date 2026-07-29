@@ -31,10 +31,24 @@ print(f"duration={m['duration_seconds']:.0f}")
 status = 'passed' if m['failed'] == 0 and m.get('errors', 0) == 0 and partial_count == 0 else 'failed'
 print(f"status={status}")
 
+# Questions measured as unstable against an unmodified server. A single-trial comparison on a
+# question whose base pass rate is well under 100% produces phantom regressions at that rate, so
+# these are counted separately instead of failing the gate. Reported, never silently dropped.
+flaky_path = Path(__file__).parent.parent / 'kaibench-flaky-questions.txt'
+flaky_qids = set()
+if flaky_path.exists():
+    for raw in flaky_path.read_text().splitlines():
+        entry = raw.split('#', 1)[0].strip()
+        if entry:
+            flaky_qids.add(entry)
+
 # Count regressions vs previous run (downloaded into prev-results/)
 # `baseline_run` stays empty when no comparison happened, so callers can tell "0 regressions"
 # apart from "never compared" — the two look identical otherwise.
 regressions = 0
+regressed_qids = []
+flaky_regressions = 0
+flaky_regressed_qids = []
 baseline_run = ''
 prev_runs = sorted(Path('prev-results').glob('run_*'), key=lambda p: p.stat().st_mtime) if Path('prev-results').exists() else []
 if prev_runs:
@@ -53,6 +67,14 @@ if prev_runs:
             qid = str(r.get('question_id', ''))
             if qid in prev_by_qid:
                 if prev_by_qid[qid].get('status') == 'passed' and r.get('status') not in ('passed', 'skipped'):
-                    regressions += 1
+                    if qid in flaky_qids:
+                        flaky_regressions += 1
+                        flaky_regressed_qids.append(qid)
+                    else:
+                        regressions += 1
+                        regressed_qids.append(qid)
 print(f"regressions={regressions}")
+print(f"regressed_qids={','.join(sorted(regressed_qids))}")
+print(f"flaky_regressions={flaky_regressions}")
+print(f"flaky_regressed_qids={','.join(sorted(flaky_regressed_qids))}")
 print(f"baseline_run={baseline_run}")

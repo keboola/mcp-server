@@ -41,6 +41,9 @@ jobs:
       pass_rate: ${{ steps.parse.outputs.pass_rate }}
       duration: ${{ steps.parse.outputs.duration }}
       regressions: ${{ steps.parse.outputs.regressions }}
+      regressed_qids: ${{ steps.parse.outputs.regressed_qids }}
+      flaky_regressions: ${{ steps.parse.outputs.flaky_regressions }}
+      flaky_regressed_qids: ${{ steps.parse.outputs.flaky_regressed_qids }}
       baseline_run: ${{ steps.parse.outputs.baseline_run }}
 
     services:
