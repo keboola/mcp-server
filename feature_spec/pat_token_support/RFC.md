@@ -610,18 +610,33 @@ This makes the multi-project path safe on humongous projects: it can never wedge
 nudges toward the scalable access patterns (search / per-project drill-down) instead of bulk-listing.
 Follow-up: real `limit`/`offset` pagination on the enumerators, and concurrent fan-out.
 
-## Transport note: multi-project scope needs a stateful session
+## Transport note: multi-project scope is carried by the caller, not the session (superseded)
 
-Multi-project scope lives in the MCP **session** state (`ctx.session.state[SCOPE_KEY]`), read back on
-each request. This only persists when the transport keeps the session alive across requests:
+**Superseded.** This section originally assumed multi-project scope had to live in the MCP
+**session** state (`ctx.session.state[SCOPE_KEY]`), read back on each request, and that this only
+persists when the transport keeps the session alive across requests — fine on stdio (one long-lived
+process), broken on the deployed default (`stateless_http=True`, a fresh empty session per request,
+confirmed live via Datadog trace evidence: three separate `POST /mcp/` requests sharing one
+process/`runtime-id` yet never seeing each other's session state), and only working around that with
+`--no-stateless-http` (a single-replica-only workaround, and itself in tension with the direction the
+MCP spec is taking: the 2026-07-28 RC removes `Mcp-Session-Id`/session pinning from the protocol
+entirely, in favor of stateless-by-default operation).
 
-- **stdio** — one long-lived session per process → scope persists (this is how MPA was developed/tested).
-- **streamable-HTTP, stateless** (`stateless_http=True`, the deployed default for horizontal scaling)
-  → every request is an independent session (`Terminating session: None`), so `set_project_scope`'s
-  state never reaches the next call and data tools keep reporting "no scope confirmed".
-- **streamable-HTTP, stateful** (`--no-stateless-http`) → the server issues an `Mcp-Session-Id` the
-  client echoes back, the `ServerSession` is reused, and scope persists.
+**As built:** `set_project_scope`/`get_accessible_projects` sign the confirmed `SessionScope` into an
+opaque `scope_token` (`SessionScope.to_token`/`from_token`, `mcp.py`; HMAC-JWT, the same
+gzip+`jwt.api_jws` mechanism `SimpleOAuthProvider` already uses for OAuth tokens, extracted into
+`jwt_utils.py`) and return it to the caller, who resends it as a tool-call argument on every
+subsequent call. `SessionStateMiddleware` decodes it fresh from the request each time
+(`_read_scope_from_request`) instead of reading `ctx.session.state` from a prior request. This is
+stateless by construction: it works identically on stdio, one HTTP replica, or many, with no shared
+store, no sticky routing, and no `--no-stateless-http` workaround needed. The signing secret is
+`config.jwt_secret` (`KBC_JWT_SECRET`) when set — required to be shared across replicas for the
+existing OAuth JWTs already, so scope tokens ride along for free — or a process-local fallback
+(fine for stdio, since one process serves exactly one conversation).
 
-So to run MPA locally over HTTP: `keboola-mcp-server --transport streamable-http --no-stateless-http`.
-Deployed multi-replica MPA over stateless HTTP would need a shared/sticky scope store (out of scope
-here; deployed sessions today are single-project via the resolver + `KBC_PROJECT_ID`).
+Separately, the deployed session no longer needs to be single-project via a resolver exchange at
+all: `create_session_state` forwards any programmatic token (`kbc_at_*`/`kbc_pat_*`) as
+`Authorization: Bearer`, narrowed by `X-KBC-ProjectId` once a project is known — the
+`resolve-storage-token` auth-bridge exchange this section referenced has been removed (see
+`oauth_session_exchange/RFC.md` Decision §6). Full multi-project scope now works the same way on
+the deployed server as it does locally.
