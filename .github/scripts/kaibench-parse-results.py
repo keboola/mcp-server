@@ -32,11 +32,15 @@ status = 'passed' if m['failed'] == 0 and m.get('errors', 0) == 0 and partial_co
 print(f"status={status}")
 
 # Count regressions vs previous run (downloaded into prev-results/)
+# `baseline_run` stays empty when no comparison happened, so callers can tell "0 regressions"
+# apart from "never compared" — the two look identical otherwise.
 regressions = 0
+baseline_run = ''
 prev_runs = sorted(Path('prev-results').glob('run_*'), key=lambda p: p.stat().st_mtime) if Path('prev-results').exists() else []
 if prev_runs:
     prev_file = prev_runs[-1] / 'results.jsonl'
     if prev_file.exists() and results_file.exists():
+        baseline_run = prev_runs[-1].name
         prev_by_qid = {}
         for line in prev_file.read_text().splitlines():
             if line.strip():
@@ -51,3 +55,4 @@ if prev_runs:
                 if prev_by_qid[qid].get('status') == 'passed' and r.get('status') not in ('passed', 'skipped'):
                     regressions += 1
 print(f"regressions={regressions}")
+print(f"baseline_run={baseline_run}")
