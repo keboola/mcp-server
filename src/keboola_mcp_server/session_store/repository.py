@@ -4,6 +4,7 @@ The protocol exists so `oauth.py`/`mcp.py` logic can be unit-tested against an i
 without a real database; `PostgresSessionStore` is the only production implementation.
 """
 
+import asyncio
 import dataclasses
 import hashlib
 import secrets
@@ -13,7 +14,6 @@ from typing import Protocol
 import asyncpg
 
 from keboola_mcp_server.session_store import crypto
-from keboola_mcp_server.session_store.migrator import apply_migrations
 
 # Length of the opaque, randomly-generated access/refresh tokens handed to the MCP client. 256
 # bits: not guessable, and this is the *entire* security check for these tokens (no signature to
@@ -69,6 +69,14 @@ class SessionStore(Protocol):
         """Replaces the encrypted Keboola credentials in place (server-managed refresh)."""
         ...
 
+    async def rotate_opaque_tokens(self, session_id: str) -> tuple[str, str]:
+        """Issues a fresh opaque access/refresh token pair for an existing session (OAuth refresh
+        grant, per OAuth 2.1's refresh-token-rotation recommendation), invalidating the old pair.
+
+        :return: (new_opaque_access_token, new_opaque_refresh_token)
+        """
+        ...
+
     async def update_scope(
         self,
         session_id: str,
@@ -84,18 +92,32 @@ class SessionStore(Protocol):
 
 
 class PostgresSessionStore:
-    def __init__(self, pool: asyncpg.Pool, encryption_key: bytes) -> None:
-        self._pool = pool
-        self._key = encryption_key
+    """Schema migrations are NOT applied here -- that's the `keboola-mcp-server migrate` CLI/Job's
+    job, run once per deployment before this app starts (oauth_session_persistence RFC). This class
+    only ever reads/writes rows, assuming the schema is already in place.
 
-    @classmethod
-    async def connect(cls, dsn: str, encryption_key: bytes) -> 'PostgresSessionStore':
-        pool = await asyncpg.create_pool(dsn)
-        await apply_migrations(pool)
-        return cls(pool, encryption_key)
+    The connection pool is created lazily, on first use, so construction stays synchronous (no
+    event loop required) -- `server.py`'s `create_server()` is a plain sync function, and forcing
+    every one of its many call sites (including a dozen-plus sync tests) to become async just to
+    accommodate this would be a much bigger, unrelated change.
+    """
+
+    def __init__(self, dsn: str, encryption_key: bytes) -> None:
+        self._dsn = dsn
+        self._key = encryption_key
+        self._pool: asyncpg.Pool | None = None
+        self._pool_lock = asyncio.Lock()
+
+    async def _get_pool(self) -> asyncpg.Pool:
+        if self._pool is None:
+            async with self._pool_lock:
+                if self._pool is None:  # re-check: another task may have won the lock race first
+                    self._pool = await asyncpg.create_pool(self._dsn)
+        return self._pool
 
     async def close(self) -> None:
-        await self._pool.close()
+        if self._pool is not None:
+            await self._pool.close()
 
     def _to_session(self, row: asyncpg.Record) -> OAuthSession:
         return OAuthSession(
@@ -127,7 +149,8 @@ class PostgresSessionStore:
     ) -> tuple[str, str, OAuthSession]:
         access_token = generate_opaque_token()
         refresh_token = generate_opaque_token()
-        row = await self._pool.fetchrow(
+        pool = await self._get_pool()
+        row = await pool.fetchrow(
             """
             INSERT INTO oauth_sessions (
                 access_token_hash, refresh_token_hash, client_id, user_email,
@@ -147,7 +170,8 @@ class PostgresSessionStore:
         return access_token, refresh_token, self._to_session(row)
 
     async def get_by_access_token(self, access_token: str) -> OAuthSession | None:
-        row = await self._pool.fetchrow(
+        pool = await self._get_pool()
+        row = await pool.fetchrow(
             'UPDATE oauth_sessions SET last_used_at = now() '
             'WHERE access_token_hash = $1 AND revoked_at IS NULL RETURNING *',
             _hash_token(access_token),
@@ -155,7 +179,8 @@ class PostgresSessionStore:
         return self._to_session(row) if row is not None else None
 
     async def get_by_refresh_token(self, refresh_token: str) -> OAuthSession | None:
-        row = await self._pool.fetchrow(
+        pool = await self._get_pool()
+        row = await pool.fetchrow(
             'SELECT * FROM oauth_sessions WHERE refresh_token_hash = $1 AND revoked_at IS NULL',
             _hash_token(refresh_token),
         )
@@ -164,7 +189,8 @@ class PostgresSessionStore:
     async def rotate_kbc_tokens(
         self, session_id: str, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
     ) -> None:
-        await self._pool.execute(
+        pool = await self._get_pool()
+        await pool.execute(
             """
             UPDATE oauth_sessions
             SET kbc_access_token_enc = $2, kbc_refresh_token_enc = $3, kbc_access_expires_at = $4,
@@ -177,6 +203,22 @@ class PostgresSessionStore:
             kbc_access_expires_at,
         )
 
+    async def rotate_opaque_tokens(self, session_id: str) -> tuple[str, str]:
+        access_token = generate_opaque_token()
+        refresh_token = generate_opaque_token()
+        pool = await self._get_pool()
+        await pool.execute(
+            """
+            UPDATE oauth_sessions
+            SET access_token_hash = $2, refresh_token_hash = $3, updated_at = now()
+            WHERE id = $1
+            """,
+            session_id,
+            _hash_token(access_token),
+            _hash_token(refresh_token),
+        )
+        return access_token, refresh_token
+
     async def update_scope(
         self,
         session_id: str,
@@ -187,7 +229,8 @@ class PostgresSessionStore:
         scoped_token: str | None,
         scoped_expires_at: datetime | None,
     ) -> None:
-        await self._pool.execute(
+        pool = await self._get_pool()
+        await pool.execute(
             """
             UPDATE oauth_sessions
             SET scope_project_ids = $2, scope_read_only = $3, scope_confirmed = $4,
@@ -203,4 +246,5 @@ class PostgresSessionStore:
         )
 
     async def revoke(self, session_id: str) -> None:
-        await self._pool.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', session_id)
+        pool = await self._get_pool()
+        await pool.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', session_id)

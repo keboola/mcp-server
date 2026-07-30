@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 import math
 import os
@@ -5,6 +6,7 @@ import re
 import secrets
 import time
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import Any, cast
 from urllib.parse import urljoin
 
@@ -28,6 +30,12 @@ from keboola_mcp_server.auth_login import TokenSet, parse_token_response, refres
 from keboola_mcp_server.clients.auth_bridge import OAuthSessionExchanger, OAuthTokenExchangeError
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
+from keboola_mcp_server.session_store.repository import SessionStore
+
+# The OAuth scope this server always requests at /oauth/consent (see authorize()) -- fixed for
+# this flow, so the opaque access/refresh tokens don't need their own scopes column; carried here
+# only to satisfy the mcp SDK's AccessToken/RefreshToken (scopes: list[str], required).
+_OAUTH_SCOPES = ['claudai', 'projectless']
 
 LOG = logging.getLogger(__name__)
 _OAUTH_LOG_ALL = bool(os.getenv('KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL'))
@@ -131,6 +139,7 @@ class ProxyRefreshToken(RefreshToken):
     # The refresh side of the same exchanged session; used to refresh independently of the
     # (single-use, discarded) league OAuth token pair.
     kbc_refresh_token: str
+    session_id: str | None = None
 
 
 class SimpleOAuthProvider(OAuthProvider):
@@ -144,6 +153,7 @@ class SimpleOAuthProvider(OAuthProvider):
         client_secret: str,
         server_url: str,
         scope: str,
+        session_store: SessionStore,
         jwt_secret: str | None = None,
     ) -> None:
         """
@@ -156,12 +166,17 @@ class SimpleOAuthProvider(OAuthProvider):
         :param client_secret: The client secret registered with the OAuth server
         :param server_url: The URL of the OAuth server that the MCP server should authenticate to.
         :param scope: The scope of access to request from the OAuth server.
-        :param jwt_secret: The secret key for encoding and decoding JWT tokens.
+        :param session_store: Postgres-backed store for the exchanged Keboola session (access/refresh
+            token + multi-project scope) -- see oauth_session_persistence RFC. The short-lived,
+            pre-authentication artifacts (authorize-state, authorization code) still use `jwt_secret`
+            below; only the long-lived, real-credential-carrying tokens live in the store.
+        :param jwt_secret: The secret key for encoding and decoding the pre-auth JWT artifacts.
         """
         super().__init__(
             base_url=mcp_server_url,
             client_registration_options=ClientRegistrationOptions(enabled=True),
         )
+        self._session_store = session_store
 
         self._storage_api_url = storage_api_url
         self._mcp_callback_url = urljoin(mcp_server_url, callback_endpoint)
@@ -394,64 +409,85 @@ class SimpleOAuthProvider(OAuthProvider):
         # Exchange the league OAuth access token for a whole-stack Keboola programmatic session.
         # The league token is used exactly once, here, and then never referenced again.
         token_set = await self._exchange_oauth_for_session(authorization_code.oauth_access_token.token)
-        return self._wrap_session_as_oauth_token(client, token_set, authorization_code.scopes)
+        access_token, refresh_token, _session = await self._session_store.create(
+            client_id=client.client_id,
+            user_email=None,
+            kbc_access_token=token_set.access_token,
+            kbc_refresh_token=token_set.refresh_token,
+            kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
+        )
+        return self._oauth_token(access_token, refresh_token, authorization_code.scopes)
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         """
-        Loads and validates an access token.
-        The method decrypts a JWT access token, validates its content, and returns a `ProxyAccessToken` object
-        if the token is valid and not expired. Returns `None` if the token is invalid or expired.
+        Loads an access token by looking up the opaque, randomly-generated token in the Postgres
+        session store (oauth_session_persistence RFC) -- no signature to verify, the DB row's mere
+        existence (and not being revoked) is the entire validity check.
 
-        :param token: The JWT access token to be loaded and validated.
-        :return: A `ProxyAccessToken` instance if the token is valid and not expired, otherwise `None`.
+        Refreshes the underlying Keboola credential transparently if it's near expiry, so a client
+        that never proactively refreshes its own (non-expiring) opaque token still always gets a
+        live Keboola session underneath.
+
+        :param token: The opaque access token to look up.
+        :return: A `ProxyAccessToken` carrying the (possibly just-refreshed) Keboola access token,
+            or `None` if the token doesn't exist or was revoked.
         """
-        try:
-            access_token_raw = self._decode(token)
-        except jwt.InvalidTokenError:
-            LOG.debug(f'[load_access_token] Invalid token: {token}', exc_info=True)
+        session = await self._session_store.get_by_access_token(token)
+        if session is None:
+            _log_debug(f'[load_access_token] Unknown or revoked token: {token}')
             return None
 
-        proxy_token = ProxyAccessToken.model_validate(access_token_raw)
-        _log_debug(f'[load_access_token] token={token}, proxy_token={proxy_token}')
+        if session.kbc_access_expires_at.timestamp() <= time.time() + 60:
+            try:
+                token_set = await refresh_tokens(self._storage_api_url, refresh_token=session.kbc_refresh_token)
+            except httpx.HTTPError as e:
+                # Don't fail the request over a refresh hiccup -- the (soon-to-expire) credential we
+                # already have may still work for the next little while; the *next* lookup retries.
+                LOG.warning(f'[load_access_token] Could not refresh near-expiry Keboola session: {e}', exc_info=True)
+            else:
+                await self._session_store.rotate_kbc_tokens(
+                    session.id,
+                    kbc_access_token=token_set.access_token,
+                    kbc_refresh_token=token_set.refresh_token,
+                    kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
+                )
+                session = dataclasses.replace(
+                    session, kbc_access_token=token_set.access_token, kbc_refresh_token=token_set.refresh_token
+                )
 
-        # Log the expired authorization code.
-        # The mcp library itself performs the check and returns a proper response, but no logs.
-        now = time.time()
-        if proxy_token.expires_at and proxy_token.expires_at < now:
-            LOG.info(
-                f'[load_access_token] Expired access token: proxy_token.expires_at={proxy_token.expires_at}, now={now}'
-            )
-
+        proxy_token = ProxyAccessToken(
+            token=token,
+            client_id=session.client_id,
+            scopes=_OAUTH_SCOPES,
+            expires_at=None,  # no client-visible expiry -- see load_access_token docstring
+            kbc_access_token=session.kbc_access_token,
+            session_id=session.id,
+        )
+        _log_debug(f'[load_access_token] token={token}, session_id={session.id}')
         return proxy_token
 
     async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
         """
-        Loads and validates a refresh token.
-        The method decrypts a JWT refresh token, validates its content, and returns a `RefreshToken` object
-        if the token is valid and not expired. Returns `None` if the token is invalid or expired.
+        Loads a refresh token by looking up the opaque token in the Postgres session store.
 
         :param client: The OAuth client details.
-        :param refresh_token: A string representing the refresh token in JWT format.
-        :return: A `ProxyRefreshToken` instance if the token is valid and not expired, otherwise `None`.
+        :param refresh_token: The opaque refresh token to look up.
+        :return: A `ProxyRefreshToken`, or `None` if the token doesn't exist or was revoked.
         """
-        try:
-            refresh_token_raw = self._decode(refresh_token)
-        except jwt.InvalidTokenError:
-            LOG.debug(f'[load_refresh_token] Invalid token: {refresh_token}', exc_info=True)
+        session = await self._session_store.get_by_refresh_token(refresh_token)
+        if session is None:
+            _log_debug(f'[load_refresh_token] Unknown or revoked token: {refresh_token}')
             return None
 
-        proxy_token = ProxyRefreshToken.model_validate(refresh_token_raw)
-        _log_debug(f'[load_refresh_token] token={refresh_token}, proxy_token={proxy_token}')
-
-        # Log the expired authorization code.
-        # The mcp library itself performs the check and returns a proper response, but no logs.
-        now = time.time()
-        if proxy_token.expires_at and proxy_token.expires_at < now:
-            LOG.info(
-                f'[load_refresh_token] Expired refresh token: proxy_token.expires_at={proxy_token.expires_at}, '
-                f'now={now}'
-            )
-
+        proxy_token = ProxyRefreshToken(
+            token=refresh_token,
+            client_id=session.client_id,
+            scopes=_OAUTH_SCOPES,
+            expires_at=None,
+            kbc_refresh_token=session.kbc_refresh_token,
+            session_id=session.id,
+        )
+        _log_debug(f'[load_refresh_token] token={refresh_token}, session_id={session.id}')
         return proxy_token
 
     async def exchange_refresh_token(
@@ -465,6 +501,9 @@ class SimpleOAuthProvider(OAuthProvider):
         oauth_session_exchange RFC) — no round-trip to the league OAuth server: that token pair
         was used once, at initial exchange, and is never touched again.
 
+        Also rotates the client-facing opaque access/refresh token pair (OAuth 2.1's refresh-token-
+        rotation recommendation) -- the old pair stops resolving to this session immediately after.
+
         :param client: The OAuth client details.
         :param refresh_token: The refresh token to use for renewing the tokens.
         :param scopes: List of scopes to associate with the new tokens. If not provided, the scopes
@@ -472,13 +511,14 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :return: A new OAuthToken containing the access and refresh tokens.
 
-        :raises HTTPException: If the session-refresh call indicates an error.
+        :raises TokenError: If the session-refresh call indicates an error.
         """
         _log_debug(
             f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, scopes={scopes}'
         )
 
         assert isinstance(refresh_token, ProxyRefreshToken), f'Expected ProxyRefreshToken, got {type(refresh_token)}'
+        assert refresh_token.session_id is not None
 
         # Raised as TokenError (not HTTPException): this method is invoked by the mcp SDK's own
         # /token endpoint handler, which only recognizes TokenError and formats it into a spec-
@@ -498,63 +538,42 @@ class SimpleOAuthProvider(OAuthProvider):
                 error='invalid_grant', error_description=f'Failed to refresh token: could not reach Connection ({e}).'
             ) from e
 
-        return self._wrap_session_as_oauth_token(client, token_set, scopes or refresh_token.scopes)
-
-    def _wrap_session_as_oauth_token(
-        self, client: OAuthClientInformationFull, token_set: TokenSet, scopes: list[str]
-    ) -> OAuthToken:
-        """Wraps an exchanged Keboola session (`TokenSet`) into our own proxy access/refresh tokens."""
-        access_token = ProxyAccessToken(
-            token=f'mcp_{secrets.token_hex(32)}',
-            client_id=client.client_id,
-            scopes=scopes,
-            expires_at=int(token_set.expires_at),
+        await self._session_store.rotate_kbc_tokens(
+            refresh_token.session_id,
             kbc_access_token=token_set.access_token,
-            session_id=token_set.session_id,
-        )
-        access_token_jwt = self._encode(access_token.model_dump())
-
-        # The proxy refresh token's own expiry must NOT be tied to the (short-lived) access token's:
-        # the underlying Keboola refresh token keeps the session alive indefinitely (RFC Decision §4),
-        # but the mcp SDK enforces `expires_at` on the object load_refresh_token() returns. Derive a
-        # longer window the same way the pre-exchange code did for the league OAuth refresh token
-        # (up to ~7 days), so a client that doesn't refresh for a while isn't forced to re-login.
-        access_expires_in = max(0, int(token_set.expires_at - time.time()))
-        refresh_expires_at = int(time.time()) + self._ceil_to_hour(min(168 * access_expires_in, 168 * 3600))
-        refresh_token = ProxyRefreshToken(
-            token=f'mcp_{secrets.token_hex(32)}',
-            client_id=client.client_id,
-            scopes=scopes,
-            expires_at=refresh_expires_at,
             kbc_refresh_token=token_set.refresh_token,
+            kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
         )
-        refresh_token_jwt = self._encode(refresh_token.model_dump())
+        new_access_token, new_refresh_token = await self._session_store.rotate_opaque_tokens(refresh_token.session_id)
+        return self._oauth_token(new_access_token, new_refresh_token, scopes or refresh_token.scopes)
 
-        oauth_token = OAuthToken(
-            access_token=access_token_jwt,
-            refresh_token=refresh_token_jwt,
+    @staticmethod
+    def _oauth_token(access_token: str, refresh_token: str, scopes: list[str]) -> OAuthToken:
+        # expires_in=None: these opaque tokens don't carry a client-visible expiry (see
+        # load_access_token) -- the server refreshes the underlying Keboola credential
+        # transparently, so the client never needs to proactively refresh either.
+        return OAuthToken(
+            access_token=access_token,
+            refresh_token=refresh_token,
             token_type='Bearer',
-            expires_in=max(0, int(token_set.expires_at - time.time())),
+            expires_in=None,
             scope=' '.join(scopes),
         )
-        _log_debug(
-            f'[_wrap_session_as_oauth_token] access_token={access_token}, refresh_token={refresh_token}, '
-            f'oauth_token={oauth_token}'
-        )
-        return oauth_token
 
     async def revoke_token(self, token: str, token_type_hint: str | None = None) -> None:
         """
-        Revokes a token.
+        Revokes a token by deleting its session from the Postgres store (soft-delete via
+        `revoked_at`) -- both the access and refresh token immediately stop resolving.
 
-        This is a no-op function as the tokens are not stored and so there is no way to revoke tokens that have already
-        been issued.
-
-        :param token: The token to be revoked.
+        :param token: The token to be revoked (access or refresh; `token_type_hint` is advisory).
         :param token_type_hint: An optional hint about the type of the token.
         """
         _log_debug(f'[revoke_token] token={token}, token_type_hint={token_type_hint}')
-        # This is no-op as we don't store the tokens.
+        session = await self._session_store.get_by_access_token(
+            token
+        ) or await self._session_store.get_by_refresh_token(token)
+        if session is not None:
+            await self._session_store.revoke(session.id)
 
     def _read_oauth_tokens(self, data: dict[str, Any], scopes: list[str]) -> tuple[AccessToken, RefreshToken]:
         """

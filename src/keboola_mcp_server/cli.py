@@ -118,6 +118,12 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
     logout_parser.add_argument('--all', action='store_true', help='Delete stored sessions for all stacks.')
 
+    subparsers.add_parser(
+        'migrate',
+        help='Applies pending Postgres schema migrations for the OAuth session store, then exits. '
+        'Intended to run as a one-shot job before the server deployment rolls out.',
+    )
+
     return parser.parse_args(args)
 
 
@@ -230,6 +236,32 @@ async def _run_logout(api_url: str | None, *, all_stacks: bool = False) -> None:
     print(f'✓ Logged out of {storage_api_url}.' if removed else f'No stored session for {storage_api_url}.')
 
 
+async def _run_migrate() -> None:
+    """Applies pending Postgres schema migrations for the OAuth session store, then exits.
+
+    Reads the DSN from the same env vars the server itself uses (MCP_DB_URL / KBC_MCP_DB_URL /
+    KBC_POSTGRES_DSN) so a migration Job can share the exact same envFrom secret as the deployment.
+    """
+    import asyncpg
+
+    from keboola_mcp_server.session_store.migrator import apply_migrations
+
+    config = Config().replace_by(os.environ)
+    if not config.postgres_dsn:
+        raise RuntimeError('A Postgres DSN is required to run migrations: set MCP_DB_URL (or KBC_POSTGRES_DSN).')
+
+    pool = await asyncpg.create_pool(config.postgres_dsn)
+    try:
+        applied = await apply_migrations(pool)
+    finally:
+        await pool.close()
+
+    if applied:
+        print(f"✓ Applied {len(applied)} migration(s): {', '.join(applied)}")
+    else:
+        print('✓ Schema already up to date -- no migrations applied.')
+
+
 async def run_server(args: list[str] | None = None) -> None:
     """Runs the MCP server in async mode."""
     parsed_args = parse_args(args)
@@ -270,6 +302,10 @@ async def run_server(args: list[str] | None = None) -> None:
 
     if parsed_args.command == 'logout':
         await _run_logout(getattr(parsed_args, 'api_url', None), all_stacks=getattr(parsed_args, 'all', False))
+        return
+
+    if parsed_args.command == 'migrate':
+        await _run_migrate()
         return
 
     # Create config from the CLI arguments

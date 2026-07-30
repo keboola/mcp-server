@@ -617,3 +617,40 @@ async def test_oauth_callback_handler_propagates_http_exception(mocker) -> None:
         await routes.oauth_callback_handler(request)
     assert exc.value.status_code == 400
     assert exc.value.detail == 'Invalid state parameter'
+
+
+class TestCreateServerOAuthSessionStore:
+    """OAuth sessions live in Postgres (oauth_session_persistence RFC) -- create_server() must
+    refuse to enable OAuth without a DSN rather than silently falling back to something unrevoked."""
+
+    @staticmethod
+    def _oauth_config(**overrides) -> Config:
+        return Config(
+            storage_api_url='https://connection.keboola.com',
+            oauth_client_id='client-id',
+            oauth_client_secret='client-secret',
+            oauth_server_url='https://connection.keboola.com',
+            mcp_server_url='https://mcp.keboola.com',
+            **overrides,
+        )
+
+    def test_raises_without_postgres_dsn(self) -> None:
+        with pytest.raises(RuntimeError, match='MCP_DB_URL'):
+            create_server(self._oauth_config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+
+    def test_constructs_session_store_when_dsn_is_set(self) -> None:
+        from keboola_mcp_server.session_store.repository import PostgresSessionStore
+
+        server = create_server(
+            self._oauth_config(postgres_dsn='postgresql://u:p@host/db'),
+            runtime_info=ServerRuntimeInfo(transport='streamable-http'),
+        )
+        assert isinstance(server, FastMCP)
+        assert isinstance(server.auth._session_store, PostgresSessionStore)
+
+    def test_no_oauth_configured_needs_no_postgres_dsn(self) -> None:
+        # The vast majority of create_server() call sites (local stdio, header/PAT-token sessions)
+        # have no OAuth at all -- this must keep working with zero Postgres setup.
+        server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        assert isinstance(server, FastMCP)
+        assert server.auth is None

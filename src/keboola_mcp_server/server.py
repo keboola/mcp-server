@@ -28,6 +28,8 @@ from keboola_mcp_server.mcp import (
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
+from keboola_mcp_server.session_store.crypto import resolve_encryption_key
+from keboola_mcp_server.session_store.repository import PostgresSessionStore
 from keboola_mcp_server.tools.components.tools import add_component_tools
 from keboola_mcp_server.tools.data_apps import add_data_app_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
@@ -209,6 +211,19 @@ def create_server(
         if not config.oauth_scope:
             config = dataclasses.replace(config, oauth_scope='email')
 
+        # OAuth sessions (the real Keboola access/refresh tokens) live in Postgres, not in a
+        # self-contained JWT (oauth_session_persistence RFC) -- revocation and server-managed
+        # refresh both need a durable, deletable row. No silent in-memory fallback for this
+        # production auth path: refuse to start rather than accept OAuth logins nothing can revoke.
+        if not config.postgres_dsn:
+            raise RuntimeError(
+                'OAuth is configured (oauth_client_id/oauth_client_secret) but no Postgres DSN is set. '
+                'Set MCP_DB_URL (or KBC_POSTGRES_DSN) so OAuth sessions can be stored.'
+            )
+        session_store = PostgresSessionStore(
+            config.postgres_dsn, encryption_key=resolve_encryption_key(config.session_encryption_key)
+        )
+
         oauth_provider = SimpleOAuthProvider(
             storage_api_url=config.storage_api_url,
             client_id=config.oauth_client_id,
@@ -220,6 +235,7 @@ def create_server(
             # The path corresponds to oauth_callback_handler() set up below.
             callback_endpoint='/oauth/callback',
             jwt_secret=config.jwt_secret,
+            session_store=session_store,
         )
     else:
         oauth_provider = None
