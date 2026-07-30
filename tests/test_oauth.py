@@ -1,4 +1,7 @@
+import dataclasses
+import secrets
 import time
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from typing import Any, Mapping
 from urllib.parse import parse_qs, urlparse
@@ -16,8 +19,88 @@ from keboola_mcp_server.oauth import (
     _ExtendedAuthorizationCode,
     _OAuthClientInformationFull,
 )
+from keboola_mcp_server.session_store.repository import OAuthSession
 
 JWT_KEY = 'secret'
+
+
+class FakeSessionStore:
+    """In-memory `SessionStore` (no real Postgres) for exercising `SimpleOAuthProvider` in isolation."""
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, OAuthSession] = {}
+        self._access_tokens: dict[str, str] = {}
+        self._refresh_tokens: dict[str, str] = {}
+        self._next_id = 0
+
+    def _new_token_pair(self, session_id: str) -> tuple[str, str]:
+        access_token = f'at_{session_id}_{secrets.token_hex(4)}'
+        refresh_token = f'rt_{session_id}_{secrets.token_hex(4)}'
+        self._access_tokens[access_token] = session_id
+        self._refresh_tokens[refresh_token] = session_id
+        return access_token, refresh_token
+
+    async def create(
+        self, *, client_id, user_email, kbc_access_token, kbc_refresh_token, kbc_access_expires_at
+    ) -> tuple[str, str, OAuthSession]:
+        self._next_id += 1
+        session_id = str(self._next_id)
+        session = OAuthSession(
+            id=session_id,
+            client_id=client_id,
+            user_email=user_email,
+            kbc_access_token=kbc_access_token,
+            kbc_refresh_token=kbc_refresh_token,
+            kbc_access_expires_at=kbc_access_expires_at,
+            scope_project_ids=None,
+            scope_read_only=False,
+            scope_confirmed=False,
+            scope_scoped_token=None,
+            scope_scoped_expires_at=None,
+        )
+        self._sessions[session_id] = session
+        access_token, refresh_token = self._new_token_pair(session_id)
+        return access_token, refresh_token, session
+
+    async def get_by_access_token(self, access_token: str) -> OAuthSession | None:
+        session_id = self._access_tokens.get(access_token)
+        return self._sessions.get(session_id) if session_id else None
+
+    async def get_by_refresh_token(self, refresh_token: str) -> OAuthSession | None:
+        session_id = self._refresh_tokens.get(refresh_token)
+        return self._sessions.get(session_id) if session_id else None
+
+    async def rotate_kbc_tokens(
+        self, session_id: str, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
+    ) -> None:
+        session = self._sessions[session_id]
+        self._sessions[session_id] = dataclasses.replace(
+            session,
+            kbc_access_token=kbc_access_token,
+            kbc_refresh_token=kbc_refresh_token,
+            kbc_access_expires_at=kbc_access_expires_at,
+        )
+
+    async def rotate_opaque_tokens(self, session_id: str) -> tuple[str, str]:
+        self._access_tokens = {k: v for k, v in self._access_tokens.items() if v != session_id}
+        self._refresh_tokens = {k: v for k, v in self._refresh_tokens.items() if v != session_id}
+        return self._new_token_pair(session_id)
+
+    async def update_scope(
+        self, session_id: str, *, project_ids, read_only, confirmed, scoped_token, scoped_expires_at
+    ) -> None:
+        session = self._sessions[session_id]
+        self._sessions[session_id] = dataclasses.replace(
+            session,
+            scope_project_ids=project_ids,
+            scope_read_only=read_only,
+            scope_confirmed=confirmed,
+            scope_scoped_token=scoped_token,
+            scope_scoped_expires_at=scoped_expires_at,
+        )
+
+    async def revoke(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
 
 
 class TestSimpleOAuthProvider:
@@ -33,6 +116,7 @@ class TestSimpleOAuthProvider:
             server_url='https://oauth',
             scope='scope',
             jwt_secret=JWT_KEY,
+            session_store=FakeSessionStore(),
         )
 
     @staticmethod
@@ -280,10 +364,11 @@ class TestSimpleOAuthProvider:
         loaded_refresh = await oauth_provider.load_refresh_token(client, oauth_token.refresh_token)
         assert loaded_refresh is not None
         assert loaded_refresh.kbc_refresh_token == 'kbc_rt_new'
-        # The refresh token's own expiry must be much longer than the (1h) access token's -- it must
-        # not be tied to it, or the mcp SDK would force a re-login every ~1h even though the
-        # underlying Keboola refresh token can keep the session alive indefinitely.
-        assert loaded_refresh.expires_at - loaded.expires_at > 6 * 24 * 3600  # at least ~6 more days
+        # Neither opaque token carries a client-visible expiry (oauth_session_persistence RFC): the
+        # server refreshes the underlying Keboola credential transparently on lookup, so there's no
+        # forced-relogin window tied to the (1h) Keboola access token's lifetime.
+        assert loaded.expires_at is None
+        assert loaded_refresh.expires_at is None
 
     @pytest.mark.asyncio
     async def test_exchange_authorization_code_maps_exchange_error(
@@ -350,12 +435,20 @@ class TestSimpleOAuthProvider:
         )
 
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        _at, _rt, session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at_old',
+            kbc_refresh_token='kbc_rt_old',
+            kbc_access_expires_at=datetime.now(timezone.utc),
+        )
         refresh_token = ProxyRefreshToken(
             token='mcp_old',
             client_id='foo-client-id',
             scopes=['claudai', 'projectless'],
-            expires_at=int(time.time() + 3600),
+            expires_at=None,
             kbc_refresh_token='kbc_rt_old',
+            session_id=session.id,
         )
 
         oauth_token = await oauth_provider.exchange_refresh_token(client, refresh_token, [])
@@ -380,12 +473,20 @@ class TestSimpleOAuthProvider:
         monkeypatch.setattr(oauth_module, 'refresh_tokens', _failing_refresh_tokens)
 
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        _at, _rt, session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at_old',
+            kbc_refresh_token='kbc_rt_old',
+            kbc_access_expires_at=datetime.now(timezone.utc),
+        )
         refresh_token = ProxyRefreshToken(
             token='mcp_old',
             client_id='foo-client-id',
             scopes=['claudai', 'projectless'],
-            expires_at=int(time.time() + 3600),
+            expires_at=None,
             kbc_refresh_token='kbc_rt_old',
+            session_id=session.id,
         )
 
         # A network failure talking to Connection must surface as a clean TokenError, not
@@ -393,3 +494,86 @@ class TestSimpleOAuthProvider:
         with pytest.raises(TokenError) as exc:
             await oauth_provider.exchange_refresh_token(client, refresh_token, [])
         assert exc.value.error == 'invalid_grant'
+
+    @pytest.mark.asyncio
+    async def test_load_access_token_refreshes_near_expiry_session_transparently(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.auth_login import TokenSet
+
+        access_token, _rt, session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at_stale',
+            kbc_refresh_token='kbc_rt_stale',
+            kbc_access_expires_at=datetime.now(timezone.utc),  # already at/past expiry
+        )
+
+        async def _fake_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
+            assert refresh_token == 'kbc_rt_stale'
+            return TokenSet(access_token='kbc_at_fresh', refresh_token='kbc_rt_fresh', expires_at=time.time() + 3600)
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _fake_refresh_tokens)
+
+        loaded = await oauth_provider.load_access_token(access_token)
+
+        assert loaded is not None
+        assert loaded.kbc_access_token == 'kbc_at_fresh'
+        # The refresh is persisted, not just returned once -- a second lookup sees it too.
+        stored = await oauth_provider._session_store.get_by_access_token(access_token)
+        assert stored is not None
+        assert stored.kbc_access_token == 'kbc_at_fresh'
+        assert stored.kbc_refresh_token == 'kbc_rt_fresh'
+
+    @pytest.mark.asyncio
+    async def test_load_access_token_tolerates_refresh_failure(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        # A refresh hiccup must not break the current request -- the (soon-to-expire) credential
+        # already on the session may still work; the next lookup retries the refresh.
+        from keboola_mcp_server import oauth as oauth_module
+
+        access_token, _rt, _session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at_stale',
+            kbc_refresh_token='kbc_rt_stale',
+            kbc_access_expires_at=datetime.now(timezone.utc),
+        )
+
+        async def _failing_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
+            raise httpx.ConnectError('boom')
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _failing_refresh_tokens)
+
+        loaded = await oauth_provider.load_access_token(access_token)
+
+        assert loaded is not None
+        assert loaded.kbc_access_token == 'kbc_at_stale'  # unchanged, refresh failed but didn't raise
+
+    @pytest.mark.asyncio
+    async def test_load_access_token_unknown_token_returns_none(self, oauth_provider: SimpleOAuthProvider) -> None:
+        assert await oauth_provider.load_access_token('never-issued') is None
+
+    @pytest.mark.asyncio
+    async def test_revoke_token_invalidates_both_access_and_refresh_token(
+        self, oauth_provider: SimpleOAuthProvider
+    ) -> None:
+        access_token, refresh_token, _session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at_x',
+            kbc_refresh_token='kbc_rt_x',
+            kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+        await oauth_provider.revoke_token(access_token)
+
+        assert await oauth_provider.load_access_token(access_token) is None
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        assert await oauth_provider.load_refresh_token(client, refresh_token) is None
+
+    @pytest.mark.asyncio
+    async def test_revoke_token_unknown_token_is_a_noop(self, oauth_provider: SimpleOAuthProvider) -> None:
+        await oauth_provider.revoke_token('never-issued')  # must not raise
