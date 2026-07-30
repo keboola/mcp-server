@@ -459,6 +459,9 @@ async def create_sql_transformation(
 
     USAGE:
     - Use when you want to create a new SQL transformation.
+    - This is THE tool for creating `keboola.snowflake-transformation` and `keboola.google-bigquery-transformation`
+      components (do NOT use `create_config` for these); the transformation ID is derived automatically from the
+      workspace SQL dialect.
 
     EXAMPLES:
     - user_input: `Can you create a new transformation out of this sql query?`
@@ -1116,6 +1119,8 @@ async def create_config(
 ) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
+    Not for SQL transformations (`keboola.snowflake-transformation` / `keboola.google-bigquery-transformation`),
+    data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE).
 
     BEFORE CALLING - REQUIRED STEPS:
     1. Call `get_components([component_id])` to retrieve the component's `configuration_schema`.
@@ -1128,9 +1133,9 @@ async def create_config(
     - Use when you want to create a new root configuration for a specific component.
 
     WHEN NOT TO USE:
-    - `keboola.orchestrator` / `keboola.flow` → use flows tools
-    - `keboola.data-apps` → use data applications tools
-    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+    - `keboola.orchestrator` / `keboola.flow` → use `create_flow` / `create_conditional_flow`
+    - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `create_sql_transformation`
 
     EXAMPLES:
     - user_input: `Create a new configuration for component X with these settings`
@@ -1274,9 +1279,9 @@ async def add_config_row(
     - Use when you want to create a new row configuration for a specific component configuration.
 
     WHEN NOT TO USE:
-    - `keboola.orchestrator` / `keboola.flow` → use flows tools
-    - `keboola.data-apps` → use data applications tools
-    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+    - `keboola.orchestrator` / `keboola.flow` → use `create_flow` / `create_conditional_flow`
+    - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `create_sql_transformation`
 
     EXAMPLES:
     - user_input: `Create a new configuration row for component X with these settings`
@@ -1463,6 +1468,8 @@ async def update_config(
 ) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
+    Not for SQL transformations (`keboola.snowflake-transformation` / `keboola.google-bigquery-transformation`),
+    data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE).
 
     This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
     All other fields will remain unchanged.
@@ -1475,9 +1482,9 @@ async def update_config(
     - Any combination of the above
 
     WHEN NOT TO USE:
-    - `keboola.orchestrator` / `keboola.flow` → use flows tools
-    - `keboola.data-apps` → use data applications tools
-    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+    - `keboola.orchestrator` / `keboola.flow` → use `update_flow`
+    - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `update_sql_transformation`
 
     PREREQUISITES:
     - Configuration must already exist (use create_config for new configurations)
@@ -1741,9 +1748,9 @@ async def update_config_row(
     - Any combination of the above
 
     WHEN NOT TO USE:
-    - `keboola.orchestrator` / `keboola.flow` → use flows tools
-    - `keboola.data-apps` → use data applications tools
-    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+    - `keboola.orchestrator` / `keboola.flow` → use `update_flow`
+    - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `update_sql_transformation`
 
     PREREQUISITES:
     - The configuration row must already exist (use add_config_row for new rows)

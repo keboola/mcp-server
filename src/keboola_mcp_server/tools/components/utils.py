@@ -1078,12 +1078,16 @@ def update_transformation_parameters(
 # OTHER
 # ============================================================================
 
+# Maps unsuitable component IDs to a message naming the exact specialized tools to use instead,
+# so the raised error names the tool to call rather than a vague tool category.
 _UNSUITABLE_COMPONENTS_MESSAGES: Mapping[str, str] = {
-    DATA_APP_COMPONENT_ID: 'Use the data applications tools.',
-    CONDITIONAL_FLOW_COMPONENT_ID: 'Use the flows tools.',
-    ORCHESTRATOR_COMPONENT_ID: 'Use the flows tools.',
-    BIGQUERY_TRANSFORMATION_ID: 'Use the SQL transformation tools.',
-    SNOWFLAKE_TRANSFORMATION_ID: 'Use the SQL transformation tools.',
+    DATA_APP_COMPONENT_ID: (
+        'Use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app` instead.'
+    ),
+    CONDITIONAL_FLOW_COMPONENT_ID: 'Use `create_flow` / `create_conditional_flow` / `update_flow` instead.',
+    ORCHESTRATOR_COMPONENT_ID: 'Use `create_flow` / `create_conditional_flow` / `update_flow` instead.',
+    BIGQUERY_TRANSFORMATION_ID: 'Use `create_sql_transformation` / `update_sql_transformation` instead.',
+    SNOWFLAKE_TRANSFORMATION_ID: 'Use `create_sql_transformation` / `update_sql_transformation` instead.',
 }
 
 
