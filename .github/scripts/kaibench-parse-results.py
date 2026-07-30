@@ -50,6 +50,12 @@ regressed_qids = []
 flaky_regressions = 0
 flaky_regressed_qids = []
 baseline_run = ''
+# Share of this run's questions the baseline actually covers. A targeted run (say a single
+# question dispatched with --questions) produces a perfectly valid artifact that nonetheless
+# makes a near-empty baseline, which would otherwise yield "0 regressions" and a green check
+# while verifying almost nothing.
+baseline_overlap = 0
+baseline_shared = 0
 prev_runs = sorted(Path('prev-results').glob('run_*'), key=lambda p: p.stat().st_mtime) if Path('prev-results').exists() else []
 if prev_runs:
     prev_file = prev_runs[-1] / 'results.jsonl'
@@ -63,6 +69,10 @@ if prev_runs:
                 except json.JSONDecodeError:
                     continue
                 prev_by_qid[str(pr.get('question_id', ''))] = pr
+        candidate_qids = {str(r.get('question_id', '')) for r in evaluated}
+        baseline_shared = len(candidate_qids & set(prev_by_qid))
+        if candidate_qids:
+            baseline_overlap = round(100 * baseline_shared / len(candidate_qids))
         for r in evaluated:
             qid = str(r.get('question_id', ''))
             if qid in prev_by_qid:
@@ -77,4 +87,6 @@ print(f"regressions={regressions}")
 print(f"regressed_qids={','.join(sorted(regressed_qids))}")
 print(f"flaky_regressions={flaky_regressions}")
 print(f"flaky_regressed_qids={','.join(sorted(flaky_regressed_qids))}")
+print(f"baseline_overlap={baseline_overlap}")
+print(f"baseline_shared={baseline_shared}")
 print(f"baseline_run={baseline_run}")
