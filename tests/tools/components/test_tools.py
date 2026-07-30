@@ -1,4 +1,5 @@
 import asyncio
+import re
 from typing import Any, Callable
 from unittest.mock import MagicMock
 
@@ -46,6 +47,7 @@ from keboola_mcp_server.tools.components.model import (
     TfStrReplace,
     VariableDefinition,
 )
+from keboola_mcp_server.tools.components.sql_utils import MAX_SQL_SCRIPT_LENGTH
 from keboola_mcp_server.tools.components.tools import (
     add_config_row,
     create_config,
@@ -827,6 +829,87 @@ async def test_create_sql_transformation(
             },
         },
     )
+
+
+# The aggregate SQL size limit raised by `SimplifiedTfBlocks.to_raw_parameters()`.
+_OVERSIZED_SQL_ERROR = re.escape("The transformation's total SQL is too large to process")
+
+
+@pytest.mark.parametrize('tool_name', ['create_sql_transformation', 'update_sql_transformation'])
+@pytest.mark.asyncio
+async def test_sql_transformation_rejects_oversized_sql(
+    mocker: MockerFixture,
+    mcp_context_components_configs: Context,
+    mock_component: dict[str, Any],
+    tool_name: str,
+):
+    """
+    Oversized SQL is rejected before any Storage API write, on both SQL transformation tools.
+
+    Both go through `SimplifiedTfBlocks.to_raw_parameters()`, which is also what the
+    `update_sql_transformation` config-diff preview calls -- i.e. before any human approval.
+    """
+    context = mcp_context_components_configs
+    workspace_manager = WorkspaceManager.from_state(context.session.state)
+    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+
+    keboola_client = KeboolaClient.from_state(context.session.state)
+    keboola_client.ai_service_client = mocker.MagicMock()
+    keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.component_detail = mocker.AsyncMock(return_value=mock_component)
+    keboola_client.storage_client.configuration_create = mocker.AsyncMock()
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock()
+
+    # Four blocks, each well within the per-block limit, that together exceed the total.
+    oversized_script = 'SELECT ' + 'x' * (MAX_SQL_SCRIPT_LENGTH // 3)
+
+    if tool_name == 'create_sql_transformation':
+        with pytest.raises(ValueError, match=_OVERSIZED_SQL_ERROR) as exc_info:
+            await create_sql_transformation(
+                ctx=context,
+                name='Oversized',
+                description='Oversized SQL',
+                sql_code_blocks=[
+                    SimplifiedTfBlocks.Block.Code(name=f'Code {i}', script=oversized_script) for i in range(4)
+                ],
+            )
+        keboola_client.storage_client.configuration_create.assert_not_called()
+    else:
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+            return_value={
+                'id': 'test-config-id',
+                'name': 'Existing Transformation',
+                'description': 'Existing description',
+                'configuration': {
+                    'parameters': {
+                        'blocks': [
+                            {
+                                'name': 'Existing',
+                                'codes': [{'name': f'Code {i}', 'script': ['SELECT 1;']} for i in range(4)],
+                            }
+                        ]
+                    },
+                    'storage': {},
+                },
+                'version': 1,
+            }
+        )
+        with pytest.raises(ValueError, match=_OVERSIZED_SQL_ERROR) as exc_info:
+            await update_sql_transformation(
+                context,
+                configuration_id='test-config-id',
+                change_description='Oversized SQL',
+                parameter_updates=[
+                    TfSetCode(op='set_code', block_id='b0', code_id=f'b0.c{i}', script=oversized_script)
+                    for i in range(4)
+                ],
+            )
+        keboola_client.storage_client.configuration_update.assert_not_called()
+
+    # The message must give the actual total and tell the agent not to retry the same input.
+    message = str(exc_info.value)
+    assert str(4 * len(oversized_script)) in message
+    assert 'Do not retry with the same input' in message
 
 
 @pytest.mark.parametrize('sql_dialect', ['Unknown'])
