@@ -85,7 +85,7 @@ jobs:
 
       # Build for tests (single-arch, load into daemon)
       - name: Build Docker image
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: ./Dockerfile # Explicitly specify the Dockerfile path
@@ -107,7 +107,7 @@ jobs:
 
       # Push multi-arch image (no load)
       - name: Push Docker image
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: ./Dockerfile
