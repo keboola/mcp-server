@@ -125,6 +125,13 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
         'Intended to run as a one-shot job before the server deployment rolls out.',
     )
 
+    subparsers.add_parser(
+        'gc-sessions',
+        help='Ensures upcoming oauth_sessions partitions exist and drops ones past the retention '
+        'window, then exits. Intended to run monthly (e.g. a kbc-stacks CronJob), independent of '
+        'deployments.',
+    )
+
     return parser.parse_args(args)
 
 
@@ -263,6 +270,29 @@ async def _run_migrate() -> None:
         print('✓ Schema already up to date -- no migrations applied.')
 
 
+async def _run_gc_sessions() -> None:
+    """Ensures upcoming oauth_sessions partitions exist and drops ones past the retention window,
+    then exits. Reads the DSN from the same env vars the server itself uses, so this can share the
+    exact same envFrom secret as the deployment (see cli.py's `migrate` command).
+    """
+    import asyncpg
+
+    from keboola_mcp_server.session_store.retention import ensure_partitions
+
+    config = Config().replace_by(os.environ)
+    if not config.postgres_dsn:
+        raise RuntimeError('A Postgres DSN is required to run gc-sessions: set MCP_DB_URL (or KBC_POSTGRES_DSN).')
+
+    pool = await asyncpg.create_pool(config.postgres_dsn)
+    try:
+        result = await ensure_partitions(pool)
+    finally:
+        await pool.close()
+
+    created, dropped = result['created'], result['dropped']
+    print(f"✓ Partitions created: {', '.join(created) or 'none'}; dropped: {', '.join(dropped) or 'none'}")
+
+
 async def run_server(args: Optional[list[str]] = None) -> None:
     """Runs the MCP server in async mode."""
     parsed_args = parse_args(args)
@@ -307,6 +337,10 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
     if parsed_args.command == 'migrate':
         await _run_migrate()
+        return
+
+    if parsed_args.command == 'gc-sessions':
+        await _run_gc_sessions()
         return
 
     # Create config from the CLI arguments

@@ -57,7 +57,7 @@ unaffected) or the header/PAT-supplied-token flow (still fully stateless, unaffe
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | `uuid`, PK | Internal row id |
+| `id` | `uuid`, PK | Internal row id. As of the partitioning resolution below, PK is `(id, created_at)` — required by `PARTITION BY RANGE (created_at)` — with a plain non-unique index kept on `id` alone for lookup speed |
 | `access_token_hash` | `bytea`, unique, indexed | `sha256` of the opaque access token the client holds — store the hash, not the token, so a DB read alone can't leak a live bearer credential |
 | `refresh_token_hash` | `bytea`, unique, indexed, nullable | Same, for the opaque refresh token |
 | `client_id` | `text` | The OAuth client (`claude.ai`, etc.) — audit/introspection only |
@@ -235,9 +235,42 @@ its embedded expiry).
    would make future rotation non-disruptive if we want to add it later — flagging now so the column
    format (prefix the ciphertext with a key-version byte) is decided before Phase 1's migration ships,
    not retrofitted after real rows exist.
-3. **Session expiry / cleanup.** Rows never get deleted automatically today's plan — need a retention
-   policy (e.g. delete rows with `revoked_at` set or `last_used_at` older than N days) — a cron/cleanup
-   job, explicitly out of scope for v1 but should be tracked as an immediate follow-up, not forgotten.
+3. **Session expiry / cleanup — RESOLVED: monthly `RANGE` partitioning on `created_at`, 2-month
+   retention.** Rather than a `DELETE ... WHERE` sweep (which bloats the table with dead tuples until
+   `VACUUM` reclaims them, and gets slower as the table grows), `oauth_sessions` becomes a
+   `PARTITION BY RANGE (created_at)` table with one partition per month
+   (`oauth_sessions_YYYY_MM`). Dropping a whole month is an instant `DROP TABLE`, no vacuum needed.
+
+   - **Retention window: 2 months.** E.g. in July, June's partition is the oldest kept; it gets
+     dropped once August starts (so at most 2 full months of session history ever exist). A session
+     genuinely still in use well past that keeps refreshing (`last_used_at`) but its *row* still ages
+     out with its creation month — acceptable, since a session that old should reasonably force
+     re-login rather than live forever; this isn't meant to be a durable audit log.
+   - **Maintenance is a monthly job, not per-request logic** (`session_store/retention.py`,
+     `ensure_partitions()`): each run (a) creates the partition for the *current* and *next* month if
+     missing — created ahead of time, not on first use, because a `RANGE`-partitioned `INSERT` with no
+     matching partition raises immediately, it does not fall through to a partition created moments
+     later — and (b) drops any partition whose entire month is older than the retention cutoff.
+     Idempotent (`CREATE TABLE IF NOT EXISTS` / `DROP TABLE IF EXISTS`-equivalent checks), safe to
+     re-run, safe to have missed a run or several (it always computes from "now", not from a
+     last-run watermark).
+   - **Wired via a new CLI subcommand + a monthly kbc-stacks CronJob** (`keboola-mcp-server
+     gc-sessions`), the same shape as the existing `migrate` pre-install/pre-upgrade hook Job but
+     schedule-triggered instead of deploy-triggered — deploys don't happen monthly on a
+     reliable cadence, so partition upkeep can't piggyback on the migration Job.
+   - **Trade-off, explicit not accidental: uniqueness is now per-partition, not table-wide.**
+     PostgreSQL requires a partitioned table's `UNIQUE` (and `PRIMARY KEY`) indexes to include the
+     partition key. `access_token_hash`/`refresh_token_hash` — and `id` itself — can therefore only be
+     enforced unique *within* a given month's partition, not globally across the whole table. A
+     same-hash collision across two different months on a 256-bit random token (`generate_opaque_token`,
+     `session_store/repository.py:20`) is cryptographically negligible (same reasoning already applied
+     to `id`'s `gen_random_uuid()`), so this is an acceptable relaxation of a guarantee that was never
+     meaningfully load-bearing to begin with — not a real security gap.
+   - **Migration (`0002_partition_oauth_sessions.sql`) recreates the table rather than converting it
+     in place**, copying any existing rows across into whichever partition (or the `DEFAULT` catch-all)
+     their `created_at` lands in. Safe because no production OAuth sessions exist on this schema yet
+     (dev/testing stacks only, as of this writing) — if that's no longer true when this ships, a
+     data-preserving rewrite would be needed instead of a straight copy.
 4. **Does Postgres downtime take down OAuth login entirely, or degrade gracefully?** With no DB, no
    OAuth session can be created or validated — this is a new hard dependency for the OAuth path (by
    design, per Scope: "no silent in-memory fallback for a production auth path"). Confirm this is
