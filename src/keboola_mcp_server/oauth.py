@@ -133,6 +133,16 @@ class ProxyAccessToken(AccessToken):
     kbc_access_token: str
     session_id: str | None = None
 
+    # The multi-project scope persisted on the oauth_sessions row (see SessionStore.update_scope),
+    # carried here so mcp.py can rebuild a SessionScope without a second DB round-trip -- the row is
+    # already fetched in load_access_token below. Same exposure-minimization reasoning as
+    # kbc_access_token: only the fields mcp.py actually needs, not the whole OAuthSession.
+    scope_project_ids: list[int] | None = None
+    scope_read_only: bool = False
+    scope_confirmed: bool = False
+    scope_scoped_token: str | None = None
+    scope_scoped_expires_at: datetime | None = None
+
 
 class ProxyRefreshToken(RefreshToken):
     # The refresh side of the same exchanged session; used to refresh independently of the
@@ -462,6 +472,11 @@ class SimpleOAuthProvider(OAuthProvider):
             expires_at=None,  # no client-visible expiry -- see load_access_token docstring
             kbc_access_token=session.kbc_access_token,
             session_id=session.id,
+            scope_project_ids=session.scope_project_ids,
+            scope_read_only=session.scope_read_only,
+            scope_confirmed=session.scope_confirmed,
+            scope_scoped_token=session.scope_scoped_token,
+            scope_scoped_expires_at=session.scope_scoped_expires_at,
         )
         _log_debug(f'[load_access_token] token={token}, session_id={session.id}')
         return proxy_token

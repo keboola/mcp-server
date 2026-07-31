@@ -9,6 +9,7 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from fastmcp.tools.tool import ToolResult
 from mcp import types as mt
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel, Field
 from pydantic import ValidationError as PydanticValidationError
 
@@ -1094,6 +1095,63 @@ class TestScopeToken:
         token = SessionScope(project_ids=[11], confirmed=True).to_token('secret-a')
         context = self._call_tool_context({'scope_token': token})
         assert SessionStateMiddleware._read_scope_from_request(context, Config(jwt_secret='secret-b')) is None
+
+    @staticmethod
+    def _http_rq_with_oauth_user(**access_token_kwargs) -> SimpleNamespace:
+        from keboola_mcp_server.oauth import ProxyAccessToken
+
+        access_token = ProxyAccessToken(
+            token='opaque-access-token',
+            client_id='client-1',
+            scopes=[],
+            expires_at=None,
+            kbc_access_token='kbc_at_x',
+            **access_token_kwargs,
+        )
+        user = AuthenticatedUser(access_token)
+        return SimpleNamespace(scope={'user': user})
+
+    def test_read_persisted_oauth_scope_builds_scope_when_confirmed(self) -> None:
+        http_rq = self._http_rq_with_oauth_user(
+            session_id='session-1',
+            scope_project_ids=[11, 22],
+            scope_read_only=True,
+            scope_confirmed=True,
+            scope_scoped_token='kbc_at_scoped',
+            scope_scoped_expires_at=datetime.fromtimestamp(1234.0, tz=timezone.utc),
+        )
+        scope = SessionStateMiddleware._read_persisted_oauth_scope(http_rq)
+        assert scope == SessionScope(
+            project_ids=[11, 22],
+            read_only=True,
+            scoped_token='kbc_at_scoped',
+            scoped_expires_at=1234.0,
+            confirmed=True,
+        )
+
+    @pytest.mark.parametrize(
+        'access_token_kwargs',
+        [
+            {'scope_confirmed': False, 'scope_project_ids': [11]},
+            {'scope_confirmed': True, 'scope_project_ids': None},
+        ],
+        ids=['unconfirmed', 'no_project_ids'],
+    )
+    def test_read_persisted_oauth_scope_returns_none_when_not_confirmed(self, access_token_kwargs: dict) -> None:
+        http_rq = self._http_rq_with_oauth_user(**access_token_kwargs)
+        assert SessionStateMiddleware._read_persisted_oauth_scope(http_rq) is None
+
+    def test_read_persisted_oauth_scope_returns_none_for_non_oauth_request(self) -> None:
+        assert SessionStateMiddleware._read_persisted_oauth_scope(None) is None
+        assert SessionStateMiddleware._read_persisted_oauth_scope(SimpleNamespace(scope={})) is None
+
+    def test_read_oauth_session_id_returns_session_id_for_oauth_request(self) -> None:
+        http_rq = self._http_rq_with_oauth_user(session_id='session-1')
+        assert SessionStateMiddleware._read_oauth_session_id(http_rq) == 'session-1'
+
+    def test_read_oauth_session_id_returns_none_for_non_oauth_request(self) -> None:
+        assert SessionStateMiddleware._read_oauth_session_id(None) is None
+        assert SessionStateMiddleware._read_oauth_session_id(SimpleNamespace(scope={})) is None
 
     @pytest.mark.asyncio
     async def test_on_list_tools_advertises_scope_token_unconditionally(self) -> None:
