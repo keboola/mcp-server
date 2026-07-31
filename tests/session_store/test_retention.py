@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import asyncpg
 import pytest
@@ -92,6 +92,42 @@ class TestEnsurePartitions:
 
             assert name in result['dropped']
             assert name not in await self._existing_partitions(pool)
+        finally:
+            await pool.close()
+
+    async def test_creates_partition_when_default_has_overlapping_rows(self) -> None:
+        # Regression test: a plain `CREATE TABLE ... PARTITION OF` fails with a CheckViolationError
+        # if oauth_sessions_default already holds rows in the new partition's range -- e.g. the
+        # one-time backlog copied over by migration 0002 on a stack with pre-existing sessions.
+        # ensure_partitions() must move those rows into the new partition instead of erroring.
+        pool = await asyncpg.create_pool(TEST_DSN)
+        try:
+            for name in await self._existing_partitions(pool):
+                await pool.execute(f'DROP TABLE {name}')
+
+            this_month = _month_start(date.today())
+            mid_month = datetime(this_month.year, this_month.month, this_month.day, tzinfo=timezone.utc) + timedelta(
+                days=1
+            )
+            await pool.execute(
+                'INSERT INTO oauth_sessions_default '
+                '(access_token_hash, client_id, kbc_access_token_enc, kbc_refresh_token_enc, '
+                'kbc_access_expires_at, created_at) '
+                "VALUES ($1, 'client', $2, $3, now() + interval '1 hour', $4)",
+                b'token-hash',
+                b'enc-access',
+                b'enc-refresh',
+                mid_month,
+            )
+
+            result = await ensure_partitions(pool)
+
+            this_month_partition = f'oauth_sessions_{this_month:%Y_%m}'
+            assert this_month_partition in result['created']
+            row = await pool.fetchrow(f'SELECT client_id FROM {this_month_partition}')
+            assert row['client_id'] == 'client'
+            default_count = await pool.fetchval('SELECT count(*) FROM oauth_sessions_default')
+            assert default_count == 0
         finally:
             await pool.close()
 
