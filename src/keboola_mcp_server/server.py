@@ -215,6 +215,14 @@ def create_server(
                 'OAuth is configured (oauth_client_id/oauth_client_secret) but no Postgres DSN is set. '
                 'Set MCP_DB_URL (or KBC_POSTGRES_DSN) so OAuth sessions can be stored.'
             )
+        # Without an explicit key, resolve_encryption_key() falls back to a process-local one --
+        # fine for local dev/tests, but in production it would silently make persisted sessions
+        # undecryptable after every restart (same "refuse to start" reasoning as the DSN check above).
+        if not config.session_encryption_key:
+            raise RuntimeError(
+                'OAuth is configured (oauth_client_id/oauth_client_secret) but no session encryption key is '
+                'set. Set KBC_SESSION_ENCRYPTION_KEY so persisted OAuth sessions survive a process restart.'
+            )
         session_store = PostgresSessionStore(
             config.postgres_dsn, encryption_key=resolve_encryption_key(config.session_encryption_key)
         )
