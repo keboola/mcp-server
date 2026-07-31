@@ -464,6 +464,7 @@ class SimpleOAuthProvider(OAuthProvider):
                 session = dataclasses.replace(
                     session, kbc_access_token=token_set.access_token, kbc_refresh_token=token_set.refresh_token
                 )
+                LOG.info(f'[load_access_token] Lazily refreshed near-expiry Keboola session: session_id={session.id}')
 
         proxy_token = ProxyAccessToken(
             token=token,
