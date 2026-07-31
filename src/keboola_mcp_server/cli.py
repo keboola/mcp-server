@@ -127,8 +127,8 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     subparsers.add_parser(
         'gc-sessions',
         help='Ensures upcoming oauth_sessions partitions exist and drops ones past the retention '
-        'window, then exits. Intended to run monthly (e.g. a kbc-stacks CronJob), independent of '
-        'deployments.',
+        'window, then exits. Intended to run on a recurring schedule (e.g. a kbc-stacks CronJob), '
+        'independent of deployments.',
     )
 
     return parser.parse_args(args)
@@ -263,7 +263,7 @@ async def _run_migrate() -> None:
         applied = await apply_migrations(pool)
         # Bootstraps this month's + next month's oauth_sessions partition right after the schema
         # exists, so the app never hits a RANGE-partitioned INSERT with no matching partition on
-        # first use -- the same call the monthly gc-sessions job makes on an ongoing basis.
+        # first use -- the same call the recurring gc-sessions job makes on an ongoing basis.
         partitions = await ensure_partitions(pool)
     finally:
         await pool.close()

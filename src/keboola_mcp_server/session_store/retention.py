@@ -1,15 +1,16 @@
-"""Monthly partition maintenance for oauth_sessions (RFC oauth_session_persistence, "Session
-expiry / cleanup"). Two responsibilities, both idempotent and safe to re-run or to have missed a
-run (each call computes everything from "now", not from a last-run watermark):
+"""Partition maintenance for oauth_sessions (RFC oauth_session_persistence, "Session expiry /
+cleanup"). Two responsibilities, both idempotent and safe to re-run or to have missed a run (each
+call computes everything from "now", not from a last-run watermark):
 
   - Ensure a partition exists for the current month and the next, so writes never fail for lack of
     one -- a RANGE-partitioned INSERT with no matching partition raises immediately, it does not
     fall through to a partition created moments later.
   - Drop partitions whose entire month is older than the retention window.
 
-Intended to run as a monthly job (`keboola-mcp-server gc-sessions`), separate from the deploy-time
-`migrate` command -- deploys don't happen on a reliable monthly cadence, so this can't piggyback
-on that hook.
+Intended to run as a recurring job (`keboola-mcp-server gc-sessions`), separate from the
+deploy-time `migrate` command -- deploys don't happen on a reliable cadence, so this can't
+piggyback on that hook. Safe to run more often than monthly: the exists-check on creation and the
+month-boundary check on drops make repeated runs within the same month no-ops.
 """
 
 import logging
@@ -49,7 +50,9 @@ async def ensure_partitions(
     :return: ``{'created': [...], 'dropped': [...]}`` partition names, for the CLI to report.
     """
     this_month = _month_start(datetime.now(timezone.utc).date())
-    cutoff = _add_months(this_month, -retention_months)
+    # retention_months counts the current month, so keep (retention_months - 1) months before it --
+    # e.g. retention_months=2 on an August run keeps July + August, drops June.
+    cutoff = _add_months(this_month, -(retention_months - 1))
 
     created: list[str] = []
     async with pool.acquire() as conn:
