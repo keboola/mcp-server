@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import subprocess
 import tempfile
@@ -569,6 +570,8 @@ class TestCreateServerOAuthSessionStore:
     """OAuth sessions live in Postgres (oauth_session_persistence RFC) -- create_server() must
     refuse to enable OAuth without a DSN rather than silently falling back to something unrevoked."""
 
+    _TEST_ENCRYPTION_KEY = base64.b64encode(b'0' * 32).decode()
+
     @staticmethod
     def _oauth_config(**overrides) -> Config:
         return Config(
@@ -582,13 +585,27 @@ class TestCreateServerOAuthSessionStore:
 
     def test_raises_without_postgres_dsn(self) -> None:
         with pytest.raises(RuntimeError, match='MCP_DB_URL'):
-            create_server(self._oauth_config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+            create_server(
+                self._oauth_config(session_encryption_key=self._TEST_ENCRYPTION_KEY),
+                runtime_info=ServerRuntimeInfo(transport='streamable-http'),
+            )
+
+    def test_raises_without_session_encryption_key(self) -> None:
+        # A silent fallback to a process-local key would make persisted OAuth sessions
+        # undecryptable after every restart -- refuse to start instead, same as the DSN check.
+        with pytest.raises(RuntimeError, match='KBC_SESSION_ENCRYPTION_KEY'):
+            create_server(
+                self._oauth_config(postgres_dsn='postgresql://u:p@host/db'),
+                runtime_info=ServerRuntimeInfo(transport='streamable-http'),
+            )
 
     def test_constructs_session_store_when_dsn_is_set(self) -> None:
         from keboola_mcp_server.session_store.repository import PostgresSessionStore
 
         server = create_server(
-            self._oauth_config(postgres_dsn='postgresql://u:p@host/db'),
+            self._oauth_config(
+                postgres_dsn='postgresql://u:p@host/db', session_encryption_key=self._TEST_ENCRYPTION_KEY
+            ),
             runtime_info=ServerRuntimeInfo(transport='streamable-http'),
         )
         assert isinstance(server, FastMCP)
