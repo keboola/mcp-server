@@ -40,12 +40,19 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, deployed_sa_token_path, is_same_stack
 from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
 from keboola_mcp_server.oauth import ProxyAccessToken
+from keboola_mcp_server.session_store.repository import SessionStore
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, SEMANTIC_TOOLS_TAG, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 CONVERSATION_ID = 'conversation_id'
 SCOPE_KEY = 'project_scope'
+
+# The OAuth session's DB row id (see session_store.repository.OAuthSession), stashed on
+# ctx.session.state so set_project_scope can persist a newly-confirmed scope back to Postgres
+# instead of only returning a scope_token. Absent for non-OAuth (PAT/header-token) sessions, which
+# have no session row to persist against -- those keep relying on scope_token.
+OAUTH_SESSION_ID_KEY = 'oauth_session_id'
 
 # Tools that must not be fanned out across multiple projects, even when a multi-project scope is
 # active and they are read-only: the scope/auth tools operate on the whole-stack token (not a single
@@ -183,6 +190,7 @@ async def project_has_semantic_models(client: KeboolaClient) -> bool:
 class ServerState:
     config: Config
     runtime_info: ServerRuntimeInfo
+    session_store: SessionStore | None = None
 
     @property
     def own_stack_storage_api_url(self) -> str | None:
@@ -332,6 +340,12 @@ class SessionStateMiddleware(fmw.Middleware):
             # stateless-HTTP transport. With no scope and no preset project, auto-lease ALL accessible
             # projects (multi-project mode) so read tools fan out across everything — but never on /list.
             scope = self._read_scope_from_request(context, config)
+            # OAuth-authenticated sessions don't need scope_token at all: the opaque OAuth access
+            # token is already resent on every call and resolves through the Postgres session store
+            # (load_access_token), so a confirmed scope persisted there (via set_project_scope ->
+            # SessionStore.update_scope) is read back here instead of round-tripping it as an argument.
+            if scope is None:
+                scope = self._read_persisted_oauth_scope(http_rq)
             if scope is None and not config.project_id and not is_list:
                 scope = await self._autolease_default_scope(config)
             if not is_list:
@@ -354,6 +368,8 @@ class SessionStateMiddleware(fmw.Middleware):
             )
             if scope is not None:
                 state[SCOPE_KEY] = scope
+            if oauth_session_id := self._read_oauth_session_id(http_rq):
+                state[OAUTH_SESSION_ID_KEY] = oauth_session_id
             ctx.session.state = state
 
         try:
@@ -483,6 +499,42 @@ class SessionStateMiddleware(fmw.Middleware):
         except Exception:
             LOG.warning('Ignoring invalid or expired scope_token.', exc_info=True)
             return None
+
+    @staticmethod
+    def _oauth_access_token(http_rq: Request | None) -> ProxyAccessToken | None:
+        if http_rq is None:
+            return None
+        user = http_rq.scope.get('user')
+        if not isinstance(user, AuthenticatedUser) or not isinstance(user.access_token, ProxyAccessToken):
+            return None
+        return user.access_token
+
+    @classmethod
+    def _read_persisted_oauth_scope(cls, http_rq: Request | None) -> 'SessionScope | None':
+        """The multi-project scope persisted on the OAuth session row, if any.
+
+        Only used as a fallback when the caller sent no ``scope_token`` -- an explicit scope_token
+        (e.g. a fresher re-scope from the same request) always takes precedence.
+        """
+        access_token = cls._oauth_access_token(http_rq)
+        if access_token is None or not access_token.scope_confirmed or access_token.scope_project_ids is None:
+            return None
+        return SessionScope(
+            project_ids=access_token.scope_project_ids,
+            read_only=access_token.scope_read_only,
+            scoped_token=access_token.scope_scoped_token,
+            scoped_expires_at=(
+                access_token.scope_scoped_expires_at.timestamp()
+                if access_token.scope_scoped_expires_at is not None
+                else None
+            ),
+            confirmed=True,
+        )
+
+    @classmethod
+    def _read_oauth_session_id(cls, http_rq: Request | None) -> str | None:
+        access_token = cls._oauth_access_token(http_rq)
+        return access_token.session_id if access_token is not None else None
 
     @classmethod
     def _is_local_programmatic(cls, config: Config) -> bool:

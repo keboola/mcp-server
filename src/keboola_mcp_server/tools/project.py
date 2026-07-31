@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Annotated, Optional, cast
 
 import httpx
@@ -16,6 +17,7 @@ from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import (
+    OAUTH_SESSION_ID_KEY,
     SCOPE_KEY,
     MultiProjectMiddleware,
     ServerState,
@@ -341,13 +343,41 @@ class AccessibleProjects(BaseModel):
 class ProjectScope(BaseModel):
     project_ids: list[int] = Field(description='The projects the session is now scoped to.')
     read_only: bool = Field(description='Whether the scoped token is read-only.')
-    scope_token: str = Field(
+    scope_token: str | None = Field(
+        default=None,
         description=(
-            'Opaque token encoding this scope. The server does not remember it between calls -- pass '
+            'Opaque token encoding this scope, or null for an OAuth-authenticated session (the '
+            'server persists the scope itself in that case -- no need to resend it). Otherwise, pass '
             'this value as the "scope_token" argument on every subsequent tool call in this conversation.'
         ),
     )
     llm_instruction: str = Field(description='Guidance for the assistant on the new scope.')
+
+
+async def _persist_oauth_scope(ctx: Context, scope: SessionScope) -> bool:
+    """Persists ``scope`` on the caller's OAuth session row, if this is an OAuth-authenticated
+    session (see mcp.OAUTH_SESSION_ID_KEY). No-op (returns False) for PAT/header-token sessions,
+    which have no session row to persist against -- those keep relying on scope_token.
+    """
+    session_id = ctx.session.state.get(OAUTH_SESSION_ID_KEY)
+    if not session_id:
+        return False
+    session_store = ServerState.from_context(ctx).session_store
+    if session_store is None:
+        return False
+    await session_store.update_scope(
+        session_id,
+        project_ids=scope.project_ids,
+        read_only=scope.read_only,
+        confirmed=scope.confirmed,
+        scoped_token=scope.scoped_token,
+        scoped_expires_at=(
+            datetime.fromtimestamp(scope.scoped_expires_at, tz=timezone.utc)
+            if scope.scoped_expires_at is not None
+            else None
+        ),
+    )
+    return True
 
 
 async def _project_sql_dialect(
@@ -447,9 +477,14 @@ async def get_accessible_projects(
             'projects or a subset, then call "set_project_scope" with the chosen project ids. Never write '
             'to more than one project without explicit user confirmation.'
         )
+        is_oauth_persisted = False
     else:
+        is_oauth_persisted = bool(ctx.session.state.get(OAUTH_SESSION_ID_KEY))
         instruction = (
-            f'Session is currently scoped to {len(scoped_ids)} project(s). Resend "scope_token" on every '
+            f'Session is currently scoped to {len(scoped_ids)} project(s). Call "set_project_scope" to '
+            'change the scope.'
+            if is_oauth_persisted
+            else f'Session is currently scoped to {len(scoped_ids)} project(s). Resend "scope_token" on every '
             'subsequent tool call to keep it in effect; call "set_project_scope" to change the scope.'
         )
     return AccessibleProjects(
@@ -457,7 +492,11 @@ async def get_accessible_projects(
         projects=projects,
         scoped_project_ids=scoped_ids,
         read_only=scope.read_only if scoped_ids is not None else None,
-        scope_token=scope.to_token(resolve_scope_secret(server_state.config)) if scoped_ids is not None else None,
+        scope_token=(
+            scope.to_token(resolve_scope_secret(server_state.config))
+            if scoped_ids is not None and not is_oauth_persisted
+            else None
+        ),
         base_instructions=base_instructions,
         llm_instruction=instruction,
     )
@@ -542,7 +581,14 @@ async def set_project_scope(
         LOG.debug(f'Could not send tools/list_changed after scoping: {e}')
 
     multi = len(ids) > 1
-    scope_token = scope.to_token(resolve_scope_secret(ServerState.from_context(ctx).config))
+    persisted = await _persist_oauth_scope(ctx, scope)
+    scope_token = None if persisted else scope.to_token(resolve_scope_secret(ServerState.from_context(ctx).config))
+    resend_instruction = (
+        'The server persists this scope server-side for the rest of the conversation -- no need to resend it.'
+        if persisted
+        else 'The server does not remember this scope between calls -- pass "scope_token" as an argument on '
+        'every subsequent tool call in this conversation.'
+    )
     return ProjectScope(
         project_ids=ids,
         read_only=scope.read_only,
@@ -551,15 +597,9 @@ async def set_project_scope(
             (
                 f'Session scoped to {len(ids)} projects. Read-only tools return results per project. '
                 'Write operations are not fanned out — they target the first scoped project; to write '
-                'elsewhere, re-scope to that project first (confirm with the user). The server does not '
-                'remember this scope between calls -- pass "scope_token" as an argument on every '
-                'subsequent tool call in this conversation.'
+                f'elsewhere, re-scope to that project first (confirm with the user). {resend_instruction}'
             )
             if multi
-            else (
-                f'Session scoped to project {ids[0]}. The server does not remember this scope between '
-                'calls -- pass "scope_token" as an argument on every subsequent tool call in this '
-                'conversation.'
-            )
+            else f'Session scoped to project {ids[0]}. {resend_instruction}'
         ),
     )

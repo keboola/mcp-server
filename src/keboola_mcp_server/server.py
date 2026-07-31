@@ -239,10 +239,11 @@ def create_server(
         )
     else:
         oauth_provider = None
+        session_store = None
 
     # Initialize FastMCP server with system lifespan
     LOG.info(f'Creating server with config: {config}')
-    server_state = ServerState(config=config, runtime_info=runtime_info)
+    server_state = ServerState(config=config, runtime_info=runtime_info, session_store=session_store)
     mcp = KeboolaMcpServer(
         name='Keboola MCP Server',
         instructions=(

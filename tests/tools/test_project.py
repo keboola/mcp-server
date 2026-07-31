@@ -7,9 +7,9 @@ from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, MetadataField
+from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.mcp import SCOPE_KEY, SessionScope, resolve_scope_secret
+from keboola_mcp_server.mcp import OAUTH_SESSION_ID_KEY, SCOPE_KEY, ServerState, SessionScope, resolve_scope_secret
 from keboola_mcp_server.tools.project import (
     ProjectInfo,
     _get_toolset_restrictions,
@@ -440,6 +440,36 @@ async def test_set_project_scope_subset_exchanges_and_stores(
     # The server does not remember this scope between calls; the caller must resend scope_token.
     assert result.scope_token is not None
     assert SessionScope.from_token(result.scope_token, resolve_scope_secret(Config())) == scope
+
+
+@pytest.mark.asyncio
+async def test_set_project_scope_persists_to_db_and_omits_scope_token_for_oauth_session(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    # An OAuth-authenticated session (OAUTH_SESSION_ID_KEY present) persists the scope on its
+    # oauth_sessions row instead of minting a scope_token -- the opaque OAuth access token already
+    # resolves back to that row on every subsequent call, so there's nothing left to resend.
+    _prep_client(mcp_context_client, mocker)
+    mcp_context_client.session.state[OAUTH_SESSION_ID_KEY] = 'session-1'
+    session_store = mocker.Mock()
+    session_store.update_scope = mocker.AsyncMock()
+    mcp_context_client.request_context.lifespan_context = ServerState(
+        config=Config(), runtime_info=ServerRuntimeInfo(transport='stdio'), session_store=session_store
+    )
+    minted = SimpleNamespace(access_token='kbc_at_scoped', expires_at=1234.0, read_only=False)
+    mocker.patch('keboola_mcp_server.tools.project.exchange_scoped_token', new=mocker.AsyncMock(return_value=minted))
+
+    result = await set_project_scope(mcp_context_client, project_ids=[18, 83])
+
+    session_store.update_scope.assert_awaited_once()
+    call = session_store.update_scope.await_args
+    assert call.args == ('session-1',)
+    assert call.kwargs['project_ids'] == [18, 83]
+    assert call.kwargs['scoped_token'] == 'kbc_at_scoped'
+    assert call.kwargs['confirmed'] is True
+    # Nothing left for the caller to resend -- the server persisted the scope itself.
+    assert result.scope_token is None
+    assert 'no need to resend' in result.llm_instruction
 
 
 @pytest.mark.asyncio
