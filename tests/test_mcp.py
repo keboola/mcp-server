@@ -1574,8 +1574,44 @@ class TestMultiProjectMiddleware:
     def test_merge_small_keeps_full_detail(self) -> None:
         merged = MultiProjectMiddleware._merge([(11, self._items_result(2)), (22, self._items_result(3))])
         # Under the cap: per-project text envelopes + fully merged lists; counters summed.
+        # Non-dict list items (plain ints here) are left alone -- nothing to attribute.
         assert merged.structured_content == {'buckets': [0, 1, 0, 1, 2], 'total': 5}
         assert [c.text for c in merged.content] == ['=== project 11 ===', '2 items', '=== project 22 ===', '3 items']
+
+    @staticmethod
+    def _dict_items_result(project_id: int, n: int) -> ToolResult:
+        return ToolResult(
+            content=[mt.TextContent(type='text', text=f'{n} items')],
+            structured_content={'tables': [{'id': f'p{project_id}-t{i}'} for i in range(n)], 'total': n},
+        )
+
+    def test_tag_items_with_project_stamps_dict_items_only(self) -> None:
+        tagged = MultiProjectMiddleware._tag_items_with_project(
+            {'tables': [{'id': 't1'}, {'id': 't2'}], 'ids': [1, 2], 'total': 2}, project_id=42
+        )
+        assert tagged == {
+            'tables': [{'id': 't1', '_scope_project_id': 42}, {'id': 't2', '_scope_project_id': 42}],
+            'ids': [1, 2],  # non-dict items untouched
+            'total': 2,
+        }
+
+    def test_tag_items_with_project_passes_through_non_dict_and_none(self) -> None:
+        assert MultiProjectMiddleware._tag_items_with_project(None, project_id=42) is None
+        assert MultiProjectMiddleware._tag_items_with_project([1, 2, 3], project_id=42) == [1, 2, 3]
+
+    def test_merge_small_stamps_project_id_on_dict_items_in_structured_content(self) -> None:
+        # Attribution must survive a client that reads only structured_content, not the text envelope.
+        merged = MultiProjectMiddleware._merge(
+            [(11, self._dict_items_result(11, 2)), (22, self._dict_items_result(22, 1))]
+        )
+        assert merged.structured_content == {
+            'tables': [
+                {'id': 'p11-t0', '_scope_project_id': 11},
+                {'id': 'p11-t1', '_scope_project_id': 11},
+                {'id': 'p22-t0', '_scope_project_id': 22},
+            ],
+            'total': 3,
+        }
 
     @pytest.mark.asyncio
     async def test_fan_out_partial_failure_returns_successes_with_retry_hint(self) -> None:

@@ -1229,6 +1229,34 @@ class MultiProjectMiddleware(fmw.Middleware):
             return sc[:limit]
         return sc
 
+    # Key stamped onto every dict item in a merged multi-project structured_content, so a client
+    # reading only structured_content (not the `=== project N ===` text envelope) can still tell
+    # which project an item came from once results are concatenated. Leading underscore + a name
+    # unlikely to collide with any real Keboola field (see PSGO-261 RFC addendum: merged-result
+    # project attribution). No output schema in this codebase sets extra='forbid'/additionalProperties:
+    # false, so an extra key here doesn't break schema validation for any existing tool.
+    _PROJECT_ATTRIBUTION_KEY = '_scope_project_id'
+
+    @staticmethod
+    def _tag_items_with_project(sc: Any, project_id: int) -> Any:
+        """Stamps ``project_id`` onto every dict item in ``sc``'s top-level lists (non-dict items --
+        e.g. a list of plain strings/ids -- are left alone; nothing to attribute).
+        """
+        if not isinstance(sc, dict):
+            return sc
+        tagged = dict(sc)
+        for key, value in sc.items():
+            if isinstance(value, list):
+                tagged[key] = [
+                    (
+                        {**item, MultiProjectMiddleware._PROJECT_ATTRIBUTION_KEY: project_id}
+                        if isinstance(item, dict)
+                        else item
+                    )
+                    for item in value
+                ]
+        return tagged
+
     @staticmethod
     def _merge(results: list[tuple[int, 'ToolResult']], errors: 'list[tuple[int, str]] | None' = None) -> 'ToolResult':
         # Deep-merge the per-project structured payloads into one schema-valid object (lists concatenated
@@ -1247,7 +1275,7 @@ class MultiProjectMiddleware(fmw.Middleware):
         per_project_counts: list[tuple[int, int]] = []
         total_items = 0
         for project_id, result in results:
-            sc = result.structured_content
+            sc = MultiProjectMiddleware._tag_items_with_project(result.structured_content, project_id)
             item_count = MultiProjectMiddleware._largest_list_len(sc)
             per_project_counts.append((project_id, item_count))
             total_items += item_count
@@ -1256,7 +1284,9 @@ class MultiProjectMiddleware(fmw.Middleware):
                     sc if merged_structured is None else MultiProjectMiddleware._deep_merge(merged_structured, sc)
                 )
 
-        # Small enough: full detail with per-project text envelopes (attribution the model can read).
+        # Small enough: full detail, with per-project text envelopes AND a `_scope_project_id` on every
+        # merged structured_content item -- attribution survives whichever half of the result a caller
+        # actually reads.
         if total_items <= MultiProjectMiddleware._FANOUT_MAX_ITEMS:
             content: list[Any] = list(error_notes)
             for project_id, result in results:

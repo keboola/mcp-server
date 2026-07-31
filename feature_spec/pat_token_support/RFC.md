@@ -551,6 +551,32 @@ Concrete, with a 2-project read:
 Follow-up (not in this increment): make fan-out concurrent, catch per-project errors into a
 per-project `{project_id, ok|error}` envelope, and stamp `source_project` on merged rows.
 
+## Resolved: structured_content attribution (PSGO-261, follow-up to the fan-out gap above)
+
+Error isolation shipped separately (`MultiProjectMiddleware.on_call_tool`'s per-project try/except,
+collecting failures into retry-hint text notes rather than failing the whole call — see the code).
+This closes the remaining half: attribution in `structured_content`.
+
+- **Field name is `_scope_project_id`, not `source_project` as originally sketched above.**
+  `source_project` is already a real field on bucket/table output models (`storage/tools.py:127,331`)
+  — Keboola's own cross-project *linked-bucket* provenance (which project a shared/linked bucket
+  originated from), a pre-existing and unrelated concept. Stamping that name here would have silently
+  overwritten real data on any linked bucket/table in a fanned-out result. `_scope_project_id` (leading
+  underscore, MCP-scope-specific name) avoids the collision; no output model in this codebase uses
+  that name today.
+- **Mechanism:** `MultiProjectMiddleware._tag_items_with_project` stamps `_scope_project_id` onto every
+  dict item inside each project's structured payload, before `_deep_merge` concatenates the per-project
+  lists together — so the field survives the merge on every list item, not just the top level.
+  Non-dict list items (e.g. a plain list of ids) are left untouched — nothing to attribute.
+- **Only applies to genuine fan-out (2+ targets).** A single-target call (scope of one, or narrowed to
+  one via `project_ids`) returns `call_next()` directly and never reaches `_merge` — it doesn't need
+  the tag, the whole session already knows which project it hit.
+- **Schema safety:** no output model in this codebase sets `extra='forbid'` (`ConfigDict`), so no
+  generated JSON schema declares `additionalProperties: false` — adding this key doesn't violate any
+  existing tool's declared output schema.
+- Text-content attribution (`=== project N ===`) is unchanged and still emitted alongside — this adds
+  the same information to `structured_content` for callers that only read that half of the result.
+
 ## Tool gating: call-time, not list-time (why hide-then-reveal was reverted)
 
 We first tried **scope-first tool visibility**: while a programmatic session's scope was unconfirmed,
