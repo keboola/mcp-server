@@ -75,6 +75,26 @@ class TestEnsurePartitions:
         finally:
             await pool.close()
 
+    async def test_drops_partition_exactly_retention_months_old(self) -> None:
+        # Regression test: retention_months=2 must keep exactly 2 months (this + previous), so a
+        # partition dated retention_months back (2 months old) is dropped, not kept.
+        pool = await asyncpg.create_pool(TEST_DSN)
+        try:
+            this_month = _month_start(date.today())
+            boundary = _add_months(this_month, -2)
+            name = f'oauth_sessions_{boundary:%Y_%m}'
+            end = _add_months(boundary, 1)
+            await pool.execute(
+                f"CREATE TABLE {name} PARTITION OF oauth_sessions FOR VALUES FROM ('{boundary}') TO ('{end}')"
+            )
+
+            result = await ensure_partitions(pool, retention_months=2)
+
+            assert name in result['dropped']
+            assert name not in await self._existing_partitions(pool)
+        finally:
+            await pool.close()
+
     async def test_creates_missing_current_and_next_month(self) -> None:
         pool = await asyncpg.create_pool(TEST_DSN)
         try:
