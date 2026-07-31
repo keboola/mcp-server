@@ -1240,7 +1240,7 @@ wheels = [
 
 [[package]]
 name = "keboola-mcp-server"
-version = "1.79.0"
+version = "1.80.0"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
