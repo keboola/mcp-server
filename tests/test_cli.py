@@ -35,12 +35,18 @@ class TestRunMigrate:
                 'keboola_mcp_server.session_store.migrator.apply_migrations',
                 AsyncMock(return_value=['0001_oauth_sessions.sql']),
             ),
+            patch(
+                'keboola_mcp_server.session_store.retention.ensure_partitions',
+                AsyncMock(return_value={'created': ['oauth_sessions_2026_07'], 'dropped': []}),
+            ),
         ):
             await _run_migrate()
 
         create_pool.assert_awaited_once_with('postgresql://u:p@host/db')
         pool.close.assert_awaited_once()
-        assert '0001_oauth_sessions.sql' in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert '0001_oauth_sessions.sql' in out
+        assert 'oauth_sessions_2026_07' in out
 
     @pytest.mark.asyncio
     async def test_no_pending_migrations_still_closes_pool(self, monkeypatch, capsys) -> None:
@@ -50,6 +56,10 @@ class TestRunMigrate:
         with (
             patch('asyncpg.create_pool', AsyncMock(return_value=pool)),
             patch('keboola_mcp_server.session_store.migrator.apply_migrations', AsyncMock(return_value=[])),
+            patch(
+                'keboola_mcp_server.session_store.retention.ensure_partitions',
+                AsyncMock(return_value={'created': [], 'dropped': []}),
+            ),
         ):
             await _run_migrate()
 
@@ -65,6 +75,24 @@ class TestRunMigrate:
             patch('asyncpg.create_pool', AsyncMock(return_value=pool)),
             patch(
                 'keboola_mcp_server.session_store.migrator.apply_migrations',
+                AsyncMock(side_effect=RuntimeError('boom')),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match='boom'):
+                await _run_migrate()
+
+        pool.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_closes_pool_even_if_partition_ensure_fails(self, monkeypatch) -> None:
+        monkeypatch.setenv('MCP_DB_URL', 'postgresql://u:p@host/db')
+        pool = MagicMock()
+        pool.close = AsyncMock()
+        with (
+            patch('asyncpg.create_pool', AsyncMock(return_value=pool)),
+            patch('keboola_mcp_server.session_store.migrator.apply_migrations', AsyncMock(return_value=[])),
+            patch(
+                'keboola_mcp_server.session_store.retention.ensure_partitions',
                 AsyncMock(side_effect=RuntimeError('boom')),
             ),
         ):

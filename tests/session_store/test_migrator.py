@@ -44,7 +44,11 @@ async def test_creates_oauth_sessions_table() -> None:
         await pool.close()
 
 
-async def test_partitions_by_month_with_current_and_next_ready() -> None:
+async def test_partitions_table_with_default_catch_all() -> None:
+    # Migration 0002 only creates the structure + a DEFAULT catch-all partition -- creating this
+    # month's/next month's partition is the `migrate` CLI's job (it calls
+    # session_store.retention.ensure_partitions() right after this), not the migration's. One
+    # Python-side mechanism for partition creation instead of duplicating it here in SQL too.
     pool = await asyncpg.create_pool(TEST_DSN)
     try:
         await apply_migrations(pool)
@@ -55,9 +59,6 @@ async def test_partitions_by_month_with_current_and_next_ready() -> None:
             r['tablename']
             for r in await pool.fetch("SELECT tablename FROM pg_tables WHERE tablename LIKE 'oauth_sessions%'")
         }
-        # This month's + next month's partition exist immediately, plus the DEFAULT catch-all --
-        # writes never fail for lack of a partition even before the monthly gc-sessions job runs.
-        assert 'oauth_sessions_default' in tables
-        assert sum(1 for t in tables if t not in ('oauth_sessions', 'oauth_sessions_default')) == 2
+        assert tables == {'oauth_sessions', 'oauth_sessions_default'}
     finally:
         await pool.close()

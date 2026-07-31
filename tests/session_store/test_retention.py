@@ -45,7 +45,7 @@ class TestEnsurePartitions:
     async def test_is_idempotent(self) -> None:
         pool = await asyncpg.create_pool(TEST_DSN)
         try:
-            # Migration 0002 already created this month's + next month's partition.
+            await ensure_partitions(pool)  # first run creates this month's + next month's partition
             before = await self._existing_partitions(pool)
             result = await ensure_partitions(pool)
             assert result == {'created': [], 'dropped': []}
