@@ -1,0 +1,66 @@
+name: 'Login to Amazon ECR, Azure ACR and GCP GAR'
+description: 'Authenticate Docker to our private registries so a subsequent buildx push can push to all of them'
+inputs:
+  ecrRegion:
+    description: Amazon ECR region
+    required: true
+  ecrPushRole:
+    description: Amazon ECR push role
+    required: true
+  gcpRegistry:
+    description: GCP Artifact Registry root URL
+    required: true
+  gcpIdentityProvider:
+    description: GCP Identity Provider for OIDC integration
+    required: true
+  gcpServiceAccount:
+    description: GCP Service Account for OIDC integration
+    required: true
+  acrRegistry:
+    description: Azure ACR registry
+    required: true
+  acrUsername:
+    description: Azure ACR username
+    required: true
+  acrPassword:
+    description: Azure ACR password
+    required: true
+outputs:
+  ecrRegistry:
+    description: The Amazon ECR registry host (account + region specific)
+    value: ${{ steps.login-ecr.outputs.registry }}
+runs:
+  using: "composite"
+  steps:
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        aws-region: ${{ inputs.ecrRegion }}
+        role-to-assume: ${{ inputs.ecrPushRole }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - id: gcpAuth
+      name: Authenticate to GCP
+      uses: google-github-actions/auth@v3
+      with:
+        token_format: access_token
+        create_credentials_file: true
+        workload_identity_provider: ${{ inputs.gcpIdentityProvider }}
+        service_account: ${{ inputs.gcpServiceAccount }}
+
+    - name: Login to GCP GAR
+      uses: docker/login-action@v4
+      with:
+        registry: ${{ inputs.gcpRegistry }}
+        username: oauth2accesstoken
+        password: ${{ steps.gcpAuth.outputs.access_token }}
+
+    - name: Login to Azure ACR
+      uses: docker/login-action@v4
+      with:
+        registry: ${{ inputs.acrRegistry }}
+        username: ${{ inputs.acrUsername }}
+        password: ${{ inputs.acrPassword }}
