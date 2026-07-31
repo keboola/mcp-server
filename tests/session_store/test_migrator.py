@@ -21,7 +21,11 @@ async def test_applies_migrations_once() -> None:
     pool = await asyncpg.create_pool(TEST_DSN)
     try:
         applied = await apply_migrations(pool)
-        assert applied == ['0001_oauth_sessions.sql', '0002_partition_oauth_sessions.sql']
+        assert applied == [
+            '0001_oauth_sessions.sql',
+            '0002_partition_oauth_sessions.sql',
+            '0003_default_partition_unique_indexes.sql',
+        ]
 
         # Re-running is a no-op -- the table already exists, so re-applying the DDL would fail
         # if the tracking table didn't correctly skip it.
@@ -60,5 +64,24 @@ async def test_partitions_table_with_default_catch_all() -> None:
             for r in await pool.fetch("SELECT tablename FROM pg_tables WHERE tablename LIKE 'oauth_sessions%'")
         }
         assert tables == {'oauth_sessions', 'oauth_sessions_default'}
+    finally:
+        await pool.close()
+
+
+async def test_default_partition_rejects_duplicate_access_token_hash() -> None:
+    # Regression test: the parent's (access_token_hash, created_at) index alone doesn't reject a
+    # duplicate hash (created_at differs per row) -- migration 0003's plain index on the
+    # partition table itself must.
+    pool = await asyncpg.create_pool(TEST_DSN)
+    try:
+        await apply_migrations(pool)
+        insert = (
+            'INSERT INTO oauth_sessions_default '
+            '(access_token_hash, client_id, kbc_access_token_enc, kbc_refresh_token_enc, kbc_access_expires_at) '
+            "VALUES ($1, 'client', $2, $3, now())"
+        )
+        await pool.execute(insert, b'dup-hash', b'enc-access', b'enc-refresh')
+        with pytest.raises(asyncpg.UniqueViolationError):
+            await pool.execute(insert, b'dup-hash', b'enc-access', b'enc-refresh')
     finally:
         await pool.close()
