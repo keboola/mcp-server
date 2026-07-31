@@ -1,4 +1,5 @@
 import dataclasses
+import logging
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -497,7 +498,7 @@ class TestSimpleOAuthProvider:
 
     @pytest.mark.asyncio
     async def test_load_access_token_refreshes_near_expiry_session_transparently(
-        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ):
         from keboola_mcp_server import oauth as oauth_module
         from keboola_mcp_server.auth_login import TokenSet
@@ -516,7 +517,8 @@ class TestSimpleOAuthProvider:
 
         monkeypatch.setattr(oauth_module, 'refresh_tokens', _fake_refresh_tokens)
 
-        loaded = await oauth_provider.load_access_token(access_token)
+        with caplog.at_level(logging.INFO):
+            loaded = await oauth_provider.load_access_token(access_token)
 
         assert loaded is not None
         assert loaded.kbc_access_token == 'kbc_at_fresh'
@@ -525,6 +527,12 @@ class TestSimpleOAuthProvider:
         assert stored is not None
         assert stored.kbc_access_token == 'kbc_at_fresh'
         assert stored.kbc_refresh_token == 'kbc_rt_fresh'
+        # Observable in logs (session id only, no token values) -- previously silent on success.
+        refresh_logs = [r for r in caplog.records if 'Lazily refreshed near-expiry' in r.message]
+        assert len(refresh_logs) == 1
+        assert session.id in refresh_logs[0].message
+        assert 'kbc_at_fresh' not in refresh_logs[0].message
+        assert 'kbc_rt_fresh' not in refresh_logs[0].message
 
     @pytest.mark.asyncio
     async def test_load_access_token_tolerates_refresh_failure(
