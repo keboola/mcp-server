@@ -64,10 +64,27 @@ async def ensure_partitions(
             if not exists:
                 # DDL bounds can't be bound query parameters -- start/end are computed dates, not
                 # user input, so direct formatting here carries no injection risk.
-                await conn.execute(
-                    f'CREATE TABLE {name} PARTITION OF oauth_sessions '
-                    f"FOR VALUES FROM ('{start.isoformat()}') TO ('{end.isoformat()}')"
-                )
+                #
+                # Can't just `CREATE TABLE {name} PARTITION OF oauth_sessions FOR VALUES FROM ... TO
+                # ...`: oauth_sessions_default may already hold rows in that range (e.g. the
+                # one-time backlog migration 0002 copies over, or a period where partition
+                # maintenance lagged), and Postgres refuses to attach a new range partition while
+                # the default partition has matching rows. So build the partition as a standalone
+                # table, move any matching default rows into it first, then attach it -- this works
+                # whether or not default has conflicting rows.
+                async with conn.transaction():
+                    await conn.execute(f'CREATE TABLE {name} (LIKE oauth_sessions INCLUDING ALL)')
+                    await conn.execute(
+                        f'WITH moved AS ('
+                        f'    DELETE FROM oauth_sessions_default '
+                        f"    WHERE created_at >= '{start.isoformat()}' AND created_at < '{end.isoformat()}' "
+                        f'    RETURNING *'
+                        f') INSERT INTO {name} SELECT * FROM moved'
+                    )
+                    await conn.execute(
+                        f'ALTER TABLE oauth_sessions ATTACH PARTITION {name} '
+                        f"FOR VALUES FROM ('{start.isoformat()}') TO ('{end.isoformat()}')"
+                    )
                 LOG.info(f'Created oauth_sessions partition: {name} [{start}, {end})')
                 created.append(name)
 
