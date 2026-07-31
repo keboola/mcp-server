@@ -1,6 +1,7 @@
 """Tests for OAuth URL generation tools."""
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import pytest
 from mcp.server.fastmcp import Context

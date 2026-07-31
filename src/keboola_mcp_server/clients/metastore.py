@@ -95,7 +95,7 @@ class MetastoreClient(KeboolaServiceClient):
         endpoint = f'api/v1/schema/{object_type}/{version}' if version else f'api/v1/schema/{object_type}'
         response = await self.get(endpoint=endpoint)
         if not isinstance(response, dict):
-            raise ValueError('Unexpected metastore schema response format.')
+            raise TypeError('Unexpected metastore schema response format.')
         return response
 
     async def list_objects(
@@ -230,17 +230,17 @@ class MetastoreClient(KeboolaServiceClient):
     @staticmethod
     def _parse_list(response: JsonStruct) -> list[MetastoreObject]:
         if not isinstance(response, dict):
-            raise ValueError('Unexpected metastore response format: expected JSON object with "data" key.')
+            raise TypeError('Unexpected metastore response format: expected JSON object with "data" key.')
         data = response.get('data')
         if not isinstance(data, list):
-            raise ValueError('Unexpected metastore response format: "data" is not an array.')
+            raise TypeError('Unexpected metastore response format: "data" is not an array.')
         return LIST_ADAPTER.validate_python(data)
 
     @staticmethod
     def _parse_object(response: JsonStruct) -> MetastoreObject:
         if not isinstance(response, dict):
-            raise ValueError('Unexpected metastore response format: expected JSON object.')
+            raise TypeError('Unexpected metastore response format: expected JSON object.')
         data = response.get('data', response)
         if not isinstance(data, dict):
-            raise ValueError('Unexpected metastore response format: "data" is not an object.')
+            raise TypeError('Unexpected metastore response format: "data" is not an object.')
         return MetastoreObject.model_validate(data)

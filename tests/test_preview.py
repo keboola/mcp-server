@@ -1,5 +1,6 @@
 import copy
-from typing import Generator, cast
+from collections.abc import Generator
+from typing import cast
 
 import pytest
 import pytest_asyncio
@@ -1110,7 +1111,8 @@ class TestPreviewConfigDiff:
         result = response.json()
         assert result['isValid'] is False
         assert 'validationErrors' in result
-        assert 'parameter_updates.1' in str(result['validationErrors'])
+        # index 1 is the invalid entry (op="foo") in the parameter_updates list
+        assert "field: '1'" in str(result['validationErrors'])
 
         # Check that empty configs are in the response (required by KAI backend)
         assert result['originalConfig'] == {}

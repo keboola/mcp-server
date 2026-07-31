@@ -5,7 +5,7 @@ These models represent the raw data returned by Keboola APIs.
 They contain no business logic and use the exact field names and structures from the APIs.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -102,7 +102,7 @@ class ConfigurationAPIResponse(BaseModel):
         validation_alias=AliasChoices('id', 'configuration_id', 'configurationId', 'configuration-id'),
     )
     name: str = Field(description='The name of the configuration')
-    description: Optional[str] = Field(default=None, description='The description of the configuration')
+    description: str | None = Field(default=None, description='The description of the configuration')
     version: int = Field(description='The version of the configuration')
     is_disabled: bool = Field(
         default=False,
@@ -117,10 +117,10 @@ class ConfigurationAPIResponse(BaseModel):
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters and storage'
     )
-    rows: Optional[list[dict[str, Any]]] = Field(
+    rows: list[dict[str, Any]] | None = Field(
         default=None, description='The row configurations within this configuration'
     )
-    change_description: Optional[str] = Field(
+    change_description: str | None = Field(
         default=None,
         description='The description of the latest changes',
         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),

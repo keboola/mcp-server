@@ -9,7 +9,8 @@ import json
 import logging
 import re
 from collections import defaultdict
-from typing import Any, Iterable, Literal, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, Literal
 
 import jsonpath_ng
 from jsonpath_ng.jsonpath import JSONPath
@@ -198,7 +199,7 @@ class SearchSpec(BaseModel):
     item_types: Sequence[SearchItemType]
     pattern_mode: SearchPatternMode = 'regex'
     case_sensitive: bool = False
-    search_scopes: Sequence[str] = tuple()
+    search_scopes: Sequence[str] = ()
     search_type: SearchType = 'textual'
     return_all_matched_patterns: bool = False
 
@@ -229,11 +230,11 @@ class SearchSpec(BaseModel):
     def _validate_component_args(self) -> 'SearchSpec':
         if not self._component_types:
             self._component_types = list(
-                set(
+                {
                     component_type
                     for item in self.item_types
                     for component_type in SEARCH_ITEM_TYPE_TO_COMPONENT_TYPES.get(item, [])
-                )
+                }
             )
         return self
 

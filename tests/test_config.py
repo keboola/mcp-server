@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Mapping
+from collections.abc import Mapping
 
 import pytest
 

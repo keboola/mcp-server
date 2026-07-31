@@ -139,28 +139,49 @@ EXAMPLES:
       "type": "object"
     },
     "storage": {
-      "additionalProperties": true,
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "type": "object"
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined"
     },
     "processors_before": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run before the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run before the configured component row runs."
     },
     "processors_after": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run after the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run after the configured component row runs."
     }
   },
   "required": [
@@ -267,28 +288,49 @@ EXAMPLES:
       "type": "object"
     },
     "storage": {
-      "additionalProperties": true,
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "type": "object"
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined"
     },
     "processors_before": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run before the configured component runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run before the configured component runs."
     },
     "processors_after": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run after the configured component runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run after the configured component runs."
     },
     "variables": {
       "anyOf": [
@@ -921,58 +963,86 @@ WORKFLOW:
       "type": "string"
     },
     "parameter_updates": {
-      "default": null,
-      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove, list_append) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Paths are relative to the `parameters` object, not the configuration root (e.g. use `tables`, not `parameters.tables`). Prefer simple JSONPaths (e.g., \"array_param[1]\", \"object_param.key\") and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path.",
-      "items": {
-        "discriminator": {
-          "mapping": {
-            "list_append": "#/$defs/ConfigParamListAppend",
-            "remove": "#/$defs/ConfigParamRemove",
-            "set": "#/$defs/ConfigParamSet",
-            "str_replace": "#/$defs/ConfigParamReplace"
+      "anyOf": [
+        {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "list_append": "#/$defs/ConfigParamListAppend",
+                "remove": "#/$defs/ConfigParamRemove",
+                "set": "#/$defs/ConfigParamSet",
+                "str_replace": "#/$defs/ConfigParamReplace"
+              },
+              "propertyName": "op"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ConfigParamSet"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamReplace"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamRemove"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamListAppend"
+              }
+            ]
           },
-          "propertyName": "op"
+          "type": "array"
         },
-        "oneOf": [
-          {
-            "$ref": "#/$defs/ConfigParamSet"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamReplace"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamRemove"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamListAppend"
-          }
-        ]
-      },
-      "type": "array"
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove, list_append) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Paths are relative to the `parameters` object, not the configuration root (e.g. use `tables`, not `parameters.tables`). Prefer simple JSONPaths (e.g., \"array_param[1]\", \"object_param.key\") and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path."
     },
     "storage": {
-      "additionalProperties": true,
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
-      "type": "object"
+      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration"
     },
     "processors_before": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run before the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run before the configured component row runs."
     },
     "processors_after": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run after the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run after the configured component row runs."
     },
     "folder": {
       "anyOf": [
@@ -1183,58 +1253,86 @@ WORKFLOW:
       "type": "string"
     },
     "parameter_updates": {
-      "default": null,
-      "description": "List of granular parameter update operations to apply to this row. Each operation (set, str_replace, remove, list_append) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Paths are relative to the row's `parameters` object, not the row root (e.g. use `tables`, not `parameters.tables`). Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
-      "items": {
-        "discriminator": {
-          "mapping": {
-            "list_append": "#/$defs/ConfigParamListAppend",
-            "remove": "#/$defs/ConfigParamRemove",
-            "set": "#/$defs/ConfigParamSet",
-            "str_replace": "#/$defs/ConfigParamReplace"
+      "anyOf": [
+        {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "list_append": "#/$defs/ConfigParamListAppend",
+                "remove": "#/$defs/ConfigParamRemove",
+                "set": "#/$defs/ConfigParamSet",
+                "str_replace": "#/$defs/ConfigParamReplace"
+              },
+              "propertyName": "op"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ConfigParamSet"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamReplace"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamRemove"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamListAppend"
+              }
+            ]
           },
-          "propertyName": "op"
+          "type": "array"
         },
-        "oneOf": [
-          {
-            "$ref": "#/$defs/ConfigParamSet"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamReplace"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamRemove"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamListAppend"
-          }
-        ]
-      },
-      "type": "array"
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "List of granular parameter update operations to apply to this row. Each operation (set, str_replace, remove, list_append) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Paths are relative to the row's `parameters` object, not the row root (e.g. use `tables`, not `parameters.tables`). Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path."
     },
     "storage": {
-      "additionalProperties": true,
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_configs first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration",
-      "type": "object"
+      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_configs first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration"
     },
     "processors_before": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run before the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run before the configured component row runs."
     },
     "processors_after": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run after the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run after the configured component row runs."
     },
     "is_disabled": {
       "anyOf": [
@@ -1818,60 +1916,74 @@ Example 4 - Update storage mappings:
       "type": "string"
     },
     "parameter_updates": {
-      "default": null,
-      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. \n\nIMPORTANT: Use get_configs first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned.\n\nAvailable operations:\n1. add_block: Add a new block to the transformation\n   - Fields: op=\"add_block\", block={name, codes}, position=\"start\"|\"end\"\n2. remove_block: Remove an existing block\n   - Fields: op=\"remove_block\", block_id (e.g., \"b0\")\n3. rename_block: Rename an existing block\n   - Fields: op=\"rename_block\", block_id (e.g., \"b0\"), block_name\n4. add_code: Add a new code block to an existing block\n   - Fields: op=\"add_code\", block_id (e.g., \"b0\"), code={name, script}, position=\"start\"|\"end\"\n5. remove_code: Remove an existing code block\n   - Fields: op=\"remove_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\")\n6. rename_code: Rename an existing code block\n   - Fields: op=\"rename_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), code_name\n7. set_code: Replace the entire SQL script of a code block\n   - Fields: op=\"set_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script\n8. add_script: Append or prepend SQL to a code block\n   - Fields: op=\"add_script\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script,     position=\"start\"|\"end\"\n9. str_replace: Replace substring in SQL scripts\n   - Fields: op=\"str_replace\", search_for, replace_with, block_id (optional), code_id (optional)\n   - If block_id omitted: replaces in all blocks\n   - If code_id omitted: replaces in all codes of the specified block\n",
-      "items": {
-        "discriminator": {
-          "mapping": {
-            "add_block": "#/$defs/TfAddBlock",
-            "add_code": "#/$defs/TfAddCode",
-            "add_script": "#/$defs/TfAddScript",
-            "remove_block": "#/$defs/TfRemoveBlock",
-            "remove_code": "#/$defs/TfRemoveCode",
-            "rename_block": "#/$defs/TfRenameBlock",
-            "rename_code": "#/$defs/TfRenameCode",
-            "set_code": "#/$defs/TfSetCode",
-            "str_replace": "#/$defs/TfStrReplace"
+      "anyOf": [
+        {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "add_block": "#/$defs/TfAddBlock",
+                "add_code": "#/$defs/TfAddCode",
+                "add_script": "#/$defs/TfAddScript",
+                "remove_block": "#/$defs/TfRemoveBlock",
+                "remove_code": "#/$defs/TfRemoveCode",
+                "rename_block": "#/$defs/TfRenameBlock",
+                "rename_code": "#/$defs/TfRenameCode",
+                "set_code": "#/$defs/TfSetCode",
+                "str_replace": "#/$defs/TfStrReplace"
+              },
+              "propertyName": "op"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/TfAddBlock"
+              },
+              {
+                "$ref": "#/$defs/TfRemoveBlock"
+              },
+              {
+                "$ref": "#/$defs/TfRenameBlock"
+              },
+              {
+                "$ref": "#/$defs/TfAddCode"
+              },
+              {
+                "$ref": "#/$defs/TfRemoveCode"
+              },
+              {
+                "$ref": "#/$defs/TfRenameCode"
+              },
+              {
+                "$ref": "#/$defs/TfSetCode"
+              },
+              {
+                "$ref": "#/$defs/TfAddScript"
+              },
+              {
+                "$ref": "#/$defs/TfStrReplace"
+              }
+            ]
           },
-          "propertyName": "op"
+          "type": "array"
         },
-        "oneOf": [
-          {
-            "$ref": "#/$defs/TfAddBlock"
-          },
-          {
-            "$ref": "#/$defs/TfRemoveBlock"
-          },
-          {
-            "$ref": "#/$defs/TfRenameBlock"
-          },
-          {
-            "$ref": "#/$defs/TfAddCode"
-          },
-          {
-            "$ref": "#/$defs/TfRemoveCode"
-          },
-          {
-            "$ref": "#/$defs/TfRenameCode"
-          },
-          {
-            "$ref": "#/$defs/TfSetCode"
-          },
-          {
-            "$ref": "#/$defs/TfAddScript"
-          },
-          {
-            "$ref": "#/$defs/TfStrReplace"
-          }
-        ]
-      },
-      "type": "array"
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. \n\nIMPORTANT: Use get_configs first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned.\n\nAvailable operations:\n1. add_block: Add a new block to the transformation\n   - Fields: op=\"add_block\", block={name, codes}, position=\"start\"|\"end\"\n2. remove_block: Remove an existing block\n   - Fields: op=\"remove_block\", block_id (e.g., \"b0\")\n3. rename_block: Rename an existing block\n   - Fields: op=\"rename_block\", block_id (e.g., \"b0\"), block_name\n4. add_code: Add a new code block to an existing block\n   - Fields: op=\"add_code\", block_id (e.g., \"b0\"), code={name, script}, position=\"start\"|\"end\"\n5. remove_code: Remove an existing code block\n   - Fields: op=\"remove_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\")\n6. rename_code: Rename an existing code block\n   - Fields: op=\"rename_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), code_name\n7. set_code: Replace the entire SQL script of a code block\n   - Fields: op=\"set_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script\n8. add_script: Append or prepend SQL to a code block\n   - Fields: op=\"add_script\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script,     position=\"start\"|\"end\"\n9. str_replace: Replace substring in SQL scripts\n   - Fields: op=\"str_replace\", search_for, replace_with, block_id (optional), code_id (optional)\n   - If block_id omitted: replaces in all blocks\n   - If code_id omitted: replaces in all codes of the specified block\n"
     },
     "storage": {
-      "additionalProperties": true,
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
-      "type": "object"
+      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration"
     },
     "folder": {
       "anyOf": [
@@ -2925,22 +3037,36 @@ adjusting dependencies, or enabling/disabling flow execution
       "type": "string"
     },
     "phases": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Updated list of phase definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "Updated list of phase definitions."
     },
     "tasks": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Updated list of task definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "Updated list of task definitions."
     },
     "name": {
       "default": "",
@@ -3051,22 +3177,36 @@ or enabling/disabling flow execution
       "type": "string"
     },
     "phases": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Updated list of phase definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "Updated list of phase definitions."
     },
     "tasks": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Updated list of task definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "Updated list of task definitions."
     },
     "name": {
       "default": "",
@@ -3218,14 +3358,28 @@ EXAMPLES WITH LOGS:
       "type": "string"
     },
     "component_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The optional ID of the component whose jobs you want to list (ignored if job_ids is provided). Default = None.",
-      "type": "string"
+      "description": "The optional ID of the component whose jobs you want to list (ignored if job_ids is provided). Default = None."
     },
     "config_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The optional ID of the component configuration whose jobs you want to list (ignored if job_ids is provided). Default = None.",
-      "type": "string"
+      "description": "The optional ID of the component configuration whose jobs you want to list (ignored if job_ids is provided). Default = None."
     },
     "limit": {
       "default": 100,
@@ -3507,7 +3661,7 @@ This tool supports two complementary search types:
   branches of the project — such hits carry `branch_id`/`branch_name` so you can tell where they live.
 
 2) config-based
-- Searches item configurations (JSON objects) by matching patterns against the configuration values ​​converted
+- Searches item configurations (JSON objects) by matching patterns against the configuration values converted
   to a string, optionally narrowed by JSON path `scopes`.
 - Returns also `match_scopes` with JSON paths and matched patterns per scope.
 

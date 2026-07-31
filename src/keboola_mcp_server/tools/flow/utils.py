@@ -3,8 +3,9 @@
 import json
 import logging
 from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 from importlib import resources
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
@@ -228,7 +229,7 @@ async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFl
             )
             api_flow = APIFlowResponse.model_validate(raw_flow)
             return api_flow, flow_type
-        except Exception:
+        except Exception:  # noqa: S112 -- probing each flow type; a miss here is expected, not an error
             continue
 
     raise ValueError(f'Flow configuration "{flow_id}" not found')

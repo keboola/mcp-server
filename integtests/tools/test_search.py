@@ -25,7 +25,7 @@ async def test_search_end_to_end(
     Test the search tool end-to-end by searching for items that exist in the test project.
     This verifies that the search returns expected results for buckets, tables, and configurations.
     """
-    item_types = (item_type,) if item_type else tuple()
+    item_types = (item_type,) if item_type else ()
 
     full_result = await mcp_client.call_tool(
         'search', {'patterns': ['test'], 'item_types': item_types, 'limit': 50, 'offset': 0}

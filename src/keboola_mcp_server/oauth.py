@@ -6,8 +6,9 @@ import os
 import re
 import secrets
 import time
+from collections.abc import Mapping
 from http.client import HTTPException
-from typing import Any, Mapping, cast
+from typing import Any, cast
 from urllib.parse import urljoin
 
 import httpx
@@ -253,11 +254,11 @@ class SimpleOAuthProvider(OAuthProvider):
             raise HTTPException(400, 'Invalid state parameter')
 
         if not state_data:
-            LOG.debug(f'[handle_oauth_callback] Invalid state: {state_data}', exc_info=True)
+            LOG.debug(f'[handle_oauth_callback] Invalid state: {state_data}')
             raise HTTPException(400, 'Invalid state parameter')
 
         if state_data['expires_at'] < time.time():
-            LOG.debug(f'[handle_oauth_callback] Expired state: {state_data}', exc_info=True)
+            LOG.debug(f'[handle_oauth_callback] Expired state: {state_data}')
             raise HTTPException(400, 'Invalid state parameter')
 
         # Exchange the authorization code for the access token with the OAuth server.

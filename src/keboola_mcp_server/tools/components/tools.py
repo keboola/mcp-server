@@ -27,8 +27,9 @@ component-related operations in the MCP server.
 import copy
 import json
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Annotated, Any, Optional, Sequence, cast
+from typing import Annotated, Any, cast
 
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
@@ -213,7 +214,7 @@ async def get_configs(
                 'This parameter is IGNORED when configs is provided (non-empty) or component_ids is non-empty.'
             )
         ),
-    ] = tuple(),
+    ] = (),
     component_ids: Annotated[
         Sequence[str],
         Field(
@@ -224,7 +225,7 @@ async def get_configs(
                 'Ignored if configs is provided.'
             )
         ),
-    ] = tuple(),
+    ] = (),
     configs: Annotated[
         Sequence[FullConfigId],
         Field(
@@ -236,7 +237,7 @@ async def get_configs(
                 'grouped by component. Use this for detailed retrieval.'
             )
         ),
-    ] = tuple(),
+    ] = (),
 ) -> GetConfigsOutput:
     """
     Retrieves component configurations in the project with optional filtering.
@@ -418,13 +419,13 @@ async def create_sql_transformation(
                 '(e.g., using `CREATE TABLE ...`).'
             ),
         ),
-    ] = tuple(),
+    ] = (),
     folder: Annotated[
         str,
         Field(description=folder_field_description('transformation', 'transformations')),
     ] = '',
     variables: Annotated[
-        Optional[list[VariableDefinition]],
+        list[VariableDefinition] | None,
         Field(
             description=(
                 'Variable definitions to attach to this transformation. '
@@ -592,7 +593,7 @@ async def update_sql_transformation(
         ),
     ] = '',
     parameter_updates: Annotated[
-        list[TfParamUpdate],
+        list[TfParamUpdate] | None,
         Field(
             description=(
                 'List of operations to apply to the transformation structure (blocks, codes, SQL scripts). '
@@ -628,7 +629,7 @@ async def update_sql_transformation(
         ),
     ] = None,
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
             description=(
                 'Complete storage configuration for transformation input/output table mappings. '
@@ -648,11 +649,11 @@ async def update_sql_transformation(
         ),
     ] = None,
     folder: Annotated[
-        Optional[str],
+        str | None,
         Field(description=folder_field_description('transformation', 'transformations')),
     ] = None,
     variables: Annotated[
-        Optional[list[VariableDefinition]],
+        list[VariableDefinition] | None,
         Field(
             description=(
                 'Variable definitions for this transformation. '
@@ -982,7 +983,7 @@ async def update_sql_transformation_internal(
     description: str = '',
     parameter_updates: list[TfParamUpdate] | None = None,
     storage: dict[str, Any] | None = None,
-    folder: Optional[str] = None,
+    folder: str | None = None,
 ) -> tuple[JsonDict, JsonDict, str, dict | None]:
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
@@ -1088,7 +1089,7 @@ async def create_config(
         Field(description='The component configuration parameters, adhering to the configuration_schema'),
     ],
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
@@ -1097,15 +1098,15 @@ async def create_config(
         ),
     ] = None,
     processors_before: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run before the configured component runs.'),
     ] = None,
     processors_after: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run after the configured component runs.'),
     ] = None,
     variables: Annotated[
-        Optional[list[VariableDefinition]],
+        list[VariableDefinition] | None,
         Field(
             description=(
                 'Variable definitions to attach to this configuration. '
@@ -1247,7 +1248,7 @@ async def add_config_row(
         Field(description='The component row configuration parameters, adhering to the configuration_row_schema'),
     ],
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
@@ -1256,11 +1257,11 @@ async def add_config_row(
         ),
     ] = None,
     processors_before: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run before the configured component row runs.'),
     ] = None,
     processors_after: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
 ) -> ConfigToolOutput:
@@ -1405,7 +1406,7 @@ async def update_config(
         ),
     ] = '',
     parameter_updates: Annotated[
-        list[ConfigParamUpdate],
+        list[ConfigParamUpdate] | None,
         Field(
             description=(
                 'List of granular parameter update operations to apply. '
@@ -1422,7 +1423,7 @@ async def update_config(
         ),
     ] = None,
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
             description=(
                 'Complete storage configuration containing input/output table and file mappings. '
@@ -1443,19 +1444,19 @@ async def update_config(
         ),
     ] = None,
     processors_before: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run before the configured component row runs.'),
     ] = None,
     processors_after: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
     folder: Annotated[
-        Optional[str],
+        str | None,
         Field(description=folder_field_description('configuration', 'configurations')),
     ] = None,
     variables: Annotated[
-        Optional[list[VariableDefinition]],
+        list[VariableDefinition] | None,
         Field(
             description=(
                 'Variable definitions for this configuration. '
@@ -1677,7 +1678,7 @@ async def update_config_row(
         ),
     ] = '',
     parameter_updates: Annotated[
-        list[ConfigParamUpdate],
+        list[ConfigParamUpdate] | None,
         Field(
             description=(
                 'List of granular parameter update operations to apply to this row. '
@@ -1694,7 +1695,7 @@ async def update_config_row(
         ),
     ] = None,
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
             description=(
                 'Complete storage configuration for this row containing input/output table and file mappings. '
@@ -1715,11 +1716,11 @@ async def update_config_row(
         ),
     ] = None,
     processors_before: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run before the configured component row runs.'),
     ] = None,
     processors_after: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
     is_disabled: Annotated[

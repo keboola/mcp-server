@@ -1,5 +1,6 @@
 import re
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -111,8 +112,10 @@ def test_expand_component_types(
                                     name='Code 0',
                                     script=[
                                         'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
-                                        '-- comment\n'
-                                        'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";',
+                                        (
+                                            '-- comment\n'
+                                            'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";'
+                                        ),
                                     ],
                                 )
                             ],
@@ -1258,8 +1261,10 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     ),
                 ]
             ),
-            'Added code with name "New Code"\nReplaced 2 occurrences of "FROM" in '
-            'the transformation\n## Updated Transformation Structure',
+            (
+                'Added code with name "New Code"\nReplaced 2 occurrences of "FROM" in '
+                'the transformation\n## Updated Transformation Structure'
+            ),
         ),
         # Remove code (structural) - should report structure
         (

@@ -1,5 +1,6 @@
 from collections import defaultdict
-from typing import Mapping, Optional, Sequence, cast
+from collections.abc import Mapping, Sequence
+from typing import cast
 
 from pydantic import BaseModel, Field
 
@@ -35,8 +36,8 @@ class UsageById(BaseModel):
 async def find_id_usage(
     client: KeboolaClient,
     target_ids: Sequence[str],
-    item_types: Optional[Sequence[SearchComponentItemType]] = None,
-    scopes: Sequence[str] = tuple(),
+    item_types: Sequence[SearchComponentItemType] | None = None,
+    scopes: Sequence[str] = (),
 ) -> list[UsageById]:
     """
     Finds component configurations (including rows) that reference any of the target IDs in the specified configuration
@@ -55,7 +56,7 @@ async def find_id_usage(
     spec = SearchSpec(
         patterns=target_ids,
         # Casting SearchComponentItemType to SearchItemType since it is a subset of SearchItemType.
-        item_types=cast(Sequence[SearchItemType], item_types) or tuple(),
+        item_types=cast(Sequence[SearchItemType], item_types) or (),
         search_scopes=scopes,
         pattern_mode='literal',
         search_type='config-based',

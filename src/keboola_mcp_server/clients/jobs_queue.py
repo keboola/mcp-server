@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from keboola_mcp_server.clients.base import JsonDict, JsonList, KeboolaServiceClient, RawKeboolaClient
 
@@ -55,13 +55,13 @@ class JobsQueueClient(KeboolaServiceClient):
 
     async def search_jobs_by(
         self,
-        component_id: Optional[str] = None,
-        config_id: Optional[str] = None,
-        status: Optional[list[str]] = None,
+        component_id: str | None = None,
+        config_id: str | None = None,
+        status: list[str] | None = None,
         limit: int = 100,
         offset: int = 0,
-        sort_by: Optional[str] = 'startTime',
-        sort_order: Optional[str] = 'desc',
+        sort_by: str | None = 'startTime',
+        sort_order: str | None = 'desc',
     ) -> JsonList:
         """
         Searches for jobs based on the provided parameters.

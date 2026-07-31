@@ -1,6 +1,6 @@
 """Unit tests for Flow management tools."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 import httpx
 import pytest
@@ -41,7 +41,7 @@ from keboola_mcp_server.tools.flow.tools import (
 
 
 @pytest.fixture
-def legacy_flow_phases() -> List[Dict[str, Any]]:
+def legacy_flow_phases() -> list[dict[str, Any]]:
     """Sample legacy flow phases."""
     return [
         {'id': 1, 'name': 'Data Extraction', 'description': 'Extract data from various sources', 'dependsOn': []},
@@ -51,7 +51,7 @@ def legacy_flow_phases() -> List[Dict[str, Any]]:
 
 
 @pytest.fixture
-def legacy_flow_tasks() -> List[Dict[str, Any]]:
+def legacy_flow_tasks() -> list[dict[str, Any]]:
     """Sample legacy flow tasks."""
     return [
         {
@@ -82,7 +82,7 @@ def legacy_flow_tasks() -> List[Dict[str, Any]]:
 
 
 @pytest.fixture
-def mock_conditional_flow_phases() -> List[Dict[str, Any]]:
+def mock_conditional_flow_phases() -> list[dict[str, Any]]:
     """Sample conditional flow phases with simple configuration."""
     return [
         {
@@ -95,7 +95,7 @@ def mock_conditional_flow_phases() -> List[Dict[str, Any]]:
 
 
 @pytest.fixture
-def mock_conditional_flow_tasks() -> List[Dict[str, Any]]:
+def mock_conditional_flow_tasks() -> list[dict[str, Any]]:
     """Sample conditional flow tasks with simple configuration."""
     return [
         {
@@ -115,8 +115,8 @@ def mock_conditional_flow_tasks() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def mock_conditional_flow(
-    mock_conditional_flow_phases: List[Dict[str, Any]], mock_conditional_flow_tasks: List[Dict[str, Any]]
-) -> Dict[str, Any]:
+    mock_conditional_flow_phases: list[dict[str, Any]], mock_conditional_flow_tasks: list[dict[str, Any]]
+) -> dict[str, Any]:
     """Mock conditional flow configuration response for get_flow endpoint."""
     return {
         'component_id': CONDITIONAL_FLOW_COMPONENT_ID,
@@ -138,8 +138,8 @@ def mock_conditional_flow(
 
 @pytest.fixture
 def mock_conditional_flow_create_update(
-    mock_conditional_flow_phases: List[Dict[str, Any]], mock_conditional_flow_tasks: List[Dict[str, Any]]
-) -> Dict[str, Any]:
+    mock_conditional_flow_phases: list[dict[str, Any]], mock_conditional_flow_tasks: list[dict[str, Any]]
+) -> dict[str, Any]:
     """Mock conditional flow configuration response for create/update endpoints."""
     return {
         'id': 'conditional_flow_456',
@@ -250,7 +250,7 @@ class TestCreateFlowTool:
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
-        mock_conditional_flow_create_update: Dict[str, Any],
+        mock_conditional_flow_create_update: dict[str, Any],
         conditional_flow_schema: dict,
     ):
         """Test conditional flow creation."""
@@ -301,9 +301,9 @@ class TestUpdateFlowTool:
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
-        legacy_flow_phases: List[Dict[str, Any]],
-        legacy_flow_tasks: List[Dict[str, Any]],
-        mock_legacy_flow_create_update: Dict[str, Any],
+        legacy_flow_phases: list[dict[str, Any]],
+        legacy_flow_tasks: list[dict[str, Any]],
+        mock_legacy_flow_create_update: dict[str, Any],
     ):
         """Test legacy flow update with new phases and tasks."""
         mock_project_info = mocker.Mock()
@@ -349,7 +349,7 @@ class TestUpdateFlowTool:
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
-        mock_conditional_flow_create_update: Dict[str, Any],
+        mock_conditional_flow_create_update: dict[str, Any],
         conditional_flow_schema: dict,
     ):
         """Test conditional flow update with enhanced conditions."""
@@ -523,7 +523,7 @@ class TestGetFlowsTool:
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
-        mock_conditional_flow: Dict[str, Any],
+        mock_conditional_flow: dict[str, Any],
         mock_conditional_flow_phases: list[dict[str, Any]],
         mock_conditional_flow_tasks: list[dict[str, Any]],
     ):
@@ -583,8 +583,8 @@ class TestGetFlowsTool:
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
-        mock_legacy_flow: Dict[str, Any],
-        mock_conditional_flow: Dict[str, Any],
+        mock_legacy_flow: dict[str, Any],
+        mock_conditional_flow: dict[str, Any],
     ):
         """Test listing flows of both types."""
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
@@ -650,8 +650,8 @@ class TestGetFlowsTool:
         self,
         mocker: MockerFixture,
         mcp_context_client: Context,
-        mock_legacy_flow: Dict[str, Any],
-        mock_conditional_flow: Dict[str, Any],
+        mock_legacy_flow: dict[str, Any],
+        mock_conditional_flow: dict[str, Any],
         legacy_flow_phases: list[dict[str, Any]],
         legacy_flow_tasks: list[dict[str, Any]],
         mock_conditional_flow_phases: list[dict[str, Any]],
@@ -668,7 +668,7 @@ class TestGetFlowsTool:
                 return mock_legacy_flow
             elif configuration_id == conditional_id and component_id == CONDITIONAL_FLOW_COMPONENT_ID:
                 return mock_conditional_flow
-            raise Exception(f'Configuration {configuration_id} not found')
+            raise RuntimeError(f'Configuration {configuration_id} not found')
 
         keboola_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_configuration_detail)
         mocker.patch.object(keboola_client.scheduler_client, 'list_schedules_by_config_id', return_value=[])

@@ -776,7 +776,7 @@ class TestSearch:
             ),
             (
                 ['gamma'],
-                tuple(),
+                (),
                 [
                     {
                         'id': 'test-config',
@@ -862,7 +862,7 @@ class TestSearch:
             ),
             (
                 ['alpha', 'gamma'],
-                tuple(),
+                (),
                 [
                     {
                         'id': 'test-config-a',

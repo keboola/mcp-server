@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.74.7"
+version = "1.74.8"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,6 +38,7 @@ codestyle = [
     "flake8-quotes ~= 3.4",
     "flake8-typing-imports ~= 1.17",
     "pep8-naming ~= 0.15",
+    "ruff ~= 0.16",
 ]
 tests = [
     "pytest ~= 9.0",
@@ -129,10 +130,31 @@ per-file-ignores = [
 # alphabetical case-sensitive sort A, B, a, b
 extend-ignore = ["E203", "W503", "I101"]
 
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+# BLE001: this server's tool/error boundary is built on deliberate broad `except Exception` catches
+# (never crash, always return a structured error/best-effort result) -- see keboola_mcp_server.errors.
+# tool_errors and the many "best effort, log and continue" catches throughout tools/.
+# RUF100: flake8 also lints this codebase and its E402/etc. detection doesn't always agree with
+# ruff's, so a `# noqa: E402` kept for flake8 can look "unused" to ruff. Don't auto-strip those.
+ignore = ["BLE001", "RUF100"]
+
+[tool.ruff.lint.per-file-ignores]
+# Re-exports for the package's public API; unused within the module itself.
+"src/keboola_mcp_server/tools/components/__init__.py" = ["F401"]
+"src/keboola_mcp_server/tools/flow/__init__.py" = ["F401"]
+# Test/integtest-only: blocking subprocess calls and naive datetimes used for comparison are
+# intentional there and carry none of the production-code risk the rules guard against.
+"tests/**" = ["ASYNC220", "ASYNC221", "DTZ001", "DTZ007", "S102"]
+"integtests/**" = ["ASYNC220", "ASYNC221"]
+
 [tool.tox]
 requires = ["tox>=4.23"]
-env_list = ["python", "black", "isort", "flake8", "check-tools-docs"]
-labels = { cs-fix = ["black", "isort"], cs = ["isort", "flake8"] }
+env_list = ["python", "black", "isort", "flake8", "ruff", "check-tools-docs"]
+labels = { cs-fix = ["black", "isort"], cs = ["isort", "flake8", "ruff"] }
 
 [tool.tox.env_run_base]
 description = "Run tests"
@@ -210,6 +232,14 @@ deps = [
     "pep8-naming ~= 0.15",
 ]
 commands = [["flake8", "src/", "tests/", "integtests/"]]
+
+[tool.tox.env.ruff]
+description = "Run additional lint checks using ruff"
+package = "skip"
+deps = [
+    "ruff ~= 0.16",
+]
+commands = [["ruff", "check", "src/", "tests/", "integtests/"]]
 
 [tool.tox.env.check-tools-docs]
 description = "Check if TOOLS.md is up-to-date with tool definitions"

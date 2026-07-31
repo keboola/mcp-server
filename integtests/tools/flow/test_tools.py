@@ -115,7 +115,7 @@ async def test_create_and_retrieve_conditional_flow(mcp_context: Context, config
         result = await get_flows(mcp_context)
         assert isinstance(result, GetFlowsListOutput)
         assert any(f.name == flow_name for f in result.flows)
-        found = [f for f in result.flows if f.configuration_id == flow_id][0]
+        found = next(f for f in result.flows if f.configuration_id == flow_id)
         flow_detail_result = await get_flows(mcp_context, flow_ids=[found.configuration_id])
         assert isinstance(flow_detail_result, GetFlowsDetailOutput)
         flow = flow_detail_result.flows[0]
@@ -257,10 +257,7 @@ async def test_update_flow(
     # Determine the tool name to use based on the token role, should not break if not using schedulers
     token_info = await keboola_client.storage_client.verify_token()
     token_role = (token_info.get('admin', {}) or {}).get('role')
-    if token_role == 'admin':
-        tool_name = MODIFY_FLOW_TOOL_NAME
-    else:
-        tool_name = UPDATE_FLOW_TOOL_NAME
+    tool_name = MODIFY_FLOW_TOOL_NAME if token_role == 'admin' else UPDATE_FLOW_TOOL_NAME
 
     project_id = keboola_project.project_id
     tool_result = await mcp_client.call_tool(

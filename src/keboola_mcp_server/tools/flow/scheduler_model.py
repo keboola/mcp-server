@@ -51,7 +51,6 @@ class ScheduleDetail(BaseModel):
     )
     timezone: str = Field(description='Timezone')
     state: Literal['enabled', 'disabled'] = Field(description='Schedule state')
-    timezone: str = Field(description='Timezone')
     cron_tab: str = Field(
         description=(
             'Cron Tab `* * * * *`. Where 1. minutes, 2. hours, 3. days of month, 4. months, 5. days of week.'

@@ -1,7 +1,7 @@
 import re
 import sys
 from types import ModuleType
-from typing import Literal, Optional, cast
+from typing import Literal, cast
 
 import pytest
 from fastmcp import Context
@@ -1200,7 +1200,7 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
     name: str,
     slug_kwargs: dict,
     expected_slug: str,
-    expected_error: Optional[str],
+    expected_error: str | None,
 ) -> None:
     """Prod create path (no `parent_configuration_id`): an explicit slug is written verbatim (when it
     is at most 63 chars, else rejected), and an omitted/empty slug is auto-derived from `name` as a
@@ -2018,7 +2018,7 @@ def test_update_existing_code_data_app_config_branch_without_git_block_raises() 
         _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=900, branch='feature-x')
 
 
-def _make_external_git_data_app(*, is_managed_git_repo: Optional[bool] = False) -> DataApp:
+def _make_external_git_data_app(*, is_managed_git_repo: bool | None = False) -> DataApp:
     """A python-js DataApp with an external-git block, as `_fetch_data_app` would return it."""
     return DataApp(
         name='Repo App',
@@ -2057,9 +2057,7 @@ def test_validate_branch_update_rejects_invalid_branch_name(bad_branch: str) -> 
         (None, 'could not determine'),
     ],
 )
-def test_validate_branch_update_rejects_managed_and_unknown(
-    is_managed_git_repo: Optional[bool], error_match: str
-) -> None:
+def test_validate_branch_update_rejects_managed_and_unknown(is_managed_git_repo: bool | None, error_match: str) -> None:
     """The repoint is gated on `is_managed_git_repo`, NOT on the presence of a git block: a managed
     app (which can carry a git block too) is rejected, and an undetermined flag is refused rather
     than risking a change to a managed app (CFTL-714 review)."""

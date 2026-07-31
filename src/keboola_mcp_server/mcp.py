@@ -119,14 +119,14 @@ class ServerState:
     def from_context(cls, ctx: Context) -> 'ServerState':
         server_state = ctx.request_context.lifespan_context
         if not isinstance(server_state, ServerState):
-            raise ValueError('ServerState is not available in the context.')
+            raise TypeError('ServerState is not available in the context.')
         return server_state
 
     @classmethod
     def from_starlette(cls, app: Starlette) -> 'ServerState':
         server_state = app.state.server_state
         if not isinstance(server_state, ServerState):
-            raise ValueError('ServerState is not available in the Starlette app.')
+            raise TypeError('ServerState is not available in the Starlette app.')
         return server_state
 
 

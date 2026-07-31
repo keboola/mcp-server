@@ -169,15 +169,15 @@ async def _validate_tool_params(
 
         return False, f'{header}\n{yaml_str}'
 
-    except jsonschema.SchemaError as e:
+    except jsonschema.SchemaError:
         # Schema itself is invalid
-        LOG.exception(f"[validate_tool_params] Invalid schema for tool '{tool_name}': {e}")
+        LOG.exception(f"[validate_tool_params] Invalid schema for tool '{tool_name}'")
         return False, 'Internal error: Invalid tool schema'
 
     except Exception as e:
         # Handle other unexpected errors
-        LOG.exception(f'[validate_tool_params] Unexpected error: {e}')
-        return False, f'Validation error: {str(e)}'
+        LOG.exception('[validate_tool_params] Unexpected error')
+        return False, f'Validation error: {e!s}'
 
 
 def _prepare_mutator(
@@ -376,7 +376,7 @@ async def preview_config_diff(rq: Request) -> Response:
         )
 
     except (pydantic.ValidationError, jsonschema.ValidationError, ValueError) as ex:
-        LOG.exception(f'[preview_config_diff] {ex}')
+        LOG.exception('[preview_config_diff]')
         preview_resp = PreviewConfigDiffResp(
             coordinates=coordinates,
             original_config={},

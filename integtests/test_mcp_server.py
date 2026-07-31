@@ -3,8 +3,9 @@ import os
 import random
 import subprocess
 import time
+from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Iterable, Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 from fastmcp import Client

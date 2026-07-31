@@ -116,7 +116,7 @@ class SemanticModelData(SemanticTypeData):
     sql_dialect: str | None = None
 
     @classmethod
-    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticModelData':
+    def from_metastore(cls, obj: MetastoreObject) -> SemanticModelData:
         attributes = obj.attributes or {}
         return cls(
             semantic_type=SemanticObjectType.SEMANTIC_MODEL,
@@ -136,7 +136,7 @@ class SemanticDatasetData(SemanticTypeData):
     model_uuid: str | None = None
 
     @classmethod
-    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticDatasetData':
+    def from_metastore(cls, obj: MetastoreObject) -> SemanticDatasetData:
         attributes = obj.attributes or {}
         return cls(
             semantic_type=SemanticObjectType.SEMANTIC_DATASET,
@@ -158,7 +158,7 @@ class SemanticMetricData(SemanticTypeData):
     model_uuid: str | None = None
 
     @classmethod
-    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticMetricData':
+    def from_metastore(cls, obj: MetastoreObject) -> SemanticMetricData:
         attributes = obj.attributes or {}
         return cls(
             semantic_type=SemanticObjectType.SEMANTIC_METRIC,
@@ -181,7 +181,7 @@ class SemanticRelationshipData(SemanticTypeData):
     model_uuid: str | None = None
 
     @classmethod
-    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticRelationshipData':
+    def from_metastore(cls, obj: MetastoreObject) -> SemanticRelationshipData:
         attributes = obj.attributes or {}
         return cls(
             semantic_type=SemanticObjectType.SEMANTIC_RELATIONSHIP,
@@ -202,7 +202,7 @@ class SemanticGlossaryData(SemanticTypeData):
     model_uuid: str | None = None
 
     @classmethod
-    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticGlossaryData':
+    def from_metastore(cls, obj: MetastoreObject) -> SemanticGlossaryData:
         attributes = obj.attributes or {}
         return cls(
             semantic_type=SemanticObjectType.SEMANTIC_GLOSSARY,
@@ -233,7 +233,7 @@ class SemanticConstraintData(SemanticTypeData):
     validation_query: dict[str, str] | None = None
 
     @classmethod
-    def from_metastore(cls, obj: MetastoreObject) -> 'SemanticConstraintData':
+    def from_metastore(cls, obj: MetastoreObject) -> SemanticConstraintData:
         attributes = obj.attributes or {}
         ai = attributes.get('ai')
         validation_query = attributes.get('validationQuery')
@@ -306,7 +306,7 @@ class SemanticValidationServiceOutput(BaseModel):
     """Output for semantic SQL validation."""
 
     valid: bool = Field(description='False when an error-severity pre-execution finding was detected.')
-    used_object_groups: list['SemanticServiceDataTypeGroup'] = Field(
+    used_object_groups: list[SemanticServiceDataTypeGroup] = Field(
         default_factory=list,
         description='Used semantic objects grouped by semantic object type.',
     )
@@ -603,7 +603,7 @@ async def search_semantic_context(
     client: KeboolaClient,
     patterns: Sequence[str],
     *,
-    semantic_types: Sequence[SemanticObjectType] = tuple(),
+    semantic_types: Sequence[SemanticObjectType] = (),
     semantic_model_ids: Sequence[str] | None = None,
     case_sensitive: bool = False,
     max_results: int = 50,
@@ -654,7 +654,7 @@ async def load_semantic_context_for_semantic_type(
     client: KeboolaClient,
     object_type: SemanticObjectType,
     *,
-    ids: Sequence[str] = tuple(),
+    ids: Sequence[str] = (),
     semantic_model_ids: Sequence[str] | None = None,
 ) -> SemanticServiceDataTypeGroup:
     """Get semantic context for a semantic object type, optionally filtered by semantic model IDs or object IDs."""

@@ -5,7 +5,8 @@ import logging
 import re
 import time
 import uuid
-from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence, cast
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any, Literal, cast
 from urllib.parse import urlunparse
 
 from httpx import HTTPStatusError
@@ -407,7 +408,7 @@ class _Workspace(abc.ABC):
 
             offset += len(page_data)
 
-        rows = [{col_name: value for col_name, value in zip(columns, row)} for row in all_rows]
+        rows = [dict(zip(columns, row)) for row in all_rows]
 
         if columns:
             message = ' '.join(
@@ -675,7 +676,7 @@ class WorkspaceManager:
             if e.response.status_code == 404:
                 return None
             else:
-                raise e
+                raise
 
     async def _find_ws_in_branch(self) -> _WspInfo | None:
         """Finds the shared read-only MCP workspace in the current branch.

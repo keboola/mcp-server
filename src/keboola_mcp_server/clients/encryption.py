@@ -1,4 +1,5 @@
-from typing import Any, Iterator, cast
+from collections.abc import Iterator
+from typing import Any, cast
 
 from keboola_mcp_server.clients.base import JsonDict, KeboolaServiceClient, RawKeboolaClient
 

@@ -461,8 +461,10 @@ def test_extract_metric_column(sql: str, expected: str | None) -> None:
         ),
         # Function call + string literal — LEFT and AVG (keyword) are filtered; string literal stripped.
         (
-            'fact.DIM_CURRENCY = dim.CURRENCY_FROM AND LEFT(dim.CODE_PERIOD_VALUE, 6) = fact.CODE_PERIOD_VALUE '
-            "AND dim.RATE_TYPE = 'AVG'",
+            (
+                'fact.DIM_CURRENCY = dim.CURRENCY_FROM AND LEFT(dim.CODE_PERIOD_VALUE, 6) = fact.CODE_PERIOD_VALUE '
+                "AND dim.RATE_TYPE = 'AVG'"
+            ),
             ['DIM_CURRENCY', 'CURRENCY_FROM', 'CODE_PERIOD_VALUE', 'RATE_TYPE'],
         ),
         # All-lowercase on-clause returns empty list (triggers full-string fallback).

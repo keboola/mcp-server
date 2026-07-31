@@ -2,8 +2,9 @@ import logging
 import os
 import subprocess
 import uuid
+from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
-from typing import Any, AsyncGenerator, Mapping, cast
+from typing import Any, cast
 
 import pytest
 import pytest_asyncio
@@ -363,6 +364,7 @@ async def test_python_js_data_app_prod_and_draft_lifecycle(
                 cwd=repo_dir,
                 capture_output=True,
                 text=True,
+                check=False,
             ).returncode
             == 0
         )

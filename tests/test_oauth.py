@@ -1,5 +1,6 @@
 import time
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import pytest
 from mcp.server.auth.provider import AccessToken, RefreshToken

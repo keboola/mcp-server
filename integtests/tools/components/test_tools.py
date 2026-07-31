@@ -1,5 +1,6 @@
 import logging
-from typing import Any, AsyncGenerator, cast
+from collections.abc import AsyncGenerator
+from typing import Any, cast
 
 import pytest
 import pytest_asyncio
@@ -497,9 +498,7 @@ async def test_add_config_row(
         metadata_dict = {item['key']: item['value'] for item in metadata if isinstance(item, dict)}
         # The updated metadata should be present since we added a row to the configuration
         updated_by_md_keys = [
-            key
-            for key in metadata_dict.keys()
-            if isinstance(key, str) and key.startswith(MetadataField.UPDATED_BY_MCP_PREFIX)
+            key for key in metadata_dict if isinstance(key, str) and key.startswith(MetadataField.UPDATED_BY_MCP_PREFIX)
         ]
         assert len(updated_by_md_keys) > 0
 

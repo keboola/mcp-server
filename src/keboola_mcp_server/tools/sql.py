@@ -2,8 +2,9 @@ import asyncio
 import contextlib
 import csv
 import logging
+from collections.abc import Awaitable
 from io import StringIO
-from typing import Annotated, Awaitable
+from typing import Annotated
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool

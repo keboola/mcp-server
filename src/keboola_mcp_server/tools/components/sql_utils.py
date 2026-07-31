@@ -10,7 +10,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Iterable
+from collections.abc import Iterable
 
 import sqlglot
 
@@ -141,7 +141,7 @@ async def split_sql_statements(script: str, timeout_seconds: float = 1.0) -> lis
     except Exception as e:
         if isinstance(e, ValueError):
             raise
-        LOG.exception(f'Failed to split SQL statements: {e}')
+        LOG.exception('Failed to split SQL statements')
         raise ValueError(f'Failed to parse SQL script: {e}')
 
 

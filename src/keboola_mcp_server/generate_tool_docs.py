@@ -4,8 +4,8 @@ import logging
 import re
 import sys
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
 from operator import attrgetter
-from typing import Iterable, Mapping, Optional
 
 from fastmcp import FastMCP
 from fastmcp.tools import Tool
@@ -103,7 +103,7 @@ class ToolDocumentationGenerator:
                 LOG.warning(f'Category {category} has no tools')
         f.write('\n---\n')
 
-    def _get_annotations(self, annotations: Optional[ToolAnnotations]) -> str:
+    def _get_annotations(self, annotations: ToolAnnotations | None) -> str:
         if annotations is None:
             return ''
         str_annotations = []
@@ -118,7 +118,7 @@ class ToolDocumentationGenerator:
     def _get_tags(self, tags: set[str]) -> str:
         return f'`{", ".join(sorted(tags))}`' if tags else ''
 
-    def _get_first_sentence(self, text: Optional[str]) -> str:
+    def _get_first_sentence(self, text: str | None) -> str:
         """Extracts the first sentence from the given text."""
         if not text:
             return 'No description available.'
@@ -196,8 +196,8 @@ async def generate_docs() -> None:
         ]
         doc_gen = ToolDocumentationGenerator(tools, categories)
         doc_gen.generate()
-    except Exception as e:
-        LOG.exception(f'Failed to generate documentation: {e}')
+    except Exception:
+        LOG.exception('Failed to generate documentation')
         sys.exit(1)
 
 

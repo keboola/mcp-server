@@ -42,7 +42,7 @@ async def _wait_for_job_in_list(
     for attempt in range(max_retries):
         result = await get_jobs(
             ctx=mcp_context,
-            job_ids=tuple(),
+            job_ids=(),
             component_id=component_id,
             config_id=config_id,
             limit=10,

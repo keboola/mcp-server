@@ -1,5 +1,6 @@
 import json
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 from unittest.mock import AsyncMock, call
 
 import httpx

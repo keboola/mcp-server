@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -14,7 +14,7 @@ def mock_project_id() -> str:
 
 
 @pytest.fixture
-def mock_raw_flow_config() -> Dict[str, Any]:
+def mock_raw_flow_config() -> dict[str, Any]:
     """Mock raw flow configuration as returned by Keboola API."""
     return {
         'id': '21703284',
@@ -54,7 +54,7 @@ def mock_raw_flow_config() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def mock_empty_flow_config() -> Dict[str, Any]:
+def mock_empty_flow_config() -> dict[str, Any]:
     """Mock empty flow configuration."""
     return {
         'id': '21703285',
@@ -71,7 +71,7 @@ def mock_empty_flow_config() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def sample_phases() -> List[Dict[str, Any]]:
+def sample_phases() -> list[dict[str, Any]]:
     """Sample phase definitions for testing."""
     return [
         {'name': 'Data Extraction', 'dependsOn': [], 'description': 'Extract data'},
@@ -81,7 +81,7 @@ def sample_phases() -> List[Dict[str, Any]]:
 
 
 @pytest.fixture
-def sample_tasks() -> List[Dict[str, Any]]:
+def sample_tasks() -> list[dict[str, Any]]:
     """Sample task definitions for testing."""
     return [
         {'name': 'Extract from S3', 'phase': 1, 'task': {'componentId': 'keboola.ex-aws-s3', 'configId': '12345'}},

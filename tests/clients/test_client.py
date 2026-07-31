@@ -1,6 +1,7 @@
 import importlib.metadata
 import json
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import httpx
