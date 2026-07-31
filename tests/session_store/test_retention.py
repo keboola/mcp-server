@@ -131,6 +131,29 @@ class TestEnsurePartitions:
         finally:
             await pool.close()
 
+    async def test_created_partition_rejects_duplicate_access_token_hash(self) -> None:
+        # Regression test: the parent's composite index doesn't reject a duplicate hash (created_at
+        # differs per row) -- the plain index ensure_partitions() adds on the partition itself must.
+        pool = await asyncpg.create_pool(TEST_DSN)
+        try:
+            for name in await self._existing_partitions(pool):
+                await pool.execute(f'DROP TABLE {name}')
+
+            result = await ensure_partitions(pool)
+            this_month_partition = f'oauth_sessions_{_month_start(date.today()):%Y_%m}'
+            assert this_month_partition in result['created']
+
+            insert = (
+                f'INSERT INTO {this_month_partition} '
+                '(access_token_hash, client_id, kbc_access_token_enc, kbc_refresh_token_enc, kbc_access_expires_at) '
+                "VALUES ($1, 'client', $2, $3, now())"
+            )
+            await pool.execute(insert, b'dup-hash', b'enc-access', b'enc-refresh')
+            with pytest.raises(asyncpg.UniqueViolationError):
+                await pool.execute(insert, b'dup-hash', b'enc-access', b'enc-refresh')
+        finally:
+            await pool.close()
+
     async def test_creates_missing_current_and_next_month(self) -> None:
         pool = await asyncpg.create_pool(TEST_DSN)
         try:

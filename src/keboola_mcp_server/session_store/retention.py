@@ -62,16 +62,11 @@ async def ensure_partitions(
             name = _partition_name(start)
             exists = await conn.fetchval('SELECT to_regclass($1) IS NOT NULL', name)
             if not exists:
-                # DDL bounds can't be bound query parameters -- start/end are computed dates, not
-                # user input, so direct formatting here carries no injection risk.
+                # DDL bounds can't be bound query parameters -- start/end are computed, not user
+                # input, so direct formatting is safe.
                 #
-                # Can't just `CREATE TABLE {name} PARTITION OF oauth_sessions FOR VALUES FROM ... TO
-                # ...`: oauth_sessions_default may already hold rows in that range (e.g. the
-                # one-time backlog migration 0002 copies over, or a period where partition
-                # maintenance lagged), and Postgres refuses to attach a new range partition while
-                # the default partition has matching rows. So build the partition as a standalone
-                # table, move any matching default rows into it first, then attach it -- this works
-                # whether or not default has conflicting rows.
+                # Postgres refuses to attach a new partition while default holds matching rows
+                # (e.g. migration 0002's backlog copy), so move any such rows in first.
                 async with conn.transaction():
                     await conn.execute(f'CREATE TABLE {name} (LIKE oauth_sessions INCLUDING ALL)')
                     await conn.execute(
@@ -84,6 +79,16 @@ async def ensure_partitions(
                     await conn.execute(
                         f'ALTER TABLE oauth_sessions ATTACH PARTITION {name} '
                         f"FOR VALUES FROM ('{start.isoformat()}') TO ('{end.isoformat()}')"
+                    )
+                    # The copied (access_token_hash, created_at) index doesn't actually enforce hash
+                    # uniqueness (created_at differs per row) -- a plain index on the partition
+                    # table itself, without the partition key, does.
+                    await conn.execute(
+                        f'CREATE UNIQUE INDEX {name}_access_token_hash_uidx ON {name} (access_token_hash)'
+                    )
+                    await conn.execute(
+                        f'CREATE UNIQUE INDEX {name}_refresh_token_hash_uidx ON {name} (refresh_token_hash) '
+                        f'WHERE refresh_token_hash IS NOT NULL'
                     )
                 LOG.info(f'Created oauth_sessions partition: {name} [{start}, {end})')
                 created.append(name)
