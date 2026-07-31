@@ -48,8 +48,8 @@ def is_programmatic_token(token: str | None) -> bool:
     return bare.startswith(_ACCESS_TOKEN_PREFIX) or bare.startswith(_PAT_PREFIX)
 
 
-class _AuthBridgeExchangeError(RuntimeError):
-    """Base for auth-bridge exchange failures.
+class OAuthTokenExchangeError(RuntimeError):
+    """Raised when the auth-bridge fails to exchange a league OAuth token for a programmatic session.
 
     :ivar status_code: The client-facing HTTP status (resolver 400/401/403 pass through;
         5xx/timeout/network map to 502).
@@ -63,8 +63,9 @@ class _AuthBridgeExchangeError(RuntimeError):
         return self.args[0]
 
 
-class _AuthBridgeClient:
-    """Shared setup for auth-bridge clients: base URL, SA-token path, timeout, transport."""
+class OAuthSessionExchanger:
+    """Exchanges a league OAuth access token (``claudai projectless`` scope) for a whole-stack
+    Keboola programmatic session (PSGO-261 oauth_session_exchange RFC)."""
 
     def __init__(
         self,
@@ -88,15 +89,6 @@ class _AuthBridgeClient:
     def _read_sa_jwt(self) -> str:
         # Read per call — the kubelet rotates the projected token in place.
         return read_service_account_jwt(self._kubernetes_token_path)
-
-
-class OAuthTokenExchangeError(_AuthBridgeExchangeError):
-    """Raised when the auth-bridge fails to exchange a league OAuth token for a programmatic session."""
-
-
-class OAuthSessionExchanger(_AuthBridgeClient):
-    """Exchanges a league OAuth access token (``claudai projectless`` scope) for a whole-stack
-    Keboola programmatic session (PSGO-261 oauth_session_exchange RFC)."""
 
     async def exchange(self, *, oauth_access_token: str) -> dict:
         """

@@ -18,13 +18,8 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport, get_env_storage_api_url
 from keboola_mcp_server.errors import ValidationErrorMiddleware
-from keboola_mcp_server.mcp import (
-    KeboolaMcpServer,
-    MultiProjectMiddleware,
-    ServerState,
-    SessionStateMiddleware,
-    ToolsFilteringMiddleware,
-)
+from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
+from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts

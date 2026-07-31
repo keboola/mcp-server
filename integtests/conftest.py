@@ -19,6 +19,8 @@ from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
 from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
+import keboola_mcp_server.mcp
+import keboola_mcp_server.multiproject
 from integtests.project_lock import (
     DEFAULT_MAX_WAIT_MINUTES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -28,8 +30,8 @@ from integtests.project_lock import (
     verify_project_endpoint,
 )
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
+from keboola_mcp_server.config import Config, ServerRuntimeInfo, build_tracing_headers
+from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -123,17 +125,20 @@ def _patch_fastmcp_client_default_info(mocker) -> None:
 @pytest.fixture(scope='session', autouse=True)
 def _patch_session_middleware_user_agent() -> Generator[None, None, None]:
     # Force a distinct User-Agent for outbound Keboola API requests during integration tests.
+    # build_tracing_headers is imported by name into both mcp.py (SessionStateMiddleware) and
+    # multiproject.py (MultiProjectMiddleware), so both call sites need patching -- patching only
+    # keboola_mcp_server.config.build_tracing_headers wouldn't affect either already-imported name.
     monkeypatch = pytest.MonkeyPatch()
-    original_get_headers = SessionStateMiddleware._get_headers.__func__
 
-    def _get_headers_with_integtest_ua(
-        cls: type[SessionStateMiddleware], runtime_info: ServerRuntimeInfo
-    ) -> dict[str, Any]:
-        headers = original_get_headers(cls, runtime_info)
+    def _build_tracing_headers_with_integtest_ua(runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
+        headers = build_tracing_headers(runtime_info)
         headers['User-Agent'] = INTEGTEST_USER_AGENT
         return headers
 
-    monkeypatch.setattr(SessionStateMiddleware, '_get_headers', classmethod(_get_headers_with_integtest_ua))
+    monkeypatch.setattr(keboola_mcp_server.mcp, 'build_tracing_headers', _build_tracing_headers_with_integtest_ua)
+    monkeypatch.setattr(
+        keboola_mcp_server.multiproject, 'build_tracing_headers', _build_tracing_headers_with_integtest_ua
+    )
     try:
         yield
     finally:

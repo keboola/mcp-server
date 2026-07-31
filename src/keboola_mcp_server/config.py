@@ -263,6 +263,24 @@ class ServerRuntimeInfo:
     """The version of the FastMCP library."""
 
 
+def build_tracing_headers(runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
+    """Additional headers for requests made to Connection/downstream services, identifying this
+    MCP server for tracing. Depends only on ServerRuntimeInfo, so it lives here rather than in
+    mcp.py -- shared by SessionStateMiddleware and MultiProjectMiddleware's per-project client
+    construction, which live in separate modules."""
+    return {
+        'User-Agent': (
+            f'Keboola MCP Server/{runtime_info.server_version} app_env={runtime_info.app_env} '
+            f'transport={runtime_info.transport}'
+        ),
+        'MCP-Server-Transport': runtime_info.transport or 'NA',
+        'MCP-Server-Versions': (
+            f'keboola-mcp-server/{runtime_info.server_version} mcp/{runtime_info.mcp_library_version} '
+            f'fastmcp/{runtime_info.fastmcp_library_version}'
+        ),
+    }
+
+
 class MetadataField:
     """
     Predefined names of Keboola metadata fields.

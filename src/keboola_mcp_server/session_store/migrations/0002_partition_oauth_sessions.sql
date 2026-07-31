@@ -53,28 +53,13 @@ CREATE UNIQUE INDEX oauth_sessions_refresh_token_hash_idx ON oauth_sessions (ref
     WHERE refresh_token_hash IS NOT NULL;
 
 -- Catch-all for rows outside any explicit month partition -- notably the rows copied over from
--- oauth_sessions_pre_partition below, and a safety net if partition maintenance ever lags. Never
--- touched by session_store/retention.py's cleanup (only oauth_sessions_YYYY_MM names are).
+-- oauth_sessions_pre_partition below (this migration creates no month partitions itself; the
+-- `migrate` CLI command calls session_store.retention.ensure_partitions() right after applying
+-- migrations, which is also what the monthly gc-sessions job calls -- one Python-side mechanism
+-- for all partition creation instead of duplicating it here in SQL too). Also a safety net if
+-- partition maintenance ever lags. Never touched by ensure_partitions()'s cleanup (only
+-- oauth_sessions_YYYY_MM names are).
 CREATE TABLE oauth_sessions_default PARTITION OF oauth_sessions DEFAULT;
-
--- This month's and next month's partitions, so writes never fail for lack of one -- a
--- RANGE-partitioned INSERT with no matching partition raises immediately, it does not fall
--- through to a partition created moments later. session_store/retention.py takes over creating
--- further-ahead partitions (and dropping old ones) every month after this.
-DO $$
-DECLARE
-    this_month DATE := date_trunc('month', now());
-    next_month DATE := this_month + INTERVAL '1 month';
-BEGIN
-    EXECUTE format(
-        'CREATE TABLE oauth_sessions_%s PARTITION OF oauth_sessions FOR VALUES FROM (%L) TO (%L)',
-        to_char(this_month, 'YYYY_MM'), this_month, next_month
-    );
-    EXECUTE format(
-        'CREATE TABLE oauth_sessions_%s PARTITION OF oauth_sessions FOR VALUES FROM (%L) TO (%L)',
-        to_char(next_month, 'YYYY_MM'), next_month, next_month + INTERVAL '1 month'
-    );
-END $$;
 
 INSERT INTO oauth_sessions SELECT * FROM oauth_sessions_pre_partition;
 

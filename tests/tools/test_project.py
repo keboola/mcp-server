@@ -9,7 +9,8 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.mcp import OAUTH_SESSION_ID_KEY, SCOPE_KEY, ServerState, SessionScope, resolve_scope_secret
+from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.scope import OAUTH_SESSION_ID_KEY, SCOPE_KEY, SessionScope, resolve_scope_secret
 from keboola_mcp_server.tools.project import (
     ProjectInfo,
     _get_toolset_restrictions,

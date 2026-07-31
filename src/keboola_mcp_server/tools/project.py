@@ -16,16 +16,10 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import (
-    OAUTH_SESSION_ID_KEY,
-    SCOPE_KEY,
-    MultiProjectMiddleware,
-    ServerState,
-    SessionScope,
-    process_concurrently,
-    resolve_scope_secret,
-)
+from keboola_mcp_server.mcp import ServerState, process_concurrently
+from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
+from keboola_mcp_server.scope import OAUTH_SESSION_ID_KEY, SCOPE_KEY, SessionScope, resolve_scope_secret
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -557,17 +551,15 @@ async def set_project_scope(
             scoped_expires_at=minted.expires_at,
             confirmed=True,
         )
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code in (400, 401, 403):
+    except Exception as e:
+        if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (400, 401, 403):
             # Client error (bad project_ids, invalid/insufficient token): the input or auth is wrong,
             # not the exchange endpoint — surface it instead of silently downgrading to an unscoped
             # whole-stack token, which would mislead the caller about what was actually scoped.
             raise
-        LOG.warning('Scoped-token exchange failed; scoping with the whole-stack token instead.', exc_info=True)
-        scope = SessionScope(project_ids=ids, read_only=read_only, confirmed=True)
-    except Exception:
-        # Network/timeout/unavailable exchange endpoint: fall back so scoping still works, narrowed
-        # per request by X-KBC-ProjectId, without the extra token-scoping security narrowing.
+        # Any other failure (network/timeout/unavailable exchange endpoint, or a non-400/401/403
+        # HTTP status): fall back so scoping still works, narrowed per request by X-KBC-ProjectId,
+        # without the extra token-scoping security narrowing.
         LOG.warning('Scoped-token exchange failed; scoping with the whole-stack token instead.', exc_info=True)
         scope = SessionScope(project_ids=ids, read_only=read_only, confirmed=True)
     ctx.session.state[SCOPE_KEY] = scope

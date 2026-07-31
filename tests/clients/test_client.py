@@ -12,7 +12,7 @@ from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import ServerRuntimeInfo
-from keboola_mcp_server.mcp import SessionStateMiddleware
+from keboola_mcp_server.mcp import build_tracing_headers
 
 
 @pytest.fixture
@@ -345,7 +345,7 @@ class TestKeboolaClient:
 
     @pytest.fixture
     def keboola_client_with_headers(self, runtime_config: ServerRuntimeInfo) -> KeboolaClient:
-        headers = SessionStateMiddleware._get_headers(runtime_config)
+        headers = build_tracing_headers(runtime_config)
         return KeboolaClient(
             storage_api_url='https://connection.nowhere', storage_api_token='test-token', headers=headers
         )

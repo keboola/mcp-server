@@ -252,6 +252,7 @@ async def _run_migrate() -> None:
     import asyncpg
 
     from keboola_mcp_server.session_store.migrator import apply_migrations
+    from keboola_mcp_server.session_store.retention import ensure_partitions
 
     config = Config().replace_by(os.environ)
     if not config.postgres_dsn:
@@ -260,6 +261,10 @@ async def _run_migrate() -> None:
     pool = await asyncpg.create_pool(config.postgres_dsn)
     try:
         applied = await apply_migrations(pool)
+        # Bootstraps this month's + next month's oauth_sessions partition right after the schema
+        # exists, so the app never hits a RANGE-partitioned INSERT with no matching partition on
+        # first use -- the same call the monthly gc-sessions job makes on an ongoing basis.
+        partitions = await ensure_partitions(pool)
     finally:
         await pool.close()
 
@@ -267,6 +272,8 @@ async def _run_migrate() -> None:
         print(f"✓ Applied {len(applied)} migration(s): {', '.join(applied)}")
     else:
         print('✓ Schema already up to date -- no migrations applied.')
+    if partitions['created']:
+        print(f"✓ Ensured oauth_sessions partitions: {', '.join(partitions['created'])}")
 
 
 async def _run_gc_sessions() -> None:

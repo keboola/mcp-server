@@ -68,14 +68,13 @@ async def ensure_partitions(
                 LOG.info(f'Created oauth_sessions partition: {name} [{start}, {end})')
                 created.append(name)
 
-        rows = await conn.fetch(
-            "SELECT tablename FROM pg_tables WHERE tablename ~ '^oauth_sessions_[0-9]{4}_[0-9]{2}$'"
-        )
+        rows = await conn.fetch("SELECT tablename FROM pg_tables WHERE tablename LIKE 'oauth_sessions_%'")
         dropped: list[str] = []
         for row in rows:
             name = row['tablename']
             match = _PARTITION_NAME_RE.match(name)
-            assert match is not None  # guaranteed by the query's own regex filter
+            if match is None:
+                continue  # oauth_sessions_default / oauth_sessions_pre_partition -- not a month partition
             partition_month = date(int(match.group(1)), int(match.group(2)), 1)
             if partition_month < cutoff:
                 await conn.execute(f'DROP TABLE IF EXISTS {name}')
