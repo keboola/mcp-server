@@ -11,7 +11,6 @@ from mcp import types as mt
 from integtests.conftest import ConfigDef
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
-    ORCHESTRATOR_COMPONENT_ID,
     KeboolaClient,
 )
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -45,29 +44,37 @@ async def mcp_client(mcp_server: FastMCP) -> AsyncGenerator[Client, None]:
 
 
 @pytest_asyncio.fixture
-async def initial_lf(
+async def initial_cf2(
     mcp_client: Client, configs: list[ConfigDef], keboola_client: KeboolaClient
 ) -> AsyncGenerator[FlowToolOutput, None]:
-    # Create the initial component configuration test data
+    # A second, distinct conditional flow instance — used where tests need two independent flows
+    # (e.g. listing). Legacy Orchestrator (`keboola.orchestrator`) flow creation is disabled on the
+    # test project, so this is a Conditional Flow rather than a legacy one.
     tool_result = await mcp_client.call_tool(
-        name='create_flow',
+        name='create_conditional_flow',
         arguments={
-            'name': 'Initial Test Flow',
-            'description': 'Initial test flow created by automated test',
-            'phases': [{'name': 'Phase1', 'dependsOn': [], 'description': 'First phase'}],
+            'name': 'Initial Test Flow 2',
+            'description': 'Second initial test flow created by automated test',
+            'phases': [
+                {
+                    'id': 'phase1',
+                    'name': 'Phase1',
+                    'description': 'First phase',
+                    'next': [{'id': 'phase1_end', 'name': 'End Flow', 'goto': None}],
+                },
+            ],
             'tasks': [
                 {
-                    'id': 20001,
+                    'id': 'task1',
                     'name': 'Task1',
-                    'phase': 1,
-                    'continueOnFailure': False,
-                    'enabled': False,
+                    'phase': 'phase1',
                     'task': {
+                        'type': 'job',
                         'componentId': configs[0].component_id,
                         'configId': configs[0].configuration_id,
                         'mode': 'run',
                     },
-                }
+                },
             ],
         },
     )
@@ -76,7 +83,7 @@ async def initial_lf(
     finally:
         # Clean up: Delete the configuration
         await keboola_client.storage_client.configuration_delete(
-            component_id=ORCHESTRATOR_COMPONENT_ID,
+            component_id=CONDITIONAL_FLOW_COMPONENT_ID,
             configuration_id=tool_result.structured_content['configuration_id'],
             skip_trash=True,
         )
