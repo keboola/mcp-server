@@ -7,7 +7,7 @@ from httpx import HTTPStatusError, Request, Response
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
-from keboola_mcp_server.workspace import JobSubmittedInfo, WorkspaceManager, _SnowflakeWorkspace
+from keboola_mcp_server.workspace import JobSubmittedInfo, WorkspaceManager, _SnowflakeWorkspace, _WspInfo
 
 
 @pytest.mark.parametrize(
@@ -241,6 +241,37 @@ async def test_workspace_manager_create_is_branch_aware(
         input_client.has_feature.assert_not_called()
     else:
         input_client.has_feature.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_workspace_resolves_by_id_when_set():
+    """An explicit `workspace_id` (e.g. a Data App's own workspace) must be looked up by ID
+    and take precedence over `workspace_schema`, instead of falling back to the default
+    per-branch MCP-managed workspace."""
+    mock_client = Mock(spec=KeboolaClient)
+    manager = WorkspaceManager(mock_client, workspace_schema='SOME_SCHEMA', workspace_id='123')
+
+    ws_info = _WspInfo(id=123, schema='APP_SCHEMA', backend='snowflake', credentials=None, readonly=True)
+    manager._find_ws_by_id = AsyncMock(return_value=ws_info)  # type: ignore[method-assign]
+    manager._find_ws_by_schema = AsyncMock()  # type: ignore[method-assign]
+
+    workspace = await manager._get_workspace()
+
+    assert workspace.id == 123
+    manager._find_ws_by_id.assert_awaited_once_with('123')
+    manager._find_ws_by_schema.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_workspace_raises_when_id_not_found():
+    """A `workspace_id` that resolves to no workspace must fail loudly rather than silently
+    falling back to the default workspace — the caller asked for a specific workspace."""
+    mock_client = Mock(spec=KeboolaClient)
+    manager = WorkspaceManager(mock_client, workspace_id='999')
+    manager._find_ws_by_id = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match='workspace_id=999'):
+        await manager._get_workspace()
 
 
 def _make_snowflake_workspace_with_mocked_qs(job_id: str = 'job-abc-123') -> tuple[_SnowflakeWorkspace, AsyncMock]:
