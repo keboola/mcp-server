@@ -1314,7 +1314,7 @@ async def test_update_sql_transformation_wrong_component_type(
 ) -> None:
     """
     update_sql_transformation should raise ToolError with actionable guidance when the
-    configuration belongs to a Python/R transformation (Storage returns 404 for the SQL
+    configuration belongs to a Python/R/DuckDB transformation (Storage returns 404 for the SQL
     component + config-ID combination).
     """
     context = mcp_context_components_configs
@@ -1342,6 +1342,8 @@ async def test_update_sql_transformation_wrong_component_type(
     assert 'keboola.snowflake-transformation' in error_msg
     assert 'update_config' in error_msg
     assert 'keboola.python-transformation-v2' in error_msg
+    assert 'keboola.r-transformation-v2' in error_msg
+    assert 'keboola.duckdb-transformation' in error_msg
 
 
 @pytest.mark.asyncio
@@ -1655,14 +1657,23 @@ async def test_update_config(
 
 
 @pytest.mark.parametrize(
-    ('folder', 'cfg_count', 'cfg_folders', 'expect_folder_metadata', 'expect_folder_delete', 'expect_hint'),
+    (
+        'component_id',
+        'folder',
+        'cfg_count',
+        'cfg_folders',
+        'expect_folder_metadata',
+        'expect_folder_delete',
+        'expect_hint',
+    ),
     [
-        ('Analytics', 0, [], True, False, False),
-        ('  Analytics  ', 0, [], True, False, False),
-        (None, 5, [], False, False, False),
-        (None, 25, ['Analytics'], False, False, True),
-        (None, 25, [], False, False, True),
-        ('', 5, [], False, True, False),
+        ('keboola.python-transformation-v2', 'Analytics', 0, [], True, False, False),
+        ('keboola.python-transformation-v2', '  Analytics  ', 0, [], True, False, False),
+        ('keboola.python-transformation-v2', None, 5, [], False, False, False),
+        ('keboola.python-transformation-v2', None, 25, ['Analytics'], False, False, True),
+        ('keboola.python-transformation-v2', None, 25, [], False, False, True),
+        ('keboola.python-transformation-v2', '', 5, [], False, True, False),
+        ('keboola.duckdb-transformation', 'Analytics', 0, [], True, False, False),
     ],
     ids=[
         'folder_provided',
@@ -1671,6 +1682,7 @@ async def test_update_config(
         'no_folder_many_with_folders',
         'no_folder_many_no_folders',
         'folder_empty_deletes',
+        'duckdb_folder_provided',
     ],
 )
 @pytest.mark.asyncio
@@ -1678,6 +1690,7 @@ async def test_update_config_folder(
     mocker: MockerFixture,
     mcp_context_components_configs: Context,
     mock_component: dict[str, Any],
+    component_id: str,
     folder: Any,
     cfg_count: int,
     cfg_folders: list[str],
@@ -1688,7 +1701,6 @@ async def test_update_config_folder(
     """Test folder metadata is set/cleared and folder hint is returned by update_config."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
-    component_id = 'keboola.python-transformation-v2'
     mock_component['id'] = component_id
     configuration_id = 'cfg-folder-test'
     existing = {
