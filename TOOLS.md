@@ -185,7 +185,9 @@ EXAMPLES:
 
 Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
 Not for SQL transformations (`keboola.snowflake-transformation` / `keboola.google-bigquery-transformation`),
-data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE).
+data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE). This IS the tool for
+Python (`keboola.python-transformation-v2`), R (`keboola.r-transformation-v2`) and DuckDB
+(`keboola.duckdb-transformation`) transformations.
 
 BEFORE CALLING - REQUIRED STEPS:
 1. Call `get_components([component_id])` to retrieve the component's `configuration_schema`.
@@ -350,6 +352,8 @@ USAGE:
 - This is THE tool for creating `keboola.snowflake-transformation` and `keboola.google-bigquery-transformation`
   components (do NOT use `create_config` for these); the transformation ID is derived automatically from the
   workspace SQL dialect.
+- Snowflake/BigQuery only. For Python, R, or DuckDB transformations, use `create_config` with the appropriate
+  `component_id` instead — this tool cannot create them.
 
 EXAMPLES:
 - user_input: `Can you create a new transformation out of this sql query?`
@@ -1276,7 +1280,7 @@ the operations you want to perform. All other fields will remain unchanged.
 Use this for modifying SQL transformations created with create_sql_transformation.
 
 WHEN TO USE:
-- SQL transformations only (Snowflake/BigQuery); use update_config for Python/R transformations
+- SQL transformations only (Snowflake/BigQuery); use update_config for Python/R/DuckDB transformations
 - Modifying SQL queries in transformation (add/edit/remove SQL statements)
 - Updating transformation block or code block names
 - Changing input/output table mappings for the transformation
