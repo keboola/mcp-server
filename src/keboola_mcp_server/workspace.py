@@ -578,6 +578,7 @@ class WorkspaceManager:
         client: KeboolaClient,
         workspace_schema: str | None = None,
         kubernetes_token_path: str | None = None,
+        workspace_id: str | int | None = None,
     ) -> 'WorkspaceManager':
         # On projects with the `storage-branches` feature, each dev branch needs its own
         # workspace so the agent's queries (FQN paths, `query_data`) see that branch's
@@ -588,15 +589,18 @@ class WorkspaceManager:
         # `has_storage_branches` already requires `branch_id is not None`, so the default
         # branch always takes the prod-client path.
         if await has_storage_branches(client):
-            return cls(client, workspace_schema, kubernetes_token_path=kubernetes_token_path)
+            return cls(client, workspace_schema, kubernetes_token_path=kubernetes_token_path, workspace_id=workspace_id)
         prod_client = await client.with_branch_id(None)
-        return cls(prod_client, workspace_schema, kubernetes_token_path=kubernetes_token_path)
+        return cls(
+            prod_client, workspace_schema, kubernetes_token_path=kubernetes_token_path, workspace_id=workspace_id
+        )
 
     def __init__(
         self,
         client: KeboolaClient,
         workspace_schema: str | None = None,
         kubernetes_token_path: str | None = None,
+        workspace_id: str | int | None = None,
     ):
         """
         Initializes the WorkspaceManager.
@@ -611,9 +615,12 @@ class WorkspaceManager:
             JWT as the X-Kubernetes-Authorization step-up header alongside the user's
             own token, so Connection can waive permissions the user's token lacks
             (e.g. read-only users).
+        :param workspace_id: The ID of the workspace to use (e.g. a Data App's own workspace).
+            Takes precedence over `workspace_schema` when both are set.
         """
         self._client = client
         self._workspace_schema = workspace_schema
+        self._workspace_id = workspace_id
         self._kubernetes_token_path = kubernetes_token_path
         self._provisioning_client: AsyncStorageClient | None = None
         self._workspace: _Workspace | None = None
@@ -819,6 +826,17 @@ class WorkspaceManager:
     async def _get_workspace(self) -> _Workspace:
         if self._workspace:
             return self._workspace
+
+        if self._workspace_id:
+            # use the workspace that was explicitly requested (e.g. a Data App's own workspace)
+            # this workspace must never be written to the default branch metadata
+            LOG.info(f'Looking up workspace by id: {self._workspace_id}')
+            if info := await self._find_ws_by_id(self._workspace_id):
+                LOG.info(f'Found workspace: {info}')
+                self._workspace = self._init_workspace(info)
+                return self._workspace
+            else:
+                raise ValueError(f'No Keboola workspace found: workspace_id={self._workspace_id}')
 
         if self._workspace_schema:
             # use the workspace that was explicitly requested

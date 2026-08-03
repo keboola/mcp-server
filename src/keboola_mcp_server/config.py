@@ -27,6 +27,10 @@ class Config:
     """The branch ID to access the storage API using the MCP tools."""
     workspace_schema: str | None = None
     """Workspace schema to access the buckets, tables and execute sql queries."""
+    workspace_id: str | None = None
+    """Workspace ID to access the buckets, tables and execute sql queries (e.g. a Data App's own
+    workspace, supplied per-request via the 'X-Workspace-Id' header). Takes precedence over
+    `workspace_schema` when both are set."""
     oauth_client_id: str | None = None
     """OAuth client ID registered in the Keboola OAuth Server."""
     oauth_client_secret: str | None = None
