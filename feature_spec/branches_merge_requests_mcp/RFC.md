@@ -100,7 +100,7 @@ state-machine and partial-failure semantics make batching writes a poor fit.
 | Tool | Annotation | Behavior |
 |---|---|---|
 | `get_merge_requests` | `readOnlyHint` | Per the read-tool convention above. **No `merge_request_ids`** → list all MRs (summaries; optional `state` filter). **With IDs** → full detail per MR (metadata, reviewers + status, plain-language changelog summary, activity-log timeline via `?include=activityLog`, and conflicts via `/conflicts`), fetched **concurrently** in one call. Branch/user IDs resolved to names. |
-| `create_merge_request` | (write) | Create an MR. `branch_from` defaults to the current session branch, `branch_into` to the default branch. `title` required; `description`, `reviewer_ids`, `auto_merge` optional. |
+| `create_merge_request` | (write) | Create an MR for the **current session branch**. Signature: `title` (required), `description?`, `reviewer_ids?`, `auto_merge?` — **no branch parameters**. Source = the session branch; target = the default branch. Both are resolved internally (see below); the tool errors if the session is on the default/production branch. |
 | `request_merge_request_review` | (write) | `development → in_review` (→ `approved` when 0 approvals required). |
 | `merge_merge_request` | `destructiveHint` | Trigger merge **and await the returned Job** (reusing existing job-polling infra); return final MR state + changelog summary. |
 | `publish_branch` | `destructiveHint` | **Orchestrator** — see below. |
@@ -168,6 +168,14 @@ Lean Pydantic models, human-first:
    (`src/keboola_mcp_server/tools/project.py:46`) to get the current branch id/name and the
    default branch id (from `branches_list`, `isDefault=True`) — the same helper
    `get_project_info` uses. Factor it into a shared location if needed.
+   `create_merge_request` therefore takes **no branch parameters**: `branchFromId` = the
+   current session branch, `branchIntoId` = the resolved default branch. This is not just a
+   convenience — the backend forces the target to be the default branch
+   (`MergeRequestCreateProcessor.php:53-54`, `InvalidBranchException::createTargetBranchNotDefault`),
+   and the single-branch session model means the source can only be the branch the session
+   is on. The tool returns a clear error when the session is on the default/production branch
+   (nothing to merge). If cross-branch MRs are ever needed, they arrive with mid-session
+   branch switching (Tier C, out of scope) — the tool signatures will be revisited then.
 3. **Async merge**: the merge endpoint returns a Job; reuse the existing job utilities in
    `src/keboola_mcp_server/tools/jobs.py` to poll to completion inside `merge_merge_request`
    and `publish_branch` rather than reimplementing polling.
