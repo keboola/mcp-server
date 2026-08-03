@@ -87,17 +87,24 @@ All tools live in a new module `src/keboola_mcp_server/tools/merge_requests.py`,
 `src/keboola_mcp_server/server.py`. All are gated behind the `branches-merge-requests`
 project feature (below); write/approve/merge tools are additionally role-gated.
 
+**Read-tool convention (mirrors `get_configs`, `tools/components/tools.py:205`):** every read
+tool takes an optional list of IDs — empty → list **all** as summaries; one ID → one detail;
+many IDs → many details, **batched concurrently in a single tool call** (via
+`process_concurrently` / `unwrap_results`). Lower-priority filters (e.g. `state`) are ignored
+when IDs are supplied, exactly as `component_types` is ignored when `configs` is passed to
+`get_configs`. Action tools stay **single-target** (one MR per call) — their distinct
+state-machine and partial-failure semantics make batching writes a poor fit.
+
 **Tier A — MVP (end-to-end happy path):**
 
 | Tool | Annotation | Behavior |
 |---|---|---|
-| `get_merge_requests` | `readOnlyHint` | List MRs; optional `state` filter. Branch/user IDs resolved to names. |
-| `get_merge_request` | `readOnlyHint` | Detail for one MR: metadata, reviewers + status, plain-language changelog summary, activity-log timeline, and conflicts — fetched in one call (`?include=activityLog` + `/conflicts`). |
+| `get_merge_requests` | `readOnlyHint` | Per the read-tool convention above. **No `merge_request_ids`** → list all MRs (summaries; optional `state` filter). **With IDs** → full detail per MR (metadata, reviewers + status, plain-language changelog summary, activity-log timeline via `?include=activityLog`, and conflicts via `/conflicts`), fetched **concurrently** in one call. Branch/user IDs resolved to names. |
 | `create_merge_request` | (write) | Create an MR. `branch_from` defaults to the current session branch, `branch_into` to the default branch. `title` required; `description`, `reviewer_ids`, `auto_merge` optional. |
 | `request_merge_request_review` | (write) | `development → in_review` (→ `approved` when 0 approvals required). |
 | `merge_merge_request` | `destructiveHint` | Trigger merge **and await the returned Job** (reusing existing job-polling infra); return final MR state + changelog summary. |
 | `publish_branch` | `destructiveHint` | **Orchestrator** — see below. |
-| `get_branches` | `readOnlyHint` | List the project's branches (id, name, isDefault, created). Read-only context so the agent/user can see what exists. |
+| `get_branches` | `readOnlyHint` | Same convention. **No `branch_ids`** → list all branches (id, name, isDefault, created); **with IDs** → branch detail(s) (`dev_branch_detail`) fetched concurrently. Read-only context so the agent/user can see what exists. |
 
 **Tier B — full UI parity (fast follow, same PR or immediate next):**
 
@@ -142,6 +149,10 @@ Lean Pydantic models, human-first:
 - `MergeRequestDetail` extends it with `changelog_summary` (counts + short per-item list),
   `activity_log` (typed events), and `conflicts`.
 - `MergeResult`: `merge_request_id`, `state`, `job_id`, `changelog_summary`, `next_step`.
+- `get_merge_requests` returns a **union**: `MergeRequestsListOutput` (list of `MergeRequest`
+  summaries + links) or `MergeRequestsDetailOutput` (list of `MergeRequestDetail`), mirroring
+  `GetConfigsListOutput` / `GetConfigsDetailOutput`. `get_branches` uses the same
+  list-vs-detail union shape.
 
 ## Resolution Strategy
 
