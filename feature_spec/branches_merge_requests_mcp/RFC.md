@@ -104,7 +104,6 @@ state-machine and partial-failure semantics make batching writes a poor fit.
 | `request_merge_request_review` | (write) | `development → in_review` (→ `approved` when 0 approvals required). |
 | `merge_merge_request` | `destructiveHint` | Trigger merge **and await the returned Job** (reusing existing job-polling infra); return final MR state + changelog summary. |
 | `publish_branch` | `destructiveHint` | **Orchestrator** — see below. |
-| `get_branches` | `readOnlyHint` | Same convention. **No `branch_ids`** → list all branches (id, name, isDefault, created); **with IDs** → branch detail(s) (`dev_branch_detail`) fetched concurrently. Read-only context so the agent/user can see what exists. |
 
 **Tier B — full UI parity (fast follow, same PR or immediate next):**
 
@@ -151,8 +150,7 @@ Lean Pydantic models, human-first:
 - `MergeResult`: `merge_request_id`, `state`, `job_id`, `changelog_summary`, `next_step`.
 - `get_merge_requests` returns a **union**: `MergeRequestsListOutput` (list of `MergeRequest`
   summaries + links) or `MergeRequestsDetailOutput` (list of `MergeRequestDetail`), mirroring
-  `GetConfigsListOutput` / `GetConfigsDetailOutput`. `get_branches` uses the same
-  list-vs-detail union shape.
+  `GetConfigsListOutput` / `GetConfigsDetailOutput`.
 
 ## Resolution Strategy
 
@@ -199,15 +197,17 @@ Lean Pydantic models, human-first:
 - *No branch create/switch.* Creating or switching branches mid-session would require
   mutating session state and reprovisioning the SQL workspace (branch-bound at session
   creation, `mcp.py:267-311`). That is a separate architecture decision and is out of
-  scope; `get_branches` is read-only context only.
+  scope. A read-only `get_branches` tool is deferred to that work (Tier C) — until branches
+  can be created/switched, a branch list feeds no workflow, and `get_project_info` already
+  surfaces the current branch.
 
 ## Scope
 
 **In scope:**
 
-- New module `tools/merge_requests.py` with Tier A + Tier B tools listed above, plus
-  read-only `get_branches`.
-- Storage-client wrappers for the nine MR endpoints (+ branches list already exists).
+- New module `tools/merge_requests.py` with the Tier A + Tier B tools listed above.
+- Storage-client wrappers for the nine MR endpoints (`branches_list` already exists and is
+  reused internally for branch resolution).
 - Feature gating (`branches-merge-requests`) and role gating for write/merge tools.
 - Changelog humanization helper and lean response models.
 - `TOOLS.md` regeneration, a minor version bump (from current `main` — `1.74.3 → 1.75.0`
@@ -218,7 +218,9 @@ Lean Pydantic models, human-first:
 - SOX flow (`protected-default-branch`: mandatory reviewers, production managers, required
   approvals ≥ 2). The tools must not misbehave there, but full SOX UX is a separate RFC.
 - Creating, switching, or deleting branches; any mid-session branch context change or SQL
-  workspace reprovisioning.
+  workspace reprovisioning. A read-only `get_branches` tool (list branches / batch detail,
+  same `get_configs` convention) is deferred to this Tier C work, where it first gains a
+  concrete use.
 - Auto-merge scheduling UX beyond passing `autoMergeStrategy`/`autoMergeAt` through
   create/update.
 - CLI and kbagent-specific wiring (tracked under the sibling milestones).
