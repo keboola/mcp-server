@@ -31,7 +31,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeInfo
+from keboola_mcp_server.config import Config, ServerRuntimeInfo, is_same_stack
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, SEMANTIC_TOOLS_TAG, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -246,8 +246,31 @@ class SessionStateMiddleware(fmw.Middleware):
 
     @classmethod
     def apply_request_config(cls, http_rq: Request, config: Config) -> Config:
+        """
+        Builds the configuration for a single HTTP request by applying the request's headers
+        on top of the server's own configuration.
+
+        The Storage API URL is treated specially: it selects the Keboola stack that the server
+        talks to on the caller's behalf, using the caller's credentials and, on the deployed
+        server, the server's own ServiceAccount identity. When the server is configured with a
+        stack of its own, a request asking for a different stack is not honoured — the server's
+        own Storage API URL is kept. The check is an exact host match against that single known
+        URL (see `is_same_stack()`); no prefix or pattern matching is used.
+
+        :param http_rq: The incoming HTTP request whose headers are applied.
+        :param config: The server's own configuration (from CLI parameters and environment).
+        :return: The configuration to use for this request.
+        """
         LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
+        server_storage_api_url = config.storage_api_url
         config = config.replace_by(http_rq.headers)
+
+        if server_storage_api_url and not is_same_stack(config.storage_api_url, server_storage_api_url):
+            LOG.warning(
+                f'Ignoring the requested Storage API URL "{config.storage_api_url}"; '
+                f'this server only serves "{server_storage_api_url}".'
+            )
+            config = dataclasses.replace(config, storage_api_url=server_storage_api_url)
 
         if user := http_rq.scope.get('user'):
             LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
@@ -305,7 +328,9 @@ class SessionStateMiddleware(fmw.Middleware):
             # The Kubernetes ServiceAccount token path is read from the process environment
             # only (KBC_KUBERNETES_TOKEN_PATH), never from `Config`/HTTP headers — it is a
             # deployment-level credential of the MCP server itself and must not be
-            # overridable per request.
+            # overridable per request. An unforgeable path is not enough on its own, because the
+            # destination can come from a header — `KeboolaClient.step_up_storage_client()`
+            # therefore attaches the JWT only when the target is this server's own stack.
             kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
             workspace_manager = await WorkspaceManager.create(
                 client, config.workspace_schema, kubernetes_token_path=kubernetes_token_path

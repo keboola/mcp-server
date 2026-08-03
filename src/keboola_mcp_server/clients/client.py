@@ -15,6 +15,7 @@ from keboola_mcp_server.clients.metastore import MetastoreClient
 from keboola_mcp_server.clients.scheduler import SchedulerClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient, JsonDict
 from keboola_mcp_server.clients.sync_actions import SyncActionsClient
+from keboola_mcp_server.config import get_deployment_storage_api_url, is_same_stack
 
 LOG = logging.getLogger(__name__)
 
@@ -278,11 +279,28 @@ class KeboolaClient:
         user's token stays the audited principal. The read-only write guard of the user's
         Storage client is preserved; the header only widens server-side permissions.
 
+        The ServiceAccount JWT is a credential of the MCP server deployment itself, so it is
+        only ever sent to the Keboola stack that this server is deployed on. The Storage API URL
+        of a session can come from a per-request HTTP header, therefore it is checked against the
+        stack derived from the process environment (see `get_deployment_storage_api_url()`) before
+        the header is attached. When the two differ — or when the server has no stack of its own,
+        as on a locally run server — the step-up is skipped and this client's plain Storage client
+        is returned, so the JWT is never sent anywhere else.
+
         The token file is read on each call so kubelet rotation needs no restart.
 
         :param kubernetes_token_path: Path to the projected ServiceAccount token file.
         :raises ValueError: If the token file is empty.
         """
+        deployment_storage_api_url = get_deployment_storage_api_url()
+        if not is_same_stack(self._storage_api_url, deployment_storage_api_url):
+            LOG.warning(
+                f'Not sending the Kubernetes ServiceAccount step-up header to "{self._storage_api_url}": '
+                f"it is not the Storage API URL of this server's own stack "
+                f'({deployment_storage_api_url or "not configured"}).'
+            )
+            return self._storage_client
+
         jwt = Path(kubernetes_token_path).read_text().strip()
         if not jwt:
             raise ValueError(f'Kubernetes ServiceAccount token file is empty: {kubernetes_token_path}')

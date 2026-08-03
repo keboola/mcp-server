@@ -764,6 +764,14 @@ def test_get_metadata_property(
 class TestStepUpStorageClient:
     """KeboolaClient.step_up_storage_client builds the Kubernetes step-up Storage client."""
 
+    OWN_STACK_URL = 'https://connection.keboola.com'
+
+    @pytest.fixture(autouse=True)
+    def _deployed_on_own_stack(self, monkeypatch):
+        """Pretends the server runs on the 'connection.keboola.com' stack, as a deployed server does."""
+        monkeypatch.setenv('KBC_STORAGE_API_URL', self.OWN_STACK_URL)
+        monkeypatch.delenv('HOSTNAME_SUFFIX', raising=False)
+
     def test_attaches_step_up_header_and_keeps_user_token(self, tmp_path):
         token_file = tmp_path / 'token'
         token_file.write_text('sa-jwt\n')
@@ -810,3 +818,47 @@ class TestStepUpStorageClient:
 
         with pytest.raises(FileNotFoundError):
             client.step_up_storage_client(str(tmp_path / 'missing'))
+
+    @pytest.mark.parametrize(
+        'storage_api_url',
+        [
+            # Another Keboola stack ...
+            'https://connection.north-europe.azure.keboola.com',
+            # ... and hosts that only look like this server's stack. All of them satisfy the
+            # 'connection.' prefix that the Storage API URL itself is required to have.
+            'https://connection.keboola.com.attacker.example',
+            'https://connection.attacker.example',
+        ],
+        ids=['other_stack', 'lookalike_suffix', 'foreign_domain'],
+    )
+    def test_no_step_up_header_for_foreign_stack(self, tmp_path, storage_api_url):
+        """The ServiceAccount JWT belongs to this server's stack and must not travel anywhere else."""
+        client = KeboolaClient(storage_api_url=storage_api_url, storage_api_token='user-token')
+
+        # The token file does not exist: the destination is checked before the JWT is read.
+        stepped = client.step_up_storage_client(str(tmp_path / 'token'))
+
+        assert 'X-Kubernetes-Authorization' not in (stepped.raw_client.headers or {})
+        assert stepped is client.storage_client
+
+    def test_no_step_up_header_when_server_has_no_own_stack(self, tmp_path, monkeypatch):
+        """A server with no stack of its own (locally run) has no stack to step up on."""
+        monkeypatch.delenv('KBC_STORAGE_API_URL', raising=False)
+        client = KeboolaClient(storage_api_url=self.OWN_STACK_URL, storage_api_token='user-token')
+
+        stepped = client.step_up_storage_client(str(tmp_path / 'token'))
+
+        assert 'X-Kubernetes-Authorization' not in (stepped.raw_client.headers or {})
+        assert stepped is client.storage_client
+
+    def test_attaches_step_up_header_with_hostname_suffix_only(self, tmp_path, monkeypatch):
+        """Deployed servers identify their stack by HOSTNAME_SUFFIX alone."""
+        monkeypatch.delenv('KBC_STORAGE_API_URL', raising=False)
+        monkeypatch.setenv('HOSTNAME_SUFFIX', 'keboola.com')
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt')
+        client = KeboolaClient(storage_api_url=self.OWN_STACK_URL, storage_api_token='user-token')
+
+        stepped = client.step_up_storage_client(str(token_file))
+
+        assert stepped.raw_client.headers['X-Kubernetes-Authorization'] == 'Bearer sa-jwt'

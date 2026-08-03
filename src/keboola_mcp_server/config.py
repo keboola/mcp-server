@@ -138,6 +138,56 @@ class Config:
         return f'Config({joined_params})'
 
 
+def get_deployment_storage_api_url(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """
+    Returns the Storage API URL of the Keboola stack that this server instance is deployed on.
+
+    The value is derived exclusively from the process environment ('KBC_STORAGE_API_URL', falling
+    back to 'HOSTNAME_SUFFIX') — the same sources that `create_server()` uses when starting the
+    server. HTTP headers and other per-request inputs can never influence it, which makes it usable
+    as the trusted answer to "which stack is mine?". The URL is normalized the same way as
+    `Config.storage_api_url`, so the two are directly comparable.
+
+    :param env: The environment mapping to read from; defaults to `os.environ`.
+    :return: The Storage API URL of this server's own stack, or None when the server is not
+        configured with a stack of its own (typically a locally run server).
+    """
+    env = os.environ if env is None else env
+    if storage_api_url := env.get('KBC_STORAGE_API_URL'):
+        return Config(storage_api_url=storage_api_url).storage_api_url
+    if hostname_suffix := env.get('HOSTNAME_SUFFIX'):
+        return f'https://connection.{hostname_suffix}'
+    return None
+
+
+def is_same_stack(url: Optional[str], other_url: Optional[str]) -> bool:
+    """
+    Tells whether two Keboola URLs point to the very same host.
+
+    The comparison is an exact host (and port) match. No prefix, suffix or pattern matching is
+    involved, so hosts that merely look alike (e.g. 'connection.keboola.com.example.com' or
+    'connection.example.com') never compare equal. URLs carrying user info are never considered
+    equal to anything, and a missing or unparsable URL always compares as different.
+
+    :param url: The first URL to compare.
+    :param other_url: The second URL to compare.
+    :return: True if both URLs are set and address the same host and port.
+    """
+    if not url or not other_url:
+        return False
+    try:
+        parsed = urlparse(url)
+        other_parsed = urlparse(other_url)
+        if parsed.username or parsed.password or other_parsed.username or other_parsed.password:
+            return False
+        if not parsed.hostname or not other_parsed.hostname:
+            return False
+        return (parsed.hostname, parsed.port) == (other_parsed.hostname, other_parsed.port)
+    except ValueError:
+        # Raised by urlparse() when e.g. the port is not a number.
+        return False
+
+
 @dataclass(frozen=True)
 class ServerRuntimeInfo:
     """Server runtime Information."""

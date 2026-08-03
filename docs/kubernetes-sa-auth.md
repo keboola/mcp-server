@@ -32,9 +32,21 @@ Key properties:
   well within the projected token's rotation window; a new session re-reads the file, so
   kubelet rotation is picked up without restarting the server.
 - `KBC_KUBERNETES_TOKEN_PATH` is read from the process environment only; it cannot be
-  set or overridden via HTTP headers or per-request config.
+  set or overridden via HTTP headers or per-request config. That alone is not enough,
+  because the Storage API URL of a session *can* come from an HTTP header — so the
+  destination is checked as well (see the next point).
+- The SA JWT is only ever sent to the stack this server is deployed on. Before the
+  header is attached, the session's Storage API host is compared — exact host match,
+  no prefix or pattern matching — against the stack derived from the process
+  environment (`KBC_STORAGE_API_URL`, falling back to `HOSTNAME_SUFFIX`). If they
+  differ, or if the server has no stack of its own, the step-up is skipped and the
+  user's own Storage client is used instead.
+- Consistently, a per-request Storage API URL (`X-Storage-Api-Url`) pointing at a
+  different host than the server's own stack is not honoured: the server keeps its own
+  Storage API URL for the request and logs a warning. Servers with no stack configured
+  in the environment (locally run servers, stdio transport) are unaffected.
 - A missing or empty token file fails loudly — the step-up header is never silently
-  dropped.
+  dropped when the destination is this server's own stack.
 - When the env variable is not set (any locally-run server), the behavior is exactly
   as before — provisioning uses the user's token alone.
 - Requires the Connection-side step-up support; until that support covers all

@@ -16,6 +16,7 @@ from mcp.shared.context import RequestContext
 from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, tool_errors
 from keboola_mcp_server.mcp import ServerState
@@ -463,3 +464,41 @@ async def test_event_uses_plain_client_without_k8s_token(monkeypatch, mcp_contex
     client = KeboolaClient.from_state(mcp_context_client.session.state)
     client.storage_client.trigger_event.assert_called_once()
     client.step_up_storage_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('session_storage_api_url', 'expect_step_up_header'),
+    [
+        ('https://connection.keboola.com', True),
+        ('https://connection.north-europe.azure.keboola.com', False),
+        ('https://connection.keboola.com.attacker.example', False),
+        ('https://connection.attacker.example', False),
+    ],
+    ids=['own_stack', 'other_stack', 'lookalike_suffix', 'foreign_domain'],
+)
+async def test_event_step_up_header_only_for_own_stack(
+    tmp_path, monkeypatch, mocker, empty_context: Context, session_storage_api_url: str, expect_step_up_header: bool
+):
+    """The event is emitted in a `finally:` block that swallows its errors, so the ServiceAccount
+    JWT must not be sent when the session talks to a stack other than this server's own."""
+    token_file = tmp_path / 'token'
+    token_file.write_text('sa-jwt')
+    monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', str(token_file))
+    monkeypatch.setenv('KBC_STORAGE_API_URL', 'https://connection.keboola.com')
+    monkeypatch.delenv('HOSTNAME_SUFFIX', raising=False)
+
+    # A real client, so the real step-up logic decides whether the JWT is attached.
+    client = KeboolaClient(storage_api_url=session_storage_api_url, storage_api_token='user-token')
+    empty_context.session.state[KeboolaClient.STATE_KEY] = client
+    trigger_event = mocker.patch.object(AsyncStorageClient, 'trigger_event', autospec=True)
+
+    @tool_errors()
+    async def foo(_ctx: Context):
+        pass
+
+    await foo(empty_context)
+
+    trigger_event.assert_awaited_once()
+    storage_client = trigger_event.await_args.args[0]
+    assert ('X-Kubernetes-Authorization' in storage_client.raw_client.headers) is expect_step_up_header
