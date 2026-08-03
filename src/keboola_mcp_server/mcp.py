@@ -435,7 +435,10 @@ class SessionStateMiddleware(fmw.Middleware):
             # therefore attaches the JWT only when the target is this server's own stack.
             kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
             workspace_manager = await WorkspaceManager.create(
-                client, config.workspace_schema, kubernetes_token_path=kubernetes_token_path
+                client,
+                config.workspace_schema,
+                kubernetes_token_path=kubernetes_token_path,
+                workspace_id=config.workspace_id,
             )
             state[WorkspaceManager.STATE_KEY] = workspace_manager
             LOG.info('Successfully initialized Storage API Workspace manager.')

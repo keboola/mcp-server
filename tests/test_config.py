@@ -27,6 +27,14 @@ class TestConfig:
                 Config(storage_token='foo', workspace_schema='bar'),
             ),
             (
+                {'storage_token': 'foo', 'workspace_id': '123'},
+                Config(storage_token='foo', workspace_id='123'),
+            ),
+            (
+                {'X-Workspace-Id': '123'},
+                Config(workspace_id='123'),
+            ),
+            (
                 {'foo': 'bar', 'storage_api_url': 'http://nowhere'},
                 Config(storage_api_url='http://nowhere'),
             ),
@@ -67,6 +75,11 @@ class TestConfig:
             (Config(branch_id='foo'), {'branch-id': 'Null'}, Config()),
             (Config(branch_id='foo'), {'branch-id': 'Default'}, Config()),
             (Config(branch_id='foo'), {'branch-id': 'pRoDuCtIoN'}, Config()),
+            (
+                Config(),
+                {'storage_token': 'foo', 'workspace_id': '123'},
+                Config(storage_token='foo', workspace_id='123'),
+            ),
         ],
     )
     def test_replace_by(self, orig: Config, d: Mapping[str, str], expected: Config) -> None:
@@ -81,6 +94,7 @@ class TestConfig:
         config = Config(storage_token='foo')
         assert str(config) == (
             "Config(storage_api_url=None, storage_token='****', branch_id=None, workspace_schema=None, "
+            'workspace_id=None, '
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
             'jwt_secret=None, bearer_token=None, conversation_id=None, project_id=None)'
