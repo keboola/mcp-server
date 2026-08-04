@@ -76,20 +76,20 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Docker Hub login
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.4.0
         with:
           username: keboolabot
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: GHCR login
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build MCP server from branch
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@v7.3.0
         with:
           load: true
           tags: keboola/mcp-server:kaibench-test
@@ -188,7 +188,7 @@ jobs:
           done
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v9.0.0
 
       - name: Install Python
         run: uv python install 3.11

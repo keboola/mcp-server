@@ -10,6 +10,7 @@ import jsonschema
 import yaml
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.server import middleware as fmw
 from fastmcp.server.middleware import CallNext, MiddlewareContext
 from fastmcp.utilities.types import find_kwarg_by_type
@@ -261,3 +262,9 @@ class ValidationErrorMiddleware(fmw.Middleware):
             return await call_next(context)
         except ValidationError as e:
             raise ToolError(prettify_validation_error(e)) from e
+        except FastMCPValidationError as e:
+            # fastmcp wraps a pydantic ValidationError raised during argument validation
+            # (a bad call) in its own ValidationError, keeping the original as __cause__.
+            if isinstance(e.__cause__, ValidationError):
+                raise ToolError(prettify_validation_error(e.__cause__)) from e
+            raise
