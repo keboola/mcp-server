@@ -313,22 +313,32 @@ async def get_merge_request_conflicts(
 async def resolve_config_conflict(
     component_id: str,
     configuration_id: str,
-    resolved_configuration: JsonDict | None = None, # required unless delete=True
+    version: int,                                   # REQUIRED: default-branch version to rebase onto
+    configuration: JsonDict | None = None,          # content fields: all required unless delete=True
     rows: Sequence[JsonDict] | None = None,         # complete resolved row set; [] clears all rows
-    delete: bool = False,                           # resolve by deleting (tombstone)
+    name: str | None = None,
+    description: str | None = None,
+    change_description: str | None = None,
+    is_disabled: bool = False,
+    delete: bool = False,                           # omit all content fields -> tombstone
     merge_request_id: int | None = None,            # guard only, never sent to the endpoint
 ) -> ResolveConflictResult: ...
 ```
 
-Argument rules for `resolve_config_conflict` (the rebase payload is a **full replacement**,
-not a patch):
+Argument rules for `resolve_config_conflict` — these mirror `RebaseRequest`
+(`connection/src/Storage/ComponentConfigurations/Rebase/Request/RebaseRequest.php`) exactly:
 
-- `delete=False` (default): `resolved_configuration` **and** `rows` are both required —
-  `rows` is the complete resolved row set, its array order becomes the row sort order, and
-  `rows=[]` deletes all rows. A partial payload is rejected client-side rather than silently
-  dropping fields.
-- `delete=True`: resolve the conflict by deleting the configuration (tombstone);
-  `resolved_configuration` / `rows` must be omitted.
+- **`version` is always required** — it is the *default-branch* configuration version the dev
+  branch is re-anchored onto. The agent takes it from the diff's `theirs.version`. The backend
+  rejects a target version that is not newer
+  (`ConfigurationRebaseTargetVersionNotNewerException` → 400).
+- The rebase payload is a **full replacement, not a patch.** With `delete=False` the content
+  fields (`configuration`, `rows`, `name`, `description`, `change_description`,
+  `is_disabled`) are sent as the resolved result; `rows` is the complete row set, its array
+  order becomes the row sort order, and `rows=[]` deletes all rows. The tool rejects a partial
+  payload client-side rather than letting the agent silently drop fields.
+- `delete=True`: send **only** `version`, omitting every content field — the backend then
+  resolves the conflict by deleting the configuration (the new head version is a tombstone).
 - Called **once per conflicting configuration** — there is no batch rebase.
 
 ### Result models
@@ -356,11 +366,16 @@ class Approvals(BaseModel):
     given_by: list[str]                     # names that already approved
     missing_from: list[str]                 # named reviewers yet to approve; [] when none are named
 
-class ConflictRef(BaseModel):               # identity only, no diff content
+class ConflictRef(BaseModel):               # exactly what GET /merge-request/{id}/conflicts returns
     component_id: str
     configuration_id: str
-    name: str | None = None
-    is_deleted: bool = False
+    message: str                            # backend's human-readable conflict description — reuse it
+    is_deleted: bool
+    dev_branch_version_identifier: str
+    default_branch_version_identifier: str
+    # NOTE: no configuration *name* — the conflicts endpoint does not return one. Resolving a
+    # name here would cost one extra config lookup per conflict, so we deliberately don't:
+    # `message` already reads well, and ConfigDiff below carries the name for free.
 
 class MergeRequestStatus(BaseModel):        # the decision object the agent branches on
     state: MergeRequestState
@@ -372,7 +387,7 @@ class MergeRequestStatus(BaseModel):        # the decision object the agent bran
     action_required: ActionRequired
     next_step: str                          # one human-readable sentence
 
-class ChangelogSummary(BaseModel):
+class ChangelogSummary(BaseModel):          # ⚠ shape UNVERIFIED — see the open question below
     added: int
     modified: int
     deleted: int
@@ -399,6 +414,7 @@ class MergeRequest(BaseModel):              # summary
     auto_merge_at: str | None
     created_at: str
     merged_at: str | None
+    merged_by: str | None                   # `merge.mergerName`; set for system merges too
     links: list[Link]
 
 class MergeRequestDetail(MergeRequest):
@@ -413,10 +429,23 @@ class MergeRequestsListOutput(BaseModel):
 class MergeRequestsDetailOutput(BaseModel):
     merge_requests: list[MergeRequestDetail]
 
+class ConfigVersionSnapshot(BaseModel):     # = ConfigurationVersionResponse
+    version: int                            # `theirs.version` is what resolve_config_conflict needs
+    is_deleted: bool
+    name: str | None                        # from the nested `diff` payload (ConfigurationDiffData)
+    description: str | None
+    change_description: str | None
+    is_disabled: bool
+    configuration: JsonDict
+    rows: list[JsonDict]
+
 class ConfigDiff(ConflictRef):              # one conflicting config + its three-way diff
-    base: JsonDict | None                   # dev branch version 1
-    ours: JsonDict | None                   # dev branch head
-    theirs: JsonDict | None                 # default branch head
+    base: ConfigVersionSnapshot | None      # dev branch version 1
+    ours: ConfigVersionSnapshot | None      # dev branch head
+    theirs: ConfigVersionSnapshot | None    # default branch head
+    # Each side is null when the configuration does not exist on that side. The API nests the
+    # content under `diff` (ConfigurationDiffData); we flatten it into the snapshot above so the
+    # agent reads one level less. When there is no conflict all three sides are equal.
 
 class MergeRequestConflictsOutput(BaseModel):
     merge_request_id: int
@@ -440,13 +469,41 @@ class ResolveConflictResult(BaseModel):
     next_step: str
 ```
 
-Notes on two deliberate choices:
+Notes on deliberate choices:
 
 - **`MergeRequestStatus` is returned by every state-changing tool** (`approve`, `reject`,
   `submit_for_review`) and embedded in `MergeRequestDetail` and `MergeResult`, so the agent
   always re-reads the same shape after any action and never has to guess what changed.
 - **`ResolveConflictResult.remaining_conflicts`** lets the agent drive the per-config loop
   without re-fetching the whole conflict set: empty list = ready to merge.
+
+**Provenance — which fields are the API's and which are ours.** `MergeRequest`, `Reviewer`,
+`ActivityEvent`, `ConflictRef`, `ConfigDiff` map 1:1 onto the Connection OpenAPI schemas
+(`MergeRequestResponse`, `MergeRequestDetailResponse`, the conflicts action,
+`ConfigurationDiffResponse`). **`MergeRequestStatus` has no backend counterpart** — `mergeable`,
+`blocked_reason`, `action_required`, `next_step` and `approvals.missing_from` are *derived*
+by this server from state + required-approvals + the conflicts list. That is the point (it is
+what makes the agent's branching reliable), but it must be unit-tested as our own logic, not
+trusted as API data.
+
+Field translations we apply on purpose:
+
+| API | Ours | Why |
+|---|---|---|
+| `reviewers[].status: 'approved'\|'rejected'\|null` | `ReviewerStatus` incl. `'pending'` | `null` is ambiguous for an LLM; `'pending'` states it |
+| `activityLog[].note: string` (empty when none) | `note: str \| None` | normalize `''` → `None` |
+| `approvals[].approverId: string` | `Approvals.given_by: list[str]` (names) | ids are noise in chat; the type mismatch (string id vs. int elsewhere) never surfaces |
+| `merge.{mergedAt, mergerId, mergerName}` | `merged_at`, `merged_by` | keep who merged (`mergerName` is set even for system merges), drop the id |
+| `externalId` | *dropped* | external-system reference, no meaning in a chat |
+| `branches.{branchFromId, branchIntoId}` | `branch_from_id/name`, `branch_into_name` | names resolved via the branch pair lookup |
+
+**Open question to resolve before implementing `ChangelogSummary`.** The API types `changeLog`
+as a bare `type: 'object'` (`MergeRequestWithChangeLogResponse`) — there is **no schema for its
+contents**. The `addedConfigs` / `modifiedConfigs` / `deletedConfigs` keys assumed above come
+from reading the merge implementation, not from a contract. **Action:** capture a real
+`changeLog` payload from a published MR on a `branches-merge-requests` project (or confirm the
+keys with the Connection team) *before* writing the humanization helper, and treat unknown keys
+defensively (fall back to "changes merged" rather than reporting zero counts).
 
 ## Resolution Strategy
 
@@ -561,10 +618,17 @@ Notes on two deliberate choices:
   - status object / decision table: `mergeable` happy path; `blocked_reason=needs_approval`
     with `given_by`/`missing_from`; `blocked_reason=conflicts` with the conflicts list;
     `merge_merge_request` returns the status (not a raw error) on a 409.
-  - conflict resolution: `get_merge_request_conflicts` fans out diffs; `resolve_config_conflict`
-    posts a per-config rebase incl. the delete/tombstone case; a resolved MR then merges
-    (live conflict check clears); approvals survive rebase.
-  - changelog humanization: empty, mixed add/modify/delete, truncation.
+  - conflict resolution: `get_merge_request_conflicts` fans out diffs and flattens each side's
+    nested `diff` payload; `resolve_config_conflict` sends `version` + the full content set for
+    a keep rebase, sends **only** `version` for `delete=True`, and rejects a partial payload
+    client-side; a resolved MR then merges (live conflict check clears); approvals survive
+    rebase.
+  - changelog humanization: empty, mixed add/modify/delete, truncation, **and an unrecognized
+    `changeLog` shape** → falls back to a generic summary instead of reporting zero counts
+    (guards the unverified contract).
+  - status object is *derived*, not passed through: `mergeable` / `blocked_reason` /
+    `action_required` computed from state + required approvals + conflicts; `null` reviewer
+    status maps to `'pending'`; empty activity-log `note` maps to `None`.
   - gating: tools hidden without the feature; write/merge hidden for `developer`/`reviewer`;
     branch-only tools error / hidden on a production session; visible on a dev-branch session.
 - **Integration tests** (`integtests/tools/test_merge_requests.py`) against a
