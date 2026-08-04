@@ -132,10 +132,18 @@ All tools live in a new module `src/keboola_mcp_server/tools/merge_requests.py`,
 `merge-request`, registered via `add_merge_request_tools(mcp)` in
 `src/keboola_mcp_server/server.py`.
 
-**Read-tool convention (mirrors `get_configs`, `tools/components/tools.py:205`):**
-`get_merge_requests` takes an optional list of IDs — empty → list **all** as summaries;
-IDs → full detail per MR, **batched concurrently** (via `process_concurrently` /
-`unwrap_results`). Lower-priority filters (e.g. `state`) are ignored when IDs are supplied.
+**Read-tool convention — a *simplified* variant of `get_configs`
+(`tools/components/tools.py:205`), not a 1:1 mirror.** `get_merge_requests` takes a single
+optional flat list `merge_request_ids` — empty → list **all** as summaries; IDs → full detail
+per MR, **batched concurrently** (via `process_concurrently` / `unwrap_results`).
+Lower-priority filters (e.g. `state`) are ignored when IDs are supplied.
+
+What we borrow from `get_configs` is the *behavioral* contract (no IDs = list; IDs = batched
+details; IDs outrank filters) and its concurrency helpers. What we deliberately do **not**
+copy is its parameter shape: `get_configs` needs two separate inputs (`component_ids` for
+summaries, `configs` for details) because a configuration is addressed by a
+**component+config pair**. An MR id is a single flat integer, so one list covers both modes
+and the extra parameter would be noise.
 
 #### Read / diagnosis — available in any session
 
@@ -155,8 +163,8 @@ IDs → full detail per MR, **batched concurrently** (via `process_concurrently`
 | Tool | Annotation | Behavior |
 |---|---|---|
 | `create_merge_request` | (write) | Create an MR for the **current session branch**. Signature: `title` (required), `description?`, `reviewer_ids?`, `auto_merge?` — **no branch parameters** (source = session branch, target = default, both resolved internally). Errors from production. |
-| `submit_merge_request_for_review` | (write) | `development → in_review` (→ `approved` when 0 approvals required). |
-| `merge_merge_request` | `destructiveHint` | Merge the current branch's MR and **await the Job** → `published`. On refusal returns the **status object** (why it is blocked: approvals / conflicts) rather than a bare error. |
+| `submit_merge_request_for_review` | (write) | `merge_request_id?` (see MR-id convention below). `development → in_review` (→ `approved` when 0 approvals required). |
+| `merge_merge_request` | `destructiveHint` | `merge_request_id?` (see below). Merges and **awaits the Job** → `published`. On refusal returns the **status object** (why it is blocked: approvals / conflicts) rather than a bare error. |
 
 #### Conflict resolution — dev-branch session only (`admin`/`share`)
 
@@ -164,6 +172,18 @@ IDs → full detail per MR, **batched concurrently** (via `process_concurrently`
 |---|---|---|
 | `get_merge_request_conflicts` | `readOnlyHint` | For the given MR: the conflict list **plus the three-way diff** (`base`/`ours`/`theirs`) for each conflicting config. Backend: 1× `/conflicts` + N× per-config `/diff`, fetched concurrently. |
 | `resolve_config_conflict` | (write) | Submit **one** resolved configuration (per-config rebase). Full config + complete `rows`; supports "resolve = delete" (tombstone). Called once per conflict; there is no batch rebase. |
+
+**MR-id convention (applies to every tool that targets one MR).** The underlying endpoints
+are project-level and always addressed by MR id, so every such tool accepts
+`merge_request_id`. It differs only in whether it may be omitted:
+
+| Tool group | `merge_request_id` | Resolution / validation |
+|---|---|---|
+| `approve_merge_request`, `reject_merge_request` | **required** | Any session; the MR is identified purely by id. No branch check. |
+| `submit_merge_request_for_review`, `merge_merge_request`, `get_merge_request_conflicts`, `resolve_config_conflict` | **optional** | Dev-branch session only. When **omitted**, resolve the session branch's single open MR (a branch has at most one — the backend rejects a second, `InvalidBranchException::createMergeRequestExists`). When **given**, validate that its `branchFromId` equals the session branch and otherwise fail with the handoff error — never act on another branch's MR. |
+
+This keeps both phrasings working: *"merge it"* (id omitted, resolved from the branch) and
+*"merge #1234"* (id given and validated), which is what chat flow Y below does.
 
 #### Optional orchestrator — dev-branch session only
 
@@ -270,18 +290,35 @@ Lean, human-first Pydantic models:
      `merge_request_merge(id)`.
    - Conflict (branch-scoped, use the session `branch_id`): `configuration_diff(component_id,
      configuration_id)`, `configuration_rebase(component_id, configuration_id, payload)`.
-2. **Branch resolution**: reuse `_resolve_branch_context`
-   (`src/keboola_mcp_server/tools/project.py:46`) for the current branch id/name and the
-   default branch id (`branches_list`, `isDefault=True`). `create_merge_request` derives
-   `branchFromId` = session branch, `branchIntoId` = default (backend forces the target to
-   the default branch anyway). It errors when the session is on the default/production branch.
+2. **Branch resolution — needs a new helper, not a plain reuse.**
+   `_resolve_branch_context` (`src/keboola_mcp_server/tools/project.py:46`) returns
+   `(branch_id, branch_name, is_development_branch)` for **one** branch — the session branch,
+   or the default one when the session has no branch id. It does **not** hand back the default
+   branch's id while on a dev branch, which is exactly what `create_merge_request` needs.
+   Plan: add a small shared helper (e.g. `resolve_branch_pair`) that calls `branches_list`
+   **once** and returns both the session branch (matching `client.branch_id`) and the default
+   branch (`isDefault=True`) from that single response. Factor it next to
+   `_resolve_branch_context` and let `get_project_info` keep using its existing helper (or
+   refactor that one on top of the new lookup) — either way this is **new code**, sized
+   accordingly. `create_merge_request` then derives `branchFromId` = session branch,
+   `branchIntoId` = default branch, and errors when the session is on the default/production
+   branch.
 3. **Status object**: a helper builds `MergeRequestStatus` from the MR payload +
    `/conflicts` + the required-approvals count. `merge_merge_request` catches the backend
    409/not-ready and returns this status (enriched with the conflicts list) instead of a
    raw error.
-4. **Async merge**: the merge endpoint returns a Job; reuse `tools/jobs.py` polling inside
-   `merge_merge_request` / `publish_branch`. Merge is atomic server-side (merge + publish in
-   one transaction, rollback on failure) — the tool just awaits the job's terminal state.
+4. **Async merge — the await loop must be written from scratch.** The merge endpoint returns
+   a Storage Job, and **no reusable job-polling helper exists**: `tools/jobs.py` only has
+   `run_job` (creates a job and returns immediately) and `get_jobs` (reads status). The
+   polling loops in the codebase are not applicable — `workspace.py:182-203` polls
+   *query-service* jobs via `_qsclient`, and `sql.py:55` is an HTTP-disconnect watcher.
+   Plan: implement a small `_await_storage_job(job_id)` in the new module that polls
+   `client.storage_client` job status until a terminal state, following the **pattern** of
+   `workspace.py` (fixed interval + overall timeout + explicit terminal-state set), and
+   surface a timeout as a status object saying the merge is still running (`in_merge`) rather
+   than as a hard failure. Merge itself is atomic server-side (merge + publish in one
+   transaction, rollback to `approved` on failure), so the tool only awaits the terminal
+   state — it never has to compensate.
 5. **Conflict resolution**: `get_merge_request_conflicts` fans out `1× /conflicts + N× /diff`
    concurrently. `resolve_config_conflict` posts one per-config rebase (full config + `rows`,
    tombstone for delete). The agent orchestrates the per-config loop and user confirmations;
@@ -340,7 +377,14 @@ Lean, human-first Pydantic models:
 
 - **Unit tests** (`tests/tools/test_merge_requests.py`), parametrized:
   - `create_merge_request` branch defaulting (session dev branch → default); error on
-    production.
+    production. The new `resolve_branch_pair` helper: returns both branches from a single
+    `branches_list` call, on a dev-branch session and on a default-branch session.
+  - **MR-id convention**, parametrized over the optional-id tools: id **omitted** → resolves
+    the session branch's open MR; id **given and matching** → acts on it; id **given but
+    belonging to another branch** → handoff error, no call made; no open MR on the branch →
+    clear error.
+  - `_await_storage_job`: terminal success, terminal failure (rollback → `approved`), and
+    timeout → status object reporting `in_merge` rather than raising.
   - status object / decision table: `mergeable` happy path; `blocked_reason=needs_approval`
     with `given_by`/`missing_from`; `blocked_reason=conflicts` with the conflicts list;
     `merge_merge_request` returns the status (not a raw error) on a 409.
