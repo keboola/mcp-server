@@ -107,8 +107,9 @@ are **branch-scoped** and only work from within the dev branch.
 2. **Simplify, don't mirror.** Expose the lifecycle as explicit, well-named tools, and let
    the agent guide the user through the branching (merge / approvals / conflicts) using
    structured status returned by the tools.
-3. **Speak human.** Resolve branch/user **IDs → names**; translate the raw `changeLog` into
-   a plain summary (e.g. *"3 configurations added, 1 modified, 0 deleted"*).
+3. **Speak human.** Resolve branch/user **IDs → names**. Pass structured data (e.g. the
+   `changeLog` list) straight through and let the agent narrate it, rather than inventing
+   aggregates the API cannot support.
 4. **Gate by feature, role, and session context**, reusing the existing
    `ToolsFilteringMiddleware`, so users never see tools they cannot use.
 
@@ -149,7 +150,7 @@ and the extra parameter would be noise.
 
 | Tool | Annotation | Behavior |
 |---|---|---|
-| `get_merge_requests` | `readOnlyHint` | No IDs → list MRs (summaries; optional `state` filter). With IDs → detail per MR: the **status object** (below) + plain-language changelog summary + activity-log timeline + the conflicts **list** (which configs conflict — cheap, from `/conflicts`; not the diff content). IDs → names. |
+| `get_merge_requests` | `readOnlyHint` | No IDs → list MRs (summaries; optional `state` filter). With IDs → detail per MR: the **status object** (below) + the changed-configurations list + activity-log timeline + the conflicts **list** (which configs conflict — cheap, from `/conflicts`; not the diff content). IDs → names. |
 
 #### Review-state actions — available in any session (`admin`/`share`)
 
@@ -247,7 +248,7 @@ per A: agent proposes a merge -> user confirms -> resolve_config_conflict(A, ...
 per B: agent proposes a merge -> user confirms -> resolve_config_conflict(B, ...)
          -> ResolveConflictResult(resolved=True, remaining_conflicts=[])
 merge_merge_request(1234)
-  -> MergeResult(merged=True, state='published', changelog_summary=...)
+  -> MergeResult(merged=True, state='published', job_id=...)
 ```
 
 **Guarantee boundary (be honest):** MCP does not hard-guarantee the *wording* of the
@@ -387,12 +388,11 @@ class MergeRequestStatus(BaseModel):        # the decision object the agent bran
     action_required: ActionRequired
     next_step: str                          # one human-readable sentence
 
-class ChangelogSummary(BaseModel):          # ⚠ shape UNVERIFIED — see the open question below
-    added: int
-    modified: int
-    deleted: int
-    items: list[str]                        # truncated human list
-    truncated: bool
+class ChangedConfig(BaseModel):             # one entry of changeLog['configurations']
+    component_id: str
+    configuration_id: str
+    is_deleted: bool
+    # `lastVersionIdentifier` is dropped — an internal hash with no meaning in a chat.
 
 class ActivityEvent(BaseModel):
     event_type: ActivityEventType
@@ -419,7 +419,7 @@ class MergeRequest(BaseModel):              # summary
 
 class MergeRequestDetail(MergeRequest):
     status: MergeRequestStatus
-    changelog_summary: ChangelogSummary
+    changed_configurations: list[ChangedConfig]   # from changeLog; [] while state='development'
     activity_log: list[ActivityEvent]
 
 class MergeRequestsListOutput(BaseModel):
@@ -457,9 +457,11 @@ class MergeResult(BaseModel):
     merged: bool
     state: MergeRequestState
     job_id: str | None
-    changelog_summary: ChangelogSummary | None    # set when merged=True
     status: MergeRequestStatus | None             # set when merged=False (why it was refused)
     next_step: str
+    # Deliberately carries no change list: the merge endpoint returns a Job, not the MR, so
+    # including it would cost an extra fetch. If the user asks what was merged, the agent
+    # re-reads get_merge_requests(merge_request_ids=[id]).
 
 class ResolveConflictResult(BaseModel):
     component_id: str
@@ -497,13 +499,28 @@ Field translations we apply on purpose:
 | `externalId` | *dropped* | external-system reference, no meaning in a chat |
 | `branches.{branchFromId, branchIntoId}` | `branch_from_id/name`, `branch_into_name` | names resolved via the branch pair lookup |
 
-**Open question to resolve before implementing `ChangelogSummary`.** The API types `changeLog`
-as a bare `type: 'object'` (`MergeRequestWithChangeLogResponse`) — there is **no schema for its
-contents**. The `addedConfigs` / `modifiedConfigs` / `deletedConfigs` keys assumed above come
-from reading the merge implementation, not from a contract. **Action:** capture a real
-`changeLog` payload from a published MR on a `branches-merge-requests` project (or confirm the
-keys with the Connection team) *before* writing the humanization helper, and treat unknown keys
-defensively (fall back to "changes merged" rather than reporting zero counts).
+**`changeLog`: pass-through, no humanization.** The API types it as a bare `type: 'object'`
+(`MergeRequestWithChangeLogResponse`), but its actual content is pinned by
+`Model_Row_MergeRequest::updateChangeLog`:
+
+```json
+{"configurations": [
+  {"componentId": "…", "configurationId": "…", "lastVersionIdentifier": "…", "isDeleted": false}
+]}
+```
+
+Two consequences:
+
+- **There is no added/modified distinction to summarize** — only a flat list with an
+  `isDeleted` flag. An "N added, M modified" summary is not derivable, so we do **not** build
+  one: `changed_configurations` is a 1:1 pass-through and the agent describes it in prose when
+  the user asks *"what does this MR change?"*. This also removes any dependence on an
+  unspecified schema — nothing to mis-parse. Parse defensively anyway (missing/renamed
+  `configurations` key → empty list, never an exception).
+- **It is populated at `request-review` / `skip-review`, not at merge**
+  (`MergeRequestService.php:120,134`). So while the MR is still in `development` the change
+  list is empty; it becomes available once the MR is sent for review. `next_step` should say
+  so rather than implying the MR is empty.
 
 ## Resolution Strategy
 
@@ -587,7 +604,7 @@ defensively (fall back to "changes merged" rather than reporting zero counts).
 - Storage-client wrappers for the MR endpoints and the branch-scoped `diff`/`rebase`.
 - Three-axis gating (feature / role / session-branch) and the handoff error from production.
 - The `resolve_branch_pair` helper and the `_await_storage_job` polling loop (both new code).
-- The status-object helper, changelog humanization helper, and lean response models.
+- The status-object helper and lean response models (no changelog humanizer — pass-through).
 - `TOOLS.md` regeneration, minor version bump, `uv.lock` refresh.
 
 **Out of scope:**
@@ -623,9 +640,8 @@ defensively (fall back to "changes merged" rather than reporting zero counts).
     a keep rebase, sends **only** `version` for `delete=True`, and rejects a partial payload
     client-side; a resolved MR then merges (live conflict check clears); approvals survive
     rebase.
-  - changelog humanization: empty, mixed add/modify/delete, truncation, **and an unrecognized
-    `changeLog` shape** → falls back to a generic summary instead of reporting zero counts
-    (guards the unverified contract).
+  - `changeLog` parsing: normal `configurations` list; empty while `state='development'`;
+    missing/renamed key → empty list, never an exception.
   - status object is *derived*, not passed through: `mergeable` / `blocked_reason` /
     `action_required` computed from state + required approvals + conflicts; `null` reviewer
     status maps to `'pending'`; empty activity-log `note` maps to `None`.
@@ -634,7 +650,7 @@ defensively (fall back to "changes merged" rather than reporting zero counts).
 - **Integration tests** (`integtests/tools/test_merge_requests.py`) against a
   `branches-merge-requests` project: on a dev-branch session, make a config change,
   `create_merge_request` → `submit_merge_request_for_review` → `merge_merge_request`, assert
-  `published` + changelog. A conflict scenario: change the same config in production, assert
+  `published` + the changed-configurations list. A conflict scenario: change the same config in production, assert
   a conflict surfaces, `resolve_config_conflict`, then merge succeeds. Clean up branches.
 - **Manual E2E** via local `.mcp.json` (per CLAUDE.md) on a non-SOX branch project: run the
   X and Y chat flows from a dev-branch session; confirm plain-language status and the guided
