@@ -20,7 +20,7 @@ from keboola_mcp_server.clients.auth_bridge import strip_bearer
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import build_tracing_headers, deployed_sa_token_path
 from keboola_mcp_server.mcp import ServerState, is_read_only_tool
-from keboola_mcp_server.scope import SCOPE_KEY, SessionScope
+from keboola_mcp_server.scope import PROJECT_ID_ARG, SCOPE_KEY, SessionScope
 from keboola_mcp_server.tools.constants import BOOTSTRAP_TOOLS
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -48,8 +48,8 @@ class MultiProjectMiddleware(fmw.Middleware):
     project's client and the per-project results are labelled with a per-project text envelope. Their
     structured content is deep-merged (lists concatenated across projects, counters summed) into one
     schema-valid object, degrading to count-first with a truncated sample past ``_FANOUT_MAX_ITEMS``.
-    Write tools never fan out: they target the active project only, so the agent can never write to
-    multiple projects without the user explicitly re-scoping (PSGO-261 decision D8).
+    Write tools never fan out: a write always targets exactly one project, named by its own
+    ``project_id`` argument (required once 2+ projects are scoped) -- see ``_dispatch_write``.
     """
 
     async def on_call_tool(
@@ -78,12 +78,12 @@ class MultiProjectMiddleware(fmw.Middleware):
         # Bootstrap tools own a real `project_ids` argument, so we must not strip it.
         if not isinstance(scope, SessionScope) or name in BOOTSTRAP_TOOLS:
             return await call_next(context)
-        # Workspace-bound and write tools always target the active project (no fan-out, filter ignored).
+        # Workspace-bound tools always target the active project (no fan-out, filter ignored).
         if name in _NO_FANOUT_TOOLS:
             return await call_next(context)
         tool = await ctx.fastmcp.get_tool(name)
         if not is_read_only_tool(tool):
-            return await call_next(context)
+            return await self._dispatch_write(context, call_next, ctx, state, scope)
 
         # Read tool: consume the optional per-call project filter (advertised via on_list_tools) so the
         # tool never receives it, then narrow this call's target projects to the requested subset.
@@ -163,6 +163,62 @@ class MultiProjectMiddleware(fmw.Middleware):
             raise ToolError(f'The tool failed for all {len(errors)} scoped project(s): {detail}')
 
         return self._merge(results, errors)
+
+    @staticmethod
+    def _resolve_write_target(scope: SessionScope, project_id: Any) -> int | None:
+        """Picks the single project a write call targets, or raises if that's ambiguous/invalid.
+
+        ``project_id`` is required once 2+ projects are scoped (no more implicit "first project"
+        default); with exactly one scoped project it's optional and defaults to that project.
+        """
+        if project_id is None:
+            if len(scope.project_ids) >= 2:
+                raise ToolError(
+                    f'{len(scope.project_ids)} projects are scoped ({scope.project_ids}). '
+                    'Pass project_id=<id> (one of the scoped projects) -- a write targets exactly one project.'
+                )
+            return scope.active_project_id
+        try:
+            target = int(project_id)
+        except (TypeError, ValueError):
+            raise ToolError(f'project_id must be an integer project id, got: {project_id!r}')
+        if target not in scope.project_ids:
+            raise ToolError(
+                f'Project {target} is outside the current scope {scope.project_ids}. '
+                'Call "set_project_scope" to change the scope first.'
+            )
+        return target
+
+    async def _dispatch_write(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
+        ctx: Any,
+        state: dict[str, Any],
+        scope: SessionScope,
+    ) -> mt.CallToolResult:
+        """Targets a write/modify/delete tool call at the project named by its ``project_id``
+        argument (peeked, not popped -- it's a real declared tool parameter, not middleware-only).
+        """
+        args = getattr(context.message, 'arguments', None)
+        project_id = args.get(PROJECT_ID_ARG) if isinstance(args, dict) else None
+        target = self._resolve_write_target(scope, project_id)
+
+        if target is None or target == scope.active_project_id:
+            return await call_next(context)
+
+        server_state = ServerState.from_context(ctx)
+        original_client = state.get(KeboolaClient.STATE_KEY)
+        original_workspace = state.get(WorkspaceManager.STATE_KEY)
+        is_real_client = isinstance(original_client, KeboolaClient)
+        base_token = scope.scoped_token or (original_client.token if is_real_client else '')
+        storage_api_url = original_client.storage_api_url if is_real_client else server_state.config.storage_api_url
+        try:
+            await self._swap_project(state, server_state, storage_api_url, base_token, target, scope.read_only)
+            return await call_next(context)
+        finally:
+            state[KeboolaClient.STATE_KEY] = original_client
+            state[WorkspaceManager.STATE_KEY] = original_workspace
 
     async def on_list_tools(
         self,

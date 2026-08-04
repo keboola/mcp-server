@@ -189,6 +189,18 @@ EXAMPLES:
       ],
       "default": null,
       "description": "The list of processors that will run after the configured component row runs."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -353,6 +365,18 @@ EXAMPLES:
       ],
       "default": null,
       "description": "Variable definitions to attach to this configuration. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value. On creation, both `None` (omitted) and `[]` (empty list) mean \"do not attach variables\" \u2014 no `keboola.variables` config is created. To remove variables from an existing configuration, use `update_config` with `variables=[]`."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -510,6 +534,18 @@ EXAMPLES:
       ],
       "default": null,
       "description": "Variable definitions to attach to this transformation. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value. On creation, both `None` (omitted) and `[]` (empty list) mean \"do not attach variables\" \u2014 no `keboola.variables` config is created. To remove variables from an existing transformation, use `update_sql_transformation` with `variables=[]`."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -1077,6 +1113,18 @@ WORKFLOW:
       ],
       "default": null,
       "description": "Variable definitions for this configuration. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -1352,6 +1400,18 @@ WORKFLOW:
       ],
       "default": null,
       "description": "Enable or disable the configuration row. Set to True to disable execution (config row won't run), False to enable execution (config row will run). Only provide if changing the status, leave as null to preserve current state."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -2018,6 +2078,18 @@ Example 4 - Update storage mappings:
       ],
       "default": null,
       "description": "Variable definitions for this transformation. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -2087,6 +2159,18 @@ additional token without invalidating any tokens already held by other clients.
     "configuration_id": {
       "description": "Storage configuration ID of the python-js data app.",
       "type": "string"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -2137,6 +2221,18 @@ in the response) or to `get_data_apps` for further work.
     "configuration_id": {
       "description": "Storage configuration ID of the python-js draft data app to delete.",
       "type": "string"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -2216,6 +2312,18 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
       ],
       "default": null,
       "description": "Deployment mode. Set to \"dev\" to deploy a python-js draft as a **dev version of the data app** \u2014 the runtime uses a development `setup.sh` (hot reload), and the data-app proxy enables an auto-auth path so an iframe preview can render without a manual login. Only meaningful on **draft** configs (python-js apps with `isDraft=true`). Leave None (default) for prod redeploys and for Streamlit apps."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -2502,6 +2610,18 @@ slug must be at most 63 characters (the DNS-label max), and note the UI's own UR
       ],
       "default": null,
       "description": "Folder name to organize this data app in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -2603,6 +2723,18 @@ SQL & DATA TYPE RULES:
       ],
       "default": null,
       "description": "Folder name to organize this data app in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more data apps in the project. If there are 20 or more data apps, you should assign one of the existing folders or create a new one that clearly reflects the data app purpose."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -2709,6 +2841,18 @@ WHEN TO USE:
       "default": "",
       "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
       "type": "string"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -2780,6 +2924,18 @@ WHEN TO USE:
       "default": "",
       "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose.",
       "type": "string"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -3116,6 +3272,18 @@ adjusting dependencies, or enabling/disabling flow execution
       ],
       "default": null,
       "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -3248,6 +3416,18 @@ or enabling/disabling flow execution
       ],
       "default": null,
       "description": "Folder name to organize this flow in the Keboola UI. Pass an empty string to remove an existing folder assignment. Existing folder names are returned in the response change_summary when no folder is provided and there are 20 or more flows in the project. If there are 20 or more flows, you should assign one of the existing folders or create a new one that clearly reflects the flow purpose."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -3499,6 +3679,18 @@ Starts a new job for a given component or transformation.
       ],
       "default": null,
       "description": "Optional list of configuration row IDs to run. If not provided, all rows are executed."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -3541,6 +3733,18 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
     "config_id": {
       "description": "The configuration ID for the component.",
       "type": "string"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -3626,8 +3830,9 @@ Scopes the current session to a set of Keboola projects.
 
 Mints a scoped access token (narrowed to `project_ids`, optionally read-only) that is used for the
 rest of the conversation. Read-only tools then run against every scoped project in a single call;
-write operations target the active (first) project only. Call this when the user states which
-projects to work on; it can be called again any time to re-scope.
+write/modify/delete tools take a `project_id` argument naming which scoped project to target (required
+once 2+ projects are scoped). Call this when the user states which projects to work on; it can be
+called again any time to re-scope.
 
 The server does not remember this scope between calls: pass the returned `scope_token` as the
 `scope_token` argument on every subsequent tool call in this conversation to keep it in effect.
@@ -3683,6 +3888,18 @@ Updates the description of the current Keboola project.
     "description": {
       "description": "The new project description text.",
       "type": "string"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -4703,6 +4920,18 @@ Usage examples (payload uses a list of DescriptionUpdate objects):
         "$ref": "#/$defs/DescriptionUpdate"
       },
       "type": "array"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
