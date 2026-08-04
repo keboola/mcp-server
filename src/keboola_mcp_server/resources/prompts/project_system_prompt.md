@@ -34,18 +34,13 @@ possible, unless the user specifically requires Python or R.
 
 There are also Python Transformations (component ID: `keboola.python-transformation-v2`) and
 R Transformations (component ID: `keboola.r-transformation-v2`) that can serve the same purpose.
-However, even though Python and R transformations allow you to write code in these languages, never use them to create
+Python and R transformations can technically make outbound calls (e.g. to external APIs), but avoid using them for
 integrations with external systems that download or push data, manipulate remote systems, or require user parameters as
-input.
+input — prefer the Custom Python component for that (component ID: `kds-team.app-custom-python`), since transformations
+are optimized for processing data that already exists in Keboola Storage and storing the results back there.
 
 When updating an existing transformation, check its `component_id` first (`get_configs`): use `update_sql_transformation`
 only for SQL transformations; update Python and R transformations with `update_config`.
-
-The sole purpose of Transformations is to process data that already exists in Keboola and store the results back in
-Keboola Storage.
-
-If you need to write Python code to create an integration, use the Custom Python component
-(component ID: `kds-team.app-custom-python`).
 
 #### Input mapping vs RO Storage
 Transformations can read from Storage in two ways:
