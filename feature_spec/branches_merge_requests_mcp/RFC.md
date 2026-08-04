@@ -118,7 +118,7 @@ are **branch-scoped** and only work from within the dev branch.
 |---|---|
 | **Feature** | All MR tools require the `branches-merge-requests` project feature. |
 | **Role** | Write / approve / reject / merge require `admin` or `share` (mirrors Connection route guards). |
-| **Session context** | **Read + review-state** tools work from *any* session (production or branch). **Content / promotion** tools (`create`, `submit_for_review`, `merge`, conflict tools, `publish_branch`) work **only from a dev-branch session**; called from production they return a clear handoff error (*"open a session on branch '<name>' and do it there"*). |
+| **Session context** | **Read + review-state** tools work from *any* session (production or branch). **Content / promotion** tools (`create`, `submit_for_review`, `merge`, conflict tools) work **only from a dev-branch session**; called from production they return a clear handoff error (*"open a session on branch '<name>' and do it there"*). |
 
 Note on merge: the raw `merge` endpoint is project-level (`isAvailableWithoutBranch: true`),
 so the backend *would* allow it from the root. **MCP deliberately keeps merge branch-only
@@ -185,20 +185,23 @@ are project-level and always addressed by MR id, so every such tool accepts
 This keeps both phrasings working: *"merge it"* (id omitted, resolved from the branch) and
 *"merge #1234"* (id given and validated), which is what chat flow Y below does.
 
-#### Optional orchestrator — dev-branch session only
-
-| Tool | Annotation | Behavior |
-|---|---|---|
-| `publish_branch` | `destructiveHint` | One-shot "ship this branch": find-or-create the MR → submit for review → merge. On a conflict, hands off to the conflict-resolution flow (it does not auto-resolve). Nice-to-have, not required for the MVP. |
+That is the whole toolset — **8 tools, no orchestrator.** The author's happy path stays
+three explicit calls (`create_merge_request` → `submit_merge_request_for_review` →
+`merge_merge_request`), which an agent chains trivially.
 
 **MVP core** (makes the X/Y chat flows below + conflict resolution work): `get_merge_requests`,
 `create_merge_request`, `submit_merge_request_for_review`, `merge_merge_request`,
 `get_merge_request_conflicts`, `resolve_config_conflict`. `approve` / `reject` earn their
-keep on projects with required approvals > 0. `publish_branch` is optional convenience.
+keep on projects with required approvals > 0.
 
 **Dropped / deferred:** `update_merge_request` (low value for the chat audience — omitted
 for now); `cancel_merge_request` (no endpoint — cancel = branch deletion = Tier C);
-`get_branches` (deferred to Tier C branch management, where it first gains a use).
+`get_branches` (deferred to Tier C branch management, where it first gains a use);
+`publish_branch`, a one-shot create→review→merge orchestrator, **dropped** — it would
+collapse the review gate (creating *and* merging in one call means the user never sees the
+changelog before production), it duplicates `merge_merge_request` as a second destructive
+merge path, and because it must stop at every interesting case (conflicts, missing
+approvals) and return the same status object anyway, it only orchestrated the trivial one.
 
 ### The status object (drives the agent's guidance)
 
@@ -328,7 +331,7 @@ Lean, human-first Pydantic models:
    (`clients/storage.py:23`); extend `ToolsFilteringMiddleware.on_list_tools` /
    `on_call_tool` (`mcp.py`) to hide MR tools without the feature, hide write/approve/merge
    for non-`admin`/`share`, and hide the **branch-only** tools (create / submit_for_review /
-   merge / conflict tools / publish_branch) when the session is on the default branch
+   merge / conflict tools) when the session is on the default branch
    (`is_client_using_main_branch`, `mcp.py`), returning a handoff error on direct call.
 7. **Docs & version**: regenerate `TOOLS.md` (`tox -e check-tools-docs`); minor version bump
    (from current `main`, `1.74.3 → 1.75.0` at the time of writing; new tools = minor); refresh
@@ -336,9 +339,11 @@ Lean, human-first Pydantic models:
 
 **Trade-offs called out:**
 
-- *Explicit tools vs. one `action=` enum.* Explicit per-action tools give better LLM
-  tool-selection and correct `readOnly`/`destructive` hints; the optional `publish_branch`
-  keeps the common path to a single call.
+- *Explicit tools vs. one `action=` enum, and no orchestrator.* Explicit per-action tools
+  give better LLM tool-selection and correct `readOnly`/`destructive` hints. We also
+  deliberately ship **no** one-shot orchestrator: the happy path is three cheap calls an
+  agent chains anyway, and collapsing them would hide the review gate (see
+  *Dropped / deferred*). Exactly one destructive merge path exists.
 - *Merge kept branch-only by MCP even though the API allows root.* Keeps the whole promotion
   flow inside the branch and removes the "merge any MR from production" surface; worth
   aligning with the Connection team if they later tighten the endpoint too.
@@ -353,10 +358,10 @@ Lean, human-first Pydantic models:
 
 **In scope:**
 
-- New module `tools/merge_requests.py` with the tools above (MVP core + `approve`/`reject`;
-  `publish_branch` optional).
+- New module `tools/merge_requests.py` with the 8 tools above (MVP core + `approve`/`reject`).
 - Storage-client wrappers for the MR endpoints and the branch-scoped `diff`/`rebase`.
 - Three-axis gating (feature / role / session-branch) and the handoff error from production.
+- The `resolve_branch_pair` helper and the `_await_storage_job` polling loop (both new code).
 - The status-object helper, changelog humanization helper, and lean response models.
 - `TOOLS.md` regeneration, minor version bump, `uv.lock` refresh.
 
