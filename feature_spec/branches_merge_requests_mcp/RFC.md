@@ -87,9 +87,23 @@ are **branch-scoped** and only work from within the dev branch.
 - **Default required approvals = 0** for non-SOX (`RequiredApprovalsCountProvider`). With
   the default, `request-review` transitions **straight to `approved`** and the approve step
   never runs.
-- **Roles**: only `admin` / `share` may approve, reject, or merge; `admin` / `share` /
-  `reviewer` / `developer` may create / update / request-review; list / detail / conflicts
-  are readable by any member.
+- **Roles (non-SOX): every write is `admin` / `share` only.** Each controller carries two
+  whitelists and `StorageRouteGuard` picks one by project feature, then does a strict
+  membership test (`canAccessInMergeRequestsProject`:
+  `in_array($role, $scope->mergeRequestsAllowedRoles)`):
+  - `#[MergeRequestsAllowedRoles]` — the whitelist for `branches-merge-requests` (our flow).
+    It is `[ADMIN, SHARE]` on **all** of create, request-review, approve, request-changes,
+    and merge.
+  - `#[ProtectedBranchAllowedRoles]` — the whitelist for the **SOX** flow only, and that is
+    where `REVIEWER` / `DEVELOPER` / `PRODUCTION_MANAGER` appear. Those roles carry **no**
+    MR privileges in a non-SOX project.
+  - Reads (list, detail, conflicts) are `#[AsReadOnlyAction]` with no role whitelist —
+    readable by any member.
+
+  *Consequence worth naming:* in a non-SOX project a user with the `developer` or `reviewer`
+  role cannot create or advance an MR at all — the persona this flow serves must hold `admin`
+  or `share`. This is the backend's rule, not our restriction; a tool that offered `create`
+  to a developer would only produce a 403.
 - **Create target is forced to the default branch**
   (`MergeRequestCreateProcessor.php:53-54`, `InvalidBranchException::createTargetBranchNotDefault`).
 - **No cancel endpoint.** An MR is canceled only as a side-effect of deleting its source
@@ -118,7 +132,7 @@ are **branch-scoped** and only work from within the dev branch.
 | Axis | Rule |
 |---|---|
 | **Feature** | All MR tools require the `branches-merge-requests` project feature. |
-| **Role** | Write / approve / reject / merge require `admin` or `share` (mirrors Connection route guards). |
+| **Role** | Reads are open to any member; **every write** (create, submit_for_review, approve, reject, merge, conflict rebase) requires `admin` or `share`. This mirrors `#[MergeRequestsAllowedRoles]`, which is `[ADMIN, SHARE]` on every non-SOX MR write — see *Verified behaviors*. Deliberately **not** split into a broader create/submit tier: `reviewer`/`developer` appear only in the SOX whitelist, so widening it here would just surface tools that 403. |
 | **Session context** | **Read + review-state** tools work from *any* session (production or branch). **Content / promotion** tools (`create`, `submit_for_review`, `merge`, conflict tools) work **only from a dev-branch session**; called from production they return a clear handoff error (*"open a session on branch '<name>' and do it there"*). |
 
 Note on merge: the raw `merge` endpoint is project-level (`isAvailableWithoutBranch: true`),
@@ -211,24 +225,62 @@ approvals) and return the same status object anyway, it only orchestrated the tr
 
 ### The status object (drives the agent's guidance)
 
-To make the conversational flows reliable, every state-changing tool and
-`get_merge_requests` detail return the same explicit `MergeRequestStatus`
-(fields defined under *Result models* below) so the agent branches on data, not on its own
-guesswork. Its `approvals` breakdown maps directly to the API's `reviewers:[{name,status}]`
-+ `approvals`. This lets the agent produce, e.g.:
+To make the conversational flows reliable, `approve_merge_request`,
+`reject_merge_request`, `submit_merge_request_for_review` and `get_merge_requests` detail all
+return the same explicit `MergeRequestStatus` (fields defined under *Result models* below) so
+the agent branches on data, not on its own guesswork. Its `approvals` breakdown maps directly
+to the API's `reviewers:[{name,status}]` + `approvals`. This lets the agent produce, e.g.:
 
 - *"MR #1234 is approved and conflict-free — merge?"* (`mergeable=true`)
 - *"MR #1234 can't merge yet — conflicts in A, B. Resolve now?"* (`blocked_reason=conflicts`)
 - *"You're missing approval from X, Y; Z already approved."* (`blocked_reason=needs_approval`)
+
+**Derivation (normative).** This is our own logic — no backend field corresponds to it — so it
+is specified here and unit-tested as a decision table. Inputs: the MR `state`, the conflicts
+list, and `approvals.given` vs `approvals.required`.
+
+| `state` | conflicts | approvals | `mergeable` | `blocked_reason` | `action_required` |
+|---|---|---|---|---|---|
+| `development` | — | — | `false` | `not_ready` | `submit_for_review` |
+| `in_review` | non-empty | any | `false` | `conflicts` | `resolve_conflicts` |
+| `in_review` | `[]` | `given < required` | `false` | `needs_approval` | `wait_for_approval` |
+| `approved` | non-empty | — | `false` | `conflicts` | `resolve_conflicts` |
+| `approved` | `[]` | — | **`true`** | `none` | `merge` |
+| `in_merge` | — | — | `false` | `not_ready` | `wait_for_merge` |
+| `published` | — | — | `false` | `none` | `none` |
+| `canceled` | — | — | `false` | `not_ready` | `none` |
+
+Rules that the table encodes:
+
+- **Precedence is state → conflicts → approvals.** When an `in_review` MR is both short of
+  approvals *and* conflicted, we report `conflicts`, because that is the part the current user
+  can act on immediately; waiting for someone else's approval is not actionable.
+- **`not_ready`** means the *lifecycle position* blocks the merge (`development`, `in_merge`,
+  `canceled`) — as opposed to a specific fixable obstacle. It is never used for conflicts or
+  approvals.
+- **`wait_for_merge`** means a merge job is already running for this MR (`in_merge`); the
+  correct behavior is to wait for it, never to start a second merge.
+- `mergeable = (state == 'approved' and not conflicts)`. It is deliberately **not** true for
+  `published` — there is nothing left to merge; `blocked_reason` is `none` because nothing is
+  wrong.
+- `in_review` + `[]` conflicts + enough approvals is absent by construction: the backend
+  auto-transitions to `approved` once the required count is met.
+- **`required` is read per project** (`KBC.branches-merge-requests.required-approvals-count`,
+  default 0), never assumed to be 0.
 
 ### Chat flows the tools must support
 
 **X — "Is there anything to merge?"** → two steps, because list mode returns summaries
 without status: `get_merge_requests(state='approved')` to find candidates, then
 `get_merge_requests(merge_request_ids=[...])` whose `status.mergeable` /
-`status.conflicts` let the agent proactively offer either the merge or conflict resolution.
+`status.conflicts` let the agent report what is ready and what is blocked.
 (Keeping the conflicts probe out of list mode is deliberate — it would cost one extra
 `/conflicts` call per MR on every listing.)
+
+Both steps work from **any** session, but the follow-up action does not: merging and resolving
+are branch-only. So from a **production** session flow X ends in a handoff — *"MR #1234 is
+ready; open a session on branch 'x' to merge it"* — and only from a **dev-branch** session can
+the agent go on to actually merge or start the resolve loop.
 
 **Y — "Merge #1234."** → `merge_merge_request(1234)`; on
 `status.blocked_reason == 'conflicts'` the agent fetches `get_merge_request_conflicts`, walks
@@ -279,6 +331,7 @@ parameter on every tool.
 async def get_merge_requests(
     merge_request_ids: Sequence[int] = (),          # empty -> list all; IDs -> batched details
     state: MergeRequestState | None = None,         # list mode only; ignored when IDs given
+                                                    # filtered CLIENT-side (GET /merge-request takes no params)
 ) -> MergeRequestsListOutput | MergeRequestsDetailOutput: ...
 
 # ---- Review-state actions — any session, admin/share --------------------------------
@@ -294,9 +347,9 @@ async def create_merge_request(
     title: str,
     description: str | None = None,
     reviewer_ids: Sequence[int] = (),
-    auto_merge: AutoMergeStrategy = 'none',
+    auto_merge: AutoMergeStrategy = 'none',         # 'none' is a real API value, sent as-is
     auto_merge_at: str | None = None,               # ISO-8601; required iff auto_merge='scheduled'
-) -> MergeRequestDetail: ...                        # no branch params — see Resolution Strategy §2
+) -> MergeRequestDetail: ...                        # costs +1 /conflicts call — see Resolution Strategy §2
 
 async def submit_merge_request_for_review(
     merge_request_id: int | None = None,            # MR-id convention
@@ -320,7 +373,7 @@ async def resolve_config_conflict(
     name: str | None = None,
     description: str | None = None,
     change_description: str | None = None,
-    is_disabled: bool = False,
+    is_disabled: bool | None = None,                # None = "not sent" (must be distinguishable)
     delete: bool = False,                           # omit all content fields -> tombstone
     merge_request_id: int | None = None,            # guard only, never sent to the endpoint
 ) -> ResolveConflictResult: ...
@@ -333,6 +386,17 @@ Argument rules for `resolve_config_conflict` — these mirror `RebaseRequest`
   branch is re-anchored onto. The agent takes it from the diff's `theirs.version`. The backend
   rejects a target version that is not newer
   (`ConfigurationRebaseTargetVersionNotNewerException` → 400).
+- **`theirs` is guaranteed present for a *conflicting* config,** so `theirs.version` is always
+  available in the resolve loop: `DefaultConflictValidator` only reports a conflict when the
+  configuration exists on **both** sides (a config present only in the default branch is
+  explicitly *not* a conflict), and a config deleted in the default branch still has a version
+  — it surfaces as `theirs.is_deleted = true`, not as `theirs = None`. The `None` sides in
+  `ConfigDiff` therefore occur only when diffing a **non**-conflicting configuration. If
+  `theirs` is nonetheless `None`, the tool must fail with an explicit message rather than
+  guessing a version.
+- **`is_disabled` must be tri-state** (`bool | None`). The content-field set is detected by
+  presence, so a plain `bool` default of `False` would be indistinguishable from a caller
+  explicitly sending `false` — breaking both the partial-payload check and the tombstone case.
 - The rebase payload is a **full replacement, not a patch.** With `delete=False` the content
   fields (`configuration`, `rows`, `name`, `description`, `change_description`,
   `is_disabled`) are sent as the resolved result; `rows` is the complete row set, its array
@@ -456,7 +520,7 @@ class MergeResult(BaseModel):
     merge_request_id: int
     merged: bool
     state: MergeRequestState
-    job_id: str | None
+    job_id: str | None                             # JobResponse types `id` as string — keep it a str
     status: MergeRequestStatus | None             # set when merged=False (why it was refused)
     next_step: str
     # Deliberately carries no change list: the merge endpoint returns a Job, not the MR, so
@@ -473,9 +537,12 @@ class ResolveConflictResult(BaseModel):
 
 Notes on deliberate choices:
 
-- **`MergeRequestStatus` is returned by every state-changing tool** (`approve`, `reject`,
-  `submit_for_review`) and embedded in `MergeRequestDetail` and `MergeResult`, so the agent
-  always re-reads the same shape after any action and never has to guess what changed.
+- **`MergeRequestStatus` is returned by `approve`, `reject` and `submit_for_review`** and
+  embedded in `MergeRequestDetail` and in `MergeResult` when a merge is refused, so the agent
+  re-reads the same shape after those actions. The two exceptions are deliberate:
+  `merge_merge_request` returns `MergeResult` (status only on refusal — on success the state is
+  simply `published`) and `resolve_config_conflict` returns `ResolveConflictResult`, whose
+  `remaining_conflicts` is the signal the loop needs.
 - **`ResolveConflictResult.remaining_conflicts`** lets the agent drive the per-config loop
   without re-fetching the whole conflict set: empty list = ready to merge.
 
@@ -549,9 +616,19 @@ Two consequences:
    `branchIntoId` = default branch, and errors when the session is on the default/production
    branch.
 3. **Status object**: a helper builds `MergeRequestStatus` from the MR payload +
-   `/conflicts` + the required-approvals count. `merge_merge_request` catches the backend
-   409/not-ready and returns this status (enriched with the conflicts list) instead of a
-   raw error.
+   `/conflicts` + the required-approvals count, per the normative decision table above.
+   `merge_merge_request` catches the backend 409/not-ready and returns this status (enriched
+   with the conflicts list) instead of a raw error.
+   **Request cost:** the status needs `/conflicts`, which `POST /merge-request` does not
+   return — so `create_merge_request` is `POST /merge-request` **+ 1** `GET
+   …/conflicts`. It needs nothing further: `changed_configurations` is legitimately `[]` in
+   `development` (the changeLog is only written at request-review) and `activity_log` is `[]`
+   because creation emits no lifecycle event. Likewise `get_merge_requests` in detail mode is
+   `1 + 2N` requests (detail with `?include=activityLog`, plus `/conflicts`, per MR) — batched
+   concurrently. **List mode stays 1 request**, which is why summaries carry no status.
+   The required-approvals count comes from project metadata
+   (`KBC.branches-merge-requests.required-approvals-count`, default 0) and is fetched once per
+   call, not per MR.
 4. **Async merge — the await loop must be written from scratch.** The merge endpoint returns
    a Storage Job, and **no reusable job-polling helper exists**: `tools/jobs.py` only has
    `run_job` (creates a job and returns immediately) and `get_jobs` (reads status). The
@@ -632,21 +709,30 @@ Two consequences:
     clear error.
   - `_await_storage_job`: terminal success, terminal failure (rollback → `approved`), and
     timeout → status object reporting `in_merge` rather than raising.
-  - status object / decision table: `mergeable` happy path; `blocked_reason=needs_approval`
-    with `given_by`/`missing_from`; `blocked_reason=conflicts` with the conflicts list;
-    `merge_merge_request` returns the status (not a raw error) on a 409.
+  - status object: **the full decision table above, parametrized row by row** (every `state`
+    × conflicts × approvals combination, including `not_ready` for `development`/`in_merge`/
+    `canceled` and `wait_for_merge` for `in_merge`), plus the precedence rule (conflicts win
+    over `needs_approval` when both apply), `required` read from project metadata rather than
+    assumed 0, and `merge_merge_request` returning the status (not a raw error) on a 409.
   - conflict resolution: `get_merge_request_conflicts` fans out diffs and flattens each side's
     nested `diff` payload; `resolve_config_conflict` sends `version` + the full content set for
     a keep rebase, sends **only** `version` for `delete=True`, and rejects a partial payload
-    client-side; a resolved MR then merges (live conflict check clears); approvals survive
-    rebase.
+    client-side; `is_disabled=False` is sent while `is_disabled=None` is omitted (tri-state);
+    a missing `theirs` fails with an explicit message instead of guessing a version; a resolved
+    MR then merges (live conflict check clears); approvals survive rebase.
   - `changeLog` parsing: normal `configurations` list; empty while `state='development'`;
     missing/renamed key → empty list, never an exception.
   - status object is *derived*, not passed through: `mergeable` / `blocked_reason` /
     `action_required` computed from state + required approvals + conflicts; `null` reviewer
     status maps to `'pending'`; empty activity-log `note` maps to `None`.
-  - gating: tools hidden without the feature; write/merge hidden for `developer`/`reviewer`;
-    branch-only tools error / hidden on a production session; visible on a dev-branch session.
+  - gating: tools hidden without the feature; **all writes** hidden for `developer` /
+    `reviewer` / `readonly` and visible for `admin` / `share` (matching
+    `#[MergeRequestsAllowedRoles]`, which is `[ADMIN, SHARE]` on every non-SOX write) while
+    reads stay visible to any member; branch-only tools error / hidden on a production session
+    and visible on a dev-branch session.
+  - request counts: `create_merge_request` = POST + 1 `/conflicts`; detail mode = `1 + 2N`
+    batched; list mode = exactly 1 request (no per-MR conflicts probe); `state` filtering
+    happens client-side.
 - **Integration tests** (`integtests/tools/test_merge_requests.py`) against a
   `branches-merge-requests` project: on a dev-branch session, make a config change,
   `create_merge_request` → `submit_merge_request_for_review` → `merge_merge_request`, assert
