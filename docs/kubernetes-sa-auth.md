@@ -35,16 +35,21 @@ Key properties:
   set or overridden via HTTP headers or per-request config. That alone is not enough,
   because the Storage API URL of a session *can* come from an HTTP header — so the
   destination is checked as well (see the next point).
-- The SA JWT is only ever sent to the stack this server is deployed on. Before the
-  header is attached, the session's Storage API host is compared — exact host match,
-  no prefix or pattern matching — against the stack derived from the process
-  environment (`KBC_STORAGE_API_URL`, falling back to `HOSTNAME_SUFFIX`). If they
-  differ, or if the server has no stack of its own, the step-up is skipped and the
-  user's own Storage client is used instead.
+- The SA JWT is only ever sent to the stack this server belongs to. Before the header is
+  attached, the session's Storage API host is compared — exact host match, no prefix or
+  pattern matching, with the scheme's default port normalized away — against the server's
+  own Storage API URL. If they differ, or if the server has no stack of its own, the
+  step-up is skipped and the user's own Storage client is used instead.
+- The server's own stack is resolved **once**, when the server starts, from its own
+  configuration: the `--api-url` command-line parameter if given, otherwise
+  `KBC_STORAGE_API_URL`, otherwise `HOSTNAME_SUFFIX` (the input the Keboola Helm charts
+  set). That single value — `ServerState.own_stack_storage_api_url` — is then passed to
+  every check, so the step-up check and the per-request URL pinning below cannot disagree
+  about which stack is ours. A per-request HTTP header can never influence it.
 - Consistently, a per-request Storage API URL (`X-Storage-Api-Url`) pointing at a
   different host than the server's own stack is not honoured: the server keeps its own
-  Storage API URL for the request and logs a warning. Servers with no stack configured
-  in the environment (locally run servers, stdio transport) are unaffected.
+  Storage API URL for the request and logs a warning. Servers with no stack of their own
+  (locally run servers, stdio transport) are unaffected.
 - A missing or empty token file fails loudly — the step-up header is never silently
   dropped when the destination is this server's own stack.
 - When the env variable is not set (any locally-run server), the behavior is exactly

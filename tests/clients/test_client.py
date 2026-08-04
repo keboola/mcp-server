@@ -762,23 +762,34 @@ def test_get_metadata_property(
 
 
 class TestStepUpStorageClient:
-    """KeboolaClient.step_up_storage_client builds the Kubernetes step-up Storage client."""
+    """
+    KeboolaClient.step_up_storage_client builds the Kubernetes step-up Storage client.
+
+    The stack that the server itself belongs to is resolved once, when the server starts, and passed
+    to the client as `own_stack_storage_api_url` (see `ServerState.own_stack_storage_api_url`); the
+    step-up header is attached only when the session talks to that very stack.
+    """
 
     OWN_STACK_URL = 'https://connection.keboola.com'
 
-    @pytest.fixture(autouse=True)
-    def _deployed_on_own_stack(self, monkeypatch):
-        """Pretends the server runs on the 'connection.keboola.com' stack, as a deployed server does."""
-        monkeypatch.setenv('KBC_STORAGE_API_URL', self.OWN_STACK_URL)
-        monkeypatch.delenv('HOSTNAME_SUFFIX', raising=False)
-
-    def test_attaches_step_up_header_and_keeps_user_token(self, tmp_path):
+    @pytest.mark.parametrize(
+        'own_stack_storage_api_url',
+        [
+            OWN_STACK_URL,
+            # The default port is just another spelling of the same endpoint. `KeboolaClient` drops
+            # the port when building its own Storage API URL, so this must still be our own stack.
+            f'{OWN_STACK_URL}:443',
+        ],
+        ids=['plain', 'default_port'],
+    )
+    def test_attaches_step_up_header_and_keeps_user_token(self, tmp_path, own_stack_storage_api_url):
         token_file = tmp_path / 'token'
         token_file.write_text('sa-jwt\n')
         client = KeboolaClient(
-            storage_api_url='https://connection.keboola.com',
+            storage_api_url=self.OWN_STACK_URL,
             storage_api_token='user-token',
             headers={'User-Agent': 'test'},
+            own_stack_storage_api_url=own_stack_storage_api_url,
         )
 
         stepped = client.step_up_storage_client(str(token_file))
@@ -796,69 +807,89 @@ class TestStepUpStorageClient:
         token_file = tmp_path / 'token'
         token_file.write_text('sa-jwt')
         client = KeboolaClient(
-            storage_api_url='https://connection.keboola.com',
+            storage_api_url=self.OWN_STACK_URL,
             storage_api_token='user-token',
             readonly=readonly,
+            own_stack_storage_api_url=self.OWN_STACK_URL,
         )
 
         stepped = client.step_up_storage_client(str(token_file))
 
         assert stepped.raw_client.readonly == client.storage_client.raw_client.readonly
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('branch_id', [None, '123'], ids=['main_branch', 'dev_branch'])
+    async def test_own_stack_survives_branch_switch(self, tmp_path, mocker, branch_id):
+        """`with_branch_id()` builds a new client, which must keep knowing which stack is ours."""
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt')
+        client = KeboolaClient(
+            storage_api_url=self.OWN_STACK_URL,
+            storage_api_token='user-token',
+            branch_id='999',
+            own_stack_storage_api_url=self.OWN_STACK_URL,
+        )
+        client.storage_client.dev_branch_detail = mocker.AsyncMock(return_value={'isDefault': False})
+
+        branched = await client.with_branch_id(branch_id)
+
+        assert branched is not client
+        assert (
+            branched.step_up_storage_client(str(token_file)).raw_client.headers['X-Kubernetes-Authorization']
+            == 'Bearer sa-jwt'
+        )
+
     def test_fails_loudly_on_empty_token_file(self, tmp_path):
         token_file = tmp_path / 'token'
         token_file.write_text('  \n')
-        client = KeboolaClient(storage_api_url='https://connection.keboola.com', storage_api_token='user-token')
+        client = KeboolaClient(
+            storage_api_url=self.OWN_STACK_URL,
+            storage_api_token='user-token',
+            own_stack_storage_api_url=self.OWN_STACK_URL,
+        )
 
         with pytest.raises(ValueError, match='token file is empty'):
             client.step_up_storage_client(str(token_file))
 
     def test_fails_loudly_on_missing_token_file(self, tmp_path):
-        client = KeboolaClient(storage_api_url='https://connection.keboola.com', storage_api_token='user-token')
+        client = KeboolaClient(
+            storage_api_url=self.OWN_STACK_URL,
+            storage_api_token='user-token',
+            own_stack_storage_api_url=self.OWN_STACK_URL,
+        )
 
         with pytest.raises(FileNotFoundError):
             client.step_up_storage_client(str(tmp_path / 'missing'))
 
     @pytest.mark.parametrize(
-        'storage_api_url',
+        ('storage_api_url', 'own_stack_storage_api_url'),
         [
             # Another Keboola stack ...
-            'https://connection.north-europe.azure.keboola.com',
+            ('https://connection.north-europe.azure.keboola.com', OWN_STACK_URL),
             # ... and hosts that only look like this server's stack. All of them satisfy the
             # 'connection.' prefix that the Storage API URL itself is required to have.
-            'https://connection.keboola.com.attacker.example',
-            'https://connection.attacker.example',
+            ('https://connection.keboola.com.attacker.example', OWN_STACK_URL),
+            ('https://connection.attacker.example', OWN_STACK_URL),
+            # A genuinely different port is a different endpoint.
+            (OWN_STACK_URL, f'{OWN_STACK_URL}:8443'),
+            # A server with no stack of its own (locally run) has no stack to step up on.
+            (OWN_STACK_URL, None),
         ],
-        ids=['other_stack', 'lookalike_suffix', 'foreign_domain'],
+        ids=['other_stack', 'lookalike_suffix', 'foreign_domain', 'other_port', 'no_own_stack'],
     )
-    def test_no_step_up_header_for_foreign_stack(self, tmp_path, storage_api_url):
+    def test_no_step_up_header_for_foreign_stack(self, tmp_path, storage_api_url, own_stack_storage_api_url):
         """The ServiceAccount JWT belongs to this server's stack and must not travel anywhere else."""
-        client = KeboolaClient(storage_api_url=storage_api_url, storage_api_token='user-token')
-
-        # The token file does not exist: the destination is checked before the JWT is read.
-        stepped = client.step_up_storage_client(str(tmp_path / 'token'))
-
-        assert 'X-Kubernetes-Authorization' not in (stepped.raw_client.headers or {})
-        assert stepped is client.storage_client
-
-    def test_no_step_up_header_when_server_has_no_own_stack(self, tmp_path, monkeypatch):
-        """A server with no stack of its own (locally run) has no stack to step up on."""
-        monkeypatch.delenv('KBC_STORAGE_API_URL', raising=False)
-        client = KeboolaClient(storage_api_url=self.OWN_STACK_URL, storage_api_token='user-token')
-
-        stepped = client.step_up_storage_client(str(tmp_path / 'token'))
-
-        assert 'X-Kubernetes-Authorization' not in (stepped.raw_client.headers or {})
-        assert stepped is client.storage_client
-
-    def test_attaches_step_up_header_with_hostname_suffix_only(self, tmp_path, monkeypatch):
-        """Deployed servers identify their stack by HOSTNAME_SUFFIX alone."""
-        monkeypatch.delenv('KBC_STORAGE_API_URL', raising=False)
-        monkeypatch.setenv('HOSTNAME_SUFFIX', 'keboola.com')
+        # A readable token file, so that it is the destination check — not a missing file — that
+        # keeps the header away.
         token_file = tmp_path / 'token'
         token_file.write_text('sa-jwt')
-        client = KeboolaClient(storage_api_url=self.OWN_STACK_URL, storage_api_token='user-token')
+        client = KeboolaClient(
+            storage_api_url=storage_api_url,
+            storage_api_token='user-token',
+            own_stack_storage_api_url=own_stack_storage_api_url,
+        )
 
         stepped = client.step_up_storage_client(str(token_file))
 
-        assert stepped.raw_client.headers['X-Kubernetes-Authorization'] == 'Bearer sa-jwt'
+        assert 'X-Kubernetes-Authorization' not in (stepped.raw_client.headers or {})
+        assert stepped is client.storage_client

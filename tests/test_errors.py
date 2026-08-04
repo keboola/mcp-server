@@ -485,11 +485,14 @@ async def test_event_step_up_header_only_for_own_stack(
     token_file = tmp_path / 'token'
     token_file.write_text('sa-jwt')
     monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', str(token_file))
-    monkeypatch.setenv('KBC_STORAGE_API_URL', 'https://connection.keboola.com')
-    monkeypatch.delenv('HOSTNAME_SUFFIX', raising=False)
 
-    # A real client, so the real step-up logic decides whether the JWT is attached.
-    client = KeboolaClient(storage_api_url=session_storage_api_url, storage_api_token='user-token')
+    # A real client, so the real step-up logic decides whether the JWT is attached. The server's own
+    # stack is the one it was configured with when it started (see `ServerState.own_stack_storage_api_url`).
+    client = KeboolaClient(
+        storage_api_url=session_storage_api_url,
+        storage_api_token='user-token',
+        own_stack_storage_api_url='https://connection.keboola.com',
+    )
     empty_context.session.state[KeboolaClient.STATE_KEY] = client
     trigger_event = mocker.patch.object(AsyncStorageClient, 'trigger_event', autospec=True)
 

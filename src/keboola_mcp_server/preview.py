@@ -285,8 +285,15 @@ async def preview_config_diff(rq: Request) -> Response:
     LOG.info(f'[preview_config_diff] tool_name={preview_rq.tool_name} param_keys={sorted(preview_rq.tool_params)}')
 
     server_state = ServerState.from_starlette(rq.app)
-    config = SessionStateMiddleware.apply_request_config(rq, server_state.config)
-    state = await SessionStateMiddleware.create_session_state(config, server_state.runtime_info, readonly=True)
+    # This route builds its own session state, so it must pin the Storage API URL to the server's
+    # own stack the same way the MCP middleware chain does.
+    own_stack_storage_api_url = server_state.own_stack_storage_api_url
+    config = SessionStateMiddleware.apply_request_config(
+        rq, server_state.config, own_stack_storage_api_url=own_stack_storage_api_url
+    )
+    state = await SessionStateMiddleware.create_session_state(
+        config, server_state.runtime_info, readonly=True, own_stack_storage_api_url=own_stack_storage_api_url
+    )
     client = KeboolaClient.from_state(state)
     workspace_manager = WorkspaceManager.from_state(state)
 

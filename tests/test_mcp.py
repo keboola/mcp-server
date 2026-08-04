@@ -701,9 +701,11 @@ class TestSessionStateMiddleware:
             return expected_result
 
         captured_configs: list[Config] = []
+        captured_own_stack_urls: list[str | None] = []
 
-        async def fake_create_session_state(cfg, _runtime_info, readonly=None):
+        async def fake_create_session_state(cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url):
             captured_configs.append(cfg)
+            captured_own_stack_urls.append(own_stack_storage_api_url)
             return {'fake': 'state'}
 
         middleware = SessionStateMiddleware()
@@ -717,6 +719,9 @@ class TestSessionStateMiddleware:
         assert result is expected_result
         assert len(captured_configs) == 1
         assert captured_configs[0].branch_id == expected_branch_id
+        # The session's client is told which stack is the server's own one, so that it can decide
+        # whether the Kubernetes step-up header may be sent.
+        assert captured_own_stack_urls == ['https://connection.test.keboola.com']
 
     @pytest.mark.parametrize(
         ('server_storage_api_url', 'headers', 'expected_storage_api_url'),
@@ -730,6 +735,12 @@ class TestSessionStateMiddleware:
             # The expected case: the caller asks for the very stack this server runs on.
             (
                 'https://connection.keboola.com',
+                {'X-Storage-Api-Url': 'https://connection.keboola.com', 'X-Branch-Id': '123'},
+                'https://connection.keboola.com',
+            ),
+            # The same stack spelled with the scheme's default port is honoured as our own.
+            (
+                'https://connection.keboola.com:443',
                 {'X-Storage-Api-Url': 'https://connection.keboola.com', 'X-Branch-Id': '123'},
                 'https://connection.keboola.com',
             ),
@@ -766,6 +777,7 @@ class TestSessionStateMiddleware:
         ids=[
             'no_url_in_headers',
             'own_stack',
+            'own_stack_default_port',
             'other_stack',
             'lookalike_suffix',
             'foreign_domain',
@@ -785,7 +797,9 @@ class TestSessionStateMiddleware:
         http_rq.headers = headers
         http_rq.scope = {}
 
-        applied = SessionStateMiddleware.apply_request_config(http_rq, config)
+        applied = SessionStateMiddleware.apply_request_config(
+            http_rq, config, own_stack_storage_api_url=server_storage_api_url
+        )
 
         assert applied.storage_api_url == expected_storage_api_url
         # Only the Storage API URL is pinned; the other per-request headers keep working.

@@ -3,7 +3,7 @@ from typing import Mapping
 
 import pytest
 
-from keboola_mcp_server.config import Config, get_deployment_storage_api_url, is_same_stack
+from keboola_mcp_server.config import Config, get_env_storage_api_url, is_same_stack
 
 
 class TestConfig:
@@ -110,7 +110,7 @@ class TestConfig:
         assert config.mcp_server_url == expected
 
 
-class TestDeploymentStorageApiUrl:
+class TestEnvStorageApiUrl:
     @pytest.mark.parametrize(
         ('env', 'expected'),
         [
@@ -130,8 +130,8 @@ class TestDeploymentStorageApiUrl:
         ],
         ids=['not_deployed', 'hostname_suffix', 'explicit_url', 'explicit_url_normalized', 'explicit_url_wins'],
     )
-    def test_get_deployment_storage_api_url(self, env: Mapping[str, str], expected: str | None) -> None:
-        assert get_deployment_storage_api_url(env) == expected
+    def test_get_env_storage_api_url(self, env: Mapping[str, str], expected: str | None) -> None:
+        assert get_env_storage_api_url(env) == expected
 
 
 class TestIsSameStack:
@@ -150,9 +150,20 @@ class TestIsSameStack:
             ('https://connection.keboola.com.example.com', 'https://connection.keboola.com', False),
             ('https://connection.example.com', 'https://connection.keboola.com', False),
             ('https://xconnection.keboola.com', 'https://connection.keboola.com', False),
-            # ... nor may user info smuggle a foreign host in.
+            # ... nor may user info smuggle a foreign host in ...
             ('https://connection.keboola.com@example.com', 'https://connection.keboola.com', False),
+            # ... and a URL with user info is not this stack even when its host is: our own URLs
+            # never carry credentials.
+            ('https://attacker@connection.keboola.com', 'https://connection.keboola.com', False),
+            ('https://user:password@connection.keboola.com', 'https://connection.keboola.com', False),
+            # The scheme's default port is the same endpoint as no port at all. `KeboolaClient`
+            # builds its Storage API URL without a port, so 'KBC_STORAGE_API_URL=...:443' must
+            # still be recognized as this server's own stack.
+            ('https://connection.keboola.com:443', 'https://connection.keboola.com', True),
+            ('http://localhost:80', 'http://localhost', True),
             # Different ports are different endpoints.
+            ('https://connection.keboola.com:8443', 'https://connection.keboola.com', False),
+            ('https://connection.keboola.com:8443', 'https://connection.keboola.com:443', False),
             ('http://localhost:8000', 'http://localhost:8001', False),
             # Missing or unusable URLs never match.
             (None, 'https://connection.keboola.com', False),

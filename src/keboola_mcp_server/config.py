@@ -138,19 +138,19 @@ class Config:
         return f'Config({joined_params})'
 
 
-def get_deployment_storage_api_url(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+def get_env_storage_api_url(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
     """
-    Returns the Storage API URL of the Keboola stack that this server instance is deployed on.
+    Returns the Storage API URL of this server's own Keboola stack as described by the process
+    environment ('KBC_STORAGE_API_URL', falling back to 'HOSTNAME_SUFFIX').
 
-    The value is derived exclusively from the process environment ('KBC_STORAGE_API_URL', falling
-    back to 'HOSTNAME_SUFFIX') — the same sources that `create_server()` uses when starting the
-    server. HTTP headers and other per-request inputs can never influence it, which makes it usable
-    as the trusted answer to "which stack is mine?". The URL is normalized the same way as
+    This is only the environment-derived input; the authoritative "which stack is mine?" value is
+    `Config.storage_api_url` of the server's own configuration, which `create_server()` builds from
+    the '--api-url' CLI parameter and from this function (see `ServerState.own_stack_storage_api_url`,
+    the single value that all the stack checks use). The URL is normalized the same way as
     `Config.storage_api_url`, so the two are directly comparable.
 
     :param env: The environment mapping to read from; defaults to `os.environ`.
-    :return: The Storage API URL of this server's own stack, or None when the server is not
-        configured with a stack of its own (typically a locally run server).
+    :return: The Storage API URL configured in the environment, or None when there is none.
     """
     env = os.environ if env is None else env
     if storage_api_url := env.get('KBC_STORAGE_API_URL'):
@@ -160,14 +160,46 @@ def get_deployment_storage_api_url(env: Optional[Mapping[str, str]] = None) -> O
     return None
 
 
+# The ports that are implied by a scheme, so that 'https://connection.keboola.com' and
+# 'https://connection.keboola.com:443' are recognized as the very same endpoint.
+_DEFAULT_PORTS: Mapping[str, int] = {'http': 80, 'https': 443}
+
+
+def _stack_identity(url: str) -> Optional[tuple[str, Optional[int]]]:
+    """
+    Returns the (host, port) pair that identifies the Keboola stack addressed by the input URL,
+    or None when the URL cannot identify a stack.
+
+    The port is dropped when it is the default port of the URL's scheme, so that the two spellings
+    of the same endpoint ('https://host' and 'https://host:443') yield the same identity, while a
+    genuinely different port ('https://host:8443') does not. This mirrors the normalization that
+    `KeboolaClient.__init__()` applies when it builds its own Storage API URL.
+
+    :param url: The URL to identify.
+    :return: The (host, port) pair, or None for a URL with no host or with user info in it.
+    """
+    parsed = urlparse(url)
+    if parsed.username or parsed.password:
+        # A URL such as 'https://connection.keboola.com@example.com' addresses 'example.com', and
+        # 'https://attacker@connection.keboola.com' carries credentials that our URLs never have.
+        return None
+    if not parsed.hostname:
+        return None
+    port = parsed.port  # raises ValueError when the port is not a number
+    if port is not None and port == _DEFAULT_PORTS.get(parsed.scheme.lower()):
+        port = None
+    return parsed.hostname, port
+
+
 def is_same_stack(url: Optional[str], other_url: Optional[str]) -> bool:
     """
     Tells whether two Keboola URLs point to the very same host.
 
-    The comparison is an exact host (and port) match. No prefix, suffix or pattern matching is
-    involved, so hosts that merely look alike (e.g. 'connection.keboola.com.example.com' or
-    'connection.example.com') never compare equal. URLs carrying user info are never considered
-    equal to anything, and a missing or unparsable URL always compares as different.
+    The comparison is an exact host (and port) match, with the scheme's default port normalized
+    away. No prefix, suffix or pattern matching is involved, so hosts that merely look alike
+    (e.g. 'connection.keboola.com.example.com' or 'connection.example.com') never compare equal.
+    URLs carrying user info are never considered equal to anything, and a missing or unparsable
+    URL always compares as different.
 
     :param url: The first URL to compare.
     :param other_url: The second URL to compare.
@@ -176,16 +208,14 @@ def is_same_stack(url: Optional[str], other_url: Optional[str]) -> bool:
     if not url or not other_url:
         return False
     try:
-        parsed = urlparse(url)
-        other_parsed = urlparse(other_url)
-        if parsed.username or parsed.password or other_parsed.username or other_parsed.password:
-            return False
-        if not parsed.hostname or not other_parsed.hostname:
-            return False
-        return (parsed.hostname, parsed.port) == (other_parsed.hostname, other_parsed.port)
+        identity = _stack_identity(url)
+        other_identity = _stack_identity(other_url)
     except ValueError:
         # Raised by urlparse() when e.g. the port is not a number.
         return False
+    if identity is None or other_identity is None:
+        return False
+    return identity == other_identity
 
 
 @dataclass(frozen=True)

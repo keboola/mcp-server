@@ -135,6 +135,10 @@ For client–server communication, Keboola credentials must be provided to enabl
 - For personal use (mainly with stdio transport): set the environment variables before starting the server. All requests will reuse these predefined credentials.
 - For multi-user use: include the variables in the request headers so that each request uses the credentials provided with it.
 
+Two of the variables are not taken from the request headers:
+- `KBC_STORAGE_API_URL`: a server that was started with its own Storage API URL (the `--api-url` parameter or the `KBC_STORAGE_API_URL` environment variable) only serves that one Keboola stack. An `X-Storage-Api-Url` header asking for a different host is ignored (a warning is logged) — the server keeps its own URL for the request. Start the server without a Storage API URL of its own if you want each request to choose its stack.
+- `KBC_KUBERNETES_TOKEN_PATH` (deployed servers only, see [docs/kubernetes-sa-auth.md](docs/kubernetes-sa-auth.md)): read from the environment only, never from a header.
+
 
 ### KBC_STORAGE_TOKEN
 
