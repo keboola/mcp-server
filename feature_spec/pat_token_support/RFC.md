@@ -328,6 +328,8 @@ the session's subject token for all downstream exchange/forwarding.
   automatically: with >1 project in scope they require a single confirmed target project. Server
   instructions state: **the agent must never write to more than one project without explicit user
   guidance or confirmation.** Bulk multi-project writes are possible but only on that explicit signal.
+  _(How "confirmed target" is expressed evolved — see "Decisions (increment 5)" below: an explicit
+  `project_id` tool argument, not the interim active-project/re-scope indirection.)_
 
 ## Scope changes (relative to the base RFC)
 
@@ -412,7 +414,7 @@ the per-project envelope shape change the docs), integration tests on a dev stac
 - **Q1 (exactly-1-in-scope) — confirmed: a single-project scope returns the raw result, not a
   1-element envelope.** Single-project UX is byte-for-byte unchanged.
 - **Q4 (write-target confirmation) — lean: explicit `project_id` arg on write tools, honored only when
-  scope > 1.** (Still open; not blocking.)
+  scope > 1.** (Resolved as leaned — see "Decisions (increment 5)" below.)
 
 # Extension: query fan-out, dialect-aware bootstrap, per-service token gaps (PSGO-261, increment 3)
 
@@ -602,6 +604,8 @@ achievable on clients that re-fetch on `list_changed`; we don't rely on it.
   (absent in Claude Code mid-session), so all tools stay listed and data tools are gated at call time.
 - **No phantom active project before a scope is confirmed**; after `set_project_scope` the
   `active_project_id` is the write / `query_data`-default target and is surfaced intentionally.
+  _(Superseded for writes by "Decisions (increment 5)" below: writes now take an explicit
+  `project_id` argument instead of implicitly targeting `active_project_id`.)_
 - **Fan-out stays**, with the relevance/latency critiques answered by the `project_ids` filter and a
   (follow-up) concurrent loop; per-project error isolation is now implemented (partial results).
 - Fixed a latent bug: `set_project_scope` referenced `minted.read_only` on the exchange-failure path
@@ -666,3 +670,33 @@ all: `create_session_state` forwards any programmatic token (`kbc_at_*`/`kbc_pat
 `resolve-storage-token` auth-bridge exchange this section referenced has been removed (see
 `oauth_session_exchange/RFC.md` Decision §6). Full multi-project scope now works the same way on
 the deployed server as it does locally.
+
+## Decisions (increment 5) — explicit `project_id` on write tools (resolves Q4)
+
+**Q4 (write-target confirmation), previously "still open; not blocking," is now resolved as leaned:
+explicit `project_id` argument on every write/modify/delete tool, required once 2+ projects are
+scoped.** Superseded is the interim behavior described above (line ~604, "increment 4"): a write
+targeting `active_project_id` (the first scoped project) with no per-call target, requiring
+`set_project_scope` to change which project a write lands on. That indirection was reported as
+confusing in practice — writing to a different scoped project needlessly demanded a re-scope, which
+also reorders the scope for every subsequent read fan-out.
+
+- **Every write tool now declares `project_id: str | None = None`** (a real, schema-visible
+  parameter — not a middleware-injected one, unlike the read-side `project_ids` filter). The LLM
+  states its target explicitly in the conversation.
+- **`MultiProjectMiddleware._dispatch_write`** (not the tool body) resolves and swaps the target,
+  for the same reason `_swap_project` already runs ahead of `ToolsFilteringMiddleware` for read
+  fan-out: role/feature/branch authorization must be evaluated against the *targeted* project's
+  client, not whatever was active before the call.
+- **Ambiguity is now a hard error, not a silent default:** 2+ scoped projects and no `project_id` →
+  `ToolError` naming the scoped projects and asking for one. Exactly one scoped project still
+  defaults `project_id` to it (unchanged single-project UX).
+- **Read tools are unaffected** — they keep the existing `project_ids`-filtered fan-out; listing
+  needs no single target.
+
+This also folds in the one still-useful idea from the earlier, superseded MPA RFC (PR #500,
+AI-3027, closed as superseded by this RFC): its "`project_id` as an explicit tool argument, chosen
+over a header/middleware-only approach" recommendation, including the ambiguity rule (`from_project`
+raising when 2+ projects are active and no `project_id` is given). Everything else in PR #500 (token
+taxonomy, append-only project registry, Kai integration flow, 24h idle refresh) is already covered
+by this RFC and the as-built code under different names.

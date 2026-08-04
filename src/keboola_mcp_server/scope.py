@@ -8,11 +8,28 @@ Split out of ``mcp.py`` so that module can stay focused on the middleware/server
 import dataclasses
 import secrets
 import time
+from typing import Annotated, Optional
+
+from pydantic import Field
 
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
 
 SCOPE_KEY = 'project_scope'
+
+# Declared on every write/modify/delete tool; consumed by MultiProjectMiddleware.on_call_tool to
+# pick which scoped project the call targets (see multiproject.py's write branch). Optional only
+# when the scope resolves the target unambiguously (a single scoped project).
+PROJECT_ID_ARG = 'project_id'
+ProjectIdArg = Annotated[
+    Optional[str],
+    Field(
+        description=(
+            'Target Keboola project id for this write. Required when the session is scoped to 2+ '
+            'projects; optional (defaults to the single scoped project) otherwise.'
+        )
+    ),
+]
 
 # The OAuth session's DB row id (see session_store.repository.OAuthSession), stashed on
 # ctx.session.state so set_project_scope can persist a newly-confirmed scope back to Postgres

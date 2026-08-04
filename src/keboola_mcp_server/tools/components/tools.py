@@ -48,6 +48,7 @@ from keboola_mcp_server.mcp import (
     toon_serializer_compact,
     unwrap_results,
 )
+from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.model import (
     Component,
     ComponentSummary,
@@ -435,6 +436,7 @@ async def create_sql_transformation(
             ),
         ),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> ConfigToolOutput:
     """
     Creates an SQL transformation using the specified name, SQL query following the current SQL dialect, a detailed
@@ -659,6 +661,7 @@ async def update_sql_transformation(
             ),
         ),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
@@ -1113,6 +1116,7 @@ async def create_config(
             ),
         ),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -1258,6 +1262,7 @@ async def add_config_row(
         list[dict[str, Any]],
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> ConfigToolOutput:
     """
     Creates a component configuration row in the specified configuration_id, using the specified name,
@@ -1460,6 +1465,7 @@ async def update_config(
             ),
         ),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
@@ -1725,6 +1731,7 @@ async def update_config_row(
             ),
         ),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing component configuration row by modifying its parameters, storage mappings, name, or description.

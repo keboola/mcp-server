@@ -22,6 +22,7 @@ from keboola_mcp_server.mcp import (
     toon_serializer_compact,
     unwrap_results,
 )
+from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.storage.usage import (
     ComponentUsageReference,
@@ -1026,6 +1027,7 @@ async def update_descriptions(
             'Examples: "bucket_id", "bucket_id.table_id", "bucket_id.table_id.column_name"'
         ),
     ],
+    project_id: ProjectIdArg = None,
 ) -> UpdateDescriptionsOutput:
     """Updates the description for a Keboola storage item.
 

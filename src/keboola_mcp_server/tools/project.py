@@ -19,7 +19,7 @@ from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import ServerState, process_concurrently
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
-from keboola_mcp_server.scope import OAUTH_SESSION_ID_KEY, SCOPE_KEY, SessionScope, resolve_scope_secret
+from keboola_mcp_server.scope import OAUTH_SESSION_ID_KEY, SCOPE_KEY, ProjectIdArg, SessionScope, resolve_scope_secret
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -206,6 +206,7 @@ async def update_project_description(
         str,
         Field(description='The new project description text.'),
     ],
+    project_id: ProjectIdArg = None,
 ) -> None:
     """Updates the description of the current Keboola project."""
     client = KeboolaClient.from_state(ctx.session.state)
@@ -516,8 +517,9 @@ async def set_project_scope(
 
     Mints a scoped access token (narrowed to `project_ids`, optionally read-only) that is used for the
     rest of the conversation. Read-only tools then run against every scoped project in a single call;
-    write operations target the active (first) project only. Call this when the user states which
-    projects to work on; it can be called again any time to re-scope.
+    write/modify/delete tools take a `project_id` argument naming which scoped project to target (required
+    once 2+ projects are scoped). Call this when the user states which projects to work on; it can be
+    called again any time to re-scope.
 
     The server does not remember this scope between calls: pass the returned `scope_token` as the
     `scope_token` argument on every subsequent tool call in this conversation to keep it in effect.
@@ -588,8 +590,8 @@ async def set_project_scope(
         llm_instruction=(
             (
                 f'Session scoped to {len(ids)} projects. Read-only tools return results per project. '
-                'Write operations are not fanned out — they target the first scoped project; to write '
-                f'elsewhere, re-scope to that project first (confirm with the user). {resend_instruction}'
+                'Write operations require a project_id argument naming which scoped project to target '
+                f'-- no re-scope needed to switch targets. {resend_instruction}'
             )
             if multi
             else f'Session scoped to project {ids[0]}. {resend_instruction}'

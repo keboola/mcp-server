@@ -12,6 +12,7 @@ from pydantic import Field
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import KeboolaMcpServer
+from keboola_mcp_server.scope import ProjectIdArg
 
 LOG = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ async def create_oauth_url(
     ],
     config_id: Annotated[str, Field(description='The configuration ID for the component.')],
     ctx: Context,
+    project_id: ProjectIdArg = None,
 ) -> Annotated[str, Field(description='The OAuth authorization URL.')]:
     """
     Generates an OAuth authorization URL for a Keboola component configuration.
