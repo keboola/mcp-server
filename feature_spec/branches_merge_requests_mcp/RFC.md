@@ -185,6 +185,11 @@ are project-level and always addressed by MR id, so every such tool accepts
 This keeps both phrasings working: *"merge it"* (id omitted, resolved from the branch) and
 *"merge #1234"* (id given and validated), which is what chat flow Y below does.
 
+One exception to note: the rebase endpoint is addressed by **component + config on the
+session branch** and takes no MR id, so `resolve_config_conflict`'s `merge_request_id` is
+**never sent to the backend** — it is used only as a guard (confirm the target really is in
+that MR's conflict set) so an agent cannot overwrite an unrelated configuration.
+
 That is the whole toolset — **8 tools, no orchestrator.** The author's happy path stays
 three explicit calls (`create_merge_request` → `submit_merge_request_for_review` →
 `merge_merge_request`), which an agent chains trivially.
@@ -205,23 +210,11 @@ approvals) and return the same status object anyway, it only orchestrated the tr
 
 ### The status object (drives the agent's guidance)
 
-To make the conversational flows reliable, `get_merge_requests` detail **and**
-`merge_merge_request` (on refusal) return the same explicit status so the agent branches on
-data, not on its own guesswork:
-
-```
-state,                       # development | in_review | approved | in_merge | published
-is_approved,
-mergeable: bool,
-approvals: { required, given_by: [names], missing_from: [names] },
-conflicts: [ {component_id, configuration_id, name} ],   # list only, no diff content
-blocked_reason: none | needs_approval | conflicts,
-action_required: merge | submit_for_review | wait_for_approval | resolve_conflicts | none,
-next_step: "<one human-readable sentence>",
-```
-
-The approvals breakdown maps directly to the API's `reviewers:[{name,status}]` + `approvals`.
-This lets the agent produce, e.g.:
+To make the conversational flows reliable, every state-changing tool and
+`get_merge_requests` detail return the same explicit `MergeRequestStatus`
+(fields defined under *Result models* below) so the agent branches on data, not on its own
+guesswork. Its `approvals` breakdown maps directly to the API's `reviewers:[{name,status}]`
++ `approvals`. This lets the agent produce, e.g.:
 
 - *"MR #1234 is approved and conflict-free — merge?"* (`mergeable=true`)
 - *"MR #1234 can't merge yet — conflicts in A, B. Resolve now?"* (`blocked_reason=conflicts`)
@@ -229,21 +222,32 @@ This lets the agent produce, e.g.:
 
 ### Chat flows the tools must support
 
-**X — "Is there anything to merge?"** → `get_merge_requests(state=approved)`; detail's
-status shows `mergeable`/`conflicts` so the agent proactively offers merge or conflict
-resolution.
+**X — "Is there anything to merge?"** → two steps, because list mode returns summaries
+without status: `get_merge_requests(state='approved')` to find candidates, then
+`get_merge_requests(merge_request_ids=[...])` whose `status.mergeable` /
+`status.conflicts` let the agent proactively offer either the merge or conflict resolution.
+(Keeping the conflicts probe out of list mode is deliberate — it would cost one extra
+`/conflicts` call per MR on every listing.)
 
-**Y — "Merge #1234."** → `merge_merge_request(1234)`; on `blocked_reason=conflicts` the
-agent fetches `get_merge_request_conflicts`, walks the user through
-`resolve_config_conflict` per config (propose merge from `base`/`ours`/`theirs`, user
-confirms, rebase), then retries merge:
+**Y — "Merge #1234."** → `merge_merge_request(1234)`; on
+`status.blocked_reason == 'conflicts'` the agent fetches `get_merge_request_conflicts`, walks
+the user through `resolve_config_conflict` per config (propose a merge from
+`base`/`ours`/`theirs`, user confirms, rebase), then retries merge:
 
 ```
-merge_merge_request(1234) → { blocked_reason: conflicts, conflicts:[A,B], next_step }
-get_merge_request_conflicts(1234) → three-way diff for A, B
-per A: agent proposes merge → user confirms → resolve_config_conflict(A, …)
-per B: agent proposes merge → user confirms → resolve_config_conflict(B, …)
-merge_merge_request(1234) → merged → published
+merge_merge_request(1234)
+  -> MergeResult(merged=False, status=MergeRequestStatus(
+         blocked_reason='conflicts', action_required='resolve_conflicts',
+         conflicts=[A, B], next_step=...))
+get_merge_request_conflicts(1234)
+  -> MergeRequestConflictsOutput(conflicts=[ConfigDiff(A, base/ours/theirs),
+                                            ConfigDiff(B, base/ours/theirs)])
+per A: agent proposes a merge -> user confirms -> resolve_config_conflict(A, ...)
+         -> ResolveConflictResult(resolved=True, remaining_conflicts=[B])
+per B: agent proposes a merge -> user confirms -> resolve_config_conflict(B, ...)
+         -> ResolveConflictResult(resolved=True, remaining_conflicts=[])
+merge_merge_request(1234)
+  -> MergeResult(merged=True, state='published', changelog_summary=...)
 ```
 
 **Guarantee boundary (be honest):** MCP does not hard-guarantee the *wording* of the
@@ -263,22 +267,186 @@ Therefore resolution runs on a dev-branch session the user simply **opens fresh*
 enter the branch → new `X-Branch-Id` → new session state) — **not** a mid-session switch
 (that would need workspace reprovisioning = Tier C).
 
-### Response models
+### Tool signatures
 
-Lean, human-first Pydantic models:
+Normative contract. Descriptions/`Annotated[..., Field(...)]` metadata are omitted here for
+readability; the shapes and defaults are the spec. `ctx: Context` is the usual first
+parameter on every tool.
 
-- `MergeRequest` (summary): `id`, `title`, `description`, `state`, `branch_from_name`,
-  `branch_into_name`, `creator_name`, `reviewers` (name + status), `auto_merge`,
-  `created_at`, `merged_at`.
-- `MergeRequestStatus`: the status object above (embedded in detail and in merge refusals).
-- `MergeRequestDetail` = `MergeRequest` + `MergeRequestStatus` + `changelog_summary`
-  (counts + short per-item list) + `activity_log` (typed events).
-- `get_merge_requests` returns a **union**: `MergeRequestsListOutput` (summaries + links) or
-  `MergeRequestsDetailOutput` (list of `MergeRequestDetail`), mirroring
-  `GetConfigsListOutput` / `GetConfigsDetailOutput`.
-- `ConflictDiff`: `component_id`, `configuration_id`, `name`, `is_deleted`, `base`, `ours`,
-  `theirs` (returned by `get_merge_request_conflicts`).
-- `MergeResult`: `merge_request_id`, `state`, `job_id`, `changelog_summary`, `next_step`.
+```python
+# ---- Read / diagnosis — any session -------------------------------------------------
+async def get_merge_requests(
+    merge_request_ids: Sequence[int] = (),          # empty -> list all; IDs -> batched details
+    state: MergeRequestState | None = None,         # list mode only; ignored when IDs given
+) -> MergeRequestsListOutput | MergeRequestsDetailOutput: ...
+
+# ---- Review-state actions — any session, admin/share --------------------------------
+async def approve_merge_request(merge_request_id: int) -> MergeRequestStatus: ...
+
+async def reject_merge_request(
+    merge_request_id: int,
+    reason: str | None = None,                      # stored in the activity log
+) -> MergeRequestStatus: ...
+
+# ---- Author / promotion — dev-branch session only, admin/share ----------------------
+async def create_merge_request(
+    title: str,
+    description: str | None = None,
+    reviewer_ids: Sequence[int] = (),
+    auto_merge: AutoMergeStrategy = 'none',
+    auto_merge_at: str | None = None,               # ISO-8601; required iff auto_merge='scheduled'
+) -> MergeRequestDetail: ...                        # no branch params — see Resolution Strategy §2
+
+async def submit_merge_request_for_review(
+    merge_request_id: int | None = None,            # MR-id convention
+) -> MergeRequestStatus: ...
+
+async def merge_merge_request(
+    merge_request_id: int | None = None,            # MR-id convention
+) -> MergeResult: ...                               # awaits the job; refusal -> MergeResult.status
+
+# ---- Conflict resolution — dev-branch session only, admin/share ---------------------
+async def get_merge_request_conflicts(
+    merge_request_id: int | None = None,            # MR-id convention
+) -> MergeRequestConflictsOutput: ...               # conflict list + three-way diff per config
+
+async def resolve_config_conflict(
+    component_id: str,
+    configuration_id: str,
+    resolved_configuration: JsonDict | None = None, # required unless delete=True
+    rows: Sequence[JsonDict] | None = None,         # complete resolved row set; [] clears all rows
+    delete: bool = False,                           # resolve by deleting (tombstone)
+    merge_request_id: int | None = None,            # guard only, never sent to the endpoint
+) -> ResolveConflictResult: ...
+```
+
+Argument rules for `resolve_config_conflict` (the rebase payload is a **full replacement**,
+not a patch):
+
+- `delete=False` (default): `resolved_configuration` **and** `rows` are both required —
+  `rows` is the complete resolved row set, its array order becomes the row sort order, and
+  `rows=[]` deletes all rows. A partial payload is rejected client-side rather than silently
+  dropping fields.
+- `delete=True`: resolve the conflict by deleting the configuration (tombstone);
+  `resolved_configuration` / `rows` must be omitted.
+- Called **once per conflicting configuration** — there is no batch rebase.
+
+### Result models
+
+Lean, human-first Pydantic models. `Link` is the existing `keboola_mcp_server.links.Link`.
+
+```python
+MergeRequestState  = Literal['development', 'in_review', 'approved', 'in_merge', 'published', 'canceled']
+AutoMergeStrategy  = Literal['none', 'immediately', 'scheduled']
+ReviewerStatus     = Literal['approved', 'rejected', 'pending']
+BlockedReason      = Literal['none', 'needs_approval', 'conflicts', 'not_ready']
+ActionRequired     = Literal['none', 'submit_for_review', 'wait_for_approval',
+                             'resolve_conflicts', 'merge', 'wait_for_merge']
+ActivityEventType  = Literal['review_requested', 'approved', 'changes_requested',
+                             'merged', 'canceled']
+
+class Reviewer(BaseModel):
+    id: int
+    name: str
+    status: ReviewerStatus                  # 'pending' when the API reports null
+
+class Approvals(BaseModel):
+    required: int                           # 0 by default on non-SOX
+    given: int
+    given_by: list[str]                     # names that already approved
+    missing_from: list[str]                 # named reviewers yet to approve; [] when none are named
+
+class ConflictRef(BaseModel):               # identity only, no diff content
+    component_id: str
+    configuration_id: str
+    name: str | None = None
+    is_deleted: bool = False
+
+class MergeRequestStatus(BaseModel):        # the decision object the agent branches on
+    state: MergeRequestState
+    is_approved: bool
+    mergeable: bool
+    approvals: Approvals
+    conflicts: list[ConflictRef]
+    blocked_reason: BlockedReason
+    action_required: ActionRequired
+    next_step: str                          # one human-readable sentence
+
+class ChangelogSummary(BaseModel):
+    added: int
+    modified: int
+    deleted: int
+    items: list[str]                        # truncated human list
+    truncated: bool
+
+class ActivityEvent(BaseModel):
+    event_type: ActivityEventType
+    admin_name: str | None                  # None for system events (e.g. auto-merge)
+    note: str | None                        # e.g. the reject reason
+    created_at: str
+
+class MergeRequest(BaseModel):              # summary
+    id: int
+    title: str
+    description: str | None
+    state: MergeRequestState
+    branch_from_id: int
+    branch_from_name: str
+    branch_into_name: str
+    creator_name: str
+    reviewers: list[Reviewer]
+    auto_merge: AutoMergeStrategy
+    auto_merge_at: str | None
+    created_at: str
+    merged_at: str | None
+    links: list[Link]
+
+class MergeRequestDetail(MergeRequest):
+    status: MergeRequestStatus
+    changelog_summary: ChangelogSummary
+    activity_log: list[ActivityEvent]
+
+class MergeRequestsListOutput(BaseModel):
+    merge_requests: list[MergeRequest]
+    links: list[Link]
+
+class MergeRequestsDetailOutput(BaseModel):
+    merge_requests: list[MergeRequestDetail]
+
+class ConfigDiff(ConflictRef):              # one conflicting config + its three-way diff
+    base: JsonDict | None                   # dev branch version 1
+    ours: JsonDict | None                   # dev branch head
+    theirs: JsonDict | None                 # default branch head
+
+class MergeRequestConflictsOutput(BaseModel):
+    merge_request_id: int
+    conflicts: list[ConfigDiff]             # [] means nothing to resolve
+    next_step: str
+
+class MergeResult(BaseModel):
+    merge_request_id: int
+    merged: bool
+    state: MergeRequestState
+    job_id: str | None
+    changelog_summary: ChangelogSummary | None    # set when merged=True
+    status: MergeRequestStatus | None             # set when merged=False (why it was refused)
+    next_step: str
+
+class ResolveConflictResult(BaseModel):
+    component_id: str
+    configuration_id: str
+    resolved: bool
+    remaining_conflicts: list[ConflictRef]  # [] -> the MR is now mergeable
+    next_step: str
+```
+
+Notes on two deliberate choices:
+
+- **`MergeRequestStatus` is returned by every state-changing tool** (`approve`, `reject`,
+  `submit_for_review`) and embedded in `MergeRequestDetail` and `MergeResult`, so the agent
+  always re-reads the same shape after any action and never has to guess what changed.
+- **`ResolveConflictResult.remaining_conflicts`** lets the agent drive the per-config loop
+  without re-fetching the whole conflict set: empty list = ready to merge.
 
 ## Resolution Strategy
 
