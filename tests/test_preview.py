@@ -150,6 +150,36 @@ class TestPreviewConfigDiff:
         assert response.status_code == 403
         assert expected_fragment in response.json()['message']
 
+    def test_preview_pins_storage_api_url_to_own_stack(self, test_client: TestClient, mocker):
+        """
+        A request may not steer this endpoint to another Keboola stack.
+
+        This is a raw Starlette route outside the FastMCP middleware chain, so the pin applied by
+        `SessionStateMiddleware.apply_request_config()` is what binds it to the server's own stack.
+        """
+        # Spy on the real constructor: the endpoint builds its own session state, and the URL that
+        # the client is built with is the URL that the request is actually served from.
+        constructor = mocker.spy(KeboolaClient, '__init__')
+        mock_client = mocker.AsyncMock(KeboolaClient)
+        # A read-only token denies the preview after the session state (and its client) is built,
+        # which keeps this test free of the mutator-path mocks.
+        _configure_preview_auth(mock_client, mocker, role='readOnly')
+        mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
+
+        response = test_client.post(
+            '/preview/configuration',
+            json={'toolName': 'update_config', 'toolParams': {'configuration_id': 'cfg-1'}},
+            headers={'X-Storage-Api-Url': 'https://connection.attacker.example'},
+        )
+
+        assert response.status_code == 403
+        constructor.assert_called_once()
+        kwargs = constructor.call_args.kwargs
+        assert kwargs['storage_api_url'] == 'https://connection.test.keboola.com'
+        # The client is also told which stack is the server's own one, so that the Kubernetes
+        # step-up header cannot follow a request to a foreign stack.
+        assert kwargs['own_stack_storage_api_url'] == 'https://connection.test.keboola.com'
+
     def test_preview_update_config_success(self, test_client: TestClient, mocker):
         """Test successful preview of update_config tool."""
         # Mock the storage client's configuration_detail method

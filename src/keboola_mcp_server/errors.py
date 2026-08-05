@@ -127,7 +127,10 @@ async def _trigger_event(
     # On the Keboola-deployed server (KBC_KUBERNETES_TOKEN_PATH set) send the SA JWT as the
     # step-up header so Connection waives the missing permission on the event-create action
     # (storage:events:create). Read from the process env only — never from Config/HTTP — and
-    # fall back to the user's own client when not deployed/configured.
+    # fall back to the user's own client when not deployed/configured. `step_up_storage_client()`
+    # attaches the JWT only when the session talks to this server's own stack and falls back to
+    # the user's own client otherwise — this code runs in a `finally:` block that swallows its
+    # errors, so it must not depend on anything failing loudly.
     storage_client = client.storage_client
     if kubernetes_token_path := os.environ.get('KBC_KUBERNETES_TOKEN_PATH'):
         storage_client = client.step_up_storage_client(kubernetes_token_path)

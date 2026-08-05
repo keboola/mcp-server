@@ -31,7 +31,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeInfo
+from keboola_mcp_server.config import Config, ServerRuntimeInfo, is_same_stack
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, SEMANTIC_TOOLS_TAG, UPDATE_FLOW_TOOL_NAME
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -98,6 +98,22 @@ async def project_has_semantic_models(client: KeboolaClient) -> bool:
 class ServerState:
     config: Config
     runtime_info: ServerRuntimeInfo
+
+    @property
+    def own_stack_storage_api_url(self) -> str | None:
+        """
+        The Storage API URL of the Keboola stack that this server instance belongs to, or None when
+        it has no stack of its own (a locally run server that only learns the stack from the caller).
+
+        This is the single, trusted answer to "which stack is mine?" — every check that compares a
+        session's stack against the server's own stack must use this value, so that the checks cannot
+        drift apart. It is resolved once, when the server starts: `create_server()` builds
+        `self.config` from the '--api-url' CLI parameter, the process environment and the
+        'HOSTNAME_SUFFIX' fallback (see `get_env_storage_api_url()`). Per-request HTTP headers can
+        never influence it — `ServerState` is frozen and `SessionStateMiddleware.apply_request_config()`
+        returns a new `Config` for each request instead of mutating `self.config`.
+        """
+        return self.config.storage_api_url
 
     @classmethod
     def from_context(cls, ctx: Context) -> 'ServerState':
@@ -201,8 +217,13 @@ class SessionStateMiddleware(fmw.Middleware):
             # IMPORTANT: Since mcp 1.12.4 and fastmcp 2.11 the fastmcp.server.dependencies.get_http_request()
             #   returns the same object as ctx.request_context.request.
 
+            # Resolved once here and threaded through both stack checks (the per-request Storage
+            # API URL pinning below and the Kubernetes step-up in `KeboolaClient`), so the two
+            # cannot disagree about which stack is ours.
+            own_stack_storage_api_url = server_state.own_stack_storage_api_url
+
             if http_rq := get_http_request_or_none():
-                config = self.apply_request_config(http_rq, config)
+                config = self.apply_request_config(http_rq, config, own_stack_storage_api_url=own_stack_storage_api_url)
 
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
@@ -216,7 +237,9 @@ class SessionStateMiddleware(fmw.Middleware):
                     LOG.info(f'Skipping branch validation for {context.method} request.')
                 config = dataclasses.replace(config, branch_id=None)
 
-            state = await self.create_session_state(config, runtime_info)
+            state = await self.create_session_state(
+                config, runtime_info, own_stack_storage_api_url=own_stack_storage_api_url
+            )
             ctx.session.state = state
 
         try:
@@ -245,9 +268,34 @@ class SessionStateMiddleware(fmw.Middleware):
         }
 
     @classmethod
-    def apply_request_config(cls, http_rq: Request, config: Config) -> Config:
+    def apply_request_config(cls, http_rq: Request, config: Config, *, own_stack_storage_api_url: str | None) -> Config:
+        """
+        Builds the configuration for a single HTTP request by applying the request's headers
+        on top of the server's own configuration.
+
+        The Storage API URL is treated specially: it selects the Keboola stack that the server
+        talks to on the caller's behalf, using the caller's credentials and, on the deployed
+        server, the server's own ServiceAccount identity. When the server has a stack of its own,
+        a request asking for a different stack is not honoured — the server's own Storage API URL
+        is kept. The check is an exact host match against that single known URL (see
+        `is_same_stack()`); no prefix or pattern matching is used.
+
+        :param http_rq: The incoming HTTP request whose headers are applied.
+        :param config: The server's own configuration (from CLI parameters and environment).
+        :param own_stack_storage_api_url: The Storage API URL of the server's own stack
+            (`ServerState.own_stack_storage_api_url`), or None when it has no stack of its own and
+            therefore takes the URL from the request. It must never come from a request header.
+        :return: The configuration to use for this request.
+        """
         LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
         config = config.replace_by(http_rq.headers)
+
+        if own_stack_storage_api_url and not is_same_stack(config.storage_api_url, own_stack_storage_api_url):
+            LOG.warning(
+                f'Ignoring the requested Storage API URL "{config.storage_api_url}"; '
+                f'this server only serves "{own_stack_storage_api_url}".'
+            )
+            config = dataclasses.replace(config, storage_api_url=own_stack_storage_api_url)
 
         if user := http_rq.scope.get('user'):
             LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
@@ -269,13 +317,21 @@ class SessionStateMiddleware(fmw.Middleware):
         config: Config,
         runtime_info: ServerRuntimeInfo,
         readonly: bool | None = None,
+        *,
+        own_stack_storage_api_url: str | None,
     ) -> dict[str, Any]:
         """
         Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state.
 
-        :param config: The MCP server configuration.
+        :param config: The MCP server configuration, already amended with the request's headers
+            (see `apply_request_config()`).
         :param runtime_info: The MCP server runtime information.
         :param readonly: If True, the `KeboolaClient` will only use HTTP GET, HEAD operations.
+        :param own_stack_storage_api_url: The Storage API URL of the server's own stack
+            (`ServerState.own_stack_storage_api_url`), or None when it has no stack of its own. Passed
+            to the `KeboolaClient`, which sends the Kubernetes ServiceAccount step-up header only when
+            the session talks to that stack. It must never come from a request header, so it is passed
+            separately instead of being read off `config`, whose Storage API URL a header can set.
         :return: The session state dictionary containing the created client and workspace manager instances.
         """
         LOG.info(f'Creating SessionState from config: {config}.')
@@ -293,6 +349,7 @@ class SessionStateMiddleware(fmw.Middleware):
                 bearer_token=config.bearer_token,
                 headers=cls._get_headers(runtime_info),
                 readonly=readonly,
+                own_stack_storage_api_url=own_stack_storage_api_url,
             ).with_branch_id(config.branch_id)
 
             state[KeboolaClient.STATE_KEY] = client
@@ -305,7 +362,9 @@ class SessionStateMiddleware(fmw.Middleware):
             # The Kubernetes ServiceAccount token path is read from the process environment
             # only (KBC_KUBERNETES_TOKEN_PATH), never from `Config`/HTTP headers — it is a
             # deployment-level credential of the MCP server itself and must not be
-            # overridable per request.
+            # overridable per request. An unforgeable path is not enough on its own, because the
+            # destination can come from a header — `KeboolaClient.step_up_storage_client()`
+            # therefore attaches the JWT only when the target is this server's own stack.
             kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
             workspace_manager = await WorkspaceManager.create(
                 client, config.workspace_schema, kubernetes_token_path=kubernetes_token_path
