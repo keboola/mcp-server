@@ -54,14 +54,18 @@ class SharedBucketDetail(BaseModel):
     )
     stage: str = Field(description='Stage of the shared bucket (in for input stage, out for output stage).')
     description: str | None = Field(None, description='Description of the shared bucket.')
-    project_id: str | None = Field(default=None, description='The ID of the project the shared bucket belongs to.')
+    project_id: str | int | None = Field(
+        default=None, description='The ID of the project the shared bucket belongs to.'
+    )
     project_name: str | None = Field(default=None, description='The name of the project the shared bucket belongs to.')
     sharing: str | None = Field(
         default=None,
         description=(
-            "Sharing scope: 'organization' (all projects in the organization), "
-            "'organization-project' (all projects in the source project's organization), or "
-            "'specific-projects' (only projects explicitly targeted)."
+            "Sharing scope reported by the API -- known values: 'organization' (shared with every project in the "
+            "source project's organization), 'organization-project' (shared with specific projects the source "
+            "project's admin picked), 'specific-projects' (an older/alternate name for the same per-project "
+            "sharing), and 'specific-users' (shared with individual users rather than whole projects). "
+            'The exact value set is not fully pinned server-side -- treat any other string as-is.'
         ),
     )
     linked_by: list[str] | None = Field(
@@ -143,7 +147,7 @@ async def get_shared_buckets(
 
     client = KeboolaClient.from_state(ctx.session.state)
     raw_shared_buckets = await client.storage_client.shared_bucket_list()
-    raw_shared_buckets = sorted(raw_shared_buckets, key=lambda raw: raw['id'])
+    raw_shared_buckets = sorted(raw_shared_buckets, key=lambda raw: raw.get('id') or '')
 
     total_count = len(raw_shared_buckets)
     raw_page = raw_shared_buckets[offset : offset + limit]
@@ -151,9 +155,7 @@ async def get_shared_buckets(
 
     message: str | None = None
     if offset + len(page) < total_count:
-        message = (
-            f'Returning {len(page)} of {total_count} shared buckets. ' f'Use offset={offset + len(page)} to see more.'
-        )
+        message = f'Returning {len(page)} of {total_count} shared buckets. Use offset={offset + len(page)} to see more.'
     elif total_count:
         message = f'Returning {len(page)} of {total_count} shared buckets.'
 
@@ -163,7 +165,7 @@ async def get_shared_buckets(
 @tool_errors()
 async def link_shared_bucket(
     ctx: Context,
-    source_project_id: Annotated[str, Field(description='The ID of the project the shared bucket belongs to.')],
+    source_project_id: Annotated[str | int, Field(description='The ID of the project the shared bucket belongs to.')],
     source_bucket_id: Annotated[
         str, Field(description='The ID of the shared bucket to link, from `get_shared_buckets`.')
     ],
@@ -183,6 +185,13 @@ async def link_shared_bucket(
     Links a bucket shared with this project (found via `get_shared_buckets`) into this project
     as a new local bucket, so its tables become directly queryable/joinable like any other
     bucket in the project.
+
+    Not idempotent: calling this again with the same `target_bucket_name` fails once that name
+    already exists, so don't retry blindly on error without checking whether the link succeeded.
+
+    Note: unlike `get_buckets`, the returned bucket does not participate in this server's
+    prod/dev branch-shading (its `branch_id` is not resolved) -- linking always targets the
+    caller's current branch context directly.
     """
     stage = target_stage or (source_bucket_id.split('.', 1)[0] if '.' in source_bucket_id else None)
     if stage not in ('in', 'out'):
@@ -194,8 +203,14 @@ async def link_shared_bucket(
     raw_bucket = await client.storage_client.bucket_link(
         name=target_bucket_name,
         stage=stage,
-        source_project_id=source_project_id,
+        source_project_id=str(source_project_id),
         source_bucket_id=source_bucket_id,
         display_name=display_name,
     )
-    return BucketDetail.model_validate(raw_bucket)
+    # The link POST's response shape isn't reliably documented (the reference PHP client only
+    # ever reads `id` off it), so fetch the bucket explicitly rather than trust it matches
+    # BucketDetail -- the link has already committed server-side and is non-idempotent, so a
+    # validation error here must not look like the link itself failed.
+    bucket_id = cast(str, raw_bucket['id'])
+    raw_detail = await client.storage_client.bucket_detail(bucket_id)
+    return BucketDetail.model_validate(raw_detail)

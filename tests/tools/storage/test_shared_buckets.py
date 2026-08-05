@@ -1,5 +1,6 @@
 from typing import Any
 
+import httpx
 import pytest
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
@@ -14,6 +15,18 @@ from keboola_mcp_server.tools.storage.shared_buckets import (
     link_shared_bucket,
 )
 from keboola_mcp_server.tools.storage.tools import BucketDetail
+
+
+def _linked_bucket_detail_raw(bucket_id: str, **overrides: Any) -> dict[str, Any]:
+    raw = {
+        'id': bucket_id,
+        'name': 'c-linked',
+        'displayName': 'Linked bucket',
+        'stage': bucket_id.split('.', 1)[0],
+        'created': '2026-01-01T00:00:00+0000',
+    }
+    raw.update(overrides)
+    return raw
 
 
 def _shared_bucket_raw(bucket_id: str, **overrides: Any) -> dict[str, Any]:
@@ -42,6 +55,22 @@ class TestSharedBucketDetail:
         assert bucket.tables_count == 3
         assert bucket.rows_count == 1000
         assert bucket.data_size_bytes == 2048
+
+    def test_missing_project_key_leaves_project_fields_none(self) -> None:
+        # The false branch of `if project := ...` in set_project_fields: no 'project' key at all.
+        raw = _shared_bucket_raw('in.c-foo')
+        del raw['project']
+
+        bucket = SharedBucketDetail.model_validate(raw)
+
+        assert bucket.project_id is None
+        assert bucket.project_name is None
+
+    def test_integer_project_id_is_accepted(self) -> None:
+        # Storage API project ids come back as JSON integers on some payloads.
+        bucket = SharedBucketDetail.model_validate(_shared_bucket_raw('in.c-foo', project={'id': 123, 'name': 'P'}))
+
+        assert bucket.project_id == 123
 
 
 @pytest.mark.asyncio
@@ -121,22 +150,37 @@ class TestGetSharedBuckets:
 
         assert len(result.shared_buckets) == 1
 
+    async def test_item_missing_id_raises_clear_error_not_bare_keyerror(
+        self, mocker: MockerFixture, mcp_context_client: Context
+    ) -> None:
+        # Sorting must not crash with a bare KeyError on one malformed item -- SharedBucketDetail.id
+        # is required, so validation still fails, but with a Pydantic error naming the field.
+        raw_missing_id = _shared_bucket_raw('in.c-a')
+        del raw_missing_id['id']
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.storage_client.shared_bucket_list = mocker.AsyncMock(return_value=[raw_missing_id])
+
+        with pytest.raises(Exception, match='id'):
+            await get_shared_buckets(mcp_context_client)
+
 
 @pytest.mark.asyncio
 class TestLinkSharedBucket:
+    @staticmethod
+    def _mock_link_then_detail(mocker: MockerFixture, keboola_client, bucket_id: str, **detail_overrides: Any) -> None:
+        # bucket_link's response shape isn't reliably documented (the reference PHP client only
+        # ever reads `id` off it) -- the tool fetches bucket_detail explicitly afterwards, so tests
+        # mock both calls rather than assuming bucket_link returns a full BucketDetail payload.
+        keboola_client.storage_client.bucket_link = mocker.AsyncMock(return_value={'id': bucket_id})
+        keboola_client.storage_client.bucket_detail = mocker.AsyncMock(
+            return_value=_linked_bucket_detail_raw(bucket_id, **detail_overrides)
+        )
+
     async def test_links_bucket_and_returns_bucket_detail(
         self, mocker: MockerFixture, mcp_context_client: Context
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.bucket_link = mocker.AsyncMock(
-            return_value={
-                'id': 'in.c-linked',
-                'name': 'c-linked',
-                'displayName': 'Linked bucket',
-                'stage': 'in',
-                'created': '2026-01-01T00:00:00+0000',
-            }
-        )
+        self._mock_link_then_detail(mocker, keboola_client, 'in.c-linked')
 
         result = await link_shared_bucket(
             mcp_context_client,
@@ -154,18 +198,26 @@ class TestLinkSharedBucket:
             source_bucket_id='in.c-foo',
             display_name=None,
         )
+        keboola_client.storage_client.bucket_detail.assert_called_once_with('in.c-linked')
+
+    async def test_accepts_integer_source_project_id(self, mocker: MockerFixture, mcp_context_client: Context) -> None:
+        # Storage API project ids come back as JSON integers; the tool must not require the
+        # caller to pre-stringify them.
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        self._mock_link_then_detail(mocker, keboola_client, 'in.c-linked')
+
+        await link_shared_bucket(
+            mcp_context_client,
+            source_project_id=123,
+            source_bucket_id='in.c-foo',
+            target_bucket_name='linked',
+        )
+
+        assert keboola_client.storage_client.bucket_link.call_args.kwargs['source_project_id'] == '123'
 
     async def test_stage_derived_from_out_prefix(self, mocker: MockerFixture, mcp_context_client: Context) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.bucket_link = mocker.AsyncMock(
-            return_value={
-                'id': 'out.c-linked',
-                'name': 'c-linked',
-                'displayName': 'Linked bucket',
-                'stage': 'out',
-                'created': '2026-01-01T00:00:00+0000',
-            }
-        )
+        self._mock_link_then_detail(mocker, keboola_client, 'out.c-linked')
 
         await link_shared_bucket(
             mcp_context_client,
@@ -180,15 +232,7 @@ class TestLinkSharedBucket:
         self, mocker: MockerFixture, mcp_context_client: Context
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.bucket_link = mocker.AsyncMock(
-            return_value={
-                'id': 'out.c-linked',
-                'name': 'c-linked',
-                'displayName': 'Linked bucket',
-                'stage': 'out',
-                'created': '2026-01-01T00:00:00+0000',
-            }
-        )
+        self._mock_link_then_detail(mocker, keboola_client, 'out.c-linked')
 
         await link_shared_bucket(
             mcp_context_client,
@@ -206,5 +250,38 @@ class TestLinkSharedBucket:
                 mcp_context_client,
                 source_project_id='proj-1',
                 source_bucket_id='no-stage-prefix',
+                target_bucket_name='linked',
+            )
+
+    async def test_already_linked_error_propagates(self, mocker: MockerFixture, mcp_context_client: Context) -> None:
+        # The most likely real-world failure: the agent lists shares and links one that's already
+        # linked. This isn't wrapped into a friendlier message today -- the raw HTTP error
+        # propagates -- but it must propagate, not get swallowed.
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        response = httpx.Response(409, request=httpx.Request('POST', 'https://x/v2/storage/branch/default/buckets'))
+        keboola_client.storage_client.bucket_link = mocker.AsyncMock(
+            side_effect=httpx.HTTPStatusError('already linked', request=response.request, response=response)
+        )
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await link_shared_bucket(
+                mcp_context_client,
+                source_project_id='proj-1',
+                source_bucket_id='in.c-foo',
+                target_bucket_name='linked',
+            )
+
+    async def test_no_access_error_propagates(self, mocker: MockerFixture, mcp_context_client: Context) -> None:
+        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        response = httpx.Response(403, request=httpx.Request('POST', 'https://x/v2/storage/branch/default/buckets'))
+        keboola_client.storage_client.bucket_link = mocker.AsyncMock(
+            side_effect=httpx.HTTPStatusError('forbidden', request=response.request, response=response)
+        )
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await link_shared_bucket(
+                mcp_context_client,
+                source_project_id='proj-1',
+                source_bucket_id='in.c-foo',
                 target_bucket_name='linked',
             )

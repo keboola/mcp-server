@@ -4490,6 +4490,13 @@ Links a bucket shared with this project (found via `get_shared_buckets`) into th
 as a new local bucket, so its tables become directly queryable/joinable like any other
 bucket in the project.
 
+Not idempotent: calling this again with the same `target_bucket_name` fails once that name
+already exists, so don't retry blindly on error without checking whether the link succeeded.
+
+Note: unlike `get_buckets`, the returned bucket does not participate in this server's
+prod/dev branch-shading (its `branch_id` is not resolved) -- linking always targets the
+caller's current branch context directly.
+
 
 **Input JSON Schema**:
 ```json
@@ -4497,8 +4504,15 @@ bucket in the project.
   "additionalProperties": false,
   "properties": {
     "source_project_id": {
-      "description": "The ID of the project the shared bucket belongs to.",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "description": "The ID of the project the shared bucket belongs to."
     },
     "source_bucket_id": {
       "description": "The ID of the shared bucket to link, from `get_shared_buckets`.",
