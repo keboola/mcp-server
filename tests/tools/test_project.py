@@ -303,14 +303,15 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
     introspect = mocker.patch(
         'keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection)
     )
-    # Per-project SQL dialect is resolved via a token verify narrowed by X-KBC-ProjectId; mock that.
+    # Per-project SQL dialect + organization are resolved via a token verify narrowed by
+    # X-KBC-ProjectId; mock that.
     mocker.patch(
         'keboola_mcp_server.tools.project.ServerState.from_context', return_value=SimpleNamespace(config=Config())
     )
-    dialects = {18: 'BigQuery', 83: 'Snowflake'}
+    verify_info = {18: ('BigQuery', 'org-1', 'Org One'), 83: ('Snowflake', 'org-2', 'Org Two')}
     mocker.patch(
-        'keboola_mcp_server.tools.project._project_sql_dialect',
-        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, dialects[pid])),
+        'keboola_mcp_server.tools.project._project_verify_info',
+        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, *verify_info[pid])),
     )
 
     # No scope confirmed yet.
@@ -318,9 +319,9 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
 
     introspect.assert_awaited_once_with(STACK, subject_token='kbc_at_parent')
     assert result.user_email == 'm@k.com'
-    assert [(p.id, p.name, p.role, p.sql_dialect) for p in result.projects] == [
-        (18, 'A', 'admin', 'BigQuery'),
-        (83, 'B', 'admin', 'Snowflake'),
+    assert [(p.id, p.name, p.role, p.sql_dialect, p.organization_id, p.organization_name) for p in result.projects] == [
+        (18, 'A', 'admin', 'BigQuery', 'org-1', 'Org One'),
+        (83, 'B', 'admin', 'Snowflake', 'org-2', 'Org Two'),
     ]
     assert result.scoped_project_ids is None
     assert result.read_only is None
@@ -358,8 +359,8 @@ async def test_get_accessible_projects_llm_instructions_grouped_by_dialect(
     mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
     dialects = {18: 'BigQuery', 86: 'BigQuery', 95: 'Snowflake'}
     mocker.patch(
-        'keboola_mcp_server.tools.project._project_sql_dialect',
-        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, dialects[pid])),
+        'keboola_mcp_server.tools.project._project_verify_info',
+        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, dialects[pid], None, None)),
     )
 
     result = await get_accessible_projects(mcp_context_client, with_llm_instruction=True)
@@ -384,8 +385,8 @@ async def test_get_accessible_projects_unknown_dialect_omits_snowflake_guidance(
     mocker.patch('keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection))
     mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
     mocker.patch(
-        'keboola_mcp_server.tools.project._project_sql_dialect',
-        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, None)),
+        'keboola_mcp_server.tools.project._project_verify_info',
+        new=mocker.AsyncMock(side_effect=lambda _ss, _url, _tok, pid: (pid, None, None, None)),
     )
 
     result = await get_accessible_projects(mcp_context_client, with_llm_instruction=True)
@@ -409,7 +410,7 @@ async def test_get_accessible_projects_logs_dialect_failure_with_traceback(
     mocker.patch('keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection))
     mocker.patch('keboola_mcp_server.tools.project.ServerState.from_context', return_value=mocker.Mock())
     mocker.patch(
-        'keboola_mcp_server.tools.project._project_sql_dialect',
+        'keboola_mcp_server.tools.project._project_verify_info',
         new=mocker.AsyncMock(side_effect=RuntimeError('verify failed')),
     )
     log_warning = mocker.patch('keboola_mcp_server.tools.project.LOG.warning')
