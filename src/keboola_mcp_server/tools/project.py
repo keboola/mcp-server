@@ -288,6 +288,14 @@ def _sql_dialect_from_token(token_data: JsonDict) -> str | None:
     return None
 
 
+def _organization_from_token(token_data: JsonDict) -> tuple[str | None, str | None]:
+    """Derives (organization_id, organization_name) from the token's organization field, the same
+    field get_project_info reads for organization_id."""
+    organization = cast(JsonDict, token_data.get('organization') or {})
+    org_id = organization.get('id')
+    return (str(org_id) if org_id is not None else None, organization.get('name'))
+
+
 class AccessibleProject(BaseModel):
     id: int = Field(description='The project id.')
     name: str | None = Field(default=None, description='The project name.')
@@ -296,6 +304,8 @@ class AccessibleProject(BaseModel):
     sql_dialect: str | None = Field(
         default=None, description='The SQL dialect of the project ("Snowflake" or "BigQuery").'
     )
+    organization_id: str | None = Field(default=None, description='The ID of the organization this project belongs to.')
+    organization_name: str | None = Field(default=None, description='The name of the organization, if known.')
 
 
 class BaseInstructionGroup(BaseModel):
@@ -375,19 +385,22 @@ async def _persist_oauth_scope(ctx: Context, scope: SessionScope) -> bool:
     return True
 
 
-async def _project_sql_dialect(
+async def _project_verify_info(
     server_state: ServerState, storage_api_url: str, subject_token: str, project_id: int
-) -> tuple[int, str | None]:
-    """Fetches one project's SQL dialect by verifying the parent token narrowed with X-KBC-ProjectId.
+) -> tuple[int, str | None, str | None, str | None]:
+    """Fetches one project's SQL dialect + organization (id, name) via a single token verify, the
+    parent token narrowed with X-KBC-ProjectId.
 
-    No workspace is provisioned — the dialect comes from the token's owner.defaultBackend, so this is
-    a single cheap Storage API call per project.
+    No workspace is provisioned — the dialect comes from the token's owner.defaultBackend and the
+    organization from the token's organization field, so this is one cheap Storage API call per
+    project (the same call get_project_info makes for a single project).
     """
     per_client = await MultiProjectMiddleware.client_for_project(
         server_state, storage_api_url, subject_token, project_id, read_only=True
     )
     token_data = await per_client.storage_client.verify_token()
-    return project_id, _sql_dialect_from_token(token_data)
+    org_id, org_name = _organization_from_token(token_data)
+    return project_id, _sql_dialect_from_token(token_data), org_id, org_name
 
 
 @tool_errors()
@@ -404,14 +417,15 @@ async def get_accessible_projects(
     ] = False,
 ) -> AccessibleProjects:
     """
-    Lists the Keboola projects the current login can access across the stack, each with its SQL dialect.
+    Lists the Keboola projects the current login can access across the stack, each with its SQL
+    dialect and organization.
 
     Call this early in a conversation when the user logs in with a stack-wide token (PKCE login),
     present the projects, and ask whether they want to work across all of them or a subset. Then call
     `set_project_scope` with their choice. This tool compacts several API calls (token introspection
-    plus a per-project token verify for the SQL dialect) into one result, so the assistant does not
-    need a separate get_project_info call per project. Pass with_llm_instruction=true on the first
-    call to also receive the base working instructions grouped by dialect.
+    plus a per-project token verify for the SQL dialect and organization) into one result, so the
+    assistant does not need a separate get_project_info call per project. Pass with_llm_instruction=true
+    on the first call to also receive the base working instructions grouped by dialect.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     subject_token = await _parent_subject_token(client)
@@ -420,33 +434,37 @@ async def get_accessible_projects(
     scope = ctx.session.state.get(SCOPE_KEY)
     scoped_ids = scope.project_ids if isinstance(scope, SessionScope) and scope.confirmed else None
 
-    # Enrich each project with its SQL dialect (concurrently). Best-effort: a project whose verify
-    # fails simply keeps sql_dialect=None rather than failing the whole listing.
+    # Enrich each project with its SQL dialect + organization (concurrently). Best-effort: a project
+    # whose verify fails simply keeps these fields None rather than failing the whole listing.
     server_state = ServerState.from_context(ctx)
-    dialects: dict[int, str | None] = {}
+    verify_info: dict[int, tuple[str | None, str | None, str | None]] = {}
     results = await process_concurrently(
         [p.id for p in introspection.projects],
-        lambda pid: _project_sql_dialect(server_state, client.storage_api_url, subject_token, pid),
+        lambda pid: _project_verify_info(server_state, client.storage_api_url, subject_token, pid),
     )
     for result in results:
         if isinstance(result, asyncio.CancelledError):
             raise result  # never swallow cancellation — let it propagate
         if isinstance(result, BaseException):
-            LOG.warning(f'Could not resolve SQL dialect for a project: {result}', exc_info=result)
+            LOG.warning(f'Could not resolve SQL dialect/organization for a project: {result}', exc_info=result)
             continue
-        pid, dialect = result
-        dialects[pid] = dialect
+        pid, dialect, org_id, org_name = result
+        verify_info[pid] = (dialect, org_id, org_name)
 
-    projects = [
-        AccessibleProject(
-            id=p.id,
-            name=p.name,
-            role=p.role,
-            in_scope=scoped_ids is not None and p.id in scoped_ids,
-            sql_dialect=dialects.get(p.id),
+    projects = []
+    for p in introspection.projects:
+        dialect, org_id, org_name = verify_info.get(p.id, (None, None, None))
+        projects.append(
+            AccessibleProject(
+                id=p.id,
+                name=p.name,
+                role=p.role,
+                in_scope=scoped_ids is not None and p.id in scoped_ids,
+                sql_dialect=dialect,
+                organization_id=org_id,
+                organization_name=org_name,
+            )
         )
-        for p in introspection.projects
-    ]
 
     # Optionally attach the base working instructions, grouped by dialect so the (large) prompt is
     # sent once per distinct dialect rather than duplicated per project.

@@ -50,7 +50,8 @@ providing their configuration IDs.
 - [modify_streamlit_data_app](#modify_streamlit_data_app): Creates or updates a Streamlit data app.
 
 ### Project Tools
-- [get_accessible_projects](#get_accessible_projects): Lists the Keboola projects the current login can access across the stack, each with its SQL dialect.
+- [get_accessible_projects](#get_accessible_projects): Lists the Keboola projects the current login can access across the stack, each with its SQL
+dialect and organization.
 - [get_project_info](#get_project_info): Retrieves structured information about the current project,
 including essential context and base instructions for working with it
 (e.
@@ -3766,14 +3767,15 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 
 **Description**:
 
-Lists the Keboola projects the current login can access across the stack, each with its SQL dialect.
+Lists the Keboola projects the current login can access across the stack, each with its SQL
+dialect and organization.
 
 Call this early in a conversation when the user logs in with a stack-wide token (PKCE login),
 present the projects, and ask whether they want to work across all of them or a subset. Then call
 `set_project_scope` with their choice. This tool compacts several API calls (token introspection
-plus a per-project token verify for the SQL dialect) into one result, so the assistant does not
-need a separate get_project_info call per project. Pass with_llm_instruction=true on the first
-call to also receive the base working instructions grouped by dialect.
+plus a per-project token verify for the SQL dialect and organization) into one result, so the
+assistant does not need a separate get_project_info call per project. Pass with_llm_instruction=true
+on the first call to also receive the base working instructions grouped by dialect.
 
 
 **Input JSON Schema**:
