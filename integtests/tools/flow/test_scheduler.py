@@ -5,7 +5,7 @@ import pytest
 from fastmcp import Client
 
 from integtests.conftest import ConfigDef
-from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
+from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.tools.flow.model import GetFlowsDetailOutput
 from keboola_mcp_server.tools.flow.scheduler import (
     SCHEDULER_COMPONENT_ID,
@@ -157,7 +157,7 @@ async def test_scheduler_lifecycle(mcp_context, configs, keboola_client) -> None
 
 @pytest.mark.asyncio
 async def test_scheduler_lifecycle_tooling(
-    initial_lf: FlowToolOutput, mcp_client: Client, configs: list[ConfigDef], keboola_client: KeboolaClient
+    initial_cf: FlowToolOutput, mcp_client: Client, configs: list[ConfigDef], keboola_client: KeboolaClient
 ) -> None:
     """
     Test scheduler lifecycle using MCP tools: create schedule for a flow, update, and remove it.
@@ -170,7 +170,7 @@ async def test_scheduler_lifecycle_tooling(
     assert configs
     assert configs[0].configuration_id is not None
 
-    flow_id = initial_lf.configuration_id
+    flow_id = initial_cf.configuration_id
 
     schedule_id: str | None = None
     try:
@@ -181,7 +181,7 @@ async def test_scheduler_lifecycle_tooling(
             name='modify_flow',
             arguments={
                 'configuration_id': flow_id,
-                'flow_type': ORCHESTRATOR_COMPONENT_ID,
+                'flow_type': CONDITIONAL_FLOW_COMPONENT_ID,
                 'change_description': 'Add scheduler via tooling',
                 'schedules': [
                     {
@@ -216,7 +216,7 @@ async def test_scheduler_lifecycle_tooling(
             name='modify_flow',
             arguments={
                 'configuration_id': flow_id,
-                'flow_type': ORCHESTRATOR_COMPONENT_ID,
+                'flow_type': CONDITIONAL_FLOW_COMPONENT_ID,
                 'change_description': 'Update scheduler via tooling',
                 'schedules': [
                     {
@@ -249,7 +249,7 @@ async def test_scheduler_lifecycle_tooling(
             name='modify_flow',
             arguments={
                 'configuration_id': flow_id,
-                'flow_type': ORCHESTRATOR_COMPONENT_ID,
+                'flow_type': CONDITIONAL_FLOW_COMPONENT_ID,
                 'change_description': 'Remove scheduler via tooling',
                 'schedules': [{'action': 'remove', 'schedule_id': schedule_id}],
             },
