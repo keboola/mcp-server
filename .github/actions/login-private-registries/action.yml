@@ -52,14 +52,14 @@ runs:
         service_account: ${{ inputs.gcpServiceAccount }}
 
     - name: Login to GCP GAR
-      uses: docker/login-action@v4
+      uses: docker/login-action@v4.5.2
       with:
         registry: ${{ inputs.gcpRegistry }}
         username: oauth2accesstoken
         password: ${{ steps.gcpAuth.outputs.access_token }}
 
     - name: Login to Azure ACR
-      uses: docker/login-action@v4
+      uses: docker/login-action@v4.5.2
       with:
         registry: ${{ inputs.acrRegistry }}
         username: ${{ inputs.acrUsername }}
