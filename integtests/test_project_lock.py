@@ -320,7 +320,7 @@ def test_clean_project_deletes_configs(mocker):
     mocker.patch.object(
         lock,
         '_get',
-        side_effect=lambda path, **params: ([] if path.endswith('/buckets') else components),
+        side_effect=lambda path, **params: [] if path.endswith('/buckets') else components,
     )
     delete_mock = mocker.patch.object(lock, '_delete')
 

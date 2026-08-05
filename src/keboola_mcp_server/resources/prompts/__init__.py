@@ -84,7 +84,7 @@ def _build_dialect_section(sql_dialect: str) -> str:
         '### SQL Identifiers\n',
         f'This project uses **{sql_dialect}** SQL dialect.',
         f'The delimited identifier character is the {cfg["delimiter"]}.',
-        ('**Always wrap every identifier** (column name, table name, alias) ' 'in delimited identifiers:\n'),
+        ('**Always wrap every identifier** (column name, table name, alias) in delimited identifiers:\n'),
         f'- Column reference: {cfg["col"]}',
         f'- Fully qualified table name: {cfg["fqn"]}',
         f'- New table in CREATE TABLE (table name only, no FQN): {cfg["new_table"]}',

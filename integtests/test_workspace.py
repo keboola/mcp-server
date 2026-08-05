@@ -81,7 +81,6 @@ async def dynamic_manager(
 
 
 class TestWorkspaceManager:
-
     @pytest.mark.asyncio
     async def test_static_workspace(self, workspace_manager: WorkspaceManager, workspace_schema: str):
         assert workspace_manager._workspace_schema == workspace_schema

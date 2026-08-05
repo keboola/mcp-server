@@ -128,7 +128,7 @@ class CodeDataAppConfig(BaseModel):
                 repository: str = Field(description='HTTPS clone URL of the upstream managed git repo.')
                 username: str = Field(
                     description=(
-                        'Username for HTTPS basic auth. The git-service ignores this and only validates ' 'the token.'
+                        'Username for HTTPS basic auth. The git-service ignores this and only validates the token.'
                     ),
                 )
                 password: str = Field(
@@ -364,7 +364,6 @@ class AppRunResponse(BaseModel):
 
 
 class DataScienceClient(KeboolaServiceClient):
-
     def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
         """
         Creates a DataScienceClient from a RawKeboolaClient and a branch id.

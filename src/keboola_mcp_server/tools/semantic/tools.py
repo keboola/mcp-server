@@ -669,12 +669,12 @@ async def get_semantic_context(
     # Normalize the contexts to the SemanticObjectTypeContext format
     normalized_contexts: list[SemanticObjectTypeContext] = []
     for selection, context in zip(semantic_objects, groups, strict=True):
-        assert isinstance(
-            context, semantic_service.SemanticServiceDataTypeGroup
-        ), f'Expected SemanticServiceDataTypeGroup, got {type(context)}'
-        assert (
-            selection.object_type == context.object_type
-        ), f'Semantic object type mismatch: {selection.object_type} != {context.object_type}'
+        assert isinstance(context, semantic_service.SemanticServiceDataTypeGroup), (
+            f'Expected SemanticServiceDataTypeGroup, got {type(context)}'
+        )
+        assert selection.object_type == context.object_type, (
+            f'Semantic object type mismatch: {selection.object_type} != {context.object_type}'
+        )
         if selection.ids:
             # Detail context with specific IDs
             normalized_contexts.append(

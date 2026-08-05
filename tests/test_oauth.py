@@ -13,7 +13,6 @@ JWT_KEY = 'secret'
 
 
 class TestSimpleOAuthProvider:
-
     @pytest.fixture
     def oauth_provider(self) -> SimpleOAuthProvider:
         return SimpleOAuthProvider(

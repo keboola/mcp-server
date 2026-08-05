@@ -150,16 +150,15 @@ class BucketDetail(BaseModel):
     ) -> 'BucketDetail':
         if self.branch_id:
             raise ValueError(
-                f'Dev branch buckets cannot be shaded: ' f'bucket.id={self.id}, bucket.branch_id={self.branch_id}'
+                f'Dev branch buckets cannot be shaded: bucket.id={self.id}, bucket.branch_id={self.branch_id}'
             )
         if not other.branch_id:
             raise ValueError(
-                f'Prod branch buckets cannot shade others: ' f'bucket.id={other.id}, bucket.branch_id={other.branch_id}'
+                f'Prod branch buckets cannot shade others: bucket.id={other.id}, bucket.branch_id={other.branch_id}'
             )
         if other.branch_id != branch_id:
             raise ValueError(
-                f'Dev branch mismatch: '
-                f'bucket.id={other.id}, bucket.branch_id={other.branch_id}, branch_id={branch_id}'
+                f'Dev branch mismatch: bucket.id={other.id}, bucket.branch_id={other.branch_id}, branch_id={branch_id}'
             )
         if other.prod_id != self.id:
             raise ValueError(f'Prod and dev buckets mismatch: prod_bucket.id={self.id}, dev_bucket.id={other.id}')

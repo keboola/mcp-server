@@ -342,7 +342,7 @@ async def test_update_config(
             Link(
                 type='ui-detail',
                 title=f'Configuration: {expected_name}',
-                url=f'{storage_api_url}/admin' f'/projects/{project_id}/components/{component_id}/{configuration_id}',
+                url=f'{storage_api_url}/admin/projects/{project_id}/components/{component_id}/{configuration_id}',
             ),
             Link(
                 type='ui-dashboard',
@@ -427,7 +427,6 @@ async def test_add_config_row(
     )
 
     try:
-
         # Create the row configuration
         created_row_config = await add_config_row(
             ctx=mcp_context,
@@ -597,7 +596,7 @@ async def test_update_config_row(
             Link(
                 type='ui-detail',
                 title=f'Configuration: {expected_row_name}',
-                url=f'{storage_api_url}/admin' f'/projects/{project_id}/components/{component_id}/{configuration_id}',
+                url=f'{storage_api_url}/admin/projects/{project_id}/components/{component_id}/{configuration_id}',
             ),
             Link(
                 type='ui-dashboard',
@@ -818,8 +817,7 @@ async def initial_sqltrfm(
                     block_id='b0',
                     code_id='b0.c0',
                     script=(
-                        'SELECT 1 as updated_column;\n\nSELECT 2 as additional_column;\n\n'
-                        'SELECT 3 as third_column;\n\n'
+                        'SELECT 1 as updated_column;\n\nSELECT 2 as additional_column;\n\nSELECT 3 as third_column;\n\n'
                     ),
                 ),
             ],

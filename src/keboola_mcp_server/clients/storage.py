@@ -302,7 +302,6 @@ class CreateConfigurationAPIResponse(BaseModel):
 
 
 class AsyncStorageClient(KeboolaServiceClient):
-
     def __init__(
         self,
         raw_client: RawKeboolaClient,
@@ -686,7 +685,7 @@ class AsyncStorageClient(KeboolaServiceClient):
     async def configuration_metadata_delete(self, component_id: str, configuration_id: str, metadata_id: str) -> None:
         """Deletes a single metadata entry for a configuration."""
         endpoint = (
-            f'branch/{self._branch_id}/components/{component_id}' f'/configs/{configuration_id}/metadata/{metadata_id}'
+            f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}/metadata/{metadata_id}'
         )
         await self.delete(endpoint=endpoint)
 

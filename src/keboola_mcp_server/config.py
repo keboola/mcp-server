@@ -74,7 +74,7 @@ class Config:
 
     @classmethod
     def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, Any]:
-        data = {cls._normalize(k): v for k, v, in d.items()}
+        data = {cls._normalize(k): v for k, v in d.items()}
         options: dict[str, Any] = {}
         for f in dataclasses.fields(cls):
             field_names = [f.name] + f.metadata.get('aliases', [])

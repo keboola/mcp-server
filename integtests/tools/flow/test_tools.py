@@ -326,9 +326,9 @@ async def test_update_flow(
         expected_phases = [
             phase.model_dump(exclude_unset=True, by_alias=True) for phase in initial_flow.configuration.phases
         ]
-    assert len(flow_data['phases']) == len(
-        expected_phases
-    ), f"Phases count mismatch: {len(flow_data['phases'])} vs {len(expected_phases)}"
+    assert len(flow_data['phases']) == len(expected_phases), (
+        f"Phases count mismatch: {len(flow_data['phases'])} vs {len(expected_phases)}"
+    )
     assert all(
         actual['id'] == expected['id']
         and actual['name'] == expected['name']

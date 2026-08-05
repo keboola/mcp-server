@@ -161,7 +161,7 @@ class JobDetail(JobListItem):
                 # ValueError/AssertionError get wrapped into a pydantic.ValidationError; other
                 # exception types propagate raw.
                 raise ValueError(  # noqa: TRY004
-                    'Field "result" or "config_data" cannot be a list, expecting dictionary, ' f'got: {current_value}.'
+                    f'Field "result" or "config_data" cannot be a list, expecting dictionary, got: {current_value}.'
                 )
         return current_value
 
@@ -236,7 +236,7 @@ async def get_jobs(
         int,
         Field(
             description=(
-                'The number of jobs to list when listing (ignored if job_ids is provided), ' 'default = 100, max = 500.'
+                'The number of jobs to list when listing (ignored if job_ids is provided), default = 100, max = 500.'
             ),
             ge=1,
             le=500,
@@ -253,7 +253,7 @@ async def get_jobs(
         SORT_BY_VALUES,
         Field(
             description=(
-                'The field to sort the jobs by when listing (ignored if job_ids is provided), ' 'default = "startTime".'
+                'The field to sort the jobs by when listing (ignored if job_ids is provided), default = "startTime".'
             ),
         ),
     ] = 'startTime',

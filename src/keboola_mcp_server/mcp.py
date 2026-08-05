@@ -300,9 +300,9 @@ class SessionStateMiddleware(fmw.Middleware):
         if user := http_rq.scope.get('user'):
             LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
             assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
-            assert isinstance(
-                user.access_token, ProxyAccessToken
-            ), f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
+            assert isinstance(user.access_token, ProxyAccessToken), (
+                f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
+            )
             config = dataclasses.replace(
                 config,
                 storage_token=user.access_token.sapi_token,

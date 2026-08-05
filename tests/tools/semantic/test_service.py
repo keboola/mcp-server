@@ -729,7 +729,7 @@ def test_constraint_is_relevant_edge_cases(
         # Relationship with uppercase ON clause columns — but the actual SQL uses DIFFERENT columns
         # in the join (FK_ORDER_ID instead of FK_CUSTOMER_ID).  Should NOT detect the relationship.
         (
-            ('SELECT * FROM "DB"."s"."ORDERS" o ' 'JOIN "DB"."s"."CUSTOMERS" c ON o."FK_ORDER_ID" = c."PK_ORDER_ID"'),
+            ('SELECT * FROM "DB"."s"."ORDERS" o JOIN "DB"."s"."CUSTOMERS" c ON o."FK_ORDER_ID" = c."PK_ORDER_ID"'),
             [
                 (
                     'dataset-orders',

@@ -176,13 +176,7 @@ def test_exclude_none_serializer(data, expected):
                 NestedModel(field1='value1', field2=['item1', 'item2']),
                 NestedModel(field1='value2', field2=['item3', 'item4']),
             ],
-            (
-                '[2]:\n'
-                '  - field1: value1\n'
-                '    field2[2]: item1,item2\n'
-                '  - field1: value2\n'
-                '    field2[2]: item3,item4'
-            ),
+            ('[2]:\n  - field1: value1\n    field2[2]: item1,item2\n  - field1: value2\n    field2[2]: item3,item4'),
         ),
         # Complex structure with models, lists, dicts, and None
         (
@@ -193,15 +187,7 @@ def test_exclude_none_serializer(data, expected):
                 ],
                 'meta': SimpleModel(field1='test'),
             },
-            (
-                'users[2]{name,active}:\n'
-                '  Alice,true\n'
-                '  Bob,null\n'
-                'meta:\n'
-                '  field1: test\n'
-                '  field2: null\n'
-                '  field3: null'
-            ),
+            ('users[2]{name,active}:\n  Alice,true\n  Bob,null\nmeta:\n  field1: test\n  field2: null\n  field3: null'),
         ),
     ],
 )

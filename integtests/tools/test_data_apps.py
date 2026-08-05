@@ -50,7 +50,7 @@ def streamlit_app_entrypoint() -> str:
 @pytest.fixture
 def sample_streamlit_app(streamlit_app_imports: str, streamlit_app_entrypoint: str) -> str:
     """Return a minimal Streamlit app template that supports query injection."""
-    return f'{streamlit_app_imports}' '{QUERY_DATA_FUNCTION}\n\n' f'{streamlit_app_entrypoint}'
+    return f'{streamlit_app_imports}{{QUERY_DATA_FUNCTION}}\n\n{streamlit_app_entrypoint}'
 
 
 @pytest.fixture
