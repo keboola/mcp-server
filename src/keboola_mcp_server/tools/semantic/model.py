@@ -27,7 +27,7 @@ class SemanticObjectTypeSelection(BaseModel):
 
     object_type: SemanticObjectType = Field(description='Semantic object type to load.')
     ids: tuple[str, ...] = Field(
-        default=tuple(),
+        default=(),
         description='Specific object UUIDs to include. Empty list [] means include all objects of this type.',
     )
 

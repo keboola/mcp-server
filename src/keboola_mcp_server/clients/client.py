@@ -1,8 +1,9 @@
 """Keboola Storage API client wrapper."""
 
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal, Mapping, Sequence, TypeVar
+from typing import Any, Literal, TypeVar
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -113,7 +114,7 @@ class KeboolaClient:
                     raise httpx.HTTPStatusError(message, request=exc.request, response=exc.response) from exc
                 else:
                     LOG.error(f'Failed to get details of "{branch_id}" branch: {exc.response.text}')
-                    raise exc
+                    raise
 
             # Converts the branch id referring to the main/production branch to None as we expect
             normalized_branch_id = None if is_default else branch_id

@@ -1,9 +1,10 @@
 import copy
-import importlib.resources as resources
 import logging
 import re
 import secrets
-from typing import Annotated, Any, Literal, Mapping, Optional, Sequence, Union, cast
+from collections.abc import Mapping, Sequence
+from importlib import resources
+from typing import Annotated, Any, Literal, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
@@ -93,12 +94,12 @@ def add_data_app_tools(mcp: FastMCP) -> None:
 State = Literal['created', 'running', 'stopped', 'starting', 'stopping', 'restarting']
 # Accepts known states or any string preventing from validation errors when receiving unknown states from the API
 # LLM agent can still understand the state of the data app even if it is different from the known states
-SafeState = Union[State, str]
+SafeState = State | str
 # Type of the data app
 Type = Literal['streamlit', 'python-js']
 # Accepts known types or any string preventing from validation errors when receiving unknown types from the API
 # LLM agent can still understand the type of the data app even if it is different from the known types
-SafeType = Union[Type, str]
+SafeType = Type | str
 
 _DATA_APP_RESOURCES = resources.files('keboola_mcp_server.resources.data_app')
 _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE = _DATA_APP_RESOURCES.joinpath('qsapi_query_data_code.py').read_text(
@@ -164,12 +165,12 @@ class DataAppSummary(BaseModel):
             'supports additional types, which can be retrieved from the API.'
         )
     )
-    deployment_url: Optional[str] = Field(description='The URL of the running data app.', default=None)
-    auto_suspend_after_seconds: Optional[int] = Field(
+    deployment_url: str | None = Field(description='The URL of the running data app.', default=None)
+    auto_suspend_after_seconds: int | None = Field(
         description='The number of seconds after which the running data app is automatically suspended.',
         default=None,
     )
-    repo_url: Optional[str] = Field(
+    repo_url: str | None = Field(
         default=None,
         description=(
             'HTTPS clone URL of the managed git repo (without embedded credentials). '
@@ -202,18 +203,18 @@ class AppRunInfo(BaseModel):
     """Outcome of a single deployment attempt (AppRun) of a data app."""
 
     state: str = Field(description='The state of the run: "starting", "running", "finished" or "failed".')
-    created_at: Optional[str] = Field(description='The timestamp when the run was created.', default=None)
-    stopped_at: Optional[str] = Field(
+    created_at: str | None = Field(description='The timestamp when the run was created.', default=None)
+    stopped_at: str | None = Field(
         description='The timestamp when the run stopped, or `null` while it is still active.', default=None
     )
-    failure_reason: Optional[str] = Field(
+    failure_reason: str | None = Field(
         description=(
             'Machine-readable code identifying why the run failed, e.g. "ConfigDecryptionFailed" '
             'or "StartupProbeFailed". `null` for successful runs.'
         ),
         default=None,
     )
-    failure_message: Optional[str] = Field(
+    failure_message: str | None = Field(
         description='Detailed explanation of the failure, when the platform provides one.', default=None
     )
     startup_logs: list[str] = Field(
@@ -242,17 +243,17 @@ class DeploymentInfo(BaseModel):
 
     version: str = Field(description='The version of the data app deployment.')
     state: str = Field(description='The state of the data app deployment.')
-    url: Optional[str] = Field(description='The URL of the running data app deployment.', default=None)
-    last_request_timestamp: Optional[str] = Field(
+    url: str | None = Field(description='The URL of the running data app deployment.', default=None)
+    last_request_timestamp: str | None = Field(
         description='The last request timestamp of the data app deployment.', default=None
     )
-    last_start_timestamp: Optional[str] = Field(
+    last_start_timestamp: str | None = Field(
         description='The last start timestamp of the data app deployment.', default=None
     )
     logs: list[str] = Field(
         description='The latest 20 log lines reported in the data app deployment.', default_factory=list
     )
-    last_run: Optional[AppRunInfo] = Field(
+    last_run: AppRunInfo | None = Field(
         description=(
             'The most recent deployment attempt (AppRun). When the app failed to start, its '
             '`failure_reason`/`failure_message` explain why — including setup-phase failures '
@@ -267,7 +268,7 @@ class DataApp(BaseModel):
     """A data app used for detail views."""
 
     name: str = Field(description='The name of the data app.')
-    description: Optional[str] = Field(description='The description of the data app.', default=None)
+    description: str | None = Field(description='The description of the data app.', default=None)
     component_id: str = Field(description='The ID of the data app component.')
     configuration_id: str = Field(description='The ID of the data app configuration.')
     data_app_id: str = Field(description='The ID of the data app.')
@@ -281,12 +282,12 @@ class DataApp(BaseModel):
             'supports additional types, which can be retrieved from the API.'
         )
     )
-    deployment_url: Optional[str] = Field(description='The URL of the running data app.', default=None)
-    auto_suspend_after_seconds: Optional[int] = Field(
+    deployment_url: str | None = Field(description='The URL of the running data app.', default=None)
+    auto_suspend_after_seconds: int | None = Field(
         description='The number of seconds after which the running data app is automatically suspended.',
         default=None,
     )
-    repo_url: Optional[str] = Field(
+    repo_url: str | None = Field(
         default=None,
         description=(
             'HTTPS clone URL of the managed git repo (without embedded credentials). '
@@ -294,7 +295,7 @@ class DataApp(BaseModel):
             '`create_python_js_data_app_git_credential` to authenticate.'
         ),
     )
-    is_managed_git_repo: Optional[bool] = Field(
+    is_managed_git_repo: bool | None = Field(
         default=None,
         description=(
             'For python-js data apps: True when the app runs on a Keboola-managed git repo, False when it '
@@ -307,7 +308,7 @@ class DataApp(BaseModel):
         description='The nested configuration object containing parameters, storage and authorization'
     )
     folder: str = Field(default='', description='The UI folder this data app is organized into')
-    deployment_info: Optional[DeploymentInfo] = Field(
+    deployment_info: DeploymentInfo | None = Field(
         description='Deployment info of the data app including a url of the app and logs to diagnose in-app errors.',
         default=None,
     )
@@ -360,7 +361,7 @@ class DataApp(BaseModel):
         self.links = links
         return self
 
-    def with_deployment_info(self, logs: list[str], last_run: Optional[AppRunInfo] = None) -> 'DataApp':
+    def with_deployment_info(self, logs: list[str], last_run: AppRunInfo | None = None) -> 'DataApp':
         """Adds deployment info to the data app.
 
         :param logs: The logs of the data app deployment.
@@ -382,7 +383,7 @@ class ModifiedDataAppOutput(BaseModel):
     interface."""
 
     response: str = Field(description='The response of the action performed with potential additional information.')
-    change_summary: Optional[str] = Field(default=None, description='Additional notes or hints about the operation.')
+    change_summary: str | None = Field(default=None, description='Additional notes or hints about the operation.')
     data_app: DataAppSummary = Field(description='The data app.')
     links: list[Link] = Field(description='Navigation links for the web interface.')
 
@@ -391,9 +392,9 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
     """Output for `modify_python_js_data_app`. Includes git repo URL on create."""
 
     response: str = Field(description='The response of the action performed with potential additional information.')
-    change_summary: Optional[str] = Field(default=None, description='Additional notes or hints about the operation.')
+    change_summary: str | None = Field(default=None, description='Additional notes or hints about the operation.')
     data_app: DataAppSummary = Field(description='The data app.')
-    repo_url: Optional[str] = Field(
+    repo_url: str | None = Field(
         default=None,
         description=(
             'HTTPS clone URL of the managed git repo (without embedded credentials). Returned on create so the '
@@ -404,7 +405,7 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
             'tool on the draft create path).'
         ),
     )
-    git_clone_url: Optional[str] = Field(
+    git_clone_url: str | None = Field(
         default=None,
         description=(
             'Ready-to-use authenticated HTTPS clone URL embedding the freshly-minted prod-app token (format: '
@@ -414,7 +415,7 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
             'create and on update.'
         ),
     )
-    branch: Optional[str] = Field(
+    branch: str | None = Field(
         default=None,
         description=(
             'Draft branch the new draft is pinned to (set in `parameters.dataApp.git.branch`). Only populated '
@@ -466,7 +467,7 @@ class DeletedDraftOutput(BaseModel):
     response: str = Field(description='Status of the delete operation, e.g. "deleted".')
     configuration_id: str = Field(description='Storage configuration ID of the deleted draft.')
     data_app_id: str = Field(description='Data-science API ID of the deleted draft data app.')
-    parent_configuration_id: Optional[str] = Field(
+    parent_configuration_id: str | None = Field(
         default=None,
         description=(
             'Storage configuration ID of the parent prod app the draft was iterating against. '
@@ -515,7 +516,7 @@ async def modify_streamlit_data_app(
         Field(description='The description of the change when updating (e.g. "Update Code"), otherwise empty string.'),
     ] = '',
     folder: Annotated[
-        Optional[str],
+        str | None,
         Field(description=folder_field_description('data app', 'data apps')),
     ] = None,
 ) -> ModifiedDataAppOutput:
@@ -704,7 +705,7 @@ async def modify_streamlit_data_app_internal(
     authentication_type: AuthenticationType,
     configuration_id: str,
     change_description: str = '',
-    folder: Optional[str] = None,
+    folder: str | None = None,
 ) -> tuple[DataApp, JsonDict, dict | None]:
     secrets = _get_secrets(
         workspace_id=str(await workspace_manager.get_workspace_id()),
@@ -880,7 +881,7 @@ async def modify_python_js_data_app(
         Field(description='The description of the change when updating (e.g. "Bump image"), otherwise empty string.'),
     ] = '',
     slug: Annotated[
-        Optional[str],
+        str | None,
         Field(
             description=(
                 'URL-safe slug for the data app (used as a subdomain). Optional on create — when omitted '
@@ -890,7 +891,7 @@ async def modify_python_js_data_app(
         ),
     ] = None,
     parent_configuration_id: Annotated[
-        Optional[str],
+        str | None,
         Field(
             description=(
                 'Storage configuration ID of the prod python-js data app this draft will iterate against. '
@@ -903,7 +904,7 @@ async def modify_python_js_data_app(
         ),
     ] = None,
     branch: Annotated[
-        Optional[str],
+        str | None,
         Field(
             description=(
                 'Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n'
@@ -939,7 +940,7 @@ async def modify_python_js_data_app(
         ),
     ] = 900,
     storage: Annotated[
-        Optional[dict[str, Any]],
+        dict[str, Any] | None,
         Field(
             description=(
                 'Complete storage configuration for the data app (input/output table mappings). '
@@ -953,7 +954,7 @@ async def modify_python_js_data_app(
         ),
     ] = None,
     folder: Annotated[
-        Optional[str],
+        str | None,
         Field(description=folder_field_description('data app', 'data apps')),
     ] = None,
 ) -> ModifiedPythonJsDataAppOutput:
@@ -1092,7 +1093,7 @@ async def modify_python_js_data_app(
     # When the platform-managed workspace feature is off, the data app cannot rely on the
     # platform to inject WORKSPACE_ID; fall back to passing it via parameters.dataApp.secrets.
     has_storage_workspace = await client.has_feature(DATA_APPS_STORAGE_WORKSPACE_FEATURE)
-    legacy_secrets: Optional[dict[str, Any]] = None
+    legacy_secrets: dict[str, Any] | None = None
     if not has_storage_workspace:
         workspace_manager = WorkspaceManager.from_state(ctx.session.state)
         legacy_secrets = {SECRET_WORKSPACE_ID: str(await workspace_manager.get_workspace_id())}
@@ -1164,9 +1165,9 @@ async def modify_python_js_data_app(
         uses_basic_auth = authentication_type in ('basic-auth', 'default')
         authorization_model = DataAppConfig.Authorization.model_validate(_get_authorization(uses_basic_auth))
 
-        git_clone_url: Optional[str] = None
-        draft_branch: Optional[str] = None
-        git_block: Optional[CodeDataAppConfig.Parameters.DataApp.Git] = None
+        git_clone_url: str | None = None
+        draft_branch: str | None = None
+        git_block: CodeDataAppConfig.Parameters.DataApp.Git | None = None
         if parent_configuration_id:
             # Draft create path: resolve the parent's repo + mint a parent-side credential, then
             # serialize an external-git block into the draft's config.
@@ -1451,10 +1452,10 @@ def _normalize_config_storage(config: dict[str, Any]) -> None:
 
 
 def _validate_data_app_storage(
-    storage: Optional[dict[str, Any]],
+    storage: dict[str, Any] | None,
     *,
-    configuration_id: Optional[str] = None,
-) -> Optional[dict[str, Any]]:
+    configuration_id: str | None = None,
+) -> dict[str, Any] | None:
     """Validate a caller-provided storage block for a data app.
 
     Returns the validated `storage` dict, or None when no storage was provided (caller
@@ -1489,9 +1490,9 @@ def _update_existing_code_data_app_config(
     existing_config: Mapping[str, Any],
     auto_suspend_after_seconds: int,
     authentication_type: AuthenticationType = 'default',
-    secrets: Optional[dict[str, Any]] = None,
-    storage: Optional[dict[str, Any]] = None,
-    branch: Optional[str] = None,
+    secrets: dict[str, Any] | None = None,
+    storage: dict[str, Any] | None = None,
+    branch: str | None = None,
 ) -> dict[str, Any]:
     """Apply requested updates to the existing python-js data app storage configuration.
 
@@ -1543,7 +1544,7 @@ def _update_existing_code_data_app_config(
 @tool_errors()
 async def get_data_apps(
     ctx: Context,
-    configuration_ids: Annotated[Sequence[str], Field(description='The IDs of the data app configurations.')] = tuple(),
+    configuration_ids: Annotated[Sequence[str], Field(description='The IDs of the data app configurations.')] = (),
     limit: Annotated[int, Field(description='The limit of the data apps to fetch.')] = 100,
     offset: Annotated[int, Field(description='The offset of the data apps to fetch.')] = 0,
 ) -> GetDataAppsOutput:
@@ -1608,7 +1609,7 @@ async def deploy_data_app(
     action: Annotated[Literal['deploy', 'stop'], Field(description='The action to perform.')],
     configuration_id: Annotated[str, Field(description='The ID of the data app configuration.')],
     mode: Annotated[
-        Optional[Literal['dev', 'production']],
+        Literal['dev', 'production'] | None,
         Field(
             description=(
                 'Deployment mode. Set to "dev" to deploy a python-js draft as a **dev version of the data '
@@ -1744,7 +1745,7 @@ async def delete_python_js_data_app_draft(
 
     data_app_block = cast(Mapping[str, Any], data_app.configuration.get('parameters') or {}).get('dataApp') or {}
     parent_cfg_id = data_app_block.get('parentConfigurationId')
-    parent_configuration_id: Optional[str] = parent_cfg_id if isinstance(parent_cfg_id, str) else None
+    parent_configuration_id: str | None = parent_cfg_id if isinstance(parent_cfg_id, str) else None
 
     # DSAPI deletes the data app and moves its Storage config to the trash. Don't delete the config
     # via Storage API on top of that — deleting an already-trashed config purges it from the trash
@@ -1777,7 +1778,7 @@ def _build_data_app_config(
     secrets: dict[str, Any],
     sql_dialect: str,
 ) -> dict[str, Any]:
-    packages = sorted(list(set(packages + _DEFAULT_PACKAGES)))
+    packages = sorted(set(packages + _DEFAULT_PACKAGES))
     slug = _get_data_app_slug(name) or 'Data-App'
     parameters = {
         'size': 'tiny',
@@ -1820,9 +1821,9 @@ def _update_existing_data_app_config(
 
     updated_secrets = existing_config['parameters']['dataApp'].get('secrets', {}).copy()
     # Add new secrets, do not overwrite existing secrets
-    for key in secrets:
+    for key, value in secrets.items():
         if key not in updated_secrets:
-            updated_secrets[key] = secrets[key]
+            updated_secrets[key] = value
 
     new_config['parameters']['dataApp']['secrets'] = updated_secrets
 
@@ -1837,8 +1838,8 @@ def _update_existing_data_app_config(
 async def _fetch_data_app(
     client: KeboolaClient,
     *,
-    data_app_id: Optional[str],
-    configuration_id: Optional[str],
+    data_app_id: str | None,
+    configuration_id: str | None,
 ) -> DataApp:
     """
     Fetches data app from both data-science API and storage API based on the provided data_app_id or
@@ -2032,7 +2033,7 @@ async def _fetch_logs(client: KeboolaClient, data_app_id: str) -> list[str]:
         return []
 
 
-async def _fetch_latest_run(client: KeboolaClient, data_app_id: str) -> Optional[AppRunInfo]:
+async def _fetch_latest_run(client: KeboolaClient, data_app_id: str) -> AppRunInfo | None:
     """Fetches the most recent run (deployment attempt) of a data app, or None when there is none.
 
     Diagnostics must not break the detail fetch: any error (e.g. an older DSAPI without the
@@ -2076,8 +2077,6 @@ MAX_DATA_APP_SLUG_LENGTH = 50
 
 class DataAppSlugTooLongError(ValueError):
     """Raised when the generated data app slug exceeds the DNS label length limit."""
-
-    pass
 
 
 def _get_data_app_slug(name: str) -> str:

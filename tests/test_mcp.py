@@ -99,9 +99,11 @@ async def _async_square_or_fail(n: int) -> int:
                 'key2': {'nested_key': SimpleModel(field2=789)},
                 'key3': datetime(2025, 1, 1, 1, 2, 3),
             },
-            '{"key1":[{"field3":"2025-02-03T10:11:12+02:00"}],'
-            '"key2":{"nested_key":{"field2":789}},'
-            '"key3":"2025-01-01T01:02:03"}',
+            (
+                '{"key1":[{"field3":"2025-02-03T10:11:12+02:00"}],'
+                '"key2":{"nested_key":{"field2":789}},'
+                '"key3":"2025-01-01T01:02:03"}'
+            ),
         ),
     ],
 )
@@ -174,11 +176,7 @@ def test_exclude_none_serializer(data, expected):
                 NestedModel(field1='value1', field2=['item1', 'item2']),
                 NestedModel(field1='value2', field2=['item3', 'item4']),
             ],
-            '[2]:\n'
-            '  - field1: value1\n'
-            '    field2[2]: item1,item2\n'
-            '  - field1: value2\n'
-            '    field2[2]: item3,item4',
+            ('[2]:\n  - field1: value1\n    field2[2]: item1,item2\n  - field1: value2\n    field2[2]: item3,item4'),
         ),
         # Complex structure with models, lists, dicts, and None
         (
@@ -189,13 +187,7 @@ def test_exclude_none_serializer(data, expected):
                 ],
                 'meta': SimpleModel(field1='test'),
             },
-            'users[2]{name,active}:\n'
-            '  Alice,true\n'
-            '  Bob,null\n'
-            'meta:\n'
-            '  field1: test\n'
-            '  field2: null\n'
-            '  field3: null',
+            ('users[2]{name,active}:\n  Alice,true\n  Bob,null\nmeta:\n  field1: test\n  field2: null\n  field3: null'),
         ),
     ],
 )

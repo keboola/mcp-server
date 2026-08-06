@@ -776,7 +776,7 @@ class TestSearch:
             ),
             (
                 ['gamma'],
-                tuple(),
+                (),
                 [
                     {
                         'id': 'test-config',
@@ -862,7 +862,7 @@ class TestSearch:
             ),
             (
                 ['alpha', 'gamma'],
-                tuple(),
+                (),
                 [
                     {
                         'id': 'test-config-a',
@@ -1095,7 +1095,7 @@ class TestGlobalTextualSearch:
                     Link(
                         type='ui-detail',
                         title='Flow: My Flow',
-                        url=(f'https://connection.test.keboola.com/admin/projects/{project_id}' '/flows/flow-1'),
+                        url=(f'https://connection.test.keboola.com/admin/projects/{project_id}/flows/flow-1'),
                     )
                 ],
             ),

@@ -3,8 +3,9 @@ import json
 import logging
 import os
 import time
+from collections.abc import Callable, Mapping
 from functools import wraps
-from typing import Any, Callable, Mapping, Optional, Type, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 import jsonschema
 import yaml
@@ -88,9 +89,8 @@ async def _trigger_event(
         user_agent = f'{client_params.clientInfo.name}/{client_params.clientInfo.version}'
     if not user_agent:
         user_agent = ctx.client_id
-    if not user_agent:
-        if http_rq := get_http_request_or_none():
-            user_agent = http_rq.headers.get('User-Agent')
+    if not user_agent and (http_rq := get_http_request_or_none()):
+        user_agent = http_rq.headers.get('User-Agent')
     if not user_agent:
         user_agent = ''
 
@@ -145,8 +145,8 @@ async def _trigger_event(
 
 
 def tool_errors(
-    default_recovery: Optional[str] = None,
-    recovery_instructions: Optional[dict[Type[Exception], str]] = None,
+    default_recovery: str | None = None,
+    recovery_instructions: dict[type[Exception], str] | None = None,
 ) -> Callable[[F], F]:
     """
     The MCP tool function decorator that logs exceptions and adds recovery instructions for LLMs.
@@ -191,9 +191,9 @@ def tool_errors(
                     if error_msg:
                         raise ToolError(error_msg) from e
                     else:
-                        raise e
+                        raise
                 except Exception as e:
-                    LOG.exception(f'MCP tool "{func.__name__}" call failed. {type(e).__name__}: {e}')
+                    LOG.exception(f'MCP tool "{func.__name__}" call failed.')
                     exception = e
                     raise
 

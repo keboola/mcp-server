@@ -144,8 +144,8 @@ async def test_logging_on_tool_exception(caplog, function_with_value_error, mcp_
 
     assert len(caplog.records) == 1
     assert caplog.records[0].levelno == logging.ERROR
-    assert 'MCP tool "func" call failed. ValueError: Simulated ValueError' in caplog.records[0].message
-    assert 'Simulated ValueError' in caplog.records[0].message
+    assert 'MCP tool "func" call failed.' in caplog.records[0].message
+    assert 'Simulated ValueError' in caplog.text
 
 
 @pytest.mark.asyncio
@@ -354,8 +354,7 @@ class TestPydanticValidationErrors:
             assert log_records, 'No log records from keboola_mcp_server.errors'
             lines = log_records[0].message.splitlines()
             assert len(lines) > 0, 'Empty log message'
-            assert lines[0] == 'MCP tool "foo" call failed. ToolError: Found 1 validation error(s) for TableColumnInfo'
-            assert expected_error_details == yaml.safe_load('\n'.join(lines[1:]))
+            assert lines[0] == 'MCP tool "foo" call failed.'
 
             # check the message in the submitted SAPI event
             post_mock.assert_called_once()

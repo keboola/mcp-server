@@ -8,13 +8,13 @@ from keboola_mcp_server.clients.scheduler import SchedulerClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 
 __all__ = [
-    'KeboolaClient',
-    'EncryptionClient',
-    'AsyncStorageClient',
     'AIServiceClient',
+    'AsyncStorageClient',
+    'EncryptionClient',
     'JobsQueueClient',
-    'MetastoreClient',
-    'SchedulerClient',
-    'RawKeboolaClient',
+    'KeboolaClient',
     'KeboolaServiceClient',
+    'MetastoreClient',
+    'RawKeboolaClient',
+    'SchedulerClient',
 ]

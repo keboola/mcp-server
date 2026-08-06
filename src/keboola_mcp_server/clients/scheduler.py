@@ -17,7 +17,6 @@ LOG = logging.getLogger(__name__)
 
 
 class Schedule(BaseModel):
-
     cron_tab: str = Field(
         validation_alias=AliasChoices('cronTab', 'cron_tab', 'cron-tab'),
         serialization_alias='cronTab',
@@ -28,7 +27,6 @@ class Schedule(BaseModel):
 
 
 class TargetConfiguration(BaseModel):
-
     component_id: str = Field(
         validation_alias=AliasChoices('componentId', 'component_id', 'component-id'),
         serialization_alias='componentId',

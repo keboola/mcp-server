@@ -1,6 +1,7 @@
 import asyncio
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import MagicMock
 
 import httpx
@@ -1357,7 +1358,9 @@ async def test_get_config_examples(
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
 
     text = await get_config_examples(component_id='keboola.ex-aws-s3', ctx=context)
-    assert text == """# Configuration Examples for `keboola.ex-aws-s3`
+    assert (
+        text
+        == """# Configuration Examples for `keboola.ex-aws-s3`
 
 ## Root Configuration Examples
 
@@ -1378,6 +1381,7 @@ async def test_get_config_examples(
 ```
 
 """
+    )
 
 
 @pytest.mark.asyncio

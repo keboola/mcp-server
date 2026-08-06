@@ -1,7 +1,6 @@
 import copy
 import json
 import logging
-from typing import Optional
 
 import jsonschema
 import pytest
@@ -44,7 +43,7 @@ def test_load_schema(schema_name, expected_keywords):
     ],
 )
 def test_validate_storage_valid(valid_storage_path: str):
-    with open(valid_storage_path, 'r') as f:
+    with open(valid_storage_path) as f:
         valid_storage = json.load(f)
     # returns the same valid storage no exception is raised
     assert validation.validate_storage_configuration_against_schema(valid_storage) == valid_storage
@@ -77,7 +76,7 @@ def test_validate_storage_valid(valid_storage_path: str):
 )
 def test_validate_storage_invalid(invalid_storage_path: str):
     """We expect the json will not be validated and raise a RecoverableValidationError"""
-    with open(invalid_storage_path, 'r') as f:
+    with open(invalid_storage_path) as f:
         invalid_storage = json.load(f)
     with pytest.raises(validation.RecoverableValidationError) as exc_info:
         validation.validate_storage_configuration_against_schema(
@@ -127,7 +126,7 @@ def test_validate_parameters_output_format(input_parameters, output_parameters):
     ],
 )
 def test_validate_flow_valid(valid_flow_path: str):
-    with open(valid_flow_path, 'r') as f:
+    with open(valid_flow_path) as f:
         valid_flow = json.load(f)
     assert (
         validation.validate_flow_configuration_against_schema(valid_flow, flow_type=ORCHESTRATOR_COMPONENT_ID)
@@ -147,7 +146,7 @@ def test_validate_flow_valid(valid_flow_path: str):
     ],
 )
 def test_validate_flow_invalid(invalid_flow_path: str):
-    with open(invalid_flow_path, 'r') as f:
+    with open(invalid_flow_path) as f:
         invalid_flow = json.load(f)
     with pytest.raises(validation.RecoverableValidationError):
         validation.validate_flow_configuration_against_schema(invalid_flow, flow_type=ORCHESTRATOR_COMPONENT_ID)
@@ -231,8 +230,10 @@ _MULTI_REQUIRED_SCHEMA: JsonDict = {
             {'embedding_settings': {'provider_type': 'gpt-9000'}},
             [
                 "'gpt-9000' is not one of",
-                "Failed validating 'enum' in schema['properties']['embedding_settings']['properties']['provider_type']"
-                "['enum']",
+                (
+                    "Failed validating 'enum' in schema['properties']['embedding_settings']"
+                    "['properties']['provider_type']['enum']"
+                ),
                 "On instance['embedding_settings']['provider_type']",
                 '"openai"',  # enum values are shown
                 '"gpt-9000"',  # the bad value is shown
@@ -247,8 +248,10 @@ _MULTI_REQUIRED_SCHEMA: JsonDict = {
             {'text_column': 'notes', 'advanced_options': {'batch_size': 'not-a-number'}},
             [
                 "is not of type 'integer'",
-                "Failed validating 'type' in schema['properties']['advanced_options']['properties']['batch_size']"
-                "['type']",
+                (
+                    "Failed validating 'type' in schema['properties']['advanced_options']['properties']['batch_size']"
+                    "['type']"
+                ),
                 "On instance['advanced_options']['batch_size']",
                 '"type": "integer"',  # the type constraint value is shown
                 '"not-a-number"',  # the bad value is shown
@@ -263,8 +266,10 @@ _MULTI_REQUIRED_SCHEMA: JsonDict = {
             {'text_column': 'notes', 'advanced_options': {'batch_size': 0}},
             [
                 '0 is less than the minimum of 1',
-                "Failed validating 'minimum' in schema['properties']['advanced_options']['properties']['batch_size']"
-                "['minimum']",
+                (
+                    "Failed validating 'minimum' in schema['properties']['advanced_options']"
+                    "['properties']['batch_size']['minimum']"
+                ),
                 "On instance['advanced_options']['batch_size']",
                 '"minimum": 1',  # the minimum value is shown
             ],
@@ -534,7 +539,7 @@ def test_normalize_schema_invalid_parameters(input_schema: JsonDict):
 )
 def test_schema_validation(caplog, schema_path: str, json_data: JsonDict):
     """Testing the failure of the jsonschema.validate and the success of the KeboolaParametersValidator.validate"""
-    with open(schema_path, 'r') as f:
+    with open(schema_path) as f:
         schema = json.load(f)
 
     with caplog.at_level(logging.ERROR):
@@ -574,9 +579,9 @@ def test_schema_validation(caplog, schema_path: str, json_data: JsonDict):
     ],
 )
 def test_validate_row_parameters(schema_path: str, data_path: str, valid: bool):
-    with open(schema_path, 'r') as f:
+    with open(schema_path) as f:
         schema = json.load(f)
-    with open(data_path, 'r') as f:
+    with open(data_path) as f:
         data = json.load(f)
     if valid:
         try:
@@ -608,9 +613,9 @@ def test_validate_row_parameters(schema_path: str, data_path: str, valid: bool):
     ],
 )
 def test_validate_root_parameters(schema_path: str, data_path: str, valid: bool):
-    with open(schema_path, 'r') as f:
+    with open(schema_path) as f:
         schema = json.load(f)
-    with open(data_path, 'r') as f:
+    with open(data_path) as f:
         data = json.load(f)
     if valid:
         try:
@@ -633,7 +638,7 @@ def test_validate_root_parameters(schema_path: str, data_path: str, valid: bool)
     ],
 )
 def test_validate_storage_configuration_output(
-    mock_component: dict, input_storage: Optional[JsonDict], output_storage: Optional[JsonDict]
+    mock_component: dict, input_storage: JsonDict | None, output_storage: JsonDict | None
 ):
     """testing expected storage output for a given storage input"""
     component_raw = mock_component.copy()
@@ -674,9 +679,9 @@ def test_validate_storage_of_row_based_and_root_based_writers(
     caplog,
     mock_component: dict,
     is_writer_row_based: bool,
-    storage: Optional[JsonDict],
+    storage: JsonDict | None,
     is_storage_row_based: bool,
-    error_message: Optional[str],
+    error_message: str | None,
 ):
     """testing storage necessity validation"""
     component_raw = mock_component.copy()
@@ -718,7 +723,7 @@ def test_validate_storage_of_row_based_and_root_based_writers(
         ({'input': {'tables': []}, 'output': {'tables': []}}, True),
     ],
 )
-def test_validate_storage_of_sql_transformation(mock_component: dict, storage: Optional[JsonDict], is_valid: bool):
+def test_validate_storage_of_sql_transformation(mock_component: dict, storage: JsonDict | None, is_valid: bool):
     """testing storage necessity validation"""
     component_raw = mock_component.copy()
     component_raw['type'] = 'transformation'
@@ -785,7 +790,7 @@ async def test_validate_row_parameters_configuration_output(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('input_schema', [None, {}])
-async def test_validate_parameters_configuration_no_schema(mock_component: dict, input_schema: Optional[JsonDict]):
+async def test_validate_parameters_configuration_no_schema(mock_component: dict, input_schema: JsonDict | None):
     """We expect passing the validation when no schema is provided"""
     input_parameters: JsonDict = {'a': 1}
     component_raw = mock_component.copy()
@@ -811,10 +816,10 @@ def test_validate_parameters_root_real_scenario(
 ):
     """We test the validation of the root parameters configuration for a real scenario
     regardless of the parameters key presence we expect the same output"""
-    with open(file_path, 'r') as f:
+    with open(file_path) as f:
         input_parameters = json.load(f)
     assert 'parameters' not in input_parameters  # we do not expect the parameters key in the input
-    with open('tests/resources/parameters/root_parameters_schema.json', 'r') as f:
+    with open('tests/resources/parameters/root_parameters_schema.json') as f:
         input_schema = json.load(f)
 
     component_raw = mock_component.copy()
@@ -833,7 +838,7 @@ def test_validate_parameters_root_real_scenario(
 
 def test_validate_conditional_flow_with_explicit_schema():
     """A conditional flow validates against an explicitly provided schema."""
-    with open('tests/tools/flow/fixtures/conditional_flow_schema.json', 'r') as f:
+    with open('tests/tools/flow/fixtures/conditional_flow_schema.json') as f:
         schema = json.load(f)
     valid_flow = {
         'phases': [

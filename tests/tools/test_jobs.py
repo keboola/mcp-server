@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Type, Union
+from typing import Any
 
 import pytest
 from httpx import HTTPError
@@ -313,8 +313,8 @@ async def test_run_job_fail(mocker: MockerFixture, mcp_context_client: Context, 
 )
 def test_job_detail_model_validate_dict_fields(
     field_name: str,
-    input_value: Union[list, dict, None],
-    expected_result: Union[dict, Type[Exception]],
+    input_value: list | dict | None,
+    expected_result: dict | type[Exception],
     mock_job: dict[str, Any],
 ):
     """Tests JobDetail model validate for result field.

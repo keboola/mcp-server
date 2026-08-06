@@ -1,7 +1,8 @@
 """Scheduler management functions for creating, updating, and deleting schedulers."""
 
 import logging
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
@@ -49,7 +50,7 @@ def validate_cron_tab(cron_tab: str | None) -> None:
     """Validate the cron tab expression."""
     try:
         if cron_tab is None:
-            return None
+            return
         split_cron_tab = cron_tab.strip().split()
         if len(split_cron_tab) != 5:
             raise ValueError(
@@ -130,7 +131,7 @@ def validate_cron_tab(cron_tab: str | None) -> None:
         if weekdays_set and not hours_set:
             raise ValueError('Days of week must be specified with hours of day. Example: `55 12 * * 0`')
     except ValueError as e:
-        raise ValueError(f'Invalid cron tab expression: {str(e)}.\n{CRON_TAB_INSTRUCTIONS}') from e
+        raise ValueError(f'Invalid cron tab expression: {e!s}.\n{CRON_TAB_INSTRUCTIONS}') from e
 
 
 class SimplifiedSchedule(BaseModel):
@@ -179,7 +180,7 @@ async def _update_schedulers_internal(
     client: KeboolaClient,
     configuration_id: str,
     component_id: str,
-    schedules: Sequence[ScheduleRequest] = tuple(),
+    schedules: Sequence[ScheduleRequest] = (),
 ) -> tuple[dict[str, SimplifiedSchedule], dict[str, SimplifiedSchedule | None], list[SimplifiedSchedule]]:
     """
     Compute original, updated and new schedulers for preview by adding/updating/removing schedules.
@@ -328,7 +329,7 @@ async def process_schedule_request(
             )
             responses.append(f'Created schedule: {response.schedule_id}')
     except Exception as e:
-        raise ValueError(f'Error processing schedule requests: {str(e)}') from e
+        raise ValueError(f'Error processing schedule requests: {e!s}') from e
     return responses
 
 

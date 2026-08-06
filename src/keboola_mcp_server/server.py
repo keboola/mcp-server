@@ -3,9 +3,9 @@
 import dataclasses
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Callable, Literal
+from typing import Literal
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware.logging import LoggingMiddleware
@@ -144,7 +144,7 @@ class CustomRoutes:
         except HTTPException:
             raise
         except Exception as e:
-            LOG.exception(f'Failed to handle OAuth callback: {e}')
+            LOG.exception('Failed to handle OAuth callback')
             return JSONResponse(status_code=500, content={'message': f'Unexpected error: {e}'})
 
     def add_to_mcp(self, mcp: FastMCP) -> None:

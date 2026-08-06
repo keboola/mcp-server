@@ -5,8 +5,9 @@ import importlib.metadata
 import logging
 import os
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, Optional
+from typing import Any, Literal
 from urllib.parse import urlparse, urlunparse
 
 LOG = logging.getLogger(__name__)
@@ -18,29 +19,29 @@ Transport = Literal['stdio', 'streamable-http', 'http-compat/streamable-http']
 class Config:
     """Server configuration."""
 
-    storage_api_url: Optional[str] = None
+    storage_api_url: str | None = None
     """The URL to the Storage API."""
-    storage_token: Optional[str] = field(default=None, metadata={'aliases': ['storage_api_token']})
+    storage_token: str | None = field(default=None, metadata={'aliases': ['storage_api_token']})
     """The token to access the storage API using the MCP tools."""
-    branch_id: Optional[str] = None
+    branch_id: str | None = None
     """The branch ID to access the storage API using the MCP tools."""
-    workspace_schema: Optional[str] = None
+    workspace_schema: str | None = None
     """Workspace schema to access the buckets, tables and execute sql queries."""
-    oauth_client_id: Optional[str] = None
+    oauth_client_id: str | None = None
     """OAuth client ID registered in the Keboola OAuth Server."""
-    oauth_client_secret: Optional[str] = None
+    oauth_client_secret: str | None = None
     """OAuth client secret registered in the Keboola OAuth Server."""
-    oauth_server_url: Optional[str] = None
+    oauth_server_url: str | None = None
     """The URL of the OAuth server to authenticate with."""
-    oauth_scope: Optional[str] = None
+    oauth_scope: str | None = None
     """The OAuth scope to request from the OAuth server."""
-    mcp_server_url: Optional[str] = None
+    mcp_server_url: str | None = None
     """The URL where the MCP server si reachable."""
-    jwt_secret: Optional[str] = None
+    jwt_secret: str | None = None
     """The secret key for encoding and decoding JWT tokens."""
-    bearer_token: Optional[str] = None
+    bearer_token: str | None = None
     """The access-token issued by Keboola OAuth server to be sent in 'Authorization: Bearer <access-token>' header."""
-    conversation_id: Optional[str] = None
+    conversation_id: str | None = None
     """The ID of the ongoing conversation with the MCP server. This is supplied only by the HTTP header."""
 
     def __post_init__(self) -> None:
@@ -73,13 +74,13 @@ class Config:
 
     @classmethod
     def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, Any]:
-        data = {cls._normalize(k): v for k, v, in d.items()}
+        data = {cls._normalize(k): v for k, v in d.items()}
         options: dict[str, Any] = {}
         for f in dataclasses.fields(cls):
             field_names = [f.name] + f.metadata.get('aliases', [])
 
             for name in field_names:
-                value: Optional[str] = _NO_VALUE_MARKER
+                value: str | None = _NO_VALUE_MARKER
 
                 if (dict_name := cls._normalize(name)) in data:
                     value = data[dict_name]
@@ -93,9 +94,9 @@ class Config:
                     value = data[dict_name]
 
                 if value is not _NO_VALUE_MARKER:
-                    if f.type is Optional[bool]:
+                    if f.type == (bool | None):
                         options[f.name] = value.lower() in ('true', 'yes', '1')
-                    elif f.type is Optional[str]:
+                    elif f.type == (str | None):
                         options[f.name] = value
                     else:
                         raise ValueError(f'Unsupported type {f.type} for field {f.name}')
@@ -138,7 +139,7 @@ class Config:
         return f'Config({joined_params})'
 
 
-def get_env_storage_api_url(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+def get_env_storage_api_url(env: Mapping[str, str] | None = None) -> str | None:
     """
     Returns the Storage API URL of this server's own Keboola stack as described by the process
     environment ('KBC_STORAGE_API_URL', falling back to 'HOSTNAME_SUFFIX').
@@ -165,7 +166,7 @@ def get_env_storage_api_url(env: Optional[Mapping[str, str]] = None) -> Optional
 _DEFAULT_PORTS: Mapping[str, int] = {'http': 80, 'https': 443}
 
 
-def _stack_identity(url: str) -> Optional[tuple[str, Optional[int]]]:
+def _stack_identity(url: str) -> tuple[str, int | None] | None:
     """
     Returns the (host, port) pair that identifies the Keboola stack addressed by the input URL,
     or None when the URL cannot identify a stack.
@@ -191,7 +192,7 @@ def _stack_identity(url: str) -> Optional[tuple[str, Optional[int]]]:
     return parsed.hostname, port
 
 
-def is_same_stack(url: Optional[str], other_url: Optional[str]) -> bool:
+def is_same_stack(url: str | None, other_url: str | None) -> bool:
     """
     Tells whether two Keboola URLs point to the very same host.
 

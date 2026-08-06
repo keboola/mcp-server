@@ -1,7 +1,8 @@
 import logging
 import math
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, cast
+from typing import Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
@@ -52,7 +53,7 @@ class GlobalSearchResponse(BaseModel):
             ),
             alias='fullPath',
         )
-        component_id: Optional[str] = Field(
+        component_id: str | None = Field(
             default=None, description='The id of the component the item belongs to.', alias='componentId'
         )
         organization_id: int = Field(
@@ -90,7 +91,7 @@ class GlobalSearchResponse(BaseModel):
     def validate_dict_fields(cls, current_value: Any) -> Any:
         # If the value is empty-list/None, return an empty dictionary, otherwise return the value
         if not current_value:
-            return dict()
+            return {}
         return current_value
 
 
@@ -108,7 +109,7 @@ class APIFlowResponse(BaseModel):
         serialization_alias='id',
     )
     name: str = Field(description='The name of the flow configuration')
-    description: Optional[str] = Field(default=None, description='The description of the flow configuration')
+    description: str | None = Field(default=None, description='The description of the flow configuration')
 
     # Versioning and state
     version: int = Field(description='The version of the flow configuration')
@@ -131,7 +132,7 @@ class APIFlowResponse(BaseModel):
     )
 
     # Change tracking
-    change_description: Optional[str] = Field(
+    change_description: str | None = Field(
         default=None,
         description='The description of the latest changes',
         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
@@ -146,8 +147,8 @@ class APIFlowResponse(BaseModel):
     )
 
     # Timestamps
-    created: Optional[str] = Field(None, description='Creation timestamp')
-    updated: Optional[str] = Field(None, description='Last update timestamp')
+    created: str | None = Field(None, description='Creation timestamp')
+    updated: str | None = Field(None, description='Last update timestamp')
 
 
 class ComponentAPIResponse(BaseModel):
@@ -242,7 +243,7 @@ class ConfigurationAPIResponse(BaseModel):
         validation_alias=AliasChoices('configuration_id', 'id', 'configurationId', 'configuration-id'),
     )
     name: str = Field(description='The name of the configuration')
-    description: Optional[str] = Field(default=None, description='The description of the configuration')
+    description: str | None = Field(default=None, description='The description of the configuration')
     version: int = Field(description='The version of the configuration')
     is_disabled: bool = Field(
         default=False,
@@ -257,10 +258,10 @@ class ConfigurationAPIResponse(BaseModel):
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters and storage'
     )
-    rows: Optional[list[dict[str, Any]]] = Field(
+    rows: list[dict[str, Any]] | None = Field(
         default=None, description='The row configurations within this configuration'
     )
-    change_description: Optional[str] = Field(
+    change_description: str | None = Field(
         default=None,
         description='The description of the latest changes',
         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
@@ -275,13 +276,13 @@ class ConfigurationAPIResponse(BaseModel):
 class CreateConfigurationAPIResponse(BaseModel):
     id: str = Field(description='Unique identifier of the newly created configuration.')
     name: str = Field(description='Human-readable name of the configuration.')
-    description: Optional[str] = Field(default='', description='Optional description of the configuration.')
+    description: str | None = Field(default='', description='Optional description of the configuration.')
     created: datetime = Field(description='Timestamp when the configuration was created (ISO 8601).')
     creator_token: dict[str, Any] = Field(
         description='Metadata about the token that created the configuration.', alias='creatorToken'
     )
     version: int = Field(description='Version number of the configuration.')
-    change_description: Optional[str] = Field(
+    change_description: str | None = Field(
         description='Optional description of the change that introduced this configuration version.',
         alias='changeDescription',
     )
@@ -291,19 +292,16 @@ class CreateConfigurationAPIResponse(BaseModel):
     is_deleted: bool = Field(
         description='Indicates whether the configuration has been marked as deleted.', alias='isDeleted'
     )
-    configuration: Optional[dict[str, Any]] = Field(
+    configuration: dict[str, Any] | None = Field(
         description='User-defined configuration payload (key-value structure).'
     )
-    state: Optional[dict[str, Any]] = Field(
-        description='Internal runtime state data associated with the configuration.'
-    )
-    current_version: Optional[dict[str, Any]] = Field(
+    state: dict[str, Any] | None = Field(description='Internal runtime state data associated with the configuration.')
+    current_version: dict[str, Any] | None = Field(
         description='Metadata about the currently deployed version of the configuration.', alias='currentVersion'
     )
 
 
 class AsyncStorageClient(KeboolaServiceClient):
-
     def __init__(
         self,
         raw_client: RawKeboolaClient,
@@ -328,7 +326,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         cls,
         *,
         root_url: str,
-        token: Optional[str],
+        token: str | None,
         version: str = 'v2',
         branch_id: str | None = None,
         headers: dict[str, Any] | None = None,
@@ -687,7 +685,7 @@ class AsyncStorageClient(KeboolaServiceClient):
     async def configuration_metadata_delete(self, component_id: str, configuration_id: str, metadata_id: str) -> None:
         """Deletes a single metadata entry for a configuration."""
         endpoint = (
-            f'branch/{self._branch_id}/components/{component_id}' f'/configs/{configuration_id}/metadata/{metadata_id}'
+            f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}/metadata/{metadata_id}'
         )
         await self.delete(endpoint=endpoint)
 
@@ -697,8 +695,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         configuration_id: str,
         configuration: dict[str, Any],
         change_description: str,
-        updated_name: Optional[str] = None,
-        updated_description: Optional[str] = None,
+        updated_name: str | None = None,
+        updated_description: str | None = None,
         is_disabled: bool | None = None,
     ) -> JsonDict:
         """
@@ -771,8 +769,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         configuration_row_id: str,
         configuration: dict[str, Any],
         change_description: str,
-        updated_name: Optional[str] = None,
-        updated_description: Optional[str] = None,
+        updated_name: str | None = None,
+        updated_description: str | None = None,
         is_disabled: bool | None = None,
     ) -> JsonDict:
         """
@@ -860,7 +858,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         query: str,
         limit: int = 100,
         offset: int = 0,
-        types: Sequence[ItemType] = tuple(),
+        types: Sequence[ItemType] = (),
         branch_scope: Literal['current', 'all'] = 'current',
     ) -> GlobalSearchResponse:
         """
@@ -994,7 +992,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             payload['results'] = results
         if duration is not None:
             # The events API ignores floats, so we round up to the nearest integer.
-            payload['duration'] = int(math.ceil(duration))
+            payload['duration'] = math.ceil(duration)
         if run_id:
             payload['runId'] = run_id
 

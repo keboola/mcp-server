@@ -358,7 +358,7 @@ async def test_workspace_manager_execute_query_forwards_callback():
     Without this, the tool-layer notification path is silently disabled for any consumer that goes
     through the manager (which is everyone, in practice).
     """
-    workspace, qs_mock = _make_snowflake_workspace_with_mocked_qs(job_id='job-fwd')
+    workspace, _qs_mock = _make_snowflake_workspace_with_mocked_qs(job_id='job-fwd')
 
     manager = WorkspaceManager(Mock(spec=KeboolaClient))
     manager._workspace = workspace

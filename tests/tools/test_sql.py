@@ -125,9 +125,9 @@ async def test_query_data_emits_progress_notification_with_job_id(mcp_context_cl
     mcp_context_client.session.send_notification.assert_awaited_once()
     call_args = mcp_context_client.session.send_notification.await_args
     sent = call_args.args[0]
-    assert (
-        call_args.kwargs.get('related_request_id') == 'req-99'
-    ), f'related_request_id missing or wrong: {call_args.kwargs!r}'
+    assert call_args.kwargs.get('related_request_id') == 'req-99', (
+        f'related_request_id missing or wrong: {call_args.kwargs!r}'
+    )
     # The wrapper is ServerNotification(root=ProgressNotification(...)); both .root and
     # the wrapper's model_dump should expose the progress notification shape.
     progress = sent.root if hasattr(sent, 'root') else sent
@@ -209,7 +209,6 @@ async def test_query_data_skips_progress_when_request_id_missing(mcp_context_cli
 
 
 class TestWorkspaceManagerSnowflake:
-
     @pytest.fixture
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
         keboola_client.storage_client.workspace_list.return_value = [
@@ -448,10 +447,7 @@ class TestWorkspaceManagerSnowflake:
         }
         mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
 
-        if db_data.data is not None:
-            expected = _truncate_data(db_data, max_rows, max_chars)
-        else:
-            expected = db_data
+        expected = _truncate_data(db_data, max_rows, max_chars) if db_data.data is not None else db_data
 
         m = WorkspaceManager.from_state(context.session.state)
         actual = await m.execute_query(query, max_rows=max_rows, max_chars=max_chars)
@@ -807,10 +803,7 @@ class TestWorkspaceManagerBigQuery:
         }
         mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
 
-        if db_data.data is not None:
-            expected = _truncate_data(db_data, max_rows, max_chars)
-        else:
-            expected = db_data
+        expected = _truncate_data(db_data, max_rows, max_chars) if db_data.data is not None else db_data
 
         m = WorkspaceManager.from_state(context.session.state)
         actual = await m.execute_query(query, max_rows=max_rows, max_chars=max_chars)
@@ -829,15 +822,21 @@ class TestWorkspaceManagerBigQuery:
         [
             # Query Service wraps BigQuery errors as a serialized error object; we extract `Message`.
             (
-                '{Location: "query"; Message: "Syntax error: Unexpected identifier \\"INVALID\\" at [1:1]"; '
-                'Reason: "invalidQuery"}',
+                (
+                    '{Location: "query"; Message: "Syntax error: Unexpected identifier \\"INVALID\\" at [1:1]"; '
+                    'Reason: "invalidQuery"}'
+                ),
                 'Syntax error: Unexpected identifier "INVALID" at [1:1]',
             ),
             (
-                '{Location: ""; Message: "Access Denied: Table foo: User does not have permission to query '
-                'table foo, or perhaps it does not exist."; Reason: "accessDenied"}',
-                'Access Denied: Table foo: User does not have permission to query table foo, '
-                'or perhaps it does not exist.',
+                (
+                    '{Location: ""; Message: "Access Denied: Table foo: User does not have permission to query '
+                    'table foo, or perhaps it does not exist."; Reason: "accessDenied"}'
+                ),
+                (
+                    'Access Denied: Table foo: User does not have permission to query table foo, '
+                    'or perhaps it does not exist.'
+                ),
             ),
             # A plain message (no wrapper) is passed through unchanged.
             ('400 Invalid SQL...', '400 Invalid SQL...'),

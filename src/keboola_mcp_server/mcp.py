@@ -119,14 +119,14 @@ class ServerState:
     def from_context(cls, ctx: Context) -> 'ServerState':
         server_state = ctx.request_context.lifespan_context
         if not isinstance(server_state, ServerState):
-            raise ValueError('ServerState is not available in the context.')
+            raise TypeError('ServerState is not available in the context.')
         return server_state
 
     @classmethod
     def from_starlette(cls, app: Starlette) -> 'ServerState':
         server_state = app.state.server_state
         if not isinstance(server_state, ServerState):
-            raise ValueError('ServerState is not available in the Starlette app.')
+            raise TypeError('ServerState is not available in the Starlette app.')
         return server_state
 
 
@@ -300,9 +300,9 @@ class SessionStateMiddleware(fmw.Middleware):
         if user := http_rq.scope.get('user'):
             LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
             assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
-            assert isinstance(
-                user.access_token, ProxyAccessToken
-            ), f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
+            assert isinstance(user.access_token, ProxyAccessToken), (
+                f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
+            )
             config = dataclasses.replace(
                 config,
                 storage_token=user.access_token.sapi_token,

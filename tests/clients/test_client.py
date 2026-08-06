@@ -1,6 +1,7 @@
 import importlib.metadata
 import json
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import httpx
@@ -107,7 +108,7 @@ class TestRawKeboolaClient:
         type(mock_http_response_500).text = PropertyMock(return_value='Invalid JSON')
         mock_http_response_500.json.side_effect = ValueError('Invalid JSON')
 
-        match = "Internal Server Error for url 'https://api.example.com/test'\n" 'API error: Invalid JSON'
+        match = "Internal Server Error for url 'https://api.example.com/test'\nAPI error: Invalid JSON"
         with pytest.raises(httpx.HTTPStatusError, match=match):
             raw_client._raise_for_status(mock_http_response_500)
 
@@ -338,7 +339,6 @@ class TestAsyncStorageClient:
 
 
 class TestKeboolaClient:
-
     @pytest.fixture
     def runtime_config(self) -> ServerRuntimeInfo:
         return ServerRuntimeInfo(transport='stdio', server_id='test')

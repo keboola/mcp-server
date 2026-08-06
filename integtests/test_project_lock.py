@@ -63,14 +63,14 @@ def _released_entry(lock_id: str, meta_id: int | None = None) -> dict:
 
 
 def _make_project_lock(**kwargs) -> ProjectLock:
-    defaults = dict(
-        storage_api_url='https://connection.keboola.com',
-        storage_api_token='test-token',
-        ttl_minutes=60,
-        poll_interval_seconds=1,
-        max_wait_minutes=2,
-        anti_collision_seconds=0,
-    )
+    defaults = {
+        'storage_api_url': 'https://connection.keboola.com',
+        'storage_api_token': 'test-token',
+        'ttl_minutes': 60,
+        'poll_interval_seconds': 1,
+        'max_wait_minutes': 2,
+        'anti_collision_seconds': 0,
+    }
     defaults.update(kwargs)
     return ProjectLock(**defaults)
 
@@ -320,7 +320,7 @@ def test_clean_project_deletes_configs(mocker):
     mocker.patch.object(
         lock,
         '_get',
-        side_effect=lambda path, **params: ([] if path.endswith('/buckets') else components),
+        side_effect=lambda path, **params: [] if path.endswith('/buckets') else components,
     )
     delete_mock = mocker.patch.object(lock, '_delete')
 
@@ -488,13 +488,13 @@ def _make_endpoint(
 
 
 def _make_pool(**kwargs) -> ProjectPool:
-    defaults = dict(
-        endpoints=[_make_endpoint()],
-        ttl_minutes=60,
-        poll_interval_seconds=1,
-        max_wait_minutes=5,
-        anti_collision_seconds=0,
-    )
+    defaults = {
+        'endpoints': [_make_endpoint()],
+        'ttl_minutes': 60,
+        'poll_interval_seconds': 1,
+        'max_wait_minutes': 5,
+        'anti_collision_seconds': 0,
+    }
     defaults.update(kwargs)
     return ProjectPool(**defaults)
 

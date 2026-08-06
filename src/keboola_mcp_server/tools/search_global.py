@@ -8,7 +8,8 @@ constants), so there is no import cycle with `search.py`.
 import asyncio
 import logging
 from collections import defaultdict
-from typing import Any, Literal, Sequence, cast
+from collections.abc import Sequence
+from typing import Any, Literal, cast
 
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,

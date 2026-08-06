@@ -70,7 +70,7 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
 
         # Check X-Allowed-Tools header for explicit tool list
         if header_tools := http_rq.headers.get('X-Allowed-Tools'):
-            parsed_tools = set(t.strip() for t in header_tools.split(',') if t.strip())
+            parsed_tools = {t.strip() for t in header_tools.split(',') if t.strip()}
             if parsed_tools:
                 allowed_tools = parsed_tools
                 LOG.info(f'Tool authorization: X-Allowed-Tools={sorted(allowed_tools)}')
@@ -82,7 +82,7 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
 
         # Check X-Disallowed-Tools header for tools to exclude
         if header_disallowed := http_rq.headers.get('X-Disallowed-Tools'):
-            parsed_tools = set(t.strip() for t in header_disallowed.split(',') if t.strip())
+            parsed_tools = {t.strip() for t in header_disallowed.split(',') if t.strip()}
             if parsed_tools:
                 disallowed_tools = parsed_tools
                 LOG.info(f'Tool authorization: X-Disallowed-Tools={sorted(disallowed_tools)}')
@@ -112,9 +112,7 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         if read_only_mode and not is_read_only:
             return False
         # Then check if tool is in allowed list (if specified)
-        if allowed_tools is not None and tool_name not in allowed_tools:
-            return False
-        return True
+        return not (allowed_tools is not None and tool_name not in allowed_tools)
 
     @staticmethod
     def _is_tool_authorized(

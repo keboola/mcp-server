@@ -1,4 +1,4 @@
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -41,7 +41,7 @@ class AIServiceClient(KeboolaServiceClient):
     def create(
         cls,
         root_url: str,
-        token: Optional[str],
+        token: str | None,
         headers: dict[str, Any] | None = None,
         readonly: bool | None = None,
     ) -> 'AIServiceClient':

@@ -9,7 +9,6 @@ import os
 import pathlib
 import sys
 import traceback
-from typing import Optional
 
 import pydantic
 from fastmcp import FastMCP
@@ -25,7 +24,7 @@ from keboola_mcp_server.server import CustomRoutes, create_server
 LOG = logging.getLogger(__name__)
 
 
-def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
+def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     """Parses command line arguments."""
     parser = argparse.ArgumentParser(
         prog='python -m keboola-mcp-server',
@@ -99,7 +98,7 @@ _exception_handlers = {
 }
 
 
-async def run_server(args: Optional[list[str]] = None) -> None:
+async def run_server(args: list[str] | None = None) -> None:
     """Runs the MCP server in async mode."""
     parsed_args = parse_args(args)
 
@@ -209,12 +208,12 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
             await server.serve()
 
-    except Exception as e:
-        LOG.exception(f'Server failed: {e}')
+    except Exception:
+        LOG.exception('Server failed')
         sys.exit(1)
 
 
-def main(args: Optional[list[str]] = None) -> None:
+def main(args: list[str] | None = None) -> None:
     asyncio.run(run_server(args))
 
 

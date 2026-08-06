@@ -1,5 +1,5 @@
 import logging
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock
 
 import pytest

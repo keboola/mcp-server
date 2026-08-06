@@ -100,7 +100,7 @@ def query_data(query: str) -> pd.DataFrame:
             elif len(page_rows) < _RESULTS_PAGE_SIZE:
                 break
 
-        data_rows = [{col_name: value for col_name, value in zip(columns, row)} for row in all_rows]
+        data_rows = [dict(zip(columns, row)) for row in all_rows]
         return pd.DataFrame(data_rows)
 
 

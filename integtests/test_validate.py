@@ -60,15 +60,15 @@ async def test_validate_parameters(keboola_client: KeboolaClient):
             try:
                 root_counts += 1
                 _check_schema(component.configuration_schema, dummy_parameters={})
-            except jsonschema.SchemaError as e:
-                LOG.exception(f'Root schema error for {raw_component["id"]}: {e}')
+            except jsonschema.SchemaError:
+                LOG.exception(f'Root schema error for {raw_component["id"]}')
                 invalid_root_schemas.append(raw_component['id'])
         if component.configuration_row_schema:
             try:
                 row_counts += 1
                 _check_schema(component.configuration_row_schema, dummy_parameters={})
-            except jsonschema.SchemaError as e:
-                LOG.exception(f'Row schema error for {raw_component["id"]}: {e}')
+            except jsonschema.SchemaError:
+                LOG.exception(f'Row schema error for {raw_component["id"]}')
                 invalid_row_schemas.append(raw_component['id'])
 
     if invalid_root_schemas:

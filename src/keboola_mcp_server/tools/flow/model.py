@@ -4,7 +4,7 @@ Flow models for Keboola MCP server.
 
 import logging
 from datetime import datetime
-from typing import Annotated, Any, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
@@ -34,7 +34,7 @@ class GetFlowsDetailOutput(BaseModel, frozen=True):
     flows: list['Flow'] = Field(description='The retrieved flow configurations with full details.')
 
 
-GetFlowsOutput = Union[GetFlowsListOutput, GetFlowsDetailOutput]
+GetFlowsOutput = GetFlowsListOutput | GetFlowsDetailOutput
 
 
 class FlowToolOutput(BaseModel):
@@ -56,8 +56,8 @@ class FlowToolOutput(BaseModel):
     description: str = Field(description='The description of the Flow.')
     version: int = Field(description='The version number of the flow configuration.')
     timestamp: datetime = Field(description='The timestamp of the operation.')
-    response: Optional[str] = Field(default=None, description='The response message from the operation.')
-    change_summary: Optional[str] = Field(default=None, description='Additional notes or hints about the operation.')
+    response: str | None = Field(default=None, description='The response message from the operation.')
+    change_summary: str | None = Field(default=None, description='Additional notes or hints about the operation.')
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
     links: list[Link] = Field(description='The links relevant to the flow.')
 
@@ -87,8 +87,8 @@ class FlowTask(BaseModel):
     id: int | str = Field(description='Unique identifier of the task')
     name: str = Field(description='Name of the task')
     phase: int | str = Field(description='ID of the phase this task belongs to')
-    enabled: Optional[bool] = Field(default=True, description='Whether the task is enabled')
-    continue_on_failure: Optional[bool] = Field(
+    enabled: bool | None = Field(default=True, description='Whether the task is enabled')
+    continue_on_failure: bool | None = Field(
         default=False,
         description='Whether to continue if task fails',
         validation_alias=AliasChoices('continue_on_failure', 'continueOnFailure', 'continue-on-failure'),
@@ -143,7 +143,7 @@ class RetryConfiguration(BaseExtraModel):
     strategy_params: RetryStrategyParams = Field(
         default_factory=RetryStrategyParams, description='Strategy parameters', alias='strategyParams'
     )
-    retry_on: Optional[list[RetryOnCondition]] = Field(
+    retry_on: list[RetryOnCondition] | None = Field(
         default=None, description='Conditions that trigger retry', alias='retryOn'
     )
 
@@ -182,7 +182,7 @@ class ConstantCondition(BaseExtraModel):
     """Constant value condition."""
 
     type: Literal['const', 'constant'] = Field(description='Condition type')
-    value: Union[str, int, bool, list] = Field(description='Constant value')
+    value: str | int | bool | list = Field(description='Constant value')
 
 
 class VariableCondition(BaseExtraModel):
@@ -235,7 +235,10 @@ class ArrayCondition(BaseExtraModel):
 
 
 # Union type for all condition types
-ConditionObject = Union[
+# NB: keep as typing.Union, not `X | Y` -- this is exposed in tool-facing pydantic schemas, and
+# `types.UnionType` has been observed to change pydantic's generated JSON Schema in ways that alter
+# jsonschema validation error paths (see ConfigParamUpdate/TfParamUpdate above).
+ConditionObject = Union[  # noqa: UP007
     TaskCondition,
     PhaseCondition,
     ConstantCondition,
@@ -257,12 +260,12 @@ class JobTaskConfiguration(BaseExtraModel):
 
     type: Literal['job'] = Field(description='Task type')
     component_id: str = Field(description='Component ID', alias='componentId')
-    config_id: Optional[str] = Field(default=None, description='Configuration ID', alias='configId')
-    config_data: Optional[dict[str, Any]] = Field(default=None, description='Configuration data', alias='configData')
+    config_id: str | None = Field(default=None, description='Configuration ID', alias='configId')
+    config_data: dict[str, Any] | None = Field(default=None, description='Configuration data', alias='configData')
     mode: Literal['run'] = Field(description='Execution mode')
-    delay: Optional[Union[str, int]] = Field(default=None, description='Initial delay in seconds')
-    retry: Optional[RetryConfiguration] = Field(default=None, description='Retry configuration')
-    variable_overrides: Optional[list[str]] = Field(
+    delay: str | int | None = Field(default=None, description='Initial delay in seconds')
+    retry: RetryConfiguration | None = Field(default=None, description='Retry configuration')
+    variable_overrides: list[str] | None = Field(
         default=None,
         description='Names of flow variables to pass into this job as variable overrides',
         alias='variableOverrides',
@@ -282,14 +285,14 @@ class NotificationTaskConfiguration(BaseExtraModel):
     type: Literal['notification'] = Field(description='Task type')
     recipients: list[NotificationRecipient] = Field(description='List of notification recipients', min_length=1)
     title: str = Field(description='Notification title')
-    message: Optional[str] = Field(default=None, description='Notification message')
+    message: str | None = Field(default=None, description='Notification message')
 
 
 # Variable source object (limited subset of conditions). Each member has a unique `type`
 # literal, so we discriminate on it: pydantic dispatches directly to the matching model and
 # reports one targeted error instead of trying every member and producing a cascade.
 VariableSourceObject = Annotated[
-    Union[ConstantCondition, PhaseCondition, TaskCondition, VariableCondition, FunctionCondition, ArrayCondition],
+    ConstantCondition | PhaseCondition | TaskCondition | VariableCondition | FunctionCondition | ArrayCondition,
     Field(discriminator='type'),
 ]
 
@@ -299,12 +302,12 @@ class VariableTaskConfiguration(BaseExtraModel):
 
     type: Literal['variable'] = Field(description='Task type')
     name: str = Field(description='Variable name')
-    value: Optional[str] = Field(default=None, description='Variable value')
-    source: Optional[VariableSourceObject] = Field(default=None, description='Variable source')
+    value: str | None = Field(default=None, description='Variable value')
+    source: VariableSourceObject | None = Field(default=None, description='Variable source')
 
 
 TaskConfiguration = Annotated[
-    Union[JobTaskConfiguration, NotificationTaskConfiguration, VariableTaskConfiguration],
+    JobTaskConfiguration | NotificationTaskConfiguration | VariableTaskConfiguration,
     Field(discriminator='type'),
 ]
 
@@ -318,8 +321,8 @@ class ConditionalFlowTransition(BaseExtraModel):
     """Transition model with structured conditions."""
 
     id: str = Field(description='Unique identifier of the transition')
-    name: Optional[str] = Field(default=None, description='Optional descriptive name for the transition')
-    condition: Optional[ConditionObject] = Field(default=None, description='Structured condition for this transition')
+    name: str | None = Field(default=None, description='Optional descriptive name for the transition')
+    condition: ConditionObject | None = Field(default=None, description='Structured condition for this transition')
     goto: str | None = Field(description='Target phase ID to transition to, or null to end the flow')
 
 
@@ -329,7 +332,7 @@ class ConditionalFlowTask(BaseExtraModel):
     id: str = Field(description='Unique identifier of the task (must be string)')
     name: str = Field(description='Name of the task')
     phase: str = Field(description='ID of the phase this task belongs to (must be string)')
-    enabled: Optional[bool] = Field(default=True, description='Whether the task is enabled')
+    enabled: bool | None = Field(default=True, description='Whether the task is enabled')
     task: TaskConfiguration = Field(description='Structured task configuration')
 
 
@@ -338,11 +341,11 @@ class ConditionalFlowPhase(BaseExtraModel):
 
     id: str = Field(description='Unique identifier of the phase (must be string)')
     name: str = Field(description='Name of the phase', min_length=1)
-    description: Optional[str] = Field(default=None, description='Description of the phase')
-    retry: Optional[RetryConfiguration] = Field(
+    description: str | None = Field(default=None, description='Description of the phase')
+    retry: RetryConfiguration | None = Field(
         default=None, description='Retry configuration for all tasks in this phase'
     )
-    next: Optional[list[ConditionalFlowTransition]] = Field(
+    next: list[ConditionalFlowTransition] | None = Field(
         default_factory=list, description='Array of transitions to other phases'
     )
 
@@ -353,12 +356,13 @@ class ConditionalFlowPhase(BaseExtraModel):
         # This allows us to modify the ending phases without specified transitions in the UI of conditional flows in
         # Keboola Designer, and prevents UI damage from single null transitions.
         data = super().model_dump(exclude_unset=exclude_unset, **kwargs)
-        if exclude_unset:
-            if 'next' in data and isinstance(data['next'], list):
-                if len(data['next']) == 0:
-                    data.pop('next')
-                elif len(data['next']) == 1 and data['next'][0].get('goto') is None:
-                    data.pop('next')
+        if (
+            exclude_unset
+            and 'next' in data
+            and isinstance(data['next'], list)
+            and (len(data['next']) == 0 or len(data['next']) == 1 and data['next'][0].get('goto') is None)
+        ):
+            data.pop('next')
         return data
 
 
@@ -369,7 +373,7 @@ class ConditionalFlowConfiguration(BaseExtraModel):
     tasks: list[ConditionalFlowTask] = Field(description='List of tasks in the flow')
 
 
-_T = Union[ConditionalFlowPhase, ConditionalFlowTask]
+_T = ConditionalFlowPhase | ConditionalFlowTask
 
 
 def _safe_validate(model_cls: type[_T], raw: dict[str, Any], flow_id: str, kind: str) -> _T:
@@ -405,21 +409,21 @@ class Flow(BaseModel):
     component_id: FlowType = Field(description='The ID of the component (keboola.orchestrator/keboola.flow)')
     configuration_id: str = Field(description='The ID of this flow configuration')
     name: str = Field(description='The name of the flow configuration')
-    description: Optional[str] = Field(default=None, description='The description of the flow configuration')
+    description: str | None = Field(default=None, description='The description of the flow configuration')
     version: int = Field(description='The version of the flow configuration')
     is_disabled: bool = Field(default=False, description='Whether the flow configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the flow configuration is deleted')
     configuration: FlowConfiguration | ConditionalFlowConfiguration = Field(
         description='The flow configuration containing phases and tasks'
     )
-    change_description: Optional[str] = Field(default=None, description='The description of the latest changes')
+    change_description: str | None = Field(default=None, description='The description of the latest changes')
     configuration_metadata: list[dict[str, Any]] = Field(
         default_factory=list, description='Flow configuration metadata including MCP tracking'
     )
     folder: str = Field(default='', description='The UI folder this flow is organized into')
-    created: Optional[str] = Field(None, description='Creation timestamp')
-    updated: Optional[str] = Field(None, description='Last update timestamp')
-    schedules: Optional[SchedulesOutput] = Field(default=None, description='List of schedules for this flow')
+    created: str | None = Field(None, description='Creation timestamp')
+    updated: str | None = Field(None, description='Last update timestamp')
+    schedules: SchedulesOutput | None = Field(default=None, description='List of schedules for this flow')
     links: list[Link] = Field(default_factory=list, description='MCP-specific links for UI navigation')
 
     @classmethod
@@ -427,8 +431,8 @@ class Flow(BaseModel):
         cls,
         api_config: APIFlowResponse,
         flow_component_id: FlowType,
-        links: Optional[list[Link]] = None,
-        schedules: Optional[SchedulesOutput] = None,
+        links: list[Link] | None = None,
+        schedules: SchedulesOutput | None = None,
     ) -> 'Flow':
         """
         Create a Flow domain model from an APIFlowResponse.
@@ -480,7 +484,7 @@ class FlowSummary(BaseModel):
     component_id: FlowType = Field(description='The ID of the component (keboola.orchestrator/keboola.flow)')
     configuration_id: str = Field(description='The ID of this flow configuration')
     name: str = Field(description='The name of the flow configuration')
-    description: Optional[str] = Field(default=None, description='The description of the flow configuration')
+    description: str | None = Field(default=None, description='The description of the flow configuration')
     version: int = Field(description='The version of the flow configuration')
     is_disabled: bool = Field(default=False, description='Whether the flow configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the flow configuration is deleted')
@@ -488,8 +492,8 @@ class FlowSummary(BaseModel):
     tasks_count: int = Field(description='Number of tasks in the flow')
     schedules_count: int = Field(default=0, description='Number of configured schedules for this flow')
     folder: str = Field(default='', description='The UI folder this flow is organized into')
-    created: Optional[str] = Field(None, description='Creation timestamp')
-    updated: Optional[str] = Field(None, description='Last update timestamp')
+    created: str | None = Field(None, description='Creation timestamp')
+    updated: str | None = Field(None, description='Last update timestamp')
 
     @classmethod
     def from_api_response(

@@ -34,8 +34,9 @@ from individual tasks:
 """
 
 import asyncio
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Annotated, Any, Literal, Optional, Sequence, Union, get_args
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
@@ -55,7 +56,7 @@ class VariableDefinition(BaseModel):
 
     name: str = Field(description='Variable name.')
     type: Literal['string', 'vault'] = Field(default='string', description='Variable type: "string" or "vault".')
-    default_value: Optional[str] = Field(default=None, description='Optional default value bound at creation time.')
+    default_value: str | None = Field(default=None, description='Optional default value bound at creation time.')
 
 
 ALL_COMPONENT_TYPES = tuple(component_type for component_type in get_args(ComponentType))
@@ -230,7 +231,7 @@ class ConfigurationRoot(BaseModel):
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of this configuration root')
     name: str = Field(description='The name of the configuration')
-    description: Optional[str] = Field(default=None, description='The description of the configuration')
+    description: str | None = Field(default=None, description='The description of the configuration')
     version: int = Field(description='The version of the configuration')
     is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
@@ -238,17 +239,17 @@ class ConfigurationRoot(BaseModel):
     parameters: dict[str, Any] = Field(
         description='The configuration parameters, adhering to the configuration root schema'
     )
-    storage: Optional[dict[str, Any]] = Field(
+    storage: dict[str, Any] | None = Field(
         default=None, description='The table and/or file input/output mapping configuration'
     )
-    processors: Optional[dict[str, Any]] = Field(
+    processors: dict[str, Any] | None = Field(
         default=None, description='The processors that run before or after the configured component.'
     )
-    variables_id: Optional[str] = Field(default=None, description='ID of the linked keboola.variables configuration')
-    variables_values_id: Optional[str] = Field(
+    variables_id: str | None = Field(default=None, description='ID of the linked keboola.variables configuration')
+    variables_values_id: str | None = Field(
         default=None, description='ID of the Default Values row in the linked keboola.variables configuration'
     )
-    variables: Optional[list[dict[str, Any]]] = Field(
+    variables: list[dict[str, Any]] | None = Field(
         default=None, description='Variable definitions (keboola.variables configs only)'
     )
     configuration_metadata: list[dict[str, Any]] = Field(
@@ -308,20 +309,20 @@ class ConfigurationRow(BaseModel):
     configuration_id: str = Field(description='The ID of the corresponding configuration root')
     configuration_row_id: str = Field(description='The ID of this configuration row')
     name: str = Field(description='The name of the configuration row')
-    description: Optional[str] = Field(default=None, description='The description of the configuration row')
+    description: str | None = Field(default=None, description='The description of the configuration row')
     version: int = Field(description='The version of the configuration row')
     is_disabled: bool = Field(default=False, description='Whether the configuration row is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration row is deleted')
     parameters: dict[str, Any] = Field(
         description='The configuration row parameters, adhering to the configuration row schema'
     )
-    storage: Optional[dict[str, Any]] = Field(
+    storage: dict[str, Any] | None = Field(
         default=None, description='The table and/or file input/output mapping configuration'
     )
-    processors: Optional[dict[str, Any]] = Field(
+    processors: dict[str, Any] | None = Field(
         default=None, description='The processors that run before or after the configured component row.'
     )
-    values: Optional[list[dict[str, Any]]] = Field(
+    values: list[dict[str, Any]] | None = Field(
         default=None, description='Variable default values (keboola.variables rows only)'
     )
     configuration_metadata: list[dict[str, Any]] = Field(default_factory=list, description='Configuration row metadata')
@@ -377,7 +378,7 @@ class ConfigurationRootSummary(BaseModel):
     component_id: str = Field(description='The ID of the component')
     configuration_id: str = Field(description='The ID of this configuration root')
     name: str = Field(description='The name of the configuration')
-    description: Optional[str] = Field(default=None, description='The description of the configuration')
+    description: str | None = Field(default=None, description='The description of the configuration')
     is_disabled: bool = Field(default=False, description='Whether the configuration is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration is deleted')
     folder: str = Field(default='', description='The UI folder this configuration is organized into')
@@ -403,7 +404,7 @@ class ConfigurationRowSummary(BaseModel):
     configuration_id: str = Field(description='The ID of the corresponding configuration root')
     row_configuration_id: str = Field(description='The ID of this configuration row')
     name: str = Field(description='The name of the configuration row')
-    description: Optional[str] = Field(default=None, description='The description of the configuration row')
+    description: str | None = Field(default=None, description='The description of the configuration row')
     is_disabled: bool = Field(default=False, description='Whether the configuration row is disabled')
     is_deleted: bool = Field(default=False, description='Whether the configuration row is deleted')
 
@@ -436,7 +437,7 @@ class ConfigSummary(BaseModel):
     """
 
     configuration_root: ConfigurationRootSummary = Field(description='The configuration root summary')
-    configuration_rows: Optional[list[ConfigurationRowSummary]] = Field(
+    configuration_rows: list[ConfigurationRowSummary] | None = Field(
         default=None, description='The configuration row summaries'
     )
     links: list[Link] = Field(default_factory=list, description='Navigation links for the web interface')
@@ -481,20 +482,18 @@ class Configuration(BaseModel):
     """
 
     configuration_root: ConfigurationRoot = Field(description='The complete configuration root')
-    configuration_rows: Optional[list[ConfigurationRow]] = Field(
+    configuration_rows: list[ConfigurationRow] | None = Field(
         default=None, description='The complete configuration rows'
     )
-    component: Optional[ComponentSummary] = Field(
-        default=None, description='The component this configuration belongs to'
-    )
+    component: ComponentSummary | None = Field(default=None, description='The component this configuration belongs to')
     links: list[Link] = Field(default_factory=list, description='Navigation links for the web interface')
 
     @classmethod
     def from_api_response(
         cls,
         api_config: 'ConfigurationAPIResponse',
-        component: Optional[ComponentSummary] = None,
-        links: Optional[list[Link]] = None,
+        component: ComponentSummary | None = None,
+        links: list[Link] | None = None,
     ) -> 'Configuration':
         """
         Create Configuration from API response.
@@ -583,7 +582,7 @@ class ConfigParamListAppend(BaseModel, frozen=True):
 
 # Discriminated union of all parameter update operations
 ConfigParamUpdate = Annotated[
-    Union[ConfigParamSet, ConfigParamReplace, ConfigParamRemove, ConfigParamListAppend], Field(discriminator='op')
+    ConfigParamSet | ConfigParamReplace | ConfigParamRemove | ConfigParamListAppend, Field(discriminator='op')
 ]
 
 
@@ -647,8 +646,8 @@ class TransformationConfiguration(BaseModel):
             class Table(BaseModel):
                 """The table used in the transformation"""
 
-                destination: Optional[str] = Field(description='The destination table name', default=None)
-                source: Optional[str] = Field(description='The source table name', default=None)
+                destination: str | None = Field(description='The destination table name', default=None)
+                source: str | None = Field(description='The source table name', default=None)
 
             tables: list[Table] = Field(description='The tables used in the transformation', default_factory=list)
 
@@ -794,11 +793,11 @@ class TfStrReplace(BaseModel, frozen=True):
     """Replace a substring in SQL statements in the transformation."""
 
     op: Literal['str_replace']
-    block_id: Optional[str] = Field(
+    block_id: str | None = Field(
         description='The ID of the block to replace substrings in. If not provided, all blocks will be updated.',
         default=None,
     )
-    code_id: Optional[str] = Field(
+    code_id: str | None = Field(
         description='The ID of the code to replace substrings in. '
         'If not provided, all codes in the block will be updated.',
         default=None,
@@ -816,17 +815,15 @@ class TfStrReplace(BaseModel, frozen=True):
 
 # Discriminated union of all transformation parameter update operations
 TfParamUpdate = Annotated[
-    Union[
-        TfAddBlock,
-        TfRemoveBlock,
-        TfRenameBlock,
-        TfAddCode,
-        TfRemoveCode,
-        TfRenameCode,
-        TfSetCode,
-        TfAddScript,
-        TfStrReplace,
-    ],
+    TfAddBlock
+    | TfRemoveBlock
+    | TfRenameBlock
+    | TfAddCode
+    | TfRemoveCode
+    | TfRenameCode
+    | TfSetCode
+    | TfAddScript
+    | TfStrReplace,
     Field(discriminator='op'),
 ]
 
@@ -846,7 +843,7 @@ class ConfigToolOutput(BaseModel):
     timestamp: datetime = Field(description='The timestamp of the operation.')
     success: bool = Field(default=True, description='Indicates if the operation succeeded.')
     links: list[Link] = Field(description='The links relevant to the configuration.')
-    change_summary: Optional[str] = Field(
+    change_summary: str | None = Field(
         description="Optional summary of the change to update the agent's context.",
         default=None,
     )
@@ -863,7 +860,7 @@ class GetConfigsDetailOutput(BaseModel, frozen=True):
     configs: list[Configuration] = Field(description='List of configurations')
 
 
-GetConfigsOutput = Union[GetConfigsListOutput, GetConfigsDetailOutput]
+GetConfigsOutput = GetConfigsListOutput | GetConfigsDetailOutput
 
 
 # ============================================================================
@@ -901,7 +898,7 @@ class ComponentConfigurationResponseBase(BaseModel):
             'configuration-name',
         ),
     )
-    configuration_description: Optional[str] = Field(
+    configuration_description: str | None = Field(
         description='The description of the component configuration',
         validation_alias=AliasChoices(
             'configuration_description',

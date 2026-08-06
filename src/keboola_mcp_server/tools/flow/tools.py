@@ -4,8 +4,9 @@ import copy
 import importlib.resources as pkg_resources
 import json
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Annotated, Any, Optional, Sequence, cast
+from typing import Annotated, Any, cast
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import FunctionTool
@@ -358,8 +359,8 @@ async def update_flow(
         ),
     ],
     change_description: Annotated[str, Field(description='Description of changes made.')],
-    phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')] = None,
-    tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')] = None,
+    phases: Annotated[list[dict[str, Any]] | None, Field(description='Updated list of phase definitions.')] = None,
+    tasks: Annotated[list[dict[str, Any]] | None, Field(description='Updated list of task definitions.')] = None,
     name: Annotated[str, Field(description='Updated flow name. Only updated if provided.')] = '',
     description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = '',
     is_disabled: Annotated[
@@ -373,7 +374,7 @@ async def update_flow(
         ),
     ] = None,
     folder: Annotated[
-        Optional[str],
+        str | None,
         Field(description=folder_field_description('flow', 'flows')),
     ] = None,
 ) -> FlowToolOutput:
@@ -412,7 +413,7 @@ async def update_flow(
         tasks=tasks,
         name=name,
         description=description,
-        schedules=tuple(),
+        schedules=(),
         is_disabled=is_disabled,
         folder=folder,
     )
@@ -432,8 +433,8 @@ async def modify_flow(
         ),
     ],
     change_description: Annotated[str, Field(description='Description of changes made.')],
-    phases: Annotated[list[dict[str, Any]], Field(description='Updated list of phase definitions.')] = None,
-    tasks: Annotated[list[dict[str, Any]], Field(description='Updated list of task definitions.')] = None,
+    phases: Annotated[list[dict[str, Any]] | None, Field(description='Updated list of phase definitions.')] = None,
+    tasks: Annotated[list[dict[str, Any]] | None, Field(description='Updated list of task definitions.')] = None,
     name: Annotated[str, Field(description='Updated flow name. Only updated if provided.')] = '',
     description: Annotated[str, Field(description='Updated flow description. Only updated if provided.')] = '',
     schedules: Annotated[
@@ -447,7 +448,7 @@ async def modify_flow(
                 'Example: [{"action": "add", "cron_tab": "0 8 * * 1-5", "state": "enabled", "timezone": "UTC"}]'
             )
         ),
-    ] = tuple(),
+    ] = (),
     is_disabled: Annotated[
         bool | None,
         Field(
@@ -459,7 +460,7 @@ async def modify_flow(
         ),
     ] = None,
     folder: Annotated[
-        Optional[str],
+        str | None,
         Field(description=folder_field_description('flow', 'flows')),
     ] = None,
 ) -> FlowToolOutput:
@@ -606,9 +607,9 @@ async def update_flow_internal(
     tasks: list[dict[str, Any]] | None = None,
     name: str = '',
     description: str = '',
-    schedules: Sequence[ScheduleRequest] | None = tuple(),
+    schedules: Sequence[ScheduleRequest] | None = (),
     is_disabled: bool | None = None,
-    folder: Optional[str] = None,
+    folder: str | None = None,
 ) -> tuple[JsonDict, JsonDict, dict[str, Any] | None]:
     current_config = await client.storage_client.configuration_detail(
         component_id=flow_type, configuration_id=configuration_id
@@ -679,7 +680,7 @@ async def get_flows(
                 'When empty [], lists all flows in the project as summaries.'
             )
         ),
-    ] = tuple(),
+    ] = (),
 ) -> GetFlowsOutput:
     """
     Lists flows or retrieves full details for specific flows.
