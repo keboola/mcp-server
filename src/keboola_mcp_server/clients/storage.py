@@ -460,6 +460,48 @@ class AsyncStorageClient(KeboolaServiceClient):
         """
         await self.delete(endpoint=f'buckets/{bucket_id}/metadata/{metadata_id}')
 
+    async def shared_bucket_list(self, branch_id: str | None = None) -> list[JsonDict]:
+        """
+        Lists buckets shared with this project (the Data Catalog "Shared with me" view) that
+        are not necessarily linked into the project yet.
+
+        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
+        :return: List of shared buckets as dictionaries
+        """
+        bid = branch_id or self._branch_id
+        return cast(list[JsonDict], await self.get(endpoint=f'branch/{bid}/shared-buckets'))
+
+    async def bucket_link(
+        self,
+        name: str,
+        stage: str,
+        source_project_id: str,
+        source_bucket_id: str,
+        display_name: str | None = None,
+        branch_id: str | None = None,
+    ) -> JsonDict:
+        """
+        Links a shared bucket (from `shared_bucket_list`) into this project as a new local bucket.
+
+        :param name: The name the linked bucket should have in this project.
+        :param stage: The stage ('in' or 'out') the linked bucket should have in this project.
+        :param source_project_id: The id of the project the shared bucket belongs to.
+        :param source_bucket_id: The id of the shared bucket to link.
+        :param display_name: Optional display name for the linked bucket.
+        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
+        :return: The newly linked bucket's details as a dictionary
+        """
+        bid = branch_id or self._branch_id
+        data: JsonDict = {
+            'name': name,
+            'stage': stage,
+            'sourceProjectId': source_project_id,
+            'sourceBucketId': source_bucket_id,
+        }
+        if display_name is not None:
+            data['displayName'] = display_name
+        return cast(JsonDict, await self.post(endpoint=f'branch/{bid}/buckets', data=data))
+
     async def bucket_metadata_get(self, bucket_id: str) -> list[JsonDict]:
         """
         Retrieves metadata for a given bucket.
