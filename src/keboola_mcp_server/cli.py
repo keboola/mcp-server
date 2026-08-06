@@ -397,7 +397,9 @@ async def run_server(args: list[str] | None = None) -> None:
             mcp_server: FastMCP | None = None
 
             if parsed_args.transport in ['http-compat', 'streamable-http']:
-                http_runtime_config = ServerRuntimeInfo('http-compat/streamable-http')
+                http_runtime_config = ServerRuntimeInfo(
+                    'http-compat/streamable-http', stateless_http=parsed_args.stateless_http
+                )
                 mcp_server, custom_routes = create_server(
                     config, runtime_info=http_runtime_config, custom_routes_handling='return'
                 )

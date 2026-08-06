@@ -46,6 +46,7 @@ from keboola_mcp_server.scope import (
     SCOPE_KEY,
     SCOPE_TOKEN_ARG,
     SessionScope,
+    persist_scope,
     resolve_scope_secret,
 )
 from keboola_mcp_server.session_store.repository import SessionStore
@@ -275,10 +276,30 @@ class SessionStateMiddleware(fmw.Middleware):
             # SessionStore.update_scope) is read back here instead of round-tripping it as an argument.
             if scope is None:
                 scope = self._read_persisted_oauth_scope(http_rq)
+            # stdio and --no-stateless-http streamable-http reuse the same ctx.session object (and
+            # its .state dict) across every request in the conversation, unlike the stateless-http
+            # default where FastMCP hands out a fresh session per request. On those transports, a
+            # scope already confirmed by an earlier set_project_scope call is still sitting in
+            # ctx.session.state -- reuse it instead of falling back to scope_token/auto-lease, so
+            # the caller never needs to resend scope_token at all.
+            if scope is None and runtime_info.session_state_persists:
+                scope = self._read_persisted_local_scope(ctx)
             if scope is None and not config.project_id and not is_list:
                 scope = await self._autolease_default_scope(config)
             if not is_list:
+                scoped_token_before = scope.scoped_token if scope is not None else None
                 config, scope = await self._resolve_local_tokens(config, scope)
+                # _resolve_local_tokens re-mints a near-expiry scoped_token for OAuth/deployed
+                # sessions too (not just local ones) -- persist the refresh to the OAuth session row
+                # immediately, so it's not silently re-attempted (and re-written) on every single
+                # request for the rest of this token's lifetime, only once per actual expiry.
+                if (
+                    scope is not None
+                    and scope.scoped_token != scoped_token_before
+                    and (oauth_session_id := self._read_oauth_session_id(http_rq)) is not None
+                    and server_state.session_store is not None
+                ):
+                    await persist_scope(server_state.session_store, oauth_session_id, scope)
 
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
@@ -320,8 +341,19 @@ class SessionStateMiddleware(fmw.Middleware):
         whether a scope is currently confirmed can't be known while building this response. Showing
         the parameter always costs nothing when unused and is what lets the caller learn about it
         before ever calling `set_project_scope`.
+
+        Skipped entirely when this session's transport persists `ctx.session.state` across requests
+        (stdio, or streamable-http with `--no-stateless-http`) -- there, `on_request` reuses the
+        already-confirmed scope straight from that state, so `scope_token` is dead weight.
         """
         tools = await call_next(context)
+        ctx = getattr(context, 'fastmcp_context', None)
+        if (
+            ctx is not None
+            and isinstance(ctx, Context)
+            and ServerState.from_context(ctx).runtime_info.session_state_persists
+        ):
+            return tools
         patched: list[Tool] = []
         for tool in tools:
             params = dict(tool.parameters or {})
@@ -450,6 +482,20 @@ class SessionStateMiddleware(fmw.Middleware):
         access_token = cls._oauth_access_token(http_rq)
         return access_token.session_id if access_token is not None else None
 
+    @staticmethod
+    def _read_persisted_local_scope(ctx: Context) -> 'SessionScope | None':
+        """The scope confirmed by an earlier ``set_project_scope`` call on this same, still-live
+        ``ctx.session`` -- only ever meaningful when the transport pins one session object across
+        requests (see ``ServerRuntimeInfo.session_state_persists``); callers must check that first.
+        """
+        # Real session objects (e.g. MiddlewareServerSession) have no `.state` attribute at all
+        # until this middleware sets one on a prior request -- getattr, not direct access.
+        state = getattr(ctx.session, 'state', None)
+        if not isinstance(state, dict):
+            return None
+        scope = state.get(SCOPE_KEY)
+        return scope if isinstance(scope, SessionScope) else None
+
     @classmethod
     def _is_local_programmatic(cls, config: Config) -> bool:
         """True for a local (non-deployed) session carrying a Keboola programmatic token."""
@@ -534,18 +580,39 @@ class SessionStateMiddleware(fmw.Middleware):
         has explicitly narrowed scope (a minted scoped token is present), that token is re-minted from
         the parent when it nears expiry. The default (auto-leased) multi-project scope carries no
         minted token and simply uses the parent token, narrowed per request by ``X-KBC-ProjectId``.
-        On the deployed server (``KBC_KUBERNETES_TOKEN_PATH`` set) the per-request resolver exchange
-        already handles token freshness/narrowing once ``project_id`` is known -- but it only runs
-        once ``project_id`` is known, and nothing else threads a confirmed scope's active project id
-        into ``config`` for a deployed session. Without that, ``create_session_state`` keeps building
-        the active client from the unscoped whole-stack token with no ``X-KBC-ProjectId``, so every
-        call after ``set_project_scope`` 401s even though scoping itself succeeded. So still apply
-        just the active project id here for deployed sessions; the token itself is left alone since
-        the resolver-exchange path (keyed off that project id) handles narrowing it correctly.
+        On the deployed server (``KBC_KUBERNETES_TOKEN_PATH`` set), ``config.storage_token`` is
+        already the freshly-refreshed OAuth ``kbc_access_token`` (refreshed by
+        ``SimpleOAuthProvider.load_access_token``'s lazy refresh before this ever runs) -- that part
+        needs no help here. Nothing else threads a confirmed scope's active project id into
+        ``config`` for a deployed session, though: without it, ``create_session_state`` keeps
+        building the active client from the unscoped whole-stack token with no ``X-KBC-ProjectId``,
+        so every call after ``set_project_scope`` 401s even though scoping itself succeeded -- apply
+        just the active project id here. The confirmed scope's own ``scoped_token`` (minted once by
+        ``set_project_scope``, used by ``MultiProjectMiddleware`` for every fanned-out project once
+        2+ are scoped -- including the first) *does* need the same near-expiry re-mint the local
+        branch below does, or it silently starts 401ing mid-conversation once it expires, with no
+        refresh ever attempted for the rest of the session (`on_request` persists the refreshed
+        token back to the OAuth session row afterward, so this happens at most once per expiry, not
+        every request).
         """
         if not cls._is_local_programmatic(config):
             if scope and scope.project_ids and not config.project_id:
                 config = dataclasses.replace(config, project_id=str(scope.active_project_id))
+            if scope is not None and scope.scoped_token is not None and scope.is_near_expiry:
+                try:
+                    minted = await exchange_scoped_token(
+                        config.storage_api_url,
+                        subject_token=strip_bearer(config.storage_token),
+                        project_ids=scope.project_ids,
+                        read_only=scope.read_only,
+                    )
+                    scope = dataclasses.replace(
+                        scope, scoped_token=minted.access_token, scoped_expires_at=minted.expires_at
+                    )
+                except Exception as e:
+                    # Don't break the session if re-minting fails -- the caller keeps using the
+                    # (possibly already-expired) scoped_token, same failure mode as before this fix.
+                    LOG.warning(f'Could not refresh the deployed session scoped token: {e}', exc_info=True)
             return config, scope
 
         # Strip any inbound `Bearer ` scheme; introspect/exchange helpers add the scheme themselves,

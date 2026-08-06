@@ -306,7 +306,8 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
     # Per-project SQL dialect + organization are resolved via a token verify narrowed by
     # X-KBC-ProjectId; mock that.
     mocker.patch(
-        'keboola_mcp_server.tools.project.ServerState.from_context', return_value=SimpleNamespace(config=Config())
+        'keboola_mcp_server.tools.project.ServerState.from_context',
+        return_value=SimpleNamespace(config=Config(), runtime_info=ServerRuntimeInfo(transport='stdio')),
     )
     verify_info = {18: ('BigQuery', 'org-1', 'Org One'), 83: ('Snowflake', 'org-2', 'Org Two')}
     mocker.patch(
@@ -329,17 +330,14 @@ async def test_get_accessible_projects(mcp_context_client: Context, mocker: Mock
     assert result.scope_token is None
     assert all(not p.in_scope for p in result.projects)
 
-    # Once scoped, the current scope is surfaced on the projects and at the top level, and echoed
-    # back as a scope_token the caller must resend on later calls (the server does not remember it).
+    # Once scoped, the current scope is surfaced on the projects and at the top level. On this
+    # (stdio) transport ctx.session.state persists across requests, so no scope_token is needed.
     mcp_context_client.session.state[SCOPE_KEY] = SessionScope(project_ids=[83], read_only=True, confirmed=True)
     result = await get_accessible_projects(mcp_context_client)
     assert result.scoped_project_ids == [83]
     assert result.read_only is True
     assert [(p.id, p.in_scope) for p in result.projects] == [(18, False), (83, True)]
-    assert result.scope_token is not None
-    assert SessionScope.from_token(result.scope_token, resolve_scope_secret(Config())) == SessionScope(
-        project_ids=[83], read_only=True, confirmed=True
-    )
+    assert result.scope_token is None
 
 
 @pytest.mark.asyncio
@@ -439,9 +437,31 @@ async def test_set_project_scope_subset_exchanges_and_stores(
     scope = mcp_context_client.session.state[SCOPE_KEY]
     assert scope.scoped_token == 'kbc_at_scoped'
     assert scope.project_ids == [18, 83]
-    # The server does not remember this scope between calls; the caller must resend scope_token.
+    # mcp_context_client's runtime is transport='stdio', which persists ctx.session.state across
+    # requests (ServerRuntimeInfo.session_state_persists) -- no scope_token needed to keep it in effect.
+    assert result.scope_token is None
+    assert 'persists this scope server-side' in result.llm_instruction
+
+
+@pytest.mark.asyncio
+async def test_set_project_scope_returns_scope_token_when_session_does_not_persist(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    # Deployed default: stateless-http streamable-http, a fresh ctx.session per request -- nothing
+    # server-side survives between calls, so the caller must resend scope_token.
+    mcp_context_client.request_context.lifespan_context = ServerState(
+        Config(), ServerRuntimeInfo(transport='http-compat/streamable-http', stateless_http=True)
+    )
+    _prep_client(mcp_context_client, mocker)
+    minted = SimpleNamespace(access_token='kbc_at_scoped', expires_at=time.time() + 3600, read_only=False)
+    mocker.patch('keboola_mcp_server.tools.project.exchange_scoped_token', new=mocker.AsyncMock(return_value=minted))
+
+    result = await set_project_scope(mcp_context_client, project_ids=[18, 83])
+
+    scope = mcp_context_client.session.state[SCOPE_KEY]
     assert result.scope_token is not None
     assert SessionScope.from_token(result.scope_token, resolve_scope_secret(Config())) == scope
+    assert 'does not remember this scope' in result.llm_instruction
 
 
 @pytest.mark.asyncio

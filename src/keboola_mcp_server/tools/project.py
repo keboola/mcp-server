@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import Annotated, Optional, cast
 
 import httpx
@@ -19,7 +18,14 @@ from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import ServerState, process_concurrently
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
-from keboola_mcp_server.scope import OAUTH_SESSION_ID_KEY, SCOPE_KEY, ProjectIdArg, SessionScope, resolve_scope_secret
+from keboola_mcp_server.scope import (
+    OAUTH_SESSION_ID_KEY,
+    SCOPE_KEY,
+    ProjectIdArg,
+    SessionScope,
+    persist_scope,
+    resolve_scope_secret,
+)
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -372,18 +378,7 @@ async def _persist_oauth_scope(ctx: Context, scope: SessionScope) -> bool:
     session_store = ServerState.from_context(ctx).session_store
     if session_store is None:
         return False
-    await session_store.update_scope(
-        session_id,
-        project_ids=scope.project_ids,
-        read_only=scope.read_only,
-        confirmed=scope.confirmed,
-        scoped_token=scope.scoped_token,
-        scoped_expires_at=(
-            datetime.fromtimestamp(scope.scoped_expires_at, tz=timezone.utc)
-            if scope.scoped_expires_at is not None
-            else None
-        ),
-    )
+    await persist_scope(session_store, session_id, scope)
     return True
 
 
@@ -492,13 +487,15 @@ async def get_accessible_projects(
             'projects or a subset, then call "set_project_scope" with the chosen project ids. Never write '
             'to more than one project without explicit user confirmation.'
         )
-        is_oauth_persisted = False
+        is_persisted = False
     else:
-        is_oauth_persisted = bool(ctx.session.state.get(OAUTH_SESSION_ID_KEY))
+        is_persisted = (
+            bool(ctx.session.state.get(OAUTH_SESSION_ID_KEY)) or server_state.runtime_info.session_state_persists
+        )
         instruction = (
             f'Session is currently scoped to {len(scoped_ids)} project(s). Call "set_project_scope" to '
             'change the scope.'
-            if is_oauth_persisted
+            if is_persisted
             else f'Session is currently scoped to {len(scoped_ids)} project(s). Resend "scope_token" on every '
             'subsequent tool call to keep it in effect; call "set_project_scope" to change the scope.'
         )
@@ -509,7 +506,7 @@ async def get_accessible_projects(
         read_only=scope.read_only if scoped_ids is not None else None,
         scope_token=(
             scope.to_token(resolve_scope_secret(server_state.config))
-            if scoped_ids is not None and not is_oauth_persisted
+            if scoped_ids is not None and not is_persisted
             else None
         ),
         base_instructions=base_instructions,
@@ -541,8 +538,10 @@ async def set_project_scope(
     once 2+ projects are scoped). Call this when the user states which projects to work on; it can be
     called again any time to re-scope.
 
-    The server does not remember this scope between calls: pass the returned `scope_token` as the
-    `scope_token` argument on every subsequent tool call in this conversation to keep it in effect.
+    On most transports the server does not remember this scope between calls: pass the returned
+    `scope_token` as the `scope_token` argument on every subsequent tool call in this conversation
+    to keep it in effect. Not needed for a local server or an OAuth-authenticated session, both of
+    which persist the confirmed scope server-side instead -- `scope_token` is null there.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     parent_token = await _parent_subject_token(client)
@@ -595,8 +594,9 @@ async def set_project_scope(
         LOG.debug(f'Could not send tools/list_changed after scoping: {e}')
 
     multi = len(ids) > 1
-    persisted = await _persist_oauth_scope(ctx, scope)
-    scope_token = None if persisted else scope.to_token(resolve_scope_secret(ServerState.from_context(ctx).config))
+    server_state = ServerState.from_context(ctx)
+    persisted = await _persist_oauth_scope(ctx, scope) or server_state.runtime_info.session_state_persists
+    scope_token = None if persisted else scope.to_token(resolve_scope_secret(server_state.config))
     resend_instruction = (
         'The server persists this scope server-side for the rest of the conversation -- no need to resend it.'
         if persisted

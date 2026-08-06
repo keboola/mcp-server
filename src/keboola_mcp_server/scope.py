@@ -8,12 +8,16 @@ Split out of ``mcp.py`` so that module can stay focused on the middleware/server
 import dataclasses
 import secrets
 import time
-from typing import Annotated, Optional
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Annotated, Optional
 
 from pydantic import Field
 
 from keboola_mcp_server.config import Config
 from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
+
+if TYPE_CHECKING:
+    from keboola_mcp_server.session_store.repository import SessionStore
 
 SCOPE_KEY = 'project_scope'
 
@@ -95,3 +99,21 @@ class SessionScope:
         """Inverse of ``to_token``. Raises on a missing/invalid/tampered token -- callers should
         treat any exception as "no scope" rather than fail the request."""
         return cls(**decode_jwt(token, secret))
+
+
+async def persist_scope(session_store: 'SessionStore', session_id: str, scope: SessionScope) -> None:
+    """Writes ``scope`` onto the OAuth session row ``session_id`` -- shared by ``set_project_scope``
+    (a fresh confirmation) and ``SessionStateMiddleware.on_request`` (a near-expiry re-mint), so both
+    persist a refreshed ``scoped_token`` the same way."""
+    await session_store.update_scope(
+        session_id,
+        project_ids=scope.project_ids,
+        read_only=scope.read_only,
+        confirmed=scope.confirmed,
+        scoped_token=scope.scoped_token,
+        scoped_expires_at=(
+            datetime.fromtimestamp(scope.scoped_expires_at, tz=timezone.utc)
+            if scope.scoped_expires_at is not None
+            else None
+        ),
+    )

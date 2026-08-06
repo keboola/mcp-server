@@ -24,7 +24,7 @@ from keboola_mcp_server.mcp import (
     toon_serializer,
     unwrap_results,
 )
-from keboola_mcp_server.scope import SessionScope, resolve_scope_secret
+from keboola_mcp_server.scope import SCOPE_KEY, SessionScope, resolve_scope_secret
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -865,6 +865,67 @@ class TestSessionStateMiddleware:
         assert out_config.storage_token == 'kbc_at_exchanged'
         assert is_programmatic_token(out_config.storage_token)
 
+    @pytest.mark.asyncio
+    async def test_on_request_persists_remint_of_expiring_oauth_scoped_token(self, monkeypatch) -> None:
+        # End-to-end regression for the bug this fixes: a deployed OAuth session's scoped_token
+        # expiring mid-conversation silently 401ed every fanned-out call thereafter, since nothing
+        # ever refreshed it. on_request must re-mint it (via _resolve_local_tokens) and persist the
+        # refresh to the OAuth session row so it's fixed for the rest of the session, not just once.
+        from datetime import datetime, timezone
+
+        from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+        from starlette.requests import Request
+
+        from keboola_mcp_server.oauth import ProxyAccessToken
+
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        access_token = ProxyAccessToken(
+            token='mcp_proxy',
+            client_id='claude.ai',
+            scopes=['claudai', 'projectless'],
+            expires_at=int(time.time() + 3600),
+            kbc_access_token='kbc_at_fresh_oauth',
+            session_id='session-1',
+            scope_project_ids=[18, 83],
+            scope_confirmed=True,
+            scope_scoped_token='kbc_at_stale',
+            scope_scoped_expires_at=datetime.fromtimestamp(time.time() - 1, tz=timezone.utc),
+        )
+        http_rq = Request({'type': 'http', 'headers': [], 'user': AuthenticatedUser(access_token)})
+
+        session_store = AsyncMock()
+        config = Config(storage_api_url='https://connection.test.keboola.com')
+        server_state = ServerState(
+            config=config,
+            runtime_info=ServerRuntimeInfo(transport='http-compat/streamable-http'),
+            session_store=session_store,
+        )
+        session = SimpleNamespace(state={})
+        ctx = MagicMock(spec=Context)
+        ctx.session = session
+        ctx.request_context.lifespan_context = server_state
+        context = SimpleNamespace(message=SimpleNamespace(arguments={}), method='tools/call', fastmcp_context=ctx)
+
+        minted = SimpleNamespace(access_token='kbc_at_reminted', expires_at=time.time() + 3600)
+
+        async def call_next(_):
+            return 'ok'
+
+        with (
+            patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=http_rq),
+            patch('keboola_mcp_server.mcp.exchange_scoped_token', AsyncMock(return_value=minted)),
+            patch.object(SessionStateMiddleware, 'create_session_state', AsyncMock(return_value={})),
+        ):
+            result = await SessionStateMiddleware().on_request(context, call_next)
+
+        assert result == 'ok'
+        session_store.update_scope.assert_awaited_once()
+        call = session_store.update_scope.await_args
+        assert call.args == ('session-1',)
+        assert call.kwargs['project_ids'] == [18, 83]
+        assert call.kwargs['scoped_token'] == 'kbc_at_reminted'
+        assert call.kwargs['scoped_expires_at'] == datetime.fromtimestamp(minted.expires_at, tz=timezone.utc)
+
 
 class TestProgrammaticTokenForwarding:
     """A programmatic token (kbc_at_/kbc_pat_) is always forwarded downstream as a Bearer (PSGO-261).
@@ -1000,6 +1061,54 @@ class TestResolveLocalTokens:
         out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
         assert out_config is config  # project_id already set -- not overwritten
         assert out_scope is scope
+
+    @pytest.mark.asyncio
+    async def test_deployed_near_expiry_scoped_token_is_reminted(self, monkeypatch) -> None:
+        # Regression: a deployed (OAuth) session's scoped_token was never refreshed once minted by
+        # set_project_scope, so it silently started 401ing every fanned-out call once it expired,
+        # for the rest of the conversation, with no error pointing at the real cause.
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_fresh_oauth')
+        scope = SessionScope(
+            project_ids=[18, 83], scoped_token='kbc_at_stale', scoped_expires_at=time.time() - 1, confirmed=True
+        )
+        minted = SimpleNamespace(access_token='kbc_at_reminted', expires_at=time.time() + 3600)
+        with patch('keboola_mcp_server.mcp.exchange_scoped_token', AsyncMock(return_value=minted)) as exch:
+            out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
+        exch.assert_awaited_once_with(
+            'https://connection.keboola.com', subject_token='kbc_at_fresh_oauth', project_ids=[18, 83], read_only=False
+        )
+        assert out_scope.scoped_token == 'kbc_at_reminted'
+        assert out_scope.scoped_expires_at == minted.expires_at
+        assert out_config.project_id == '18'
+
+    @pytest.mark.asyncio
+    async def test_deployed_scoped_token_not_near_expiry_is_untouched(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_fresh_oauth')
+        scope = SessionScope(
+            project_ids=[18, 83], scoped_token='kbc_at_live', scoped_expires_at=time.time() + 3600, confirmed=True
+        )
+        with patch('keboola_mcp_server.mcp.exchange_scoped_token', AsyncMock()) as exch:
+            out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
+        exch.assert_not_awaited()
+        assert out_scope is scope
+
+    @pytest.mark.asyncio
+    async def test_deployed_remint_failure_keeps_old_scope(self, monkeypatch) -> None:
+        # Same failure mode as before this fix (the caller keeps using the stale token and 401s
+        # downstream) rather than crashing the request outright.
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_fresh_oauth')
+        scope = SessionScope(
+            project_ids=[18], scoped_token='kbc_at_stale', scoped_expires_at=time.time() - 1, confirmed=True
+        )
+        with patch(
+            'keboola_mcp_server.mcp.exchange_scoped_token', AsyncMock(side_effect=RuntimeError('exchange down'))
+        ):
+            out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
+        assert out_scope is scope
+        assert out_scope.scoped_token == 'kbc_at_stale'
 
     @pytest.mark.asyncio
     async def test_legacy_token_is_noop(self, monkeypatch) -> None:
@@ -1226,6 +1335,30 @@ class TestScopeToken:
         assert SessionStateMiddleware._read_oauth_session_id(None) is None
         assert SessionStateMiddleware._read_oauth_session_id(SimpleNamespace(scope={})) is None
 
+    def test_read_persisted_local_scope_returns_confirmed_scope_from_session_state(self) -> None:
+        scope = SessionScope(project_ids=[18, 83], confirmed=True)
+        ctx = SimpleNamespace(session=SimpleNamespace(state={SCOPE_KEY: scope}))
+        assert SessionStateMiddleware._read_persisted_local_scope(ctx) is scope
+
+    def test_read_persisted_local_scope_returns_none_when_absent_or_invalid(self) -> None:
+        assert (
+            SessionStateMiddleware._read_persisted_local_scope(SimpleNamespace(session=SimpleNamespace(state={})))
+            is None
+        )
+        assert (
+            SessionStateMiddleware._read_persisted_local_scope(
+                SimpleNamespace(session=SimpleNamespace(state={SCOPE_KEY: 'not-a-scope'}))
+            )
+            is None
+        )
+        assert (
+            SessionStateMiddleware._read_persisted_local_scope(SimpleNamespace(session=SimpleNamespace(state=None)))
+            is None
+        )
+        # Regression: a real (non-mocked) session object has no `.state` attribute at all until this
+        # middleware sets one on a prior request -- must not raise AttributeError on the very first request.
+        assert SessionStateMiddleware._read_persisted_local_scope(SimpleNamespace(session=object())) is None
+
     @pytest.mark.asyncio
     async def test_on_list_tools_advertises_scope_token_unconditionally(self) -> None:
         # Unlike MultiProjectMiddleware's `project_ids` filter, this must show up even with no scope
@@ -1235,6 +1368,47 @@ class TestScopeToken:
         tool.parameters = {'type': 'object', 'properties': {}}
         tool.model_copy = lambda update, _t=tool: SimpleNamespace(name=_t.name, parameters=update['parameters'])
         context = SimpleNamespace(method='tools/list')
+
+        async def call_next(_):
+            return [tool]
+
+        tools = await SessionStateMiddleware().on_list_tools(context, call_next)
+
+        assert 'scope_token' in tools[0].parameters['properties']
+
+    @pytest.mark.asyncio
+    async def test_on_list_tools_skips_scope_token_when_session_state_persists(self) -> None:
+        # stdio (and --no-stateless-http streamable-http) keep ctx.session.state across requests --
+        # on_request reuses an already-confirmed scope straight from it, so there's nothing for the
+        # caller to resend and advertising scope_token would just be clutter.
+        tool = _tool('get_tables', read_only=True)
+        tool.parameters = {'type': 'object', 'properties': {}}
+
+        ctx = MagicMock(spec=Context)
+        ctx.request_context.lifespan_context = ServerState(
+            config=Config(), runtime_info=ServerRuntimeInfo(transport='stdio')
+        )
+        context = SimpleNamespace(method='tools/list', fastmcp_context=ctx)
+
+        async def call_next(_):
+            return [tool]
+
+        tools = await SessionStateMiddleware().on_list_tools(context, call_next)
+
+        assert 'scope_token' not in tools[0].parameters['properties']
+
+    @pytest.mark.asyncio
+    async def test_on_list_tools_advertises_scope_token_when_session_state_does_not_persist(self) -> None:
+        tool = _tool('get_tables', read_only=True)
+        tool.parameters = {'type': 'object', 'properties': {}}
+        tool.model_copy = lambda update, _t=tool: SimpleNamespace(name=_t.name, parameters=update['parameters'])
+
+        ctx = MagicMock(spec=Context)
+        ctx.request_context.lifespan_context = ServerState(
+            config=Config(),
+            runtime_info=ServerRuntimeInfo(transport='http-compat/streamable-http', stateless_http=True),
+        )
+        context = SimpleNamespace(method='tools/list', fastmcp_context=ctx)
 
         async def call_next(_):
             return [tool]
