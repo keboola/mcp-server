@@ -26,14 +26,15 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
-# Tools that must not be fanned out across multiple projects, even when a multi-project scope is
-# active and they are read-only: the scope/auth tools operate on the whole-stack token (not a single
-# project), and get_project_info resolves through the active project's WorkspaceManager (workspace id
-# / sql dialect), so it reports the active project only.
-# query_data is intentionally NOT here: the fan-out swaps a per-project WorkspaceManager (see
-# MultiProjectMiddleware._swap_project) so a query runs against the workspace of each targeted
-# project — narrow to one with the project_ids filter, or run across all scoped projects.
-_NO_FANOUT_TOOLS = {'get_accessible_projects', 'set_project_scope', 'get_project_info'}
+# Scope/auth tools that operate on the whole-stack token, not a single project -- never fanned out,
+# never given a project_id (they don't have one to target).
+_NO_FANOUT_TOOLS = {'get_accessible_projects', 'set_project_scope'}
+
+# Read tools that report on exactly one project (not a list to fan out over) and take an explicit
+# project_id argument to say which -- same single-target resolution/swap as a write tool, just
+# without the write semantics. get_project_info resolves through the active project's
+# WorkspaceManager (workspace id / sql dialect), so it can only ever report one project at a time.
+_SINGLE_TARGET_READ_TOOLS = {'get_project_info'}
 
 # Optional per-call argument injected on fan-out-eligible read tools to restrict a single call to a
 # subset of the scoped projects (consumed and stripped by MultiProjectMiddleware.on_call_tool).
@@ -49,7 +50,9 @@ class MultiProjectMiddleware(fmw.Middleware):
     structured content is deep-merged (lists concatenated across projects, counters summed) into one
     schema-valid object, degrading to count-first with a truncated sample past ``_FANOUT_MAX_ITEMS``.
     Write tools never fan out: a write always targets exactly one project, named by its own
-    ``project_id`` argument (required once 2+ projects are scoped) -- see ``_dispatch_write``.
+    ``project_id`` argument (required once 2+ projects are scoped) -- see
+    ``_dispatch_single_target``. ``get_project_info`` uses the same single-target resolution
+    (it reports on the active project's WorkspaceManager, so it can't fan out either).
     """
 
     async def on_call_tool(
@@ -78,12 +81,16 @@ class MultiProjectMiddleware(fmw.Middleware):
         # Bootstrap tools own a real `project_ids` argument, so we must not strip it.
         if not isinstance(scope, SessionScope) or name in BOOTSTRAP_TOOLS:
             return await call_next(context)
-        # Workspace-bound tools always target the active project (no fan-out, filter ignored).
+        # Whole-stack scope/auth tools: always the active project's client, no project_id to target.
         if name in _NO_FANOUT_TOOLS:
             return await call_next(context)
+        # Single-project-at-a-time tools (get_project_info) and all write tools resolve their own
+        # explicit project_id the same way -- one target, swap the client, no fan-out.
+        if name in _SINGLE_TARGET_READ_TOOLS:
+            return await self._dispatch_single_target(context, call_next, ctx, state, scope)
         tool = await ctx.fastmcp.get_tool(name)
         if not is_read_only_tool(tool):
-            return await self._dispatch_write(context, call_next, ctx, state, scope)
+            return await self._dispatch_single_target(context, call_next, ctx, state, scope)
 
         # Read tool: consume the optional per-call project filter (advertised via on_list_tools) so the
         # tool never receives it, then narrow this call's target projects to the requested subset.
@@ -165,8 +172,9 @@ class MultiProjectMiddleware(fmw.Middleware):
         return self._merge(results, errors)
 
     @staticmethod
-    def _resolve_write_target(scope: SessionScope, project_id: Any) -> int | None:
-        """Picks the single project a write call targets, or raises if that's ambiguous/invalid.
+    def _resolve_single_target(scope: SessionScope, project_id: Any) -> int | None:
+        """Picks the single project a write call or a single-target read targets, or raises if
+        that's ambiguous/invalid.
 
         ``project_id`` is required once 2+ projects are scoped (no more implicit "first project"
         default); with exactly one scoped project it's optional and defaults to that project.
@@ -175,7 +183,7 @@ class MultiProjectMiddleware(fmw.Middleware):
             if len(scope.project_ids) >= 2:
                 raise ToolError(
                     f'{len(scope.project_ids)} projects are scoped ({scope.project_ids}). '
-                    'Pass project_id=<id> (one of the scoped projects) -- a write targets exactly one project.'
+                    'Pass project_id=<id> (one of the scoped projects) -- this tool targets exactly one project.'
                 )
             return scope.active_project_id
         try:
@@ -189,7 +197,7 @@ class MultiProjectMiddleware(fmw.Middleware):
             )
         return target
 
-    async def _dispatch_write(
+    async def _dispatch_single_target(
         self,
         context: MiddlewareContext[mt.CallToolRequestParams],
         call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
@@ -197,12 +205,13 @@ class MultiProjectMiddleware(fmw.Middleware):
         state: dict[str, Any],
         scope: SessionScope,
     ) -> mt.CallToolResult:
-        """Targets a write/modify/delete tool call at the project named by its ``project_id``
-        argument (peeked, not popped -- it's a real declared tool parameter, not middleware-only).
+        """Targets a write/modify/delete tool, or a single-target read tool (get_project_info), at
+        the project named by its ``project_id`` argument (peeked, not popped -- it's a real
+        declared tool parameter, not middleware-only).
         """
         args = getattr(context.message, 'arguments', None)
         project_id = args.get(PROJECT_ID_ARG) if isinstance(args, dict) else None
-        target = self._resolve_write_target(scope, project_id)
+        target = self._resolve_single_target(scope, project_id)
 
         if target is None or target == scope.active_project_id:
             return await call_next(context)
@@ -243,7 +252,12 @@ class MultiProjectMiddleware(fmw.Middleware):
 
         patched: list[Tool] = []
         for tool in tools:
-            if tool.name in BOOTSTRAP_TOOLS or tool.name in _NO_FANOUT_TOOLS or not is_read_only_tool(tool):
+            if (
+                tool.name in BOOTSTRAP_TOOLS
+                or tool.name in _NO_FANOUT_TOOLS
+                or tool.name in _SINGLE_TARGET_READ_TOOLS
+                or not is_read_only_tool(tool)
+            ):
                 patched.append(tool)
                 continue
             params = dict(tool.parameters or {})

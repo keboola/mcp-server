@@ -220,6 +220,7 @@ async def update_project_description(
 @tool_errors()
 async def get_project_info(
     ctx: Context,
+    project_id: ProjectIdArg = None,
 ) -> ProjectInfo:
     """
     Retrieves structured information about the current project,
@@ -227,7 +228,8 @@ async def get_project_info(
     (e.g., transformations, components, workflows, and dependencies).
 
     Always call this tool at least once at the start of a conversation
-    to establish the project context before using other tools.
+    to establish the project context before using other tools. Reports on exactly one project;
+    pass `project_id` to pick which when the session is scoped to 2+ projects.
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
