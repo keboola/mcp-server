@@ -253,29 +253,27 @@ class TestLinkSharedBucket:
                 target_bucket_name='linked',
             )
 
-    async def test_already_linked_error_propagates(self, mocker: MockerFixture, mcp_context_client: Context) -> None:
+    @pytest.mark.parametrize(
+        ('status_code', 'reason'),
+        [
+            (400, 'already exists'),
+            (409, 'already linked'),
+            (403, 'forbidden'),
+        ],
+        ids=['already-exists-400', 'already-linked-409', 'no-access-403'],
+    )
+    async def test_bucket_link_http_error_propagates(
+        self, status_code: int, reason: str, mocker: MockerFixture, mcp_context_client: Context
+    ) -> None:
         # The most likely real-world failure: the agent lists shares and links one that's already
-        # linked. This isn't wrapped into a friendlier message today -- the raw HTTP error
-        # propagates -- but it must propagate, not get swallowed.
+        # linked or lacks access. This isn't wrapped into a friendlier message today -- the raw
+        # HTTP error propagates -- but it must propagate, not get swallowed.
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        response = httpx.Response(409, request=httpx.Request('POST', 'https://x/v2/storage/branch/default/buckets'))
-        keboola_client.storage_client.bucket_link = mocker.AsyncMock(
-            side_effect=httpx.HTTPStatusError('already linked', request=response.request, response=response)
+        response = httpx.Response(
+            status_code, request=httpx.Request('POST', 'https://x/v2/storage/branch/default/buckets')
         )
-
-        with pytest.raises(httpx.HTTPStatusError):
-            await link_shared_bucket(
-                mcp_context_client,
-                source_project_id='proj-1',
-                source_bucket_id='in.c-foo',
-                target_bucket_name='linked',
-            )
-
-    async def test_no_access_error_propagates(self, mocker: MockerFixture, mcp_context_client: Context) -> None:
-        keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        response = httpx.Response(403, request=httpx.Request('POST', 'https://x/v2/storage/branch/default/buckets'))
         keboola_client.storage_client.bucket_link = mocker.AsyncMock(
-            side_effect=httpx.HTTPStatusError('forbidden', request=response.request, response=response)
+            side_effect=httpx.HTTPStatusError(reason, request=response.request, response=response)
         )
 
         with pytest.raises(httpx.HTTPStatusError):

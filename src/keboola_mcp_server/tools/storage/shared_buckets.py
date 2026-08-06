@@ -14,7 +14,6 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import KeboolaMcpServer, toon_serializer_compact
-from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.storage.tools import STORAGE_TOOLS_TAG, BucketDetail
 
 LOG = logging.getLogger(__name__)
@@ -92,7 +91,7 @@ class SharedBucketDetail(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_project_fields(cls, values: dict) -> dict:
-        if project := cast(dict | None, get_nested(values, 'project')):
+        if project := cast(dict | None, values.get('project')):
             values.setdefault('project_id', project.get('id'))
             values.setdefault('project_name', project.get('name'))
         return values
