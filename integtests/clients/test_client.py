@@ -10,7 +10,6 @@ LOG = logging.getLogger(__name__)
 
 
 class TestAsyncStorageClient:
-
     @pytest.fixture
     def storage_client(self, keboola_client: KeboolaClient, keboola_project: ProjectDef) -> AsyncStorageClient:
         return keboola_client.storage_client

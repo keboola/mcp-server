@@ -141,7 +141,7 @@ class SearchHit(BaseModel):
 
         if self.configuration_row_id and not all([self.component_id, self.configuration_id]):
             raise ValueError(
-                'If configuration_row_id is filled, ' 'both component_id and configuration_id must be filled.'
+                'If configuration_row_id is filled, both component_id and configuration_id must be filled.'
             )
 
         if self.configuration_id and not self.component_id:

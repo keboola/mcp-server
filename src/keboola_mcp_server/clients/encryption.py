@@ -60,7 +60,6 @@ def redact_secrets(value: Any, *, mask: str = REDACTED_SECRET_VALUE) -> Any:
 
 
 class EncryptionClient(KeboolaServiceClient):
-
     @classmethod
     def create(
         cls,

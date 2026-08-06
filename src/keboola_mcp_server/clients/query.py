@@ -26,7 +26,6 @@ _SUBMIT_JOB_RETRY_DELAY_SECONDS = 1.0
 
 
 class QueryServiceClient(KeboolaServiceClient):
-
     def __init__(self, raw_client: RawKeboolaClient, branch_id: str) -> None:
         """
         Creates a QueryServiceClient from a RawKeboolaClient and a branch id.
@@ -106,8 +105,7 @@ class QueryServiceClient(KeboolaServiceClient):
                 if not is_transient_credentials_failure or attempt == _SUBMIT_JOB_MAX_ATTEMPTS:
                     raise
                 LOG.warning(
-                    'Job submission failed to fetch workspace credentials '
-                    '(attempt %d/%d), retrying: workspace_id=%s',
+                    'Job submission failed to fetch workspace credentials (attempt %d/%d), retrying: workspace_id=%s',
                     attempt,
                     _SUBMIT_JOB_MAX_ATTEMPTS,
                     workspace_id,

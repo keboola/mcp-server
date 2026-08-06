@@ -125,9 +125,9 @@ async def test_query_data_emits_progress_notification_with_job_id(mcp_context_cl
     mcp_context_client.session.send_notification.assert_awaited_once()
     call_args = mcp_context_client.session.send_notification.await_args
     sent = call_args.args[0]
-    assert (
-        call_args.kwargs.get('related_request_id') == 'req-99'
-    ), f'related_request_id missing or wrong: {call_args.kwargs!r}'
+    assert call_args.kwargs.get('related_request_id') == 'req-99', (
+        f'related_request_id missing or wrong: {call_args.kwargs!r}'
+    )
     # The wrapper is ServerNotification(root=ProgressNotification(...)); both .root and
     # the wrapper's model_dump should expose the progress notification shape.
     progress = sent.root if hasattr(sent, 'root') else sent
@@ -209,7 +209,6 @@ async def test_query_data_skips_progress_when_request_id_missing(mcp_context_cli
 
 
 class TestWorkspaceManagerSnowflake:
-
     @pytest.fixture
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
         keboola_client.storage_client.workspace_list.return_value = [

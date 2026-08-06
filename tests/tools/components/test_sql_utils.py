@@ -155,7 +155,7 @@ def _short_id(value: object) -> str | None:
             ),
             [
                 'SELECT 1;',
-                ('-- Comment line\nexecute immediate $$\n  SELECT 2;\n  ' "SELECT 'value;still string';\n$$;"),
+                ('-- Comment line\nexecute immediate $$\n  SELECT 2;\n  SELECT \'value;still string\';\n$$;'),
                 'SELECT 3;',
                 '-- Another comment\nSELECT "double" as col;',
             ],

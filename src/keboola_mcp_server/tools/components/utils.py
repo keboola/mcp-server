@@ -870,7 +870,6 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
         return params
 
     elif update.op == 'str_replace':
-
         if not update.search_for:
             raise ValueError('Search string is empty')
 

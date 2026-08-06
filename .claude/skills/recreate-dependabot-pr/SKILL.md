@@ -93,7 +93,7 @@ CI runs the same checks, so they must pass before pushing. If no venv exists, cr
 ```bash
 python3.10 -m venv 3.10.venv && source 3.10.venv/bin/activate
 pip install -q --upgrade pip uv && uv sync --active --extra dev --extra tests
-tox    # pytest, black, flake8, check-tools-docs — all must exit 0
+tox    # pytest, ruff, check-tools-docs — all must exit 0
 ```
 
 If tests fail because a new major version changed behavior, that package needs manual

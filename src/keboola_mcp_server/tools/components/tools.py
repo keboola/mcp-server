@@ -534,7 +534,7 @@ async def create_sql_transformation(
             )
             change_summary = None
 
-    LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
+    LOG.info(f'Created new transformation "{component_id}" with configuration id "{configuration_id}".')
 
     vars_result = None
     if variables:
@@ -1295,8 +1295,7 @@ async def add_config_row(
     links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(
-        f'Creating new configuration row: {name} for component: {component_id} '
-        f'and configuration {configuration_id}.'
+        f'Creating new configuration row: {name} for component: {component_id} and configuration {configuration_id}.'
     )
 
     api_component = await fetch_component(client=client, component_id=component_id)
@@ -1344,9 +1343,7 @@ async def add_config_row(
         ),
     )
 
-    LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".'
-    )
+    LOG.info(f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".')
 
     await set_cfg_update_metadata(
         client=client,
@@ -1547,7 +1544,7 @@ async def update_config(
             skip_trash=True,
         )
 
-    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
+    LOG.info(f'Updated configuration for component "{component_id}" with configuration id "{configuration_id}".')
 
     folder_hint = (
         await apply_folder_metadata(client, component_id, configuration_id, folder, 'configurations', 'update_config')

@@ -76,6 +76,6 @@ Review standards for the keboola-mcp-server project, derived from patterns in te
 - No `print()` statements, debug logs, or leftover development artifacts in the final diff
 
 ## Skip
-- Formatting-only changes already enforced by `black` and `flake8` (run via tox)
+- Formatting-only changes already enforced by `ruff format` and `ruff check` (run via tox)
 - Changes to `uv.lock` that are only lockfile resolution updates
 - Auto-generated content in `TOOLS.md`
