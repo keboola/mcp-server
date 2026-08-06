@@ -3636,14 +3636,28 @@ including essential context and base instructions for working with it
 (e.g., transformations, components, workflows, and dependencies).
 
 Always call this tool at least once at the start of a conversation
-to establish the project context before using other tools.
+to establish the project context before using other tools. Reports on exactly one project;
+pass `project_id` to pick which when the session is scoped to 2+ projects.
 
 
 **Input JSON Schema**:
 ```json
 {
   "additionalProperties": false,
-  "properties": {},
+  "properties": {
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
   "type": "object"
 }
 ```

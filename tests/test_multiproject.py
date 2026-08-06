@@ -68,7 +68,7 @@ class TestMultiProjectMiddleware:
             (SessionScope(project_ids=[11], confirmed=True), 'get_tables', True),
             # write, single scoped project: project_id is optional, defaults to the active project.
             (SessionScope(project_ids=[11], confirmed=True), 'update_config', False),
-            (SessionScope(project_ids=[11, 22], confirmed=True), 'get_project_info', True),  # excluded tool
+            (SessionScope(project_ids=[11, 22], confirmed=True), 'get_accessible_projects', True),  # excluded tool
         ],
         ids=['no_scope', 'single_project', 'write_tool_single_project', 'excluded_tool'],
     )
@@ -174,6 +174,61 @@ class TestMultiProjectMiddleware:
             raise AssertionError('call_next must not run for an out-of-scope project_id')
 
         with pytest.raises(ToolError, match='outside the current scope'):
+            await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+    @pytest.mark.asyncio
+    async def test_get_project_info_targets_named_project(self) -> None:
+        # Same single-target resolution as a write tool: 2+ scoped projects, project_id names a
+        # non-active one -- swap to it for the call, then restore.
+        scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_s', confirmed=True)
+        context, state = self._ctx(scope, 'get_project_info', read_only=True, arguments={'project_id': '22'})
+        active_clients: list = []
+
+        async def call_next(_):
+            active_clients.append(state[KeboolaClient.STATE_KEY])
+            return self._result('info')
+
+        with (
+            patch.object(
+                MultiProjectMiddleware,
+                'client_for_project',
+                AsyncMock(side_effect=lambda _ss, _url, _token, pid, _ro: f'client-{pid}'),
+            ),
+            patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')),
+        ):
+            result = await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        assert active_clients == ['client-22']
+        assert state[KeboolaClient.STATE_KEY] == 'orig-client'  # restored
+        assert result.content[0].text == 'info'
+
+    @pytest.mark.asyncio
+    async def test_get_project_info_defaults_for_single_scoped_project(self) -> None:
+        # Single scoped project, no project_id given: defaults to it, no swap.
+        scope = SessionScope(project_ids=[11], confirmed=True)
+        context, _ = self._ctx(scope, 'get_project_info', read_only=True, arguments={})
+        calls = []
+
+        async def call_next(_):
+            calls.append(1)
+            return self._result('info')
+
+        with patch.object(MultiProjectMiddleware, 'client_for_project', AsyncMock()) as client_for_project:
+            result = await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        client_for_project.assert_not_called()
+        assert len(calls) == 1
+        assert result.content[0].text == 'info'
+
+    @pytest.mark.asyncio
+    async def test_get_project_info_ambiguous_without_project_id_raises(self) -> None:
+        scope = SessionScope(project_ids=[11, 22], confirmed=True)
+        context, _ = self._ctx(scope, 'get_project_info', read_only=True, arguments={})
+
+        async def call_next(_):
+            raise AssertionError('call_next must not run for an ambiguous get_project_info')
+
+        with pytest.raises(ToolError, match='2 projects are scoped'):
             await MultiProjectMiddleware().on_call_tool(context, call_next)
 
     @pytest.mark.asyncio
