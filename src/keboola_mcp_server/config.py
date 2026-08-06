@@ -180,6 +180,21 @@ class ServerRuntimeInfo:
     """The version of the MCP library."""
     fastmcp_library_version: str = importlib.metadata.version('fastmcp')
     """The version of the FastMCP library."""
+    stateless_http: bool = True
+    """Only meaningful for streamable-http: whether the transport was started with the default
+    stateless session mode (a fresh session per request -- required for scaled/deployed servers
+    where any replica may handle any request) or `--no-stateless-http` (session pinned by
+    Mcp-Session-Id, for a single local server). Ignored for stdio, which is inherently
+    single-session -- see `session_state_persists`."""
+
+    @property
+    def session_state_persists(self) -> bool:
+        """True when the same `ctx.session` object (and thus its `.state` dict) is reused across
+        requests within one conversation: always for stdio (one process, one session, for the
+        whole conversation), and for streamable-http only when started with
+        `--no-stateless-http`. False for the deployed default (`--stateless-http`), where FastMCP
+        hands every request a fresh session object regardless of what this server does."""
+        return self.transport == 'stdio' or not self.stateless_http
 
 
 def build_tracing_headers(runtime_info: ServerRuntimeInfo) -> dict[str, Any]:

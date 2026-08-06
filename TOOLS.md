@@ -3679,8 +3679,10 @@ write/modify/delete tools take a `project_id` argument naming which scoped proje
 once 2+ projects are scoped). Call this when the user states which projects to work on; it can be
 called again any time to re-scope.
 
-The server does not remember this scope between calls: pass the returned `scope_token` as the
-`scope_token` argument on every subsequent tool call in this conversation to keep it in effect.
+On most transports the server does not remember this scope between calls: pass the returned
+`scope_token` as the `scope_token` argument on every subsequent tool call in this conversation
+to keep it in effect. Not needed for a local server or an OAuth-authenticated session, both of
+which persist the confirmed scope server-side instead -- `scope_token` is null there.
 
 
 **Input JSON Schema**:

@@ -3,7 +3,7 @@ from typing import Mapping
 
 import pytest
 
-from keboola_mcp_server.config import Config
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
 
 
 class TestConfig:
@@ -129,3 +129,18 @@ class TestConfig:
         assert config.storage_api_url == expected
         assert config.oauth_server_url == expected
         assert config.mcp_server_url == expected
+
+
+class TestServerRuntimeInfoSessionStatePersists:
+    def test_stdio_always_persists_regardless_of_stateless_http(self) -> None:
+        # stdio is one process/one session for the whole conversation -- the flag is meaningless there.
+        assert ServerRuntimeInfo(transport='stdio', stateless_http=True).session_state_persists is True
+        assert ServerRuntimeInfo(transport='stdio', stateless_http=False).session_state_persists is True
+
+    def test_streamable_http_follows_stateless_http_flag(self) -> None:
+        assert ServerRuntimeInfo(transport='streamable-http', stateless_http=True).session_state_persists is False
+        assert ServerRuntimeInfo(transport='streamable-http', stateless_http=False).session_state_persists is True
+
+    def test_defaults_to_stateless(self) -> None:
+        # Matches the CLI's --stateless-http default (scaled/deployed-safe).
+        assert ServerRuntimeInfo(transport='streamable-http').session_state_persists is False
