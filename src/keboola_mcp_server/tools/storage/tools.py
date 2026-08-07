@@ -2,8 +2,9 @@
 
 import logging
 from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from datetime import datetime
-from typing import Annotated, Any, Iterable, Literal, Sequence, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
@@ -150,16 +151,15 @@ class BucketDetail(BaseModel):
     ) -> 'BucketDetail':
         if self.branch_id:
             raise ValueError(
-                f'Dev branch buckets cannot be shaded: ' f'bucket.id={self.id}, bucket.branch_id={self.branch_id}'
+                f'Dev branch buckets cannot be shaded: bucket.id={self.id}, bucket.branch_id={self.branch_id}'
             )
         if not other.branch_id:
             raise ValueError(
-                f'Prod branch buckets cannot shade others: ' f'bucket.id={other.id}, bucket.branch_id={other.branch_id}'
+                f'Prod branch buckets cannot shade others: bucket.id={other.id}, bucket.branch_id={other.branch_id}'
             )
         if other.branch_id != branch_id:
             raise ValueError(
-                f'Dev branch mismatch: '
-                f'bucket.id={other.id}, bucket.branch_id={other.branch_id}, branch_id={branch_id}'
+                f'Dev branch mismatch: bucket.id={other.id}, bucket.branch_id={other.branch_id}, branch_id={branch_id}'
             )
         if other.prod_id != self.id:
             raise ValueError(f'Prod and dev buckets mismatch: prod_bucket.id={self.id}, dev_bucket.id={other.id}')
@@ -555,7 +555,7 @@ async def _combine_buckets(
 
 @tool_errors()
 async def get_buckets(
-    ctx: Context, bucket_ids: Annotated[Sequence[str], Field(description='Filter by specific bucket IDs.')] = tuple()
+    ctx: Context, bucket_ids: Annotated[Sequence[str], Field(description='Filter by specific bucket IDs.')] = ()
 ) -> GetBucketsOutput:
     """
     Lists buckets or retrieves full details of specific buckets, including descriptions,
@@ -631,7 +631,7 @@ async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManage
 
         if not prod_bucket and not dev_buckets:
             # should not happen
-            raise Exception(f'No buckets in the group: prod_id={prod_id}')
+            raise RuntimeError(f'No buckets in the group: prod_id={prod_id}')
 
         else:
             bucket = await _combine_buckets(
@@ -654,8 +654,8 @@ async def _list_buckets(client: KeboolaClient, links_manager: ProjectLinksManage
 @tool_errors()
 async def get_tables(
     ctx: Context,
-    bucket_ids: Annotated[Sequence[str], Field(description='Filter by specific bucket IDs.')] = tuple(),
-    table_ids: Annotated[Sequence[str], Field(description='Filter by specific table IDs.')] = tuple(),
+    bucket_ids: Annotated[Sequence[str], Field(description='Filter by specific bucket IDs.')] = (),
+    table_ids: Annotated[Sequence[str], Field(description='Filter by specific table IDs.')] = (),
     include_usage: Annotated[
         bool,
         Field(description=('Show components / transformations where each table is used.')),
@@ -993,7 +993,7 @@ async def _update_column_descriptions(
         column_metadata = cast(dict[str, list[JsonDict]], response.get('columnsMetadata', {}))
         results = []
 
-        for column_name in column_updates.keys():
+        for column_name in column_updates:
             try:
                 description_entry = next(
                     entry
@@ -1013,7 +1013,7 @@ async def _update_column_descriptions(
         # If the entire table update fails, mark all columns as failed
         return [
             UpdateItemResult(item_id=f'{table_id}.{column_name}', success=False, error=str(e))
-            for column_name in column_updates.keys()
+            for column_name in column_updates
         ]
 
 

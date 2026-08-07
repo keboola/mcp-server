@@ -62,9 +62,7 @@ async def test_get_buckets_output_format(mcp_client: Client, buckets: list[Bucke
     assert GetBucketsOutput.model_validate(toon_format.decode(result_text)) == structured_output
 
     # check that the buckets are presented in tabular format
-    expected_keys = list(
-        {k: 'foo' for b in structured_output.buckets for k in b.model_dump(exclude_none=True).keys()}.keys()
-    )
+    expected_keys = list({k: 'foo' for b in structured_output.buckets for k in b.model_dump(exclude_none=True)}.keys())
     assert result_text.startswith(f"buckets[2]{{{','.join(expected_keys)}}}:")
 
 

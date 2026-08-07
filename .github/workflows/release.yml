@@ -20,6 +20,16 @@ permissions:
 
 env:
   SERVICE_IMAGE_NAME: "keboola/mcp-server"
+  ECR_REGION: "us-east-1"
+  ECR_REPOSITORY: "keboola/mcp-server"
+  ECR_PUSH_ROLE: "arn:aws:iam::968984773589:role/kbc-ecr-McpServerPushRole"
+  GCP_REGISTRY: "us-central1-docker.pkg.dev"
+  GCP_REPOSITORY: "keboola-prod-artifacts/mcp-server/mcp-server"
+  GCP_IDENTITY_PROVIDER: "projects/388088979044/locations/global/workloadIdentityPools/github/providers/github"
+  GCP_SERVICE_ACCOUNT: "mcp-server-ci-push@keboola-prod-artifacts.iam.gserviceaccount.com"
+  ACR_REGISTRY: "keboola.azurecr.io"
+  ACR_REPOSITORY: "mcp-server"
+  ACR_USERNAME: "mcp-server-push"
 
 jobs:
   build-and-push:
@@ -35,12 +45,34 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Docker login
+        uses: docker/login-action@v4.5.2
+        with:
+          username: ${{ secrets.DOCKERHUB_PUSH_USER }}
+          password: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
+
+      - name: Login to private registries (ECR, ACR, GCP GAR)
+        id: login-private-registries
+        uses: ./.github/actions/login-private-registries
+        with:
+          ecrRegion: ${{ env.ECR_REGION }}
+          ecrPushRole: ${{ env.ECR_PUSH_ROLE }}
+          gcpRegistry: ${{ env.GCP_REGISTRY }}
+          gcpIdentityProvider: ${{ env.GCP_IDENTITY_PROVIDER }}
+          gcpServiceAccount: ${{ env.GCP_SERVICE_ACCOUNT }}
+          acrRegistry: ${{ env.ACR_REGISTRY }}
+          acrUsername: ${{ env.ACR_USERNAME }}
+          acrPassword: ${{ secrets.MCP_SERVER_ACR_PASSWORD }}
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: |
             ${{ env.SERVICE_IMAGE_NAME }}
+            ${{ steps.login-private-registries.outputs.ecrRegistry }}/${{ env.ECR_REPOSITORY }}
+            ${{ env.GCP_REGISTRY }}/${{ env.GCP_REPOSITORY }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_REPOSITORY }}
           tags: |
             type=sha,format=long
             # Production: clean v* / agent-v* tags -> production stacks.
@@ -51,15 +83,9 @@ jobs:
             # Dev: dev-v* / dev-agent* tags -> testing stacks.
             type=raw,value=dev-${{ github.sha }},enable=${{ startsWith(github.ref, 'refs/tags/dev-') }}
 
-      - name: Docker login
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_PUSH_USER }}
-          password: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
-
       # Build for tests (single-arch, load into daemon)
       - name: Build Docker image
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: ./Dockerfile # Explicitly specify the Dockerfile path
@@ -81,7 +107,7 @@ jobs:
 
       # Push multi-arch image (no load)
       - name: Push Docker image
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: ./Dockerfile
@@ -154,7 +180,7 @@ jobs:
       pull-requests: write   # comment on referenced PRs
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

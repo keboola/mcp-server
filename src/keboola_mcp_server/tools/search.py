@@ -1,7 +1,8 @@
 import asyncio
 import logging
 from collections import defaultdict
-from typing import Annotated, Any, AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Sequence
+from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
@@ -45,8 +46,8 @@ LOG = logging.getLogger(__name__)
 # path to search_global. Importers (server.py, generate_tool_docs, tools/storage/usage.py, tests) keep
 # importing these names from `keboola_mcp_server.tools.search`.
 __all__ = [
-    'SEARCH_TOOL_NAME',
     'SEARCH_TOOLS_TAG',
+    'SEARCH_TOOL_NAME',
     'PatternMatch',
     'SearchComponentItemType',
     'SearchHit',
@@ -100,9 +101,8 @@ def _get_field_value(item: JsonDict, fields: Sequence[str]) -> Any | None:
 def _check_column_match(table: JsonDict, cfg: SearchSpec) -> list[PatternMatch]:
     """Check if any column name or description matches the patterns."""
     # Check column names (list of strings)
-    if col_names := table.get('columns', []):
-        if matched := cfg.match_texts(col_names):
-            return matched
+    if (col_names := table.get('columns', [])) and (matched := cfg.match_texts(col_names)):
+        return matched
 
     if col_metadata := table.get('columnMetadata', {}):
         col_descs = (get_metadata_property(col_meta, MetadataField.DESCRIPTION) for col_meta in col_metadata.values())
@@ -243,16 +243,17 @@ async def _fetch_configs(
                         name=config_name,
                         description=config_description,
                     ).set_matches(matches)
-            elif spec.search_type == 'config-based':
-                if matches := spec.match_configuration_scopes(config.get('configuration')):
-                    yield SearchHit(
-                        component_id=component_id,
-                        configuration_id=config_id,
-                        item_type=item_type,
-                        updated=config_updated,
-                        name=config_name,
-                        description=config_description,
-                    ).set_matches(matches)
+            elif spec.search_type == 'config-based' and (
+                matches := spec.match_configuration_scopes(config.get('configuration'))
+            ):
+                yield SearchHit(
+                    component_id=component_id,
+                    configuration_id=config_id,
+                    item_type=item_type,
+                    updated=config_updated,
+                    name=config_name,
+                    description=config_description,
+                ).set_matches(matches)
 
             for row in config.get('rows', []):
                 if not (row_id := row.get('id')):
@@ -273,17 +274,18 @@ async def _fetch_configs(
                             description=row_description,
                         ).set_matches(matches)
 
-                elif spec.search_type == 'config-based':
-                    if matches := spec.match_configuration_scopes(row.get('configuration')):
-                        yield SearchHit(
-                            component_id=component_id,
-                            configuration_id=config_id,
-                            configuration_row_id=row_id,
-                            item_type='configuration-row',
-                            updated=config_updated or _get_field_value(row, ['created']),
-                            name=row_name,
-                            description=row_description,
-                        ).set_matches(matches)
+                elif spec.search_type == 'config-based' and (
+                    matches := spec.match_configuration_scopes(row.get('configuration'))
+                ):
+                    yield SearchHit(
+                        component_id=component_id,
+                        configuration_id=config_id,
+                        configuration_row_id=row_id,
+                        item_type='configuration-row',
+                        updated=config_updated or _get_field_value(row, ['created']),
+                        name=row_name,
+                        description=row_description,
+                    ).set_matches(matches)
 
 
 @tool_errors()
@@ -307,7 +309,7 @@ async def search(
             '"data-app" (data apps), "flow" (orchestration flows). '
             "Use when you know what type of item you're looking for or leave empty to search all types."
         ),
-    ] = tuple(),
+    ] = (),
     search_type: Annotated[
         SearchType,
         Field(
@@ -323,7 +325,7 @@ async def search(
             'supported (e.g. "parameters.host", "storage.input[0].source"). '
             'Leave empty to search the whole configuration.'
         ),
-    ] = tuple(),
+    ] = (),
     mode: Annotated[
         SearchPatternMode,
         Field(
@@ -355,7 +357,7 @@ async def search(
       branches of the project — such hits carry `branch_id`/`branch_name` so you can tell where they live.
 
     2) config-based
-    - Searches item configurations (JSON objects) by matching patterns against the configuration values ​​converted
+    - Searches item configurations (JSON objects) by matching patterns against the configuration values converted
       to a string, optionally narrowed by JSON path `scopes`.
     - Returns also `match_scopes` with JSON paths and matched patterns per scope.
 
@@ -545,9 +547,7 @@ async def _enumeration_search(client: KeboolaClient, spec: SearchSpec, limit: in
     if not types_to_fetch or 'table' in types_to_fetch:
         tasks.append(_fetch_tables(client, spec))
 
-    if not types_to_fetch:
-        tasks.append(fetch_configurations(client, spec))
-    elif types_to_fetch & {
+    if not types_to_fetch or types_to_fetch & {
         'configuration',
         'transformation',
         'flow',

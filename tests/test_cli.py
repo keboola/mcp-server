@@ -77,9 +77,9 @@ class TestRunMigrate:
                 'keboola_mcp_server.session_store.migrator.apply_migrations',
                 AsyncMock(side_effect=RuntimeError('boom')),
             ),
+            pytest.raises(RuntimeError, match='boom'),
         ):
-            with pytest.raises(RuntimeError, match='boom'):
-                await _run_migrate()
+            await _run_migrate()
 
         pool.close.assert_awaited_once()
 
@@ -95,9 +95,9 @@ class TestRunMigrate:
                 'keboola_mcp_server.session_store.retention.ensure_partitions',
                 AsyncMock(side_effect=RuntimeError('boom')),
             ),
+            pytest.raises(RuntimeError, match='boom'),
         ):
-            with pytest.raises(RuntimeError, match='boom'):
-                await _run_migrate()
+            await _run_migrate()
 
         pool.close.assert_awaited_once()
 
@@ -158,8 +158,8 @@ class TestRunGcSessions:
                 'keboola_mcp_server.session_store.retention.ensure_partitions',
                 AsyncMock(side_effect=RuntimeError('boom')),
             ),
+            pytest.raises(RuntimeError, match='boom'),
         ):
-            with pytest.raises(RuntimeError, match='boom'):
-                await _run_gc_sessions()
+            await _run_gc_sessions()
 
         pool.close.assert_awaited_once()

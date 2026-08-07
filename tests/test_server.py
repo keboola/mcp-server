@@ -6,6 +6,7 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -17,9 +18,16 @@ from pydantic import Field
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 
+from keboola_mcp_server import cli
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState, _exclude_none_serializer, toon_serializer, toon_serializer_compact
+from keboola_mcp_server.mcp import (
+    ServerState,
+    SessionStateMiddleware,
+    _exclude_none_serializer,
+    toon_serializer,
+    toon_serializer_compact,
+)
 from keboola_mcp_server.server import CustomRoutes, create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
@@ -67,7 +75,9 @@ class TestServer:
             'get_project_info',
             'get_semantic_context',
             'get_semantic_schema',
+            'get_shared_buckets',
             'get_tables',
+            'link_shared_bucket',
             'modify_flow',
             'modify_python_js_data_app',
             'modify_streamlit_data_app',
@@ -149,6 +159,50 @@ class TestServer:
         assert not missing_type, f'These tool params have no "type" info: {missing_type}'
         missing_default.sort()
         assert not missing_default, f'These tool params are optional, but have no default value: {missing_default}'
+
+
+@pytest.mark.asyncio
+async def test_own_stack_from_cli_parameter_only(tmp_path, monkeypatch):
+    """
+    A server started with '--api-url' and no environment variables must recognize that stack as its
+    own in both places where the check is made: the per-request Storage API URL is pinned to it, and
+    the Kubernetes ServiceAccount step-up header is attached for it.
+
+    Regression test: the step-up check used to read the process environment on its own, so it saw no
+    stack at all here and stopped attaching the header for the whole life of the process.
+    """
+    monkeypatch.delenv('KBC_STORAGE_API_URL', raising=False)
+    monkeypatch.delenv('HOSTNAME_SUFFIX', raising=False)
+    token_file = tmp_path / 'token'
+    token_file.write_text('sa-jwt')
+
+    # This is what cli.run_server() builds from the command line.
+    parsed_args = cli.parse_args(['--transport', 'streamable-http', '--api-url', 'https://connection.keboola.com'])
+    config = Config(storage_api_url=parsed_args.api_url, storage_token='user-token', workspace_schema='WORKSPACE_1234')
+    created = create_server(
+        config,
+        runtime_info=ServerRuntimeInfo(transport='http-compat/streamable-http'),
+        custom_routes_handling='return',
+    )
+    assert isinstance(created, tuple)
+    server_state = created[1].server_state
+    assert server_state.own_stack_storage_api_url == 'https://connection.keboola.com'
+
+    # A request asking for another stack is served from the server's own stack ...
+    http_rq = MagicMock(spec=Request)
+    http_rq.headers = {'X-Storage-Api-Url': 'https://connection.attacker.example'}
+    http_rq.scope = {}
+    request_config = SessionStateMiddleware.apply_request_config(
+        http_rq, server_state.config, own_stack_storage_api_url=server_state.own_stack_storage_api_url
+    )
+    assert request_config.storage_api_url == 'https://connection.keboola.com'
+
+    # ... and the step-up header is attached, because that stack is ours.
+    state = await SessionStateMiddleware.create_session_state(
+        request_config, server_state.runtime_info, own_stack_storage_api_url=server_state.own_stack_storage_api_url
+    )
+    stepped = KeboolaClient.from_state(state).step_up_storage_client(str(token_file))
+    assert stepped.raw_client.headers['X-Kubernetes-Authorization'] == 'Bearer sa-jwt'
 
 
 @pytest.mark.asyncio

@@ -76,8 +76,13 @@ the expected semantic objects provided.
 ### Storage Tools
 - [get_buckets](#get_buckets): Lists buckets or retrieves full details of specific buckets, including descriptions,
 lineage references (created/updated by), and links.
+- [get_shared_buckets](#get_shared_buckets): Lists buckets shared with this project by other Keboola projects that are not necessarily
+linked into this project yet (the Data Catalog "Shared with me" view).
 - [get_tables](#get_tables): Lists tables in buckets or retrieves full details of specific tables, including fully qualified database name,
 column definitions, lineage references (created/updated by) and links.
+- [link_shared_bucket](#link_shared_bucket): Links a bucket shared with this project (found via `get_shared_buckets`) into this project
+as a new local bucket, so its tables become directly queryable/joinable like any other
+bucket in the project.
 - [update_descriptions](#update_descriptions): Updates the description for a Keboola storage item.
 
 ---
@@ -105,9 +110,9 @@ USAGE:
 - Use when you want to create a new row configuration for a specific component configuration.
 
 WHEN NOT TO USE:
-- `keboola.orchestrator` / `keboola.flow` → use flows tools
-- `keboola.data-apps` → use data applications tools
-- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+- `keboola.orchestrator` / `keboola.flow` → use `create_flow` / `create_conditional_flow`
+- `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `create_sql_transformation`
 
 EXAMPLES:
 - user_input: `Create a new configuration row for component X with these settings`
@@ -142,28 +147,49 @@ EXAMPLES:
       "type": "object"
     },
     "storage": {
-      "additionalProperties": true,
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "type": "object"
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined"
     },
     "processors_before": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run before the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run before the configured component row runs."
     },
     "processors_after": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run after the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run after the configured component row runs."
     },
     "project_id": {
       "anyOf": [
@@ -199,6 +225,8 @@ EXAMPLES:
 **Description**:
 
 Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
+Not for SQL transformations (`keboola.snowflake-transformation` / `keboola.google-bigquery-transformation`),
+data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE).
 
 BEFORE CALLING - REQUIRED STEPS:
 1. Call `get_components([component_id])` to retrieve the component's `configuration_schema`.
@@ -211,9 +239,9 @@ USAGE:
 - Use when you want to create a new root configuration for a specific component.
 
 WHEN NOT TO USE:
-- `keboola.orchestrator` / `keboola.flow` → use flows tools
-- `keboola.data-apps` → use data applications tools
-- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+- `keboola.orchestrator` / `keboola.flow` → use `create_flow` / `create_conditional_flow`
+- `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `create_sql_transformation`
 
 EXAMPLES:
 - user_input: `Create a new configuration for component X with these settings`
@@ -280,28 +308,49 @@ EXAMPLES:
       "type": "object"
     },
     "storage": {
-      "additionalProperties": true,
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined",
-      "type": "object"
+      "description": "The table and/or file input / output mapping of the component configuration. It is present only for components that have tables or file input mapping defined"
     },
     "processors_before": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run before the configured component runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run before the configured component runs."
     },
     "processors_after": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run after the configured component runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run after the configured component runs."
     },
     "variables": {
       "anyOf": [
@@ -372,6 +421,9 @@ CONSIDERATIONS:
 
 USAGE:
 - Use when you want to create a new SQL transformation.
+- This is THE tool for creating `keboola.snowflake-transformation` and `keboola.google-bigquery-transformation`
+  components (do NOT use `create_config` for these); the transformation ID is derived automatically from the
+  workspace SQL dialect.
 
 EXAMPLES:
 - user_input: `Can you create a new transformation out of this sql query?`
@@ -763,6 +815,8 @@ WHEN TO USE:
 **Description**:
 
 Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
+Not for SQL transformations (`keboola.snowflake-transformation` / `keboola.google-bigquery-transformation`),
+data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE).
 
 This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
 All other fields will remain unchanged.
@@ -775,9 +829,9 @@ WHEN TO USE:
 - Any combination of the above
 
 WHEN NOT TO USE:
-- `keboola.orchestrator` / `keboola.flow` → use flows tools
-- `keboola.data-apps` → use data applications tools
-- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+- `keboola.orchestrator` / `keboola.flow` → use `update_flow`
+- `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `update_sql_transformation`
 
 PREREQUISITES:
 - Configuration must already exist (use create_config for new configurations)
@@ -953,58 +1007,86 @@ WORKFLOW:
       "type": "string"
     },
     "parameter_updates": {
-      "default": null,
-      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove, list_append) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Paths are relative to the `parameters` object, not the configuration root (e.g. use `tables`, not `parameters.tables`). Prefer simple JSONPaths (e.g., \"array_param[1]\", \"object_param.key\") and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path.",
-      "items": {
-        "discriminator": {
-          "mapping": {
-            "list_append": "#/$defs/ConfigParamListAppend",
-            "remove": "#/$defs/ConfigParamRemove",
-            "set": "#/$defs/ConfigParamSet",
-            "str_replace": "#/$defs/ConfigParamReplace"
+      "anyOf": [
+        {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "list_append": "#/$defs/ConfigParamListAppend",
+                "remove": "#/$defs/ConfigParamRemove",
+                "set": "#/$defs/ConfigParamSet",
+                "str_replace": "#/$defs/ConfigParamReplace"
+              },
+              "propertyName": "op"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ConfigParamSet"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamReplace"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamRemove"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamListAppend"
+              }
+            ]
           },
-          "propertyName": "op"
+          "type": "array"
         },
-        "oneOf": [
-          {
-            "$ref": "#/$defs/ConfigParamSet"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamReplace"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamRemove"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamListAppend"
-          }
-        ]
-      },
-      "type": "array"
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "List of granular parameter update operations to apply. Each operation (set, str_replace, remove, list_append) modifies a specific value using JSONPath notation. Only provide if updating parameters - do not use for changing description, storage or processors. Paths are relative to the `parameters` object, not the configuration root (e.g. use `tables`, not `parameters.tables`). Prefer simple JSONPaths (e.g., \"array_param[1]\", \"object_param.key\") and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters section, you can use the `set` operation with `$` as path."
     },
     "storage": {
-      "additionalProperties": true,
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
-      "type": "object"
+      "description": "Complete storage configuration containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input or output tables\n- Modifying table/file mappings\n- Updating table destinations or sources\n\nImportant:\n- Not applicable for row-based components (they use row-level storage)\n- Must conform to the Keboola storage schema\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration"
     },
     "processors_before": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run before the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run before the configured component row runs."
     },
     "processors_after": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run after the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run after the configured component row runs."
     },
     "folder": {
       "anyOf": [
@@ -1078,9 +1160,9 @@ WHEN TO USE:
 - Any combination of the above
 
 WHEN NOT TO USE:
-- `keboola.orchestrator` / `keboola.flow` → use flows tools
-- `keboola.data-apps` → use data applications tools
-- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+- `keboola.orchestrator` / `keboola.flow` → use `update_flow`
+- `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+- `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `update_sql_transformation`
 
 PREREQUISITES:
 - The configuration row must already exist (use add_config_row for new rows)
@@ -1227,58 +1309,86 @@ WORKFLOW:
       "type": "string"
     },
     "parameter_updates": {
-      "default": null,
-      "description": "List of granular parameter update operations to apply to this row. Each operation (set, str_replace, remove, list_append) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Paths are relative to the row's `parameters` object, not the row root (e.g. use `tables`, not `parameters.tables`). Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path.",
-      "items": {
-        "discriminator": {
-          "mapping": {
-            "list_append": "#/$defs/ConfigParamListAppend",
-            "remove": "#/$defs/ConfigParamRemove",
-            "set": "#/$defs/ConfigParamSet",
-            "str_replace": "#/$defs/ConfigParamReplace"
+      "anyOf": [
+        {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "list_append": "#/$defs/ConfigParamListAppend",
+                "remove": "#/$defs/ConfigParamRemove",
+                "set": "#/$defs/ConfigParamSet",
+                "str_replace": "#/$defs/ConfigParamReplace"
+              },
+              "propertyName": "op"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ConfigParamSet"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamReplace"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamRemove"
+              },
+              {
+                "$ref": "#/$defs/ConfigParamListAppend"
+              }
+            ]
           },
-          "propertyName": "op"
+          "type": "array"
         },
-        "oneOf": [
-          {
-            "$ref": "#/$defs/ConfigParamSet"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamReplace"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamRemove"
-          },
-          {
-            "$ref": "#/$defs/ConfigParamListAppend"
-          }
-        ]
-      },
-      "type": "array"
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "List of granular parameter update operations to apply to this row. Each operation (set, str_replace, remove, list_append) modifies a specific parameter using JSONPath notation. Only provide if updating parameters - do not use for changing description or storage. Paths are relative to the row's `parameters` object, not the row root (e.g. use `tables`, not `parameters.tables`). Prefer simple dot-delimited JSONPaths and make the smallest possible updates - only change what needs changing. In case you need to replace the whole parameters, you can use the `set` operation with `$` as path."
     },
     "storage": {
-      "additionalProperties": true,
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_configs first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration",
-      "type": "object"
+      "description": "Complete storage configuration for this row containing input/output table and file mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration for this row. \n\nWhen to use:\n- Adding/removing input or output tables for this specific row\n- Modifying table/file mappings for this row\n- Updating table destinations or sources for this row\n\nImportant:\n- Must conform to the component's row storage schema\n- Replaces ALL existing storage config for this row - include all mappings you want to keep\n- Use get_configs first to see current row storage configuration\n- Leave unfilled to preserve existing storage configuration"
     },
     "processors_before": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run before the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run before the configured component row runs."
     },
     "processors_after": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The list of processors that will run after the configured component row runs.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "The list of processors that will run after the configured component row runs."
     },
     "is_disabled": {
       "anyOf": [
@@ -1874,60 +1984,74 @@ Example 4 - Update storage mappings:
       "type": "string"
     },
     "parameter_updates": {
-      "default": null,
-      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. \n\nIMPORTANT: Use get_configs first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned.\n\nAvailable operations:\n1. add_block: Add a new block to the transformation\n   - Fields: op=\"add_block\", block={name, codes}, position=\"start\"|\"end\"\n2. remove_block: Remove an existing block\n   - Fields: op=\"remove_block\", block_id (e.g., \"b0\")\n3. rename_block: Rename an existing block\n   - Fields: op=\"rename_block\", block_id (e.g., \"b0\"), block_name\n4. add_code: Add a new code block to an existing block\n   - Fields: op=\"add_code\", block_id (e.g., \"b0\"), code={name, script}, position=\"start\"|\"end\"\n5. remove_code: Remove an existing code block\n   - Fields: op=\"remove_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\")\n6. rename_code: Rename an existing code block\n   - Fields: op=\"rename_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), code_name\n7. set_code: Replace the entire SQL script of a code block\n   - Fields: op=\"set_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script\n8. add_script: Append or prepend SQL to a code block\n   - Fields: op=\"add_script\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script,     position=\"start\"|\"end\"\n9. str_replace: Replace substring in SQL scripts\n   - Fields: op=\"str_replace\", search_for, replace_with, block_id (optional), code_id (optional)\n   - If block_id omitted: replaces in all blocks\n   - If code_id omitted: replaces in all codes of the specified block\n",
-      "items": {
-        "discriminator": {
-          "mapping": {
-            "add_block": "#/$defs/TfAddBlock",
-            "add_code": "#/$defs/TfAddCode",
-            "add_script": "#/$defs/TfAddScript",
-            "remove_block": "#/$defs/TfRemoveBlock",
-            "remove_code": "#/$defs/TfRemoveCode",
-            "rename_block": "#/$defs/TfRenameBlock",
-            "rename_code": "#/$defs/TfRenameCode",
-            "set_code": "#/$defs/TfSetCode",
-            "str_replace": "#/$defs/TfStrReplace"
+      "anyOf": [
+        {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "add_block": "#/$defs/TfAddBlock",
+                "add_code": "#/$defs/TfAddCode",
+                "add_script": "#/$defs/TfAddScript",
+                "remove_block": "#/$defs/TfRemoveBlock",
+                "remove_code": "#/$defs/TfRemoveCode",
+                "rename_block": "#/$defs/TfRenameBlock",
+                "rename_code": "#/$defs/TfRenameCode",
+                "set_code": "#/$defs/TfSetCode",
+                "str_replace": "#/$defs/TfStrReplace"
+              },
+              "propertyName": "op"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/TfAddBlock"
+              },
+              {
+                "$ref": "#/$defs/TfRemoveBlock"
+              },
+              {
+                "$ref": "#/$defs/TfRenameBlock"
+              },
+              {
+                "$ref": "#/$defs/TfAddCode"
+              },
+              {
+                "$ref": "#/$defs/TfRemoveCode"
+              },
+              {
+                "$ref": "#/$defs/TfRenameCode"
+              },
+              {
+                "$ref": "#/$defs/TfSetCode"
+              },
+              {
+                "$ref": "#/$defs/TfAddScript"
+              },
+              {
+                "$ref": "#/$defs/TfStrReplace"
+              }
+            ]
           },
-          "propertyName": "op"
+          "type": "array"
         },
-        "oneOf": [
-          {
-            "$ref": "#/$defs/TfAddBlock"
-          },
-          {
-            "$ref": "#/$defs/TfRemoveBlock"
-          },
-          {
-            "$ref": "#/$defs/TfRenameBlock"
-          },
-          {
-            "$ref": "#/$defs/TfAddCode"
-          },
-          {
-            "$ref": "#/$defs/TfRemoveCode"
-          },
-          {
-            "$ref": "#/$defs/TfRenameCode"
-          },
-          {
-            "$ref": "#/$defs/TfSetCode"
-          },
-          {
-            "$ref": "#/$defs/TfAddScript"
-          },
-          {
-            "$ref": "#/$defs/TfStrReplace"
-          }
-        ]
-      },
-      "type": "array"
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "List of operations to apply to the transformation structure (blocks, codes, SQL scripts). Each operation modifies specific elements using block_id and code_id identifiers. Only provide if updating SQL code or block structure - do not use for description or storage changes. \n\nIMPORTANT: Use get_configs first to retrieve the current transformation structure and identify the block_id and code_id values needed for your operations. IDs are automatically assigned.\n\nAvailable operations:\n1. add_block: Add a new block to the transformation\n   - Fields: op=\"add_block\", block={name, codes}, position=\"start\"|\"end\"\n2. remove_block: Remove an existing block\n   - Fields: op=\"remove_block\", block_id (e.g., \"b0\")\n3. rename_block: Rename an existing block\n   - Fields: op=\"rename_block\", block_id (e.g., \"b0\"), block_name\n4. add_code: Add a new code block to an existing block\n   - Fields: op=\"add_code\", block_id (e.g., \"b0\"), code={name, script}, position=\"start\"|\"end\"\n5. remove_code: Remove an existing code block\n   - Fields: op=\"remove_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\")\n6. rename_code: Rename an existing code block\n   - Fields: op=\"rename_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), code_name\n7. set_code: Replace the entire SQL script of a code block\n   - Fields: op=\"set_code\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script\n8. add_script: Append or prepend SQL to a code block\n   - Fields: op=\"add_script\", block_id (e.g., \"b0\"), code_id (e.g., \"b0.c0\"), script,     position=\"start\"|\"end\"\n9. str_replace: Replace substring in SQL scripts\n   - Fields: op=\"str_replace\", search_for, replace_with, block_id (optional), code_id (optional)\n   - If block_id omitted: replaces in all blocks\n   - If code_id omitted: replaces in all codes of the specified block\n"
     },
     "storage": {
-      "additionalProperties": true,
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration",
-      "type": "object"
+      "description": "Complete storage configuration for transformation input/output table mappings. Only provide if updating storage mappings - this replaces the ENTIRE storage configuration. \n\nWhen to use:\n- Adding/removing input tables for the transformation\n- Modifying output table mappings and destinations\n- Changing table aliases used in SQL\n\nImportant:\n- Must conform to transformation storage schema (input/output tables)\n- Replaces ALL existing storage config - include all mappings you want to keep\n- Use get_configs first to see current storage configuration\n- Leave unfilled to preserve existing storage configuration"
     },
     "folder": {
       "anyOf": [
@@ -2363,7 +2487,8 @@ draft handle.
 - `branch` on **create** is only valid when `parent_configuration_id` is set (pins the new
   draft's branch). Defaults to `'init'`. Must not be `'main'`. Rejected on prod create.
   On **update** `branch` repoints an existing **external-git** app's pinned branch (see below).
-- `slug` is required on create and immutable after.
+- `slug` is optional on create (auto-derived from `name` when omitted; drafts get a unique
+  suffix) and immutable after.
 - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
   `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or
   a draft, and for repointing an **external-git** app's `branch` (a draft, or an app bound
@@ -2380,8 +2505,12 @@ to expose publicly. On update, `authentication_type='default'` preserves the exi
 
 ## Slug constraint
 
-Must be DNS-label-safe (lowercase letters, digits, hyphens, ≤63 chars). For drafts, append a
-short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its drafts.
+Must be DNS-label-safe (lowercase letters, digits, hyphens). Optional on create: when omitted it
+is auto-derived from `name` and capped at 50 characters (the data-app URL-prefix limit enforced
+by the UI; drafts additionally get a short unique `-draft-<suffix>`, still within 50, to keep
+slugs unique across the prod app and its drafts). Pass an explicit slug to override; an explicit
+slug must be at most 63 characters (the DNS-label max), and note the UI's own URL-prefix limit is
+50, so an explicit slug of 51-63 characters may still be rejected at deploy time.
 
 
 **Input JSON Schema**:
@@ -2417,7 +2546,7 @@ short suffix (e.g. `-draft-abc123`) to keep slugs unique across the prod and its
         }
       ],
       "default": null,
-      "description": "URL-safe slug for the data app (used as a subdomain). Required when creating; immutable after."
+      "description": "URL-safe slug for the data app (used as a subdomain). Optional on create \u2014 when omitted it is auto-derived from `name` (drafts get a unique suffix). An explicit slug must be at most 63 characters (DNS-label max; the UI URL-prefix limit is 50). Immutable after create."
     },
     "parent_configuration_id": {
       "anyOf": [
@@ -3072,22 +3201,36 @@ adjusting dependencies, or enabling/disabling flow execution
       "type": "string"
     },
     "phases": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Updated list of phase definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "Updated list of phase definitions."
     },
     "tasks": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Updated list of task definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "Updated list of task definitions."
     },
     "name": {
       "default": "",
@@ -3210,22 +3353,36 @@ or enabling/disabling flow execution
       "type": "string"
     },
     "phases": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Updated list of phase definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "Updated list of phase definitions."
     },
     "tasks": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "Updated list of task definitions.",
-      "items": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "type": "array"
+      "description": "Updated list of task definitions."
     },
     "name": {
       "default": "",
@@ -3389,14 +3546,28 @@ EXAMPLES WITH LOGS:
       "type": "string"
     },
     "component_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The optional ID of the component whose jobs you want to list (ignored if job_ids is provided). Default = None.",
-      "type": "string"
+      "description": "The optional ID of the component whose jobs you want to list (ignored if job_ids is provided). Default = None."
     },
     "config_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "default": null,
-      "description": "The optional ID of the component configuration whose jobs you want to list (ignored if job_ids is provided). Default = None.",
-      "type": "string"
+      "description": "The optional ID of the component configuration whose jobs you want to list (ignored if job_ids is provided). Default = None."
     },
     "limit": {
       "default": 100,
@@ -3816,7 +3987,7 @@ This tool supports two complementary search types:
   branches of the project — such hits carry `branch_id`/`branch_name` so you can tell where they live.
 
 2) config-based
-- Searches item configurations (JSON objects) by matching patterns against the configuration values ​​converted
+- Searches item configurations (JSON objects) by matching patterns against the configuration values converted
   to a string, optionally narrowed by JSON path `scopes`.
 - Returns also `match_scopes` with JSON paths and matched patterns per scope.
 
@@ -4405,7 +4576,12 @@ CRITICAL SQL REQUIREMENTS:
 TABLE AND COLUMN REFERENCES:
 * Always use fully qualified table names in the exact FQN format provided by table information tools
 * Follow the identifier structure exactly as shown by table info tools for the current SQL dialect
-* Always use delimited identifiers when referring to table columns
+* For every column reference, call get_tables first and copy that column's `quotedName` value VERBATIM.
+  Do not guess the name, re-case it, or hand-quote it yourself — use the exact `quotedName` from get_tables.
+* Snowflake case trap: unquoted identifiers fold to UPPERCASE while quoted identifiers are case-sensitive,
+  so hand-quoting a guessed lowercase name (e.g. "date") fails with `invalid identifier` even though the
+  column physically exists as DATE. The `quotedName` from get_tables already carries the correct case and
+  dialect quoting, so copying it avoids this.
 
 CTE (WITH CLAUSE) RULES:
 * ALL column references in main query MUST match exact case used in the CTE
@@ -4418,9 +4594,17 @@ FUNCTION COMPATIBILITY:
 * Cast VARCHAR columns to appropriate types before using in date/numeric functions
 
 ERROR PREVENTION:
-* Never pass empty strings ('') where numeric or date values are expected
-* Use NULLIF or CASE statements to handle empty values
-* Always use TRY_CAST or similar safe casting functions when converting data types
+* Keboola Storage stores empty cells as empty strings ('') rather than NULL — even for columns reported as
+  VARCHAR/STRING with nullable=false — so casting a text column straight to numeric/date/timestamp throws
+  (`Numeric value '' is not recognized` on Snowflake, `Bad double value` on BigQuery).
+* When casting, use the dialect-safe cast: on Snowflake `TRY_CAST(x AS ...)` (or `TRY_TO_DATE`/`TRY_TO_NUMBER`),
+  which returns NULL instead of erroring; on BigQuery `SAFE_CAST(x AS ...)` — BigQuery has NO `TRY_CAST`.
+  Alternatively wrap the column with `NULLIF(col, '')` before CAST. This is defensive against empty strings,
+  not a guarantee for genuinely non-numeric or non-date values.
+* For numeric casts always specify precision and scale so fractional values survive: on Snowflake use
+  `TRY_CAST(x AS NUMBER(38,9))` or `TRY_TO_NUMBER(x, 38, 9)` (never bare `NUMBER`/`DECIMAL`/`NUMERIC`, which
+  mean `NUMBER(38,0)` and silently round `'3.75'` to 4); on BigQuery use `NUMERIC`/`BIGNUMERIC` (never bare
+  `INT64`, which truncates). Use `FLOAT`/`DOUBLE`/`FLOAT64` only for ratios/averages.
 * Check for division by zero using NULLIF(denominator, 0)
 * Always use the LIMIT clause in your SELECT statements when fetching data. There are hard limits imposed
   by this tool on the maximum number of rows that can be fetched and the maximum number of characters.
@@ -4489,6 +4673,48 @@ EXAMPLES:
         "type": "string"
       },
       "type": "array"
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="get_shared_buckets"></a>
+## get_shared_buckets
+**Annotations**: `read-only`
+
+**Tags**: `storage`
+
+**Description**:
+
+Lists buckets shared with this project by other Keboola projects that are not necessarily
+linked into this project yet (the Data Catalog "Shared with me" view). Use this to answer
+"what data is shared with this project?" or "what could I link?" — `get_buckets` only
+returns buckets already in this project (including already-linked ones).
+
+Results are paginated (`limit`/`offset`) because the number of shared buckets can be large
+for projects in big organizations — always check `total_count` and the `message` to see
+whether more results exist, and page through with `offset` rather than assuming a single
+call returns everything.
+
+Use `link_shared_bucket` to link a shared bucket returned here into this project.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "limit": {
+      "default": 50,
+      "description": "Maximum number of shared buckets to return (default 50, max 100). Values outside (0, 100] are reset to the default rather than rejected.",
+      "type": "integer"
+    },
+    "offset": {
+      "default": 0,
+      "description": "Number of shared buckets to skip, for pagination. Negative values are clamped to 0.",
+      "type": "integer"
     }
   },
   "type": "object"
@@ -4568,6 +4794,89 @@ EXAMPLES:
       "type": "boolean"
     }
   },
+  "type": "object"
+}
+```
+
+---
+<a name="link_shared_bucket"></a>
+## link_shared_bucket
+**Annotations**: 
+
+**Tags**: `storage`
+
+**Description**:
+
+Links a bucket shared with this project (found via `get_shared_buckets`) into this project
+as a new local bucket, so its tables become directly queryable/joinable like any other
+bucket in the project.
+
+Not idempotent: calling this again with the same `target_bucket_name` fails once that name
+already exists, so don't retry blindly on error without checking whether the link succeeded.
+
+Note: unlike `get_buckets`, the returned bucket does not participate in this server's
+prod/dev branch-shading (its `branch_id` is not resolved) -- linking always targets the
+caller's current branch context directly.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "source_project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "description": "The ID of the project the shared bucket belongs to."
+    },
+    "source_bucket_id": {
+      "description": "The ID of the shared bucket to link, from `get_shared_buckets`.",
+      "type": "string"
+    },
+    "target_bucket_name": {
+      "description": "The name the linked bucket should have in this project.",
+      "type": "string"
+    },
+    "target_stage": {
+      "anyOf": [
+        {
+          "enum": [
+            "in",
+            "out"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Stage for the linked bucket in this project. Defaults to the source bucket's own stage (parsed from its \"in.\"/\"out.\" ID prefix) \u2014 only pass this to deliberately re-stage on link."
+    },
+    "display_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional display name for the linked bucket."
+    }
+  },
+  "required": [
+    "source_project_id",
+    "source_bucket_id",
+    "target_bucket_name"
+  ],
   "type": "object"
 }
 ```

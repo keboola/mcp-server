@@ -2,13 +2,15 @@ import inspect
 import json
 import logging
 import time
+from collections.abc import Callable, Mapping
 from functools import wraps
-from typing import Any, Callable, Mapping, Optional, Type, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 import jsonschema
 import yaml
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.server import middleware as fmw
 from fastmcp.server.middleware import CallNext, MiddlewareContext
 from fastmcp.utilities.types import find_kwarg_by_type
@@ -87,9 +89,8 @@ async def _trigger_event(
         user_agent = f'{client_params.clientInfo.name}/{client_params.clientInfo.version}'
     if not user_agent:
         user_agent = ctx.client_id
-    if not user_agent:
-        if http_rq := get_http_request_or_none():
-            user_agent = http_rq.headers.get('User-Agent')
+    if not user_agent and (http_rq := get_http_request_or_none()):
+        user_agent = http_rq.headers.get('User-Agent')
     if not user_agent:
         user_agent = ''
 
@@ -126,7 +127,10 @@ async def _trigger_event(
     # On the Keboola-deployed server (KBC_KUBERNETES_TOKEN_PATH set) send the SA JWT as the
     # step-up header so Connection waives the missing permission on the event-create action
     # (storage:events:create). Read from the process env only — never from Config/HTTP — and
-    # fall back to the user's own client when not deployed/configured.
+    # fall back to the user's own client when not deployed/configured. `step_up_storage_client()`
+    # attaches the JWT only when the session talks to this server's own stack and falls back to
+    # the user's own client otherwise — this code runs in a `finally:` block that swallows its
+    # errors, so it must not depend on anything failing loudly.
     storage_client = client.storage_client
     if kubernetes_token_path := deployed_sa_token_path():
         storage_client = client.step_up_storage_client(kubernetes_token_path)
@@ -141,8 +145,8 @@ async def _trigger_event(
 
 
 def tool_errors(
-    default_recovery: Optional[str] = None,
-    recovery_instructions: Optional[dict[Type[Exception], str]] = None,
+    default_recovery: str | None = None,
+    recovery_instructions: dict[type[Exception], str] | None = None,
 ) -> Callable[[F], F]:
     """
     The MCP tool function decorator that logs exceptions and adds recovery instructions for LLMs.
@@ -187,9 +191,9 @@ def tool_errors(
                     if error_msg:
                         raise ToolError(error_msg) from e
                     else:
-                        raise e
+                        raise
                 except Exception as e:
-                    LOG.exception(f'MCP tool "{func.__name__}" call failed. {type(e).__name__}: {e}')
+                    LOG.exception(f'MCP tool "{func.__name__}" call failed.')
                     exception = e
                     raise
 
@@ -261,3 +265,9 @@ class ValidationErrorMiddleware(fmw.Middleware):
             return await call_next(context)
         except ValidationError as e:
             raise ToolError(prettify_validation_error(e)) from e
+        except FastMCPValidationError as e:
+            # fastmcp wraps a pydantic ValidationError raised during argument validation
+            # (a bad call) in its own ValidationError, keeping the original as __cause__.
+            if isinstance(e.__cause__, ValidationError):
+                raise ToolError(prettify_validation_error(e.__cause__)) from e
+            raise

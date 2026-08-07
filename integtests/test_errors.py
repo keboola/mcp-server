@@ -3,8 +3,9 @@ import json
 import math
 import re
 import uuid
+from collections.abc import Mapping
 from importlib.metadata import distribution
-from typing import Any, Mapping
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx

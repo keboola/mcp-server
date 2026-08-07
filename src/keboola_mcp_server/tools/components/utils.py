@@ -24,7 +24,8 @@ import copy
 import logging
 import re
 import unicodedata
-from typing import Any, Mapping, Optional, Sequence, TypeVar, cast
+from collections.abc import Mapping, Sequence
+from typing import Any, TypeVar, cast
 
 import jsonpath_ng
 from httpx import HTTPStatusError
@@ -384,10 +385,8 @@ async def set_cfg_creation_metadata(client: KeboolaClient, component_id: str, co
             configuration_id=configuration_id,
             metadata={MetadataField.CREATED_BY_MCP: 'true'},
         )
-    except HTTPStatusError as e:
-        logging.exception(
-            f'Failed to set "{MetadataField.CREATED_BY_MCP}" metadata for configuration {configuration_id}: {e}'
-        )
+    except HTTPStatusError:
+        LOG.exception(f'Failed to set "{MetadataField.CREATED_BY_MCP}" metadata for configuration {configuration_id}')
 
 
 async def set_cfg_update_metadata(
@@ -411,8 +410,8 @@ async def set_cfg_update_metadata(
             configuration_id=configuration_id,
             metadata={updated_by_md_key: 'true'},
         )
-    except HTTPStatusError as e:
-        logging.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}: {e}')
+    except HTTPStatusError:
+        LOG.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}')
 
 
 async def get_config_folders(client: KeboolaClient, component_id: str) -> tuple[int, list[str], bool]:
@@ -675,7 +674,7 @@ async def apply_folder_metadata(
     client: KeboolaClient,
     component_id: str,
     configuration_id: str,
-    folder: Optional[str],
+    folder: str | None,
     kind: str,
     tool_name: str,
     *,
@@ -689,27 +688,35 @@ async def apply_folder_metadata(
     :param is_new: When True, an empty folder string is a no-op (no folder to remove on a new item).
     :return: Folder hint string if applicable, else None.
     """
+    # Both catches below stay broad on purpose: callers invoke this *after* the configuration has
+    # already been written, so letting anything escape would report a failure for a change that
+    # actually landed. They use LOG.exception (not LOG.warning) so the cause and traceback are
+    # always recorded — a swallowed cause here kept a fully broken folder search invisible.
     if folder is None:
         try:
             total, existing_folders, lower_bound = await get_config_folders(client, component_id)
             return build_folder_hint(total, existing_folders, kind, tool_name, lower_bound=lower_bound)
-        except Exception:
-            LOG.warning(
-                'Unable to fetch %s folders for component "%s" when processing configuration "%s".',
+        except Exception as e:
+            # Cause is duplicated into the message text on purpose (see test_apply_folder_metadata_*).
+            LOG.exception(
+                'Unable to fetch %s folders for component "%s" when processing configuration "%s": %s',
                 kind,
                 component_id,
                 configuration_id,
+                e,  # noqa: TRY401
             )
             return None
     normalized = folder.strip()
     if normalized:
         try:
             await set_configuration_folder_metadata(client, component_id, configuration_id, normalized)
-        except Exception:
-            LOG.warning(
-                'Unable to set folder metadata for component "%s", configuration "%s".',
+        except Exception as e:
+            # Cause is duplicated into the message text on purpose (see test_apply_folder_metadata_*).
+            LOG.exception(
+                'Unable to set folder metadata for component "%s", configuration "%s": %s',
                 component_id,
                 configuration_id,
+                e,  # noqa: TRY401
             )
     elif not is_new:
         await clear_configuration_folder_metadata(client, component_id, configuration_id)
@@ -801,7 +808,7 @@ def _normalize_jsonpath(path: str) -> str:
     """
     segments = []
     for segment in path.split('.'):
-        if segment.startswith('"') or segment.startswith("'") or '[' in segment or segment == '$':
+        if segment.startswith(('"', "'")) or '[' in segment or segment == '$':
             segments.append(segment)
         elif not _VALID_JSONPATH_FIELD.match(segment):
             segments.append(f'"{segment}"')
@@ -828,7 +835,8 @@ def set_nested_value(data: dict[str, Any], path: str, value: Any) -> None:
         current = current[key]
         if not isinstance(current, dict):
             path_so_far = '.'.join(keys[: i + 1])
-            raise ValueError(
+            # ValueError to stay consistent with the other "malformed config shape" raises in this function.
+            raise ValueError(  # noqa: TRY004
                 f'Cannot set nested value at path "{path}": '
                 f'encountered non-dict value at "{path_so_far}" (type: {type(current).__name__})'
             )
@@ -870,7 +878,6 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
         return params
 
     elif update.op == 'str_replace':
-
         if not update.search_for:
             raise ValueError('Search string is empty')
 
@@ -907,7 +914,7 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
                     replace_cnt += occurrences
                     params = match.full_path.update(params, new_value)
             else:
-                raise ValueError(f'Path "{match.full_path}" is not a string or list of strings')
+                raise ValueError(f'Path "{match.full_path}" is not a string or list of strings')  # noqa: TRY004
 
         if replace_cnt == 0:
             raise ValueError(f'Search string "{update.search_for}" not found in path "{update.path}"')
@@ -931,7 +938,7 @@ def _apply_param_update(params: dict[str, Any], update: ConfigParamUpdate) -> di
         for match in matches:
             current_value = match.value
             if not isinstance(current_value, list):
-                raise ValueError(f'Path "{match.full_path}" is not a list')
+                raise ValueError(f'Path "{match.full_path}" is not a list')  # noqa: TRY004
 
             current_value.append(update.value)
 
@@ -1078,12 +1085,16 @@ def update_transformation_parameters(
 # OTHER
 # ============================================================================
 
+# Maps unsuitable component IDs to a message naming the exact specialized tools to use instead,
+# so the raised error names the tool to call rather than a vague tool category.
 _UNSUITABLE_COMPONENTS_MESSAGES: Mapping[str, str] = {
-    DATA_APP_COMPONENT_ID: 'Use the data applications tools.',
-    CONDITIONAL_FLOW_COMPONENT_ID: 'Use the flows tools.',
-    ORCHESTRATOR_COMPONENT_ID: 'Use the flows tools.',
-    BIGQUERY_TRANSFORMATION_ID: 'Use the SQL transformation tools.',
-    SNOWFLAKE_TRANSFORMATION_ID: 'Use the SQL transformation tools.',
+    DATA_APP_COMPONENT_ID: (
+        'Use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app` instead.'
+    ),
+    CONDITIONAL_FLOW_COMPONENT_ID: 'Use `create_flow` / `create_conditional_flow` / `update_flow` instead.',
+    ORCHESTRATOR_COMPONENT_ID: 'Use `create_flow` / `create_conditional_flow` / `update_flow` instead.',
+    BIGQUERY_TRANSFORMATION_ID: 'Use `create_sql_transformation` / `update_sql_transformation` instead.',
+    SNOWFLAKE_TRANSFORMATION_ID: 'Use `create_sql_transformation` / `update_sql_transformation` instead.',
 }
 
 

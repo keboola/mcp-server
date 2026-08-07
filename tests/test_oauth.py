@@ -2,9 +2,10 @@ import dataclasses
 import logging
 import secrets
 import time
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
-from typing import Any, Mapping
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -105,7 +106,6 @@ class FakeSessionStore:
 
 
 class TestSimpleOAuthProvider:
-
     @pytest.fixture
     def oauth_provider(self) -> SimpleOAuthProvider:
         return SimpleOAuthProvider(

@@ -27,8 +27,9 @@ component-related operations in the MCP server.
 import copy
 import json
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Annotated, Any, Optional, Sequence, cast
+from typing import Annotated, Any, cast
 
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
@@ -214,7 +215,7 @@ async def get_configs(
                 'This parameter is IGNORED when configs is provided (non-empty) or component_ids is non-empty.'
             )
         ),
-    ] = tuple(),
+    ] = (),
     component_ids: Annotated[
         Sequence[str],
         Field(
@@ -225,7 +226,7 @@ async def get_configs(
                 'Ignored if configs is provided.'
             )
         ),
-    ] = tuple(),
+    ] = (),
     configs: Annotated[
         Sequence[FullConfigId],
         Field(
@@ -237,7 +238,7 @@ async def get_configs(
                 'grouped by component. Use this for detailed retrieval.'
             )
         ),
-    ] = tuple(),
+    ] = (),
 ) -> GetConfigsOutput:
     """
     Retrieves component configurations in the project with optional filtering.
@@ -419,13 +420,13 @@ async def create_sql_transformation(
                 '(e.g., using `CREATE TABLE ...`).'
             ),
         ),
-    ] = tuple(),
+    ] = (),
     folder: Annotated[
         str,
         Field(description=folder_field_description('transformation', 'transformations')),
     ] = '',
     variables: Annotated[
-        Optional[list[VariableDefinition]],
+        list[VariableDefinition] | None,
         Field(
             description=(
                 'Variable definitions to attach to this transformation. '
@@ -461,6 +462,9 @@ async def create_sql_transformation(
 
     USAGE:
     - Use when you want to create a new SQL transformation.
+    - This is THE tool for creating `keboola.snowflake-transformation` and `keboola.google-bigquery-transformation`
+      components (do NOT use `create_config` for these); the transformation ID is derived automatically from the
+      workspace SQL dialect.
 
     EXAMPLES:
     - user_input: `Can you create a new transformation out of this sql query?`
@@ -532,7 +536,7 @@ async def create_sql_transformation(
             )
             change_summary = None
 
-    LOG.info(f'Created new transformation "{component_id}" with configuration id ' f'"{configuration_id}".')
+    LOG.info(f'Created new transformation "{component_id}" with configuration id "{configuration_id}".')
 
     vars_result = None
     if variables:
@@ -591,7 +595,7 @@ async def update_sql_transformation(
         ),
     ] = '',
     parameter_updates: Annotated[
-        list[TfParamUpdate],
+        list[TfParamUpdate] | None,
         Field(
             description=(
                 'List of operations to apply to the transformation structure (blocks, codes, SQL scripts). '
@@ -627,7 +631,7 @@ async def update_sql_transformation(
         ),
     ] = None,
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
             description=(
                 'Complete storage configuration for transformation input/output table mappings. '
@@ -647,11 +651,11 @@ async def update_sql_transformation(
         ),
     ] = None,
     folder: Annotated[
-        Optional[str],
+        str | None,
         Field(description=folder_field_description('transformation', 'transformations')),
     ] = None,
     variables: Annotated[
-        Optional[list[VariableDefinition]],
+        list[VariableDefinition] | None,
         Field(
             description=(
                 'Variable definitions for this transformation. '
@@ -982,7 +986,7 @@ async def update_sql_transformation_internal(
     description: str = '',
     parameter_updates: list[TfParamUpdate] | None = None,
     storage: dict[str, Any] | None = None,
-    folder: Optional[str] = None,
+    folder: str | None = None,
 ) -> tuple[JsonDict, JsonDict, str, dict | None]:
     sql_dialect = await workspace_manager.get_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
@@ -1088,7 +1092,7 @@ async def create_config(
         Field(description='The component configuration parameters, adhering to the configuration_schema'),
     ],
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
@@ -1097,15 +1101,15 @@ async def create_config(
         ),
     ] = None,
     processors_before: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run before the configured component runs.'),
     ] = None,
     processors_after: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run after the configured component runs.'),
     ] = None,
     variables: Annotated[
-        Optional[list[VariableDefinition]],
+        list[VariableDefinition] | None,
         Field(
             description=(
                 'Variable definitions to attach to this configuration. '
@@ -1120,6 +1124,8 @@ async def create_config(
 ) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
+    Not for SQL transformations (`keboola.snowflake-transformation` / `keboola.google-bigquery-transformation`),
+    data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE).
 
     BEFORE CALLING - REQUIRED STEPS:
     1. Call `get_components([component_id])` to retrieve the component's `configuration_schema`.
@@ -1132,9 +1138,9 @@ async def create_config(
     - Use when you want to create a new root configuration for a specific component.
 
     WHEN NOT TO USE:
-    - `keboola.orchestrator` / `keboola.flow` → use flows tools
-    - `keboola.data-apps` → use data applications tools
-    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+    - `keboola.orchestrator` / `keboola.flow` → use `create_flow` / `create_conditional_flow`
+    - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `create_sql_transformation`
 
     EXAMPLES:
     - user_input: `Create a new configuration for component X with these settings`
@@ -1246,7 +1252,7 @@ async def add_config_row(
         Field(description='The component row configuration parameters, adhering to the configuration_row_schema'),
     ],
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
             description=(
                 'The table and/or file input / output mapping of the component configuration. '
@@ -1255,11 +1261,11 @@ async def add_config_row(
         ),
     ] = None,
     processors_before: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run before the configured component row runs.'),
     ] = None,
     processors_after: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
     project_id: ProjectIdArg = None,
@@ -1279,9 +1285,9 @@ async def add_config_row(
     - Use when you want to create a new row configuration for a specific component configuration.
 
     WHEN NOT TO USE:
-    - `keboola.orchestrator` / `keboola.flow` → use flows tools
-    - `keboola.data-apps` → use data applications tools
-    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+    - `keboola.orchestrator` / `keboola.flow` → use `create_flow` / `create_conditional_flow`
+    - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `create_sql_transformation`
 
     EXAMPLES:
     - user_input: `Create a new configuration row for component X with these settings`
@@ -1294,8 +1300,7 @@ async def add_config_row(
     links_manager = await ProjectLinksManager.from_client(client)
 
     LOG.info(
-        f'Creating new configuration row: {name} for component: {component_id} '
-        f'and configuration {configuration_id}.'
+        f'Creating new configuration row: {name} for component: {component_id} and configuration {configuration_id}.'
     )
 
     api_component = await fetch_component(client=client, component_id=component_id)
@@ -1343,9 +1348,7 @@ async def add_config_row(
         ),
     )
 
-    LOG.info(
-        f'Created new configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".'
-    )
+    LOG.info(f'Created new configuration for component "{component_id}" with configuration id "{configuration_id}".')
 
     await set_cfg_update_metadata(
         client=client,
@@ -1405,7 +1408,7 @@ async def update_config(
         ),
     ] = '',
     parameter_updates: Annotated[
-        list[ConfigParamUpdate],
+        list[ConfigParamUpdate] | None,
         Field(
             description=(
                 'List of granular parameter update operations to apply. '
@@ -1422,7 +1425,7 @@ async def update_config(
         ),
     ] = None,
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
             description=(
                 'Complete storage configuration containing input/output table and file mappings. '
@@ -1443,19 +1446,19 @@ async def update_config(
         ),
     ] = None,
     processors_before: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run before the configured component row runs.'),
     ] = None,
     processors_after: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
     folder: Annotated[
-        Optional[str],
+        str | None,
         Field(description=folder_field_description('configuration', 'configurations')),
     ] = None,
     variables: Annotated[
-        Optional[list[VariableDefinition]],
+        list[VariableDefinition] | None,
         Field(
             description=(
                 'Variable definitions for this configuration. '
@@ -1469,6 +1472,8 @@ async def update_config(
 ) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
+    Not for SQL transformations (`keboola.snowflake-transformation` / `keboola.google-bigquery-transformation`),
+    data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE).
 
     This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
     All other fields will remain unchanged.
@@ -1481,9 +1486,9 @@ async def update_config(
     - Any combination of the above
 
     WHEN NOT TO USE:
-    - `keboola.orchestrator` / `keboola.flow` → use flows tools
-    - `keboola.data-apps` → use data applications tools
-    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+    - `keboola.orchestrator` / `keboola.flow` → use `update_flow`
+    - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `update_sql_transformation`
 
     PREREQUISITES:
     - Configuration must already exist (use create_config for new configurations)
@@ -1545,7 +1550,7 @@ async def update_config(
             skip_trash=True,
         )
 
-    LOG.info(f'Updated configuration for component "{component_id}" with configuration id ' f'"{configuration_id}".')
+    LOG.info(f'Updated configuration for component "{component_id}" with configuration id "{configuration_id}".')
 
     folder_hint = (
         await apply_folder_metadata(client, component_id, configuration_id, folder, 'configurations', 'update_config')
@@ -1676,7 +1681,7 @@ async def update_config_row(
         ),
     ] = '',
     parameter_updates: Annotated[
-        list[ConfigParamUpdate],
+        list[ConfigParamUpdate] | None,
         Field(
             description=(
                 'List of granular parameter update operations to apply to this row. '
@@ -1693,7 +1698,7 @@ async def update_config_row(
         ),
     ] = None,
     storage: Annotated[
-        dict[str, Any],
+        dict[str, Any] | None,
         Field(
             description=(
                 'Complete storage configuration for this row containing input/output table and file mappings. '
@@ -1714,11 +1719,11 @@ async def update_config_row(
         ),
     ] = None,
     processors_before: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run before the configured component row runs.'),
     ] = None,
     processors_after: Annotated[
-        list[dict[str, Any]],
+        list[dict[str, Any]] | None,
         Field(description='The list of processors that will run after the configured component row runs.'),
     ] = None,
     is_disabled: Annotated[
@@ -1748,9 +1753,9 @@ async def update_config_row(
     - Any combination of the above
 
     WHEN NOT TO USE:
-    - `keboola.orchestrator` / `keboola.flow` → use flows tools
-    - `keboola.data-apps` → use data applications tools
-    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use SQL transformation tools
+    - `keboola.orchestrator` / `keboola.flow` → use `update_flow`
+    - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
+    - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `update_sql_transformation`
 
     PREREQUISITES:
     - The configuration row must already exist (use add_config_row for new rows)

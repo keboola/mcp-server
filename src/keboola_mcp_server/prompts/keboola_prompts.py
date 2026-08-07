@@ -1,11 +1,9 @@
 """Keboola-specific prompts for the MCP server."""
 
-from typing import List
-
 from fastmcp.prompts import Message
 
 
-async def analyze_project_structure() -> List[Message]:
+async def analyze_project_structure() -> list[Message]:
     """Generate a comprehensive analysis prompt for a Keboola project's structure.
 
     This prompt analyzes the project's components, data flow, buckets, tables,
@@ -54,7 +52,7 @@ Please provide a comprehensive analysis with specific examples and names from th
     ]
 
 
-async def project_health_check() -> List[Message]:
+async def project_health_check() -> list[Message]:
     """Generate a comprehensive health check analysis for the entire Keboola project.
 
     This one-click prompt analyzes project health, identifies issues, and provides recommendations.
@@ -108,7 +106,7 @@ Please provide specific findings with component and table names and actionable r
     ]
 
 
-async def data_quality_assessment() -> List[Message]:
+async def data_quality_assessment() -> list[Message]:
     """Generate a comprehensive data quality assessment for all project data.
 
     One-click analysis of data quality across all buckets and tables.
@@ -162,7 +160,7 @@ metrics, and actionable recommendations.""",
     ]
 
 
-async def security_audit() -> List[Message]:
+async def security_audit() -> list[Message]:
     """Generate a security audit for the Keboola project.
 
     One-click security assessment covering permissions, access, and best practices.
@@ -216,7 +214,7 @@ Please provide specific findings with component and bucket names and prioritized
     ]
 
 
-async def performance_optimization_analysis() -> List[Message]:
+async def performance_optimization_analysis() -> list[Message]:
     """Generate a performance analysis and optimization recommendations.
 
     One-click performance audit identifying bottlenecks and optimization opportunities.
@@ -271,7 +269,7 @@ recommendations with component names and expected performance improvements.""",
     ]
 
 
-async def component_usage_summary() -> List[Message]:
+async def component_usage_summary() -> list[Message]:
     """Generate a comprehensive summary of all components and their usage patterns.
 
     One-click overview of project components, configurations, and usage analytics.
@@ -326,7 +324,7 @@ actionable insights for project optimization.""",
     ]
 
 
-async def error_analysis_report() -> List[Message]:
+async def error_analysis_report() -> list[Message]:
     """Generate an analysis of recent errors and failures across the project.
 
     One-click error analysis with troubleshooting recommendations.
@@ -381,7 +379,7 @@ instances with component names and detailed troubleshooting guidance.""",
     ]
 
 
-async def create_project_documentation() -> List[Message]:
+async def create_project_documentation() -> list[Message]:
     """Generate comprehensive project documentation automatically.
 
     One-click documentation creation for the entire Keboola project.
@@ -444,7 +442,7 @@ including specific names, configurations, and real examples.""",
 
 async def generate_project_descriptions(
     focus_area: str = 'all', include_technical_details: bool = True
-) -> List[Message]:
+) -> list[Message]:
     """Generate comprehensive descriptions for all tables and buckets in a Keboola project.
 
     The focus can be on buckets, tables, or all components. Technical details such as
@@ -512,7 +510,7 @@ Please analyze the actual project data and provide specific, actionable descript
     ]
 
 
-async def debug_transformation(transformation_name: str) -> List[Message]:
+async def debug_transformation(transformation_name: str) -> list[Message]:
     """Generate a prompt to help debug a specific transformation.
 
     Provides debugging assistance for transformation logic, SQL errors, performance
@@ -537,7 +535,7 @@ What specific information would you need to effectively debug this transformatio
 
 async def create_data_pipeline_plan(
     source_description: str, target_description: str, requirements: str = ''
-) -> List[Message]:
+) -> list[Message]:
     """Generate a prompt to create a data pipeline plan.
 
     Creates a comprehensive data pipeline design based on source and target specifications
@@ -585,7 +583,7 @@ Please provide a detailed, step-by-step implementation plan with specific Kebool
     ]
 
 
-async def optimize_sql_query(sql_query: str, context: str = '') -> List[Message]:
+async def optimize_sql_query(sql_query: str, context: str = '') -> list[Message]:
     """Generate a prompt to optimize an SQL query for Keboola transformations.
 
     Analyzes the provided SQL query and suggests performance optimizations,
@@ -631,7 +629,7 @@ Please provide the optimized query with explanations for each improvement.""",
 
 async def troubleshoot_component_error(
     component_name: str, error_message: str, component_type: str = 'unknown'
-) -> List[Message]:
+) -> list[Message]:
     """Generate a prompt to troubleshoot a component error.
 
     Provides comprehensive troubleshooting guidance for component errors including

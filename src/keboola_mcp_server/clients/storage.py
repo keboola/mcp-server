@@ -1,7 +1,8 @@
 import logging
 import math
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import Any, Iterable, Literal, Mapping, Optional, Sequence, cast
+from typing import Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
@@ -52,7 +53,7 @@ class GlobalSearchResponse(BaseModel):
             ),
             alias='fullPath',
         )
-        component_id: Optional[str] = Field(
+        component_id: str | None = Field(
             default=None, description='The id of the component the item belongs to.', alias='componentId'
         )
         organization_id: int = Field(
@@ -90,7 +91,7 @@ class GlobalSearchResponse(BaseModel):
     def validate_dict_fields(cls, current_value: Any) -> Any:
         # If the value is empty-list/None, return an empty dictionary, otherwise return the value
         if not current_value:
-            return dict()
+            return {}
         return current_value
 
 
@@ -108,7 +109,7 @@ class APIFlowResponse(BaseModel):
         serialization_alias='id',
     )
     name: str = Field(description='The name of the flow configuration')
-    description: Optional[str] = Field(default=None, description='The description of the flow configuration')
+    description: str | None = Field(default=None, description='The description of the flow configuration')
 
     # Versioning and state
     version: int = Field(description='The version of the flow configuration')
@@ -131,7 +132,7 @@ class APIFlowResponse(BaseModel):
     )
 
     # Change tracking
-    change_description: Optional[str] = Field(
+    change_description: str | None = Field(
         default=None,
         description='The description of the latest changes',
         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
@@ -146,8 +147,8 @@ class APIFlowResponse(BaseModel):
     )
 
     # Timestamps
-    created: Optional[str] = Field(None, description='Creation timestamp')
-    updated: Optional[str] = Field(None, description='Last update timestamp')
+    created: str | None = Field(None, description='Creation timestamp')
+    updated: str | None = Field(None, description='Last update timestamp')
 
 
 class ComponentAPIResponse(BaseModel):
@@ -242,7 +243,7 @@ class ConfigurationAPIResponse(BaseModel):
         validation_alias=AliasChoices('configuration_id', 'id', 'configurationId', 'configuration-id'),
     )
     name: str = Field(description='The name of the configuration')
-    description: Optional[str] = Field(default=None, description='The description of the configuration')
+    description: str | None = Field(default=None, description='The description of the configuration')
     version: int = Field(description='The version of the configuration')
     is_disabled: bool = Field(
         default=False,
@@ -257,10 +258,10 @@ class ConfigurationAPIResponse(BaseModel):
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters and storage'
     )
-    rows: Optional[list[dict[str, Any]]] = Field(
+    rows: list[dict[str, Any]] | None = Field(
         default=None, description='The row configurations within this configuration'
     )
-    change_description: Optional[str] = Field(
+    change_description: str | None = Field(
         default=None,
         description='The description of the latest changes',
         validation_alias=AliasChoices('changeDescription', 'change_description', 'change-description'),
@@ -275,13 +276,13 @@ class ConfigurationAPIResponse(BaseModel):
 class CreateConfigurationAPIResponse(BaseModel):
     id: str = Field(description='Unique identifier of the newly created configuration.')
     name: str = Field(description='Human-readable name of the configuration.')
-    description: Optional[str] = Field(default='', description='Optional description of the configuration.')
+    description: str | None = Field(default='', description='Optional description of the configuration.')
     created: datetime = Field(description='Timestamp when the configuration was created (ISO 8601).')
     creator_token: dict[str, Any] = Field(
         description='Metadata about the token that created the configuration.', alias='creatorToken'
     )
     version: int = Field(description='Version number of the configuration.')
-    change_description: Optional[str] = Field(
+    change_description: str | None = Field(
         description='Optional description of the change that introduced this configuration version.',
         alias='changeDescription',
     )
@@ -291,19 +292,16 @@ class CreateConfigurationAPIResponse(BaseModel):
     is_deleted: bool = Field(
         description='Indicates whether the configuration has been marked as deleted.', alias='isDeleted'
     )
-    configuration: Optional[dict[str, Any]] = Field(
+    configuration: dict[str, Any] | None = Field(
         description='User-defined configuration payload (key-value structure).'
     )
-    state: Optional[dict[str, Any]] = Field(
-        description='Internal runtime state data associated with the configuration.'
-    )
-    current_version: Optional[dict[str, Any]] = Field(
+    state: dict[str, Any] | None = Field(description='Internal runtime state data associated with the configuration.')
+    current_version: dict[str, Any] | None = Field(
         description='Metadata about the currently deployed version of the configuration.', alias='currentVersion'
     )
 
 
 class AsyncStorageClient(KeboolaServiceClient):
-
     def __init__(
         self,
         raw_client: RawKeboolaClient,
@@ -328,7 +326,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         cls,
         *,
         root_url: str,
-        token: Optional[str],
+        token: str | None,
         version: str = 'v2',
         branch_id: str | None = None,
         headers: dict[str, Any] | None = None,
@@ -461,6 +459,48 @@ class AsyncStorageClient(KeboolaServiceClient):
         :param metadata_id: The id of the metadata
         """
         await self.delete(endpoint=f'buckets/{bucket_id}/metadata/{metadata_id}')
+
+    async def shared_bucket_list(self, branch_id: str | None = None) -> list[JsonDict]:
+        """
+        Lists buckets shared with this project (the Data Catalog "Shared with me" view) that
+        are not necessarily linked into the project yet.
+
+        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
+        :return: List of shared buckets as dictionaries
+        """
+        bid = branch_id or self._branch_id
+        return cast(list[JsonDict], await self.get(endpoint=f'branch/{bid}/shared-buckets'))
+
+    async def bucket_link(
+        self,
+        name: str,
+        stage: str,
+        source_project_id: str,
+        source_bucket_id: str,
+        display_name: str | None = None,
+        branch_id: str | None = None,
+    ) -> JsonDict:
+        """
+        Links a shared bucket (from `shared_bucket_list`) into this project as a new local bucket.
+
+        :param name: The name the linked bucket should have in this project.
+        :param stage: The stage ('in' or 'out') the linked bucket should have in this project.
+        :param source_project_id: The id of the project the shared bucket belongs to.
+        :param source_bucket_id: The id of the shared bucket to link.
+        :param display_name: Optional display name for the linked bucket.
+        :param branch_id: Optional branch ID override (uses client's branch_id if not specified)
+        :return: The newly linked bucket's details as a dictionary
+        """
+        bid = branch_id or self._branch_id
+        data: JsonDict = {
+            'name': name,
+            'stage': stage,
+            'sourceProjectId': source_project_id,
+            'sourceBucketId': source_bucket_id,
+        }
+        if display_name is not None:
+            data['displayName'] = display_name
+        return cast(JsonDict, await self.post(endpoint=f'branch/{bid}/buckets', data=data))
 
     async def bucket_metadata_get(self, bucket_id: str) -> list[JsonDict]:
         """
@@ -636,19 +676,29 @@ class AsyncStorageClient(KeboolaServiceClient):
         Searches component configurations by component and metadata keys.
         All filters are applied server-side by the SAPI search endpoint.
 
+        The endpoint validates the query string against a fixed set of field names and rejects the
+        whole request with HTTP 400 if an unknown one is sent, so the param names below must match
+        the SAPI contract exactly: the component filter is `idComponent` (*not* `componentId`), and
+        `metadataKeys` must use the bracket-array form. `include=filteredMetadata` is required for
+        the response rows to carry their `metadata` at all — without it each row is only
+        `{'idComponent': ..., 'configurationId': ...}`.
+
         :param component_id: Optional component ID to filter results.
         :param metadata_keys: List of metadata keys to filter by — returns only configurations
             that have at least one of the specified metadata keys set.
-        :return: List of matching configurations as dictionaries.
+        :return: List of matching configurations, one entry per configuration, each with
+            'idComponent', 'configurationId' and a 'metadata' list of {'id', 'key', 'value',
+            'timestamp'} entries holding only the metadata matching `metadata_keys`.
         """
         if not (component_id or metadata_keys):
             return []
         endpoint = f'branch/{self._branch_id}/search/component-configurations'
         params: dict[str, Any] = {}
         if component_id:
-            params['componentId'] = component_id
+            params['idComponent'] = component_id
         for i, key in enumerate(metadata_keys or []):
             params[f'metadataKeys[{i}]'] = key
+        params['include'] = 'filteredMetadata'
         return cast(list[JsonDict], await self.get(endpoint=endpoint, params=params))
 
     async def configuration_metadata_get(self, component_id: str, configuration_id: str) -> list[JsonDict]:
@@ -687,7 +737,7 @@ class AsyncStorageClient(KeboolaServiceClient):
     async def configuration_metadata_delete(self, component_id: str, configuration_id: str, metadata_id: str) -> None:
         """Deletes a single metadata entry for a configuration."""
         endpoint = (
-            f'branch/{self._branch_id}/components/{component_id}' f'/configs/{configuration_id}/metadata/{metadata_id}'
+            f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}/metadata/{metadata_id}'
         )
         await self.delete(endpoint=endpoint)
 
@@ -697,8 +747,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         configuration_id: str,
         configuration: dict[str, Any],
         change_description: str,
-        updated_name: Optional[str] = None,
-        updated_description: Optional[str] = None,
+        updated_name: str | None = None,
+        updated_description: str | None = None,
         is_disabled: bool | None = None,
     ) -> JsonDict:
         """
@@ -771,8 +821,8 @@ class AsyncStorageClient(KeboolaServiceClient):
         configuration_row_id: str,
         configuration: dict[str, Any],
         change_description: str,
-        updated_name: Optional[str] = None,
-        updated_description: Optional[str] = None,
+        updated_name: str | None = None,
+        updated_description: str | None = None,
         is_disabled: bool | None = None,
     ) -> JsonDict:
         """
@@ -860,7 +910,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         query: str,
         limit: int = 100,
         offset: int = 0,
-        types: Sequence[ItemType] = tuple(),
+        types: Sequence[ItemType] = (),
         branch_scope: Literal['current', 'all'] = 'current',
     ) -> GlobalSearchResponse:
         """
@@ -994,7 +1044,7 @@ class AsyncStorageClient(KeboolaServiceClient):
             payload['results'] = results
         if duration is not None:
             # The events API ignores floats, so we round up to the nearest integer.
-            payload['duration'] = int(math.ceil(duration))
+            payload['duration'] = math.ceil(duration)
         if run_id:
             payload['runId'] = run_id
 

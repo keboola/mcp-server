@@ -9,7 +9,7 @@ import dataclasses
 import secrets
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Annotated, Optional
+from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
 
@@ -26,7 +26,7 @@ SCOPE_KEY = 'project_scope'
 # when the scope resolves the target unambiguously (a single scoped project).
 PROJECT_ID_ARG = 'project_id'
 ProjectIdArg = Annotated[
-    Optional[str],
+    str | None,
     Field(
         description=(
             'Target Keboola project id for this write. Required when the session is scoped to 2+ '

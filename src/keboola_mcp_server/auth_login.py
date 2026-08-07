@@ -464,7 +464,7 @@ def forget_tokens(storage_api_url: str | None = None) -> bool:
 class _CallbackHandler(BaseHTTPRequestHandler):
     result: dict = {}
 
-    def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
+    def do_GET(self) -> None:
         query = urllib.parse.parse_qs(urlparse(self.path).query)
         type(self).result = {k: v[0] for k, v in query.items()}
         self.send_response(200)

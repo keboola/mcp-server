@@ -389,16 +389,16 @@ def _to_tool_finding(finding: semantic_service.ConstraintValidationFinding) -> C
 def _format_validation_result(
     raw_result: semantic_service.SemanticValidationServiceOutput,
     *,
-    models: Sequence[semantic_service.SemanticModelData] = tuple(),
-    summary_notes: Sequence[str] = tuple(),
+    models: Sequence[semantic_service.SemanticModelData] = (),
+    summary_notes: Sequence[str] = (),
 ) -> SemanticQueryValidationResult:
     used_dataset_objects = []
     used_metric_objects = []
     for group in raw_result.used_object_groups:
         if group.object_type == SemanticObjectType.SEMANTIC_DATASET:
-            used_dataset_objects = [item for item in group.objects]
+            used_dataset_objects = list(group.objects)
         elif group.object_type == SemanticObjectType.SEMANTIC_METRIC:
-            used_metric_objects = [item for item in group.objects]
+            used_metric_objects = list(group.objects)
 
     used_datasets = [SemanticUsedDataset.from_semantic_service_data(item) for item in used_dataset_objects]
     used_metrics = [SemanticUsedMetric.from_semantic_service_data(item) for item in used_metric_objects]
@@ -418,10 +418,7 @@ def _format_validation_result(
         summary_parts.append('Some checks should be verified after execution.')
     summary_parts.extend(summary_notes)
 
-    if summary_parts:
-        summary = '\n'.join(summary_parts)
-    else:
-        summary = 'Semantic validation finished without relevant findings.'
+    summary = '\n'.join(summary_parts) if summary_parts else 'Semantic validation finished without relevant findings.'
 
     return SemanticQueryValidationResult(
         valid=raw_result.valid,
@@ -495,7 +492,7 @@ async def search_semantic_context(
                 'relationships, glossary terms, constraints, or models.'
             )
         ),
-    ] = tuple(),
+    ] = (),
     semantic_model_ids: Annotated[
         Sequence[str],
         Field(
@@ -504,7 +501,7 @@ async def search_semantic_context(
                 'Empty list [] means search across all semantic models.'
             )
         ),
-    ] = tuple(),
+    ] = (),
     case_sensitive: Annotated[
         bool,
         Field(
@@ -625,7 +622,7 @@ async def get_semantic_context(
                 'Empty list [] means load across all semantic models.'
             )
         ),
-    ] = tuple(),
+    ] = (),
 ) -> list[SemanticObjectTypeContext]:
     """
     Loads semantic objects grouped by semantic object type.
@@ -672,12 +669,12 @@ async def get_semantic_context(
     # Normalize the contexts to the SemanticObjectTypeContext format
     normalized_contexts: list[SemanticObjectTypeContext] = []
     for selection, context in zip(semantic_objects, groups, strict=True):
-        assert isinstance(
-            context, semantic_service.SemanticServiceDataTypeGroup
-        ), f'Expected SemanticServiceDataTypeGroup, got {type(context)}'
-        assert (
-            selection.object_type == context.object_type
-        ), f'Semantic object type mismatch: {selection.object_type} != {context.object_type}'
+        assert isinstance(context, semantic_service.SemanticServiceDataTypeGroup), (
+            f'Expected SemanticServiceDataTypeGroup, got {type(context)}'
+        )
+        assert selection.object_type == context.object_type, (
+            f'Semantic object type mismatch: {selection.object_type} != {context.object_type}'
+        )
         if selection.ids:
             # Detail context with specific IDs
             normalized_contexts.append(
@@ -766,7 +763,7 @@ async def validate_semantic_query(
                 'Use `ids` when you want to assert that specific semantic objects should be present.'
             )
         ),
-    ] = tuple(),
+    ] = (),
 ) -> ValidateSemanticQueryOutput:
     """
     Performs best-effort semantic validation of an SQL query against one or more semantic models and compares it with

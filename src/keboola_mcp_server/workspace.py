@@ -5,7 +5,8 @@ import logging
 import re
 import time
 import uuid
-from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence, cast
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any, Literal, cast
 from urllib.parse import urlunparse
 
 from httpx import HTTPStatusError
@@ -127,6 +128,17 @@ class _Workspace(abc.ABC):
     _CANCELLATION_TIMEOUT = 30.0  # 30 seconds to wait for cancellation
     _SELECTED_ROWS_MSG = 'Returning {rows} of {total} selected rows.'
     _PAGE_SIZE = 1_000
+
+    @staticmethod
+    def _next_poll_interval(elapsed_seconds: float) -> float:
+        """Job-status polling interval for `execute_query`: fast at first, capped at 20s."""
+        if elapsed_seconds < 10:
+            return 1.0
+        if elapsed_seconds < 30:
+            return 2.0
+        if elapsed_seconds < 120:
+            return 5.0
+        return 20.0
 
     def __init__(self, workspace_id: int, client: KeboolaClient) -> None:
         self._workspace_id = workspace_id
@@ -262,7 +274,14 @@ class _Workspace(abc.ABC):
                 'canceled',
                 'cancelled',
             ]:
-                await asyncio.sleep(1)
+                elapsed_time = time.perf_counter() - ts_start
+                # Back off polling frequency for long-running queries so a multi-minute query
+                # isn't status-checked hundreds of times. Sleep is clamped to the time left so
+                # it never overshoots the timeout, though the last status check before the
+                # deadline may still land up to one full interval (max 20s) early.
+                remaining = self._QUERY_TIMEOUT - elapsed_time
+                sleep_for = max(min(self._next_poll_interval(elapsed_time), remaining), 0.0)
+                await asyncio.sleep(sleep_for)
                 elapsed_time = time.perf_counter() - ts_start
                 if elapsed_time > self._QUERY_TIMEOUT:
                     # Cancel the query before raising timeout error. Inline the reason (rather than
@@ -389,7 +408,7 @@ class _Workspace(abc.ABC):
 
             offset += len(page_data)
 
-        rows = [{col_name: value for col_name, value in zip(columns, row)} for row in all_rows]
+        rows = [dict(zip(columns, row)) for row in all_rows]
 
         if columns:
             message = ' '.join(
@@ -611,7 +630,10 @@ class WorkspaceManager:
         step-up header — Connection waives permissions the user's token lacks when the
         ServiceAccount is authorized for workspace provisioning. No privileged token
         is ever minted; the audit trail stays on the user's token.
-        Otherwise the user's own Storage client is used unchanged.
+        Otherwise the user's own Storage client is used unchanged. The SA JWT is attached
+        only when this manager's client talks to the server's own stack;
+        `KeboolaClient.step_up_storage_client()` falls back to the user's own client
+        otherwise.
 
         The step-up client is cached for this manager's lifetime, so the token file is
         read once — when the client is first built — not on every provisioning attempt.
@@ -623,7 +645,7 @@ class WorkspaceManager:
             return self._client.storage_client
         if self._provisioning_client is None:
             self._provisioning_client = self._client.step_up_storage_client(self._kubernetes_token_path)
-            LOG.debug('Workspace provisioning will send the Kubernetes step-up header.')
+            LOG.debug('Workspace provisioning storage client created.')
         return self._provisioning_client
 
     async def _find_ws_by_schema(self, schema: str) -> _WspInfo | None:
@@ -654,7 +676,7 @@ class WorkspaceManager:
             if e.response.status_code == 404:
                 return None
             else:
-                raise e
+                raise
 
     async def _find_ws_in_branch(self) -> _WspInfo | None:
         """Finds the shared read-only MCP workspace in the current branch.

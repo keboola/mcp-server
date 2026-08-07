@@ -1,5 +1,7 @@
+import logging
 import re
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -27,6 +29,7 @@ from keboola_mcp_server.tools.components.model import (
 from keboola_mcp_server.tools.components.utils import (
     _apply_param_update,
     _normalize_jsonpath,
+    apply_folder_metadata,
     clean_bucket_name,
     clear_configuration_folder_metadata,
     create_transformation_configuration,
@@ -111,8 +114,7 @@ def test_expand_component_types(
                                     name='Code 0',
                                     script=[
                                         'CREATE OR REPLACE TABLE "test_table_1" AS SELECT * FROM "test";',
-                                        '-- comment\n'
-                                        'CREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";',
+                                        ('-- comment\nCREATE OR REPLACE TABLE "test_table_2" AS SELECT * FROM "test";'),
                                     ],
                                 )
                             ],
@@ -1258,8 +1260,10 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     ),
                 ]
             ),
-            'Added code with name "New Code"\nReplaced 2 occurrences of "FROM" in '
-            'the transformation\n## Updated Transformation Structure',
+            (
+                'Added code with name "New Code"\nReplaced 2 occurrences of "FROM" in '
+                'the transformation\n## Updated Transformation Structure'
+            ),
         ),
         # Remove code (structural) - should report structure
         (
@@ -1326,11 +1330,7 @@ def test_structure_summary(parameters: dict[str, Any], expected_markdown: str):
                     SimplifiedTfBlocks.Block(name='New Block', codes=[]),
                 ]
             ),
-            (
-                'Added block with name "New Block"\n'
-                'Added code with name "New Code"\n'
-                '## Updated Transformation Structure'
-            ),
+            ('Added block with name "New Block"\nAdded code with name "New Code"\n## Updated Transformation Structure'),
         ),
         # Empty updates list - should return empty message
         (
@@ -1426,7 +1426,7 @@ async def test_get_config_folders_skips_list_when_enough_folder_configs() -> Non
     folder_configs = [
         {
             'id': str(i),
-            'componentId': 'keboola.snowflake-transformation',
+            'idComponent': 'keboola.snowflake-transformation',
             'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': f'Folder{i % 5}'}],
         }
         for i in range(22)
@@ -1456,12 +1456,12 @@ _MANY_CONFIGS = [{'id': str(i)} for i in range(25)]
             [
                 {
                     'id': '1',
-                    'componentId': 'keboola.snowflake-transformation',
+                    'idComponent': 'keboola.snowflake-transformation',
                     'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
                 },
                 {
                     'id': '2',
-                    'componentId': 'keboola.snowflake-transformation',
+                    'idComponent': 'keboola.snowflake-transformation',
                     'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Sales'}],
                 },
             ],
@@ -1472,12 +1472,12 @@ _MANY_CONFIGS = [{'id': str(i)} for i in range(25)]
             [
                 {
                     'id': '1',
-                    'componentId': 'keboola.snowflake-transformation',
+                    'idComponent': 'keboola.snowflake-transformation',
                     'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
                 },
                 {
                     'id': '2',
-                    'componentId': 'keboola.snowflake-transformation',
+                    'idComponent': 'keboola.snowflake-transformation',
                     'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
                 },
             ],
@@ -1502,6 +1502,55 @@ async def test_get_config_folders(
         component_id='keboola.snowflake-transformation',
         metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
     )
+
+
+@pytest.mark.asyncio
+async def test_apply_folder_metadata_logs_cause_when_folder_lookup_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Test that a failing folder lookup is logged with its cause and does not fail the caller.
+
+    A silent `except Exception` here hid a fully broken search endpoint: every call 400'd, the hint
+    was never produced, and nothing in the logs said why.
+    """
+    client = _make_client([], [])
+    client.storage_client.component_configurations_search = AsyncMock(
+        side_effect=RuntimeError('componentId: "This field was not expected."')
+    )
+
+    with caplog.at_level(logging.ERROR):
+        result = await apply_folder_metadata(
+            client, 'keboola.snowflake-transformation', 'cfg-1', None, 'configurations', 'update_config'
+        )
+
+    assert result is None
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    # The cause must be in the message *and* attached as exc_info, so neither a log aggregator
+    # that drops tracebacks nor one that only shows them loses the reason.
+    assert 'This field was not expected.' in record.getMessage()
+    assert record.exc_info is not None
+
+
+@pytest.mark.asyncio
+async def test_apply_folder_metadata_logs_cause_when_setting_folder_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that a failing folder write is logged with its cause and does not fail the caller."""
+    client = _make_client([], [])
+    client.storage_client.configuration_metadata_update = AsyncMock(side_effect=RuntimeError('boom'))
+
+    with caplog.at_level(logging.ERROR):
+        result = await apply_folder_metadata(
+            client, 'keboola.snowflake-transformation', 'cfg-1', 'Analytics', 'configurations', 'update_config'
+        )
+
+    assert result is None
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert 'boom' in record.getMessage()
+    assert record.exc_info is not None
 
 
 @pytest.mark.parametrize(

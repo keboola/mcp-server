@@ -3,9 +3,9 @@
 import dataclasses
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Callable, Literal
+from typing import Literal
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware.logging import LoggingMiddleware
@@ -16,7 +16,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
-from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport
+from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport, get_env_storage_api_url
 from keboola_mcp_server.errors import ValidationErrorMiddleware
 from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
@@ -142,7 +142,7 @@ class CustomRoutes:
         except HTTPException:
             raise
         except Exception as e:
-            LOG.exception(f'Failed to handle OAuth callback: {e}')
+            LOG.exception('Failed to handle OAuth callback')
             return JSONResponse(status_code=500, content={'message': f'Unexpected error: {e}'})
 
     def add_to_mcp(self, mcp: FastMCP) -> None:
@@ -190,8 +190,12 @@ def create_server(
     config = config.replace_by(os.environ)
 
     hostname_suffix = os.environ.get('HOSTNAME_SUFFIX')
-    if not config.storage_api_url and hostname_suffix:
-        config = dataclasses.replace(config, storage_api_url=f'https://connection.{hostname_suffix}')
+    # This is where the server's own stack is resolved, once: the '--api-url' CLI parameter (already
+    # in `config`) wins over the environment. The resulting `config.storage_api_url` is the single
+    # value that every "is this my stack?" check uses afterwards — the per-request Storage API URL
+    # pinning and the Kubernetes ServiceAccount step-up alike (`ServerState.own_stack_storage_api_url`).
+    if not config.storage_api_url and (env_storage_api_url := get_env_storage_api_url()):
+        config = dataclasses.replace(config, storage_api_url=env_storage_api_url)
 
     if config.oauth_client_id and config.oauth_client_secret:
         # fall back to HOSTNAME_SUFFIX if no URLs are specified for the OAUth server or the MCP server itself

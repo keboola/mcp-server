@@ -10,6 +10,15 @@ from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.workspace import JobSubmittedInfo, WorkspaceManager, _SnowflakeWorkspace
 
 
+@pytest.mark.parametrize(
+    ('elapsed_seconds', 'expected_interval'),
+    [(0.0, 1.0), (9.99, 1.0), (10.0, 2.0), (29.99, 2.0), (30.0, 5.0), (119.99, 5.0), (120.0, 20.0), (600.0, 20.0)],
+)
+def test_next_poll_interval_backs_off_over_time(elapsed_seconds: float, expected_interval: float) -> None:
+    """Job-status polling interval must back off as the query keeps running."""
+    assert _SnowflakeWorkspace._next_poll_interval(elapsed_seconds) == expected_interval
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('bearer_token', 'storage_token', 'expected_token'),
@@ -403,7 +412,7 @@ async def test_workspace_manager_execute_query_forwards_callback():
     Without this, the tool-layer notification path is silently disabled for any consumer that goes
     through the manager (which is everyone, in practice).
     """
-    workspace, qs_mock = _make_snowflake_workspace_with_mocked_qs(job_id='job-fwd')
+    workspace, _qs_mock = _make_snowflake_workspace_with_mocked_qs(job_id='job-fwd')
 
     manager = WorkspaceManager(Mock(spec=KeboolaClient))
     manager._workspace = workspace

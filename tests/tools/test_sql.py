@@ -4,6 +4,7 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call
 
+import httpx
 import pytest
 from mcp.server.fastmcp import Context
 from mcp.types import ProgressNotification
@@ -124,9 +125,9 @@ async def test_query_data_emits_progress_notification_with_job_id(mcp_context_cl
     mcp_context_client.session.send_notification.assert_awaited_once()
     call_args = mcp_context_client.session.send_notification.await_args
     sent = call_args.args[0]
-    assert (
-        call_args.kwargs.get('related_request_id') == 'req-99'
-    ), f'related_request_id missing or wrong: {call_args.kwargs!r}'
+    assert call_args.kwargs.get('related_request_id') == 'req-99', (
+        f'related_request_id missing or wrong: {call_args.kwargs!r}'
+    )
     # The wrapper is ServerNotification(root=ProgressNotification(...)); both .root and
     # the wrapper's model_dump should expose the progress notification shape.
     progress = sent.root if hasattr(sent, 'root') else sent
@@ -208,7 +209,6 @@ async def test_query_data_skips_progress_when_request_id_missing(mcp_context_cli
 
 
 class TestWorkspaceManagerSnowflake:
-
     @pytest.fixture
     def context(self, keboola_client: KeboolaClient, empty_context: Context, mocker) -> Context:
         keboola_client.storage_client.workspace_list.return_value = [
@@ -447,10 +447,7 @@ class TestWorkspaceManagerSnowflake:
         }
         mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
 
-        if db_data.data is not None:
-            expected = _truncate_data(db_data, max_rows, max_chars)
-        else:
-            expected = db_data
+        expected = _truncate_data(db_data, max_rows, max_chars) if db_data.data is not None else db_data
 
         m = WorkspaceManager.from_state(context.session.state)
         actual = await m.execute_query(query, max_rows=max_rows, max_chars=max_chars)
@@ -806,10 +803,7 @@ class TestWorkspaceManagerBigQuery:
         }
         mocker.patch.object(QueryServiceClient, 'create', return_value=qsclient)
 
-        if db_data.data is not None:
-            expected = _truncate_data(db_data, max_rows, max_chars)
-        else:
-            expected = db_data
+        expected = _truncate_data(db_data, max_rows, max_chars) if db_data.data is not None else db_data
 
         m = WorkspaceManager.from_state(context.session.state)
         actual = await m.execute_query(query, max_rows=max_rows, max_chars=max_chars)
@@ -828,15 +822,21 @@ class TestWorkspaceManagerBigQuery:
         [
             # Query Service wraps BigQuery errors as a serialized error object; we extract `Message`.
             (
-                '{Location: "query"; Message: "Syntax error: Unexpected identifier \\"INVALID\\" at [1:1]"; '
-                'Reason: "invalidQuery"}',
+                (
+                    '{Location: "query"; Message: "Syntax error: Unexpected identifier \\"INVALID\\" at [1:1]"; '
+                    'Reason: "invalidQuery"}'
+                ),
                 'Syntax error: Unexpected identifier "INVALID" at [1:1]',
             ),
             (
-                '{Location: ""; Message: "Access Denied: Table foo: User does not have permission to query '
-                'table foo, or perhaps it does not exist."; Reason: "accessDenied"}',
-                'Access Denied: Table foo: User does not have permission to query table foo, '
-                'or perhaps it does not exist.',
+                (
+                    '{Location: ""; Message: "Access Denied: Table foo: User does not have permission to query '
+                    'table foo, or perhaps it does not exist."; Reason: "accessDenied"}'
+                ),
+                (
+                    'Access Denied: Table foo: User does not have permission to query table foo, '
+                    'or perhaps it does not exist.'
+                ),
             ),
             # A plain message (no wrapper) is passed through unchanged.
             ('400 Invalid SQL...', '400 Invalid SQL...'),
@@ -947,6 +947,64 @@ class TestQueryCancellation:
             endpoint='queries/job-abc-123/cancel', data={'reason': 'Test cancellation'}, params=None, timeout=None
         )
         assert result == {'status': 'canceling'}
+
+    @staticmethod
+    def _workspace_credentials_403() -> httpx.HTTPStatusError:
+        request = httpx.Request('POST', 'https://query.example.com/api/v1/branches/1234/workspaces/ws1/queries')
+        response = httpx.Response(403, request=request, text='403 Failed to get workspace credentials')
+        return httpx.HTTPStatusError('403 Failed to get workspace credentials', request=request, response=response)
+
+    @pytest.mark.asyncio
+    async def test_submit_job_retries_on_workspace_credentials_403(self, mocker) -> None:
+        """submit_job retries a transient QS 403 (own deadline shorter than Connection's) up to 3x."""
+        from keboola_mcp_server.clients.base import RawKeboolaClient
+
+        mocker.patch('keboola_mcp_server.clients.query.asyncio.sleep', new=AsyncMock())
+        raw_client = mocker.AsyncMock(RawKeboolaClient)
+        raw_client.post.side_effect = [
+            self._workspace_credentials_403(),
+            self._workspace_credentials_403(),
+            {'queryJobId': 'qs-job-retried'},
+        ]
+
+        qsclient = QueryServiceClient(raw_client=raw_client, branch_id='1234')
+        job_id = await qsclient.submit_job(statements=['SELECT 1'], workspace_id='ws1')
+
+        assert job_id == 'qs-job-retried'
+        assert raw_client.post.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_submit_job_raises_after_exhausting_credentials_403_retries(self, mocker) -> None:
+        """submit_job gives up and raises once all retry attempts return the same transient 403."""
+        from keboola_mcp_server.clients.base import RawKeboolaClient
+
+        mocker.patch('keboola_mcp_server.clients.query.asyncio.sleep', new=AsyncMock())
+        raw_client = mocker.AsyncMock(RawKeboolaClient)
+        raw_client.post.side_effect = [self._workspace_credentials_403() for _ in range(3)]
+
+        qsclient = QueryServiceClient(raw_client=raw_client, branch_id='1234')
+        with pytest.raises(httpx.HTTPStatusError, match='workspace credentials'):
+            await qsclient.submit_job(statements=['SELECT 1'], workspace_id='ws1')
+
+        assert raw_client.post.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_submit_job_does_not_retry_unrelated_403(self, mocker) -> None:
+        """A 403 unrelated to workspace credentials (e.g. real auth failure) is not retried."""
+        from keboola_mcp_server.clients.base import RawKeboolaClient
+
+        request = httpx.Request('POST', 'https://query.example.com/api/v1/branches/1234/workspaces/ws1/queries')
+        response = httpx.Response(403, request=request, text='403 Forbidden: invalid token')
+        raw_client = mocker.AsyncMock(RawKeboolaClient)
+        raw_client.post.side_effect = httpx.HTTPStatusError(
+            '403 Forbidden: invalid token', request=request, response=response
+        )
+
+        qsclient = QueryServiceClient(raw_client=raw_client, branch_id='1234')
+        with pytest.raises(httpx.HTTPStatusError, match='invalid token'):
+            await qsclient.submit_job(statements=['SELECT 1'], workspace_id='ws1')
+
+        assert raw_client.post.call_count == 1
 
     @pytest.mark.asyncio
     async def test_cancellation_polling_multiple_checks(

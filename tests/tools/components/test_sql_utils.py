@@ -5,13 +5,51 @@ Ported from the Keboola UI's splitSqlQueries.test.ts to ensure
 the Python implementation matches the production-proven JavaScript logic.
 """
 
+import re
+import time
+
 import pytest
 
+from keboola_mcp_server.tools.components.model import SimplifiedTfBlocks
 from keboola_mcp_server.tools.components.sql_utils import (
+    MAX_SQL_SCRIPT_LENGTH,
     format_sql,
     join_sql_statements,
     split_sql_statements,
 )
+
+# Synthetic payloads that reproduce the blow-up of the previous statement-level regex. They are
+# constructed, not captured from any real request. The trigger is quote parity: each one needs a
+# quote that can never be paired, preceded by a run of characters the old pattern could not fold
+# into a single greedy match. Size alone is not enough -- a 1 MiB script with balanced quotes
+# always split in ~15 ms. The three shapes below scale differently; all three were measured
+# against the old pattern.
+
+# Cost doubles per ordinary character between the start of the line and the stray quote
+# (measured 1.5 s at 16 characters and 5.8 s at 18, so ~5 days at the 40 used here).
+_UNPAIRED_QUOTE_EXPONENTIAL = 'SELECT ' + 'x' * 40 + "'"
+
+# '-' is a split point for the pattern, so single-character runs carry no ambiguity, but the failing
+# match was still retried at every one of O(n) offsets at O(n) cost each: measured x4 per doubling
+# of the length (0.14 s at 2,001 characters, 8.9 s at 16,001, 43.4 s at the 35,001 used here).
+_UNPAIRED_QUOTE_QUADRATIC = 'x-' * 17_500 + "'"
+
+# Realistic dash-dense SQL, which combines both effects and is by far the worst: measured 0.08 s at
+# 2 repetitions and 20.2 s at 3, i.e. x255 per added repetition, so ~85 minutes at the 4 used here.
+_UNPAIRED_QUOTE_REALISTIC_TAIL = 'col-1 - col-2 - ' * 4 + "'"
+_UNPAIRED_QUOTE_REALISTIC = "SELECT 'a' AS ok;\n" + _UNPAIRED_QUOTE_REALISTIC_TAIL
+
+# A large but completely benign script, to keep the linear path covered at scale.
+_LARGE_BENIGN_SCRIPT = 'SELECT 1;\n' * 5_000
+
+
+def _short_id(value: object) -> str | None:
+    """Keeps pytest IDs readable by not inlining the large payloads. `None` = use pytest's default."""
+    if isinstance(value, str) and len(value) > 40:
+        return f'{len(value)}chars'
+    if isinstance(value, list) and len(value) > 5:
+        return f'{len(value)}items'
+    return None
 
 
 @pytest.mark.parametrize(
@@ -117,7 +155,7 @@ from keboola_mcp_server.tools.components.sql_utils import (
             ),
             [
                 'SELECT 1;',
-                ('-- Comment line\nexecute immediate $$\n  SELECT 2;\n  ' "SELECT 'value;still string';\n$$;"),
+                ('-- Comment line\nexecute immediate $$\n  SELECT 2;\n  SELECT \'value;still string\';\n$$;'),
                 'SELECT 3;',
                 '-- Another comment\nSELECT "double" as col;',
             ],
@@ -514,13 +552,146 @@ from keboola_mcp_server.tools.components.sql_utils import (
             1.0,
             'multi_line_block_comment_with_stars',
         ),
+        # Unpairable quote, exponential shape (48 chars) - used to take ~5 days
+        (
+            _UNPAIRED_QUOTE_EXPONENTIAL,
+            [_UNPAIRED_QUOTE_EXPONENTIAL],
+            1.0,
+            'unpaired_quote_exponential_shape',
+        ),
+        # Unpairable quote, quadratic shape (35 KB) - used to take 43 s
+        (
+            _UNPAIRED_QUOTE_QUADRATIC,
+            [_UNPAIRED_QUOTE_QUADRATIC],
+            1.0,
+            'unpaired_quote_quadratic_shape',
+        ),
+        # Unpairable quote after realistic dash-dense SQL (83 chars) - used to take ~85 min
+        (
+            _UNPAIRED_QUOTE_REALISTIC,
+            ["SELECT 'a' AS ok;", _UNPAIRED_QUOTE_REALISTIC_TAIL],
+            1.0,
+            'unpaired_quote_realistic_dash_dense',
+        ),
+        # Unterminated single quote: the stray quote is kept as ordinary text, the rest still splits
+        (
+            "SELECT 1;\nSELECT 'not closed; SELECT 3",
+            ['SELECT 1;', "SELECT 'not closed;", 'SELECT 3'],
+            1.0,
+            'unterminated_single_quote',
+        ),
+        # Unterminated double quote at the very end of the script
+        (
+            'SELECT 1; SELECT "abc',
+            ['SELECT 1;', 'SELECT "abc'],
+            1.0,
+            'unterminated_double_quote',
+        ),
+        # Unterminated block comment: '/*' is kept as ordinary text, nothing is discarded
+        (
+            'SELECT 1;\nSELECT 2 /* not closed; SELECT 3',
+            ['SELECT 1;', 'SELECT 2 /* not closed;', 'SELECT 3'],
+            1.0,
+            'unterminated_block_comment',
+        ),
+        # Unterminated dollar-quoted block
+        (
+            'SELECT 1;\nSELECT 2 $$ not closed; SELECT 3',
+            ['SELECT 1;', 'SELECT 2 $$ not closed;', 'SELECT 3'],
+            1.0,
+            'unterminated_dollar_block',
+        ),
+        # A ';' preceded only by whitespace is its own (empty) statement, but a ';' immediately
+        # after another one is not. Both behaviours are inherited from the previous pattern.
+        (
+            'SELECT 1; ; SELECT 2;',
+            ['SELECT 1;', ';', 'SELECT 2;'],
+            1.0,
+            'semicolon_after_whitespace_only',
+        ),
+        # Large but benign script (5,000 statements) still splits correctly and fast
+        (
+            _LARGE_BENIGN_SCRIPT,
+            ['SELECT 1;'] * 5_000,
+            1.0,
+            'large_benign_script',
+        ),
     ],
+    ids=_short_id,
 )
 @pytest.mark.asyncio
 async def test_split_sql_statements(input_sql, expected, timeout_seconds, test_id):
     """Test SQL splitting with various inputs and scenarios."""
+    started = time.monotonic()
     result = await split_sql_statements(input_sql, timeout_seconds=timeout_seconds)
+    elapsed = time.monotonic() - started
+
     assert result == expected
+    # The scan is linear in the length of the script, so every case above finishes in single-digit
+    # milliseconds. A case that takes seconds means the splitter has started backtracking again.
+    assert elapsed < 5.0, f'{test_id} took {elapsed:.3f}s'
+
+
+@pytest.mark.parametrize(
+    ('entry_point', 'scripts', 'expected_fragment', 'test_id'),
+    [
+        # A single code block over the limit is rejected by `split_sql_statements()` itself.
+        (
+            'split_sql_statements',
+            ['SELECT ' + 'x' * MAX_SQL_SCRIPT_LENGTH],
+            'The SQL script is too large to process',
+            'single_script_over_limit',
+        ),
+        (
+            'to_raw_parameters',
+            ['SELECT ' + 'x' * MAX_SQL_SCRIPT_LENGTH],
+            "The transformation's total SQL is too large to process",
+            'single_block_over_limit',
+        ),
+        # Several code blocks, each individually within the limit, that together exceed it. This is
+        # the case a per-block-only cap would miss: `to_raw_parameters()` splits all of them, so the
+        # cost is the sum over the blocks.
+        (
+            'to_raw_parameters',
+            ['SELECT ' + 'x' * (MAX_SQL_SCRIPT_LENGTH // 4) for _ in range(5)],
+            "The transformation's total SQL is too large to process",
+            'blocks_over_limit_in_total',
+        ),
+    ],
+    ids=_short_id,
+)
+@pytest.mark.asyncio
+async def test_sql_size_limit_is_enforced(entry_point, scripts, expected_fragment, test_id):
+    """
+    Oversized SQL is rejected before any scanning, on both entry points.
+
+    `SimplifiedTfBlocks.to_raw_parameters()` is the choke point shared by
+    `create_sql_transformation`, `update_sql_transformation` and the config-diff preview.
+    """
+    if entry_point == 'split_sql_statements':
+        with pytest.raises(ValueError, match=re.escape(expected_fragment)) as exc_info:
+            await split_sql_statements(scripts[0])
+    else:
+        blocks = SimplifiedTfBlocks(
+            blocks=[
+                SimplifiedTfBlocks.Block(
+                    name='Blocks',
+                    codes=[
+                        SimplifiedTfBlocks.Block.Code(name=f'Code {i}', script=script)
+                        for i, script in enumerate(scripts)
+                    ],
+                )
+            ]
+        )
+        with pytest.raises(ValueError, match=re.escape(expected_fragment)) as exc_info:
+            await blocks.to_raw_parameters()
+
+    # The message must tell an LLM agent the limit, the actual size and what to do about it.
+    message = str(exc_info.value)
+    assert str(MAX_SQL_SCRIPT_LENGTH) in message
+    assert str(sum(len(script) for script in scripts)) in message
+    assert 'Do not retry with the same input' in message
+    assert 'code blocks' in message
 
 
 @pytest.mark.parametrize(

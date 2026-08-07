@@ -9,7 +9,8 @@ secret can verify it without a shared store.
 
 import gzip
 import json
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import jwt.api_jws
 

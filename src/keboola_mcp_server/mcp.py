@@ -32,7 +32,13 @@ from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_toke
 from keboola_mcp_server.clients.auth_bridge import is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeInfo, build_tracing_headers, deployed_sa_token_path
+from keboola_mcp_server.config import (
+    Config,
+    ServerRuntimeInfo,
+    build_tracing_headers,
+    deployed_sa_token_path,
+    is_same_stack,
+)
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.scope import (
     OAUTH_SESSION_ID_KEY,
@@ -59,7 +65,8 @@ T = TypeVar('T')
 
 DEFAULT_CONCURRENCY = 10
 
-SEMANTIC_TOOLING_FEATURE = 'mcp-semantic-tooling'
+# Metastore object type used to detect whether a project already has any semantic models.
+SEMANTIC_MODEL_OBJECT_TYPE = 'semantic-model'
 SEMANTIC_TOOL_NAMES = {
     'search_semantic_context',
     'get_semantic_context',
@@ -91,24 +98,57 @@ def is_semantic_tool(tool: Tool) -> bool:
     return SEMANTIC_TOOLS_TAG in (tool.tags or set()) or tool.name in SEMANTIC_TOOL_NAMES
 
 
+async def project_has_semantic_models(client: KeboolaClient) -> bool:
+    """
+    Detect whether the project has at least one semantic model, so the semantic tools can be
+    shown/allowed dynamically instead of behind a project feature flag.
+
+    Fails closed: if the metastore call raises (e.g. the project is not provisioned for the
+    semantic layer, or the API returns a 5xx), we treat it as "no semantic models" so the tools
+    stay hidden. This preserves the previous default-off behavior.
+    """
+    try:
+        objects = await client.metastore_client.list_objects(SEMANTIC_MODEL_OBJECT_TYPE, limit=1)
+        return bool(objects)
+    except Exception as e:
+        LOG.debug(f'Failed to detect semantic models, assuming none are available: {e}')
+        return False
+
+
 @dataclasses.dataclass(frozen=True)
 class ServerState:
     config: Config
     runtime_info: ServerRuntimeInfo
     session_store: SessionStore | None = None
 
+    @property
+    def own_stack_storage_api_url(self) -> str | None:
+        """
+        The Storage API URL of the Keboola stack that this server instance belongs to, or None when
+        it has no stack of its own (a locally run server that only learns the stack from the caller).
+
+        This is the single, trusted answer to "which stack is mine?" — every check that compares a
+        session's stack against the server's own stack must use this value, so that the checks cannot
+        drift apart. It is resolved once, when the server starts: `create_server()` builds
+        `self.config` from the '--api-url' CLI parameter, the process environment and the
+        'HOSTNAME_SUFFIX' fallback (see `get_env_storage_api_url()`). Per-request HTTP headers can
+        never influence it — `ServerState` is frozen and `SessionStateMiddleware.apply_request_config()`
+        returns a new `Config` for each request instead of mutating `self.config`.
+        """
+        return self.config.storage_api_url
+
     @classmethod
     def from_context(cls, ctx: Context) -> 'ServerState':
         server_state = ctx.request_context.lifespan_context
         if not isinstance(server_state, ServerState):
-            raise ValueError('ServerState is not available in the context.')
+            raise TypeError('ServerState is not available in the context.')
         return server_state
 
     @classmethod
     def from_starlette(cls, app: Starlette) -> 'ServerState':
         server_state = app.state.server_state
         if not isinstance(server_state, ServerState):
-            raise ValueError('ServerState is not available in the Starlette app.')
+            raise TypeError('ServerState is not available in the Starlette app.')
         return server_state
 
 
@@ -199,8 +239,13 @@ class SessionStateMiddleware(fmw.Middleware):
             # IMPORTANT: Since mcp 1.12.4 and fastmcp 2.11 the fastmcp.server.dependencies.get_http_request()
             #   returns the same object as ctx.request_context.request.
 
+            # Resolved once here and threaded through both stack checks (the per-request Storage
+            # API URL pinning below and the Kubernetes step-up in `KeboolaClient`), so the two
+            # cannot disagree about which stack is ours.
+            own_stack_storage_api_url = server_state.own_stack_storage_api_url
+
             if http_rq := get_http_request_or_none():
-                config = self.apply_request_config(http_rq, config)
+                config = self.apply_request_config(http_rq, config, own_stack_storage_api_url=own_stack_storage_api_url)
 
             # Capability-discovery requests (tools/list, prompts/list, resources/list) MUST be fast: a
             # client fetches all three on connect, so any Connection AUTH round-trip here (token
@@ -267,7 +312,9 @@ class SessionStateMiddleware(fmw.Middleware):
                     LOG.info(f'Skipping branch validation for {context.method} request.')
                 config = dataclasses.replace(config, branch_id=None)
 
-            state = await self.create_session_state(config, runtime_info)
+            state = await self.create_session_state(
+                config, runtime_info, own_stack_storage_api_url=own_stack_storage_api_url
+            )
             if scope is not None:
                 state[SCOPE_KEY] = scope
             if oauth_session_id := self._read_oauth_session_id(http_rq):
@@ -327,15 +374,40 @@ class SessionStateMiddleware(fmw.Middleware):
         return patched
 
     @classmethod
-    def apply_request_config(cls, http_rq: Request, config: Config) -> Config:
+    def apply_request_config(cls, http_rq: Request, config: Config, *, own_stack_storage_api_url: str | None) -> Config:
+        """
+        Builds the configuration for a single HTTP request by applying the request's headers
+        on top of the server's own configuration.
+
+        The Storage API URL is treated specially: it selects the Keboola stack that the server
+        talks to on the caller's behalf, using the caller's credentials and, on the deployed
+        server, the server's own ServiceAccount identity. When the server has a stack of its own,
+        a request asking for a different stack is not honoured — the server's own Storage API URL
+        is kept. The check is an exact host match against that single known URL (see
+        `is_same_stack()`); no prefix or pattern matching is used.
+
+        :param http_rq: The incoming HTTP request whose headers are applied.
+        :param config: The server's own configuration (from CLI parameters and environment).
+        :param own_stack_storage_api_url: The Storage API URL of the server's own stack
+            (`ServerState.own_stack_storage_api_url`), or None when it has no stack of its own and
+            therefore takes the URL from the request. It must never come from a request header.
+        :return: The configuration to use for this request.
+        """
         LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
         config = config.replace_by(http_rq.headers)
 
+        if own_stack_storage_api_url and not is_same_stack(config.storage_api_url, own_stack_storage_api_url):
+            LOG.warning(
+                f'Ignoring the requested Storage API URL "{config.storage_api_url}"; '
+                f'this server only serves "{own_stack_storage_api_url}".'
+            )
+            config = dataclasses.replace(config, storage_api_url=own_stack_storage_api_url)
+
         if user := http_rq.scope.get('user'):
             assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
-            assert isinstance(
-                user.access_token, ProxyAccessToken
-            ), f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
+            assert isinstance(user.access_token, ProxyAccessToken), (
+                f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
+            )
             # Log only non-sensitive identifiers; ProxyAccessToken's default repr includes the raw
             # kbc_access_token/kbc_refresh_token, which must never be logged.
             LOG.debug(
@@ -582,13 +654,21 @@ class SessionStateMiddleware(fmw.Middleware):
         config: Config,
         runtime_info: ServerRuntimeInfo,
         readonly: bool | None = None,
+        *,
+        own_stack_storage_api_url: str | None,
     ) -> dict[str, Any]:
         """
         Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state.
 
-        :param config: The MCP server configuration.
+        :param config: The MCP server configuration, already amended with the request's headers
+            (see `apply_request_config()`).
         :param runtime_info: The MCP server runtime information.
         :param readonly: If True, the `KeboolaClient` will only use HTTP GET, HEAD operations.
+        :param own_stack_storage_api_url: The Storage API URL of the server's own stack
+            (`ServerState.own_stack_storage_api_url`), or None when it has no stack of its own. Passed
+            to the `KeboolaClient`, which sends the Kubernetes ServiceAccount step-up header only when
+            the session talks to that stack. It must never come from a request header, so it is passed
+            separately instead of being read off `config`, whose Storage API URL a header can set.
         :return: The session state dictionary containing the created client and workspace manager instances.
         """
         LOG.info(f'Creating SessionState from config: {config}.')
@@ -621,6 +701,7 @@ class SessionStateMiddleware(fmw.Middleware):
                 bearer_token=bearer_token,
                 headers={**build_tracing_headers(runtime_info), **extra_headers},
                 readonly=readonly,
+                own_stack_storage_api_url=own_stack_storage_api_url,
             ).with_branch_id(config.branch_id)
 
             state[KeboolaClient.STATE_KEY] = client
@@ -633,7 +714,9 @@ class SessionStateMiddleware(fmw.Middleware):
             # The Kubernetes ServiceAccount token path is read from the process environment
             # only (KBC_KUBERNETES_TOKEN_PATH), never from `Config`/HTTP headers — it is a
             # deployment-level credential of the MCP server itself and must not be
-            # overridable per request.
+            # overridable per request. An unforgeable path is not enough on its own, because the
+            # destination can come from a header — `KeboolaClient.step_up_storage_client()`
+            # therefore attaches the JWT only when the target is this server's own stack.
             kubernetes_token_path = deployed_sa_token_path()
             workspace_manager = await WorkspaceManager.create(
                 client, config.workspace_schema, kubernetes_token_path=kubernetes_token_path
@@ -753,7 +836,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             tools = [t for t in tools if is_read_only_tool(t)]
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
 
-        if SEMANTIC_TOOLING_FEATURE not in features:
+        client = KeboolaClient.from_state(context.fastmcp_context.session.state)
+        has_semantic_models = await project_has_semantic_models(client)
+        if not has_semantic_models:
             tools = [t for t in tools if not is_semantic_tool(t)]
 
         return tools
@@ -764,6 +849,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         tool_name: str,
         is_read_only: bool,
         is_semantic: bool,
+        has_semantic_models: bool,
         token_role: str,
         features: set[str],
         is_oauth: bool,
@@ -788,10 +874,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
                 f'Contact your administrator to request write access.'
             )
 
-        if SEMANTIC_TOOLING_FEATURE not in features and is_semantic:
+        if is_semantic and not has_semantic_models:
             return (
                 f'The tool "{tool_name}" is not available in this project. '
-                'Please ask Keboola support to enable "Semantic Layer Tooling" feature.'
+                'This project has no semantic models, so semantic tools are unavailable.'
             )
 
         if 'hide-conditional-flows' in features:
@@ -844,10 +930,16 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
         token_info = await self.get_token_info(context.fastmcp_context)
 
+        has_semantic_models = False
+        if is_semantic_tool(tool):
+            client = KeboolaClient.from_state(context.fastmcp_context.session.state)
+            has_semantic_models = await project_has_semantic_models(client)
+
         denial = self.authorize_tool_call(
             tool_name=tool.name,
             is_read_only=is_read_only_tool(tool),
             is_semantic=is_semantic_tool(tool),
+            has_semantic_models=has_semantic_models,
             token_role=self.get_token_role(token_info),
             features=self.get_project_features(token_info),
             is_oauth=self._is_oauth_authenticated(context.fastmcp_context),

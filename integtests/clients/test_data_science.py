@@ -1,5 +1,5 @@
 import logging
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
@@ -69,8 +69,8 @@ async def initial_data_app(ds_client: DataScienceClient, unique_id: str) -> Asyn
                 # the action. Then there is a background task that runs for the given action and after it finishes,
                 # the current state is updated to match the desired state.
                 await ds_client.delete_data_app(data_app.id)
-            except Exception as e:
-                LOG.exception(f'Failed to delete data app: {e}')
+            except Exception:
+                LOG.exception('Failed to delete data app')
                 raise
 
 

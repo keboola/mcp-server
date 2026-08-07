@@ -3,8 +3,9 @@ import os
 import random
 import subprocess
 import time
+from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Iterable, Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 from fastmcp import Client
@@ -186,8 +187,9 @@ async def _assert_basic_setup(client: Client):
         'get_flows',
         'get_jobs',
         'get_project_info',
+        'get_shared_buckets',
         'get_tables',
-        'set_project_scope',
+        'link_shared_bucket',
         'modify_flow',
         'modify_python_js_data_app',
         'modify_streamlit_data_app',
@@ -195,6 +197,7 @@ async def _assert_basic_setup(client: Client):
         'run_job',
         'run_sync_action',
         'search',
+        'set_project_scope',
         'update_config',
         'update_config_row',
         'update_descriptions',

@@ -2,16 +2,19 @@ import json
 import logging
 from http import HTTPStatus
 from pathlib import Path
-from typing import Any, Optional, Union, cast
+from typing import Any, Union, cast
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 from httpx_retries import Retry, RetryTransport
 
-JsonPrimitive = Union[int, float, str, bool, None]
+# NB: keep as typing.Union, not `X | Y` -- these use a string forward reference ('JsonStruct') for the
+# recursive type, and the eagerly-evaluated `|` operator doesn't support forward-ref strings the way
+# typing.Union does.
+JsonPrimitive = Union[int, float, str, bool, None]  # noqa: UP007
 JsonDict = dict[str, Union[JsonPrimitive, 'JsonStruct']]
 JsonList = list[Union[JsonPrimitive, 'JsonStruct']]
-JsonStruct = Union[JsonDict, JsonList]
+JsonStruct = Union[JsonDict, JsonList]  # noqa: UP007
 
 LOG = logging.getLogger(__name__)
 
@@ -53,7 +56,7 @@ class RawKeboolaClient:
     def __init__(
         self,
         base_api_url: str,
-        api_token: Optional[str],
+        api_token: str | None,
         headers: dict[str, Any] | None = None,
         timeout: httpx.Timeout | None = None,
         readonly: bool | None = None,
@@ -119,7 +122,7 @@ class RawKeboolaClient:
                     if response.text:
                         message_parts.append(f'API error: {response.text}')
                 except Exception:
-                    pass  # should never get here
+                    LOG.debug('Failed to read response.text while building the error message.', exc_info=True)
 
             raise httpx.HTTPStatusError('\n'.join(message_parts), request=response.request, response=response) from e
 
@@ -264,9 +267,9 @@ class RawKeboolaClient:
     async def patch(
         self,
         endpoint: str,
-        data: Optional[dict[str, Any]] = None,
-        params: Optional[dict[str, Any]] = None,
-        headers: Optional[dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, Any] | None = None,
     ) -> JsonStruct:
         """
         Makes a PATCH request to the service API.
@@ -314,7 +317,7 @@ class KeboolaServiceClient:
     async def get(
         self,
         endpoint: str,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
     ) -> JsonStruct:
         """
         Makes a GET request to the service API.
@@ -328,7 +331,7 @@ class KeboolaServiceClient:
     async def get_text(
         self,
         endpoint: str,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
     ) -> str:
         """
         Makes a GET request to the service API.
@@ -342,9 +345,9 @@ class KeboolaServiceClient:
     async def post(
         self,
         endpoint: str,
-        data: Optional[dict[str, Any]] = None,
-        params: Optional[dict[str, Any]] = None,
-        timeout: Optional[httpx.Timeout] = None,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        timeout: httpx.Timeout | None = None,
     ) -> JsonStruct:
         """
         Makes a POST request to the service API.
@@ -360,8 +363,8 @@ class KeboolaServiceClient:
     async def put(
         self,
         endpoint: str,
-        data: Optional[dict[str, Any]] = None,
-        params: Optional[dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> JsonStruct:
         """
         Makes a PUT request to the service API.
@@ -388,8 +391,8 @@ class KeboolaServiceClient:
     async def patch(
         self,
         endpoint: str,
-        data: Optional[dict[str, Any]] = None,
-        params: Optional[dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> JsonStruct:
         """
         Makes a PATCH request to the service API.

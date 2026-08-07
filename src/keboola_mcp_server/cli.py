@@ -11,7 +11,6 @@ import pathlib
 import sys
 import time
 import traceback
-from typing import Optional
 
 import pydantic
 from fastmcp import FastMCP
@@ -27,7 +26,7 @@ from keboola_mcp_server.server import CustomRoutes, create_server
 LOG = logging.getLogger(__name__)
 
 
-def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
+def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     """Parses command line arguments."""
     parser = argparse.ArgumentParser(
         prog='python -m keboola-mcp-server',
@@ -174,11 +173,11 @@ _exception_handlers = {
 
 
 async def _run_login(
-    api_url: Optional[str],
+    api_url: str | None,
     *,
     pat: bool = False,
-    totp: Optional[str] = None,
-    recovery: Optional[str] = None,
+    totp: str | None = None,
+    recovery: str | None = None,
     pat_name: str = 'keboola-mcp-server',
     show_token: bool = False,
     force: bool = False,
@@ -227,7 +226,7 @@ async def _run_login(
         print(f'\n✓ Personal Access Token (valid ~1 month, all accessible projects):\n\n  {pat_token}\n')
 
 
-async def _run_logout(api_url: Optional[str], *, all_stacks: bool = False) -> None:
+async def _run_logout(api_url: str | None, *, all_stacks: bool = False) -> None:
     """Deletes the stored PKCE session so the next login starts fresh."""
     from keboola_mcp_server.auth_login import forget_tokens
 
@@ -300,7 +299,7 @@ async def _run_gc_sessions() -> None:
     print(f"✓ Partitions created: {', '.join(created) or 'none'}; dropped: {', '.join(dropped) or 'none'}")
 
 
-async def run_server(args: Optional[list[str]] = None) -> None:
+async def run_server(args: list[str] | None = None) -> None:
     """Runs the MCP server in async mode."""
     parsed_args = parse_args(args)
 
@@ -433,7 +432,7 @@ async def run_server(args: Optional[list[str]] = None) -> None:
             _tools = await mcp_server.list_tools(run_middleware=False)
             app.state.mcp_tools_input_schema = {tool.name: tool.parameters for tool in _tools}
             # Used by the /preview/configuration authorization check to enforce X-Read-Only-Mode
-            # and the ToolsFilteringMiddleware-parity gating (read-only role, semantic feature).
+            # and the ToolsFilteringMiddleware-parity gating (read-only role, semantic tools).
             app.state.mcp_read_only_tools = {tool.name for tool in _tools if is_read_only_tool(tool)}
             app.state.mcp_semantic_tools = {tool.name for tool in _tools if is_semantic_tool(tool)}
 
@@ -453,12 +452,12 @@ async def run_server(args: Optional[list[str]] = None) -> None:
 
             await server.serve()
 
-    except Exception as e:
-        LOG.exception(f'Server failed: {e}')
+    except Exception:
+        LOG.exception('Server failed')
         sys.exit(1)
 
 
-def main(args: Optional[list[str]] = None) -> None:
+def main(args: list[str] | None = None) -> None:
     asyncio.run(run_server(args))
 
 

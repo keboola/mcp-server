@@ -5,8 +5,9 @@ import os
 import re
 import secrets
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Any, Mapping, cast
+from typing import Any, cast
 from urllib.parse import urljoin
 
 import httpx
@@ -152,7 +153,6 @@ class ProxyRefreshToken(RefreshToken):
 
 
 class SimpleOAuthProvider(OAuthProvider):
-
     def __init__(
         self,
         *,
@@ -290,11 +290,11 @@ class SimpleOAuthProvider(OAuthProvider):
             raise HTTPException(400, 'Invalid state parameter')
 
         if not state_data:
-            LOG.debug(f'[handle_oauth_callback] Invalid state: {state_data}', exc_info=True)
+            LOG.debug(f'[handle_oauth_callback] Invalid state: {state_data}')
             raise HTTPException(400, 'Invalid state parameter')
 
         if state_data['expires_at'] < time.time():
-            LOG.debug(f'[handle_oauth_callback] Expired state: {state_data}', exc_info=True)
+            LOG.debug(f'[handle_oauth_callback] Expired state: {state_data}')
             raise HTTPException(400, 'Invalid state parameter')
 
         # Exchange the authorization code for the access token with the OAuth server.
@@ -319,7 +319,7 @@ class SimpleOAuthProvider(OAuthProvider):
                     f'OAuth server response: status={response.status_code}, text={response.text}'
                 )
                 raise HTTPException(
-                    400, 'Failed to exchange code for token: ' f'status={response.status_code}, text={response.text}'
+                    400, f'Failed to exchange code for token: status={response.status_code}, text={response.text}'
                 )
 
             data = response.json()
@@ -411,7 +411,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :raises HTTPException: If the OAuth server response indicates an error.
         """
         _log_debug(
-            f'[exchange_authorization_code] authorization_code={authorization_code}, ' f'client_id={client.client_id}'
+            f'[exchange_authorization_code] authorization_code={authorization_code}, client_id={client.client_id}'
         )
         # Check that we get the instance loaded by load_authorization_code() function.
         assert isinstance(authorization_code, _ExtendedAuthorizationCode)
@@ -530,7 +530,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :raises TokenError: If the session-refresh call indicates an error.
         """
         _log_debug(
-            f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, ' f'scopes={scopes}'
+            f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, scopes={scopes}'
         )
 
         assert isinstance(refresh_token, ProxyRefreshToken), f'Expected ProxyRefreshToken, got {type(refresh_token)}'

@@ -133,6 +133,10 @@ The server supports multiple **transport** options, which can be selected by pro
 
 To work with your Keboola project the server needs two things: your **Keboola Region** (`KBC_STORAGE_API_URL`) and a way to **authenticate**. The recommended way is a one-time browser **login** — you never create, copy, or paste a token. Optionally set `KBC_BRANCH_ID` to work inside a development branch.
 
+Two of the variables are not taken from the request headers:
+- `KBC_STORAGE_API_URL`: a server that was started with its own Storage API URL (the `--api-url` parameter or the `KBC_STORAGE_API_URL` environment variable) only serves that one Keboola stack. An `X-Storage-Api-Url` header asking for a different host is ignored (a warning is logged) — the server keeps its own URL for the request. Start the server without a Storage API URL of its own if you want each request to choose its stack.
+- `KBC_KUBERNETES_TOKEN_PATH` (deployed servers only, see [docs/kubernetes-sa-auth.md](docs/kubernetes-sa-auth.md)): read from the environment only, never from a header.
+
 ### Logging in
 
 Sign in once with your browser; the server stores the session and refreshes it automatically, so there are no tokens to manage:

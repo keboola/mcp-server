@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.75.0"
+version = "1.76.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
-    "fastmcp == 3.4.2",
+    "fastmcp == 3.4.4",
     "mcp == 1.28.1",
     "httpx ~= 0.28",
     "httpx-retries~=0.5",
@@ -28,17 +28,7 @@ dependencies = [
 ]
 [project.optional-dependencies]
 codestyle = [
-    "black ~= 26.3",
-    "isort ~= 8.0",
-    "flake8 ~= 7.3",
-    "Flake8-pyproject ~= 1.2",
-    "flake8-bugbear ~= 25.11",
-    "flake8-colors ~= 0.1",
-    "flake8-isort ~= 7.0",
-    "flake8-pytest-style ~= 2.2",
-    "flake8-quotes ~= 3.4",
-    "flake8-typing-imports ~= 1.17",
-    "pep8-naming ~= 0.15",
+    "ruff ~= 0.16",
 ]
 tests = [
     "pytest ~= 9.0",
@@ -63,32 +53,6 @@ keboola-mcp-server = "keboola_mcp_server.cli:main"
 
 [tool.setuptools.package-data]
 "keboola_mcp_server.resources" = ["storage-schema.json"]
-
-[tool.black]
-target-version = ["py310"]
-skip-string-normalization = true
-line-length = 120
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-line_length = 120
-multi_line_output = 3
-use_parentheses = true
 
 [tool.uv]
 # Dependency cooldown (supply-chain hardening): never resolve a package version
@@ -115,25 +79,41 @@ log_level = "INFO"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s (%(filename)s:%(lineno)s)"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 
-[tool.flake8]
-max-line-length = 120
-import-order-style = "edited"
-application-package-names = ["keboola_mcp_server"]
-min-python-version = "3.10.0"
-pytest-fixture-no-parentheses = true
-# Skip unused import checks F401 in __init__.py files; re-exported imports are intentional.
-per-file-ignores = [
-    "__init__.py: F401",
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+# On top of ruff's (already broad) default rule set:
+extend-select = [
+    "I",     # isort -- import sorting; replaces isort + flake8-isort
+    "UP",    # pyupgrade -- modern Python syntax
+    "E402",  # module-level import not at top of file; was enforced by flake8. Keeps the
+             # deliberate `# noqa: E402` markers in tests/tools/test_data_apps.py meaningful
+             # instead of RUF100 flagging them as unused.
 ]
-# For Compatibility with black we skip: E203 whitespace before ':', W503 checks line break before binary operator
-# For Compatibility with isort we skip: I101 Imported names are in the wrong order since we follow isort format using
-# alphabetical case-sensitive sort A, B, a, b
-extend-ignore = ["E203", "W503", "I101"]
+# BLE001: this server's tool/error boundary is built on deliberate broad `except Exception` catches
+# (never crash, always return a structured error/best-effort result) -- see keboola_mcp_server.errors.
+# tool_errors and the many "best effort, log and continue" catches throughout tools/.
+ignore = ["BLE001"]
+
+[tool.ruff.lint.per-file-ignores]
+# Re-exports for the package's public API; unused within the module itself.
+"src/keboola_mcp_server/tools/components/__init__.py" = ["F401"]
+"src/keboola_mcp_server/tools/flow/__init__.py" = ["F401"]
+# Test/integtest-only: blocking subprocess calls and naive datetimes used for comparison are
+# intentional there and carry none of the production-code risk the rules guard against.
+"tests/**" = ["ASYNC220", "ASYNC221", "DTZ001", "DTZ007", "S102"]
+"integtests/**" = ["ASYNC220", "ASYNC221"]
+
+[tool.ruff.format]
+# Matches black's former `skip-string-normalization`: leave existing quote style alone.
+quote-style = "preserve"
 
 [tool.tox]
 requires = ["tox>=4.23"]
-env_list = ["python", "black", "isort", "flake8", "check-tools-docs"]
-labels = { cs-fix = ["black", "isort"], cs = ["isort", "flake8"] }
+env_list = ["python", "ruff", "check-tools-docs"]
+labels = { cs-fix = ["ruff-fix"], cs = ["ruff"] }
 
 [tool.tox.env_run_base]
 description = "Run tests"
@@ -180,37 +160,27 @@ commands = [
     ],
 ]
 
-[tool.tox.env.black]
-description = "Fix code formatting using black"
+[tool.tox.env.ruff]
+description = "Check formatting and run lint checks using ruff"
 package = "skip"
 deps = [
-    "black ~= 26.3",
+    "ruff ~= 0.16",
 ]
-commands = [["black", "src/", "tests/", "integtests/"]]
+commands = [
+    ["ruff", "format", "--check", "src/", "tests/", "integtests/"],
+    ["ruff", "check", "src/", "tests/", "integtests/"],
+]
 
-[tool.tox.env.isort]
-description = "Sort imports using isort"
+[tool.tox.env.ruff-fix]
+description = "Auto-fix formatting and lint issues using ruff (replaces the old black + isort envs)"
 package = "skip"
 deps = [
-    "isort ~= 8.0",
+    "ruff ~= 0.16",
 ]
-commands = [["isort", "src/", "tests/", "integtests/"]]
-
-[tool.tox.env.flake8]
-description = "Run code style check using flake8"
-package = "skip"
-deps = [
-    "flake8 ~= 7.3",
-    "Flake8-pyproject ~= 1.2",
-    "flake8-bugbear ~= 25.11",
-    "flake8-colors ~= 0.1",
-    "flake8-isort ~= 7.0",
-    "flake8-pytest-style ~= 2.2",
-    "flake8-quotes ~= 3.4",
-    "flake8-typing-imports ~= 1.17",
-    "pep8-naming ~= 0.15",
+commands = [
+    ["ruff", "format", "src/", "tests/", "integtests/"],
+    ["ruff", "check", "--fix", "src/", "tests/", "integtests/"],
 ]
-commands = [["flake8", "src/", "tests/", "integtests/"]]
 
 [tool.tox.env.check-tools-docs]
 description = "Check if TOOLS.md is up-to-date with tool definitions"

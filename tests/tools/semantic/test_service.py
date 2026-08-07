@@ -461,8 +461,10 @@ def test_extract_metric_column(sql: str, expected: str | None) -> None:
         ),
         # Function call + string literal — LEFT and AVG (keyword) are filtered; string literal stripped.
         (
-            'fact.DIM_CURRENCY = dim.CURRENCY_FROM AND LEFT(dim.CODE_PERIOD_VALUE, 6) = fact.CODE_PERIOD_VALUE '
-            "AND dim.RATE_TYPE = 'AVG'",
+            (
+                'fact.DIM_CURRENCY = dim.CURRENCY_FROM AND LEFT(dim.CODE_PERIOD_VALUE, 6) = fact.CODE_PERIOD_VALUE '
+                "AND dim.RATE_TYPE = 'AVG'"
+            ),
             ['DIM_CURRENCY', 'CURRENCY_FROM', 'CODE_PERIOD_VALUE', 'RATE_TYPE'],
         ),
         # All-lowercase on-clause returns empty list (triggers full-string fallback).
@@ -727,7 +729,7 @@ def test_constraint_is_relevant_edge_cases(
         # Relationship with uppercase ON clause columns — but the actual SQL uses DIFFERENT columns
         # in the join (FK_ORDER_ID instead of FK_CUSTOMER_ID).  Should NOT detect the relationship.
         (
-            ('SELECT * FROM "DB"."s"."ORDERS" o ' 'JOIN "DB"."s"."CUSTOMERS" c ON o."FK_ORDER_ID" = c."PK_ORDER_ID"'),
+            ('SELECT * FROM "DB"."s"."ORDERS" o JOIN "DB"."s"."CUSTOMERS" c ON o."FK_ORDER_ID" = c."PK_ORDER_ID"'),
             [
                 (
                     'dataset-orders',

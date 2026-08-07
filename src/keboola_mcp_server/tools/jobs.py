@@ -1,6 +1,7 @@
 import datetime
 import logging
-from typing import Annotated, Any, Literal, Optional, Sequence, Union
+from collections.abc import Sequence
+from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from fastmcp.tools import FunctionTool
@@ -62,13 +63,13 @@ class JobListItem(BaseModel):
 
     id: str = Field(description='The ID of the job.')
     status: JOB_STATUS = Field(description='The status of the job.')
-    component_id: Optional[str] = Field(
+    component_id: str | None = Field(
         description='The ID of the component that the job is running on.',
         validation_alias=AliasChoices('componentId', 'component', 'component_id', 'component-id'),
         serialization_alias='componentId',
         default=None,
     )
-    config_id: Optional[str] = Field(
+    config_id: str | None = Field(
         description='The ID of the component configuration that the job is running on.',
         validation_alias=AliasChoices('configId', 'config', 'config_id', 'config-id'),
         serialization_alias='configId',
@@ -80,25 +81,25 @@ class JobListItem(BaseModel):
         serialization_alias='isFinished',
         default=False,
     )
-    created_time: Optional[datetime.datetime] = Field(
+    created_time: datetime.datetime | None = Field(
         description='The creation time of the job.',
         validation_alias=AliasChoices('createdTime', 'created_time', 'created-time'),
         serialization_alias='createdTime',
         default=None,
     )
-    start_time: Optional[datetime.datetime] = Field(
+    start_time: datetime.datetime | None = Field(
         description='The start time of the job.',
         validation_alias=AliasChoices('startTime', 'start_time', 'start-time'),
         serialization_alias='startTime',
         default=None,
     )
-    end_time: Optional[datetime.datetime] = Field(
+    end_time: datetime.datetime | None = Field(
         description='The end time of the job.',
         validation_alias=AliasChoices('endTime', 'end_time', 'end-time'),
         serialization_alias='endTime',
         default=None,
     )
-    duration_seconds: Optional[float] = Field(
+    duration_seconds: float | None = Field(
         description='The duration of the job in seconds.',
         validation_alias=AliasChoices('durationSeconds', 'duration_seconds', 'duration-seconds'),
         serialization_alias='durationSeconds',
@@ -119,46 +120,49 @@ class JobDetail(JobListItem):
 
     url: str = Field(description='The URL of the job.')
 
-    config_data: Optional[dict[str, Any]] = Field(
+    config_data: dict[str, Any] | None = Field(
         description='The data of the configuration.',
         validation_alias=AliasChoices('configData', 'config_data', 'config-data'),
         serialization_alias='configData',
         default=None,
     )
-    config_row: Optional[str] = Field(
+    config_row: str | None = Field(
         description='The configuration row ID.',
         validation_alias=AliasChoices('configRow', 'config_row', 'config-row'),
         serialization_alias='configRow',
         default=None,
     )
-    run_id: Optional[str] = Field(
+    run_id: str | None = Field(
         description='The ID of the run that the job is running on.',
         validation_alias=AliasChoices('runId', 'run_id', 'run-id'),
         serialization_alias='runId',
         default=None,
     )
-    result: Optional[dict[str, Any]] = Field(
+    result: dict[str, Any] | None = Field(
         description='The results of the job.',
         default=None,
     )
     links: list[Link] = Field(..., description='The links relevant to the job.')
-    logs: Optional[list['JobLogEvent']] = Field(
+    logs: list['JobLogEvent'] | None = Field(
         description='Execution log events for the job, populated when include_logs=True.',
         default=None,
     )
 
     @field_validator('result', 'config_data', mode='before')
     @classmethod
-    def validate_dict_fields(cls, current_value: Union[list[Any], dict[str, Any], None]) -> dict[str, Any]:
+    def validate_dict_fields(cls, current_value: list[Any] | dict[str, Any] | None) -> dict[str, Any]:
         # Ensures that if the result or config_data field is passed as an empty list [] or None,
         # it gets converted to an empty dict {}.Why? Because the result is expected to be an Object, but create job
         # endpoint sends [], perhaps it means "empty". This avoids type errors.
         if not isinstance(current_value, dict):
             if not current_value:
-                return dict()
+                return {}
             if isinstance(current_value, list):
-                raise ValueError(
-                    'Field "result" or "config_data" cannot be a list, expecting dictionary, ' f'got: {current_value}.'
+                # NB: must be ValueError, not TypeError -- inside a pydantic field_validator, only
+                # ValueError/AssertionError get wrapped into a pydantic.ValidationError; other
+                # exception types propagate raw.
+                raise ValueError(  # noqa: TRY004
+                    f'Field "result" or "config_data" cannot be a list, expecting dictionary, got: {current_value}.'
                 )
         return current_value
 
@@ -176,7 +180,7 @@ class GetJobsDetailOutput(BaseModel):
     jobs: list[JobDetail] = Field(..., description='List of jobs with full details.')
 
 
-GetJobsOutput = Union[GetJobsListOutput, GetJobsDetailOutput]
+GetJobsOutput = GetJobsListOutput | GetJobsDetailOutput
 
 
 # End of Job Base Models ########################################
@@ -201,7 +205,7 @@ async def get_jobs(
                 'When empty [], lists jobs in the project as summaries with optional filtering.'
             )
         ),
-    ] = tuple(),
+    ] = (),
     status: Annotated[
         JOB_STATUS,
         Field(
@@ -212,7 +216,7 @@ async def get_jobs(
         ),
     ] = None,
     component_id: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 'The optional ID of the component whose jobs you want to list '
@@ -221,7 +225,7 @@ async def get_jobs(
         ),
     ] = None,
     config_id: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 'The optional ID of the component configuration whose jobs you want to list '
@@ -233,7 +237,7 @@ async def get_jobs(
         int,
         Field(
             description=(
-                'The number of jobs to list when listing (ignored if job_ids is provided), ' 'default = 100, max = 500.'
+                'The number of jobs to list when listing (ignored if job_ids is provided), default = 100, max = 500.'
             ),
             ge=1,
             le=500,
@@ -250,7 +254,7 @@ async def get_jobs(
         SORT_BY_VALUES,
         Field(
             description=(
-                'The field to sort the jobs by when listing (ignored if job_ids is provided), ' 'default = "startTime".'
+                'The field to sort the jobs by when listing (ignored if job_ids is provided), default = "startTime".'
             ),
         ),
     ] = 'startTime',
@@ -284,7 +288,7 @@ async def get_jobs(
         ),
     ] = 50,
     log_event_types: Annotated[
-        Optional[Sequence[Literal['info', 'warn', 'error', 'success']]],
+        Sequence[Literal['info', 'warn', 'error', 'success']] | None,
         Field(
             description=(
                 'Filter log events by type. Only used when include_logs=True. '
@@ -452,12 +456,11 @@ async def run_job(
             f'Started a new job with id: {job.id} for component {component_id} and configuration {configuration_id}.'
         )
         return job
-    except Exception as exception:
+    except Exception:
         LOG.exception(
-            f'Error when starting a new job for component {component_id} and configuration {configuration_id}: '
-            f'{exception}'
+            f'Error when starting a new job for component {component_id} and configuration {configuration_id}'
         )
-        raise exception
+        raise
 
 
 # End of MCP tools ########################################

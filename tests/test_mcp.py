@@ -9,6 +9,7 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel, Field
+from starlette.requests import Request
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -102,9 +103,11 @@ async def _async_square_or_fail(n: int) -> int:
                 'key2': {'nested_key': SimpleModel(field2=789)},
                 'key3': datetime(2025, 1, 1, 1, 2, 3),
             },
-            '{"key1":[{"field3":"2025-02-03T10:11:12+02:00"}],'
-            '"key2":{"nested_key":{"field2":789}},'
-            '"key3":"2025-01-01T01:02:03"}',
+            (
+                '{"key1":[{"field3":"2025-02-03T10:11:12+02:00"}],'
+                '"key2":{"nested_key":{"field2":789}},'
+                '"key3":"2025-01-01T01:02:03"}'
+            ),
         ),
     ],
 )
@@ -177,11 +180,7 @@ def test_exclude_none_serializer(data, expected):
                 NestedModel(field1='value1', field2=['item1', 'item2']),
                 NestedModel(field1='value2', field2=['item3', 'item4']),
             ],
-            '[2]:\n'
-            '  - field1: value1\n'
-            '    field2[2]: item1,item2\n'
-            '  - field1: value2\n'
-            '    field2[2]: item3,item4',
+            ('[2]:\n  - field1: value1\n    field2[2]: item1,item2\n  - field1: value2\n    field2[2]: item3,item4'),
         ),
         # Complex structure with models, lists, dicts, and None
         (
@@ -192,13 +191,7 @@ def test_exclude_none_serializer(data, expected):
                 ],
                 'meta': SimpleModel(field1='test'),
             },
-            'users[2]{name,active}:\n'
-            '  Alice,true\n'
-            '  Bob,null\n'
-            'meta:\n'
-            '  field1: test\n'
-            '  field2: null\n'
-            '  field3: null',
+            ('users[2]{name,active}:\n  Alice,true\n  Bob,null\nmeta:\n  field1: test\n  field2: null\n  field3: null'),
         ),
     ],
 )
@@ -607,34 +600,31 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('features', 'tool_name', 'expect_filtered'),
+        ('has_semantic_models', 'tool_name', 'expect_filtered'),
         [
-            ([], 'search_semantic_context', True),
-            ([], 'get_semantic_schema', True),
-            (['mcp-semantic-tooling'], 'search_semantic_context', False),
-            (['mcp-semantic-tooling'], 'get_semantic_schema', False),
-            (['other-feature'], 'search_semantic_context', True),
-            (['other-feature'], 'get_semantic_schema', True),
+            (False, 'search_semantic_context', True),
+            (False, 'get_semantic_schema', True),
+            (True, 'search_semantic_context', False),
+            (True, 'get_semantic_schema', False),
         ],
         ids=[
-            'no_feature_search',
-            'no_feature_schema',
-            'with_feature_search',
-            'with_feature_schema',
-            'unrelated_feature_search',
-            'unrelated_feature_schema',
+            'no_models_search',
+            'no_models_schema',
+            'with_models_search',
+            'with_models_schema',
         ],
     )
-    async def test_list_tools_filters_semantic_tools_by_feature(
+    async def test_list_tools_filters_semantic_tools_by_models(
         self,
         mcp_context_client,
-        features: list[str],
+        has_semantic_models: bool,
         tool_name: str,
         expect_filtered: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.verify_token = AsyncMock(
-            return_value={'owner': {'features': features}, 'admin': {}}
+        keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
+        keboola_client.metastore_client.list_objects = AsyncMock(
+            return_value=[MagicMock()] if has_semantic_models else []
         )
 
         tools = [
@@ -661,33 +651,34 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('features', 'tool_name', 'tool_tags', 'expect_error'),
+        ('has_semantic_models', 'tool_name', 'tool_tags', 'expect_error'),
         [
-            ([], 'search_semantic_context', {'semantic'}, True),
-            ([], 'get_semantic_schema', {'semantic'}, True),
-            (['mcp-semantic-tooling'], 'search_semantic_context', {'semantic'}, False),
-            (['mcp-semantic-tooling'], 'get_semantic_schema', {'semantic'}, False),
-            ([], 'other_tool', set(), False),
+            (False, 'search_semantic_context', {'semantic'}, True),
+            (False, 'get_semantic_schema', {'semantic'}, True),
+            (True, 'search_semantic_context', {'semantic'}, False),
+            (True, 'get_semantic_schema', {'semantic'}, False),
+            (False, 'other_tool', set(), False),
         ],
         ids=[
-            'no_feature_search_tool',
-            'no_feature_schema_tool',
-            'with_feature_search_tool',
-            'with_feature_schema_tool',
-            'no_feature_non_semantic_tool',
+            'no_models_search_tool',
+            'no_models_schema_tool',
+            'with_models_search_tool',
+            'with_models_schema_tool',
+            'no_models_non_semantic_tool',
         ],
     )
-    async def test_call_tool_blocks_semantic_tools_by_feature(
+    async def test_call_tool_blocks_semantic_tools_by_models(
         self,
         mcp_context_client,
-        features: list[str],
+        has_semantic_models: bool,
         tool_name: str,
         tool_tags: set[str],
         expect_error: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.storage_client.verify_token = AsyncMock(
-            return_value={'owner': {'features': features}, 'admin': {}}
+        keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
+        keboola_client.metastore_client.list_objects = AsyncMock(
+            return_value=[MagicMock()] if has_semantic_models else []
         )
 
         tool = _tool(tool_name, tags=tool_tags)
@@ -701,7 +692,7 @@ class TestToolsFilteringMiddleware:
 
         middleware = ToolsFilteringMiddleware()
         if expect_error:
-            with pytest.raises(ToolError, match='Semantic Layer Tooling'):
+            with pytest.raises(ToolError, match='no semantic models'):
                 await middleware.on_call_tool(context, call_next)
         else:
             result = await middleware.on_call_tool(context, call_next)
@@ -746,9 +737,11 @@ class TestSessionStateMiddleware:
             return expected_result
 
         captured_configs: list[Config] = []
+        captured_own_stack_urls: list[str | None] = []
 
-        async def fake_create_session_state(cfg, _runtime_info, readonly=None):
+        async def fake_create_session_state(cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url):
             captured_configs.append(cfg)
+            captured_own_stack_urls.append(own_stack_storage_api_url)
             return {'fake': 'state'}
 
         middleware = SessionStateMiddleware()
@@ -762,6 +755,92 @@ class TestSessionStateMiddleware:
         assert result is expected_result
         assert len(captured_configs) == 1
         assert captured_configs[0].branch_id == expected_branch_id
+        # The session's client is told which stack is the server's own one, so that it can decide
+        # whether the Kubernetes step-up header may be sent.
+        assert captured_own_stack_urls == ['https://connection.test.keboola.com']
+
+    @pytest.mark.parametrize(
+        ('server_storage_api_url', 'headers', 'expected_storage_api_url'),
+        [
+            # No Storage API URL in the headers: the server's own stack is used.
+            (
+                'https://connection.keboola.com',
+                {'X-Storage-Api-Token': 'header-token'},
+                'https://connection.keboola.com',
+            ),
+            # The expected case: the caller asks for the very stack this server runs on.
+            (
+                'https://connection.keboola.com',
+                {'X-Storage-Api-Url': 'https://connection.keboola.com', 'X-Branch-Id': '123'},
+                'https://connection.keboola.com',
+            ),
+            # The same stack spelled with the scheme's default port is honoured as our own.
+            (
+                'https://connection.keboola.com:443',
+                {'X-Storage-Api-Url': 'https://connection.keboola.com', 'X-Branch-Id': '123'},
+                'https://connection.keboola.com',
+            ),
+            # Another Keboola stack is not honoured ...
+            (
+                'https://connection.keboola.com',
+                {'X-Storage-Api-Url': 'https://connection.north-europe.azure.keboola.com', 'X-Branch-Id': '123'},
+                'https://connection.keboola.com',
+            ),
+            # ... and neither are hosts that only look like this server's stack.
+            (
+                'https://connection.keboola.com',
+                {'X-Storage-Api-Url': 'https://connection.keboola.com.attacker.example'},
+                'https://connection.keboola.com',
+            ),
+            (
+                'https://connection.keboola.com',
+                {'X-Storage-Api-Url': 'https://connection.attacker.example'},
+                'https://connection.keboola.com',
+            ),
+            (
+                'https://connection.keboola.com',
+                {'X-Storage-Api-Url': 'https://connection.keboola.com@attacker.example'},
+                'https://connection.keboola.com',
+            ),
+            # A server with no stack of its own (locally run, stdio) keeps taking the URL
+            # from the request, which is the only source it has.
+            (
+                None,
+                {'X-Storage-Api-Url': 'https://connection.north-europe.azure.keboola.com'},
+                'https://connection.north-europe.azure.keboola.com',
+            ),
+        ],
+        ids=[
+            'no_url_in_headers',
+            'own_stack',
+            'own_stack_default_port',
+            'other_stack',
+            'lookalike_suffix',
+            'foreign_domain',
+            'user_info',
+            'no_own_stack',
+        ],
+    )
+    def test_apply_request_config_pins_storage_api_url(
+        self,
+        server_storage_api_url: str | None,
+        headers: dict[str, str],
+        expected_storage_api_url: str,
+    ):
+        """A request may not steer the server to a Keboola stack other than its own."""
+        config = Config(storage_api_url=server_storage_api_url, storage_token='server-token')
+        http_rq = MagicMock(spec=Request)
+        http_rq.headers = headers
+        http_rq.scope = {}
+
+        applied = SessionStateMiddleware.apply_request_config(
+            http_rq, config, own_stack_storage_api_url=server_storage_api_url
+        )
+
+        assert applied.storage_api_url == expected_storage_api_url
+        # Only the Storage API URL is pinned; the other per-request headers keep working.
+        assert applied.storage_token == headers.get('X-Storage-Api-Token', 'server-token')
+        assert applied.branch_id == headers.get('X-Branch-Id')
 
     def test_apply_request_config_injects_exchanged_session_token(self):
         from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
@@ -781,7 +860,7 @@ class TestSessionStateMiddleware:
         http_rq = Request({'type': 'http', 'headers': [], 'user': AuthenticatedUser(access_token)})
         config = Config(storage_api_url='https://connection.test.keboola.com')
 
-        out_config = SessionStateMiddleware.apply_request_config(http_rq, config)
+        out_config = SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
 
         assert out_config.storage_token == 'kbc_at_exchanged'
         assert is_programmatic_token(out_config.storage_token)
@@ -873,7 +952,9 @@ class TestProgrammaticTokenForwarding:
         runtime_info = ServerRuntimeInfo(transport='http')
 
         with patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')):
-            state = await SessionStateMiddleware.create_session_state(config, runtime_info)
+            state = await SessionStateMiddleware.create_session_state(
+                config, runtime_info, own_stack_storage_api_url=None
+            )
 
         client = state[KeboolaClient.STATE_KEY]
         assert client.bearer_token == 'kbc_at_abc'
