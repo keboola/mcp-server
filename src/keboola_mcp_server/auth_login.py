@@ -23,7 +23,7 @@ import webbrowser
 from dataclasses import asdict, dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -462,7 +462,7 @@ def forget_tokens(storage_api_url: str | None = None) -> bool:
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
-    result: dict = {}
+    result: ClassVar[dict] = {}
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         query = urllib.parse.parse_qs(urlparse(self.path).query)

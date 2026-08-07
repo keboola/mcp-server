@@ -495,6 +495,36 @@ async def test_set_project_scope_persists_to_db_and_omits_scope_token_for_oauth_
 
 
 @pytest.mark.asyncio
+async def test_set_project_scope_persists_to_kai_scope_store_and_omits_scope_token(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    # A deployed, non-OAuth, programmatic-token session (Kai) persists the confirmed scope to
+    # kai_scope_store, keyed by (conversation_id, introspected user id) -- pat_token_support/RFC.md
+    # "Kai (header-token) session-scope persistence". No scope_token is needed afterward.
+    _prep_client(mcp_context_client, mocker)
+    mocker.patch('keboola_mcp_server.tools.project.deployed_sa_token_path', return_value='/var/run/secrets/token')
+    kai_scope_store = mocker.Mock()
+    kai_scope_store.upsert = mocker.AsyncMock()
+    mcp_context_client.request_context.lifespan_context = ServerState(
+        config=Config(),
+        runtime_info=ServerRuntimeInfo(transport='http-compat/streamable-http'),
+        kai_scope_store=kai_scope_store,
+    )
+    introspection = SimpleNamespace(user_id=42, user_email='kai@keboola.com', projects=[])
+    mocker.patch('keboola_mcp_server.tools.project.introspect_token', new=mocker.AsyncMock(return_value=introspection))
+    minted = SimpleNamespace(access_token='kbc_at_scoped', expires_at=1234.0, read_only=False)
+    mocker.patch('keboola_mcp_server.tools.project.exchange_scoped_token', new=mocker.AsyncMock(return_value=minted))
+
+    result = await set_project_scope(mcp_context_client, project_ids=[18, 83])
+
+    kai_scope_store.upsert.assert_awaited_once_with(
+        'convo-1234', 42, project_ids=[18, 83], read_only=False, confirmed=True
+    )
+    assert result.scope_token is None
+    assert 'no need to resend' in result.llm_instruction
+
+
+@pytest.mark.asyncio
 async def test_set_project_scope_all_introspects_then_exchanges(
     mcp_context_client: Context, mocker: MockerFixture
 ) -> None:

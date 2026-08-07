@@ -549,7 +549,7 @@ class SimpleOAuthProvider(OAuthProvider):
                 error='invalid_grant', error_description=f'Failed to refresh token: status={e.response.status_code}'
             ) from e
         except httpx.HTTPError as e:
-            LOG.exception(f'[exchange_refresh_token] Could not reach Connection to refresh session: {e}')
+            LOG.exception('[exchange_refresh_token] Could not reach Connection to refresh session')
             raise TokenError(
                 error='invalid_grant', error_description=f'Failed to refresh token: could not reach Connection ({e}).'
             ) from e

@@ -30,7 +30,7 @@ class TestEnsurePartitions:
     async def _clean_slate(self):
         pool = await asyncpg.create_pool(TEST_DSN)
         try:
-            await pool.execute('DROP TABLE IF EXISTS oauth_sessions, schema_migrations CASCADE')
+            await pool.execute('DROP TABLE IF EXISTS oauth_sessions, kai_sessions, schema_migrations CASCADE')
             await apply_migrations(pool)
         finally:
             await pool.close()
@@ -56,7 +56,7 @@ class TestEnsurePartitions:
     async def test_drops_only_partitions_older_than_retention(self) -> None:
         pool = await asyncpg.create_pool(TEST_DSN)
         try:
-            this_month = _month_start(date.today())
+            this_month = _month_start(datetime.now(tz=timezone.utc).date())
             stale = _add_months(this_month, -3)
             kept = _add_months(this_month, -1)
             for month_start in (stale, kept):
@@ -80,7 +80,7 @@ class TestEnsurePartitions:
         # partition dated retention_months back (2 months old) is dropped, not kept.
         pool = await asyncpg.create_pool(TEST_DSN)
         try:
-            this_month = _month_start(date.today())
+            this_month = _month_start(datetime.now(tz=timezone.utc).date())
             boundary = _add_months(this_month, -2)
             name = f'oauth_sessions_{boundary:%Y_%m}'
             end = _add_months(boundary, 1)
@@ -105,7 +105,7 @@ class TestEnsurePartitions:
             for name in await self._existing_partitions(pool):
                 await pool.execute(f'DROP TABLE {name}')
 
-            this_month = _month_start(date.today())
+            this_month = _month_start(datetime.now(tz=timezone.utc).date())
             mid_month = datetime(this_month.year, this_month.month, this_month.day, tzinfo=timezone.utc) + timedelta(
                 days=1
             )
@@ -140,7 +140,7 @@ class TestEnsurePartitions:
                 await pool.execute(f'DROP TABLE {name}')
 
             result = await ensure_partitions(pool)
-            this_month_partition = f'oauth_sessions_{_month_start(date.today()):%Y_%m}'
+            this_month_partition = f'oauth_sessions_{_month_start(datetime.now(tz=timezone.utc).date()):%Y_%m}'
             assert this_month_partition in result['created']
 
             insert = (
@@ -163,7 +163,7 @@ class TestEnsurePartitions:
 
             result = await ensure_partitions(pool)
 
-            this_month = _month_start(date.today())
+            this_month = _month_start(datetime.now(tz=timezone.utc).date())
             next_month = _add_months(this_month, 1)
             expected = {f'oauth_sessions_{this_month:%Y_%m}', f'oauth_sessions_{next_month:%Y_%m}'}
             assert set(result['created']) == expected

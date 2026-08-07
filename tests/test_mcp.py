@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -926,6 +927,178 @@ class TestSessionStateMiddleware:
         assert call.kwargs['scoped_token'] == 'kbc_at_reminted'
         assert call.kwargs['scoped_expires_at'] == datetime.fromtimestamp(minted.expires_at, tz=timezone.utc)
 
+    @pytest.mark.asyncio
+    async def test_on_request_applies_persisted_kai_scope(self, monkeypatch) -> None:
+        # A deployed, non-OAuth, programmatic-token session (Kai) with no scope_token argument and
+        # no session_state_persists must fall back to the kai_scope_store, not auto-lease default.
+        from starlette.requests import Request
+
+        from keboola_mcp_server.auth_login import Introspection, ProjectAccess
+        from keboola_mcp_server.session_store.kai_scope import KaiScope
+
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        http_rq = Request({'type': 'http', 'headers': [(b'x-conversation-id', b'conv-1')], 'user': None})
+
+        kai_scope_store = AsyncMock()
+        kai_scope_store.get.return_value = KaiScope(project_ids=[18], read_only=False, confirmed=True)
+        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_kai')
+        server_state = ServerState(
+            config=config,
+            runtime_info=ServerRuntimeInfo(transport='http-compat/streamable-http'),
+            kai_scope_store=kai_scope_store,
+        )
+        session = SimpleNamespace(state={})
+        ctx = MagicMock(spec=Context)
+        ctx.session = session
+        ctx.request_context.lifespan_context = server_state
+        context = SimpleNamespace(message=SimpleNamespace(arguments={}), method='tools/call', fastmcp_context=ctx)
+
+        captured_scopes = []
+
+        async def fake_create_session_state(cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url):
+            return {}
+
+        async def call_next(_):
+            captured_scopes.append(ctx.session.state.get(SCOPE_KEY))
+            return 'ok'
+
+        with (
+            patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=http_rq),
+            patch.object(SessionStateMiddleware, 'create_session_state', side_effect=fake_create_session_state),
+            patch(
+                'keboola_mcp_server.mcp.introspect_token',
+                AsyncMock(
+                    return_value=Introspection(
+                        user_id=42, user_email=None, user_name=None, projects=[ProjectAccess(id=18)]
+                    )
+                ),
+            ),
+        ):
+            result = await SessionStateMiddleware().on_request(context, call_next)
+
+        assert result == 'ok'
+        kai_scope_store.get.assert_awaited_once_with('conv-1', 42)
+        assert captured_scopes == [SessionScope(project_ids=[18], read_only=False, confirmed=True)]
+
+
+class TestReadPersistedKaiScope:
+    """Kai session-scope persistence (pat_token_support/RFC.md, increment 6):
+    SessionStateMiddleware._read_persisted_kai_scope."""
+
+    @staticmethod
+    def _introspection(project_ids: list[int], user_id: int | None = 42):
+        from keboola_mcp_server.auth_login import Introspection, ProjectAccess
+
+        return Introspection(
+            user_id=user_id,
+            user_email='kai@keboola.com',
+            user_name='Kai',
+            projects=[ProjectAccess(id=pid) for pid in project_ids],
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_stored_scope_when_still_reachable(self) -> None:
+        from keboola_mcp_server.session_store.kai_scope import KaiScope
+
+        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = dataclasses.replace(config, conversation_id='conv-1')
+        store = AsyncMock()
+        store.get.return_value = KaiScope(project_ids=[18], read_only=False, confirmed=True)
+
+        with patch(
+            'keboola_mcp_server.mcp.introspect_token',
+            AsyncMock(return_value=self._introspection([18, 83])),
+        ):
+            scope = await SessionStateMiddleware._read_persisted_kai_scope(config, store)
+
+        assert scope is not None
+        assert scope.project_ids == [18]
+        assert scope.confirmed is True
+        store.get.assert_awaited_once_with('conv-1', 42)
+        store.drop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_drops_scope_when_a_project_is_no_longer_reachable(self) -> None:
+        from keboola_mcp_server.session_store.kai_scope import KaiScope
+
+        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = dataclasses.replace(config, conversation_id='conv-1')
+        store = AsyncMock()
+        store.get.return_value = KaiScope(project_ids=[18, 83], read_only=False, confirmed=True)
+
+        with patch(
+            'keboola_mcp_server.mcp.introspect_token',
+            AsyncMock(return_value=self._introspection([18])),  # 83 dropped out
+        ):
+            scope = await SessionStateMiddleware._read_persisted_kai_scope(config, store)
+
+        assert scope is None
+        store.drop.assert_awaited_once_with('conv-1', 42)
+
+    @pytest.mark.asyncio
+    async def test_added_projects_do_not_invalidate_the_stored_scope(self) -> None:
+        from keboola_mcp_server.session_store.kai_scope import KaiScope
+
+        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = dataclasses.replace(config, conversation_id='conv-1')
+        store = AsyncMock()
+        store.get.return_value = KaiScope(project_ids=[18], read_only=False, confirmed=True)
+
+        with patch(
+            'keboola_mcp_server.mcp.introspect_token',
+            AsyncMock(return_value=self._introspection([18, 999])),  # gained access to 999
+        ):
+            scope = await SessionStateMiddleware._read_persisted_kai_scope(config, store)
+
+        assert scope is not None
+        assert scope.project_ids == [18]
+        store.drop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_stored_row_returns_none(self) -> None:
+        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = dataclasses.replace(config, conversation_id='conv-1')
+        store = AsyncMock()
+        store.get.return_value = None
+
+        with patch(
+            'keboola_mcp_server.mcp.introspect_token',
+            AsyncMock(return_value=self._introspection([18])),
+        ):
+            scope = await SessionStateMiddleware._read_persisted_kai_scope(config, store)
+
+        assert scope is None
+
+    @pytest.mark.asyncio
+    async def test_unresolvable_user_id_returns_none_without_lookup(self) -> None:
+        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = dataclasses.replace(config, conversation_id='conv-1')
+        store = AsyncMock()
+
+        with patch(
+            'keboola_mcp_server.mcp.introspect_token',
+            AsyncMock(return_value=self._introspection([18], user_id=None)),
+        ):
+            scope = await SessionStateMiddleware._read_persisted_kai_scope(config, store)
+
+        assert scope is None
+        store.get.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_introspection_failure_returns_none(self) -> None:
+        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = dataclasses.replace(config, conversation_id='conv-1')
+        store = AsyncMock()
+
+        with patch(
+            'keboola_mcp_server.mcp.introspect_token',
+            AsyncMock(side_effect=RuntimeError('network down')),
+        ):
+            scope = await SessionStateMiddleware._read_persisted_kai_scope(config, store)
+
+        assert scope is None
+        store.get.assert_not_awaited()
+
 
 class TestProgrammaticTokenForwarding:
     """A programmatic token (kbc_at_/kbc_pat_) is always forwarded downstream as a Bearer (PSGO-261).
@@ -1090,7 +1263,7 @@ class TestResolveLocalTokens:
             project_ids=[18, 83], scoped_token='kbc_at_live', scoped_expires_at=time.time() + 3600, confirmed=True
         )
         with patch('keboola_mcp_server.mcp.exchange_scoped_token', AsyncMock()) as exch:
-            out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
+            _out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
         exch.assert_not_awaited()
         assert out_scope is scope
 
@@ -1106,7 +1279,7 @@ class TestResolveLocalTokens:
         with patch(
             'keboola_mcp_server.mcp.exchange_scoped_token', AsyncMock(side_effect=RuntimeError('exchange down'))
         ):
-            out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
+            _out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
         assert out_scope is scope
         assert out_scope.scoped_token == 'kbc_at_stale'
 
@@ -1153,7 +1326,7 @@ class TestResolveLocalTokens:
             patch('keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='kbc_at_parent')),
             patch('keboola_mcp_server.mcp.exchange_scoped_token', AsyncMock()) as exch,
         ):
-            out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
+            out_config, _out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
         exch.assert_not_awaited()
         assert out_config.storage_token == 'kbc_at_live'
 

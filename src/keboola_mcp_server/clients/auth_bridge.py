@@ -45,7 +45,7 @@ def is_programmatic_token(token: str | None) -> bool:
     if not token:
         return False
     bare = strip_bearer(token)
-    return bare.startswith(_ACCESS_TOKEN_PREFIX) or bare.startswith(_PAT_PREFIX)
+    return bare.startswith((_ACCESS_TOKEN_PREFIX, _PAT_PREFIX))
 
 
 class OAuthTokenExchangeError(RuntimeError):
