@@ -3,7 +3,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from keboola_mcp_server.config import Config, get_env_storage_api_url, is_same_stack
+from keboola_mcp_server.config import Config, ServerRuntimeInfo, get_env_storage_api_url, is_same_stack
 
 
 class TestConfig:
@@ -33,6 +33,26 @@ class TestConfig:
             (
                 {'X-Conversation-ID': '1234'},
                 Config(conversation_id='1234'),
+            ),
+            (
+                {'KBC_PROJECT_ID': '1888'},
+                Config(project_id='1888'),
+            ),
+            (
+                {'X-KBC-ProjectId': '1888'},
+                Config(project_id='1888'),
+            ),
+            (
+                {'MCP_DB_URL': 'postgresql://u:p@host/db'},
+                Config(postgres_dsn='postgresql://u:p@host/db'),
+            ),
+            (
+                {'KBC_MCP_DB_URL': 'postgresql://u:p@host/db'},
+                Config(postgres_dsn='postgresql://u:p@host/db'),
+            ),
+            (
+                {'KBC_POSTGRES_DSN': 'postgresql://u:p@host/db'},
+                Config(postgres_dsn='postgresql://u:p@host/db'),
             ),
         ],
     )
@@ -78,12 +98,13 @@ class TestConfig:
             assert getattr(config, f.name) is None, f'Expected default value for {f.name} to be None'
 
     def test_no_token_password_in_repr(self) -> None:
-        config = Config(storage_token='foo')
+        config = Config(storage_token='foo', postgres_dsn='postgresql://u:p@host/db', session_encryption_key='abc')
         assert str(config) == (
             "Config(storage_api_url=None, storage_token='****', branch_id=None, workspace_schema=None, "
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
-            'jwt_secret=None, bearer_token=None, conversation_id=None)'
+            "jwt_secret=None, postgres_dsn='****', session_encryption_key='****', "
+            'bearer_token=None, conversation_id=None, project_id=None)'
         )
 
     @pytest.mark.parametrize(
@@ -108,6 +129,21 @@ class TestConfig:
         assert config.storage_api_url == expected
         assert config.oauth_server_url == expected
         assert config.mcp_server_url == expected
+
+
+class TestServerRuntimeInfoSessionStatePersists:
+    def test_stdio_always_persists_regardless_of_stateless_http(self) -> None:
+        # stdio is one process/one session for the whole conversation -- the flag is meaningless there.
+        assert ServerRuntimeInfo(transport='stdio', stateless_http=True).session_state_persists is True
+        assert ServerRuntimeInfo(transport='stdio', stateless_http=False).session_state_persists is True
+
+    def test_streamable_http_follows_stateless_http_flag(self) -> None:
+        assert ServerRuntimeInfo(transport='streamable-http', stateless_http=True).session_state_persists is False
+        assert ServerRuntimeInfo(transport='streamable-http', stateless_http=False).session_state_persists is True
+
+    def test_defaults_to_stateless(self) -> None:
+        # Matches the CLI's --stateless-http default (scaled/deployed-safe).
+        assert ServerRuntimeInfo(transport='streamable-http').session_state_persists is False
 
 
 class TestEnvStorageApiUrl:

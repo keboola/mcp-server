@@ -173,6 +173,60 @@ async def test_workspace_creation_cleans_up_config_on_failure():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    'job_detail',
+    [
+        {'status': 'error'},
+        {'status': 'terminated'},
+        # 'warning' with no workspace id is still a failure (nothing usable was produced).
+        {'status': 'warning'},
+        {'status': 'warning', 'results': {}},
+    ],
+    ids=['error', 'terminated', 'warning_no_results', 'warning_no_id'],
+)
+async def test_workspace_creation_stops_on_terminal_error_status(job_detail: dict):
+    """A job that reaches a terminal failure status must stop polling at once, not spin to timeout."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+
+    mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': 'snowflake'}}
+    mock_storage_client.configuration_create.return_value = {'id': 'cfg-1', 'name': 'test'}
+    mock_storage_client.workspace_create_for_config.return_value = {'id': 999}
+    mock_storage_client.job_detail.return_value = job_detail
+
+    manager = WorkspaceManager(mock_client)
+    result = await manager._create_ws()
+
+    assert result is None
+    # Polled exactly once — the terminal status short-circuits the loop.
+    mock_storage_client.job_detail.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_workspace_creation_warning_with_id_uses_workspace(mocker):
+    """A 'warning' job that still created a workspace (results.id present) must not be discarded."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+
+    mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': 'snowflake'}}
+    mock_storage_client.configuration_create.return_value = {'id': 'cfg-1', 'name': 'test'}
+    mock_storage_client.workspace_create_for_config.return_value = {'id': 999}
+    mock_storage_client.job_detail.return_value = {'status': 'warning', 'results': {'id': 999}}
+
+    manager = WorkspaceManager(mock_client)
+    sentinel = object()
+    mocker.patch.object(manager, '_find_ws_by_id', AsyncMock(return_value=sentinel))
+    result = await manager._create_ws()
+
+    assert result is sentinel  # the created workspace is used despite the warning
+    manager._find_ws_by_id.assert_awaited_once_with(999)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ('input_branch_id', 'has_sb_feature', 'workspace_schema', 'expected_bound_branch_id'),
     [
         # default branch: always production, regardless of feature

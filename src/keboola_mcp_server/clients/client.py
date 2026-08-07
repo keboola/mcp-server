@@ -2,13 +2,13 @@
 
 import logging
 from collections.abc import Mapping, Sequence
-from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 from keboola_mcp_server.clients.ai_service import AIServiceClient
+from keboola_mcp_server.clients.base import normalize_storage_api_url, read_service_account_jwt
 from keboola_mcp_server.clients.data_science import DataScienceClient
 from keboola_mcp_server.clients.encryption import EncryptionClient
 from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
@@ -164,12 +164,8 @@ class KeboolaClient:
         # Mirrors _features_cache: fetched once per session so it is never stale across runs.
         self._flow_schema_cache: dict[str, JsonDict] = {}
 
-        sapi_url_parsed = urlparse(storage_api_url)
-        if not sapi_url_parsed.hostname or not sapi_url_parsed.hostname.startswith('connection.'):
-            raise ValueError(f'Invalid Keboola Storage API URL: {storage_api_url}')
-
-        self._hostname_suffix = sapi_url_parsed.hostname.split('connection.')[1]
-        self._storage_api_url = urlunparse(('https', f'connection.{self._hostname_suffix}', '', '', '', ''))
+        self._storage_api_url = normalize_storage_api_url(storage_api_url)
+        self._hostname_suffix = cast(str, urlparse(self._storage_api_url).hostname).split('connection.')[1]
         metastore_api_url = urlunparse(('https', f'metastore.{self._hostname_suffix}', '', '', '', ''))
         queue_api_url = urlunparse(('https', f'queue.{self._hostname_suffix}', '', '', '', ''))
         ai_service_api_url = urlunparse(('https', f'ai.{self._hostname_suffix}', '', '', '', ''))
@@ -179,7 +175,7 @@ class KeboolaClient:
         sync_actions_api_url = urlunparse(('https', f'sync-actions.{self._hostname_suffix}', '', '', '', ''))
 
         # Initialize clients for individual services
-        bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
+        bearer_or_sapi_token = self._bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
         # The encryption service does not require an authorization header, so we pass None as the token
         self._encryption_client = EncryptionClient.create(
             root_url=encryption_api_url, token=None, headers=self._headers
@@ -193,10 +189,14 @@ class KeboolaClient:
             encryption_client=self._encryption_client,
         )
         self._jobs_queue_client = JobsQueueClient.create(
-            root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._headers, readonly=readonly
+            root_url=queue_api_url,
+            token=bearer_or_sapi_token,
+            branch_id=branch_id,
+            headers=self._headers,
+            readonly=readonly,
         )
         self._ai_service_client = AIServiceClient.create(
-            root_url=ai_service_api_url, token=self._token, headers=self._headers, readonly=readonly
+            root_url=ai_service_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
         )
         # Data-science (sandboxes-service) git-repo credential endpoints require an admin-context
         # token (CanManageAppRepoCredentials -> StorageApiToken::isAdminToken()). The OAuth bearer
@@ -215,7 +215,7 @@ class KeboolaClient:
         )
         self._sync_actions_client = SyncActionsClient.create(
             root_url=sync_actions_api_url,
-            token=self._token,
+            token=bearer_or_sapi_token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
@@ -311,15 +311,16 @@ class KeboolaClient:
             )
             return self._storage_client
 
-        jwt = Path(kubernetes_token_path).read_text().strip()
-        if not jwt:
-            raise ValueError(f'Kubernetes ServiceAccount token file is empty: {kubernetes_token_path}')
+        jwt = read_service_account_jwt(kubernetes_token_path)
 
         headers = dict(self._headers or {})
         headers['X-Kubernetes-Authorization'] = f'Bearer {jwt}'
         return AsyncStorageClient.create(
             root_url=self._storage_api_url,
-            token=self._token,
+            # Bearer, not the raw storage_api_token: for a programmatic (kbc_at_/kbc_pat_) session
+            # the raw token would be sent as X-StorageAPI-Token, which Storage API rejects outright
+            # -- it only accepts a programmatic token via Authorization: Bearer.
+            token=self._bearer_or_sapi_token,
             branch_id=self._branch_id,
             headers=headers,
             readonly=self._storage_client.raw_client.readonly,

@@ -786,6 +786,25 @@ class WorkspaceManager:
                 LOG.info(f'Created workspace: {workspace_id}')
                 return await self._find_ws_by_id(workspace_id)
 
+            elif (
+                job_status == 'warning'
+                and isinstance(job_info.get('results'), dict)
+                and isinstance(job_info['results'].get('id'), int)
+            ):
+                # 'warning' = the job finished but a child job failed; the workspace itself may still
+                # have been created (results.id present). Use it instead of discarding a live workspace.
+                workspace_id = job_info['results']['id']
+                LOG.warning(
+                    f'Workspace creation finished with warning; using workspace {workspace_id}: job_id={job_id}'
+                )
+                return await self._find_ws_by_id(workspace_id)
+
+            elif job_status in ('error', 'warning', 'terminated', 'cancelled', 'canceled'):
+                # Terminal failure states (incl. 'warning' with no workspace id): the job will never
+                # reach 'success', so stop polling immediately instead of spinning until the timeout.
+                LOG.warning(f'Workspace creation job failed: job_id={job_id}, status={job_status}')
+                return None
+
             elif duration > timeout_sec:
                 LOG.info(f'Workspace creation timed out after {duration:.2f} seconds.')
                 return None

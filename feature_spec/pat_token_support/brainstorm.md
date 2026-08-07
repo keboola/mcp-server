@@ -48,10 +48,10 @@ Implications:
 - Soft dependencies that gate the production rollout (not local dev): kbc-stacks must map `mcp-server`'s SA subject to `internal:auth-bridge:resolve-storage-token` and mount the projected token (PSGO-261 Part 2); the Connection resolver and `/admin/auth/pkce/authorize` must be enabled on the target production stacks.
 
 ### Prior art
-- **`auth-demo-cli/pkce.ts` ([ui#6061](https://github.com/keboola/ui/pull/6061))** — the reference PKCE client to mirror for the new local `login` command.
+- **`auth-demo-cli/pkce.ts` (ui#6061)** — the reference PKCE client to mirror for the new local `login` command.
 - **`SimpleOAuthProvider` (`oauth.py`)** — existing PKCE + SAPI-mint patterns to follow for token handling/storage.
 - **k8s SA step-up header (`b971146f`)** — the projected-SA-token mechanism; it is the mechanism the resolver's `X-Kubernetes-Authorization` exchange must reuse on the **deployed** mcp-server (in-k8s only).
-- **[platform-libraries#507](https://github.com/keboola/platform-libraries/pull/507)** — PHP decentralized-exchange reference for exchange + error mapping.
+- **platform-libraries#507** — PHP decentralized-exchange reference for exchange + error mapping.
 
 ### Scope split (user-stated, verbatim)
 > "I think we cannot get rid of OAuth because it's MCP protocol build on top of it. We can have login separate when not having oauth — instead of passing headers just stack is enough. The OAuth exchange will be done separately as separate PR."
@@ -98,7 +98,7 @@ Core question: how does MCP turn an inbound `kbc_at_*` / `kbc_pat_*` into authen
 
 ## 5. Impact analysis
 
-> Adapted to `keboola-mcp-server` (Python). The skill's connection/platform-wiki checklist (Doctrine, Zend, storage-driver protobuf) does not apply here; the cross-cutting table below is the mcp-server equivalent. File:line refs are relative to `src/keboola_mcp_server/` and were verified against current `main`.
+> Adapted to `keboola-mcp-server` (Python). The skill's connection/platform-wiki checklist (Doctrine, Zend, storage-driver protobuf) does not apply here; the cross-cutting table below is the mcp-server equivalent. File:line refs verified against current `main`.
 
 ### Files / symbols touched
 | File / symbol | Change |
@@ -124,7 +124,7 @@ Core question: how does MCP turn an inbound `kbc_at_*` / `kbc_pat_*` into authen
 ### Cross-cutting checklist (mcp-server)
 | Dimension | Touched? | Detail |
 |---|---|---|
-| Transports (stdio / streamable-http) | Yes | stdio gets login path; http/OAuth path unchanged by the implementation |
+| Transports (stdio / streamable-http) | Yes | stdio gets login path; http/OAuth path unchanged this PR |
 | OAuth provider (`SimpleOAuthProvider`) | No | left intact; OAuth→PAT exchange is a separate PR |
 | Both deployments (mcp-server + mcp-server-agent) | Yes | one image; agent's direct-Storage-token path must not regress |
 | Legacy `X-StorageAPI-Token` path | No (must stay) | only `kbc_at_`/`kbc_pat_` prefixes trigger new behavior |
@@ -132,7 +132,7 @@ Core question: how does MCP turn an inbound `kbc_at_*` / `kbc_pat_*` into authen
 | `TOOLS.md` / tool signatures | No | no tool signature change expected |
 | Config / env vars | Yes | `project_id`, `KBC_PKCE_CLIENT_ID`, SA-token path var |
 | Unit + integration tests | Yes | new resolver, login, refresh, regression for legacy token |
-| Version bump + `uv.lock` | Yes | implementation PR: minor (new capability); this docs PR: patch, to merge cleanly ahead of it |
+| Version bump + `uv.lock` | Yes | minor (new capability) |
 
 ## 6. Security pass
 

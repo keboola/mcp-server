@@ -8,7 +8,6 @@ and other utilities for the MCP server.
 import asyncio
 import dataclasses
 import logging
-import os
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, TypeVar
@@ -29,11 +28,34 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token, load_tokens
+from keboola_mcp_server.clients.auth_bridge import is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeInfo, is_same_stack
+from keboola_mcp_server.config import (
+    Config,
+    ServerRuntimeInfo,
+    build_tracing_headers,
+    deployed_sa_token_path,
+    is_same_stack,
+)
 from keboola_mcp_server.oauth import ProxyAccessToken
-from keboola_mcp_server.tools.constants import MODIFY_FLOW_TOOL_NAME, SEMANTIC_TOOLS_TAG, UPDATE_FLOW_TOOL_NAME
+from keboola_mcp_server.scope import (
+    OAUTH_SESSION_ID_KEY,
+    SCOPE_KEY,
+    SCOPE_TOKEN_ARG,
+    SessionScope,
+    persist_scope,
+    resolve_scope_secret,
+)
+from keboola_mcp_server.session_store.kai_scope import KaiScopeStore
+from keboola_mcp_server.session_store.repository import SessionStore
+from keboola_mcp_server.tools.constants import (
+    BOOTSTRAP_TOOLS,
+    MODIFY_FLOW_TOOL_NAME,
+    SEMANTIC_TOOLS_TAG,
+    UPDATE_FLOW_TOOL_NAME,
+)
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -98,6 +120,8 @@ async def project_has_semantic_models(client: KeboolaClient) -> bool:
 class ServerState:
     config: Config
     runtime_info: ServerRuntimeInfo
+    session_store: SessionStore | None = None
+    kai_scope_store: KaiScopeStore | None = None
 
     @property
     def own_stack_storage_api_url(self) -> str | None:
@@ -225,6 +249,72 @@ class SessionStateMiddleware(fmw.Middleware):
             if http_rq := get_http_request_or_none():
                 config = self.apply_request_config(http_rq, config, own_stack_storage_api_url=own_stack_storage_api_url)
 
+            # Capability-discovery requests (tools/list, prompts/list, resources/list) MUST be fast: a
+            # client fetches all three on connect, so any Connection AUTH round-trip here (token
+            # introspect, refresh, or scoped-exchange) makes connecting hang until the client's 30s
+            # timeout. For /list we skip all that extra auth work — no auto-lease, no token refresh, no
+            # scoped re-mint — and use the stored session token as-is. (create_session_state below may
+            # still make ordinary Storage calls, e.g. WorkspaceManager.create; the point is /list adds
+            # none of the introspect/refresh/exchange round-trips.) Scope and fresh tokens are
+            # established on the first real (non-list) tool call.
+            is_list = context.method.endswith('/list')
+
+            # Local streamable-HTTP with no token supplied (no header / env): fall back to the stored
+            # PKCE session. For non-list requests keep it fresh (refresh + persist rotation); for /list
+            # read it without a network refresh. No-op when a token is provided or on the deployed
+            # server (KBC_KUBERNETES_TOKEN_PATH set).
+            config = await self._maybe_use_stored_session(config, refresh=not is_list)
+
+            # In-conversation multi-project scope is carried by the caller as the `scope_token` tool
+            # argument (see SessionScope.to_token/from_token) rather than read back from
+            # ctx.session.state, which is rebuilt empty on every request under this server's default
+            # stateless-HTTP transport. With no scope and no preset project, auto-lease ALL accessible
+            # projects (multi-project mode) so read tools fan out across everything — but never on /list.
+            scope = self._read_scope_from_request(context, config)
+            # OAuth-authenticated sessions don't need scope_token at all: the opaque OAuth access
+            # token is already resent on every call and resolves through the Postgres session store
+            # (load_access_token), so a confirmed scope persisted there (via set_project_scope ->
+            # SessionStore.update_scope) is read back here instead of round-tripping it as an argument.
+            if scope is None:
+                scope = self._read_persisted_oauth_scope(http_rq)
+            # stdio and --no-stateless-http streamable-http reuse the same ctx.session object (and
+            # its .state dict) across every request in the conversation, unlike the stateless-http
+            # default where FastMCP hands out a fresh session per request. On those transports, a
+            # scope already confirmed by an earlier set_project_scope call is still sitting in
+            # ctx.session.state -- reuse it instead of falling back to scope_token/auto-lease, so
+            # the caller never needs to resend scope_token at all.
+            if scope is None and runtime_info.session_state_persists:
+                scope = self._read_persisted_local_scope(ctx)
+            # Deployed, non-OAuth, programmatic-token sessions (Kai) carry no MCP-minted
+            # identifier and no persistent ctx.session -- kai_session_scope RFC persists their
+            # confirmed scope server-side instead, keyed by (conversation_id, token user id).
+            if (
+                scope is None
+                and not is_list
+                and config.conversation_id
+                and deployed_sa_token_path()
+                and self._oauth_access_token(http_rq) is None
+                and is_programmatic_token(config.storage_token)
+                and server_state.kai_scope_store is not None
+            ):
+                scope = await self._read_persisted_kai_scope(config, server_state.kai_scope_store)
+            if scope is None and not config.project_id and not is_list:
+                scope = await self._autolease_default_scope(config)
+            if not is_list:
+                scoped_token_before = scope.scoped_token if scope is not None else None
+                config, scope = await self._resolve_local_tokens(config, scope)
+                # _resolve_local_tokens re-mints a near-expiry scoped_token for OAuth/deployed
+                # sessions too (not just local ones) -- persist the refresh to the OAuth session row
+                # immediately, so it's not silently re-attempted (and re-written) on every single
+                # request for the rest of this token's lifetime, only once per actual expiry.
+                if (
+                    scope is not None
+                    and scope.scoped_token != scoped_token_before
+                    and (oauth_session_id := self._read_oauth_session_id(http_rq)) is not None
+                    and server_state.session_store is not None
+                ):
+                    await persist_scope(server_state.session_store, oauth_session_id, scope)
+
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
 
@@ -232,7 +322,7 @@ class SessionStateMiddleware(fmw.Middleware):
             # so that clients can discover available tools even when the configured branch ID doesn't
             # exist yet. For these requests the client is created without a branch ID. Otherwise, the branch is
             # validated via a SAPI call.
-            if context.method.endswith('/list'):
+            if is_list:
                 if config.branch_id:
                     LOG.info(f'Skipping branch validation for {context.method} request.')
                 config = dataclasses.replace(config, branch_id=None)
@@ -240,6 +330,10 @@ class SessionStateMiddleware(fmw.Middleware):
             state = await self.create_session_state(
                 config, runtime_info, own_stack_storage_api_url=own_stack_storage_api_url
             )
+            if scope is not None:
+                state[SCOPE_KEY] = scope
+            if oauth_session_id := self._read_oauth_session_id(http_rq):
+                state[OAUTH_SESSION_ID_KEY] = oauth_session_id
             ctx.session.state = state
 
         try:
@@ -249,23 +343,50 @@ class SessionStateMiddleware(fmw.Middleware):
             # ctx.session.state = {}
             pass
 
-    @classmethod
-    def _get_headers(cls, runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
+    async def on_list_tools(
+        self,
+        context: fmw.MiddlewareContext[mt.ListToolsRequest],
+        call_next: fmw.CallNext[mt.ListToolsRequest, list[Tool]],
+    ) -> list[Tool]:
+        """Advertises the optional `scope_token` argument on every tool.
+
+        Unconditional (unlike MultiProjectMiddleware's `_PROJECT_FILTER_ARG` patch, which is gated on
+        an active multi-project scope): a `tools/list` request cannot itself carry `scope_token`, so
+        whether a scope is currently confirmed can't be known while building this response. Showing
+        the parameter always costs nothing when unused and is what lets the caller learn about it
+        before ever calling `set_project_scope`.
+
+        Skipped entirely when this session's transport persists `ctx.session.state` across requests
+        (stdio, or streamable-http with `--no-stateless-http`) -- there, `on_request` reuses the
+        already-confirmed scope straight from that state, so `scope_token` is dead weight.
         """
-        :param runtime_info: Runtime information
-        :return: Additional headers for the requests used for tracing the MCP server
-        """
-        return {
-            'User-Agent': (
-                f'Keboola MCP Server/{runtime_info.server_version} app_env={runtime_info.app_env} '
-                f'transport={runtime_info.transport}'
-            ),
-            'MCP-Server-Transport': runtime_info.transport or 'NA',
-            'MCP-Server-Versions': (
-                f'keboola-mcp-server/{runtime_info.server_version} mcp/{runtime_info.mcp_library_version} '
-                f'fastmcp/{runtime_info.fastmcp_library_version}'
-            ),
-        }
+        tools = await call_next(context)
+        ctx = getattr(context, 'fastmcp_context', None)
+        if (
+            ctx is not None
+            and isinstance(ctx, Context)
+            and ServerState.from_context(ctx).runtime_info.session_state_persists
+        ):
+            return tools
+        patched: list[Tool] = []
+        for tool in tools:
+            params = dict(tool.parameters or {})
+            props = dict(params.get('properties') or {})
+            if SCOPE_TOKEN_ARG in props:
+                patched.append(tool)
+                continue
+            props[SCOPE_TOKEN_ARG] = {
+                'type': 'string',
+                'description': (
+                    'Opaque token returned by "set_project_scope" (also echoed by '
+                    '"get_accessible_projects" once a scope is confirmed). The server does not '
+                    'remember the scope between calls -- resend this value on every tool call in '
+                    'this conversation once you have it.'
+                ),
+            }
+            params['properties'] = props
+            patched.append(tool.model_copy(update={'parameters': params}))
+        return patched
 
     @classmethod
     def apply_request_config(cls, http_rq: Request, config: Config, *, own_stack_storage_api_url: str | None) -> Config:
@@ -298,18 +419,278 @@ class SessionStateMiddleware(fmw.Middleware):
             config = dataclasses.replace(config, storage_api_url=own_stack_storage_api_url)
 
         if user := http_rq.scope.get('user'):
-            LOG.debug(f'Injecting bearer and SAPI tokens: user={user}, access_token={user.access_token}')
             assert isinstance(user, AuthenticatedUser), f'Expecting AuthenticatedUser, got: {type(user)}'
             assert isinstance(user.access_token, ProxyAccessToken), (
                 f'Expecting ProxyAccessToken, got: {type(user.access_token)}'
             )
-            config = dataclasses.replace(
-                config,
-                storage_token=user.access_token.sapi_token,
-                bearer_token=user.access_token.delegate.token,
+            # Log only non-sensitive identifiers; ProxyAccessToken's default repr includes the raw
+            # kbc_access_token/kbc_refresh_token, which must never be logged.
+            LOG.debug(
+                f'Injecting exchanged session token: client_id={user.access_token.client_id}, '
+                f'session_id={user.access_token.session_id}'
             )
+            # The exchanged kbc_at_ token is a Keboola programmatic token; is_programmatic_token()
+            # detects it downstream and the full PSGO-261 multi-project machinery applies unchanged.
+            config = dataclasses.replace(config, storage_token=user.access_token.kbc_access_token)
 
         return config
+
+    @classmethod
+    def _read_scope_from_request(cls, context: fmw.MiddlewareContext[Any], config: Config) -> 'SessionScope | None':
+        """Decodes the ``scope_token`` tool-call argument (if any) back into a SessionScope.
+
+        Pops the argument so it never reaches the tool function, matching how
+        MultiProjectMiddleware.on_call_tool consumes _PROJECT_FILTER_ARG. Absent, malformed, or
+        expired tokens are treated as "no scope yet" rather than an error -- the ask-first gate in
+        MultiProjectMiddleware then steers the caller back through get_accessible_projects /
+        set_project_scope.
+        """
+        # context.message always exists (a required MiddlewareContext field); only whether it HAS
+        # .arguments varies by request type (a ListToolsRequest has none, a CallToolRequestParams
+        # does), hence the single getattr here.
+        args = getattr(context.message, 'arguments', None)
+        if not isinstance(args, dict):
+            return None
+        token = args.pop(SCOPE_TOKEN_ARG, None)
+        if not token:
+            return None
+        try:
+            return SessionScope.from_token(token, resolve_scope_secret(config))
+        except Exception:
+            LOG.warning('Ignoring invalid or expired scope_token.', exc_info=True)
+            return None
+
+    @staticmethod
+    def _oauth_access_token(http_rq: Request | None) -> ProxyAccessToken | None:
+        if http_rq is None:
+            return None
+        user = http_rq.scope.get('user')
+        if not isinstance(user, AuthenticatedUser) or not isinstance(user.access_token, ProxyAccessToken):
+            return None
+        return user.access_token
+
+    @classmethod
+    def _read_persisted_oauth_scope(cls, http_rq: Request | None) -> 'SessionScope | None':
+        """The multi-project scope persisted on the OAuth session row, if any.
+
+        Only used as a fallback when the caller sent no ``scope_token`` -- an explicit scope_token
+        (e.g. a fresher re-scope from the same request) always takes precedence.
+        """
+        access_token = cls._oauth_access_token(http_rq)
+        if access_token is None or not access_token.scope_confirmed or access_token.scope_project_ids is None:
+            return None
+        return SessionScope(
+            project_ids=access_token.scope_project_ids,
+            read_only=access_token.scope_read_only,
+            scoped_token=access_token.scope_scoped_token,
+            scoped_expires_at=(
+                access_token.scope_scoped_expires_at.timestamp()
+                if access_token.scope_scoped_expires_at is not None
+                else None
+            ),
+            confirmed=True,
+        )
+
+    @classmethod
+    def _read_oauth_session_id(cls, http_rq: Request | None) -> str | None:
+        access_token = cls._oauth_access_token(http_rq)
+        return access_token.session_id if access_token is not None else None
+
+    @staticmethod
+    def _read_persisted_local_scope(ctx: Context) -> 'SessionScope | None':
+        """The scope confirmed by an earlier ``set_project_scope`` call on this same, still-live
+        ``ctx.session`` -- only ever meaningful when the transport pins one session object across
+        requests (see ``ServerRuntimeInfo.session_state_persists``); callers must check that first.
+        """
+        # Real session objects (e.g. MiddlewareServerSession) have no `.state` attribute at all
+        # until this middleware sets one on a prior request -- getattr, not direct access.
+        state = getattr(ctx.session, 'state', None)
+        if not isinstance(state, dict):
+            return None
+        scope = state.get(SCOPE_KEY)
+        return scope if isinstance(scope, SessionScope) else None
+
+    @classmethod
+    async def _read_persisted_kai_scope(cls, config: Config, store: KaiScopeStore) -> 'SessionScope | None':
+        """The scope confirmed by an earlier `set_project_scope` call on this Kai conversation,
+        looked up by `sha256(conversation_id:user_id)` (kai_session_scope RFC) rather than by
+        token hash, since Kai refreshes its raw token independently and its value isn't stable
+        across that refresh. Drops (and forgets) the stored scope -- rather than auto-narrowing or
+        trusting stale access -- if a previously scoped project is no longer reachable by the
+        current token; callers see this as "no scope yet" and are steered back through
+        get_accessible_projects / set_project_scope.
+        """
+        try:
+            introspection = await introspect_token(
+                config.storage_api_url, subject_token=strip_bearer(config.storage_token)
+            )
+        except Exception as e:
+            LOG.warning(f'Could not introspect Kai token for persisted scope lookup: {e}', exc_info=True)
+            return None
+        if introspection.user_id is None:
+            return None
+        stored = await store.get(config.conversation_id, introspection.user_id)
+        if stored is None:
+            return None
+        current_project_ids = {p.id for p in introspection.projects}
+        if not set(stored.project_ids).issubset(current_project_ids):
+            LOG.info('Persisted Kai scope references a project no longer reachable; dropping it.')
+            await store.drop(config.conversation_id, introspection.user_id)
+            return None
+        return SessionScope(project_ids=stored.project_ids, read_only=stored.read_only, confirmed=stored.confirmed)
+
+    @classmethod
+    def _is_local_programmatic(cls, config: Config) -> bool:
+        """True for a local (non-deployed) session carrying a Keboola programmatic token."""
+        return (
+            not deployed_sa_token_path()
+            and bool(config.storage_token)
+            and bool(config.storage_api_url)
+            and is_programmatic_token(config.storage_token)
+        )
+
+    @classmethod
+    async def _maybe_use_stored_session(cls, config: Config, *, refresh: bool = True) -> Config:
+        """Populate the token from the stored PKCE session for a local, tokenless request.
+
+        Only when: no token is set, a stack URL is known, and this is not the deployed server. With
+        ``refresh=True`` reads (and refreshes + persists) the session leased by
+        ``keboola-mcp-server login``. With ``refresh=False`` (capability-discovery /list requests)
+        reads the stored token WITHOUT any network refresh, so listing never blocks on Connection.
+        If there is no stored session, leaves the config unchanged.
+        """
+        if config.storage_token or not config.storage_api_url:
+            return config
+        if deployed_sa_token_path():
+            return config
+        if refresh:
+            try:
+                access_token = await get_access_token(config.storage_api_url)
+            except RuntimeError:
+                return config
+        else:
+            tokens = load_tokens(config.storage_api_url)
+            if not tokens:
+                return config
+            if tokens.is_near_expiry:
+                # The stored access token is (near) expired; using it as-is would make the /list
+                # session-state build fail its Storage calls. Refresh only this case via the network —
+                # valid tokens still take the network-free fast path so /list never blocks on connect.
+                try:
+                    access_token = await get_access_token(config.storage_api_url)
+                except RuntimeError:
+                    return config
+            else:
+                access_token = tokens.access_token
+        return dataclasses.replace(config, storage_token=access_token)
+
+    @classmethod
+    async def _autolease_default_scope(cls, config: Config) -> 'SessionScope | None':
+        """
+        Default to multi-project mode: scope the session to ALL accessible projects.
+
+        Introspects the programmatic token once to enumerate the projects it can reach and returns a
+        scope covering all of them (no minted token — the whole-stack parent token is used, narrowed
+        per request only by the ``X-KBC-ProjectId`` header). Returns None when introspection is
+        unavailable (deployed server, legacy token, or no reachable projects) so the caller falls
+        back to the existing single-project behavior.
+        """
+        if not cls._is_local_programmatic(config):
+            return None
+        try:
+            parent = await get_access_token(config.storage_api_url)
+        except RuntimeError:
+            parent = strip_bearer(config.storage_token)
+        try:
+            introspection = await introspect_token(config.storage_api_url, subject_token=parent)
+        except Exception as e:
+            LOG.warning(f'Could not auto-lease projects from token introspection: {e}', exc_info=True)
+            return None
+        project_ids = [p.id for p in introspection.projects]
+        if not project_ids:
+            return None
+        LOG.info(f'Multi-project mode: auto-leased {len(project_ids)} accessible project(s) as the default scope.')
+        return SessionScope(project_ids=project_ids)
+
+    @classmethod
+    async def _resolve_local_tokens(
+        cls, config: Config, scope: 'SessionScope | None'
+    ) -> 'tuple[Config, SessionScope | None]':
+        """
+        For local (non-deployed) programmatic-token sessions, keep tokens fresh during usage.
+
+        Refreshes the stored whole-stack (parent) token via the PKCE credential store. When the user
+        has explicitly narrowed scope (a minted scoped token is present), that token is re-minted from
+        the parent when it nears expiry. The default (auto-leased) multi-project scope carries no
+        minted token and simply uses the parent token, narrowed per request by ``X-KBC-ProjectId``.
+        On the deployed server (``KBC_KUBERNETES_TOKEN_PATH`` set), ``config.storage_token`` is
+        already the freshly-refreshed OAuth ``kbc_access_token`` (refreshed by
+        ``SimpleOAuthProvider.load_access_token``'s lazy refresh before this ever runs) -- that part
+        needs no help here. Nothing else threads a confirmed scope's active project id into
+        ``config`` for a deployed session, though: without it, ``create_session_state`` keeps
+        building the active client from the unscoped whole-stack token with no ``X-KBC-ProjectId``,
+        so every call after ``set_project_scope`` 401s even though scoping itself succeeded -- apply
+        just the active project id here. The confirmed scope's own ``scoped_token`` (minted once by
+        ``set_project_scope``, used by ``MultiProjectMiddleware`` for every fanned-out project once
+        2+ are scoped -- including the first) *does* need the same near-expiry re-mint the local
+        branch below does, or it silently starts 401ing mid-conversation once it expires, with no
+        refresh ever attempted for the rest of the session (`on_request` persists the refreshed
+        token back to the OAuth session row afterward, so this happens at most once per expiry, not
+        every request).
+        """
+        if not cls._is_local_programmatic(config):
+            if scope and scope.project_ids and not config.project_id:
+                config = dataclasses.replace(config, project_id=str(scope.active_project_id))
+            if scope is not None and scope.scoped_token is not None and scope.is_near_expiry:
+                try:
+                    minted = await exchange_scoped_token(
+                        config.storage_api_url,
+                        subject_token=strip_bearer(config.storage_token),
+                        project_ids=scope.project_ids,
+                        read_only=scope.read_only,
+                    )
+                    scope = dataclasses.replace(
+                        scope, scoped_token=minted.access_token, scoped_expires_at=minted.expires_at
+                    )
+                except Exception as e:
+                    # Don't break the session if re-minting fails -- the caller keeps using the
+                    # (possibly already-expired) scoped_token, same failure mode as before this fix.
+                    LOG.warning(f'Could not refresh the deployed session scoped token: {e}', exc_info=True)
+            return config, scope
+
+        # Strip any inbound `Bearer ` scheme; introspect/exchange helpers add the scheme themselves,
+        # so a pre-prefixed token would produce an `Authorization: Bearer Bearer …` header.
+        parent = strip_bearer(config.storage_token)
+        try:
+            # Refreshes (and persists the rotated pair) when near expiry; raises if no stored creds.
+            parent = await get_access_token(config.storage_api_url)
+        except RuntimeError:
+            pass  # token supplied directly (no PKCE login) — use it as-is
+
+        token = parent
+        project_id = config.project_id
+        if scope and scope.project_ids:
+            project_id = str(scope.active_project_id)
+            if scope.scoped_token is not None:
+                if scope.is_near_expiry:
+                    try:
+                        minted = await exchange_scoped_token(
+                            config.storage_api_url,
+                            subject_token=parent,
+                            project_ids=scope.project_ids,
+                            read_only=scope.read_only,
+                        )
+                        scope = dataclasses.replace(
+                            scope, scoped_token=minted.access_token, scoped_expires_at=minted.expires_at
+                        )
+                    except Exception as e:
+                        # Don't break the session if re-minting fails; fall back to the parent token.
+                        LOG.warning(f'Could not refresh the scoped token; using the parent token: {e}', exc_info=True)
+                        scope = dataclasses.replace(scope, scoped_token=None, scoped_expires_at=None)
+                token = scope.scoped_token or parent
+
+        config = dataclasses.replace(config, storage_token=token, project_id=project_id)
+        return config, scope
 
     @classmethod
     async def create_session_state(
@@ -343,11 +724,26 @@ class SessionStateMiddleware(fmw.Middleware):
             if not config.storage_api_url:
                 raise ValueError('Storage API URL is not provided.')
 
+            storage_token = config.storage_token
+            bearer_token = config.bearer_token
+            extra_headers: dict[str, Any] = {}
+            if is_programmatic_token(storage_token):
+                # A programmatic token (kbc_at_/kbc_pat_) is forwarded downstream as a Bearer --
+                # KeboolaClient already sends it that way to every service it wraps (Storage, Queue,
+                # AI, etc.), so no legacy per-project Storage token needs to be minted for it. Strip
+                # any inbound `Bearer ` scheme so the client's own `Bearer ` prefixing can't produce
+                # `Bearer Bearer …`. Narrow to a specific project via X-KBC-ProjectId when known
+                # (header, or a prior scope selection) -- unset (whole-stack) is exactly what
+                # get_accessible_projects/set_project_scope need before a project is chosen.
+                bearer_token = strip_bearer(storage_token)
+                if config.project_id:
+                    extra_headers['X-KBC-ProjectId'] = config.project_id
+
             client = await KeboolaClient(
                 storage_api_url=config.storage_api_url,
-                storage_api_token=config.storage_token,
-                bearer_token=config.bearer_token,
-                headers=cls._get_headers(runtime_info),
+                storage_api_token=storage_token,
+                bearer_token=bearer_token,
+                headers={**build_tracing_headers(runtime_info), **extra_headers},
                 readonly=readonly,
                 own_stack_storage_api_url=own_stack_storage_api_url,
             ).with_branch_id(config.branch_id)
@@ -365,7 +761,7 @@ class SessionStateMiddleware(fmw.Middleware):
             # overridable per request. An unforgeable path is not enough on its own, because the
             # destination can come from a header — `KeboolaClient.step_up_storage_client()`
             # therefore attaches the JWT only when the target is this server's own stack.
-            kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
+            kubernetes_token_path = deployed_sa_token_path()
             workspace_manager = await WorkspaceManager.create(
                 client, config.workspace_schema, kubernetes_token_path=kubernetes_token_path
             )
@@ -447,6 +843,18 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
     ) -> list[Tool]:
         tools = await call_next(context)
+
+        # Feature/role filtering needs verify_token (a Connection round-trip with a single project
+        # context). For a programmatic (kbc_*) session this doesn't work at list time: pre-scope there
+        # is no project (and the call would block connecting on a slow stack); post-scope the session
+        # holds a multi-project scoped token and verify without an X-KBC-ProjectId returns 401 — which
+        # made every tools/list fail and the client disconnect. So skip list-time filtering for ALL
+        # programmatic sessions and advertise the superset; the on_call_tool guards still enforce every
+        # feature/role/branch rule per project (with the right project_id) when a tool is invoked.
+        client = KeboolaClient.from_state(context.fastmcp_context.session.state)
+        if is_programmatic_token(client.token):
+            return tools
+
         token_info = await self.get_token_info(context.fastmcp_context)
         features = self.get_project_features(token_info)
         token_role = self.get_token_role(token_info).lower()
@@ -555,6 +963,15 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
     ) -> mt.CallToolResult:
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
+
+        # Bootstrap tools (get_accessible_projects/set_project_scope) must work before any project
+        # is chosen -- that's their entire purpose. verify_token() needs a single-project context
+        # (X-KBC-ProjectId); calling it here pre-scope would 401 before the tool's own body (which
+        # establishes that context, e.g. via introspect_token) ever runs. Mirrors the same exemption
+        # in on_list_tools and MultiProjectMiddleware.
+        if tool.name in BOOTSTRAP_TOOLS:
+            return await call_next(context)
+
         token_info = await self.get_token_info(context.fastmcp_context)
 
         has_semantic_models = False

@@ -18,15 +18,14 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport, get_env_storage_api_url
 from keboola_mcp_server.errors import ValidationErrorMiddleware
-from keboola_mcp_server.mcp import (
-    KeboolaMcpServer,
-    ServerState,
-    SessionStateMiddleware,
-    ToolsFilteringMiddleware,
-)
+from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
+from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
+from keboola_mcp_server.session_store.crypto import resolve_encryption_key
+from keboola_mcp_server.session_store.kai_scope import PostgresKaiScopeStore
+from keboola_mcp_server.session_store.repository import PostgresSessionStore
 from keboola_mcp_server.tools.components.tools import add_component_tools
 from keboola_mcp_server.tools.data_apps import add_data_app_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
@@ -208,6 +207,27 @@ def create_server(
         if not config.oauth_scope:
             config = dataclasses.replace(config, oauth_scope='email')
 
+        # OAuth sessions (the real Keboola access/refresh tokens) live in Postgres, not in a
+        # self-contained JWT (oauth_session_persistence RFC) -- revocation and server-managed
+        # refresh both need a durable, deletable row. No silent in-memory fallback for this
+        # production auth path: refuse to start rather than accept OAuth logins nothing can revoke.
+        if not config.postgres_dsn:
+            raise RuntimeError(
+                'OAuth is configured (oauth_client_id/oauth_client_secret) but no Postgres DSN is set. '
+                'Set MCP_DB_URL (or KBC_POSTGRES_DSN) so OAuth sessions can be stored.'
+            )
+        # Without an explicit key, resolve_encryption_key() falls back to a process-local one --
+        # fine for local dev/tests, but in production it would silently make persisted sessions
+        # undecryptable after every restart (same "refuse to start" reasoning as the DSN check above).
+        if not config.session_encryption_key:
+            raise RuntimeError(
+                'OAuth is configured (oauth_client_id/oauth_client_secret) but no session encryption key is '
+                'set. Set KBC_SESSION_ENCRYPTION_KEY so persisted OAuth sessions survive a process restart.'
+            )
+        session_store = PostgresSessionStore(
+            config.postgres_dsn, encryption_key=resolve_encryption_key(config.session_encryption_key)
+        )
+
         oauth_provider = SimpleOAuthProvider(
             storage_api_url=config.storage_api_url,
             client_id=config.oauth_client_id,
@@ -219,21 +239,53 @@ def create_server(
             # The path corresponds to oauth_callback_handler() set up below.
             callback_endpoint='/oauth/callback',
             jwt_secret=config.jwt_secret,
+            session_store=session_store,
         )
     else:
         oauth_provider = None
+        session_store = None
+
+    # Kai session-scope persistence (pat_token_support/RFC.md, increment 6) needs only a Postgres
+    # DSN -- unlike OAuth sessions it stores no credential material, so no encryption key or
+    # oauth_client_id/secret is required. Independent of whether OAuth is configured above.
+    kai_scope_store = PostgresKaiScopeStore(config.postgres_dsn) if config.postgres_dsn else None
 
     # Initialize FastMCP server with system lifespan
     LOG.info(f'Creating server with config: {config}')
-    server_state = ServerState(config=config, runtime_info=runtime_info)
+    server_state = ServerState(
+        config=config, runtime_info=runtime_info, session_store=session_store, kai_scope_store=kai_scope_store
+    )
     mcp = KeboolaMcpServer(
         name='Keboola MCP Server',
+        instructions=(
+            'This server supports multi-project mode for stack-wide Keboola programmatic tokens '
+            '(kbc_at_/kbc_pat_). When the session uses such a token, data tools are BLOCKED until a '
+            'project scope is confirmed. So at the very START of the conversation, before doing anything '
+            'else: call "get_accessible_projects", show the user their projects, and ASK whether to work '
+            'across ALL of them or a subset. Do not decide for them. Then call "set_project_scope" with '
+            'their answer (no arguments = all projects, or the chosen project ids, optionally '
+            'read_only=true). Both tools return a "scope_token" -- the server does not remember the '
+            'scope between calls, so resend that value as the "scope_token" argument on every '
+            'subsequent tool call in this conversation. After that, read-only tools return results per '
+            'project. Never write to more than one project without explicit user confirmation — write '
+            'operations target the active (first-scoped) project only. If instead the session uses a '
+            'legacy project-scoped Storage API token, it is already bound to a single project: use the '
+            'tools directly — "get_accessible_projects" / "set_project_scope" do not apply (they will '
+            'report that no programmatic token is present). Note: outside the Storage API, some tools '
+            'may need per-project token support not yet available on every stack; surface such errors '
+            'plainly rather than retrying.'
+        ),
         lifespan=create_keboola_lifespan(server_state),
         auth=oauth_provider,
         middleware=[
             LoggingMiddleware(log_level=logging.DEBUG),
             SessionStateMiddleware(),
             ToolAuthorizationMiddleware(),
+            # MultiProjectMiddleware must wrap ToolsFilteringMiddleware (run first in this list =
+            # outer), not the reverse: it swaps the active KeboolaClient per project during fan-out,
+            # and ToolsFilteringMiddleware's per-project feature/role/branch checks must be
+            # re-evaluated against each swapped client — not just once against the pre-fan-out client.
+            MultiProjectMiddleware(),
             ToolsFilteringMiddleware(),
             ValidationErrorMiddleware(),
         ],
