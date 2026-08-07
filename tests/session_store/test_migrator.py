@@ -12,7 +12,7 @@ pytestmark = [pytest.mark.asyncio, requires_postgres]
 async def _clean_slate():
     pool = await asyncpg.create_pool(TEST_DSN)
     try:
-        await pool.execute('DROP TABLE IF EXISTS oauth_sessions, schema_migrations CASCADE')
+        await pool.execute('DROP TABLE IF EXISTS oauth_sessions, kai_sessions, schema_migrations CASCADE')
     finally:
         await pool.close()
 
@@ -25,6 +25,7 @@ async def test_applies_migrations_once() -> None:
             '0001_oauth_sessions.sql',
             '0002_partition_oauth_sessions.sql',
             '0003_default_partition_unique_indexes.sql',
+            '0004_kai_sessions.sql',
         ]
 
         # Re-running is a no-op -- the table already exists, so re-applying the DDL would fail
@@ -64,6 +65,19 @@ async def test_partitions_table_with_default_catch_all() -> None:
             for r in await pool.fetch("SELECT tablename FROM pg_tables WHERE tablename LIKE 'oauth_sessions%'")
         }
         assert tables == {'oauth_sessions', 'oauth_sessions_default'}
+    finally:
+        await pool.close()
+
+
+async def test_creates_kai_sessions_table() -> None:
+    pool = await asyncpg.create_pool(TEST_DSN)
+    try:
+        await apply_migrations(pool)
+        columns = await pool.fetch(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'kai_sessions'"
+        )
+        names = {r['column_name'] for r in columns}
+        assert {'session_key', 'project_ids', 'read_only', 'confirmed'} <= names
     finally:
         await pool.close()
 

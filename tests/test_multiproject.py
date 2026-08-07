@@ -140,7 +140,7 @@ class TestMultiProjectMiddleware:
     async def test_write_tool_no_swap_for_active_project(self) -> None:
         # project_id names the already-active (first) project: no client swap needed.
         scope = SessionScope(project_ids=[11, 22], confirmed=True)
-        context, state = self._ctx(scope, 'update_config', read_only=False, arguments={'project_id': '11'})
+        context, _state = self._ctx(scope, 'update_config', read_only=False, arguments={'project_id': '11'})
         calls = []
 
         async def call_next(_):

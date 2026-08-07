@@ -48,6 +48,7 @@ from keboola_mcp_server.scope import (
     persist_scope,
     resolve_scope_secret,
 )
+from keboola_mcp_server.session_store.kai_scope import KaiScopeStore
 from keboola_mcp_server.session_store.repository import SessionStore
 from keboola_mcp_server.tools.constants import (
     BOOTSTRAP_TOOLS,
@@ -120,6 +121,7 @@ class ServerState:
     config: Config
     runtime_info: ServerRuntimeInfo
     session_store: SessionStore | None = None
+    kai_scope_store: KaiScopeStore | None = None
 
     @property
     def own_stack_storage_api_url(self) -> str | None:
@@ -283,6 +285,19 @@ class SessionStateMiddleware(fmw.Middleware):
             # the caller never needs to resend scope_token at all.
             if scope is None and runtime_info.session_state_persists:
                 scope = self._read_persisted_local_scope(ctx)
+            # Deployed, non-OAuth, programmatic-token sessions (Kai) carry no MCP-minted
+            # identifier and no persistent ctx.session -- kai_session_scope RFC persists their
+            # confirmed scope server-side instead, keyed by (conversation_id, token user id).
+            if (
+                scope is None
+                and not is_list
+                and config.conversation_id
+                and deployed_sa_token_path()
+                and self._oauth_access_token(http_rq) is None
+                and is_programmatic_token(config.storage_token)
+                and server_state.kai_scope_store is not None
+            ):
+                scope = await self._read_persisted_kai_scope(config, server_state.kai_scope_store)
             if scope is None and not config.project_id and not is_list:
                 scope = await self._autolease_default_scope(config)
             if not is_list:
@@ -494,6 +509,35 @@ class SessionStateMiddleware(fmw.Middleware):
             return None
         scope = state.get(SCOPE_KEY)
         return scope if isinstance(scope, SessionScope) else None
+
+    @classmethod
+    async def _read_persisted_kai_scope(cls, config: Config, store: KaiScopeStore) -> 'SessionScope | None':
+        """The scope confirmed by an earlier `set_project_scope` call on this Kai conversation,
+        looked up by `sha256(conversation_id:user_id)` (kai_session_scope RFC) rather than by
+        token hash, since Kai refreshes its raw token independently and its value isn't stable
+        across that refresh. Drops (and forgets) the stored scope -- rather than auto-narrowing or
+        trusting stale access -- if a previously scoped project is no longer reachable by the
+        current token; callers see this as "no scope yet" and are steered back through
+        get_accessible_projects / set_project_scope.
+        """
+        try:
+            introspection = await introspect_token(
+                config.storage_api_url, subject_token=strip_bearer(config.storage_token)
+            )
+        except Exception as e:
+            LOG.warning(f'Could not introspect Kai token for persisted scope lookup: {e}', exc_info=True)
+            return None
+        if introspection.user_id is None:
+            return None
+        stored = await store.get(config.conversation_id, introspection.user_id)
+        if stored is None:
+            return None
+        current_project_ids = {p.id for p in introspection.projects}
+        if not set(stored.project_ids).issubset(current_project_ids):
+            LOG.info('Persisted Kai scope references a project no longer reachable; dropping it.')
+            await store.drop(config.conversation_id, introspection.user_id)
+            return None
+        return SessionScope(project_ids=stored.project_ids, read_only=stored.read_only, confirmed=stored.confirmed)
 
     @classmethod
     def _is_local_programmatic(cls, config: Config) -> bool:

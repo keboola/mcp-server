@@ -24,6 +24,7 @@ from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.session_store.crypto import resolve_encryption_key
+from keboola_mcp_server.session_store.kai_scope import PostgresKaiScopeStore
 from keboola_mcp_server.session_store.repository import PostgresSessionStore
 from keboola_mcp_server.tools.components.tools import add_component_tools
 from keboola_mcp_server.tools.data_apps import add_data_app_tools
@@ -244,9 +245,16 @@ def create_server(
         oauth_provider = None
         session_store = None
 
+    # Kai session-scope persistence (pat_token_support/RFC.md, increment 6) needs only a Postgres
+    # DSN -- unlike OAuth sessions it stores no credential material, so no encryption key or
+    # oauth_client_id/secret is required. Independent of whether OAuth is configured above.
+    kai_scope_store = PostgresKaiScopeStore(config.postgres_dsn) if config.postgres_dsn else None
+
     # Initialize FastMCP server with system lifespan
     LOG.info(f'Creating server with config: {config}')
-    server_state = ServerState(config=config, runtime_info=runtime_info, session_store=session_store)
+    server_state = ServerState(
+        config=config, runtime_info=runtime_info, session_store=session_store, kai_scope_store=kai_scope_store
+    )
     mcp = KeboolaMcpServer(
         name='Keboola MCP Server',
         instructions=(

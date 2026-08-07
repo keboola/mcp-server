@@ -700,3 +700,99 @@ over a header/middleware-only approach" recommendation, including the ambiguity 
 raising when 2+ projects are active and no `project_id` is given). Everything else in PR #500 (token
 taxonomy, append-only project registry, Kai integration flow, 24h idle refresh) is already covered
 by this RFC and the as-built code under different names.
+
+---
+
+# Extension: Kai (header-token) session-scope persistence (PSGO-261, increment 6)
+
+## Context
+
+Kai currently authorizes with a legacy, project-bound Storage token and will transition to a
+stack-wide programmatic token (`kbc_at_`/`kbc_pat_`), refreshed by Kai's own regime rather than
+this server's PKCE store. Once that happens, every request Kai sends carries an **unscoped**
+whole-stack token, and `set_project_scope`/`get_accessible_projects` need the same server-side
+scope persistence OAuth sessions already get (§"Transport note", increment 5) — pushing the
+`scope_token` round-trip onto an LLM-driven client is unreliable (nothing guarantees it survives
+compaction, a fresh turn, or simply gets echoed back correctly).
+
+OAuth's persistence trick doesn't transfer directly, though: `SimpleOAuthProvider` mints its own
+opaque token at login, so `sha256(opaque_token)` (`session_store/repository.py`) is a stable
+Postgres key for the life of the session even as the *real* Keboola credential is refreshed
+underneath it. Kai's raw token has no such stability — confirmed against the actual refresh code
+in `auth_login.py`: `refresh_tokens()` returns a brand-new access-token string on every rotation,
+and `create_pat()`'s response carries no separate token-id to key on either. Hashing the raw
+inbound token would therefore silently drop the persisted scope on every Kai-side refresh.
+
+## Required behavior
+
+- **Persistence key:** `sha256(f'{conversation_id}:{user_id}')`, where `conversation_id` is the
+  existing `X-Conversation-Id`-derived `Config.conversation_id` (already flowing on every request
+  for tracing, confirmed stable for the life of one Kai chat session) and `user_id` is
+  `Introspection.user_id` (`auth_login.py`) resolved from the *current* request's token. Binding
+  to `user_id` — not just `conversation_id` — closes the gap a low-entropy or client-chosen
+  `conversation_id` would otherwise leave open: a collision (or reuse) only matches an existing row
+  if it also resolves to the same underlying Keboola identity, so a mismatched identity is a cache
+  miss, not a leaked scope, with no separate post-lookup equality check to forget.
+- **Stored row:** `project_ids`, `read_only`, `confirmed` only — no `scoped_token`/expiry fields,
+  since Kai refreshes its own Keboola credential independently of this table; nothing here needs
+  to track the parent token's freshness.
+- **Read-time validation, not a superset/subset hash:** a hash can only express exact-match
+  equality, not "grew is fine, shrank is not" — so the monotonicity rule is enforced in code, at
+  read time, against introspection data already being fetched: if
+  `set(row.project_ids) - {p.id for p in introspection.projects}` is non-empty (some previously
+  scoped project is no longer reachable), the row is dropped and the scope is treated as
+  unconfirmed. Projects *added* to the token's reach never invalidate an existing scope, since the
+  subset relation still holds.
+- **On invalidation, drop the whole scope** (not auto-narrow to the intersection) — force a full
+  `get_accessible_projects` → `set_project_scope` redo so an access change is surfaced to the user
+  rather than silently absorbed.
+- Applies only to deployed, non-OAuth, programmatic-token sessions with a `conversation_id`
+  present (`deployed_sa_token_path()` set, `is_programmatic_token(config.storage_token)`, no
+  `AuthenticatedUser`/`ProxyAccessToken` on the request). OAuth sessions keep using
+  `oauth_sessions`; local PKCE sessions keep using `ctx.session.state` (`session_state_persists`);
+  neither is affected by this table.
+
+## Resolution strategy
+
+- New table `kai_sessions` (migration `0004_kai_sessions.sql`), unpartitioned initially — same
+  starting point `oauth_sessions` had before partitioning became necessary (increment/migration
+  `0002`); add partitioning here too if/when retention needs it.
+- New `session_store/kai_scope.py`: `KaiScope` (data) + `KaiScopeStore` (Protocol) +
+  `PostgresKaiScopeStore` (impl), deliberately **not** folded into `SessionStore`/`OAuthSession` —
+  different key scheme (composite hash vs. opaque-token hash), no encrypted credential fields (no
+  secret is stored, just a project-id list and two flags), different invalidation semantics
+  (subset-check + drop vs. revoke). Keeping it a separate small store avoids overloading the
+  OAuth-shaped `SessionStore` protocol with a second, structurally different session concept.
+  Same lazy-pool-on-first-use pattern as `PostgresSessionStore`.
+- `ServerState.kai_scope_store: KaiScopeStore | None`, constructed in `server.py` whenever
+  `config.postgres_dsn` is set — **independent of whether OAuth is configured**, since Kai's path
+  needs no `oauth_client_id`/`session_encryption_key` (no OAuth login, no encrypted fields here).
+- `SessionStateMiddleware.on_request` (`mcp.py`): a new fallback,
+  `_read_persisted_kai_scope`, slotted after `_read_persisted_local_scope` and before
+  `_autolease_default_scope` — mirrors `_read_persisted_oauth_scope`'s position in the chain but
+  reads from `kai_scope_store` instead of the OAuth session row, gated on the "deployed,
+  non-OAuth, programmatic, has conversation_id" condition above. Skipped for `/list` like every
+  other network-touching step in this chain.
+- `tools/project.py`'s `set_project_scope`: a new `_persist_kai_scope`, called alongside the
+  existing `_persist_oauth_scope` — whichever one applies persists server-side and suppresses
+  `scope_token` in the response (`persisted = await _persist_oauth_scope(...) or await
+  _persist_kai_scope(...) or session_state_persists`, unchanged shape, one more branch).
+
+## Decisions (increment 6)
+
+- **Server-side persistence over client-side round-tripping**, confirmed: pushing scope state
+  into Kai/the LLM's own context is fragile (no guarantee of faithful round-trip across turns or
+  compaction); persisting server-side, looked up automatically on every request, needs no
+  cooperation from the calling LLM beyond sending the `conversation_id` header it already sends.
+- **Composite key (`conversation_id` + `user_id`) over either alone.** `conversation_id` alone is
+  client-supplied and not guaranteed high-entropy; `user_id` alone is not conversation-scoped
+  (would incorrectly share scope across unrelated chats from the same person). Together they give
+  a key that's both stable across Kai's token refreshes and safe against a `conversation_id`
+  collision or reuse.
+- **Drop-whole-scope over auto-narrow on a reachability shrink** — an explicit user decision
+  (over the friendlier-but-quieter auto-narrow-to-intersection alternative): surfacing an access
+  change via a forced re-scope beats silently continuing with whatever subset still works.
+- **A new store/table over extending `oauth_sessions`/`SessionStore`** — the two session kinds
+  differ enough (key scheme, no encrypted fields, no OAuth-specific lifecycle) that folding Kai
+  scope into the OAuth-shaped protocol would blur its single responsibility for no real code
+  reuse (the two stores would share almost no method bodies).

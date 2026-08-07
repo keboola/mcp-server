@@ -15,7 +15,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import ServerState, process_concurrently
+from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, process_concurrently
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.scope import (
@@ -370,7 +370,7 @@ class ProjectScope(BaseModel):
 async def _persist_oauth_scope(ctx: Context, scope: SessionScope) -> bool:
     """Persists ``scope`` on the caller's OAuth session row, if this is an OAuth-authenticated
     session (see mcp.OAUTH_SESSION_ID_KEY). No-op (returns False) for PAT/header-token sessions,
-    which have no session row to persist against -- those keep relying on scope_token.
+    which either use `_persist_kai_scope` or keep relying on scope_token.
     """
     session_id = ctx.session.state.get(OAUTH_SESSION_ID_KEY)
     if not session_id:
@@ -379,6 +379,31 @@ async def _persist_oauth_scope(ctx: Context, scope: SessionScope) -> bool:
     if session_store is None:
         return False
     await persist_scope(session_store, session_id, scope)
+    return True
+
+
+async def _persist_kai_scope(ctx: Context, scope: SessionScope, client: KeboolaClient, parent_token: str) -> bool:
+    """Persists ``scope`` for a deployed, non-OAuth, programmatic-token session (Kai) -- see
+    `feature_spec/pat_token_support/RFC.md` ("Kai (header-token) session-scope persistence").
+    No-op (returns False) when this isn't such a session, or no conversation_id/store is available.
+    """
+    conversation_id = ctx.session.state.get(CONVERSATION_ID)
+    if not conversation_id or not deployed_sa_token_path() or not is_programmatic_token(client.bearer_token):
+        return False
+    server_state = ServerState.from_context(ctx)
+    store = server_state.kai_scope_store
+    if store is None:
+        return False
+    introspection = await introspect_token(client.storage_api_url, subject_token=parent_token)
+    if introspection.user_id is None:
+        return False
+    await store.upsert(
+        conversation_id,
+        introspection.user_id,
+        project_ids=scope.project_ids,
+        read_only=scope.read_only,
+        confirmed=scope.confirmed,
+    )
     return True
 
 
@@ -595,7 +620,11 @@ async def set_project_scope(
 
     multi = len(ids) > 1
     server_state = ServerState.from_context(ctx)
-    persisted = await _persist_oauth_scope(ctx, scope) or server_state.runtime_info.session_state_persists
+    persisted = (
+        await _persist_oauth_scope(ctx, scope)
+        or await _persist_kai_scope(ctx, scope, client, parent_token)
+        or server_state.runtime_info.session_state_persists
+    )
     scope_token = None if persisted else scope.to_token(resolve_scope_secret(server_state.config))
     resend_instruction = (
         'The server persists this scope server-side for the rest of the conversation -- no need to resend it.'
