@@ -173,25 +173,62 @@ class TestSearchEndpoints:
         params = raw_client.get.call_args.kwargs['params']
         assert params == {'query': 'foo', 'projectIds[]': ['4214'], 'limit': 10, 'offset': 5, **expected_branch_params}
 
+    @pytest.mark.parametrize(
+        ('component_id', 'metadata_keys', 'expected_params'),
+        [
+            pytest.param(
+                'keboola.ex-test',
+                None,
+                {'idComponent': 'keboola.ex-test', 'include': 'filteredMetadata'},
+                id='component_only',
+            ),
+            pytest.param(
+                None,
+                ['KBC.configuration.folderName'],
+                {'metadataKeys[0]': 'KBC.configuration.folderName', 'include': 'filteredMetadata'},
+                id='metadata_keys_only',
+            ),
+            pytest.param(
+                'keboola.ex-test',
+                ['KBC.configuration.folderName', 'KBC.other'],
+                {
+                    'idComponent': 'keboola.ex-test',
+                    'metadataKeys[0]': 'KBC.configuration.folderName',
+                    'metadataKeys[1]': 'KBC.other',
+                    'include': 'filteredMetadata',
+                },
+                id='component_and_metadata_keys',
+            ),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_component_configurations_search_params(self, raw_client: RawKeboolaClient) -> None:
-        raw_client.get.return_value = [{'id': 'config-1', 'componentId': 'keboola.ex-test'}]
+    async def test_component_configurations_search_params(
+        self,
+        raw_client: RawKeboolaClient,
+        component_id: str | None,
+        metadata_keys: list[str] | None,
+        expected_params: dict[str, Any],
+    ) -> None:
+        """
+        The params must match the SAPI contract exactly, or the feature breaks silently.
+
+        The endpoint validates the query string against a fixed field list and rejects the whole
+        request with HTTP 400 on an unknown name, so the component filter has to be `idComponent`
+        (*not* `componentId`). And `include=filteredMetadata` is what makes the response rows carry
+        their `metadata` at all — without it each row is only `{idComponent, configurationId}` and
+        no caller can read a metadata value, even though the request succeeds.
+        """
+        response = [{'idComponent': 'keboola.ex-test', 'configurationId': 'config-1', 'metadata': []}]
+        raw_client.get.return_value = response
         client = AsyncStorageClient(raw_client=raw_client, branch_id='123')
 
-        result = await client.component_configurations_search(
-            component_id='keboola.ex-test',
-            metadata_keys=['KBC.configuration.folderName', 'KBC.other'],
-        )
+        result = await client.component_configurations_search(component_id=component_id, metadata_keys=metadata_keys)
 
         raw_client.get.assert_called_once_with(
             endpoint='branch/123/search/component-configurations',
-            params={
-                'componentId': 'keboola.ex-test',
-                'metadataKeys[0]': 'KBC.configuration.folderName',
-                'metadataKeys[1]': 'KBC.other',
-            },
+            params=expected_params,
         )
-        assert result == [{'id': 'config-1', 'componentId': 'keboola.ex-test'}]
+        assert result == response
 
     @pytest.mark.asyncio
     async def test_component_configurations_search_requires_filter(self, raw_client: RawKeboolaClient) -> None:

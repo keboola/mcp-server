@@ -688,27 +688,35 @@ async def apply_folder_metadata(
     :param is_new: When True, an empty folder string is a no-op (no folder to remove on a new item).
     :return: Folder hint string if applicable, else None.
     """
+    # Both catches below stay broad on purpose: callers invoke this *after* the configuration has
+    # already been written, so letting anything escape would report a failure for a change that
+    # actually landed. They use LOG.exception (not LOG.warning) so the cause and traceback are
+    # always recorded — a swallowed cause here kept a fully broken folder search invisible.
     if folder is None:
         try:
             total, existing_folders, lower_bound = await get_config_folders(client, component_id)
             return build_folder_hint(total, existing_folders, kind, tool_name, lower_bound=lower_bound)
-        except Exception:
-            LOG.warning(
-                'Unable to fetch %s folders for component "%s" when processing configuration "%s".',
+        except Exception as e:
+            # Cause is duplicated into the message text on purpose (see test_apply_folder_metadata_*).
+            LOG.exception(
+                'Unable to fetch %s folders for component "%s" when processing configuration "%s": %s',
                 kind,
                 component_id,
                 configuration_id,
+                e,  # noqa: TRY401
             )
             return None
     normalized = folder.strip()
     if normalized:
         try:
             await set_configuration_folder_metadata(client, component_id, configuration_id, normalized)
-        except Exception:
-            LOG.warning(
-                'Unable to set folder metadata for component "%s", configuration "%s".',
+        except Exception as e:
+            # Cause is duplicated into the message text on purpose (see test_apply_folder_metadata_*).
+            LOG.exception(
+                'Unable to set folder metadata for component "%s", configuration "%s": %s',
                 component_id,
                 configuration_id,
+                e,  # noqa: TRY401
             )
     elif not is_new:
         await clear_configuration_folder_metadata(client, component_id, configuration_id)

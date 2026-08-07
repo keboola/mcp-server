@@ -676,19 +676,29 @@ class AsyncStorageClient(KeboolaServiceClient):
         Searches component configurations by component and metadata keys.
         All filters are applied server-side by the SAPI search endpoint.
 
+        The endpoint validates the query string against a fixed set of field names and rejects the
+        whole request with HTTP 400 if an unknown one is sent, so the param names below must match
+        the SAPI contract exactly: the component filter is `idComponent` (*not* `componentId`), and
+        `metadataKeys` must use the bracket-array form. `include=filteredMetadata` is required for
+        the response rows to carry their `metadata` at all — without it each row is only
+        `{'idComponent': ..., 'configurationId': ...}`.
+
         :param component_id: Optional component ID to filter results.
         :param metadata_keys: List of metadata keys to filter by — returns only configurations
             that have at least one of the specified metadata keys set.
-        :return: List of matching configurations as dictionaries.
+        :return: List of matching configurations, one entry per configuration, each with
+            'idComponent', 'configurationId' and a 'metadata' list of {'id', 'key', 'value',
+            'timestamp'} entries holding only the metadata matching `metadata_keys`.
         """
         if not (component_id or metadata_keys):
             return []
         endpoint = f'branch/{self._branch_id}/search/component-configurations'
         params: dict[str, Any] = {}
         if component_id:
-            params['componentId'] = component_id
+            params['idComponent'] = component_id
         for i, key in enumerate(metadata_keys or []):
             params[f'metadataKeys[{i}]'] = key
+        params['include'] = 'filteredMetadata'
         return cast(list[JsonDict], await self.get(endpoint=endpoint, params=params))
 
     async def configuration_metadata_get(self, component_id: str, configuration_id: str) -> list[JsonDict]:

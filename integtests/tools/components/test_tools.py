@@ -41,6 +41,8 @@ from keboola_mcp_server.tools.components.model import (
 )
 from keboola_mcp_server.tools.components.sql_utils import split_sql_statements
 from keboola_mcp_server.tools.components.utils import (
+    PYTHON_TRANSFORMATION_ID,
+    apply_folder_metadata,
     clean_bucket_name,
     expand_component_types,
     get_sql_transformation_id_from_sql_dialect,
@@ -1047,3 +1049,63 @@ async def test_get_config_examples_with_invalid_component(mcp_context: Context):
     result = await get_config_examples(ctx=mcp_context, component_id='completely-non-existent-component-12345')
 
     assert result == ''
+
+
+# `build_folder_hint` only produces a hint once a component has this many configurations.
+_FOLDER_HINT_MIN_CONFIGS = 20
+
+
+@pytest.mark.asyncio
+async def test_apply_folder_metadata_returns_hint_with_existing_folders(
+    keboola_client: KeboolaClient, keboola_project: ProjectDef, unique_id: str
+):
+    """
+    Tests that a real project with enough configurations yields a folder hint naming existing folders.
+
+    This is the end-to-end guard for the folder-hint feature. It was silently dead for every
+    component: the underlying search call sent a param name the Storage API rejects, and
+    `apply_folder_metadata` swallowed the resulting error, so the hint was simply never produced
+    and no test noticed.
+    """
+    storage_client = keboola_client.storage_client
+    folders = [f'Folder A {unique_id}', f'Folder B {unique_id}']
+    created_ids: list[str] = []
+    try:
+        for i in range(_FOLDER_HINT_MIN_CONFIGS):
+            created = await storage_client.configuration_create(
+                component_id=PYTHON_TRANSFORMATION_ID,
+                name=f'folder-hint-test-{unique_id}-{i}',
+                description='Configuration created by an automated test of the folder hint',
+                configuration={},
+            )
+            created_ids.append(str(created['id']))
+
+        # Only some configurations get a folder, so the hint has to come from the full
+        # configuration count rather than the (smaller) set of folder-bearing ones.
+        for configuration_id, folder in zip(created_ids, folders):
+            await storage_client.configuration_metadata_update(
+                component_id=PYTHON_TRANSFORMATION_ID,
+                configuration_id=configuration_id,
+                metadata={MetadataField.CONFIGURATION_FOLDER_NAME: folder},
+            )
+
+        hint = await apply_folder_metadata(
+            keboola_client,
+            PYTHON_TRANSFORMATION_ID,
+            created_ids[-1],
+            None,  # no folder requested -> return a hint instead of writing metadata
+            'configurations',
+            'update_config',
+        )
+
+        assert hint is not None, 'Expected a folder hint for a component with 20+ configurations.'
+        assert 'Consider organizing them with folders' in hint
+        for folder in folders:
+            assert folder in hint, f'Existing folder "{folder}" missing from hint: {hint}'
+    finally:
+        for configuration_id in created_ids:
+            await storage_client.configuration_delete(
+                component_id=PYTHON_TRANSFORMATION_ID,
+                configuration_id=configuration_id,
+                skip_trash=True,
+            )
