@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Union, cast
@@ -18,15 +19,22 @@ JsonStruct = Union[JsonDict, JsonList]  # noqa: UP007
 
 LOG = logging.getLogger(__name__)
 
+# A genuine Keboola stack host: a `connection.` label, any number of region/cloud-provider
+# subdomain labels, ending in `.keboola.com` or `.keboola.dev`. `hostname.startswith('connection.')`
+# alone is not a domain allowlist -- `connection.attacker.tld` would satisfy it -- see the
+# "Security hardening" RFC increment. Mirrors the domain-allowlist pattern `oauth.py`'s
+# `_ALLOWED_DOMAINS` already uses for redirect URIs, scoped to this server's own kind of host.
+_STORAGE_API_HOST_RE = re.compile(r'^connection\.(?:[a-z0-9-]+\.)*keboola\.(?:com|dev)$', re.IGNORECASE)
+
 
 def normalize_storage_api_url(storage_api_url: str) -> str:
     """
     Validates a Keboola Storage API URL and returns its canonical ``https://connection.<suffix>`` base.
 
-    :raises ValueError: if the host is missing or is not a ``connection.*`` host.
+    :raises ValueError: if the host is missing or is not a genuine ``connection.*.keboola.(com|dev)`` host.
     """
     parsed = urlparse(storage_api_url)
-    if not parsed.hostname or not parsed.hostname.startswith('connection.'):
+    if not parsed.hostname or not _STORAGE_API_HOST_RE.fullmatch(parsed.hostname):
         raise ValueError(f'Invalid Keboola Storage API URL: {storage_api_url}')
     return urlunparse(('https', parsed.hostname, '', '', '', ''))
 
