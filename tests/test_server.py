@@ -211,7 +211,9 @@ async def test_own_stack_from_cli_parameter_only(tmp_path, monkeypatch):
     [
         (  # config params in Config class
             Config(
-                storage_token='SAPI_1234', storage_api_url='http://connection.sapi', workspace_schema='WORKSPACE_1234'
+                storage_token='SAPI_1234',
+                storage_api_url='http://connection.test.keboola.com',
+                workspace_schema='WORKSPACE_1234',
             ),
             {},
         ),
@@ -219,16 +221,20 @@ async def test_own_stack_from_cli_parameter_only(tmp_path, monkeypatch):
             Config(),
             {
                 'KBC_STORAGE_TOKEN': 'SAPI_1234',
-                'KBC_STORAGE_API_URL': 'http://connection.sapi',
+                'KBC_STORAGE_API_URL': 'http://connection.test.keboola.com',
                 'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234',
             },
         ),
         (  # config params mixed up in both the Config class and the OS environment
-            Config(storage_api_url='http://connection.sapi'),
+            Config(storage_api_url='http://connection.test.keboola.com'),
             {'KBC_STORAGE_TOKEN': 'SAPI_1234', 'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234'},
         ),
         (  # the OS environment overrides the initial Config class
-            Config(storage_token='foo-bar', storage_api_url='http://connection.sapi', workspace_schema='xyz_123'),
+            Config(
+                storage_token='foo-bar',
+                storage_api_url='http://connection.test.keboola.com',
+                workspace_schema='xyz_123',
+            ),
             {'KBC_STORAGE_TOKEN': 'SAPI_1234', 'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234'},
         ),
         # TODO: Also test values obtained from an HTTP request.
@@ -300,7 +306,7 @@ async def test_with_session_state_admin_role_tools(mocker, admin_info, expected_
     os_mock = mocker.patch('keboola_mcp_server.server.os')
     os_mock.environ = {
         'KBC_STORAGE_TOKEN': 'SAPI_1234',
-        'KBC_STORAGE_API_URL': 'http://connection.sapi',
+        'KBC_STORAGE_API_URL': 'http://connection.test.keboola.com',
         'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234',
     }
 
@@ -507,7 +513,7 @@ async def test_json_logging():
                 '--transport',
                 'streamable-http',
                 '--api-url',
-                'http://connection.nowhere',
+                'http://connection.test.keboola.com',
                 '--storage-token',
                 'foo',
                 '--log-config',

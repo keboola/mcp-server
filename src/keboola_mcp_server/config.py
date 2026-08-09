@@ -7,7 +7,7 @@ import os
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 from urllib.parse import urlparse, urlunparse
 
 LOG = logging.getLogger(__name__)
@@ -68,6 +68,25 @@ class Config:
     Only consulted when the inbound Storage token is a Keboola programmatic token; the legacy
     project-bound Storage token derives its project from the token itself."""
 
+    # Fields a per-request HTTP header may legitimately set (see `replace_by_headers`). Everything
+    # else -- jwt_secret, postgres_dsn, session_encryption_key, oauth_client_id/secret,
+    # oauth_server_url, mcp_server_url -- is deployment-level configuration and must only ever come
+    # from the process environment or CLI args, never a caller-supplied header. Without this
+    # allowlist, a header literally named (in any of the exact/`KBC_`/`X-` spellings `_read_options`
+    # accepts) e.g. `Jwt-Secret` would let a caller choose the HMAC key that verifies their own
+    # `scope_token`, forging arbitrary `project_ids` -- see the "Security hardening" RFC increment.
+    _HEADER_ELIGIBLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            'storage_api_url',
+            'storage_token',
+            'branch_id',
+            'workspace_schema',
+            'bearer_token',
+            'conversation_id',
+            'project_id',
+        }
+    )
+
     def __post_init__(self) -> None:
         for f in dataclasses.fields(self):
             if 'url' not in f.name:
@@ -97,10 +116,18 @@ class Config:
         return name.lower().replace('_', '').replace('-', '')
 
     @classmethod
-    def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, Any]:
+    def _read_options(cls, d: Mapping[str, str], *, allowed_fields: frozenset[str] | None = None) -> Mapping[str, Any]:
+        """:param allowed_fields: When given, only these field names are ever set -- fields
+        outside it are skipped entirely, under every naming convention (`X-{name}` and `KBC_{name}`
+        headers included). Used by `replace_by_headers` to keep deployment-level fields
+        unreachable from a request; `None` (the default, for env/CLI-derived input) leaves every
+        field reachable, since that input is already operator-trusted.
+        """
         data = {cls._normalize(k): v for k, v in d.items()}
         options: dict[str, Any] = {}
         for f in dataclasses.fields(cls):
+            if allowed_fields is not None and f.name not in allowed_fields:
+                continue
             field_names = [f.name] + f.metadata.get('aliases', [])
 
             for name in field_names:
@@ -142,8 +169,22 @@ class Config:
         Creates new `Config` instance from the existing one by replacing the values from the input mapping.
         The keys in the input mapping can either be the names of the fields in `Config` class
         or their uppercase variant prefixed with 'KBC_'.
+
+        For a per-request HTTP request's headers (untrusted caller input), use
+        `replace_by_headers` instead -- this method leaves every field reachable, which is only
+        safe for operator-trusted input (the process environment, CLI args).
         """
         return dataclasses.replace(self, **self._read_options(d))
+
+    def replace_by_headers(self, headers: Mapping[str, str]) -> 'Config':
+        """Like `replace_by`, but only ever sets fields in `_HEADER_ELIGIBLE_FIELDS` -- every
+        other field (`jwt_secret`, `postgres_dsn`, `session_encryption_key`, `oauth_client_id`/
+        `oauth_client_secret`, `oauth_server_url`, `mcp_server_url`) is deployment-level
+        configuration and must never be settable by a caller-supplied header, under any of the
+        exact/`KBC_`/`X-` name spellings `_read_options` accepts -- see the "Security hardening"
+        RFC increment.
+        """
+        return dataclasses.replace(self, **self._read_options(headers, allowed_fields=self._HEADER_ELIGIBLE_FIELDS))
 
     def __repr__(self) -> str:
         params: list[str] = []
