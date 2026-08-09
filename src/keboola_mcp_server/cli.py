@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import contextlib
 import dataclasses
+import getpass
 import json
 import logging.config
 import os
@@ -79,9 +80,33 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         'Falls back to KBC_STORAGE_API_URL.',
     )
     login_parser.add_argument(
+        '--profile',
+        metavar='NAME',
+        help='Which local interface this login is for (Claude Desktop, Cursor, a terminal, ...). '
+        'Each interface needing its own session should use a distinct profile so they never share '
+        'one stored credential/refresh token. Falls back to KBC_LOGIN_PROFILE, then "default".',
+    )
+    login_parser.add_argument(
+        '--project-ids',
+        metavar='ID[,ID...]',
+        help='Scope this login to these project ids (comma-separated). Skips the interactive prompt. '
+        'Required (with this or --all) when not run from a terminal.',
+    )
+    login_parser.add_argument(
+        '--all',
+        dest='all_projects',
+        action='store_true',
+        help='Scope this login to every currently-accessible project. Skips the interactive prompt.',
+    )
+    login_parser.add_argument(
+        '--read-only',
+        action='store_true',
+        help='Scope this login read-only (no write operations in any scoped project).',
+    )
+    login_parser.add_argument(
         '--pat',
         action='store_true',
-        help='After the browser login, lease a Personal Access Token (kbc_pat_) over all accessible '
+        help='After the browser login, lease a Personal Access Token (kbc_pat_) over the scoped '
         'projects and print it. Requires an MFA code (--totp or --recovery).',
     )
     login_parser.add_argument(
@@ -90,9 +115,17 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help='Also print the session access token (kbc_at_) to stdout — e.g. to pass as a header to a '
         'locally-run streamable-HTTP server. Note: it expires in ~1 hour.',
     )
-    login_parser.add_argument('--totp', metavar='CODE', help='TOTP MFA code for the sudo elevation (--pat).')
     login_parser.add_argument(
-        '--recovery', metavar='CODE', help='Recovery MFA code for the sudo elevation (--pat); alternative to --totp.'
+        '--totp',
+        metavar='CODE',
+        help='TOTP MFA code for the sudo elevation (--pat). Visible in shell history/`ps` for the '
+        'process lifetime — prefer leaving this unset and entering the code at the prompt instead.',
+    )
+    login_parser.add_argument(
+        '--recovery',
+        metavar='CODE',
+        help='Recovery MFA code for the sudo elevation (--pat); alternative to --totp. Single-use and '
+        'high-value — same shell-history/`ps` caveat as --totp; prefer the interactive prompt.',
     )
     login_parser.add_argument(
         '--pat-name',
@@ -104,7 +137,8 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         '--force',
         action='store_true',
         help='Force a fresh browser login even if a valid stored session exists (e.g. to switch '
-        'user/token). Without it, login refreshes the existing session.',
+        'user/token). Without it, login refreshes the existing session. Also re-prompts for project '
+        'scope even if one is already stored.',
     )
 
     logout_parser = subparsers.add_parser(
@@ -115,6 +149,12 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         '--api-url',
         metavar='URL',
         help='Stack to log out of (default: KBC_STORAGE_API_URL). Use --all to clear every stack.',
+    )
+    logout_parser.add_argument(
+        '--profile',
+        metavar='NAME',
+        help='Which local interface to log out (see `login --profile`). Falls back to '
+        'KBC_LOGIN_PROFILE, then "default". Ignored with --all, which clears every profile.',
     )
     logout_parser.add_argument('--all', action='store_true', help='Delete stored sessions for all stacks.')
 
@@ -172,9 +212,55 @@ _exception_handlers = {
 }
 
 
+def _parse_project_ids(raw: str) -> list[int]:
+    try:
+        return [int(x.strip()) for x in raw.split(',') if x.strip()]
+    except ValueError:
+        raise RuntimeError(f'Could not parse --project-ids value: {raw!r} (expected comma-separated integers).')
+
+
+def _prompt_project_selection(projects: list) -> tuple[list[int], bool]:
+    """Interactively asks which projects to scope this login to. Never returns an implicit
+    "everything" without the user seeing the list and choosing it -- see the "Security
+    hardening" RFC increment: a local session must be scoped before it's ever usable.
+    """
+    print('\nAccessible projects:', file=sys.stderr)
+    for p in projects:
+        print(f'  {p.id}' + (f' - {p.name}' if p.name else ''), file=sys.stderr)
+    raw = input('\nScope this login to which projects? [a]ll or comma-separated ids (default: all): ').strip()
+    if not raw or raw.lower() in ('a', 'all'):
+        project_ids = [p.id for p in projects]
+    else:
+        project_ids = _parse_project_ids(raw)
+        valid_ids = {p.id for p in projects}
+        if outside := [pid for pid in project_ids if pid not in valid_ids]:
+            raise RuntimeError(f'Project(s) {outside} are not accessible with this token.')
+    read_only = input('Read-only (no writes in any scoped project)? [y/N]: ').strip().lower() in ('y', 'yes')
+    return project_ids, read_only
+
+
+def _prompt_mfa_code() -> tuple[str | None, str | None]:
+    """Prompts for a TOTP or recovery code via hidden input, instead of requiring a CLI argument
+    that would sit in shell history/`ps` for the process lifetime -- see the "Security hardening"
+    RFC increment. `getpass.getpass` degrades gracefully (visible input, with a stderr warning) on
+    a non-interactive stdin, so piped/scripted input still works.
+    """
+    totp = getpass.getpass('TOTP code (leave blank to use a recovery code instead): ').strip()
+    if totp:
+        return totp, None
+    recovery = getpass.getpass('Recovery code: ').strip()
+    if not recovery:
+        raise RuntimeError('Leasing a PAT (--pat) requires an MFA code (TOTP or recovery).')
+    return None, recovery
+
+
 async def _run_login(
     api_url: str | None,
     *,
+    profile: str | None = None,
+    project_ids_arg: str | None = None,
+    all_projects: bool = False,
+    read_only: bool = False,
     pat: bool = False,
     totp: str | None = None,
     recovery: str | None = None,
@@ -182,51 +268,94 @@ async def _run_login(
     show_token: bool = False,
     force: bool = False,
 ) -> None:
-    """Establishes a stored session and, with ``pat=True``, leases a PAT.
+    """Establishes a stored session, scoped to an explicit set of projects, and with ``pat=True``
+    leases a PAT over that same scope.
 
     Refresh-first: if a stored session exists and its refresh token is still valid, this refreshes
     (no browser) — so re-running `login` an hour later just leases a fresh access token. A browser
     PKCE login runs only when there is no stored session or the refresh token itself is dead.
 
-    With ``pat=True``, additionally leases a Personal Access Token over all accessible projects
-    (introspect → sudo with the MFA code → create PAT) and prints it.
+    Project scope is chosen once, here, and persisted alongside the tokens (see
+    `auth_login.TokenSet`) — a local session is never auto-leased to every project with only a
+    prompt-text "ask first" gate; see the "Security hardening" RFC increment. Already-scoped
+    sessions keep their existing choice on a plain re-run; pass `--project-ids`/`--all` or
+    `--force` to change it.
+
+    With ``pat=True``, additionally leases a Personal Access Token over the same scope
+    (sudo with the MFA code → create PAT) and prints it.
     """
-    from keboola_mcp_server.auth_login import ensure_access_token, forget_tokens, lease_pat, load_tokens, perform_login
+    from keboola_mcp_server.auth_login import (
+        ensure_access_token,
+        forget_tokens,
+        introspect_token,
+        lease_pat,
+        load_tokens,
+        perform_login,
+        save_tokens,
+    )
 
     storage_api_url = api_url or os.environ.get('KBC_STORAGE_API_URL')
     if not storage_api_url:
         raise RuntimeError('A Storage API URL is required for login: pass --api-url or set KBC_STORAGE_API_URL.')
-
-    if pat and bool(totp) == bool(recovery):
-        raise RuntimeError('Leasing a PAT (--pat) requires exactly one MFA code: pass --totp or --recovery.')
+    if project_ids_arg and all_projects:
+        raise RuntimeError('Pass either --project-ids or --all, not both.')
 
     if force:
         # Drop any stored session and always run the browser flow (e.g. to switch user/token).
-        forget_tokens(storage_api_url)
-        access_token = (await perform_login(storage_api_url)).access_token
+        forget_tokens(storage_api_url, profile=profile)
+        access_token = (await perform_login(storage_api_url, profile=profile)).access_token
     else:
         # Refresh-first, browser only when dead (interactive: this is the terminal `login` command).
-        access_token = await ensure_access_token(storage_api_url, allow_interactive=True)
-    tokens = load_tokens(storage_api_url)
-    remaining = max(0, int(tokens.expires_at - time.time())) if tokens else 0
-    print(f'\n✓ Session ready for {storage_api_url} (access token expires in ~{remaining}s).')
+        access_token = await ensure_access_token(storage_api_url, profile=profile, allow_interactive=True)
+    tokens = load_tokens(storage_api_url, profile=profile)
+    assert tokens is not None  # ensure_access_token/perform_login above always persist one
+
+    if tokens.project_ids is not None and not force and not project_ids_arg and not all_projects:
+        # Already scoped from an earlier login (and not asked to change it) -- keep it as-is.
+        project_ids, project_read_only = tokens.project_ids, tokens.read_only
+    elif project_ids_arg:
+        project_ids, project_read_only = _parse_project_ids(project_ids_arg), read_only
+    elif all_projects:
+        introspection = await introspect_token(storage_api_url, subject_token=access_token)
+        project_ids, project_read_only = [p.id for p in introspection.projects], read_only
+    elif sys.stdin.isatty():
+        introspection = await introspect_token(storage_api_url, subject_token=access_token)
+        project_ids, project_read_only = _prompt_project_selection(introspection.projects)
+    else:
+        raise RuntimeError(
+            'A project scope is required for login: pass --project-ids <id,id,...> or --all '
+            '(not run from a terminal, so the interactive prompt is unavailable).'
+        )
+    tokens = dataclasses.replace(tokens, project_ids=project_ids, read_only=project_read_only)
+    save_tokens(storage_api_url, tokens, profile=profile)
+
+    remaining = max(0, int(tokens.expires_at - time.time()))
+    print(
+        f'\n✓ Session ready for {storage_api_url} (access token expires in ~{remaining}s), '
+        f'scoped to {len(project_ids)} project(s)' + (', read-only' if project_read_only else '') + '.'
+    )
 
     if show_token:
         # Explicitly requested (e.g. to pass as a header to a local streamable-HTTP server).
         print(f'\nAccess token (kbc_at_, expires in ~{remaining}s):\n\n  {access_token}\n')
 
     if pat:
+        if bool(totp) == bool(recovery):
+            if totp or recovery:
+                raise RuntimeError('Leasing a PAT (--pat) requires exactly one MFA code: pass --totp or --recovery.')
+            totp, recovery = _prompt_mfa_code()
         pat_token = await lease_pat(
             storage_api_url,
             subject_token=access_token,
+            project_ids=project_ids,
             totp_code=totp,
             recovery_code=recovery,
             name=pat_name,
         )
-        print(f'\n✓ Personal Access Token (valid ~1 month, all accessible projects):\n\n  {pat_token}\n')
+        print(f'\n✓ Personal Access Token (valid ~1 month, {len(project_ids)} project(s)):\n\n  {pat_token}\n')
 
 
-async def _run_logout(api_url: str | None, *, all_stacks: bool = False) -> None:
+async def _run_logout(api_url: str | None, *, profile: str | None = None, all_stacks: bool = False) -> None:
     """Deletes the stored PKCE session so the next login starts fresh."""
     from keboola_mcp_server.auth_login import forget_tokens
 
@@ -239,7 +368,7 @@ async def _run_logout(api_url: str | None, *, all_stacks: bool = False) -> None:
         raise RuntimeError(
             'A Storage API URL is required for logout: pass --api-url, set KBC_STORAGE_API_URL, or use --all.'
         )
-    removed = forget_tokens(storage_api_url)
+    removed = forget_tokens(storage_api_url, profile=profile)
     print(f'✓ Logged out of {storage_api_url}.' if removed else f'No stored session for {storage_api_url}.')
 
 
@@ -328,6 +457,10 @@ async def run_server(args: list[str] | None = None) -> None:
     if parsed_args.command == 'login':
         await _run_login(
             getattr(parsed_args, 'api_url', None),
+            profile=getattr(parsed_args, 'profile', None),
+            project_ids_arg=getattr(parsed_args, 'project_ids', None),
+            all_projects=getattr(parsed_args, 'all_projects', False),
+            read_only=getattr(parsed_args, 'read_only', False),
             pat=getattr(parsed_args, 'pat', False),
             totp=getattr(parsed_args, 'totp', None),
             recovery=getattr(parsed_args, 'recovery', None),
@@ -338,7 +471,11 @@ async def run_server(args: list[str] | None = None) -> None:
         return
 
     if parsed_args.command == 'logout':
-        await _run_logout(getattr(parsed_args, 'api_url', None), all_stacks=getattr(parsed_args, 'all', False))
+        await _run_logout(
+            getattr(parsed_args, 'api_url', None),
+            profile=getattr(parsed_args, 'profile', None),
+            all_stacks=getattr(parsed_args, 'all', False),
+        )
         return
 
     if parsed_args.command == 'migrate':

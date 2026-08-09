@@ -1,8 +1,10 @@
 """Tests for the local browser PKCE login + credential store (PSGO-261, Part B)."""
 
+import asyncio
 import base64
 import hashlib
 import json
+import logging
 import stat
 import time
 from pathlib import Path
@@ -335,3 +337,156 @@ async def test_lease_pat_introspects_then_sudo_then_creates() -> None:
     )
     assert pat == 'kbc_pat_leased'
     assert [p.split('/')[-1] for p in seen] == ['introspect', 'sudo', 'pat']
+
+
+@pytest.mark.asyncio
+async def test_lease_pat_uses_explicit_project_ids_without_introspecting() -> None:
+    # An explicit choice (e.g. from `login`'s scoping prompt) must be used as-is -- lease_pat
+    # must not silently widen it back to every accessible project.
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        seen.append(path)
+        if path.endswith('/token/introspect'):
+            raise AssertionError('must not introspect when project_ids is given explicitly')
+        if path.endswith('/auth/sudo'):
+            return httpx.Response(200, json={'token': 'kbc_sudo_1'})
+        if path.endswith('/auth/pat'):
+            assert json.loads(request.content)['scope']['projects'] == ['18']
+            return httpx.Response(201, json={'token': 'kbc_pat_leased'})
+        raise AssertionError(f'unexpected path {path}')
+
+    pat = await lease_pat(
+        STACK,
+        subject_token='kbc_at_parent',
+        project_ids=[18],
+        recovery_code='rec-9',
+        transport=httpx.MockTransport(handler),
+    )
+    assert pat == 'kbc_pat_leased'
+    assert seen == ['/v1/auth/sudo', '/v1/auth/pat']
+
+
+# --- error redaction (Security hardening RFC increment) ---
+
+
+@pytest.mark.asyncio
+async def test_elevate_session_error_is_redacted(caplog) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text='sensitive-detail-should-not-surface')
+
+    with (
+        caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.auth_login'),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        await elevate_session(STACK, subject_token='kbc_at_x', totp_code='1', transport=httpx.MockTransport(handler))
+    assert 'sensitive-detail-should-not-surface' not in str(exc_info.value)
+    assert 'sensitive-detail-should-not-surface' in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_create_pat_error_is_redacted(caplog) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text='sensitive-detail-should-not-surface')
+
+    with (
+        caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.auth_login'),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        await create_pat(
+            STACK,
+            subject_token='kbc_sudo_1',
+            project_ids=[18],
+            name='demo',
+            transport=httpx.MockTransport(handler),
+        )
+    assert 'sensitive-detail-should-not-surface' not in str(exc_info.value)
+    assert 'sensitive-detail-should-not-surface' in caplog.text
+
+
+# --- per-profile credential keying (Security hardening RFC increment) ---
+
+
+def test_different_profiles_same_stack_dont_collide(creds_file: Path) -> None:
+    save_tokens(STACK, TokenSet('kbc_at_desktop', 'kbc_rt_d', expires_at=time.time() + 3600), profile='desktop')
+    save_tokens(STACK, TokenSet('kbc_at_terminal', 'kbc_rt_t', expires_at=time.time() + 3600), profile='terminal')
+
+    assert load_tokens(STACK, profile='desktop').access_token == 'kbc_at_desktop'
+    assert load_tokens(STACK, profile='terminal').access_token == 'kbc_at_terminal'
+    # No profile given resolves to the 'default' profile, distinct from either named one.
+    assert load_tokens(STACK) is None
+
+
+def test_profile_env_var_is_the_default_when_none_given(creds_file: Path, monkeypatch) -> None:
+    monkeypatch.setenv('KBC_LOGIN_PROFILE', 'desktop')
+    save_tokens(STACK, TokenSet('kbc_at_desktop', 'kbc_rt', expires_at=time.time() + 3600), profile='desktop')
+
+    assert load_tokens(STACK).access_token == 'kbc_at_desktop'
+
+
+def test_forget_one_profile_leaves_other_profiles_of_same_stack(creds_file: Path) -> None:
+    save_tokens(STACK, TokenSet('a', 'r', expires_at=time.time() + 3600), profile='desktop')
+    save_tokens(STACK, TokenSet('b', 'r', expires_at=time.time() + 3600), profile='terminal')
+
+    assert forget_tokens(STACK, profile='desktop') is True
+    assert load_tokens(STACK, profile='desktop') is None
+    assert load_tokens(STACK, profile='terminal') is not None
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_preserves_scope_across_refresh(creds_file: Path) -> None:
+    save_tokens(
+        STACK,
+        TokenSet('kbc_at_old', 'kbc_rt_old', expires_at=time.time() + 5, project_ids=[18, 83], read_only=True),
+    )
+    await get_access_token(STACK, transport=_token_response())
+
+    tokens = load_tokens(STACK)
+    assert tokens.access_token == 'kbc_at_new'
+    assert tokens.project_ids == [18, 83]
+    assert tokens.read_only is True
+
+
+@pytest.mark.asyncio
+async def test_concurrent_get_access_token_refreshes_once(creds_file: Path) -> None:
+    # Two callers racing a near-expiry refresh for the SAME (stack, profile) must only hit the
+    # network once -- the second one, after acquiring the lock, sees the already-refreshed token.
+    save_tokens(STACK, TokenSet('kbc_at_old', 'kbc_rt_old', expires_at=time.time() + 5))
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(
+            200,
+            json={'accessToken': 'kbc_at_new', 'refreshToken': 'kbc_rt_new', 'expiresIn': 3600, 'sessionId': 's'},
+        )
+
+    transport = httpx.MockTransport(handler)
+    results = await asyncio.gather(
+        get_access_token(STACK, transport=transport),
+        get_access_token(STACK, transport=transport),
+    )
+    assert results == ['kbc_at_new', 'kbc_at_new']
+    assert call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_get_access_token_dead_refresh_does_not_clobber_newer_entry(creds_file: Path, monkeypatch) -> None:
+    # If the stored refresh token changed (another caller already rotated it) between our read
+    # and our failed refresh attempt, don't drop the newer entry.
+    save_tokens(STACK, TokenSet('kbc_at_old', 'kbc_rt_dead', expires_at=time.time() + 5))
+
+    async def fake_refresh(*_a, **_k):
+        # Simulate another process/caller rotating the token concurrently, then our own
+        # (now-stale) refresh attempt failing against the auth server.
+        save_tokens(STACK, TokenSet('kbc_at_newer', 'kbc_rt_newer', expires_at=time.time() + 3600))
+        raise httpx.HTTPStatusError('dead', request=httpx.Request('POST', STACK), response=httpx.Response(401))
+
+    monkeypatch.setattr(auth_login, 'refresh_tokens', fake_refresh)
+    with pytest.raises(RuntimeError, match='has expired'):
+        await get_access_token(STACK)
+
+    # The newer entry (written by the "other caller") must survive, not be forgotten.
+    assert load_tokens(STACK).access_token == 'kbc_at_newer'

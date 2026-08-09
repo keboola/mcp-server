@@ -10,7 +10,10 @@ calls (``exchange_code``, ``refresh_tokens``) are split out so they can be teste
 an injected httpx transport.
 """
 
+import asyncio
 import base64
+import contextlib
+import dataclasses
 import hashlib
 import json
 import logging
@@ -30,6 +33,11 @@ import httpx
 
 from keboola_mcp_server.clients.base import normalize_storage_api_url
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX; the cross-process lock degrades to a no-op
+    fcntl = None  # type: ignore[assignment]
+
 LOG = logging.getLogger(__name__)
 
 DEFAULT_CLIENT_ID = 'keboola-cli-demo'
@@ -46,6 +54,26 @@ _REFRESH_SKEW_SECONDS = 60
 _LOGIN_CALLBACK_TIMEOUT_SECONDS = 300
 _PAT_DEFAULT_EXPIRES_SECONDS = 30 * 24 * 60 * 60  # ~1 month
 _CREDENTIALS_PATH = Path.home() / '.keboola' / 'mcp' / 'credentials.json'
+# Names which local interface (Claude Desktop, Cursor, a terminal `login`) a stored session
+# belongs to, so two interfaces logged in to the *same* stack never share one entry (and its
+# rotating refresh token) -- see the "Security hardening" RFC increment. Each interface's MCP
+# client config sets this to a distinct value; a single-interface setup needs nothing set.
+_PROFILE_ENV_VAR = 'KBC_LOGIN_PROFILE'
+_DEFAULT_PROFILE = 'default'
+# Cross-process insurance only (see `_credentials_lock`); the actual fix for the credential race
+# is per-profile keying above. Non-blocking poll, never a blocking flock -- this runs inside
+# `get_access_token`, which must never stall the event loop / MCP handshake.
+_LOCK_POLL_INTERVAL_SECONDS = 0.05
+_LOCK_TIMEOUT_SECONDS = 10.0
+# One asyncio.Lock per (hostname, profile), serializing concurrent refreshes *within this
+# process* -- the flock below only ever guards the on-disk file, not in-memory races.
+_refresh_locks: dict[str, asyncio.Lock] = {}
+
+
+def _resolve_profile(profile: str | None) -> str:
+    return profile or os.environ.get(_PROFILE_ENV_VAR) or _DEFAULT_PROFILE
+
+
 # Short connect timeout so an unreachable stack (e.g. VPN off — internal `.dev` stacks resolve to a
 # private 10.x IP) fails in a few seconds with a clear ConnectTimeout instead of blocking the full
 # window. A longer read timeout still tolerates a slow-but-reachable Connection.
@@ -67,12 +95,20 @@ def _b64url(data: bytes) -> str:
 
 @dataclass(frozen=True)
 class TokenSet:
-    """A leased session: the access token plus what's needed to refresh it."""
+    """A leased session: the access token plus what's needed to refresh it.
+
+    ``project_ids``/``read_only`` are the scope chosen at `login` time (None only for a
+    credential predating this choice, or one never run through `login`'s prompt/flags) -- see
+    the "Security hardening" RFC increment: a local session is scoped before it's ever usable,
+    rather than auto-leased to everything with an unenforceable ask-first gate.
+    """
 
     access_token: str
     refresh_token: str
     expires_at: float  # epoch seconds
     session_id: str | None = None
+    project_ids: list[int] | None = None
+    read_only: bool = False
 
     @property
     def is_near_expiry(self) -> bool:
@@ -213,7 +249,11 @@ async def elevate_session(
             json=payload,
         )
         if response.is_error:
-            raise RuntimeError(f'POST /{_SUDO_PATH} failed ({response.status_code}): {response.text}')
+            # The response body may echo back request details; never surface it directly to the
+            # caller (it can end up in a CLI transcript/bug report) -- full detail goes to debug
+            # logs only.
+            LOG.debug(f'POST /{_SUDO_PATH} failed ({response.status_code}): {response.text}')
+            raise RuntimeError(f'POST /{_SUDO_PATH} failed ({response.status_code}). See debug logs for details.')
         body = cast(dict, response.json()) if response.content else {}
     return cast(str, body.get('token') or body.get('accessToken') or subject_token)
 
@@ -247,8 +287,10 @@ async def create_pat(
             json=payload,
         )
         if response.is_error:
-            # Surface the validation body so a wrong/missing field is visible (the schema is assumed).
-            raise RuntimeError(f'POST /{_PAT_PATH} failed ({response.status_code}) with {payload=}: {response.text}')
+            # Full detail (request payload + response body) to debug logs only -- never surfaced
+            # directly, since it can end up in a CLI transcript/bug report.
+            LOG.debug(f'POST /{_PAT_PATH} failed ({response.status_code}) with {payload=}: {response.text}')
+            raise RuntimeError(f'POST /{_PAT_PATH} failed ({response.status_code}). See debug logs for details.')
         body = cast(dict, response.json())
     pat = body.get('token') or body.get('pat') or body.get('accessToken')
     if not pat:
@@ -260,18 +302,24 @@ async def lease_pat(
     storage_api_url: str,
     *,
     subject_token: str,
+    project_ids: list[int] | None = None,
     totp_code: str | None = None,
     recovery_code: str | None = None,
     name: str = 'keboola-mcp-server',
     expires_in: int = _PAT_DEFAULT_EXPIRES_SECONDS,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> str:
-    """Leases a PAT over ALL accessible projects: introspect → sudo (MFA) → create PAT.
+    """Leases a PAT: introspect (or use the caller's explicit ``project_ids``) → sudo (MFA) →
+    create PAT.
 
     ``subject_token`` is the whole-stack session access token (``kbc_at_*``) from the PKCE login.
+    ``project_ids=None`` means "every project the token can currently reach" -- callers making an
+    explicit choice (e.g. `login --pat`'s scoping prompt) should always pass it explicitly instead
+    of relying on this default, per the "Security hardening" RFC increment.
     """
-    introspection = await introspect_token(storage_api_url, subject_token=subject_token, transport=transport)
-    project_ids = [p.id for p in introspection.projects]
+    if project_ids is None:
+        introspection = await introspect_token(storage_api_url, subject_token=subject_token, transport=transport)
+        project_ids = [p.id for p in introspection.projects]
     if not project_ids:
         raise RuntimeError('The session token can not reach any projects; cannot create a PAT.')
     elevated = await elevate_session(
@@ -329,11 +377,12 @@ async def refresh_tokens(
         return parse_token_response(cast(dict, response.json()))
 
 
-# --- credential storage (mode-600 file, keyed by stack host) ---
+# --- credential storage (mode-600 file, keyed by stack host + interface profile) ---
 
 
-def _store_key(storage_api_url: str) -> str:
-    return cast(str, urlparse(storage_api_url).hostname)
+def _store_key(storage_api_url: str, profile: str | None = None) -> str:
+    hostname = cast(str, urlparse(storage_api_url).hostname)
+    return f'{hostname}::{_resolve_profile(profile)}'
 
 
 def _read_store() -> dict:
@@ -362,49 +411,116 @@ def _write_store(store: dict) -> None:
         json.dump(store, f, indent=2, ensure_ascii=False)
 
 
-def load_tokens(storage_api_url: str) -> TokenSet | None:
-    entry = _read_store().get(_store_key(storage_api_url))
+@contextlib.asynccontextmanager
+async def _credentials_lock():
+    """Cross-process insurance around the on-disk read-modify-write (defense in depth; the
+    primary fix for the credential race is per-profile keying, see `_store_key`). Non-blocking
+    poll of a sibling `.lock` file -- never a blocking `flock`, which would stall the event loop
+    and could hang the MCP initialize handshake. Degrades to a no-op (with a warning) on timeout
+    or on a non-POSIX platform where `fcntl` is unavailable.
+    """
+    if fcntl is None:
+        yield
+        return
+    lock_path = _CREDENTIALS_PATH.parent / (_CREDENTIALS_PATH.name + '.lock')
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        deadline = time.time() + _LOCK_TIMEOUT_SECONDS
+        locked = False
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except BlockingIOError:
+                if time.time() >= deadline:
+                    LOG.warning('Timed out waiting for the credentials file lock; proceeding without it.')
+                    break
+                await asyncio.sleep(_LOCK_POLL_INTERVAL_SECONDS)
+        try:
+            yield
+        finally:
+            if locked:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def load_tokens(storage_api_url: str, *, profile: str | None = None) -> TokenSet | None:
+    entry = _read_store().get(_store_key(storage_api_url, profile))
     if not entry:
         return None
     return TokenSet(**entry)
 
 
-def save_tokens(storage_api_url: str, tokens: TokenSet) -> None:
+def save_tokens(storage_api_url: str, tokens: TokenSet, *, profile: str | None = None) -> None:
     store = _read_store()
-    store[_store_key(storage_api_url)] = asdict(tokens)
+    store[_store_key(storage_api_url, profile)] = asdict(tokens)
     _write_store(store)
 
 
 async def get_access_token(
     storage_api_url: str,
     *,
+    profile: str | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> str:
     """
-    Returns a valid access token for the stack, refreshing (and persisting the rotated
+    Returns a valid access token for the stack+profile, refreshing (and persisting the rotated
     pair) when near expiry. Raises if there are no stored credentials (run ``login``).
+
+    Double-checked locking: an `asyncio.Lock` per (stack, profile) serializes concurrent
+    refreshes from within this process; a cross-process `flock` (see `_credentials_lock`) is
+    layered on top as insurance. After acquiring both, the stored tokens are re-read -- another
+    caller may have already refreshed while this one was waiting, in which case no network call
+    is made at all.
     """
-    tokens = load_tokens(storage_api_url)
+    tokens = load_tokens(storage_api_url, profile=profile)
     if not tokens:
         raise RuntimeError(
             f'No stored credentials for {storage_api_url}. Run "keboola-mcp-server login --api-url <url>" first.'
         )
-    if tokens.is_near_expiry:
-        try:
-            tokens = await refresh_tokens(storage_api_url, refresh_token=tokens.refresh_token, transport=transport)
-        except httpx.HTTPStatusError as e:
-            # Dead token (refresh rejected). Drop the stale credentials and force a re-login.
-            _forget(storage_api_url)
-            raise RuntimeError(
-                f'Session for {storage_api_url} has expired; run "keboola-mcp-server login --api-url <url>" again.'
-            ) from e
-        save_tokens(storage_api_url, tokens)
-    return tokens.access_token
+    if not tokens.is_near_expiry:
+        return tokens.access_token
+
+    key = _store_key(storage_api_url, profile)
+    lock = _refresh_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        async with _credentials_lock():
+            tokens = load_tokens(storage_api_url, profile=profile)
+            if not tokens:
+                raise RuntimeError(
+                    f'No stored credentials for {storage_api_url}. '
+                    'Run "keboola-mcp-server login --api-url <url>" first.'
+                )
+            if not tokens.is_near_expiry:
+                return tokens.access_token
+            try:
+                refreshed = await refresh_tokens(
+                    storage_api_url, refresh_token=tokens.refresh_token, transport=transport
+                )
+            except httpx.HTTPStatusError as e:
+                # Dead token (refresh rejected). Only forget it if it's still the same refresh
+                # token we just tried -- another caller may have already rotated it, in which
+                # case dropping the (now newer) entry would just force an unnecessary re-login.
+                current = load_tokens(storage_api_url, profile=profile)
+                if current is not None and current.refresh_token == tokens.refresh_token:
+                    _forget(storage_api_url, profile=profile)
+                raise RuntimeError(
+                    f'Session for {storage_api_url} has expired; run "keboola-mcp-server login --api-url <url>" again.'
+                ) from e
+            # The refresh response carries no scope -- carry the previously-persisted choice
+            # forward so a rotation never silently drops it.
+            refreshed = dataclasses.replace(refreshed, project_ids=tokens.project_ids, read_only=tokens.read_only)
+            save_tokens(storage_api_url, refreshed, profile=profile)
+        return refreshed.access_token
 
 
 async def ensure_access_token(
     storage_api_url: str,
     *,
+    profile: str | None = None,
     allow_interactive: bool = True,
     open_browser=webbrowser.open,
     transport: httpx.AsyncBaseTransport | None = None,
@@ -425,23 +541,24 @@ async def ensure_access_token(
     client-driven OAuth regardless.
     """
     try:
-        return await get_access_token(storage_api_url, transport=transport)
+        return await get_access_token(storage_api_url, profile=profile, transport=transport)
     except RuntimeError as exc:
         if not allow_interactive:
             raise
         LOG.info(f'No usable stored session for {storage_api_url} ({exc}); starting browser login.')
-        await perform_login(storage_api_url, open_browser=open_browser)
-        return await get_access_token(storage_api_url, transport=transport)
+        await perform_login(storage_api_url, profile=profile, open_browser=open_browser)
+        return await get_access_token(storage_api_url, profile=profile, transport=transport)
 
 
-def _forget(storage_api_url: str) -> None:
+def _forget(storage_api_url: str, *, profile: str | None = None) -> None:
     store = _read_store()
-    if store.pop(_store_key(storage_api_url), None) is not None:
+    if store.pop(_store_key(storage_api_url, profile), None) is not None:
         _write_store(store)
 
 
-def forget_tokens(storage_api_url: str | None = None) -> bool:
-    """Deletes the stored PKCE session — for one stack, or all when ``storage_api_url`` is None.
+def forget_tokens(storage_api_url: str | None = None, *, profile: str | None = None) -> bool:
+    """Deletes the stored PKCE session — for one stack+profile, or every stack/profile when
+    ``storage_api_url`` is None.
 
     Returns True if anything was removed. Used by the ``logout`` command so the next ``login`` starts
     a fresh browser flow (e.g. to switch user/token) instead of refreshing the old session.
@@ -452,7 +569,7 @@ def forget_tokens(storage_api_url: str | None = None) -> bool:
     if storage_api_url is None:
         _write_store({})
         return True
-    if store.pop(_store_key(storage_api_url), None) is not None:
+    if store.pop(_store_key(storage_api_url, profile), None) is not None:
         _write_store(store)
         return True
     return False
@@ -476,7 +593,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         pass
 
 
-async def perform_login(storage_api_url: str, *, open_browser=webbrowser.open) -> TokenSet:
+async def perform_login(storage_api_url: str, *, profile: str | None = None, open_browser=webbrowser.open) -> TokenSet:
     """Runs the interactive PKCE browser login and persists the resulting tokens."""
     verifier = _b64url(secrets.token_bytes(48))  # 64 url-safe chars
     challenge = _b64url(hashlib.sha256(verifier.encode('ascii')).digest())
@@ -522,5 +639,5 @@ async def perform_login(storage_api_url: str, *, open_browser=webbrowser.open) -
     tokens = await exchange_code(
         storage_api_url, code=code, state=state, code_verifier=verifier, redirect_uri=redirect_uri
     )
-    save_tokens(storage_api_url, tokens)
+    save_tokens(storage_api_url, tokens, profile=profile)
     return tokens
