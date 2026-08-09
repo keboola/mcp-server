@@ -799,3 +799,183 @@ inbound token would therefore silently drop the persisted scope on every Kai-sid
   differ enough (key scheme, no encrypted fields, no OAuth-specific lifecycle) that folding Kai
   scope into the OAuth-shaped protocol would blur its single responsibility for no real code
   reuse (the two stores would share almost no method bodies).
+
+---
+
+# Extension: Security hardening — response to review (PSGO-261, increment 7)
+
+## Context
+
+Tomas Fejfar's review of PR #604 (2026-08-07, "Agentic review") raised 9 concerns. Each was
+independently re-verified against the as-built code (file:line evidence) and cross-checked with a
+second, independent security-review pass before any fix was designed — this section documents
+what was actually found, not just what was claimed, since two items turned out different from
+the original framing (one narrower, one broader; see below).
+
+## Verified findings
+
+1. **Header injection into `Config` → forgeable `scope_token`, CONFIRMED.**
+   `SessionStateMiddleware.apply_request_config` calls `config.replace_by(http_rq.headers)` with
+   no allowlist; `Config._read_options` matches *any* dataclass field against an `X-{name}`
+   header, including `jwt_secret`. Since `resolve_scope_secret(config)` reads `config.jwt_secret`
+   from that same per-request config, an `X-Jwt-Secret` header lets a caller choose the HMAC key
+   that both signs and verifies their own `scope_token` — full `project_ids` forgery.
+2. **`scope_token` embeds a live bearer token, signed but not encrypted, CONFIRMED — broader than
+   first framed.** `jwt_utils.py`'s `encode_jwt`/`decode_jwt` are JWS (signature only) over
+   gzip+JSON; the payload is base64+gunzip-recoverable by anyone, without the secret.
+   `SessionScope.scoped_token` — a real, live Keboola access token, not just non-secret metadata
+   like `project_ids` — is itself a dataclass field, so it's embedded verbatim in the
+   client-visible token returned by `set_project_scope`/`get_accessible_projects` and resent as a
+   tool-call argument on every subsequent call: it lands in LLM context, client transcripts, and
+   client-side logs. No `exp` enforcement; decode failures (tampered, expired, or malformed) all
+   collapse into the same "no scope" outcome, with no revocation path.
+3. **`read_only=True` fails open, CONFIRMED — broader scope than reported.** Not just
+   single-project scopes as originally described: `MultiProjectMiddleware` skips `_swap_project`
+   (the only code path that ever passes `readonly=scope.read_only` into a `KeboolaClient`)
+   whenever a call targets `scope.active_project_id` — true for every single-project scope *and*
+   the first/active project of any multi-project scope. `SessionStateMiddleware.create_session_state`
+   never passes `readonly=` at all from `on_request`, regardless of scope. So the active
+   project's writes are never locally read-only-restricted — enforcement depends entirely on the
+   minted `scoped_token` being genuinely read-only server-side, which doesn't exist when the
+   `/v1/auth/pat/exchange` call fails. Only *non-active* projects in a 2+ project scope get real
+   local enforcement today (via `client_for_project(readonly=scope.read_only or None)`).
+4. **`normalize_storage_api_url` is a prefix check, not a domain allowlist, CONFIRMED.**
+   `hostname.startswith('connection.')` lets `connection.attacker.tld` pass. `is_same_stack` is a
+   correct exact-host match, but it's only ever applied when the server has its own configured
+   stack (`own_stack_storage_api_url` set); a server with no stack of its own (local mode, by
+   design, since it must accept the caller's URL) has no equivalent check before a caller-supplied
+   `X-Storage-Api-Url` host receives the live bearer token.
+5. **`resolve_encryption_key`'s silent process-local fallback — REFUTED, already mitigated.**
+   `server.py` already refuses to start (`raise RuntimeError`) if OAuth is configured
+   (`oauth_client_id`/`oauth_client_secret` both set) without `KBC_SESSION_ENCRYPTION_KEY`, and
+   `PostgresSessionStore` is never constructed via any other path. The cross-replica
+   silent-decrypt-failure scenario the review described can't actually happen today. Documented
+   here so it isn't re-flagged as a live gap.
+6. **MFA codes as CLI arguments, CONFIRMED.** `login --totp`/`--recovery` are plain `argparse`
+   string options — visible in shell history and `ps`/`/proc/<pid>/cmdline` for the process
+   lifetime. Recovery codes are single-use, high-value.
+7. **Verbatim auth-endpoint error bodies, CONFIRMED (minor nuance).** `elevate_session`/
+   `create_pat` both raise `RuntimeError` including the raw `response.text` (`create_pat` also
+   `{payload=}`, which is `{name, expiresIn, scope}` — the MFA code itself is not in either
+   logged payload). Still real: no redaction, contradicting this RFC's general redaction stance.
+8. **"Ask-first" is prompt-text, not access control — CONFIRMED, but narrower than it first
+   appears.** Re-verified exactly where this matters: the ask-first gate
+   (`MultiProjectMiddleware.on_call_tool`) only ever fires because `_autolease_default_scope`
+   (gated on a *local* programmatic session) auto-leases an unconfirmed, all-projects
+   `SessionScope` by default. OAuth and Kai sessions never do this — they simply have **no** scope
+   at all (not an auto-leased one) until `set_project_scope` runs, so neither grants usable
+   all-project access before an explicit choice; only the local `login`/env-var-token path has
+   this gap, and it's closed structurally rather than by better wording — see §Required behavior
+   below.
+9. **Cross-process credential race, CONFIRMED.** No `asyncio`/`fcntl`/lock import anywhere in
+   `auth_login.py`; `save_tokens` does an unlocked read-modify-write on
+   `~/.keboola/mcp/credentials.json` with a rotating refresh token. As-built, `_store_key()` is
+   `hostname` alone, so two different local MCP client processes for the *same stack* (e.g. Claude
+   Desktop and a terminal `login`) genuinely share one entry today — this is confirmed as a real
+   design gap, not just a hypothetical.
+
+## Required behavior
+
+- **Config field allowlist for header-derived values.** `Config` gains an explicit
+  `_HEADER_ELIGIBLE_FIELDS` set (the fields legitimately meant to vary per request:
+  `storage_api_url`, `storage_token`, `branch_id`, `workspace_schema`, `workspace_id`,
+  `bearer_token`, `conversation_id`, `project_id`) and a new `replace_by_headers()` method that
+  only resolves `X-{name}` headers for fields in that set. `apply_request_config` uses it instead
+  of the unrestricted `replace_by`. Deployment-level fields (`jwt_secret`, `postgres_dsn`,
+  `session_encryption_key`, `oauth_client_id`/`oauth_client_secret`, `oauth_server_url`,
+  `mcp_server_url`) become permanently unreachable from any request header. Env-var (`KBC_{name}`)
+  and CLI-derived resolution is untouched — that input is already operator-trusted.
+- **Keboola-domain allowlist for `normalize_storage_api_url`.** Replace the bare `connection.`
+  prefix check with a regex requiring both the `connection.` label and a genuine
+  `*.keboola.(com|dev)` suffix, mirroring the pattern `oauth.py`'s `_ALLOWED_DOMAINS` already uses
+  for redirect URIs. Applies uniformly to deployed (already double-covered by `is_same_stack`)
+  and local (previously uncovered) servers alike.
+- **`read_only` is enforced locally for the active project too**, not just relying on the remote
+  scoped token: `create_session_state` now receives `readonly=(True if scope and scope.read_only
+  else None)` from `on_request`, so the base session client is built read-only whenever the
+  confirmed scope requests it — success or failure of the token exchange. Workspace provisioning
+  (a server-side plumbing GET+POST pair, not a user-visible mutation) is explicitly exempted via a
+  new `KeboolaClient.writable_storage_client`, so `query_data` keeps working against a read-only
+  scope that has no workspace yet. The `MultiProjectMiddleware` active-project shortcuts (read
+  fan-out and the write-dispatch path) are guarded with a `KeboolaClient.readonly` check so they
+  only skip the per-project client swap when the base client already matches the scope's
+  `read_only` — defense in depth, zero added cost for the common case once the above makes that
+  the normal state. `set_project_scope`'s exchange-failure fallback keeps working (some stacks
+  lack the exchange endpoint) but its `llm_instruction` now says explicitly whether read-only is
+  server-enforced (a real `scoped_token` exists) or only locally enforced (fallback path).
+  `KeboolaClient.with_branch_id()` — which rebuilds a fresh client for any non-default-branch
+  call (routine on a dev branch, not just adversarial) — is fixed to forward `readonly` into the
+  new client; a fresh `security-scanner` pass on the implementation caught this dropping
+  `readonly` silently, which would have reopened this exact fail-open bug on every branch switch.
+- **`scope_token`'s payload is encrypted, not just signed.** `SessionScope.to_token`/`from_token`
+  move from `jwt_utils`'s JWS to AES-GCM authenticated encryption via the already-existing
+  `session_store/crypto.py` helpers and `resolve_encryption_key` — the same key OAuth sessions
+  already encrypt with. `resolve_scope_secret`/`_FALLBACK_SCOPE_SECRET` are removed in favour of
+  `resolve_scope_key`. A new `scope_token` is therefore ciphertext, not a
+  base64+gzip-recoverable signed blob; the live `scoped_token` it may carry is no longer readable
+  without the key. No backward-compatible legacy-JWS decode path: this feature has not shipped to
+  production (main has none of PSGO-261 yet), so there are no live tokens to migrate — a clean
+  replacement, not a staged one. (A separate design considered and rejected: a new
+  Postgres-backed `scope_sessions` table mirroring `kai_scope.py`, giving every client an opaque
+  handle instead of any client-held credential. Rejected as unwarranted complexity —
+  `scope_token` is only actually issued in the narrow
+  remaining case where neither OAuth nor Kai's Postgres-backed persistence applies; OAuth and Kai
+  sessions already never hand the client a live credential at all.)
+- **MFA codes: prompt, don't require a CLI argument.** `login --pat` still accepts
+  `--totp`/`--recovery` as opt-in overrides for scripted/CI use (documented in `--help` as
+  shell-history/`ps`-visible), but when neither is supplied, prompts via `getpass.getpass()` —
+  hidden input on a real TTY, and a graceful (though visible, with a stderr warning) read from
+  stdin when piped/non-interactive, so scripted input still works without extra plumbing.
+- **Auth-endpoint errors are redacted.** `elevate_session`/`create_pat` raise a generic
+  `RuntimeError(f'... failed ({status}). See debug logs for details.')`; the raw `response.text`/
+  request `payload` move to `LOG.debug(...)` only.
+- **Local sessions are scoped at login time, never auto-leased to everything.** This replaces
+  "document ask-first as guidance" with a structural fix: `login` (and `login --pat`) now require
+  an explicit project choice — prompted interactively (same "show projects, pick all or a subset"
+  flow already used in-conversation by `get_accessible_projects`/`set_project_scope`) when run
+  from a TTY without `--project-ids`/`--all`, required explicitly otherwise. `lease_pat`, which
+  previously always requested every accessible project, takes the same explicit choice. The
+  confirmed `project_ids`/`read_only` are persisted alongside the access/refresh tokens in the
+  stored credential entry, and the local-session bootstrap in `mcp.py` reads them back as an
+  already-`confirmed=True` `SessionScope` — `_autolease_default_scope`'s implicit
+  all-projects-then-ask-first default is removed for any session with a persisted choice. Since
+  OAuth and Kai sessions already never auto-lease (finding #8), this closes the gap at its actual
+  source (a local session existing before any explicit choice) rather than trying to make an
+  LLM-facing instruction into an enforcement boundary.
+- **Credentials are keyed per interface, not just per stack.** `login` gains a profile identifier
+  (`--profile <name>` / `KBC_LOGIN_PROFILE`, defaulting to `'default'` so single-interface setups
+  are unaffected) naming which calling interface (Claude Desktop, Cursor, a terminal session) this
+  login is for. `_store_key()` becomes `(hostname, profile)`, and the on-disk schema nests entries
+  accordingly — removing finding #9's race by construction, since independent interfaces no
+  longer share an entry at all. The narrower race that remains — two concurrent requests *within
+  one process* both seeing "near expiry" and both refreshing — is closed with a plain
+  `asyncio.Lock` per `(hostname, profile)` in `get_access_token` (in-process; no file locking
+  needed for this case). A non-blocking `fcntl.flock` on a sibling `.lock` file around the on-disk
+  read-modify-write is kept as cheap defense-in-depth insurance (polling `LOCK_EX | LOCK_NB`,
+  never a blocking flock — degrades with a warning rather than stalling the event loop/MCP
+  handshake; the `fcntl` import is guarded for non-POSIX platforms), covering accidental
+  profile-sharing or a `login` run racing an already-running server for the same profile.
+
+## Explicitly out of scope this increment
+
+- Real MCP-elicitation-based (`elicitation/create`) human-in-the-loop confirmation for scoping —
+  superseded by login-time scoping, which removes the need for any runtime confirmation gate on
+  the local path. Worth revisiting only if a future flow reintroduces an unconfirmed-by-default
+  state.
+- Windows-native file locking for the credential-lock insurance layer — CI and the documented
+  supported platforms are POSIX-only today; the `fcntl` import degrades cleanly rather than
+  crashing where absent.
+
+## Decisions (increment 7)
+
+- **Fix the flow, don't just document the gap**, for both #8 (ask-first) and #9 (credential
+  race): in both cases a structural fix (scope at login time; key credentials per interface) was
+  available and preferred over accepting the gap as a documented limitation.
+- **Eliminate shared state before adding a lock**: #9's primary fix is removing the sharing
+  (per-profile keying), not the `fcntl.flock` layer, which is retained only as insurance for
+  whatever narrow sharing remains (in-process concurrency, accidental profile reuse).
+- **Encrypt the existing `scope_token` fallback rather than build new server-side infrastructure**
+  for #2/#4: since OAuth and Kai already keep credentials server-side, the client-held-token case
+  is narrow enough that AES-GCM-encrypting the existing JWS payload is proportionate; a new
+  Postgres table mirroring `kai_scope.py` was considered and rejected as unneeded complexity for
+  that narrow remaining surface.
