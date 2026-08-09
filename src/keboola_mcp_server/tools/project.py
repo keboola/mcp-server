@@ -24,7 +24,7 @@ from keboola_mcp_server.scope import (
     ProjectIdArg,
     SessionScope,
     persist_scope,
-    resolve_scope_secret,
+    resolve_scope_key,
 )
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -530,7 +530,7 @@ async def get_accessible_projects(
         scoped_project_ids=scoped_ids,
         read_only=scope.read_only if scoped_ids is not None else None,
         scope_token=(
-            scope.to_token(resolve_scope_secret(server_state.config))
+            scope.to_token(resolve_scope_key(server_state.config))
             if scoped_ids is not None and not is_persisted
             else None
         ),
@@ -625,12 +625,22 @@ async def set_project_scope(
         or await _persist_kai_scope(ctx, scope, client, parent_token)
         or server_state.runtime_info.session_state_persists
     )
-    scope_token = None if persisted else scope.to_token(resolve_scope_secret(server_state.config))
+    scope_token = None if persisted else scope.to_token(resolve_scope_key(server_state.config))
     resend_instruction = (
         'The server persists this scope server-side for the rest of the conversation -- no need to resend it.'
         if persisted
         else 'The server does not remember this scope between calls -- pass "scope_token" as an argument on '
         'every subsequent tool call in this conversation.'
+    )
+    # Read-only is always enforced locally (this server blocks write operations regardless of
+    # scoped_token) -- but only backed by Connection itself when a real scoped_token exists. The
+    # exchange-failure fallback above has none, so say so explicitly rather than implying the same
+    # server-side guarantee the success path gets.
+    read_only_note = (
+        ' (enforced by this server only -- the scoped-token exchange was unavailable, so Connection '
+        'itself does not additionally restrict this token.)'
+        if scope.read_only and scope.scoped_token is None
+        else ''
     )
     return ProjectScope(
         project_ids=ids,
@@ -640,9 +650,9 @@ async def set_project_scope(
             (
                 f'Session scoped to {len(ids)} projects. Read-only tools return results per project. '
                 'Write operations require a project_id argument naming which scoped project to target '
-                f'-- no re-scope needed to switch targets. {resend_instruction}'
+                f'-- no re-scope needed to switch targets. {resend_instruction}{read_only_note}'
             )
             if multi
-            else f'Session scoped to project {ids[0]}. {resend_instruction}'
+            else f'Session scoped to project {ids[0]}. {resend_instruction}{read_only_note}'
         ),
     )

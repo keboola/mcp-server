@@ -46,7 +46,7 @@ from keboola_mcp_server.scope import (
     SCOPE_TOKEN_ARG,
     SessionScope,
     persist_scope,
-    resolve_scope_secret,
+    resolve_scope_key,
 )
 from keboola_mcp_server.session_store.kai_scope import KaiScopeStore
 from keboola_mcp_server.session_store.repository import SessionStore
@@ -298,6 +298,13 @@ class SessionStateMiddleware(fmw.Middleware):
                 and server_state.kai_scope_store is not None
             ):
                 scope = await self._read_persisted_kai_scope(config, server_state.kai_scope_store)
+            # Local sessions are scoped at `login` time now (see the "Security hardening" RFC
+            # increment) -- a persisted choice, once one exists, is used as a confirmed scope with
+            # no ask-first gate needed. Only a credential predating this choice (or a token
+            # supplied directly, never run through `login`) falls through to the old
+            # auto-lease-then-ask-first default below.
+            if scope is None and not config.project_id and not is_list:
+                scope = await self._read_persisted_login_scope(config)
             if scope is None and not config.project_id and not is_list:
                 scope = await self._autolease_default_scope(config)
             if not is_list:
@@ -327,8 +334,13 @@ class SessionStateMiddleware(fmw.Middleware):
                     LOG.info(f'Skipping branch validation for {context.method} request.')
                 config = dataclasses.replace(config, branch_id=None)
 
+            # A read-only confirmed scope is enforced locally too (not just by the remote scoped
+            # token, which may not exist -- see set_project_scope's exchange-failure fallback and
+            # the "Security hardening" RFC increment): the base session client itself is built
+            # read-only whenever the scope requests it, success or failure of the token exchange.
+            readonly = True if scope is not None and scope.read_only else None
             state = await self.create_session_state(
-                config, runtime_info, own_stack_storage_api_url=own_stack_storage_api_url
+                config, runtime_info, readonly=readonly, own_stack_storage_api_url=own_stack_storage_api_url
             )
             if scope is not None:
                 state[SCOPE_KEY] = scope
@@ -409,7 +421,11 @@ class SessionStateMiddleware(fmw.Middleware):
         :return: The configuration to use for this request.
         """
         LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
-        config = config.replace_by(http_rq.headers)
+        # Only fields meant to vary per request are settable from a header -- see
+        # Config._HEADER_ELIGIBLE_FIELDS / the "Security hardening" RFC increment. In particular
+        # this keeps `jwt_secret` (which would otherwise let a caller forge their own scope_token)
+        # and the other deployment-level fields permanently unreachable from a request.
+        config = config.replace_by_headers(http_rq.headers)
 
         if own_stack_storage_api_url and not is_same_stack(config.storage_api_url, own_stack_storage_api_url):
             LOG.warning(
@@ -455,7 +471,7 @@ class SessionStateMiddleware(fmw.Middleware):
         if not token:
             return None
         try:
-            return SessionScope.from_token(token, resolve_scope_secret(config))
+            return SessionScope.from_token(token, resolve_scope_key(config))
         except Exception:
             LOG.warning('Ignoring invalid or expired scope_token.', exc_info=True)
             return None
@@ -583,6 +599,20 @@ class SessionStateMiddleware(fmw.Middleware):
             else:
                 access_token = tokens.access_token
         return dataclasses.replace(config, storage_token=access_token)
+
+    @classmethod
+    async def _read_persisted_login_scope(cls, config: Config) -> 'SessionScope | None':
+        """The project scope chosen at `login` time (see `auth_login.TokenSet.project_ids`), if
+        any -- "Security hardening" RFC increment. Returns None (falls back to the old
+        auto-lease-all default) when this isn't a local programmatic session, or the stored
+        credential predates this choice / was never run through `login`'s prompt.
+        """
+        if not cls._is_local_programmatic(config):
+            return None
+        tokens = load_tokens(config.storage_api_url)
+        if tokens is None or tokens.project_ids is None:
+            return None
+        return SessionScope(project_ids=tokens.project_ids, read_only=tokens.read_only, confirmed=True)
 
     @classmethod
     async def _autolease_default_scope(cls, config: Config) -> 'SessionScope | None':
