@@ -10,7 +10,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.mcp import ServerState
-from keboola_mcp_server.scope import OAUTH_SESSION_ID_KEY, SCOPE_KEY, SessionScope, resolve_scope_secret
+from keboola_mcp_server.scope import OAUTH_SESSION_ID_KEY, SCOPE_KEY, SessionScope, resolve_scope_key
 from keboola_mcp_server.tools.project import (
     ProjectInfo,
     _get_toolset_restrictions,
@@ -460,7 +460,7 @@ async def test_set_project_scope_returns_scope_token_when_session_does_not_persi
 
     scope = mcp_context_client.session.state[SCOPE_KEY]
     assert result.scope_token is not None
-    assert SessionScope.from_token(result.scope_token, resolve_scope_secret(Config())) == scope
+    assert SessionScope.from_token(result.scope_token, resolve_scope_key(Config())) == scope
     assert 'does not remember this scope' in result.llm_instruction
 
 
@@ -598,6 +598,39 @@ async def test_set_project_scope_falls_back_on_network_error(
     assert result.project_ids == [18]
     scope = mcp_context_client.session.state[SCOPE_KEY]
     assert scope.scoped_token is None
+
+
+@pytest.mark.asyncio
+async def test_set_project_scope_read_only_fallback_notes_local_only_enforcement(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    # Security hardening RFC increment: when the exchange fails, read_only has no server-side
+    # backing (no scoped_token) -- the caller must be told explicitly, not left assuming the same
+    # guarantee the success path gets.
+    _prep_client(mcp_context_client, mocker)
+    mocker.patch(
+        'keboola_mcp_server.tools.project.exchange_scoped_token',
+        new=mocker.AsyncMock(side_effect=httpx.ConnectTimeout('timed out')),
+    )
+
+    result = await set_project_scope(mcp_context_client, project_ids=[18], read_only=True)
+
+    assert result.read_only is True
+    assert 'enforced by this server only' in result.llm_instruction
+
+
+@pytest.mark.asyncio
+async def test_set_project_scope_read_only_success_omits_local_only_note(
+    mcp_context_client: Context, mocker: MockerFixture
+) -> None:
+    _prep_client(mcp_context_client, mocker)
+    minted = SimpleNamespace(access_token='kbc_at_scoped', expires_at=time.time() + 3600, read_only=True)
+    mocker.patch('keboola_mcp_server.tools.project.exchange_scoped_token', new=mocker.AsyncMock(return_value=minted))
+
+    result = await set_project_scope(mcp_context_client, project_ids=[18], read_only=True)
+
+    assert result.read_only is True
+    assert 'enforced by this server only' not in result.llm_instruction
 
 
 @pytest.mark.asyncio

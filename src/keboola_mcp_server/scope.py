@@ -1,12 +1,14 @@
 """In-conversation multi-project scope (PSGO-261 increment 2): the ``SessionScope`` model, its
-``scope_token`` JWT round-trip, and the associated session-state keys.
+``scope_token`` round-trip, and the associated session-state keys.
 
 Split out of ``mcp.py`` so that module can stay focused on the middleware/server wiring itself
 (``mcp.py``'s ``SessionStateMiddleware``/``MultiProjectMiddleware`` both depend on this).
 """
 
+import base64
 import dataclasses
-import secrets
+import gzip
+import json
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Annotated, Optional
@@ -14,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Optional
 from pydantic import Field
 
 from keboola_mcp_server.config import Config
-from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
+from keboola_mcp_server.session_store.crypto import decrypt, encrypt, resolve_encryption_key
 
 if TYPE_CHECKING:
     from keboola_mcp_server.session_store.repository import SessionStore
@@ -50,17 +52,16 @@ OAUTH_SESSION_ID_KEY = 'oauth_session_id'
 # caller resends the token it returned.
 SCOPE_TOKEN_ARG = 'scope_token'
 
-# Process-local fallback signing key for scope_token, used when no shared KBC_JWT_SECRET is
-# configured (e.g. local stdio/login sessions). A per-process secret is enough there since a stdio
-# process serves exactly one conversation end-to-end; deployed multi-replica setups already require
-# a shared jwt_secret for the OAuth-provider JWTs (see oauth.py), which this reuses.
-_FALLBACK_SCOPE_SECRET = secrets.token_hex(32)
 
-
-def resolve_scope_secret(config: Config) -> str:
-    """The HMAC key used to sign/verify ``scope_token`` -- shared across replicas when
-    ``config.jwt_secret`` (``KBC_JWT_SECRET``) is configured, otherwise a process-local fallback."""
-    return config.jwt_secret or _FALLBACK_SCOPE_SECRET
+def resolve_scope_key(config: Config) -> bytes:
+    """The AES-256 key used to encrypt/decrypt ``scope_token`` -- the same
+    ``KBC_SESSION_ENCRYPTION_KEY`` OAuth sessions already encrypt their stored credentials with
+    (shared across replicas when configured, otherwise a process-local fallback -- see
+    ``session_store.crypto.resolve_encryption_key``). ``scope_token`` may carry a live
+    ``scoped_token`` bearer credential, so it needs the same at-rest protection OAuth sessions
+    get, not just a signature -- see the "Security hardening" RFC increment.
+    """
+    return resolve_encryption_key(config.session_encryption_key)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -90,15 +91,29 @@ class SessionScope:
             return False
         return time.time() >= (self.scoped_expires_at - 60)
 
-    def to_token(self, secret: str) -> str:
-        """Signs this scope into the opaque ``scope_token`` a caller resends on later calls."""
-        return encode_jwt(dataclasses.asdict(self), secret)
+    def to_token(self, key: bytes) -> str:
+        """Encrypts this scope into the opaque ``scope_token`` a caller resends on later calls.
+
+        AES-GCM (authenticated encryption), not a bare signature: this may carry a live
+        ``scoped_token`` bearer credential, which must not be recoverable by anyone without the
+        key -- unlike a JWS, whose payload is trivially base64+gunzip-recoverable regardless of
+        whether the signature itself can be forged. See the "Security hardening" RFC increment.
+        """
+        plaintext = gzip.compress(json.dumps(dataclasses.asdict(self)).encode('utf-8'))
+        return base64.urlsafe_b64encode(encrypt(plaintext, key)).decode('ascii').rstrip('=')
 
     @classmethod
-    def from_token(cls, token: str, secret: str) -> 'SessionScope':
-        """Inverse of ``to_token``. Raises on a missing/invalid/tampered token -- callers should
-        treat any exception as "no scope" rather than fail the request."""
-        return cls(**decode_jwt(token, secret))
+    def from_token(cls, token: str, key: bytes) -> 'SessionScope':
+        """Inverse of ``to_token``. Raises on a missing/invalid/tampered/wrong-key token --
+        callers should treat any exception as "no scope" rather than fail the request.
+        """
+        padded = token + '=' * (-len(token) % 4)
+        plaintext = decrypt(base64.urlsafe_b64decode(padded), key)
+        data = json.loads(gzip.decompress(plaintext).decode('utf-8'))
+        # Ignore any unknown keys rather than raising -- forward-compat if a future field is added
+        # to SessionScope after this token was minted.
+        known_fields = {f.name for f in dataclasses.fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known_fields})
 
 
 async def persist_scope(session_store: 'SessionStore', session_id: str, scope: SessionScope) -> None:

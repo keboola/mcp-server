@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import dataclasses
 import time
 from datetime import datetime, timedelta, timezone
@@ -25,7 +26,7 @@ from keboola_mcp_server.mcp import (
     toon_serializer,
     unwrap_results,
 )
-from keboola_mcp_server.scope import SCOPE_KEY, SessionScope, resolve_scope_secret
+from keboola_mcp_server.scope import SCOPE_KEY, SCOPE_TOKEN_ARG, SessionScope, resolve_scope_key
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -760,6 +761,49 @@ class TestSessionStateMiddleware:
         # whether the Kubernetes step-up header may be sent.
         assert captured_own_stack_urls == ['https://connection.test.keboola.com']
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('scope', 'expected_readonly'),
+        [
+            (None, None),
+            (SessionScope(project_ids=[18], read_only=False, confirmed=True), None),
+            (SessionScope(project_ids=[18], read_only=True, confirmed=True), True),
+        ],
+        ids=['no_scope', 'writable_scope', 'readonly_scope'],
+    )
+    async def test_on_request_threads_scope_read_only_into_session_state(self, scope, expected_readonly) -> None:
+        # Security hardening RFC increment: a read-only confirmed scope must be enforced on the
+        # base session client too, not just relied on via the (possibly-absent) scoped_token.
+        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        server_state = ServerState(config=config, runtime_info=ServerRuntimeInfo(transport='stdio'))
+        session = SimpleNamespace(state={})
+        ctx = MagicMock(spec=Context)
+        ctx.session = session
+        ctx.request_context.lifespan_context = server_state
+
+        args = {}
+        if scope is not None:
+            args[SCOPE_TOKEN_ARG] = scope.to_token(resolve_scope_key(config))
+        context = SimpleNamespace(message=SimpleNamespace(arguments=args), method='tools/call', fastmcp_context=ctx)
+
+        captured_readonly = []
+
+        async def fake_create_session_state(cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url):
+            captured_readonly.append(readonly)
+            return {}
+
+        async def call_next(_):
+            return 'ok'
+
+        middleware = SessionStateMiddleware()
+        with (
+            patch.object(middleware, 'create_session_state', side_effect=fake_create_session_state),
+            patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=None),
+        ):
+            await middleware.on_request(context, call_next)
+
+        assert captured_readonly == [expected_readonly]
+
     @pytest.mark.parametrize(
         ('server_storage_api_url', 'headers', 'expected_storage_api_url'),
         [
@@ -1199,6 +1243,40 @@ class TestMaybeUseStoredSession:
         assert out.storage_token is None
 
 
+class TestReadPersistedLoginScope:
+    """Local sessions are scoped at `login` time (Security hardening RFC increment) --
+    SessionStateMiddleware._read_persisted_login_scope."""
+
+    @pytest.mark.asyncio
+    async def test_returns_confirmed_scope_from_stored_credential(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        stored = SimpleNamespace(project_ids=[18, 83], read_only=True)
+        with patch('keboola_mcp_server.mcp.load_tokens', return_value=stored):
+            scope = await SessionStateMiddleware._read_persisted_login_scope(config)
+
+        assert scope == SessionScope(project_ids=[18, 83], read_only=True, confirmed=True)
+
+    @pytest.mark.asyncio
+    async def test_none_when_credential_predates_the_scoping_choice(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        stored = SimpleNamespace(project_ids=None, read_only=False)
+        with patch('keboola_mcp_server.mcp.load_tokens', return_value=stored):
+            scope = await SessionStateMiddleware._read_persisted_login_scope(config)
+
+        assert scope is None
+
+    @pytest.mark.asyncio
+    async def test_none_when_not_local_programmatic(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x')
+        with patch('keboola_mcp_server.mcp.load_tokens', side_effect=AssertionError('must not be called')):
+            scope = await SessionStateMiddleware._read_persisted_login_scope(config)
+
+        assert scope is None
+
+
 class TestResolveLocalTokens:
     """SessionStateMiddleware keeps local tokens fresh and re-mints the scoped token (PSGO-261)."""
 
@@ -1386,30 +1464,51 @@ class TestResolveLocalTokens:
         assert await SessionStateMiddleware._autolease_default_scope(config) is None
 
 
+def _b64_key(fill: bytes) -> str:
+    """A base64-encoded 32-byte KBC_SESSION_ENCRYPTION_KEY built from a repeated fill byte --
+    deterministic test keys, distinct fills give distinct keys."""
+    return base64.b64encode(fill * 32).decode('ascii')
+
+
 class TestScopeToken:
     """The multi-project scope is carried by the caller as the `scope_token` tool argument, not read
     back from ctx.session.state -- which is rebuilt empty on every request under this server's
     default stateless-HTTP transport, so nothing survives there between one tool call and the next.
+    Encrypted (AES-GCM), not just signed -- it may carry a live `scoped_token` bearer credential.
     """
+
+    KEY_A = base64.b64decode(_b64_key(b'\x01'))
+    KEY_B = base64.b64decode(_b64_key(b'\x02'))
 
     def test_round_trip(self) -> None:
         scope = SessionScope(
             project_ids=[11, 22], read_only=True, scoped_token='kbc_at_s', scoped_expires_at=1234.0, confirmed=True
         )
-        token = scope.to_token('secret')
-        assert SessionScope.from_token(token, 'secret') == scope
+        token = scope.to_token(self.KEY_A)
+        assert SessionScope.from_token(token, self.KEY_A) == scope
 
-    def test_wrong_secret_rejected(self) -> None:
-        token = SessionScope(project_ids=[11], confirmed=True).to_token('secret-a')
+    def test_token_does_not_contain_the_scoped_token_in_the_clear(self) -> None:
+        # The whole point of encrypting rather than just signing: a live bearer credential must
+        # not be recoverable from the client-visible blob without the key.
+        scope = SessionScope(project_ids=[11], scoped_token='kbc_at_super_secret_live_token', confirmed=True)
+        token = scope.to_token(self.KEY_A)
+        assert 'kbc_at_super_secret_live_token' not in token
+        # Also not recoverable via a bare base64-decode (no key at all) -- unlike the old JWS.
+        padded = token + '=' * (-len(token) % 4)
+        assert b'kbc_at_super_secret_live_token' not in base64.urlsafe_b64decode(padded)
+
+    def test_wrong_key_rejected(self) -> None:
+        token = SessionScope(project_ids=[11], confirmed=True).to_token(self.KEY_A)
         with pytest.raises(Exception, match='.+'):
-            SessionScope.from_token(token, 'secret-b')
+            SessionScope.from_token(token, self.KEY_B)
 
-    def test_resolve_scope_secret_prefers_configured_jwt_secret(self) -> None:
-        assert resolve_scope_secret(Config(jwt_secret='shared-secret')) == 'shared-secret'
+    def test_resolve_scope_key_prefers_configured_session_encryption_key(self) -> None:
+        key = _b64_key(b'\x03')
+        assert resolve_scope_key(Config(session_encryption_key=key)) == base64.b64decode(key)
 
-    def test_resolve_scope_secret_fallback_is_stable_within_process(self) -> None:
+    def test_resolve_scope_key_fallback_is_stable_within_process(self) -> None:
         config = Config()
-        assert resolve_scope_secret(config) == resolve_scope_secret(config)
+        assert resolve_scope_key(config) == resolve_scope_key(config)
 
     @staticmethod
     def _call_tool_context(arguments: dict) -> SimpleNamespace:
@@ -1417,9 +1516,10 @@ class TestScopeToken:
         return SimpleNamespace(message=message, method='tools/call')
 
     def test_read_scope_from_request_decodes_and_pops_token(self) -> None:
-        config = Config(jwt_secret='shared-secret')
+        key = _b64_key(b'\x04')
+        config = Config(session_encryption_key=key)
         scope = SessionScope(project_ids=[11, 22], confirmed=True)
-        arguments = {'scope_token': scope.to_token('shared-secret'), 'other_arg': 1}
+        arguments = {'scope_token': scope.to_token(base64.b64decode(key)), 'other_arg': 1}
 
         context = self._call_tool_context(arguments)
         result = SessionStateMiddleware._read_scope_from_request(context, config)
@@ -1431,11 +1531,11 @@ class TestScopeToken:
 
     @pytest.mark.parametrize(
         'arguments',
-        [{}, {'scope_token': None}, {'scope_token': ''}, {'scope_token': 'not-a-valid-jwt'}],
+        [{}, {'scope_token': None}, {'scope_token': ''}, {'scope_token': 'not-a-valid-token'}],
         ids=['missing', 'none', 'empty', 'malformed'],
     )
     def test_read_scope_from_request_returns_none_when_absent_or_invalid(self, arguments: dict) -> None:
-        config = Config(jwt_secret='shared-secret')
+        config = Config(session_encryption_key=_b64_key(b'\x05'))
         context = self._call_tool_context(dict(arguments))
         assert SessionStateMiddleware._read_scope_from_request(context, config) is None
 
@@ -1444,12 +1544,13 @@ class TestScopeToken:
         context = SimpleNamespace(message=SimpleNamespace(), method='tools/list', fastmcp_context=None)
         assert SessionStateMiddleware._read_scope_from_request(context, Config()) is None
 
-    def test_wrong_secret_falls_back_to_no_scope_via_read_scope_from_request(self) -> None:
-        # A token minted with a different secret (e.g. a replica whose fallback secret differs) must
+    def test_wrong_key_falls_back_to_no_scope_via_read_scope_from_request(self) -> None:
+        # A token minted with a different key (e.g. a replica whose fallback key differs) must
         # degrade to "no scope" rather than raise -- the ask-first gate then re-prompts the caller.
-        token = SessionScope(project_ids=[11], confirmed=True).to_token('secret-a')
+        token = SessionScope(project_ids=[11], confirmed=True).to_token(self.KEY_A)
         context = self._call_tool_context({'scope_token': token})
-        assert SessionStateMiddleware._read_scope_from_request(context, Config(jwt_secret='secret-b')) is None
+        config = Config(session_encryption_key=base64.b64encode(self.KEY_B).decode())
+        assert SessionStateMiddleware._read_scope_from_request(context, config) is None
 
     @staticmethod
     def _http_rq_with_oauth_user(**access_token_kwargs) -> SimpleNamespace:
