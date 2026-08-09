@@ -630,10 +630,12 @@ class WorkspaceManager:
         step-up header — Connection waives permissions the user's token lacks when the
         ServiceAccount is authorized for workspace provisioning. No privileged token
         is ever minted; the audit trail stays on the user's token.
-        Otherwise the user's own Storage client is used unchanged. The SA JWT is attached
-        only when this manager's client talks to the server's own stack;
-        `KeboolaClient.step_up_storage_client()` falls back to the user's own client
-        otherwise.
+        Otherwise the user's own client is used, but always writable
+        (`KeboolaClient.writable_storage_client`) even under a read-only confirmed scope --
+        provisioning is server-side plumbing, not a user-visible mutation, so it must succeed
+        even when the session itself can't write. The SA JWT is attached only when this
+        manager's client talks to the server's own stack; `KeboolaClient.step_up_storage_client()`
+        falls back to the plain (still writable) client otherwise.
 
         The step-up client is cached for this manager's lifetime, so the token file is
         read once — when the client is first built — not on every provisioning attempt.
@@ -642,7 +644,7 @@ class WorkspaceManager:
         rotation is picked up without restarting the server.
         """
         if not self._kubernetes_token_path:
-            return self._client.storage_client
+            return self._client.writable_storage_client
         if self._provisioning_client is None:
             self._provisioning_client = self._client.step_up_storage_client(self._kubernetes_token_path)
             LOG.debug('Workspace provisioning storage client created.')
