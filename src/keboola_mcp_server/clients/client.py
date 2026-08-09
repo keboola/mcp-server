@@ -100,6 +100,7 @@ class KeboolaClient:
                 bearer_token=self._bearer_token,
                 branch_id=None,
                 headers=self._headers,
+                readonly=self.readonly,
                 own_stack_storage_api_url=self._own_stack_storage_api_url,
             )
         else:
@@ -124,6 +125,7 @@ class KeboolaClient:
                 bearer_token=self._bearer_token,
                 branch_id=normalized_branch_id,
                 headers=self._headers,
+                readonly=self.readonly,
                 own_stack_storage_api_url=self._own_stack_storage_api_url,
             )
 
@@ -280,6 +282,29 @@ class KeboolaClient:
     def storage_client(self) -> 'AsyncStorageClient':
         return self._storage_client
 
+    @property
+    def readonly(self) -> bool | None:
+        return self._storage_client.raw_client.readonly
+
+    @property
+    def writable_storage_client(self) -> 'AsyncStorageClient':
+        """A Storage client identical to `storage_client` but never read-only.
+
+        Used for server-side plumbing (workspace/config provisioning ahead of `query_data`) that
+        must succeed even under a read-only confirmed scope: the read-only guarantee is about
+        which tools the caller can use to mutate the project's own data, not whether the server
+        may provision the read-only workspace it needs to serve reads at all -- see the
+        "Security hardening" RFC increment.
+        """
+        return AsyncStorageClient.create(
+            root_url=self._storage_api_url,
+            token=self._bearer_or_sapi_token,
+            branch_id=self._branch_id,
+            headers=self._headers,
+            readonly=None,
+            encryption_client=self._encryption_client,
+        )
+
     def step_up_storage_client(self, kubernetes_token_path: str) -> 'AsyncStorageClient':
         """
         Returns a Storage client that keeps this client's user token and additionally
@@ -287,8 +312,10 @@ class KeboolaClient:
         step-up header. Connection waives the permissions the user's token lacks on the
         step-up-enabled actions (workspace / config / event creation) when the
         ServiceAccount is authorized for them — no privileged token is minted and the
-        user's token stays the audited principal. The read-only write guard of the user's
-        Storage client is preserved; the header only widens server-side permissions.
+        user's token stays the audited principal. Always writable regardless of this client's
+        own read-only setting (see `writable_storage_client`) -- provisioning is server-side
+        plumbing, not a user-visible mutation, and step-up exists precisely to let it proceed on
+        a token that otherwise couldn't.
 
         The ServiceAccount JWT is a credential of the MCP server deployment itself, so it is
         only ever sent to the Keboola stack that this server belongs to. The Storage API URL of a
@@ -296,7 +323,8 @@ class KeboolaClient:
         this server's own stack — resolved once when the server starts and passed to this client as
         `own_stack_storage_api_url` — before the header is attached. When the two differ, or when
         the server has no stack of its own (a locally run server), the step-up is skipped and this
-        client's plain Storage client is returned, so the JWT is never sent anywhere else.
+        client's plain (but still writable) Storage client is returned, so the JWT is never sent
+        anywhere else.
 
         The token file is read on each call so kubelet rotation needs no restart.
 
@@ -309,7 +337,7 @@ class KeboolaClient:
                 f"it is not the Storage API URL of this server's own stack "
                 f'({self._own_stack_storage_api_url or "not configured"}).'
             )
-            return self._storage_client
+            return self.writable_storage_client
 
         jwt = read_service_account_jwt(kubernetes_token_path)
 
@@ -323,7 +351,7 @@ class KeboolaClient:
             token=self._bearer_or_sapi_token,
             branch_id=self._branch_id,
             headers=headers,
-            readonly=self._storage_client.raw_client.readonly,
+            readonly=None,
         )
 
     @property

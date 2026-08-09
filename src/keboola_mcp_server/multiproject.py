@@ -41,6 +41,19 @@ _SINGLE_TARGET_READ_TOOLS = {'get_project_info'}
 _PROJECT_FILTER_ARG = 'project_ids'
 
 
+def _active_client_honors_scope(state: dict[str, Any], scope: SessionScope) -> bool:
+    """True when the base session client already matches ``scope.read_only`` -- the active-
+    project shortcuts below skip the per-project client swap only in that case (defense in
+    depth: `SessionStateMiddleware.create_session_state` already builds the base client
+    read-only whenever the scope requests it, so this is normally true and the shortcut's cost
+    stays zero; see the "Security hardening" RFC increment).
+    """
+    if not scope.read_only:
+        return True
+    client = state.get(KeboolaClient.STATE_KEY)
+    return isinstance(client, KeboolaClient) and client.readonly is True
+
+
 class MultiProjectMiddleware(fmw.Middleware):
     """Fans a read-only tool call out across every project in the active multi-project scope.
 
@@ -132,7 +145,7 @@ class MultiProjectMiddleware(fmw.Middleware):
         # project only — one call, that project's X-KBC-ProjectId, no per-project envelope.
         if len(targets) == 1:
             target = targets[0]
-            if target == scope.active_project_id:
+            if target == scope.active_project_id and _active_client_honors_scope(state, scope):
                 return await call_next(context)
             try:
                 await self._swap_project(state, server_state, storage_api_url, base_token, target, scope.read_only)
@@ -213,7 +226,7 @@ class MultiProjectMiddleware(fmw.Middleware):
         project_id = args.get(PROJECT_ID_ARG) if isinstance(args, dict) else None
         target = self._resolve_single_target(scope, project_id)
 
-        if target is None or target == scope.active_project_id:
+        if target is None or (target == scope.active_project_id and _active_client_honors_scope(state, scope)):
             return await call_next(context)
 
         server_state = ServerState.from_context(ctx)

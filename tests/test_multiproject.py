@@ -608,3 +608,68 @@ class TestMultiProjectMiddleware:
         assert 'project_ids' in note
         assert len(merged.structured_content['buckets']) == 3  # truncated to the cap
         assert merged.structured_content['total'] == 5  # true total preserved
+
+
+class TestActiveProjectReadOnlyGuard:
+    """The active-project shortcut only skips the per-project client swap when the base client
+    already honors the scope's read_only -- defense in depth for the fail-open case where
+    SessionStateMiddleware couldn't build the base client read-only (Security hardening RFC
+    increment)."""
+
+    @staticmethod
+    def _ctx_with_client(scope: SessionScope, tool_name: str, read_only_tool: bool, client_readonly) -> tuple:
+        client = MagicMock(spec=KeboolaClient)
+        client.readonly = client_readonly
+        client.token = 'kbc_at_x'
+        client.storage_api_url = 'https://connection.keboola.com'
+        state: dict = {KeboolaClient.STATE_KEY: client, SCOPE_KEY: scope}
+        ctx = MagicMock(spec=Context)
+        ctx.session = SimpleNamespace(state=state)
+        ctx.request_context.lifespan_context = ServerState(
+            config=Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x'),
+            runtime_info=ServerRuntimeInfo(transport='stdio'),
+        )
+        tool = MagicMock()
+        tool.name = tool_name
+        tool.annotations.readOnlyHint = read_only_tool if read_only_tool else None
+        ctx.fastmcp.get_tool = AsyncMock(return_value=tool)
+        message = SimpleNamespace(name=tool_name, arguments={})
+        context = SimpleNamespace(message=message, fastmcp_context=ctx)
+        return context, state, client
+
+    @pytest.mark.asyncio
+    async def test_skips_swap_when_base_client_already_readonly(self, mocker) -> None:
+        scope = SessionScope(project_ids=[11], read_only=True, confirmed=True)
+        context, _, _ = self._ctx_with_client(scope, 'get_tables', read_only_tool=True, client_readonly=True)
+        swap = mocker.patch.object(MultiProjectMiddleware, '_swap_project', new=AsyncMock())
+
+        async def call_next(_):
+            return 'ok'
+
+        await MultiProjectMiddleware().on_call_tool(context, call_next)
+        swap.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_swaps_when_base_client_is_not_readonly_despite_readonly_scope(self, mocker) -> None:
+        # The fail-open case: the base client couldn't be built read-only (e.g. an older session
+        # predating the fix), so the active-project shortcut must not trust it -- fall through to
+        # a real per-project swap, which enforces read_only itself.
+        scope = SessionScope(project_ids=[11], read_only=True, confirmed=True)
+        context, state, _ = self._ctx_with_client(scope, 'get_tables', read_only_tool=True, client_readonly=None)
+
+        async def fake_swap(state_, server_state, storage_api_url, base_token, project_id, read_only):
+            new_client = MagicMock(spec=KeboolaClient)
+            new_client.readonly = read_only or None
+            state_[KeboolaClient.STATE_KEY] = new_client
+
+        mocker.patch.object(MultiProjectMiddleware, '_swap_project', new=AsyncMock(side_effect=fake_swap))
+        mocker.patch.object(WorkspaceManager, 'create', new=AsyncMock(return_value='wsm'))
+
+        captured_readonly = []
+
+        async def call_next(_):
+            captured_readonly.append(state[KeboolaClient.STATE_KEY].readonly)
+            return 'ok'
+
+        await MultiProjectMiddleware().on_call_tool(context, call_next)
+        assert captured_readonly == [True]
