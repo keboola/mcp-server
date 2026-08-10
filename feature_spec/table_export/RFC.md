@@ -41,11 +41,13 @@ A new tool (working name `export_table`) must let an agent:
    The tool does not need to expose every one of these on day one, but whichever subset
    it exposes must use these exact names/shapes — no invented or guessed parameters.
 2. Have the tool wait for the export job to finish (bounded by a timeout, matching the
-   pattern already used for workspace creation — see Resolution Strategy) and return
-   the exported data to the agent. See the "How is the file delivered" open question
-   below — this is the main undecided point, not the timeout mechanics.
+   pattern already used for workspace creation — see Resolution Strategy) and return a
+   download URL for the exported file to the agent (see open question #1).
 3. Get a clear, typed error if the job fails or times out, consistent with how
-   `run_job`/`get_jobs` (`src/keboola_mcp_server/tools/jobs.py`) surface job failures.
+   `run_job`/`get_jobs` (`src/keboola_mcp_server/tools/jobs.py`) surface job failures. On
+   timeout the error includes the Storage job ID; recovery is calling the tool again
+   (the export submission is cheap to repeat), not polling a separate endpoint — see
+   open question #2.
 
 `query_data` and `MAX_ROWS` are **not** changed by this RFC — this is a new, separate
 tool for full-table retrieval, not a change to the SQL query path. (AI-2772 tracks
@@ -63,20 +65,18 @@ silently decided during implementation:
      The agent gets the data directly in context, no second fetch, no assumption about
      the agent's network access. Downside: response size is bounded by whatever the MCP
      transport/agent context can hold, so this only works up to some row/byte size —
-     ties directly into open question #3 below. To keep this tractable the tool should
-     force `fileType='csv'`, `gzip=false` when returning inline (parquet/gzip make no
-     sense to inline as text) and reserve those options for a URL-based path if one
-     exists.
+     ties directly into open question #3 below. It also unconditionally spends context on
+     the whole table even when the agent only needs part of it.
    - **Return a Storage file download URL** (from `GET /v2/storage/files/{id}` after the
      job completes) and let the agent fetch it. Cheaper on the MCP response, supports
-     `parquet`/`gzip`, but assumes the calling agent can make an outbound HTTP request to
-     wherever the file lives (S3/ABS/GCS, or Keboola's file-proxy) — not guaranteed for
-     every MCP client.
-   - **Recommendation:** default to inline content, since it works uniformly for every
-     MCP client and matches what the underlying request (AI-3699) actually needs — an
-     agent that can act on the data without a separate download step. A URL-based mode
-     could be added later behind the `fileType`/`gzip` params for callers who explicitly
-     want the cheaper path, but is not the default. Confirm in review.
+     `parquet`/`gzip`, and lets the agent read only the parts of the file it actually
+     needs instead of the whole table landing in context. Assumes the calling agent can
+     make an outbound HTTP request to wherever the file lives (S3/ABS/GCS, or Keboola's
+     file-proxy) — not guaranteed for every MCP client.
+   - **Recommendation:** default to the URL-based path. A full table dumped inline into
+     LLM context is rarely what the agent needs, and the two-step fetch is an acceptable
+     MVP tradeoff — it's straightforward to add an inline mode later behind the
+     `fileType`/`gzip` params if a client that can't fetch URLs turns out to need one.
 2. **Job polling model.** To be precise about what's actually happening: the
    `export-async` endpoint is a Storage API job (`GET /v2/storage/jobs/{id}`, via the
    existing `AsyncStorageClient.job_detail`), **not** a Job Queue job — it is a
@@ -87,6 +87,14 @@ silently decided during implementation:
    timeout — exactly the pattern `_Workspace._wait_for_new_workspace`
    (`workspace.py:767-794`) already uses for the same job system. No fire-and-poll split
    is needed or currently supported.
+   - **On timeout:** the export job keeps running in Storage after the tool call returns
+     (submitting it doesn't get cancelled just because the tool stopped waiting). The
+     tool returns a typed timeout error containing the Storage job ID, and the documented
+     recovery is for the agent to call `export_table` again with the same parameters —
+     there's no separate "resume polling this job" tool or job-ID input, since that would
+     duplicate the job-submission side-effect handling for a case (very slow exports)
+     that's expected to be rare. If this proves too costly in practice (re-submitting
+     large exports repeatedly), a resume-by-job-ID path can be added later.
 3. **Row limit removed entirely, or just raised?** Exports go through File Storage, so
    there's no inherent row cap the way `query_data` has one — but very large tables may
    still need caller-supplied `limit`/`whereFilters` to keep exports usable. Confirm
@@ -107,9 +115,7 @@ silently decided during implementation:
     part.
   - A `file_detail(file_id) -> JsonDict` wrapper for `GET /v2/storage/files/{id}`, needed
     to resolve the file referenced in the completed job's `results` into a download
-    URL/credentials — there is currently no Files API client method at all. Needed
-    regardless of delivery mode: the inline-content path still has to fetch the file
-    from wherever it landed before returning it to the agent.
+    URL/credentials — there is currently no Files API client method at all.
 - New tool in `src/keboola_mcp_server/tools/storage/tools.py` (or a new
   `tools/storage/export.py` if it grows large): `export_table`, following the
   `@tool_errors()` + `tool_errors`/`ToolAnnotations` conventions used by the other
@@ -118,13 +124,15 @@ silently decided during implementation:
 - Polling/timeout logic modeled directly on
   `_Workspace._wait_for_new_workspace` (`workspace.py:767-794`): loop on `job_detail`,
   check `status == 'success'`, bounded by a timeout, `asyncio.sleep` between polls.
-- Resolve open question #1 (inline content vs. URL) before implementing the final fetch
-  step, since it determines whether the tool needs an HTTP client call to download the
-  file server-side or just formats a URL from `file_detail`.
+- `export_table` returns a download URL (formatted from `file_detail`), not fetched file
+  content — no HTTP client call to download the file server-side is needed.
 
 ## Scope
 
-In scope:
+The following describes the scope of the **implementation PR** that follows this RFC —
+this RFC PR itself only adds this document.
+
+In scope (implementation PR):
 
 - `table_export_async` + `file_detail` client methods.
 - `export_table` tool (exact sync/async shape per the open questions above).
@@ -137,18 +145,20 @@ Out of scope:
 
 - Any change to `query_data` / `MAX_ROWS` (tracked separately in AI-2772).
 - Pushing the exported data anywhere on the caller's behalf — this tool only produces
-  the export and returns it (inline or via URL, per open question #1); what the calling
-  agent does with it afterward is out of scope.
+  the export and returns a download URL for it; what the calling agent does with it
+  afterward is out of scope.
 - General "too many tools" tool-management work raised in the same conversation — that's
   a separate concern from this specific export tool and should get its own RFC/spike if
   pursued.
+- Kai-side integration — tracked separately, to be picked up once this RFC is settled.
 
 ## Verification
 
 1. `tox` — pytest, black, flake8, check-tools-docs all exit 0.
 2. Manual end-to-end via local MCP (`.mcp.json` per project `CLAUDE.md`) against a real
-   project: export a table larger than 1,000 rows, confirm the tool returns the full
-   table content (or, if the URL path is chosen instead, that the returned
-   download URL/credentials actually retrieve it).
+   project: export a table larger than 1,000 rows, confirm the returned download
+   URL/credentials actually retrieve the full table content.
 3. Confirm behavior on export failure (bad table ID, no read access) surfaces a clear
    tool error rather than a raw job-status dict.
+4. Confirm timeout behavior: force a slow export, confirm the tool returns a typed
+   timeout error with the Storage job ID, and that re-calling `export_table` succeeds.
