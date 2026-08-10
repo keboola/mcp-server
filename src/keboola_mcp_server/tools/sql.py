@@ -25,7 +25,7 @@ from keboola_mcp_server.workspace import JobSubmittedInfo, QueryResult, SqlSelec
 LOG = logging.getLogger(__name__)
 
 SQL_TOOLS_TAG = 'sql'
-MAX_ROWS = 1_000
+MAX_ROWS = 10_000
 MAX_CHARS = 50_000
 # How often to check whether the HTTP client has disconnected during a long query.
 # Mirrors the 1 s job-poll cadence in `_Workspace.execute_query`.
