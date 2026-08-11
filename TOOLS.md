@@ -3770,12 +3770,15 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 Lists the Keboola projects the current login can access across the stack, each with its SQL
 dialect and organization.
 
-Call this early in a conversation when the user logs in with a stack-wide token (PKCE login),
-present the projects, and ask whether they want to work across all of them or a subset. Then call
-`set_project_scope` with their choice. This tool compacts several API calls (token introspection
-plus a per-project token verify for the SQL dialect and organization) into one result, so the
-assistant does not need a separate get_project_info call per project. Pass with_llm_instruction=true
-on the first call to also receive the base working instructions grouped by dialect.
+Only call this when a data tool call has actually failed asking you to confirm a project scope --
+the session may already be pre-scoped (e.g. the user chose specific projects at `login` time), in
+which case data tools already work and this call would just be extra, unnecessary API traffic.
+When a scope genuinely is needed: present the projects, ask whether the user wants to work across
+all of them or a subset, then call `set_project_scope` with their choice. This tool compacts
+several API calls (token introspection plus a per-project token verify for the SQL dialect and
+organization) into one result, so the assistant does not need a separate get_project_info call per
+project. Pass with_llm_instruction=true on the first call to also receive the base working
+instructions grouped by dialect.
 
 
 **Input JSON Schema**:
