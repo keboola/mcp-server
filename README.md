@@ -2,6 +2,8 @@
 
 # Keboola MCP Server
 
+[![MCP Toplist](https://mcptoplist.com/badge/com.keboola%2Fmcp.svg)](https://mcptoplist.com/server/com.keboola%2Fmcp)
+
 > Connect your AI agents, MCP clients (**Cursor**, **Claude**, **Windsurf**, **VS Code** ...) and other AI assistants to Keboola. Expose data, transformations, SQL queries, and job triggers—no glue code required. Deliver the right data to agents when and where they need it.
 
 ## Overview
