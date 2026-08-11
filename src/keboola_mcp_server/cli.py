@@ -223,7 +223,14 @@ def _prompt_project_selection(projects: list) -> tuple[list[int], bool]:
     """Interactively asks which projects to scope this login to. Never returns an implicit
     "everything" without the user seeing the list and choosing it -- see the "Security
     hardening" RFC increment: a local session must be scoped before it's ever usable.
+
+    Skips the "which projects" question when there's only one accessible project -- there's no
+    real choice to make, so asking it would just be friction; still asks read-only.
     """
+    if len(projects) == 1:
+        print(f'\nOnly one accessible project ({projects[0].id}); scoping to it automatically.', file=sys.stderr)
+        read_only = input('Read-only (no writes in this project)? [y/N]: ').strip().lower() in ('y', 'yes')
+        return [projects[0].id], read_only
     print('\nAccessible projects:', file=sys.stderr)
     for p in projects:
         print(f'  {p.id}' + (f' - {p.name}' if p.name else ''), file=sys.stderr)

@@ -26,7 +26,13 @@ from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull,
 from pydantic import AnyHttpUrl, AnyUrl
 from starlette.exceptions import HTTPException
 
-from keboola_mcp_server.auth_login import TokenSet, parse_token_response, refresh_tokens
+from keboola_mcp_server.auth_login import (
+    TokenSet,
+    exchange_scoped_token,
+    introspect_token,
+    parse_token_response,
+    refresh_tokens,
+)
 from keboola_mcp_server.clients.auth_bridge import OAuthSessionExchanger, OAuthTokenExchangeError
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
@@ -419,14 +425,55 @@ class SimpleOAuthProvider(OAuthProvider):
         # Exchange the league OAuth access token for a whole-stack Keboola programmatic session.
         # The league token is used exactly once, here, and then never referenced again.
         token_set = await self._exchange_oauth_for_session(authorization_code.oauth_access_token.token)
-        access_token, refresh_token, _session = await self._session_store.create(
+        access_token, refresh_token, session = await self._session_store.create(
             client_id=client.client_id,
             user_email=None,
             kbc_access_token=token_set.access_token,
             kbc_refresh_token=token_set.refresh_token,
             kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
         )
+        await self._auto_confirm_single_project_scope(session.id, token_set.access_token)
         return self._oauth_token(access_token, refresh_token, authorization_code.scopes)
+
+    async def _auto_confirm_single_project_scope(self, session_id: str, subject_token: str) -> None:
+        """If this freshly-created session's token can reach exactly one project, there's no real
+        scoping choice for the user to make -- confirm it immediately so the session is usable
+        without ever calling ``set_project_scope`` (mirrors the local ``login``/``login --pat``
+        flow, which does the same for the same reason -- see the "Security hardening" RFC
+        increment). Any project count other than 1 is left untouched: this server's OAuth grant is
+        always whole-stack (``claudai projectless`` scope), so introspection's count there is just
+        the user's real total org membership, not a scoping decision to defer to.
+
+        Best-effort: introspection/exchange failures here just leave the session unconfirmed, same
+        as before this method existed -- an explicit ``set_project_scope`` call still works.
+        """
+        try:
+            introspection = await introspect_token(self._storage_api_url, subject_token=subject_token)
+        except Exception as e:
+            LOG.warning(f'Could not introspect new OAuth session for single-project auto-scope: {e}', exc_info=True)
+            return
+        if len(introspection.projects) != 1:
+            return
+        project_id = introspection.projects[0].id
+        scoped_token: str | None = None
+        scoped_expires_at: datetime | None = None
+        try:
+            minted = await exchange_scoped_token(
+                self._storage_api_url, subject_token=subject_token, project_ids=[project_id], read_only=False
+            )
+            scoped_token = minted.access_token
+            scoped_expires_at = datetime.fromtimestamp(minted.expires_at, tz=timezone.utc)
+        except Exception as e:
+            LOG.warning(f'Scoped-token exchange failed while auto-confirming single project: {e}', exc_info=True)
+        await self._session_store.update_scope(
+            session_id,
+            project_ids=[project_id],
+            read_only=False,
+            confirmed=True,
+            scoped_token=scoped_token,
+            scoped_expires_at=scoped_expires_at,
+        )
+        LOG.info(f'Session {session_id} auto-confirmed to its only accessible project ({project_id}).')
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         """

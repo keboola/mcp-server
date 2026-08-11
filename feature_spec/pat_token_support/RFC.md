@@ -979,3 +979,28 @@ the original framing (one narrower, one broader; see below).
   is narrow enough that AES-GCM-encrypting the existing JWS payload is proportionate; a new
   Postgres table mirroring `kai_scope.py` was considered and rejected as unneeded complexity for
   that narrow remaining surface.
+
+## Extension: single-project sessions never need scoping (increment 8)
+
+Follow-up observation, not from the review above: for both the local `login` flow (increment 7,
+item 7) and the OAuth flow, a session whose token can reach exactly one project has no real
+scoping decision to make -- prompting for it (locally) or requiring an explicit
+`set_project_scope` call (OAuth) is pure friction. This is distinct from the "N of M projects"
+case, which stays genuinely ambiguous for this server's OAuth grant (`claudai projectless` scope,
+always whole-stack) -- introspection's count there is just the user's real total org membership,
+not evidence of a prior scoping choice, so it isn't auto-confirmed.
+
+**Fix:**
+- `cli.py`'s `_prompt_project_selection` skips the "which projects" question when introspection
+  returns exactly one project -- still asks read-only, then persists the single-project scope the
+  same way an explicit choice would be.
+- `oauth.py`'s `exchange_authorization_code` introspects the freshly-exchanged session token
+  immediately after creating it; if exactly one project is reachable, it mints a scoped token
+  (mirroring `set_project_scope`'s own exchange-with-fallback pattern) and persists
+  `scope_confirmed=True`/`scope_project_ids=[that id]` on the session row right away -- no
+  `set_project_scope` call ever needed for that session. Best-effort: any introspection/exchange
+  failure here just leaves the session unconfirmed, exactly as before this fix; login itself never
+  fails because of it.
+- `lease_pat`/`login --pat` need no separate change -- they already take an explicit
+  `project_ids` argument (increment 7), which now flows from the auto-detected single project when
+  applicable.

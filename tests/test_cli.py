@@ -232,6 +232,24 @@ class TestRunLogin:
         assert tokens.read_only is True
 
     @pytest.mark.asyncio
+    async def test_interactive_prompt_skips_project_question_with_only_one_project(
+        self, creds_file, monkeypatch
+    ) -> None:
+        # No real choice to make with a single accessible project -- don't ask which project(s),
+        # just auto-scope to it; still ask read-only.
+        _seed_unscoped_session()
+        monkeypatch.setattr(auth_login, 'ensure_access_token', AsyncMock(return_value='kbc_at_x'))
+        monkeypatch.setattr(auth_login, 'introspect_token', AsyncMock(return_value=_introspection([18])))
+        monkeypatch.setattr('sys.stdin.isatty', lambda: True)
+        with patch('builtins.input', side_effect=['y']) as mocked_input:
+            await _run_login(STACK)
+        assert mocked_input.call_count == 1  # only the read-only question, not a project-choice one
+
+        tokens = auth_login.load_tokens(STACK)
+        assert tokens.project_ids == [18]
+        assert tokens.read_only is True
+
+    @pytest.mark.asyncio
     async def test_non_interactive_without_scope_raises(self, creds_file, monkeypatch) -> None:
         _seed_unscoped_session()
         monkeypatch.setattr(auth_login, 'ensure_access_token', AsyncMock(return_value='kbc_at_x'))

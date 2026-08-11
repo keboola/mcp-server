@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from typing import Any
+from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -14,6 +15,7 @@ from mcp.server.auth.provider import AccessToken, AuthorizationParams, RefreshTo
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull
 from pydantic import AnyHttpUrl, AnyUrl
 
+from keboola_mcp_server.auth_login import Introspection, ProjectAccess, ScopedToken
 from keboola_mcp_server.clients.auth_bridge import OAuthTokenExchangeError
 from keboola_mcp_server.oauth import (
     ProxyRefreshToken,
@@ -24,6 +26,10 @@ from keboola_mcp_server.oauth import (
 from keboola_mcp_server.session_store.repository import OAuthSession
 
 JWT_KEY = 'secret'
+
+
+def _project(project_id: int) -> ProjectAccess:
+    return ProjectAccess(id=project_id, name=None, role=None)
 
 
 class FakeSessionStore:
@@ -331,14 +337,9 @@ class TestSimpleOAuthProvider:
         query = parse_qs(parsed.query)
         assert query['scope'] == ['claudai projectless']
 
-    @pytest.mark.asyncio
-    async def test_exchange_authorization_code_exchanges_for_session(
-        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
-    ):
+    @staticmethod
+    def _stub_exchanger(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
         from keboola_mcp_server import oauth as oauth_module
-
-        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
-        captured: dict[str, Any] = {}
 
         class _FakeExchanger:
             def __init__(self, **kwargs):
@@ -349,6 +350,28 @@ class TestSimpleOAuthProvider:
                 return {'accessToken': 'kbc_at_new', 'refreshToken': 'kbc_rt_new', 'expiresIn': 3600}
 
         monkeypatch.setattr(oauth_module, 'OAuthSessionExchanger', _FakeExchanger)
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_exchanges_for_session(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        # Two reachable projects: not the single-project auto-confirm case, so the session should
+        # stay unconfirmed exactly as before that feature existed. Also proves introspection failures
+        # here are non-fatal to login -- see test_exchange_authorization_code_introspection_failure_is_non_fatal.
+        monkeypatch.setattr(
+            oauth_module,
+            'introspect_token',
+            mock.AsyncMock(
+                return_value=Introspection(
+                    user_id=1, user_email=None, user_name=None, projects=[_project(1), _project(2)]
+                )
+            ),
+        )
 
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
@@ -370,6 +393,68 @@ class TestSimpleOAuthProvider:
         # forced-relogin window tied to the (1h) Keboola access token's lifetime.
         assert loaded.expires_at is None
         assert loaded_refresh.expires_at is None
+        assert loaded.scope_confirmed is False
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_auto_confirms_single_project(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        # No real scoping choice to make with only one reachable project -- see the "Security
+        # hardening" RFC increment: mirrors the same auto-confirm the local `login` flow does.
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        monkeypatch.setattr(
+            oauth_module,
+            'introspect_token',
+            mock.AsyncMock(
+                return_value=Introspection(user_id=1, user_email=None, user_name=None, projects=[_project(42)])
+            ),
+        )
+        monkeypatch.setattr(
+            oauth_module,
+            'exchange_scoped_token',
+            mock.AsyncMock(
+                return_value=ScopedToken(
+                    access_token='kbc_at_scoped', expires_at=time.time() + 3600, project_ids=[42], read_only=False
+                )
+            ),
+        )
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+        oauth_token = await oauth_provider.exchange_authorization_code(client, auth_code)
+
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.scope_confirmed is True
+        assert loaded.scope_project_ids == [42]
+        assert loaded.scope_read_only is False
+        assert loaded.scope_scoped_token == 'kbc_at_scoped'
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_introspection_failure_is_non_fatal(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Login must still succeed even if the best-effort auto-confirm can't run at all.
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        monkeypatch.setattr(
+            oauth_module, 'introspect_token', mock.AsyncMock(side_effect=httpx.ConnectError('unreachable'))
+        )
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+        oauth_token = await oauth_provider.exchange_authorization_code(client, auth_code)
+
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.scope_confirmed is False
 
     @pytest.mark.asyncio
     async def test_exchange_authorization_code_maps_exchange_error(
