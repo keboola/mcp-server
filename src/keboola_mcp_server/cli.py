@@ -261,6 +261,22 @@ def _prompt_mfa_code() -> tuple[str | None, str | None]:
     return None, recovery
 
 
+async def _local_login_fallback(config: Config, *, allow_interactive: bool) -> Config:
+    """Fills in ``config.storage_token`` from the local PKCE `login` credential store when nothing
+    else has configured a token or an OAuth client -- so a locally-run server (stdio or
+    streamable-http alike) doesn't need `--storage-token`/`KBC_STORAGE_TOKEN` passed explicitly
+    once `login` has been run. No-op (returns ``config`` unchanged) when a token is already set,
+    there's no Storage API URL to log in against, or OAuth is configured (the deployed server
+    case, which authenticates per-session instead).
+    """
+    if config.storage_token or not config.storage_api_url or config.oauth_client_id or config.oauth_client_secret:
+        return config
+    from keboola_mcp_server.auth_login import ensure_access_token
+
+    access_token = await ensure_access_token(config.storage_api_url, allow_interactive=allow_interactive)
+    return dataclasses.replace(config, storage_token=access_token)
+
+
 async def _run_login(
     api_url: str | None,
     *,
@@ -493,33 +509,33 @@ async def run_server(args: list[str] | None = None) -> None:
         await _run_gc_sessions()
         return
 
-    # Create config from the CLI arguments
+    # Create config from the CLI arguments, then apply KBC_* environment overrides up front (not
+    # just inside create_server, which does this again but too late for the local-login fallback
+    # below to see an env-configured OAuth client id / storage token).
     config = Config(
         storage_api_url=parsed_args.api_url,
         storage_token=parsed_args.storage_token,
         workspace_schema=parsed_args.workspace_schema,
-    )
+    ).replace_by(os.environ)
+
+    # Local dev convenience, for stdio and streamable-http alike: with no token configured (CLI,
+    # env, or OAuth) and a Storage API URL known, use the tokens leased by a prior browser `login`
+    # (refreshing them as needed) instead of requiring --storage-token/KBC_STORAGE_TOKEN to be
+    # passed explicitly. No-op for a deployed/OAuth-configured server -- see
+    # `_local_login_fallback`.
+    #
+    # Only run the interactive browser login when a real terminal is attached. For stdio, an MCP
+    # client launches this process with stdin/stdout as pipes (no TTY) and stdout as the JSON-RPC
+    # channel -- an interactive login there would corrupt the protocol and block the initialize
+    # handshake. In that case (and for any non-interactive streamable-http launch, e.g. a
+    # container) require a prior `login` (or a configured token) and fail fast with guidance
+    # instead.
+    allow_interactive = sys.stdin.isatty() and sys.stderr.isatty()
+    config = await _local_login_fallback(config, allow_interactive=allow_interactive)
 
     try:
         # Create and run the server
         if parsed_args.transport == 'stdio':
-            # Local/stdio needs only the stack URL: with no token configured, use the tokens
-            # leased by a prior browser `login` (refreshing them as needed). When no session is
-            # stored or it can no longer be refreshed, log in interactively on the spot — so the
-            # server can be started without a separate `login` step.
-            config = config.replace_by(os.environ)
-            if not config.storage_token and config.storage_api_url:
-                from keboola_mcp_server.auth_login import ensure_access_token
-
-                # Only run the interactive browser login when a real terminal is attached. When an
-                # MCP client launches this stdio server, stdin/stdout are pipes (no TTY) and stdout
-                # is the JSON-RPC channel — an interactive login there would corrupt the protocol
-                # and block the initialize handshake. In that case require a prior `login` (or a
-                # configured token) and fail fast with guidance instead.
-                allow_interactive = sys.stdin.isatty() and sys.stderr.isatty()
-                access_token = await ensure_access_token(config.storage_api_url, allow_interactive=allow_interactive)
-                config = dataclasses.replace(config, storage_token=access_token)
-
             runtime_config = ServerRuntimeInfo(transport=parsed_args.transport)
             keboola_mcp_server: FastMCP = create_server(config, runtime_info=runtime_config)
             if config.oauth_client_id or config.oauth_client_secret:

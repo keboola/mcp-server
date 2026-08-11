@@ -5,7 +5,15 @@ import pytest
 
 from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import TokenSet
-from keboola_mcp_server.cli import _run_gc_sessions, _run_login, _run_logout, _run_migrate, parse_args
+from keboola_mcp_server.cli import (
+    _local_login_fallback,
+    _run_gc_sessions,
+    _run_login,
+    _run_logout,
+    _run_migrate,
+    parse_args,
+)
+from keboola_mcp_server.config import Config
 
 STACK = 'https://connection.keboola.com'
 
@@ -25,6 +33,55 @@ def test_parse_args_migrate() -> None:
 def test_parse_args_gc_sessions() -> None:
     args = parse_args(['gc-sessions'])
     assert args.command == 'gc-sessions'
+
+
+class TestLocalLoginFallback:
+    """Both stdio and streamable-http go through this so a locally-run server picks up a prior
+    `login`'s stored credentials instead of requiring --storage-token/KBC_STORAGE_TOKEN."""
+
+    @pytest.mark.asyncio
+    async def test_fills_in_token_from_login_store(self, monkeypatch) -> None:
+        monkeypatch.setattr(auth_login, 'ensure_access_token', AsyncMock(return_value='kbc_at_x'))
+        config = Config(storage_api_url=STACK)
+
+        result = await _local_login_fallback(config, allow_interactive=False)
+
+        assert result.storage_token == 'kbc_at_x'
+        auth_login.ensure_access_token.assert_awaited_once_with(STACK, allow_interactive=False)
+
+    @pytest.mark.asyncio
+    async def test_noop_when_token_already_set(self, monkeypatch) -> None:
+        ensure = AsyncMock()
+        monkeypatch.setattr(auth_login, 'ensure_access_token', ensure)
+        config = Config(storage_api_url=STACK, storage_token='kbc_at_already_set')
+
+        result = await _local_login_fallback(config, allow_interactive=False)
+
+        assert result is config
+        ensure.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_noop_without_storage_api_url(self, monkeypatch) -> None:
+        ensure = AsyncMock()
+        monkeypatch.setattr(auth_login, 'ensure_access_token', ensure)
+        config = Config()
+
+        result = await _local_login_fallback(config, allow_interactive=False)
+
+        assert result is config
+        ensure.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_noop_when_oauth_configured(self, monkeypatch) -> None:
+        # Deployed server: authenticates per-session via OAuth, not a locally stored token.
+        ensure = AsyncMock()
+        monkeypatch.setattr(auth_login, 'ensure_access_token', ensure)
+        config = Config(storage_api_url=STACK, oauth_client_id='id', oauth_client_secret='secret')
+
+        result = await _local_login_fallback(config, allow_interactive=False)
+
+        assert result is config
+        ensure.assert_not_awaited()
 
 
 class TestRunMigrate:
