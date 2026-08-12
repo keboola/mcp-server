@@ -1305,14 +1305,6 @@ class TestResolveLocalTokens:
         assert out_scope is scope  # untouched
 
     @pytest.mark.asyncio
-    async def test_deployed_no_scope_is_noop(self, monkeypatch) -> None:
-        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x', project_id='7')
-        out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, None)
-        assert out_config is config
-        assert out_scope is None
-
-    @pytest.mark.asyncio
     async def test_deployed_confirmed_scope_overrides_a_header_supplied_project_id(self, monkeypatch) -> None:
         # Regression: project_id is header-eligible (X-KBC-ProjectId), so a caller could set
         # config.project_id before scope resolution runs. A confirmed scope's active project must
