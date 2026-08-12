@@ -1029,3 +1029,20 @@ additional check on `MultiProjectMiddleware`'s side comparing the base client's 
 `X-KBC-ProjectId` header against the scope (defense-in-depth) -- redundant once the root cause is
 fixed at the source, and it broke existing mock-based tests for no real security benefit; the
 mcp.py-side fix alone closes the gap.
+
+## Fix: `_local_login_fallback` broke streamable-http with no configured token (increment 13)
+
+CI regression, caught by the integration-test suite (`integtests/test_mcp_server.py::test_remote_setup`,
+`test_http_multiple_clients`): the increment-that-extended-`_local_login_fallback`-to-streamable-http
+(RFC increment referenced above) made *any* transport attempt `ensure_access_token` whenever no
+token/OAuth is configured, not just `stdio`. But `streamable-http`/`http-compat` legitimately run
+with no default token at all, relying entirely on a per-request header (`X-Storage-Token`) --
+exactly what these integration tests deliberately exercise. With `allow_interactive=False` (no TTY
+in CI) and no stored local-login credential, `ensure_access_token` raised `RuntimeError: No stored
+credentials...`, uncaught, killing the server subprocess before it could even start listening.
+
+**Fix:** `_local_login_fallback` gains a `required: bool` parameter. `stdio` passes `True` (no
+other token source exists there, so a missing credential must still fail startup with the "run
+login" guidance -- unchanged behavior). `streamable-http`/`http-compat` pass `False`: a missing
+local credential there is caught and logged, not raised -- `config` is returned unchanged and the
+server starts normally, expecting a token per request.
