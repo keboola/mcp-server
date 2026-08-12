@@ -670,7 +670,14 @@ class SessionStateMiddleware(fmw.Middleware):
         every request).
         """
         if not cls._is_local_programmatic(config):
-            if scope and scope.project_ids and not config.project_id:
+            if scope and scope.project_ids:
+                # Always the scope's own active project, never a caller-supplied X-KBC-ProjectId --
+                # project_id is header-eligible (Config._HEADER_ELIGIBLE_FIELDS), and once a scope is
+                # confirmed the header must not be able to silently redirect the base client to a
+                # project outside (or merely different from) what the user confirmed. A tool wanting a
+                # *different* one of the scoped projects still has its own project_id argument
+                # (MultiProjectMiddleware._dispatch_single_target), validated against scope.project_ids
+                # there -- this is only about which project the un-swapped base client targets.
                 config = dataclasses.replace(config, project_id=str(scope.active_project_id))
             if scope is not None and scope.scoped_token is not None and scope.is_near_expiry:
                 try:

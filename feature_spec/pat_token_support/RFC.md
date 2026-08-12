@@ -1004,3 +1004,28 @@ not evidence of a prior scoping choice, so it isn't auto-confirmed.
 - `lease_pat`/`login --pat` need no separate change -- they already take an explicit
   `project_ids` argument (increment 7), which now flows from the auto-detected single project when
   applicable.
+
+## Extension: `X-KBC-ProjectId` could override a confirmed scope (increment 12)
+
+Found by a full-PR security audit, not from the original review: `project_id` is a header-eligible
+`Config` field (`_HEADER_ELIGIBLE_FIELDS`), and `_resolve_local_tokens`'s deployed/OAuth branch
+only applied a confirmed scope's active project id when `config.project_id` wasn't already set
+(`if scope and scope.project_ids and not config.project_id: ...`). A request carrying
+`X-KBC-ProjectId` therefore kept that header's value even after `set_project_scope` confirmed a
+different, narrower scope -- and `MultiProjectMiddleware`'s active-project fast paths only compare
+the *logical* target against `scope.active_project_id`, never inspect what project the base
+client was actually built with, so the mismatched client was used unnoticed. Net effect: any
+caller able to attach one header could redirect every default-target call to a project outside
+what the user confirmed, using the full unscoped token -- defeating the scoping guarantee for
+OAuth and Kai/header-token sessions (the local-programmatic branch was never affected -- it
+already unconditionally overwrote `project_id` from the scope, no guard).
+
+**Fix:** drop the `not config.project_id` guard -- once a confirmed multi-project scope exists,
+`project_id` always comes from `scope.active_project_id`, matching the local branch's existing
+(safe) behavior. A tool wanting a *different* scoped project still has its own `project_id`
+argument, validated against `scope.project_ids` by `MultiProjectMiddleware._dispatch_single_target`
+-- this only affects which project the un-swapped base client targets. Considered and rejected: an
+additional check on `MultiProjectMiddleware`'s side comparing the base client's actual
+`X-KBC-ProjectId` header against the scope (defense-in-depth) -- redundant once the root cause is
+fixed at the source, and it broke existing mock-based tests for no real security benefit; the
+mcp.py-side fix alone closes the gap.

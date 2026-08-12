@@ -1305,12 +1305,24 @@ class TestResolveLocalTokens:
         assert out_scope is scope  # untouched
 
     @pytest.mark.asyncio
-    async def test_deployed_no_scope_or_already_set_project_id_is_noop(self, monkeypatch) -> None:
+    async def test_deployed_no_scope_is_noop(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x', project_id='7')
+        out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, None)
+        assert out_config is config
+        assert out_scope is None
+
+    @pytest.mark.asyncio
+    async def test_deployed_confirmed_scope_overrides_a_header_supplied_project_id(self, monkeypatch) -> None:
+        # Regression: project_id is header-eligible (X-KBC-ProjectId), so a caller could set
+        # config.project_id before scope resolution runs. A confirmed scope's active project must
+        # always win -- otherwise a session scoped to project 18 could be silently redirected to
+        # whatever project a request header names, via the base (un-swapped) client.
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
         config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x', project_id='7')
         scope = SessionScope(project_ids=[18], confirmed=True)
         out_config, out_scope = await SessionStateMiddleware._resolve_local_tokens(config, scope)
-        assert out_config is config  # project_id already set -- not overwritten
+        assert out_config.project_id == '18'
         assert out_scope is scope
 
     @pytest.mark.asyncio
