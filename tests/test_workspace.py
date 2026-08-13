@@ -264,7 +264,7 @@ async def test_get_workspace_resolves_by_id_when_set():
     manager = WorkspaceManager(mock_client, workspace_schema='SOME_SCHEMA', workspace_id='123')
 
     ws_info = _WspInfo(id=123, schema='APP_SCHEMA', backend='snowflake', credentials=None, readonly=True)
-    manager._find_ws_by_id = AsyncMock(return_value=ws_info)  # type: ignore[method-assign]
+    manager._find_ws_by_id = AsyncMock(return_value=(ws_info, mock_client))  # type: ignore[method-assign]
     manager._find_ws_by_schema = AsyncMock()  # type: ignore[method-assign]
 
     workspace = await manager._get_workspace()
@@ -295,7 +295,7 @@ async def test_get_workspace_warns_when_pinned_workspace_is_not_readonly(caplog:
     mock_client = Mock(spec=KeboolaClient)
     manager = WorkspaceManager(mock_client, workspace_id='123')
     writable_info = _WspInfo(id=123, schema='APP_SCHEMA', backend='snowflake', credentials=None, readonly=False)
-    manager._find_ws_by_id = AsyncMock(return_value=writable_info)  # type: ignore[method-assign]
+    manager._find_ws_by_id = AsyncMock(return_value=(writable_info, mock_client))  # type: ignore[method-assign]
 
     with caplog.at_level('WARNING'):
         workspace = await manager._get_workspace()
@@ -319,7 +319,7 @@ async def test_get_data_app_workspace_id_ignores_the_pin():
         id=999, schema='PINNED_SCHEMA', backend='bigquery', credentials='{"project_id": "proj"}', readonly=True
     )
     managed_info = _WspInfo(id=111, schema='MANAGED_SCHEMA', backend='snowflake', credentials=None, readonly=True)
-    manager._find_ws_by_id = AsyncMock(return_value=pinned_info)  # type: ignore[method-assign]
+    manager._find_ws_by_id = AsyncMock(return_value=(pinned_info, mock_client))  # type: ignore[method-assign]
     manager._find_ws_in_branch = AsyncMock(return_value=managed_info)  # type: ignore[method-assign]
 
     assert await manager.get_data_app_workspace_id() == 111
@@ -385,16 +385,63 @@ async def test_find_ws_by_id_falls_back_to_production_branch() -> None:
 
     manager = WorkspaceManager(dev_client, workspace_id='123')
 
-    info = await manager._find_ws_by_id('123')
+    result = await manager._find_ws_by_id('123')
 
-    assert info is not None
+    assert result is not None
+    info, resolved_client = result
     assert info.id == 123
     dev_client.storage_client.workspace_detail.assert_awaited_once_with('123')
     dev_client.with_branch_id.assert_awaited_once_with(None)
     prod_client.storage_client.workspace_detail.assert_awaited_once_with('123')
-    # The workspace was only resolvable via the prod-branch client -- this manager must rebind to
-    # it, or later queries would run against a production workspace through the dev-branch client.
-    assert manager._client is prod_client
+    # The workspace was only resolvable via the prod-branch client -- that client is returned for
+    # use on this one workspace, but this manager's own client must NOT change: mutating
+    # `manager._client` would also redirect every other lookup this manager makes (e.g. the
+    # MCP-managed workspace) onto the wrong branch.
+    assert resolved_client is prod_client
+    assert manager._client is dev_client
+
+
+@pytest.mark.asyncio
+async def test_pin_resolution_via_prod_fallback_does_not_leak_into_managed_lookup() -> None:
+    """Regression test for a real bug caught in review: resolving a `workspace_id` pin through
+    the prod-branch fallback must not affect the *managed* workspace lookup afterwards -- that
+    lookup (feeding `get_data_app_workspace_id()`/`get_data_app_branch_id()`/
+    `get_data_app_sql_dialect()`, which get persisted into a Data App's own config) must keep
+    running on the manager's original (dev-branch) client, not the prod client the pin happened
+    to resolve on."""
+    dev_client = Mock(spec=KeboolaClient)
+    dev_client.branch_id = '456'
+    dev_client.storage_client = AsyncMock()
+    mock_response = Mock(spec=Response)
+    mock_response.status_code = 404
+    mock_request = Mock(spec=Request)
+    dev_client.storage_client.workspace_detail = AsyncMock(
+        side_effect=HTTPStatusError('not found', request=mock_request, response=mock_response)
+    )
+
+    prod_client = Mock(spec=KeboolaClient)
+    prod_client.branch_id = None
+    prod_client.storage_client = AsyncMock()
+    prod_client.storage_client.workspace_detail = AsyncMock(
+        return_value={
+            'id': 123,
+            'connection': {'backend': 'snowflake', 'schema': 'PINNED_SCHEMA', 'user': None},
+            'readOnlyStorageAccess': True,
+        }
+    )
+    dev_client.with_branch_id = AsyncMock(return_value=prod_client)
+
+    manager = WorkspaceManager(dev_client, workspace_id='123')
+    managed_info = _WspInfo(id=111, schema='MANAGED_SCHEMA', backend='snowflake', credentials=None, readonly=True)
+    manager._find_ws_in_branch = AsyncMock(return_value=managed_info)  # type: ignore[method-assign]
+
+    pinned_workspace = await manager._get_workspace()
+    assert pinned_workspace.id == 123
+
+    managed_workspace_id = await manager.get_data_app_workspace_id()
+
+    assert managed_workspace_id == 111
+    assert manager._client is dev_client
 
 
 @pytest.mark.asyncio

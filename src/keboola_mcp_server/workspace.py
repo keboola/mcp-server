@@ -701,27 +701,30 @@ class WorkspaceManager:
             return wi
         raise ValueError(f'Invalid workspace info: {sapi_wsp_info}')
 
-    async def _find_ws_by_id(self, workspace_id: str | int, *, strict: bool = False) -> _WspInfo | None:
-        """Finds the workspace info by its ID.
+    async def _find_ws_by_id(
+        self, workspace_id: str | int, *, strict: bool = False
+    ) -> tuple[_WspInfo, KeboolaClient] | None:
+        """Finds the workspace info by its ID, together with the client it was actually resolved
+        on.
 
         Tries this manager's own (possibly branch-bound) client first, then -- since a
         workspace is not necessarily tied to the branch this manager happens to be bound to
         (e.g. a Data App's workspace is project-wide) -- falls back to the production-branch
         client if that differs. `workspace_detail` is branch-scoped, so skipping this fallback
         would 404 for a workspace that only lives on the other branch even though the id exists
-        in the project. When the fallback is the one that resolves it, this manager rebinds to
-        that client so subsequent queries run against the branch the workspace was actually
-        found on, not the branch it started on.
+        in the project. The resolving client is returned rather than assigned to `self._client`,
+        so that resolving one pinned workspace this way does not silently rebind *this manager's*
+        client -- and with it every other lookup this manager makes (e.g. the MCP-managed
+        workspace via `_find_ws_in_branch`) -- onto a different branch.
 
         :param strict: see `_fetch_ws`.
         """
         if info := await self._fetch_ws(self._client, workspace_id, strict=strict):
-            return info
+            return info, self._client
         if self._client.branch_id is not None:
             prod_client = await self._client.with_branch_id(None)
             if info := await self._fetch_ws(prod_client, workspace_id, strict=strict):
-                self._client = prod_client
-                return info
+                return info, prod_client
         return None
 
     async def _find_ws_in_branch(self) -> _WspInfo | None:
@@ -746,16 +749,18 @@ class WorkspaceManager:
 
         return None
 
-    async def _create_ws(self, *, timeout_sec: float = 300.0) -> _WspInfo | None:
+    async def _create_ws(self, *, timeout_sec: float = 300.0) -> tuple[_WspInfo, KeboolaClient] | None:
         """
-        Creates a new workspace under a component configuration and returns its info.
+        Creates a new workspace under a component configuration and returns its info, together
+        with the client it was resolved on (see `_find_ws_by_id`).
 
         The workspace is created under the MCP_WORKSPACE_COMPONENT_ID component so that
         it is correctly attributed for billing. This method creates the configuration,
         creates the workspace under it, and cleans up the configuration on failure.
 
         :param timeout_sec: The number of seconds to wait for the workspace creation job to finish.
-        :return: The workspace info if the workspace was created successfully, None otherwise.
+        :return: The workspace info and resolving client if the workspace was created successfully,
+            None otherwise.
         """
 
         # Verify token before creating workspace to ensure it has proper permissions
@@ -840,11 +845,17 @@ class WorkspaceManager:
                 remaining_time = max(0.0, timeout_sec - duration)
                 await asyncio.sleep(min(5.0, remaining_time))
 
-    def _init_workspace(self, info: _WspInfo) -> _Workspace:
-        """Creates a new `Workspace` instance based on the workspace info."""
+    def _init_workspace(self, info: _WspInfo, *, client: KeboolaClient | None = None) -> _Workspace:
+        """Creates a new `Workspace` instance based on the workspace info.
+
+        :param client: the client the workspace's queries should run through; defaults to this
+            manager's own client. Pass the client the info was actually resolved on when it
+            differs (see `_find_ws_by_id`), without changing this manager's own client.
+        """
+        client = client if client is not None else self._client
 
         if info.backend == 'snowflake':
-            return _SnowflakeWorkspace(workspace_id=info.id, schema=info.schema, client=self._client)
+            return _SnowflakeWorkspace(workspace_id=info.id, schema=info.schema, client=client)
 
         elif info.backend == 'bigquery':
             credentials = json.loads(info.credentials or '{}')
@@ -853,7 +864,7 @@ class WorkspaceManager:
                     workspace_id=info.id,
                     dataset_id=info.schema,
                     project_id=project_id,
-                    client=self._client,
+                    client=client,
                 )
 
             else:
@@ -877,11 +888,12 @@ class WorkspaceManager:
             # use the workspace that was explicitly requested (e.g. a Data App's own workspace)
             # this workspace must never be written to the default branch metadata
             LOG.info(f'Looking up workspace by id: {self._workspace_id}')
-            info = await self._find_ws_by_id(self._workspace_id)
-            if info is None:
+            result = await self._find_ws_by_id(self._workspace_id)
+            if result is None:
                 raise ValueError(
                     f'No Keboola workspace found: workspace_id={self._workspace_id}, branch_id={self._client.branch_id}'
                 )
+            info, resolved_client = result
             if not info.readonly:
                 # Every other resolution path enforces read-only storage access; this is a
                 # caller-supplied id, so it *could* widen `query_data` from read-only to
@@ -893,7 +905,7 @@ class WorkspaceManager:
                 # control and worth a follow-up regardless of this policy.
                 LOG.warning(f'Pinned workspace {self._workspace_id} has no read-only storage access.')
             LOG.info(f'Found workspace: {info}')
-            self._workspace = self._init_workspace(info)
+            self._workspace = self._init_workspace(info, client=resolved_client)
             return self._workspace
 
         self._workspace = await self._get_managed_workspace()
@@ -945,13 +957,14 @@ class WorkspaceManager:
 
         # create a new workspace under the MCP component
         LOG.info('Creating workspace in the default branch.')
-        if info := await self._create_ws():
+        if result := await self._create_ws():
             # All tokens share the same read-only workspace, rediscovered by its
             # component id (see _find_ws_in_branch) — no branch-metadata pointer is
             # written, so no elevated metadata write is needed. Concurrent first-use
             # may create more than one workspace; that is acceptable, _find_ws_in_branch
             # returns the first match on the next lookup.
-            self._managed_workspace = self._init_workspace(info)
+            info, resolved_client = result
+            self._managed_workspace = self._init_workspace(info, client=resolved_client)
             return self._managed_workspace
         else:
             raise ValueError('Failed to initialize Keboola Workspace.')
