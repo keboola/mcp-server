@@ -677,15 +677,21 @@ class WorkspaceManager:
         return None
 
     @staticmethod
-    async def _fetch_ws(client: KeboolaClient, workspace_id: str | int) -> _WspInfo | None:
+    async def _fetch_ws(client: KeboolaClient, workspace_id: str | int, *, strict: bool = False) -> _WspInfo | None:
         """Fetches the workspace info by its ID from the given client, or None if the id does
-        not resolve on it. A 400/403 is treated the same as a 404: the id is caller-supplied and
-        unvalidated, so a malformed or inaccessible id means the same thing -- "not usable" here.
+        not resolve on it.
+
+        :param strict: if False (default), a 400/403 is treated the same as a 404: the id is
+            caller-supplied and unvalidated, so a malformed or inaccessible id means the same
+            thing -- "not usable" here. Pass True when the id is already known-good (e.g. a
+            workspace this server just created), so a permission or validation error on the
+            follow-up lookup is raised instead of being mistaken for "workspace doesn't exist".
         """
         try:
             sapi_wsp_info = await client.storage_client.workspace_detail(workspace_id)
         except HTTPStatusError as e:
-            if e.response.status_code in (400, 403, 404):
+            not_found_codes = (404,) if strict else (400, 403, 404)
+            if e.response.status_code in not_found_codes:
                 return None
             raise
 
@@ -695,7 +701,7 @@ class WorkspaceManager:
             return wi
         raise ValueError(f'Invalid workspace info: {sapi_wsp_info}')
 
-    async def _find_ws_by_id(self, workspace_id: str | int) -> _WspInfo | None:
+    async def _find_ws_by_id(self, workspace_id: str | int, *, strict: bool = False) -> _WspInfo | None:
         """Finds the workspace info by its ID.
 
         Tries this manager's own (possibly branch-bound) client first, then -- since a
@@ -703,13 +709,18 @@ class WorkspaceManager:
         (e.g. a Data App's workspace is project-wide) -- falls back to the production-branch
         client if that differs. `workspace_detail` is branch-scoped, so skipping this fallback
         would 404 for a workspace that only lives on the other branch even though the id exists
-        in the project.
+        in the project. When the fallback is the one that resolves it, this manager rebinds to
+        that client so subsequent queries run against the branch the workspace was actually
+        found on, not the branch it started on.
+
+        :param strict: see `_fetch_ws`.
         """
-        if info := await self._fetch_ws(self._client, workspace_id):
+        if info := await self._fetch_ws(self._client, workspace_id, strict=strict):
             return info
         if self._client.branch_id is not None:
             prod_client = await self._client.with_branch_id(None)
-            if info := await self._fetch_ws(prod_client, workspace_id):
+            if info := await self._fetch_ws(prod_client, workspace_id, strict=strict):
+                self._client = prod_client
                 return info
         return None
 
@@ -819,7 +830,7 @@ class WorkspaceManager:
 
                 workspace_id = job_results['id']
                 LOG.info(f'Created workspace: {workspace_id}')
-                return await self._find_ws_by_id(workspace_id)
+                return await self._find_ws_by_id(workspace_id, strict=True)
 
             elif duration > timeout_sec:
                 LOG.info(f'Workspace creation timed out after {duration:.2f} seconds.')
@@ -856,8 +867,8 @@ class WorkspaceManager:
         Data App's own workspace) ahead of `workspace_schema` and the default MCP-managed
         workspace. Pin-aware: do not use this for anything attributed back to the *session's
         own* identity rather than the query target (e.g. a data app's own persisted config) --
-        use `_get_managed_workspace()`/`get_data_app_workspace_id()`/`get_data_app_branch_id()`
-        for that instead (see AI-3669 review, mcp.py:373 thread).
+        use `_get_managed_workspace()`/`get_data_app_workspace_id()`/`get_data_app_branch_id()`/
+        `get_data_app_sql_dialect()` for that instead.
         """
         if self._workspace:
             return self._workspace
@@ -919,6 +930,18 @@ class WorkspaceManager:
             LOG.info(f'Found workspace: {info}')
             self._managed_workspace = self._init_workspace(info)
             return self._managed_workspace
+
+        if self._workspace_id is not None:
+            # A pinned session (e.g. a Data App session using `X-Workspace-Id`) has no reason to
+            # provision a brand new MCP-managed workspace of its own -- that workspace would be
+            # billed and owned by this session's token, not the caller who actually needs it, and
+            # provisioning can outright fail on a read-only token. Only an already-existing
+            # managed workspace is usable here; if none exists yet, that is a real "not
+            # available" case, not something to paper over by creating one.
+            raise ValueError(
+                f'No MCP-managed workspace exists for this project/branch, and one will not be '
+                f'created for a session pinned to workspace_id={self._workspace_id}.'
+            )
 
         # create a new workspace under the MCP component
         LOG.info('Creating workspace in the default branch.')
@@ -984,7 +1007,7 @@ class WorkspaceManager:
         Use this (not `get_workspace_id()`) for anything written into a data app's own
         persisted configuration (e.g. `SECRET_WORKSPACE_ID`) -- a session pinned to one Data
         App's workspace must not leak that id into a *different* app's config when creating or
-        updating it. See AI-3669 review (mcp.py:373 thread).
+        updating it.
         """
         workspace = await self._get_managed_workspace()
         return workspace.id
@@ -994,3 +1017,11 @@ class WorkspaceManager:
         `get_data_app_workspace_id()`."""
         workspace = await self._get_managed_workspace()
         return await workspace.get_branch_id()
+
+    async def get_data_app_sql_dialect(self) -> str:
+        """The MCP-managed workspace's SQL dialect, ignoring any `workspace_id` pin. See
+        `get_data_app_workspace_id()` -- the dialect baked into a data app's generated source
+        code must match the workspace whose id/branch are persisted into that same app, not
+        whichever workspace the creating/updating session happened to be pinned to."""
+        workspace = await self._get_managed_workspace()
+        return workspace.get_sql_dialect()

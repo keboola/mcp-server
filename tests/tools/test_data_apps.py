@@ -815,7 +815,7 @@ async def test_modify_streamlit_data_app_folder(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
     workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value=1)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='snowflake')
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='snowflake')
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='default')
 
     keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
@@ -937,7 +937,7 @@ async def test_modify_streamlit_data_app_partial_success_when_response_building_
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
     workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value=1)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='snowflake')
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='snowflake')
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='default')
     keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
 
@@ -1080,7 +1080,7 @@ async def test_modify_streamlit_data_app_update_skips_metadata_when_version_miss
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
     workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value=1)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='snowflake')
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='snowflake')
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='default')
     keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
 
