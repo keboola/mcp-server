@@ -138,13 +138,75 @@ not `in.c-shared-project-42`), never a lineage-encoding prefix.
    https://github.com/keboola/ai-kit and proceed with the guidance above.
    ```
 
+## Semantic layer interaction (AI-3737)
+
+Raised in review: a bare `share_bucket_to_project`/`share_bucket_to_organization` shares the
+bucket but not any semantic definitions (datasets, metrics, relationships) built on top of it —
+a consumer gets tables with no meaning attached, silently.
+
+The Keboola UI has already worked through this exact problem
+([ui#7885](https://github.com/keboola/ui/pull/7885), also currently unshippable — no backend
+model-sharing endpoint exists yet). Its resolved design, which this RFC now mirrors per
+@tomasfejfar's review comment ("I vote to mirror the UI"):
+
+- **"Share" is a model-level action composed over two independent APIs** — Storage (buckets) and
+  the Metastore (semantic-object scope) — not a bucket-only action. There is no single endpoint
+  that spans both; the composition lives in a dedicated SDK layer
+  (`semanticLayerSharingSdk.shareModel`/`unshareModel` in the UI's case) rather than in each
+  caller, so kbc-ui, Kai's tools, and this MCP server don't drift apart on the semantics.
+- **Order is deliberate and asymmetric.** Share: buckets first, then widen semantic-object scope.
+  Rationale — data without meaning is a degraded-but-usable share; meaning pointing at
+  unreadable tables is worse. Unshare: reverse order — revoke semantic scope first, then unshare
+  buckets, so a consumer is never left holding metric definitions over tables that just vanished.
+- **Not atomic, and reported rather than thrown.** Two independent, partially-async APIs cannot be
+  made transactional. Each bucket gets an outcome (`shared` / `failed` / `excluded`); the overall
+  result carries a `degraded` reason (`partial-failure`, `buckets-held-back`,
+  `definitions-not-shareable-to-users`) instead of a bare success/error. Nothing is rolled back on
+  partial failure — the caller re-runs to retry just the failed parts.
+- **Raw bucket-only sharing stays a legitimate, explicit path** (data with no model behind it),
+  it's just no longer the *default* one the system prompt should steer an agent toward.
+
+**Decision for this RFC:** adopt the same shape rather than Matovidlo's "couple both into one
+tool call, atomic-ish" alternative — the UI's own answer to that exact tradeoff was reported
+partial failure, not forced all-or-nothing, and diverging from it here would leave kbc-ui, Kai,
+and this server disagreeing on what "share" means for the same data.
+
+**Blocking gap:** MCP has no primitive for widening a semantic object's scope. The existing
+semantic tool group (`tools/semantic/`, `tools/semantic/service.py`) is read/validation-only
+(`search_semantic_context`, `validate_semantic_query_with_used_objects`, …) — there is no
+equivalent of the UI's `promoteToOrganizationScope`/`replaceTargetProjects` Metastore calls. A
+`share_semantic_model`/`unshare_semantic_model` tool pair therefore cannot be built until:
+1. a Metastore scoping endpoint exists and is confirmed callable from this server's auth context
+   (same "unshippable without backend" state the UI PR is in), and
+2. this RFC (or a follow-up) specifies the new client methods, the bucket-resolution step (walk a
+   model's datasets → table ids → bucket ids, as the UI's `bucketsForModel` does), and the
+   `ShareSemanticModelResult` shape (per-bucket outcomes + `degraded` reason, mirroring
+   `ShareModelResult`/`SharedBucketOutcome` above).
+
+Until that backend primitive exists, this RFC's three bucket-level tools ship as the explicit
+raw-bucket path, and the system prompt (see below) must say plainly that they do **not** carry
+semantic definitions with them — closing the silent-gap risk AI-3737 flagged, without blocking on
+the semantic-layer work.
+
+**System-prompt addendum** (extends the drafted text in Resolution Strategy step 4 above):
+
+> **Semantic layer note:** these tools share/unshare the bucket only. If the bucket has semantic
+> models, datasets, or metrics defined on top of it, those definitions are **not** shared and the
+> consumer will see tables without any of that meaning attached. Tell the user this explicitly
+> before sharing a bucket that has a semantic model on it. Model-level sharing (bucket +
+> definitions together) is not yet available via MCP tools.
+
 ## Scope
 
 **In scope:** `share_bucket_to_organization`, `share_bucket_to_project`, `unshare_bucket`;
 `wait_for_storage_job`; the three new `AsyncStorageClient` methods; the system-prompt extension
-above.
+above, including the semantic-layer caveat.
 
 **Out of scope:**
+- `share_semantic_model` / `unshare_semantic_model` (model-level sharing composing Storage +
+  Metastore scope, mirroring [ui#7885](https://github.com/keboola/ui/pull/7885)) — blocked on a
+  Metastore scoping endpoint that doesn't exist yet; tracked as a follow-up RFC once that backend
+  primitive ships. See "Semantic layer interaction" above.
 - `get_shared_buckets` / `link_shared_bucket` — PR #646, separate track (rebase/merge tracked
   independently of this RFC).
 - Table aliases / "cherry-pick specific tables into a new named alias bucket" — the
@@ -188,3 +250,11 @@ above.
    but not decided.
 3. **Where the three tools live** — folded into PR #646's `shared_buckets.py` vs. a new
    `sharing.py` — depends on that file's size once #646 merges; decide at implementation time.
+4. **Semantic-model sharing timeline (AI-3737).** `share_semantic_model`/`unshare_semantic_model`
+   are blocked on a Metastore scoping endpoint that doesn't exist yet — the same blocker the UI's
+   prototype ([ui#7885](https://github.com/keboola/ui/pull/7885)) is in. Until it ships, do the
+   three bucket-level tools in this RFC need to actively *warn* the agent (via tool response, not
+   just the system prompt) when the target bucket has semantic objects on it, or is the
+   system-prompt caveat sufficient? Leaning toward system-prompt-only for this RFC to avoid adding
+   a Metastore read dependency to a Storage-only tool, revisit if AI-3737 needs stronger
+   guarantees.
