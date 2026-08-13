@@ -207,7 +207,33 @@ OAuth is **not** removed (the MCP protocol needs it for HTTP transport). The OAu
 4. **SA token path env var** — align with the workspace step-up var (`b971146f`) and the Go services' `*_KUBERNETES_TOKEN_PATH` convention; share one file-read helper.
 5. **Refresh + dead token** — the server **always refreshes during usage** when it holds the token pair; when the token is dead (refresh fails), it clears stored credentials and **enforces re-login**.
 
----
+1. **`project_id`/scope is explicit session state, never silently derived from the token itself** —
+   a whole-stack PAT has no implicit project. `get_accessible_projects` + `set_project_scope` are
+   the only mechanism; there is no separate "select-project" tool or header-only path once a scope
+   exists.
+2. **In-conversation narrowing (`set_project_scope`) and the single-project auto-confirms (local
+   `login`, OAuth) mint a real token via `pat/exchange` when they can**, preferred over
+   advisory-only narrowing so a bug elsewhere can't reach an out-of-scope project even by accident;
+   the fallback (unminted, per-request-header-narrowed) exists only for stacks lacking the exchange
+   endpoint and says so explicitly to the caller. `login`'s own project-selection prompt (a genuine
+   subset, not the single-project case) is narrower: it persists the choice but does not mint a
+   token for it, relying on this server's own per-request guard alone.
+3. **Fan-out via active-project indirection, not a per-tool `projects[]` parameter** — existing
+   tool call sites are unchanged; a dispatch-layer middleware swaps the active client/workspace for
+   the duration of one call. Read results use a per-project envelope, never a semantic merge.
+4. **Writes require an explicit `project_id` tool argument once 2+ projects are scoped** — chosen
+   over implicitly targeting the "active" project, which was reported as confusing (re-scoping to
+   change a write's target also reordered every subsequent read fan-out).
+5. **Scope persistence is per-session-type, not a single shared mechanism** — OAuth and Kai
+   sessions persist server-side (Postgres) since the client already sends a stable identifier on
+   every request; local/stateless sessions round-trip an opaque, encrypted `scope_token` instead,
+   since there's no server-side store to key against.
+6. **Security fixes address the flow, not just the symptom** — e.g. local sessions are scoped at
+   `login` time (removing the unconfirmed-by-default state entirely) rather than documented as a
+   limitation; credential races are closed by removing the shared state (per-interface keying)
+   rather than only adding a lock around it.
+7. **`clientId` for PKCE** is the demo value `keboola-cli-demo`, configurable via
+   `KBC_PKCE_CLIENT_ID`; refresh tokens are treated as opaque strings (no prefix assumptions).
 
 # Extension: Multi-project scope via introspect + scoped exchange (PSGO-261, increment 2)
 
