@@ -42,7 +42,7 @@ class TestConfig:
                 Config(workspace_id='123'),
             ),
             (
-                # An empty value means "not provided" for workspace_id/workspace_schema.
+                # An empty value means "not provided" for workspace_id.
                 {'X-Workspace-Id': ''},
                 Config(),
             ),
@@ -98,9 +98,32 @@ class TestConfig:
                 Config(storage_token='foo', workspace_id='123'),
             ),
             (
-                # An empty header must not un-pin a server-configured workspace_id/workspace_schema.
+                # An empty header must not un-pin a server-configured workspace_id.
                 Config(workspace_id='999'),
                 {'X-Workspace-Id': ''},
+                Config(workspace_id='999'),
+            ),
+            (
+                # Unlike workspace_id, an empty workspace_schema header must still clear a
+                # server default (to the falsy '', same as pre-existing main behavior) -- this is
+                # the multi-user opt-out the README describes for X-Workspace-Schema, and must
+                # not regress into keeping the server's pin.
+                Config(workspace_schema='SERVER'),
+                {'X-Workspace-Schema': ''},
+                Config(workspace_schema=''),
+            ),
+            (
+                # A malformed workspace_id header must degrade to "not provided" rather than
+                # raising -- it is untrusted per-request input, so a junk value from a client
+                # should drop the pin, not turn into an unhandled server error.
+                Config(),
+                {'X-Workspace-Id': 'abc'},
+                Config(),
+            ),
+            (
+                # A malformed header must not clear an existing server-configured pin either.
+                Config(workspace_id='999'),
+                {'X-Workspace-Id': 'abc'},
                 Config(workspace_id='999'),
             ),
         ],

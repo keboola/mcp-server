@@ -25,7 +25,7 @@ class Config:
     """The token to access the storage API using the MCP tools."""
     branch_id: str | None = None
     """The branch ID to access the storage API using the MCP tools."""
-    workspace_schema: str | None = field(default=None, metadata={'empty_means_absent': True})
+    workspace_schema: str | None = None
     """Workspace schema to access the buckets, tables and execute sql queries."""
     workspace_id: str | None = field(default=None, metadata={'empty_means_absent': True, 'require_prefix': True})
     """Workspace ID to access the buckets, tables and execute sql queries (e.g. a Data App's own
@@ -35,10 +35,10 @@ class Config:
     `require_prefix` is set because the bare `WORKSPACE_ID` env var is what Keboola injects into
     Data App containers -- without it, that variable would pin every session on such a server.
     `empty_means_absent` is set so an unset header template (`X-Workspace-Id:`) forwarded as an
-    empty string is not mistaken for an explicit pin to override a server-side default with.
-    Both intentionally do NOT apply to most other fields, e.g. `branch_id` relies on an empty
-    `X-Branch-Id` header clearing a server-configured branch (see the `branch_id` normalization
-    below) -- these two flags are opt-in per field precisely to avoid that kind of regression."""
+    empty string is not mistaken for an explicit pin to override a server-side default with. This
+    intentionally does NOT apply to `workspace_schema` (an empty `X-Workspace-Schema` header must
+    keep clearing it back to the MCP-managed workspace, same as `branch_id` below) nor to most
+    other fields -- it is opt-in per field precisely to avoid that kind of regression."""
     oauth_client_id: str | None = None
     """OAuth client ID registered in the Keboola OAuth Server."""
     oauth_client_secret: str | None = None
@@ -147,8 +147,18 @@ class Config:
         Creates new `Config` instance from the existing one by replacing the values from the input mapping.
         The keys in the input mapping can either be the names of the fields in `Config` class
         or their uppercase variant prefixed with 'KBC_'.
+
+        A malformed `workspace_id` (the only field `__post_init__` validates) degrades to "not
+        provided" rather than raising: `d` is untrusted per-request input (an HTTP header), so a
+        junk value from a client should drop the pin, not turn into an unhandled server error.
         """
-        return dataclasses.replace(self, **self._read_options(d))
+        options = self._read_options(d)
+        try:
+            return dataclasses.replace(self, **options)
+        except ValueError as e:
+            LOG.warning(f'Ignoring invalid request header value(s): {e}')
+            options.pop('workspace_id', None)
+            return dataclasses.replace(self, **options)
 
     def __repr__(self) -> str:
         params: list[str] = []
