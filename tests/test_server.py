@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import subprocess
 import tempfile
@@ -14,6 +15,7 @@ from fastmcp.client import StreamableHttpTransport
 from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 
 from keboola_mcp_server import cli
@@ -26,7 +28,7 @@ from keboola_mcp_server.mcp import (
     toon_serializer,
     toon_serializer_compact,
 )
-from keboola_mcp_server.server import create_server
+from keboola_mcp_server.server import CustomRoutes, create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
 from keboola_mcp_server.tools.data_apps import DATA_APP_TOOLS_TAG
@@ -60,6 +62,7 @@ class TestServer:
             'deploy_data_app',
             'docs_query',
             'find_component_id',
+            'get_accessible_projects',
             'get_buckets',
             'get_components',
             'get_config_examples',
@@ -83,6 +86,7 @@ class TestServer:
             'run_sync_action',
             'search',
             'search_semantic_context',
+            'set_project_scope',
             'update_config',
             'update_config_row',
             'update_descriptions',
@@ -150,7 +154,7 @@ class TestServer:
                     missing_default.append(f'{tool.name}.{prop_name}')
 
         missing_properties.sort()
-        assert missing_properties == ['get_project_info']
+        assert missing_properties == []
         missing_type.sort()
         assert not missing_type, f'These tool params have no "type" info: {missing_type}'
         missing_default.sort()
@@ -207,7 +211,9 @@ async def test_own_stack_from_cli_parameter_only(tmp_path, monkeypatch):
     [
         (  # config params in Config class
             Config(
-                storage_token='SAPI_1234', storage_api_url='http://connection.sapi', workspace_schema='WORKSPACE_1234'
+                storage_token='SAPI_1234',
+                storage_api_url='http://connection.test.keboola.com',
+                workspace_schema='WORKSPACE_1234',
             ),
             {},
         ),
@@ -215,16 +221,20 @@ async def test_own_stack_from_cli_parameter_only(tmp_path, monkeypatch):
             Config(),
             {
                 'KBC_STORAGE_TOKEN': 'SAPI_1234',
-                'KBC_STORAGE_API_URL': 'http://connection.sapi',
+                'KBC_STORAGE_API_URL': 'http://connection.test.keboola.com',
                 'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234',
             },
         ),
         (  # config params mixed up in both the Config class and the OS environment
-            Config(storage_api_url='http://connection.sapi'),
+            Config(storage_api_url='http://connection.test.keboola.com'),
             {'KBC_STORAGE_TOKEN': 'SAPI_1234', 'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234'},
         ),
         (  # the OS environment overrides the initial Config class
-            Config(storage_token='foo-bar', storage_api_url='http://connection.sapi', workspace_schema='xyz_123'),
+            Config(
+                storage_token='foo-bar',
+                storage_api_url='http://connection.test.keboola.com',
+                workspace_schema='xyz_123',
+            ),
             {'KBC_STORAGE_TOKEN': 'SAPI_1234', 'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234'},
         ),
         # TODO: Also test values obtained from an HTTP request.
@@ -296,7 +306,7 @@ async def test_with_session_state_admin_role_tools(mocker, admin_info, expected_
     os_mock = mocker.patch('keboola_mcp_server.server.os')
     os_mock.environ = {
         'KBC_STORAGE_TOKEN': 'SAPI_1234',
-        'KBC_STORAGE_API_URL': 'http://connection.sapi',
+        'KBC_STORAGE_API_URL': 'http://connection.test.keboola.com',
         'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234',
     }
 
@@ -503,7 +513,7 @@ async def test_json_logging():
                 '--transport',
                 'streamable-http',
                 '--api-url',
-                'http://connection.nowhere',
+                'http://connection.test.keboola.com',
                 '--storage-token',
                 'foo',
                 '--log-config',
@@ -597,3 +607,73 @@ async def test_json_logging():
 
     missing_top_names = {'fastmcp', 'keboola_mcp_server', 'uvicorn'} - top_names
     assert not missing_top_names, f'Missing logger names: {missing_top_names}'
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_handler_propagates_http_exception(mocker) -> None:
+    # handle_oauth_callback() raises starlette.exceptions.HTTPException; oauth_callback_handler must
+    # re-raise it as-is (so Starlette renders the real status/detail) rather than falling through to
+    # the generic except-Exception branch, which would mask it as an opaque 500.
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    oauth_provider = mocker.Mock()
+    oauth_provider.handle_oauth_callback = mocker.AsyncMock(side_effect=HTTPException(400, 'Invalid state parameter'))
+    routes = CustomRoutes(server_state=server_state, oauth_provider=oauth_provider)
+
+    request = Request({'type': 'http', 'headers': [], 'query_string': b'code=abc&state=xyz'})
+    with pytest.raises(HTTPException) as exc:
+        await routes.oauth_callback_handler(request)
+    assert exc.value.status_code == 400
+    assert exc.value.detail == 'Invalid state parameter'
+
+
+class TestCreateServerOAuthSessionStore:
+    """OAuth sessions live in Postgres (oauth_session_persistence RFC) -- create_server() must
+    refuse to enable OAuth without a DSN rather than silently falling back to something unrevoked."""
+
+    _TEST_ENCRYPTION_KEY = base64.b64encode(b'0' * 32).decode()
+
+    @staticmethod
+    def _oauth_config(**overrides) -> Config:
+        return Config(
+            storage_api_url='https://connection.keboola.com',
+            oauth_client_id='client-id',
+            oauth_client_secret='client-secret',
+            oauth_server_url='https://connection.keboola.com',
+            mcp_server_url='https://mcp.keboola.com',
+            **overrides,
+        )
+
+    def test_raises_without_postgres_dsn(self) -> None:
+        with pytest.raises(RuntimeError, match='MCP_DB_URL'):
+            create_server(
+                self._oauth_config(session_encryption_key=self._TEST_ENCRYPTION_KEY),
+                runtime_info=ServerRuntimeInfo(transport='streamable-http'),
+            )
+
+    def test_raises_without_session_encryption_key(self) -> None:
+        # A silent fallback to a process-local key would make persisted OAuth sessions
+        # undecryptable after every restart -- refuse to start instead, same as the DSN check.
+        with pytest.raises(RuntimeError, match='KBC_SESSION_ENCRYPTION_KEY'):
+            create_server(
+                self._oauth_config(postgres_dsn='postgresql://u:p@host/db'),
+                runtime_info=ServerRuntimeInfo(transport='streamable-http'),
+            )
+
+    def test_constructs_session_store_when_dsn_is_set(self) -> None:
+        from keboola_mcp_server.session_store.repository import PostgresSessionStore
+
+        server = create_server(
+            self._oauth_config(
+                postgres_dsn='postgresql://u:p@host/db', session_encryption_key=self._TEST_ENCRYPTION_KEY
+            ),
+            runtime_info=ServerRuntimeInfo(transport='streamable-http'),
+        )
+        assert isinstance(server, FastMCP)
+        assert isinstance(server.auth._session_store, PostgresSessionStore)
+
+    def test_no_oauth_configured_needs_no_postgres_dsn(self) -> None:
+        # The vast majority of create_server() call sites (local stdio, header/PAT-token sessions)
+        # have no OAuth at all -- this must keep working with zero Postgres setup.
+        server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        assert isinstance(server, FastMCP)
+        assert server.auth is None

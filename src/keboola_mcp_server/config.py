@@ -7,12 +7,23 @@ import os
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 from urllib.parse import urlparse, urlunparse
 
 LOG = logging.getLogger(__name__)
 _NO_VALUE_MARKER = '__NO_VALUE_MARKER__'
 Transport = Literal['stdio', 'streamable-http', 'http-compat/streamable-http']
+
+
+def deployed_sa_token_path() -> str | None:
+    """
+    Path to the deployed server's projected Kubernetes ServiceAccount token, or None when running locally.
+
+    The presence of the ``KBC_KUBERNETES_TOKEN_PATH`` env var is the single signal that this process is
+    the Keboola-deployed MCP server (able to reach the auth-bridge resolver) rather than a local session.
+    Read from the process environment only, never from per-request config.
+    """
+    return os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
 
 
 @dataclass(frozen=True)
@@ -39,10 +50,42 @@ class Config:
     """The URL where the MCP server si reachable."""
     jwt_secret: str | None = None
     """The secret key for encoding and decoding JWT tokens."""
+    postgres_dsn: str | None = field(default=None, metadata={'aliases': ['mcp_db_url']})
+    """Connection string for the Postgres-backed OAuth session store (oauth_session_persistence RFC).
+    Required to enable OAuth login when oauth_client_id/oauth_client_secret are set.
+
+    Maps the `MCP_DB_URL` / `KBC_MCP_DB_URL` env var (via the alias) as well as `KBC_POSTGRES_DSN`."""
+    session_encryption_key: str | None = None
+    """Base64-encoded 32-byte AES-256 key used to encrypt OAuth session credentials at rest."""
     bearer_token: str | None = None
     """The access-token issued by Keboola OAuth server to be sent in 'Authorization: Bearer <access-token>' header."""
     conversation_id: str | None = None
     """The ID of the ongoing conversation with the MCP server. This is supplied only by the HTTP header."""
+    project_id: str | None = field(default=None, metadata={'aliases': ['kbc_project_id']})
+    """Project id used to scope a programmatic-token (kbc_at_/kbc_pat_) exchange.
+
+    Maps the `X-KBC-ProjectId` HTTP header (via the alias) and the `KBC_PROJECT_ID` env var.
+    Only consulted when the inbound Storage token is a Keboola programmatic token; the legacy
+    project-bound Storage token derives its project from the token itself."""
+
+    # Fields a per-request HTTP header may legitimately set (see `replace_by_headers`). Everything
+    # else -- jwt_secret, postgres_dsn, session_encryption_key, oauth_client_id/secret,
+    # oauth_server_url, mcp_server_url -- is deployment-level configuration and must only ever come
+    # from the process environment or CLI args, never a caller-supplied header. Without this
+    # allowlist, a header literally named (in any of the exact/`KBC_`/`X-` spellings `_read_options`
+    # accepts) e.g. `Jwt-Secret` would let a caller choose the HMAC key that verifies their own
+    # `scope_token`, forging arbitrary `project_ids` -- see the "Security hardening" RFC increment.
+    _HEADER_ELIGIBLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            'storage_api_url',
+            'storage_token',
+            'branch_id',
+            'workspace_schema',
+            'bearer_token',
+            'conversation_id',
+            'project_id',
+        }
+    )
 
     def __post_init__(self) -> None:
         for f in dataclasses.fields(self):
@@ -73,10 +116,18 @@ class Config:
         return name.lower().replace('_', '').replace('-', '')
 
     @classmethod
-    def _read_options(cls, d: Mapping[str, str]) -> Mapping[str, Any]:
+    def _read_options(cls, d: Mapping[str, str], *, allowed_fields: frozenset[str] | None = None) -> Mapping[str, Any]:
+        """:param allowed_fields: When given, only these field names are ever set -- fields
+        outside it are skipped entirely, under every naming convention (`X-{name}` and `KBC_{name}`
+        headers included). Used by `replace_by_headers` to keep deployment-level fields
+        unreachable from a request; `None` (the default, for env/CLI-derived input) leaves every
+        field reachable, since that input is already operator-trusted.
+        """
         data = {cls._normalize(k): v for k, v in d.items()}
         options: dict[str, Any] = {}
         for f in dataclasses.fields(cls):
+            if allowed_fields is not None and f.name not in allowed_fields:
+                continue
             field_names = [f.name] + f.metadata.get('aliases', [])
 
             for name in field_names:
@@ -118,15 +169,29 @@ class Config:
         Creates new `Config` instance from the existing one by replacing the values from the input mapping.
         The keys in the input mapping can either be the names of the fields in `Config` class
         or their uppercase variant prefixed with 'KBC_'.
+
+        For a per-request HTTP request's headers (untrusted caller input), use
+        `replace_by_headers` instead -- this method leaves every field reachable, which is only
+        safe for operator-trusted input (the process environment, CLI args).
         """
         return dataclasses.replace(self, **self._read_options(d))
+
+    def replace_by_headers(self, headers: Mapping[str, str]) -> 'Config':
+        """Like `replace_by`, but only ever sets fields in `_HEADER_ELIGIBLE_FIELDS` -- every
+        other field (`jwt_secret`, `postgres_dsn`, `session_encryption_key`, `oauth_client_id`/
+        `oauth_client_secret`, `oauth_server_url`, `mcp_server_url`) is deployment-level
+        configuration and must never be settable by a caller-supplied header, under any of the
+        exact/`KBC_`/`X-` name spellings `_read_options` accepts -- see the "Security hardening"
+        RFC increment.
+        """
+        return dataclasses.replace(self, **self._read_options(headers, allowed_fields=self._HEADER_ELIGIBLE_FIELDS))
 
     def __repr__(self) -> str:
         params: list[str] = []
         for f in dataclasses.fields(self):
             value = getattr(self, f.name)
             if value:
-                if 'token' in f.name or 'password' in f.name or 'secret' in f.name:
+                if any(kw in f.name for kw in ('token', 'password', 'secret', 'key', 'dsn')):
                     params.append(f"{f.name}='****'")
                 else:
                     if isinstance(value, str):
@@ -237,6 +302,39 @@ class ServerRuntimeInfo:
     """The version of the MCP library."""
     fastmcp_library_version: str = importlib.metadata.version('fastmcp')
     """The version of the FastMCP library."""
+    stateless_http: bool = True
+    """Only meaningful for streamable-http: whether the transport was started with the default
+    stateless session mode (a fresh session per request -- required for scaled/deployed servers
+    where any replica may handle any request) or `--no-stateless-http` (session pinned by
+    Mcp-Session-Id, for a single local server). Ignored for stdio, which is inherently
+    single-session -- see `session_state_persists`."""
+
+    @property
+    def session_state_persists(self) -> bool:
+        """True when the same `ctx.session` object (and thus its `.state` dict) is reused across
+        requests within one conversation: always for stdio (one process, one session, for the
+        whole conversation), and for streamable-http only when started with
+        `--no-stateless-http`. False for the deployed default (`--stateless-http`), where FastMCP
+        hands every request a fresh session object regardless of what this server does."""
+        return self.transport == 'stdio' or not self.stateless_http
+
+
+def build_tracing_headers(runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
+    """Additional headers for requests made to Connection/downstream services, identifying this
+    MCP server for tracing. Depends only on ServerRuntimeInfo, so it lives here rather than in
+    mcp.py -- shared by SessionStateMiddleware and MultiProjectMiddleware's per-project client
+    construction, which live in separate modules."""
+    return {
+        'User-Agent': (
+            f'Keboola MCP Server/{runtime_info.server_version} app_env={runtime_info.app_env} '
+            f'transport={runtime_info.transport}'
+        ),
+        'MCP-Server-Transport': runtime_info.transport or 'NA',
+        'MCP-Server-Versions': (
+            f'keboola-mcp-server/{runtime_info.server_version} mcp/{runtime_info.mcp_library_version} '
+            f'fastmcp/{runtime_info.fastmcp_library_version}'
+        ),
+    }
 
 
 class MetadataField:

@@ -146,6 +146,7 @@ async def test_workspace_creation_cleans_up_config_on_failure():
     mock_client.branch_id = None
     mock_storage_client = AsyncMock()
     mock_client.storage_client = mock_storage_client
+    mock_client.writable_storage_client = mock_storage_client
 
     mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': 'snowflake'}}
     mock_storage_client.configuration_create.return_value = {'id': 'test-config-123', 'name': 'test'}
@@ -169,6 +170,62 @@ async def test_workspace_creation_cleans_up_config_on_failure():
     mock_storage_client.configuration_delete.assert_called_once_with(
         WorkspaceManager.MCP_WORKSPACE_COMPONENT_ID, 'test-config-123'
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'job_detail',
+    [
+        {'status': 'error'},
+        {'status': 'terminated'},
+        # 'warning' with no workspace id is still a failure (nothing usable was produced).
+        {'status': 'warning'},
+        {'status': 'warning', 'results': {}},
+    ],
+    ids=['error', 'terminated', 'warning_no_results', 'warning_no_id'],
+)
+async def test_workspace_creation_stops_on_terminal_error_status(job_detail: dict):
+    """A job that reaches a terminal failure status must stop polling at once, not spin to timeout."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_client.writable_storage_client = mock_storage_client
+
+    mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': 'snowflake'}}
+    mock_storage_client.configuration_create.return_value = {'id': 'cfg-1', 'name': 'test'}
+    mock_storage_client.workspace_create_for_config.return_value = {'id': 999}
+    mock_storage_client.job_detail.return_value = job_detail
+
+    manager = WorkspaceManager(mock_client)
+    result = await manager._create_ws()
+
+    assert result is None
+    # Polled exactly once — the terminal status short-circuits the loop.
+    mock_storage_client.job_detail.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_workspace_creation_warning_with_id_uses_workspace(mocker):
+    """A 'warning' job that still created a workspace (results.id present) must not be discarded."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_client.writable_storage_client = mock_storage_client
+
+    mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': 'snowflake'}}
+    mock_storage_client.configuration_create.return_value = {'id': 'cfg-1', 'name': 'test'}
+    mock_storage_client.workspace_create_for_config.return_value = {'id': 999}
+    mock_storage_client.job_detail.return_value = {'status': 'warning', 'results': {'id': 999}}
+
+    manager = WorkspaceManager(mock_client)
+    sentinel = object()
+    mocker.patch.object(manager, '_find_ws_by_id', AsyncMock(return_value=sentinel))
+    result = await manager._create_ws()
+
+    assert result is sentinel  # the created workspace is used despite the warning
+    manager._find_ws_by_id.assert_awaited_once_with(999)
 
 
 @pytest.mark.asyncio
@@ -416,14 +473,16 @@ async def test_workspace_creation_uses_step_up_client(tmp_path):
 
 @pytest.mark.asyncio
 async def test_provisioning_client_falls_back_to_user_client():
-    """Without a Kubernetes token path the provisioning client is the user's own Storage client."""
+    """Without a Kubernetes token path the provisioning client is the user's own client, but
+    always writable (see `KeboolaClient.writable_storage_client`) -- provisioning is server-side
+    plumbing, not a user-visible mutation, so it must succeed even under a read-only scope."""
     mock_client = Mock(spec=KeboolaClient)
-    mock_storage_client = AsyncMock()
-    mock_client.storage_client = mock_storage_client
+    mock_writable_client = AsyncMock()
+    mock_client.writable_storage_client = mock_writable_client
 
     manager = WorkspaceManager(mock_client)
 
-    assert await manager._provisioning_storage_client() is mock_storage_client
+    assert await manager._provisioning_storage_client() is mock_writable_client
     mock_client.step_up_storage_client.assert_not_called()
 
 

@@ -19,6 +19,8 @@ from mcp.server.session import ServerSession
 from mcp.shared.context import RequestContext
 from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
+import keboola_mcp_server.mcp
+import keboola_mcp_server.multiproject
 from integtests.project_lock import (
     DEFAULT_MAX_WAIT_MINUTES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -28,8 +30,8 @@ from integtests.project_lock import (
     verify_project_endpoint,
 )
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
+from keboola_mcp_server.config import Config, ServerRuntimeInfo, build_tracing_headers
+from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -45,6 +47,11 @@ STORAGE_API_TOKENS_ENV_VAR = 'INTEGTEST_STORAGE_TOKENS'  # space-separated pool 
 # The second pair of token/schema for testing simultaneous access to two different projects.
 STORAGE_API_TOKEN_ENV_VAR_2 = 'INTEGTEST_STORAGE_TOKEN_PRJ2'
 WORKSPACE_SCHEMA_ENV_VAR_2 = 'INTEGTEST_WORKSPACE_SCHEMA_PRJ2'
+# A single Keboola programmatic token (kbc_pat_/kbc_at_) whose user is a member of ALL pool
+# projects. It exercises the multi-project PAT flow (introspect + scoped exchange + fan-out)
+# against the SAME pool projects, just with different authentication — no separate PAT pool.
+# Optional: PAT-auth tests skip when it is not set. The PAT uses the pool storage_api_url.
+STORAGE_PAT_ENV_VAR = 'INTEGTEST_STORAGE_PAT'
 # We reset dev environment variables to integtest values to ensure tests run locally using .env settings.
 DEV_STORAGE_API_URL_ENV_VAR = 'STORAGE_API_URL'
 DEV_STORAGE_TOKEN_ENV_VAR = 'KBC_STORAGE_TOKEN'
@@ -118,17 +125,20 @@ def _patch_fastmcp_client_default_info(mocker) -> None:
 @pytest.fixture(scope='session', autouse=True)
 def _patch_session_middleware_user_agent() -> Generator[None, None, None]:
     # Force a distinct User-Agent for outbound Keboola API requests during integration tests.
+    # build_tracing_headers is imported by name into both mcp.py (SessionStateMiddleware) and
+    # multiproject.py (MultiProjectMiddleware), so both call sites need patching -- patching only
+    # keboola_mcp_server.config.build_tracing_headers wouldn't affect either already-imported name.
     monkeypatch = pytest.MonkeyPatch()
-    original_get_headers = SessionStateMiddleware._get_headers.__func__
 
-    def _get_headers_with_integtest_ua(
-        cls: type[SessionStateMiddleware], runtime_info: ServerRuntimeInfo
-    ) -> dict[str, Any]:
-        headers = original_get_headers(cls, runtime_info)
+    def _build_tracing_headers_with_integtest_ua(runtime_info: ServerRuntimeInfo) -> dict[str, Any]:
+        headers = build_tracing_headers(runtime_info)
         headers['User-Agent'] = INTEGTEST_USER_AGENT
         return headers
 
-    monkeypatch.setattr(SessionStateMiddleware, '_get_headers', classmethod(_get_headers_with_integtest_ua))
+    monkeypatch.setattr(keboola_mcp_server.mcp, 'build_tracing_headers', _build_tracing_headers_with_integtest_ua)
+    monkeypatch.setattr(
+        keboola_mcp_server.multiproject, 'build_tracing_headers', _build_tracing_headers_with_integtest_ua
+    )
     try:
         yield
     finally:
@@ -203,6 +213,60 @@ def workspace_schema(_clean_project: None, storage_api_token: str, storage_api_u
             storage_client.workspaces.delete(workspace_id)
         except Exception:
             LOG.exception(f'Failed to delete test-session workspace {workspace_id}')
+
+
+@pytest.fixture(scope='session')
+def programmatic_token(env_file_loaded: bool) -> str:
+    """A Keboola programmatic token (kbc_pat_/kbc_at_) for the multi-project PAT flow.
+
+    Skips the test when INTEGTEST_STORAGE_PAT is not configured, so the suite stays green
+    on stacks/CI runs where no PAT is provided.
+    """
+    token = os.getenv(STORAGE_PAT_ENV_VAR)
+    if not token:
+        pytest.skip(f'{STORAGE_PAT_ENV_VAR} not set; skipping PAT multi-project integration tests.')
+    return token
+
+
+def _try_acquire_additional_project(exclude_project_ids: set[str]) -> AcquiredProject | None:
+    """Non-blocking single pass over the pool to lock one more project (for MPA breadth).
+
+    Reuses the same per-project lock as the primary acquisition, but does NOT block/retry: if no
+    other pool project is free right now, returns None and the caller degrades to a single-project
+    MPA scope. Never waits, so it can't hang MPA setup when the pool has only one project or the
+    others are busy with concurrent runs.
+    """
+    if _project_pool is None:
+        return None
+    for endpoint in _project_pool._endpoints:
+        if endpoint.project_id in exclude_project_ids:
+            continue
+        lock_info = _project_pool._make_lock(endpoint)._try_acquire_once()
+        if lock_info is not None:
+            return AcquiredProject(endpoint=endpoint, lock_info=lock_info)
+    return None
+
+
+@pytest.fixture(scope='session')
+def mpa_second_project(project_lock: AcquiredProject) -> Generator[AcquiredProject | None, Any, None]:
+    """A second, exclusively-locked pool project so MPA fan-out spans >1 project.
+
+    Best-effort: yields None when the pool has no other free project (MPA tests then run against a
+    single-project scope). Released and cleaned on teardown.
+    """
+    second = _try_acquire_additional_project(exclude_project_ids={project_lock.endpoint.project_id})
+    if second is None:
+        yield None
+        return
+    try:
+        yield second
+    finally:
+        if _project_pool is not None:
+            try:
+                _clean_project(second.endpoint.storage_api_token, second.endpoint.storage_api_url)
+            except Exception:
+                LOG.exception(f'Failed to clean second MPA project {second.endpoint.project_id}')
+            _project_pool.release(second)
 
 
 @pytest.fixture(scope='session')

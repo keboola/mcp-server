@@ -26,6 +26,7 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact, unwrap_results
+from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.utils import (
     build_folder_hint,
     clear_configuration_folder_metadata,
@@ -164,6 +165,7 @@ async def create_flow(
         str,
         Field(description=folder_field_description('flow', 'flows')),
     ] = '',
+    project_id: ProjectIdArg = None,
 ) -> FlowToolOutput:
     """
     Creates a new legacy (non-conditional) flow using `keboola.orchestrator`.
@@ -259,6 +261,7 @@ async def create_conditional_flow(
         str,
         Field(description=folder_field_description('flow', 'flows')),
     ] = '',
+    project_id: ProjectIdArg = None,
 ) -> FlowToolOutput:
     """
     Creates a new conditional flow configuration using `keboola.flow`.
@@ -377,6 +380,7 @@ async def update_flow(
         str | None,
         Field(description=folder_field_description('flow', 'flows')),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> FlowToolOutput:
     """
     Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`).
@@ -463,6 +467,7 @@ async def modify_flow(
         str | None,
         Field(description=folder_field_description('flow', 'flows')),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> FlowToolOutput:
     """
     Updates an existing flow configuration (either legacy `keboola.orchestrator` or conditional `keboola.flow`) or
