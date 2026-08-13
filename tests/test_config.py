@@ -27,12 +27,24 @@ class TestConfig:
                 Config(storage_token='foo', workspace_schema='bar'),
             ),
             (
+                # workspace_id requires the KBC_/X- prefix -- a bare `workspace_id`/`WORKSPACE_ID`
+                # key must NOT be picked up (it collides with the variable Keboola injects into
+                # Data App containers).
                 {'storage_token': 'foo', 'workspace_id': '123'},
+                Config(storage_token='foo'),
+            ),
+            (
+                {'storage_token': 'foo', 'KBC_WORKSPACE_ID': '123'},
                 Config(storage_token='foo', workspace_id='123'),
             ),
             (
                 {'X-Workspace-Id': '123'},
                 Config(workspace_id='123'),
+            ),
+            (
+                # An empty value means "not provided" for workspace_id/workspace_schema.
+                {'X-Workspace-Id': ''},
+                Config(),
             ),
             (
                 {'foo': 'bar', 'storage_api_url': 'http://nowhere'},
@@ -78,7 +90,18 @@ class TestConfig:
             (
                 Config(),
                 {'storage_token': 'foo', 'workspace_id': '123'},
+                Config(storage_token='foo'),
+            ),
+            (
+                Config(),
+                {'storage_token': 'foo', 'KBC_WORKSPACE_ID': '123'},
                 Config(storage_token='foo', workspace_id='123'),
+            ),
+            (
+                # An empty header must not un-pin a server-configured workspace_id/workspace_schema.
+                Config(workspace_id='999'),
+                {'X-Workspace-Id': ''},
+                Config(workspace_id='999'),
             ),
         ],
     )
@@ -99,6 +122,10 @@ class TestConfig:
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
             'jwt_secret=None, bearer_token=None, conversation_id=None, project_id=None)'
         )
+
+    def test_workspace_id_must_be_numeric(self) -> None:
+        with pytest.raises(ValueError, match='Invalid workspace_id'):
+            Config(workspace_id='not-a-valid-id')
 
     @pytest.mark.parametrize(
         ('url', 'expected'),

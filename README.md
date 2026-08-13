@@ -159,6 +159,12 @@ This identifies your workspace in Keboola and is used for SQL queries. However, 
 
 **Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in BigQuery workspaces, you simply click connect and copy the Dataset Name
 
+### KBC_WORKSPACE_ID
+
+Pins queries to one specific, already-existing workspace by its ID instead of the schema-based lookup above, and takes precedence over `KBC_WORKSPACE_SCHEMA` when both are set. This is the option a Data App / kai-agent caller supplies, as the `X-Workspace-Id` header, so that Kai embedded in that app queries only through its own workspace.
+
+Set via the `KBC_WORKSPACE_ID` environment variable, the `--workspace-id` CLI flag, or (per-request, for multi-user deployments) the `X-Workspace-Id` header.
+
 ### KBC_STORAGE_API_URL (Keboola Region)
 
 Your Keboola Region API URL depends on your deployment region. You can determine your region by looking at the URL in your browser when logged into your Keboola project:
@@ -438,7 +444,7 @@ For a complete list of available tools with detailed descriptions, parameters, a
 | Issue | Solution |
 |-------|----------|
 | **Authentication Errors** | Verify `KBC_STORAGE_TOKEN` is valid |
-| **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` is correct |
+| **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` / `KBC_WORKSPACE_ID` is correct |
 | **Connection Timeout** | Check network connectivity |
 
 ## Development

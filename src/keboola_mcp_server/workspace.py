@@ -544,13 +544,21 @@ class _BigQueryWorkspace(_Workspace):
         return message
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class _WspInfo:
     id: int
     schema: str
     backend: str
     credentials: str | None  # the backend credentials; it can contain serialized JSON data
     readonly: bool | None
+
+    def __repr__(self) -> str:
+        # Redact `credentials` (the backend's credential blob, e.g. a service-account JSON for
+        # BigQuery) so a bare `LOG.info(f'... {info}')` anywhere can never leak it.
+        return (
+            f'_WspInfo(id={self.id!r}, schema={self.schema!r}, backend={self.backend!r}, '
+            f'credentials={"****" if self.credentials else None}, readonly={self.readonly!r})'
+        )
 
     @staticmethod
     def from_sapi_info(sapi_wsp_info: Mapping[str, Any]) -> '_WspInfo':
@@ -624,6 +632,8 @@ class WorkspaceManager:
         self._kubernetes_token_path = kubernetes_token_path
         self._provisioning_client: AsyncStorageClient | None = None
         self._workspace: _Workspace | None = None
+        # Separate cache for the pin-agnostic managed workspace -- see `_get_managed_workspace`.
+        self._managed_workspace: _Workspace | None = None
         self._table_info_cache: dict[str, DbTableInfo] = {}
 
     async def _provisioning_storage_client(self) -> AsyncStorageClient:
@@ -666,24 +676,42 @@ class WorkspaceManager:
 
         return None
 
-    async def _find_ws_by_id(self, workspace_id: str | int) -> _WspInfo | None:
-        """Finds the workspace info by its ID."""
-
+    @staticmethod
+    async def _fetch_ws(client: KeboolaClient, workspace_id: str | int) -> _WspInfo | None:
+        """Fetches the workspace info by its ID from the given client, or None if the id does
+        not resolve on it. A 400/403 is treated the same as a 404: the id is caller-supplied and
+        unvalidated, so a malformed or inaccessible id means the same thing -- "not usable" here.
+        """
         try:
-            sapi_wsp_info = await self._client.storage_client.workspace_detail(workspace_id)
-            assert isinstance(sapi_wsp_info, dict)
-            wi = _WspInfo.from_sapi_info(sapi_wsp_info)  # type: ignore[attr-defined]
-
-            if wi.id and wi.backend and wi.schema:
-                return wi
-            else:
-                raise ValueError(f'Invalid workspace info: {sapi_wsp_info}')
-
+            sapi_wsp_info = await client.storage_client.workspace_detail(workspace_id)
         except HTTPStatusError as e:
-            if e.response.status_code == 404:
+            if e.response.status_code in (400, 403, 404):
                 return None
-            else:
-                raise
+            raise
+
+        assert isinstance(sapi_wsp_info, dict)
+        wi = _WspInfo.from_sapi_info(sapi_wsp_info)  # type: ignore[attr-defined]
+        if wi.id and wi.backend and wi.schema:
+            return wi
+        raise ValueError(f'Invalid workspace info: {sapi_wsp_info}')
+
+    async def _find_ws_by_id(self, workspace_id: str | int) -> _WspInfo | None:
+        """Finds the workspace info by its ID.
+
+        Tries this manager's own (possibly branch-bound) client first, then -- since a
+        workspace is not necessarily tied to the branch this manager happens to be bound to
+        (e.g. a Data App's workspace is project-wide) -- falls back to the production-branch
+        client if that differs. `workspace_detail` is branch-scoped, so skipping this fallback
+        would 404 for a workspace that only lives on the other branch even though the id exists
+        in the project.
+        """
+        if info := await self._fetch_ws(self._client, workspace_id):
+            return info
+        if self._client.branch_id is not None:
+            prod_client = await self._client.with_branch_id(None)
+            if info := await self._fetch_ws(prod_client, workspace_id):
+                return info
+        return None
 
     async def _find_ws_in_branch(self) -> _WspInfo | None:
         """Finds the shared read-only MCP workspace in the current branch.
@@ -824,19 +852,52 @@ class WorkspaceManager:
             raise ValueError(f'Unexpected backend type "{info.backend}" in workspace: {info.schema}')
 
     async def _get_workspace(self) -> _Workspace:
+        """The workspace queries run against -- honors an explicit `workspace_id` pin (e.g. a
+        Data App's own workspace) ahead of `workspace_schema` and the default MCP-managed
+        workspace. Pin-aware: do not use this for anything attributed back to the *session's
+        own* identity rather than the query target (e.g. a data app's own persisted config) --
+        use `_get_managed_workspace()`/`get_data_app_workspace_id()`/`get_data_app_branch_id()`
+        for that instead (see AI-3669 review, mcp.py:373 thread).
+        """
         if self._workspace:
             return self._workspace
 
-        if self._workspace_id:
+        if self._workspace_id is not None:
             # use the workspace that was explicitly requested (e.g. a Data App's own workspace)
             # this workspace must never be written to the default branch metadata
             LOG.info(f'Looking up workspace by id: {self._workspace_id}')
-            if info := await self._find_ws_by_id(self._workspace_id):
-                LOG.info(f'Found workspace: {info}')
-                self._workspace = self._init_workspace(info)
-                return self._workspace
-            else:
-                raise ValueError(f'No Keboola workspace found: workspace_id={self._workspace_id}')
+            info = await self._find_ws_by_id(self._workspace_id)
+            if info is None:
+                raise ValueError(
+                    f'No Keboola workspace found: workspace_id={self._workspace_id}, branch_id={self._client.branch_id}'
+                )
+            if not info.readonly:
+                # Every other resolution path enforces read-only storage access; this is a
+                # caller-supplied id, so it *could* widen `query_data` from read-only to
+                # read-write. Not hard-enforced here -- whether a Data App's platform-provisioned
+                # workspace is actually read-only is unconfirmed (needs checking against a real
+                # stack); enforcing blindly could break the feature outright. Warn for now; if it
+                # turns out these workspaces are read-only, promote this to a raise. Either way,
+                # `tools/sql.py` has no SELECT-only guard of its own, which is the real missing
+                # control and worth a follow-up regardless of this policy.
+                LOG.warning(f'Pinned workspace {self._workspace_id} has no read-only storage access.')
+            LOG.info(f'Found workspace: {info}')
+            self._workspace = self._init_workspace(info)
+            return self._workspace
+
+        self._workspace = await self._get_managed_workspace()
+        return self._workspace
+
+    async def _get_managed_workspace(self) -> _Workspace:
+        """The MCP-managed workspace, honoring `workspace_schema` but ignoring any `workspace_id`
+        pin: `workspace_schema` first, then the default per-branch MCP-managed workspace.
+
+        Data apps persist this id into their own configuration (`SECRET_WORKSPACE_ID`), so it
+        must never be the caller-supplied `workspace_id` pin of whichever session happened to
+        create/update the app -- see `get_data_app_workspace_id()`/`get_data_app_branch_id()`.
+        """
+        if self._managed_workspace:
+            return self._managed_workspace
 
         if self._workspace_schema:
             # use the workspace that was explicitly requested
@@ -844,8 +905,8 @@ class WorkspaceManager:
             LOG.info(f'Looking up workspace by schema: {self._workspace_schema}')
             if info := await self._find_ws_by_schema(self._workspace_schema):
                 LOG.info(f'Found workspace: {info}')
-                self._workspace = self._init_workspace(info)
-                return self._workspace
+                self._managed_workspace = self._init_workspace(info)
+                return self._managed_workspace
             else:
                 raise ValueError(
                     f'No Keboola workspace found or the workspace has no read-only storage access: '
@@ -856,8 +917,8 @@ class WorkspaceManager:
         if info := await self._find_ws_in_branch():
             # use the workspace that has already been created by the MCP server and noted to the branch
             LOG.info(f'Found workspace: {info}')
-            self._workspace = self._init_workspace(info)
-            return self._workspace
+            self._managed_workspace = self._init_workspace(info)
+            return self._managed_workspace
 
         # create a new workspace under the MCP component
         LOG.info('Creating workspace in the default branch.')
@@ -867,8 +928,8 @@ class WorkspaceManager:
             # written, so no elevated metadata write is needed. Concurrent first-use
             # may create more than one workspace; that is acceptable, _find_ws_in_branch
             # returns the first match on the next lookup.
-            self._workspace = self._init_workspace(info)
-            return self._workspace
+            self._managed_workspace = self._init_workspace(info)
+            return self._managed_workspace
         else:
             raise ValueError('Failed to initialize Keboola Workspace.')
 
@@ -915,4 +976,21 @@ class WorkspaceManager:
 
     async def get_branch_id(self) -> str:
         workspace = await self._get_workspace()
+        return await workspace.get_branch_id()
+
+    async def get_data_app_workspace_id(self) -> int:
+        """The MCP-managed workspace's id, ignoring any `workspace_id` pin.
+
+        Use this (not `get_workspace_id()`) for anything written into a data app's own
+        persisted configuration (e.g. `SECRET_WORKSPACE_ID`) -- a session pinned to one Data
+        App's workspace must not leak that id into a *different* app's config when creating or
+        updating it. See AI-3669 review (mcp.py:373 thread).
+        """
+        workspace = await self._get_managed_workspace()
+        return workspace.id
+
+    async def get_data_app_branch_id(self) -> str:
+        """The MCP-managed workspace's branch id, ignoring any `workspace_id` pin. See
+        `get_data_app_workspace_id()`."""
+        workspace = await self._get_managed_workspace()
         return await workspace.get_branch_id()
