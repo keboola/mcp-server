@@ -905,7 +905,7 @@ class TestSessionStateMiddleware:
         http_rq = Request({'type': 'http', 'headers': [], 'user': AuthenticatedUser(access_token)})
         config = Config(storage_api_url='https://connection.test.keboola.com')
 
-        out_config = SessionStateMiddleware.apply_request_config(http_rq, config)
+        out_config = SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
 
         assert out_config.storage_token == 'kbc_at_exchanged'
         assert is_programmatic_token(out_config.storage_token)
@@ -1169,7 +1169,9 @@ class TestProgrammaticTokenForwarding:
         runtime_info = ServerRuntimeInfo(transport='http')
 
         with patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')):
-            state = await SessionStateMiddleware.create_session_state(config, runtime_info)
+            state = await SessionStateMiddleware.create_session_state(
+                config, runtime_info, own_stack_storage_api_url=None
+            )
 
         client = state[KeboolaClient.STATE_KEY]
         assert client.bearer_token == 'kbc_at_abc'

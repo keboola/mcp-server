@@ -561,9 +561,9 @@ class TestMultiProjectMiddleware:
                 'create',
                 AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
             ),
+            pytest.raises(ToolError, match='failed for all 2 scoped'),
         ):
-            with pytest.raises(ToolError, match='failed for all 2 scoped'):
-                await MultiProjectMiddleware().on_call_tool(context, call_next)
+            await MultiProjectMiddleware().on_call_tool(context, call_next)
 
     @pytest.mark.asyncio
     async def test_fan_out_validation_error_raised_once_not_per_project(self) -> None:
@@ -588,9 +588,9 @@ class TestMultiProjectMiddleware:
                 'create',
                 AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
             ),
+            pytest.raises(PydanticValidationError),
         ):
-            with pytest.raises(PydanticValidationError):
-                await MultiProjectMiddleware().on_call_tool(context, call_next)
+            await MultiProjectMiddleware().on_call_tool(context, call_next)
 
         # Aborted after the first project; not retried across the rest.
         assert calls == ['client-11']

@@ -39,7 +39,6 @@ from keboola_mcp_server.config import (
     deployed_sa_token_path,
     is_same_stack,
 )
-from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.scope import (
     OAUTH_SESSION_ID_KEY,

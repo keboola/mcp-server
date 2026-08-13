@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Annotated, Optional, cast
+from typing import Annotated, cast
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -546,7 +546,7 @@ async def get_accessible_projects(
 async def set_project_scope(
     ctx: Context,
     project_ids: Annotated[
-        Optional[list[int]],
+        list[int] | None,
         Field(
             description='The project ids to scope the session to. '
             'Omit or pass null to scope to ALL accessible projects.'
