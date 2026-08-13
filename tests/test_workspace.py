@@ -173,22 +173,28 @@ async def test_workspace_creation_cleans_up_config_on_failure():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('input_branch_id', 'has_sb_feature', 'workspace_schema', 'expected_bound_branch_id'),
+    ('input_branch_id', 'has_sb_feature', 'workspace_schema', 'workspace_id', 'expected_bound_branch_id'),
     [
         # default branch: always production, regardless of feature
-        (None, True, None, None),
-        (None, False, None, None),
+        (None, True, None, None, None),
+        (None, False, None, None, None),
         # dev branch + storage-branches feature on: keep dev branch
-        ('456', True, None, '456'),
+        ('456', True, None, None, '456'),
         # dev branch without storage-branches (legacy): fall back to production
-        ('456', False, None, None),
+        ('456', False, None, None, None),
         # dev branch + storage-branches + explicit workspace_schema (KBC_WORKSPACE_SCHEMA):
         # stay branch-aware. The user is responsible for ensuring the named workspace
         # exists in the explicitly-bound branch — there is no carve-out for explicit schemas.
-        ('456', True, 'WORKSPACE_XYZ', '456'),
+        ('456', True, 'WORKSPACE_XYZ', None, '456'),
         # dev branch + legacy + explicit workspace_schema: still rebinds to production,
         # since branched workspaces don't exist on legacy projects.
-        ('456', False, 'WORKSPACE_XYZ', None),
+        ('456', False, 'WORKSPACE_XYZ', None, None),
+        # dev branch + storage-branches + explicit workspace_id: the pin must reach `cls(...)`
+        # on the storage-branches construction path too (mutation-tested: dropping
+        # `workspace_id=workspace_id` there leaves the rest of the suite green).
+        ('456', True, None, '123', '456'),
+        # default branch + explicit workspace_id: same, on the prod-client construction path.
+        (None, False, None, '123', None),
     ],
     ids=[
         'default_branch_with_sb',
@@ -197,20 +203,24 @@ async def test_workspace_creation_cleans_up_config_on_failure():
         'dev_branch_legacy',
         'dev_branch_with_sb_explicit_schema',
         'dev_branch_legacy_explicit_schema',
+        'dev_branch_with_sb_explicit_id',
+        'default_branch_without_sb_explicit_id',
     ],
 )
 async def test_workspace_manager_create_is_branch_aware(
     input_branch_id: str | None,
     has_sb_feature: bool,
     workspace_schema: str | None,
+    workspace_id: str | None,
     expected_bound_branch_id: str | None,
 ):
     """
     WorkspaceManager.create() must keep the client on the dev branch only when the project
     has the `storage-branches` feature; otherwise it must rebind to the production branch.
     The rule applies uniformly whether the workspace is auto-managed or pinned via an
-    explicit `workspace_schema` (KBC_WORKSPACE_SCHEMA) — branch context is governed solely
-    by KBC_BRANCH_ID and the project's `storage-branches` feature.
+    explicit `workspace_schema` (KBC_WORKSPACE_SCHEMA) or `workspace_id` (KBC_WORKSPACE_ID) —
+    branch context is governed solely by KBC_BRANCH_ID and the project's `storage-branches`
+    feature, and both pins must reach `cls(...)` on either construction path.
     """
     input_client = Mock(spec=KeboolaClient)
     input_client.branch_id = input_branch_id
@@ -227,13 +237,15 @@ async def test_workspace_manager_create_is_branch_aware(
 
     input_client.with_branch_id = AsyncMock(side_effect=_rebind)
 
-    manager = await WorkspaceManager.create(input_client, workspace_schema=workspace_schema)
+    manager = await WorkspaceManager.create(input_client, workspace_schema=workspace_schema, workspace_id=workspace_id)
 
     # noinspection PyProtectedMember
     bound_client = manager._client
     assert bound_client.branch_id == expected_bound_branch_id
     # noinspection PyProtectedMember
     assert manager._workspace_schema == workspace_schema
+    # noinspection PyProtectedMember
+    assert manager._workspace_id == workspace_id
 
     # has_feature is only meaningful when the client is on a dev branch — the helper
     # short-circuits otherwise, so on the default branch we should not even ask.
@@ -272,6 +284,135 @@ async def test_get_workspace_raises_when_id_not_found():
 
     with pytest.raises(ValueError, match='workspace_id=999'):
         await manager._get_workspace()
+
+
+@pytest.mark.asyncio
+async def test_get_workspace_warns_when_pinned_workspace_is_not_readonly(caplog: pytest.LogCaptureFixture) -> None:
+    """A `workspace_id` pin resolving to a writable workspace must not silently pass through --
+    at minimum it needs a warning (whether a Data App's platform-provisioned workspace is
+    actually read-only is unconfirmed against a real stack; hard-enforcing here without knowing
+    that could break the feature outright -- see AI-3669 review, workspace.py:834 thread)."""
+    mock_client = Mock(spec=KeboolaClient)
+    manager = WorkspaceManager(mock_client, workspace_id='123')
+    writable_info = _WspInfo(id=123, schema='APP_SCHEMA', backend='snowflake', credentials=None, readonly=False)
+    manager._find_ws_by_id = AsyncMock(return_value=writable_info)  # type: ignore[method-assign]
+
+    with caplog.at_level('WARNING'):
+        workspace = await manager._get_workspace()
+
+    assert workspace.id == 123
+    assert any('no read-only storage access' in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_get_data_app_workspace_id_ignores_the_pin():
+    """`get_data_app_workspace_id()`/`get_data_app_branch_id()` must resolve the *managed*
+    workspace even when a session is pinned via `workspace_id` -- they feed into
+    `tools/data_apps.py`, which writes the result into a *different* data app's own persisted
+    `WORKSPACE_ID` secret. If they returned the pinned workspace, creating/updating data app B
+    from a session pinned to app A's workspace would permanently point B at A's workspace."""
+    mock_client = Mock(spec=KeboolaClient)
+    manager = WorkspaceManager(mock_client, workspace_id='999')
+
+    pinned_info = _WspInfo(id=999, schema='PINNED_SCHEMA', backend='snowflake', credentials=None, readonly=True)
+    managed_info = _WspInfo(id=111, schema='MANAGED_SCHEMA', backend='snowflake', credentials=None, readonly=True)
+    manager._find_ws_by_id = AsyncMock(return_value=pinned_info)  # type: ignore[method-assign]
+    manager._find_ws_in_branch = AsyncMock(return_value=managed_info)  # type: ignore[method-assign]
+
+    assert await manager.get_data_app_workspace_id() == 111
+    pinned_workspace = await manager._get_workspace()
+    assert pinned_workspace.id == 999
+
+
+@pytest.mark.asyncio
+async def test_found_workspace_repr_never_prints_credentials() -> None:
+    """`_WspInfo.credentials` holds the backend's credential blob (a service-account JSON for
+    BigQuery) -- its repr, which every `LOG.info(f'... {info}')` call site relies on, must
+    never include it."""
+    secret = 'super-secret-service-account-json'
+    info = _WspInfo(id=123, schema='APP_SCHEMA', backend='snowflake', credentials=secret, readonly=True)
+
+    assert secret not in repr(info)
+    assert 'credentials=****' in repr(info)
+
+
+@pytest.mark.asyncio
+async def test_find_ws_by_id_falls_back_to_production_branch() -> None:
+    """A Data App workspace is not tied to any particular branch, but `workspace_detail` is
+    branch-scoped -- a dev-branch session pinned to a workspace that lives on the default
+    branch must not 404 just because the first lookup used the wrong branch prefix."""
+    dev_client = Mock(spec=KeboolaClient)
+    dev_client.branch_id = '456'
+    dev_client.storage_client = AsyncMock()
+    mock_response = Mock(spec=Response)
+    mock_response.status_code = 404
+    mock_request = Mock(spec=Request)
+    dev_client.storage_client.workspace_detail = AsyncMock(
+        side_effect=HTTPStatusError('not found', request=mock_request, response=mock_response)
+    )
+
+    prod_client = Mock(spec=KeboolaClient)
+    prod_client.branch_id = None
+    prod_client.storage_client = AsyncMock()
+    prod_client.storage_client.workspace_detail = AsyncMock(
+        return_value={
+            'id': 123,
+            'connection': {'backend': 'snowflake', 'schema': 'APP_SCHEMA', 'user': None},
+            'readOnlyStorageAccess': True,
+        }
+    )
+    dev_client.with_branch_id = AsyncMock(return_value=prod_client)
+
+    manager = WorkspaceManager(dev_client, workspace_id='123')
+
+    info = await manager._find_ws_by_id('123')
+
+    assert info is not None
+    assert info.id == 123
+    dev_client.storage_client.workspace_detail.assert_awaited_once_with('123')
+    dev_client.with_branch_id.assert_awaited_once_with(None)
+    prod_client.storage_client.workspace_detail.assert_awaited_once_with('123')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status_code', [400, 403, 404])
+async def test_find_ws_by_id_treats_400_403_404_alike(status_code: int) -> None:
+    """The header value is unvalidated: a non-numeric id (400), an id the token can't read
+    (403), and a nonexistent id (404) must all mean the same thing -- "not usable" -- rather
+    than 400/403 bypassing the intended `ValueError` and surfacing a raw `HTTPStatusError`."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_client.storage_client = AsyncMock()
+    mock_response = Mock(spec=Response)
+    mock_response.status_code = status_code
+    mock_request = Mock(spec=Request)
+    mock_client.storage_client.workspace_detail = AsyncMock(
+        side_effect=HTTPStatusError('error', request=mock_request, response=mock_response)
+    )
+
+    manager = WorkspaceManager(mock_client, workspace_id='not-a-valid-id')
+
+    assert await manager._find_ws_by_id('not-a-valid-id') is None
+
+
+@pytest.mark.asyncio
+async def test_find_ws_by_id_reraises_unexpected_status() -> None:
+    """A 5xx (or any other unexpected status) is a real failure, not an absent/inaccessible
+    workspace -- it must propagate rather than being swallowed into a misleading "not found"."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_client.storage_client = AsyncMock()
+    mock_response = Mock(spec=Response)
+    mock_response.status_code = 500
+    mock_request = Mock(spec=Request)
+    mock_client.storage_client.workspace_detail = AsyncMock(
+        side_effect=HTTPStatusError('error', request=mock_request, response=mock_response)
+    )
+
+    manager = WorkspaceManager(mock_client, workspace_id='123')
+
+    with pytest.raises(HTTPStatusError):
+        await manager._find_ws_by_id('123')
 
 
 def _make_snowflake_workspace_with_mocked_qs(job_id: str = 'job-abc-123') -> tuple[_SnowflakeWorkspace, AsyncMock]:

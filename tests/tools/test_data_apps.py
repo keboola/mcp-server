@@ -814,9 +814,9 @@ async def test_modify_streamlit_data_app_folder(
     """Test folder metadata and change_summary hint for modify_streamlit_data_app (create and update paths)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
-    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=1)
+    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value=1)
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='snowflake')
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='default')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='default')
 
     keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
 
@@ -936,9 +936,9 @@ async def test_modify_streamlit_data_app_partial_success_when_response_building_
     regardless of failure point, and that the response wording still reflects the app state."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
-    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=1)
+    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value=1)
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='snowflake')
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='default')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='default')
     keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
 
     encrypted_config = {
@@ -1079,9 +1079,9 @@ async def test_modify_streamlit_data_app_update_skips_metadata_when_version_miss
     (review hardening on AJDA-2852). The tool still returns a normal success."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
-    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=1)
+    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value=1)
     workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='snowflake')
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='default')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='default')
     keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
 
     encrypted_config = {
@@ -1208,7 +1208,7 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
         return_value=_make_python_js_data_app_response()
@@ -1270,7 +1270,7 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
 
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     app_response = _make_python_js_data_app_response()
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
@@ -1347,7 +1347,7 @@ async def test_modify_python_js_data_app_create_authentication_type(
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
 
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     app_response = _make_python_js_data_app_response()
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
@@ -1390,7 +1390,7 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
 
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     existing_data_app = DataApp(
         name='Old',
@@ -1462,7 +1462,7 @@ async def test_modify_python_js_data_app_update_repoints_external_git_branch(
     preserved, no re-encryption happens, and the change_summary hints at redeploy (CFTL-714)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     git_block = {
         'repository': 'https://github.com/org/repo.git',
@@ -1535,7 +1535,7 @@ async def test_modify_python_js_data_app_update_branch_rejected_on_managed_repo_
     is written (CFTL-714 review)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     managed_repo_app = DataApp(
         name='Prod App',
@@ -1587,7 +1587,7 @@ async def test_modify_python_js_data_app_create_without_workspace_feature(
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=False)
 
-    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value='wid-legacy')
+    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value='wid-legacy')
 
     app_response = _make_python_js_data_app_response()
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
@@ -1628,7 +1628,7 @@ async def test_modify_python_js_data_app_update_injects_workspace_id_without_fea
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.has_feature = mocker.AsyncMock(return_value=False)
 
-    workspace_manager.get_workspace_id = mocker.AsyncMock(return_value='wid-legacy')
+    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value='wid-legacy')
 
     existing_data_app = DataApp(
         name='Old',
@@ -1689,7 +1689,7 @@ async def test_modify_python_js_data_app_create_passes_storage_through(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
 
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     app_response = _make_python_js_data_app_response()
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
@@ -1737,7 +1737,7 @@ async def test_modify_python_js_data_app_create_omits_empty_storage(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
 
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     app_response = _make_python_js_data_app_response()
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(return_value=app_response)
@@ -1774,7 +1774,7 @@ async def test_modify_python_js_data_app_update_replaces_storage(
     """Update path: a non-empty `storage` argument replaces the entire stored storage block."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
 
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     existing_data_app = DataApp(
         name='Old',
@@ -2176,7 +2176,7 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     parent_repo = 'https://managed.repo/org/prod.git'
     parent_data_app_id = 'app-prod-1'
@@ -2273,7 +2273,7 @@ async def test_modify_python_js_data_app_create_draft_defaults_branch_to_init(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     parent = _make_python_js_parent_data_app()
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
@@ -2337,7 +2337,7 @@ async def test_modify_python_js_data_app_create_draft_auto_derives_slug(
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     parent = _make_python_js_parent_data_app()
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
@@ -2406,7 +2406,7 @@ async def test_modify_python_js_data_app_create_draft_rejects_when_parent_is_str
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     streamlit_parent = _make_python_js_parent_data_app(type='streamlit', repo_url=None)
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=streamlit_parent))
@@ -2432,7 +2432,7 @@ async def test_modify_python_js_data_app_create_draft_rejects_when_parent_is_dra
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     # A draft has no repo_url of its own; the guard must fire before the repo_url check below.
     draft_parent = _make_python_js_parent_data_app(is_draft=True, repo_url=None)
@@ -2460,7 +2460,7 @@ async def test_modify_python_js_data_app_create_draft_rejects_when_parent_missin
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     parent = _make_python_js_parent_data_app(repo_url=None)
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
@@ -2485,7 +2485,7 @@ async def test_modify_python_js_data_app_create_prod_calls_get_app_git_repo_for_
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
-    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
     keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
         return_value=_make_python_js_data_app_response()
