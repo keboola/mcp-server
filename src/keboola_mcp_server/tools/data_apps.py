@@ -553,7 +553,7 @@ async def modify_streamlit_data_app(
 
     project_id = await client.storage_client.project_id()
     workspace_id = await workspace_manager.get_data_app_workspace_id()
-    sql_dialect = await workspace_manager.get_sql_dialect()
+    sql_dialect = await workspace_manager.get_data_app_sql_dialect()
     branch_id = await workspace_manager.get_data_app_branch_id()
 
     secrets = _get_secrets(
@@ -720,7 +720,7 @@ async def modify_streamlit_data_app_internal(
         packages,
         authentication_type,
         secrets,
-        await workspace_manager.get_sql_dialect(),
+        await workspace_manager.get_data_app_sql_dialect(),
     )
     updated_config = cast(
         JsonDict,

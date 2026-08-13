@@ -306,22 +306,42 @@ async def test_get_workspace_warns_when_pinned_workspace_is_not_readonly(caplog:
 
 @pytest.mark.asyncio
 async def test_get_data_app_workspace_id_ignores_the_pin():
-    """`get_data_app_workspace_id()`/`get_data_app_branch_id()` must resolve the *managed*
-    workspace even when a session is pinned via `workspace_id` -- they feed into
-    `tools/data_apps.py`, which writes the result into a *different* data app's own persisted
-    `WORKSPACE_ID` secret. If they returned the pinned workspace, creating/updating data app B
-    from a session pinned to app A's workspace would permanently point B at A's workspace."""
+    """`get_data_app_workspace_id()`/`get_data_app_branch_id()`/`get_data_app_sql_dialect()` must
+    resolve the *managed* workspace even when a session is pinned via `workspace_id` -- they feed
+    into `tools/data_apps.py`, which writes the result into a *different* data app's own
+    persisted `WORKSPACE_ID` secret and bakes the dialect into that same app's generated source
+    code. If they returned the pinned workspace, creating/updating data app B from a session
+    pinned to app A's workspace would permanently point B at A's workspace/dialect."""
     mock_client = Mock(spec=KeboolaClient)
     manager = WorkspaceManager(mock_client, workspace_id='999')
 
-    pinned_info = _WspInfo(id=999, schema='PINNED_SCHEMA', backend='snowflake', credentials=None, readonly=True)
+    pinned_info = _WspInfo(
+        id=999, schema='PINNED_SCHEMA', backend='bigquery', credentials='{"project_id": "proj"}', readonly=True
+    )
     managed_info = _WspInfo(id=111, schema='MANAGED_SCHEMA', backend='snowflake', credentials=None, readonly=True)
     manager._find_ws_by_id = AsyncMock(return_value=pinned_info)  # type: ignore[method-assign]
     manager._find_ws_in_branch = AsyncMock(return_value=managed_info)  # type: ignore[method-assign]
 
     assert await manager.get_data_app_workspace_id() == 111
+    assert await manager.get_data_app_sql_dialect() == 'Snowflake'
     pinned_workspace = await manager._get_workspace()
     assert pinned_workspace.id == 999
+
+
+@pytest.mark.asyncio
+async def test_get_managed_workspace_raises_instead_of_provisioning_when_pinned():
+    """A session pinned via `workspace_id` (e.g. a Data App session) must not provision a brand
+    new MCP-managed workspace on demand when none exists yet -- that workspace would be billed
+    to this session's token, not whoever actually needs it, and provisioning can outright fail on
+    a read-only token. It should fail loudly instead of silently creating one."""
+    mock_client = Mock(spec=KeboolaClient)
+    manager = WorkspaceManager(mock_client, workspace_id='999')
+    manager._find_ws_in_branch = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    manager._create_ws = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match='workspace_id=999'):
+        await manager._get_managed_workspace()
+    manager._create_ws.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -372,6 +392,9 @@ async def test_find_ws_by_id_falls_back_to_production_branch() -> None:
     dev_client.storage_client.workspace_detail.assert_awaited_once_with('123')
     dev_client.with_branch_id.assert_awaited_once_with(None)
     prod_client.storage_client.workspace_detail.assert_awaited_once_with('123')
+    # The workspace was only resolvable via the prod-branch client -- this manager must rebind to
+    # it, or later queries would run against a production workspace through the dev-branch client.
+    assert manager._client is prod_client
 
 
 @pytest.mark.asyncio
@@ -393,6 +416,29 @@ async def test_find_ws_by_id_treats_400_403_404_alike(status_code: int) -> None:
     manager = WorkspaceManager(mock_client, workspace_id='not-a-valid-id')
 
     assert await manager._find_ws_by_id('not-a-valid-id') is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status_code', [400, 403])
+async def test_find_ws_by_id_strict_reraises_400_403(status_code: int) -> None:
+    """`strict=True` (used for the id of a workspace this server just created, e.g. in
+    `_create_ws`) must only treat a 404 as "not found" -- a 400/403 on that known-good id is a
+    real failure (e.g. the creating token can't read what it just provisioned) that must not be
+    silently swallowed into a generic "workspace creation failed" error."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = None
+    mock_client.storage_client = AsyncMock()
+    mock_response = Mock(spec=Response)
+    mock_response.status_code = status_code
+    mock_request = Mock(spec=Request)
+    mock_client.storage_client.workspace_detail = AsyncMock(
+        side_effect=HTTPStatusError('error', request=mock_request, response=mock_response)
+    )
+
+    manager = WorkspaceManager(mock_client, workspace_id='123')
+
+    with pytest.raises(HTTPStatusError):
+        await manager._find_ws_by_id('123', strict=True)
 
 
 @pytest.mark.asyncio
