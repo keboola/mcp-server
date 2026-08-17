@@ -36,6 +36,23 @@ def test_tampered_ciphertext_fails() -> None:
         decrypt(bytes(ciphertext), _key())
 
 
+def test_round_trip_with_aad() -> None:
+    ciphertext = encrypt(b'kbc_at_secret', _key(), aad=b'caller-a')
+    assert decrypt(ciphertext, _key(), aad=b'caller-a') == b'kbc_at_secret'
+
+
+def test_wrong_aad_fails() -> None:
+    ciphertext = encrypt(b'kbc_at_secret', _key(), aad=b'caller-a')
+    with pytest.raises(DecryptionError):
+        decrypt(ciphertext, _key(), aad=b'caller-b')
+
+
+def test_missing_aad_fails_when_encrypted_with_one() -> None:
+    ciphertext = encrypt(b'kbc_at_secret', _key(), aad=b'caller-a')
+    with pytest.raises(DecryptionError):
+        decrypt(ciphertext, _key())
+
+
 def test_wrong_key_version_fails() -> None:
     ciphertext = bytearray(encrypt(b'kbc_at_secret', _key()))
     ciphertext[0] = 99

@@ -24,6 +24,7 @@ from keboola_mcp_server.scope import (
     ProjectIdArg,
     SessionScope,
     persist_scope,
+    resolve_scope_binding_aad,
     resolve_scope_key,
 )
 from keboola_mcp_server.workspace import WorkspaceManager
@@ -533,7 +534,7 @@ async def get_accessible_projects(
         scoped_project_ids=scoped_ids,
         read_only=scope.read_only if scoped_ids is not None else None,
         scope_token=(
-            scope.to_token(resolve_scope_key(server_state.config))
+            scope.to_token(resolve_scope_key(server_state.config), aad=resolve_scope_binding_aad(client.token))
             if scoped_ids is not None and not is_persisted
             else None
         ),
@@ -628,7 +629,11 @@ async def set_project_scope(
         or await _persist_kai_scope(ctx, scope, client, parent_token)
         or server_state.runtime_info.session_state_persists
     )
-    scope_token = None if persisted else scope.to_token(resolve_scope_key(server_state.config))
+    scope_token = (
+        None
+        if persisted
+        else scope.to_token(resolve_scope_key(server_state.config), aad=resolve_scope_binding_aad(client.token))
+    )
     resend_instruction = (
         'The server persists this scope server-side for the rest of the conversation -- no need to resend it.'
         if persisted

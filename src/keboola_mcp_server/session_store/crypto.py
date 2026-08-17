@@ -29,24 +29,28 @@ class DecryptionError(Exception):
     """Raised when ciphertext fails authentication (wrong key, corruption, or tampering)."""
 
 
-def encrypt(plaintext: bytes, key: bytes) -> bytes:
+def encrypt(plaintext: bytes, key: bytes, aad: bytes | None = None) -> bytes:
+    """``aad`` (additional authenticated data) is bound into the auth tag but never transmitted --
+    the caller must supply the identical value again to `decrypt`. Use it to tie ciphertext to a
+    caller identity so a token minted for one caller fails authentication if replayed by another,
+    even with the right key (see `scope.py`'s `resolve_scope_binding_aad`)."""
     if len(key) != KEY_SIZE:
         raise ValueError(f'Encryption key must be {KEY_SIZE} bytes, got {len(key)}.')
     nonce = os.urandom(_NONCE_SIZE)
-    ciphertext = AESGCM(key).encrypt(nonce, plaintext, None)
+    ciphertext = AESGCM(key).encrypt(nonce, plaintext, aad)
     return bytes([_KEY_VERSION]) + nonce + ciphertext
 
 
-def decrypt(blob: bytes, key: bytes) -> bytes:
+def decrypt(blob: bytes, key: bytes, aad: bytes | None = None) -> bytes:
     if len(key) != KEY_SIZE:
         raise ValueError(f'Encryption key must be {KEY_SIZE} bytes, got {len(key)}.')
     if not blob or blob[0] != _KEY_VERSION:
         raise DecryptionError(f'Unsupported or missing key version in ciphertext: {blob[:1]!r}.')
     nonce, ciphertext = blob[1 : 1 + _NONCE_SIZE], blob[1 + _NONCE_SIZE :]
     try:
-        return AESGCM(key).decrypt(nonce, ciphertext, None)
+        return AESGCM(key).decrypt(nonce, ciphertext, aad)
     except InvalidTag as e:
-        raise DecryptionError('Ciphertext failed authentication (wrong key or tampered data).') from e
+        raise DecryptionError('Ciphertext failed authentication (wrong key/aad or tampered data).') from e
 
 
 def resolve_encryption_key(session_encryption_key: str | None) -> bytes:

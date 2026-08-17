@@ -26,7 +26,13 @@ from keboola_mcp_server.mcp import (
     toon_serializer,
     unwrap_results,
 )
-from keboola_mcp_server.scope import SCOPE_KEY, SCOPE_TOKEN_ARG, SessionScope, resolve_scope_key
+from keboola_mcp_server.scope import (
+    SCOPE_KEY,
+    SCOPE_TOKEN_ARG,
+    SessionScope,
+    resolve_scope_binding_aad,
+    resolve_scope_key,
+)
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -1557,6 +1563,58 @@ class TestScopeToken:
         context = self._call_tool_context({'scope_token': token})
         config = Config(session_encryption_key=base64.b64encode(self.KEY_B).decode())
         assert SessionStateMiddleware._read_scope_from_request(context, config) is None
+
+    def test_resolve_scope_binding_aad_is_none_locally(self, monkeypatch) -> None:
+        # A local `login` session already grants the whole stack to its one user -- no cross-caller
+        # boundary to bind, so this must stay a no-op there (see the docstring).
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        assert resolve_scope_binding_aad('kbc_at_caller') is None
+
+    def test_resolve_scope_binding_aad_is_none_without_a_token(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        assert resolve_scope_binding_aad(None) is None
+
+    def test_resolve_scope_binding_aad_differs_per_caller_when_deployed(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        aad_a = resolve_scope_binding_aad('kbc_at_caller_a')
+        aad_b = resolve_scope_binding_aad('kbc_at_caller_b')
+        assert aad_a is not None and aad_b is not None
+        assert aad_a != aad_b
+        # Stable for the same caller token (mint and later read must agree).
+        assert resolve_scope_binding_aad('kbc_at_caller_a') == aad_a
+
+    def test_round_trip_with_binding_aad(self) -> None:
+        scope = SessionScope(project_ids=[11], scoped_token='kbc_at_s', confirmed=True)
+        token = scope.to_token(self.KEY_A, aad=b'caller-a')
+        assert SessionScope.from_token(token, self.KEY_A, aad=b'caller-a') == scope
+
+    def test_a_different_callers_token_is_rejected(self) -> None:
+        # The core replay fix: a scope_token minted while serving caller A's request must not be
+        # usable by caller B, even with the right key -- only decryptable alongside A's own
+        # storage token, which B (having only obtained the opaque string, not A's credential)
+        # cannot supply.
+        scope = SessionScope(project_ids=[11], scoped_token='kbc_at_s', confirmed=True)
+        token = scope.to_token(self.KEY_A, aad=b'caller-a-token')
+        with pytest.raises(Exception, match='.+'):
+            SessionScope.from_token(token, self.KEY_A, aad=b'caller-b-token')
+
+    def test_replayed_scope_token_from_another_caller_falls_back_to_no_scope(self, monkeypatch) -> None:
+        # End-to-end: on a deployed server, a scope_token minted for caller A's storage token,
+        # replayed by caller B (a different storage token), must degrade to "no scope" via
+        # _read_scope_from_request -- not silently grant B caller A's scoped access.
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        key = _b64_key(b'\x06')
+        config_a = Config(session_encryption_key=key, storage_token='kbc_at_caller_a')
+        scope = SessionScope(project_ids=[11], scoped_token='kbc_at_victim_scoped', confirmed=True)
+        token = scope.to_token(base64.b64decode(key), aad=resolve_scope_binding_aad(config_a.storage_token))
+
+        context = self._call_tool_context({'scope_token': token})
+        config_b = Config(session_encryption_key=key, storage_token='kbc_at_caller_b')
+        assert SessionStateMiddleware._read_scope_from_request(context, config_b) is None
+
+        # The legitimate caller (same storage token the scope was minted for) still works.
+        context = self._call_tool_context({'scope_token': token})
+        assert SessionStateMiddleware._read_scope_from_request(context, config_a) == scope
 
     @staticmethod
     def _http_rq_with_oauth_user(**access_token_kwargs) -> SimpleNamespace:

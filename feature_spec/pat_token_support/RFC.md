@@ -1072,3 +1072,40 @@ other token source exists there, so a missing credential must still fail startup
 login" guidance -- unchanged behavior). `streamable-http`/`http-compat` pass `False`: a missing
 local credential there is caught and logged, not raised -- `config` is returned unchanged and the
 server starts normally, expecting a token per request.
+
+## Extension: `scope_token` was replayable across callers (increment 14)
+
+Raised in review (Tomas Fejfar), distinct from increment 7's finding #2: that fix
+(`SessionScope.to_token`/`from_token` moving from JWS to AES-GCM) addressed *confidentiality* --
+the embedded live `scoped_token` is no longer recoverable without the key. It did nothing about
+*replay*: `scope_token` decryption never checked who was presenting it, only that the ciphertext
+authenticated against the single deployment-wide key. Anyone who obtained a valid `scope_token`
+string some other way -- a shared/exported conversation transcript, client-side logs, an
+observability platform sitting on the MCP traffic -- could resend it verbatim as their own
+`scope_token` argument from an unrelated (even freshly self-registered) session on the same
+deployment, and `MultiProjectMiddleware` would use the embedded `scoped_token` as `base_token` for
+every fanned-out call, read *and* write (`multiproject.py`'s `base_token = scope.scoped_token or
+...`), fully impersonating whoever the scope was minted for.
+
+This only matters on the deployed server: `set_project_scope`/`get_accessible_projects` only ever
+return `scope_token` to the client when the scope isn't persisted server-side (`persisted =
+_persist_oauth_scope(...) or _persist_kai_scope(...) or session_state_persists`) --  OAuth and Kai
+sessions persist it in Postgres instead, and `stdio`/`--no-stateless-http` local sessions keep it
+in `ctx.session.state`. A local server has no cross-caller boundary to defend in the first place
+(`login` already grants its one user the whole stack), so the fix below is a no-op there by
+design, not by omission.
+
+**Fix:** `session_store/crypto.py`'s `encrypt`/`decrypt` gain an optional `aad` (AES-GCM
+additional authenticated data) parameter -- authenticated but never transmitted, so both sides
+must already agree on it out of band. `scope.py` adds `resolve_scope_binding_aad(storage_token)`,
+returning `sha256(storage_token)` when `deployed_sa_token_path()` is set (and the caller has a
+token), `None` otherwise (local). `SessionScope.to_token`/`from_token` take an `aad` param and
+thread it into `encrypt`/`decrypt`. Both mint sites (`set_project_scope`, `get_accessible_projects`
+in `tools/project.py`) bind to `client.token`; the read side
+(`SessionStateMiddleware._read_scope_from_request`) binds to `config.storage_token` -- the same
+underlying value, since the deployed branch of `_resolve_local_tokens` never overwrites
+`config.storage_token` with a narrowed `scoped_token` (only the local-programmatic branch does
+that, which is exactly the branch this fix doesn't apply to). A `scope_token` minted while serving
+caller A's request now fails AES-GCM authentication -- and is treated as "no scope", same as any
+other invalid token -- when replayed by caller B, whose own `storage_token` hashes to a different
+`aad`.

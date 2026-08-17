@@ -46,6 +46,7 @@ from keboola_mcp_server.scope import (
     SCOPE_TOKEN_ARG,
     SessionScope,
     persist_scope,
+    resolve_scope_binding_aad,
     resolve_scope_key,
 )
 from keboola_mcp_server.session_store.kai_scope import KaiScopeStore
@@ -471,7 +472,9 @@ class SessionStateMiddleware(fmw.Middleware):
         if not token:
             return None
         try:
-            return SessionScope.from_token(token, resolve_scope_key(config))
+            return SessionScope.from_token(
+                token, resolve_scope_key(config), aad=resolve_scope_binding_aad(config.storage_token)
+            )
         except Exception:
             LOG.warning('Ignoring invalid or expired scope_token.', exc_info=True)
             return None

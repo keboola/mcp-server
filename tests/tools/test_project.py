@@ -10,7 +10,13 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.mcp import ServerState
-from keboola_mcp_server.scope import OAUTH_SESSION_ID_KEY, SCOPE_KEY, SessionScope, resolve_scope_key
+from keboola_mcp_server.scope import (
+    OAUTH_SESSION_ID_KEY,
+    SCOPE_KEY,
+    SessionScope,
+    resolve_scope_binding_aad,
+    resolve_scope_key,
+)
 from keboola_mcp_server.tools.project import (
     ProjectInfo,
     _get_toolset_restrictions,
@@ -462,6 +468,30 @@ async def test_set_project_scope_returns_scope_token_when_session_does_not_persi
     assert result.scope_token is not None
     assert SessionScope.from_token(result.scope_token, resolve_scope_key(Config())) == scope
     assert 'does not remember this scope' in result.llm_instruction
+
+
+@pytest.mark.asyncio
+async def test_set_project_scope_binds_scope_token_to_caller_on_deployed_server(
+    mcp_context_client: Context, mocker: MockerFixture, monkeypatch
+) -> None:
+    # The replay fix: on a deployed server, the returned scope_token must only decrypt alongside
+    # the same caller's own storage token (client.token) it was minted for -- see
+    # resolve_scope_binding_aad. A different caller's token must fail, even with the right key.
+    monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+    mcp_context_client.request_context.lifespan_context = ServerState(
+        Config(), ServerRuntimeInfo(transport='http-compat/streamable-http', stateless_http=True)
+    )
+    _prep_client(mcp_context_client, mocker)
+    minted = SimpleNamespace(access_token='kbc_at_scoped', expires_at=time.time() + 3600, read_only=False)
+    mocker.patch('keboola_mcp_server.tools.project.exchange_scoped_token', new=mocker.AsyncMock(return_value=minted))
+
+    result = await set_project_scope(mcp_context_client, project_ids=[18, 83])
+
+    scope = mcp_context_client.session.state[SCOPE_KEY]
+    key = resolve_scope_key(Config())
+    assert SessionScope.from_token(result.scope_token, key, aad=resolve_scope_binding_aad('test-token')) == scope
+    with pytest.raises(Exception, match='.+'):
+        SessionScope.from_token(result.scope_token, key, aad=resolve_scope_binding_aad('kbc_at_someone_else'))
 
 
 @pytest.mark.asyncio
