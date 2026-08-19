@@ -29,6 +29,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, is_same_stack
@@ -232,13 +233,14 @@ class SessionStateMiddleware(fmw.Middleware):
             # so that clients can discover available tools even when the configured branch ID doesn't
             # exist yet. For these requests the client is created without a branch ID. Otherwise, the branch is
             # validated via a SAPI call.
-            if context.method.endswith('/list'):
+            is_list = context.method.endswith('/list')
+            if is_list:
                 if config.branch_id:
                     LOG.info(f'Skipping branch validation for {context.method} request.')
                 config = dataclasses.replace(config, branch_id=None)
 
             state = await self.create_session_state(
-                config, runtime_info, own_stack_storage_api_url=own_stack_storage_api_url
+                config, runtime_info, own_stack_storage_api_url=own_stack_storage_api_url, skip_token_exchange=is_list
             )
             ctx.session.state = state
 
@@ -280,6 +282,12 @@ class SessionStateMiddleware(fmw.Middleware):
         is kept. The check is an exact host match against that single known URL (see
         `is_same_stack()`); no prefix or pattern matching is used.
 
+        A programmatic bearer token (`kbc_at_`/`kbc_pat_`) is likewise treated specially: it
+        arrives only as `Authorization: Bearer <token>`, which `Config.replace_by` cannot route
+        into `storage_token` (no header/alias maps to it), so it is read directly off the request
+        here into an otherwise-empty `storage_token` slot for `create_session_state`'s exchange to
+        pick up.
+
         :param http_rq: The incoming HTTP request whose headers are applied.
         :param config: The server's own configuration (from CLI parameters and environment).
         :param own_stack_storage_api_url: The Storage API URL of the server's own stack
@@ -287,8 +295,21 @@ class SessionStateMiddleware(fmw.Middleware):
             therefore takes the URL from the request. It must never come from a request header.
         :return: The configuration to use for this request.
         """
-        LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
+        # Header names only, never values -- Authorization and the X-Storage-(Api-)Token variants
+        # carry live credentials, and this server now also routes a programmatic bearer token out
+        # of Authorization (see below), so the set of sensitive header names logging could sweep up
+        # here is no longer just Storage tokens.
+        LOG.debug(f'Injecting headers: http_rq={http_rq}, header_names={list(http_rq.headers.keys())}')
         config = config.replace_by(http_rq.headers)
+
+        # A programmatic bearer token (kbc_at_/kbc_pat_) is sent as `Authorization: Bearer <token>`,
+        # never as a Storage-token header/alias -- `Config.replace_by` above has no way to route it
+        # into `storage_token` (`Authorization` matches no field name or alias). Read it here, but
+        # only into an otherwise-empty slot and only when it actually looks like one of these
+        # tokens, so this never overrides an explicit X-Storage-(Api-)Token or forwards an unrelated
+        # bearer scheme downstream as if it were a Storage token.
+        if not config.storage_token and is_programmatic_token(auth_header := http_rq.headers.get('Authorization')):
+            config = dataclasses.replace(config, storage_token=strip_bearer(auth_header))
 
         if own_stack_storage_api_url and not is_same_stack(config.storage_api_url, own_stack_storage_api_url):
             LOG.warning(
@@ -312,6 +333,38 @@ class SessionStateMiddleware(fmw.Middleware):
         return config
 
     @classmethod
+    async def _exchange_programmatic_token(cls, config: Config) -> str:
+        """
+        Exchanges a programmatic token (kbc_at_/kbc_pat_) for the project's legacy Storage token.
+
+        The resolver is reached only on the deployed MCP server, which has a projected
+        ServiceAccount token at ``KBC_KUBERNETES_TOKEN_PATH`` (read from the process
+        environment only, never from per-request config). A project id is required because
+        a programmatic token is not project-bound.
+        """
+        kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
+        if not kubernetes_token_path:
+            raise ValueError(
+                'Received a Keboola programmatic token (kbc_at_/kbc_pat_) but KBC_KUBERNETES_TOKEN_PATH '
+                'is not configured. Programmatic-token exchange is available only on the deployed MCP server.'
+            )
+        if not config.project_id:
+            raise ValueError(
+                'A project id is required to exchange a programmatic token. '
+                'Set the KBC_PROJECT_ID env var or the X-KBC-ProjectId header.'
+            )
+        try:
+            project_id = int(config.project_id)
+        except (TypeError, ValueError):
+            raise ValueError(f'Invalid project id for programmatic-token exchange: {config.project_id!r}')
+
+        resolver = StorageTokenResolver(
+            storage_api_url=config.storage_api_url,
+            kubernetes_token_path=kubernetes_token_path,
+        )
+        return await resolver.resolve(subject_token=config.storage_token, project_id=project_id)
+
+    @classmethod
     async def create_session_state(
         cls,
         config: Config,
@@ -319,6 +372,7 @@ class SessionStateMiddleware(fmw.Middleware):
         readonly: bool | None = None,
         *,
         own_stack_storage_api_url: str | None,
+        skip_token_exchange: bool = False,
     ) -> dict[str, Any]:
         """
         Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state.
@@ -332,6 +386,12 @@ class SessionStateMiddleware(fmw.Middleware):
             to the `KeboolaClient`, which sends the Kubernetes ServiceAccount step-up header only when
             the session talks to that stack. It must never come from a request header, so it is passed
             separately instead of being read off `config`, whose Storage API URL a header can set.
+        :param skip_token_exchange: Skip the programmatic-token exchange (used for capability-discovery
+            `/list` requests -- see `on_request`). The resolver call has up to a ~35s timeout; a client's
+            initial `tools/list` fetch must be fast, so `/list` builds its `KeboolaClient` with the raw,
+            unexchanged token instead. Storage/metastore calls made with it fail fast (a normal 401/403,
+            not a hang) and are already handled as a soft failure (e.g. `project_has_semantic_models`
+            fails closed) -- the same trade-off this method already makes for branch validation on `/list`.
         :return: The session state dictionary containing the created client and workspace manager instances.
         """
         LOG.info(f'Creating SessionState from config: {config}.')
@@ -343,10 +403,18 @@ class SessionStateMiddleware(fmw.Middleware):
             if not config.storage_api_url:
                 raise ValueError('Storage API URL is not provided.')
 
+            storage_token = config.storage_token
+            bearer_token = config.bearer_token
+            if is_programmatic_token(storage_token) and not skip_token_exchange:
+                # A Keboola programmatic token (kbc_at_/kbc_pat_) is not a Storage token; exchange
+                # it for the project's legacy Storage token and use that downstream unchanged.
+                storage_token = await cls._exchange_programmatic_token(config)
+                bearer_token = None
+
             client = await KeboolaClient(
                 storage_api_url=config.storage_api_url,
-                storage_api_token=config.storage_token,
-                bearer_token=config.bearer_token,
+                storage_api_token=storage_token,
+                bearer_token=bearer_token,
                 headers=cls._get_headers(runtime_info),
                 readonly=readonly,
                 own_stack_storage_api_url=own_stack_storage_api_url,
