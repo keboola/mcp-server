@@ -658,17 +658,19 @@ class TestToolsFilteringMiddleware:
 class TestSessionStateMiddleware:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('method', 'expected_branch_id'),
+        ('method', 'expected_branch_id', 'expected_skip_token_exchange'),
         [
-            ('tools/list', None),
-            ('resources/list', None),
-            ('prompts/list', None),
-            ('tools/call', '999'),
-            ('resources/read', '999'),
+            ('tools/list', None, True),
+            ('resources/list', None, True),
+            ('prompts/list', None, True),
+            ('tools/call', '999', False),
+            ('resources/read', '999', False),
         ],
         ids=['tools_list', 'resources_list', 'prompts_list', 'tools_call', 'resources_read'],
     )
-    async def test_on_request_branch_handling(self, method: str, expected_branch_id: str | None):
+    async def test_on_request_branch_handling(
+        self, method: str, expected_branch_id: str | None, expected_skip_token_exchange: bool
+    ):
         config = Config(
             storage_api_url='https://connection.test.keboola.com',
             storage_token='test-token',
@@ -694,10 +696,14 @@ class TestSessionStateMiddleware:
 
         captured_configs: list[Config] = []
         captured_own_stack_urls: list[str | None] = []
+        captured_skip_token_exchange: list[bool] = []
 
-        async def fake_create_session_state(cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url):
+        async def fake_create_session_state(
+            cfg, _runtime_info, readonly=None, *, own_stack_storage_api_url, skip_token_exchange=False
+        ):
             captured_configs.append(cfg)
             captured_own_stack_urls.append(own_stack_storage_api_url)
+            captured_skip_token_exchange.append(skip_token_exchange)
             return {'fake': 'state'}
 
         middleware = SessionStateMiddleware()
@@ -714,6 +720,9 @@ class TestSessionStateMiddleware:
         # The session's client is told which stack is the server's own one, so that it can decide
         # whether the Kubernetes step-up header may be sent.
         assert captured_own_stack_urls == ['https://connection.test.keboola.com']
+        # /list requests skip the programmatic-token exchange (up to a ~35s resolver round trip) --
+        # a client's initial tools/list fetch must be fast; see create_session_state's docstring.
+        assert captured_skip_token_exchange == [expected_skip_token_exchange]
 
     @pytest.mark.parametrize(
         ('server_storage_api_url', 'headers', 'expected_storage_api_url'),
@@ -797,3 +806,64 @@ class TestSessionStateMiddleware:
         # Only the Storage API URL is pinned; the other per-request headers keep working.
         assert applied.storage_token == headers.get('X-Storage-Api-Token', 'server-token')
         assert applied.branch_id == headers.get('X-Branch-Id')
+
+
+class TestProgrammaticTokenExchange:
+    """SessionStateMiddleware exchanges programmatic tokens via the auth-bridge resolver (PSGO-261)."""
+
+    @pytest.mark.asyncio
+    async def test_missing_kubernetes_token_path_raises(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_pat_abc', project_id='1')
+        with pytest.raises(ValueError, match='KBC_KUBERNETES_TOKEN_PATH'):
+            await SessionStateMiddleware._exchange_programmatic_token(config)
+
+    @pytest.mark.asyncio
+    async def test_missing_project_id_raises(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_pat_abc')
+        with pytest.raises(ValueError, match='project id is required'):
+            await SessionStateMiddleware._exchange_programmatic_token(config)
+
+    @pytest.mark.asyncio
+    async def test_invalid_project_id_raises(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(
+            storage_api_url='https://connection.keboola.com', storage_token='kbc_pat_abc', project_id='not-an-int'
+        )
+        with pytest.raises(ValueError, match='Invalid project id'):
+            await SessionStateMiddleware._exchange_programmatic_token(config)
+
+    @pytest.mark.asyncio
+    async def test_happy_path_calls_resolver(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc', project_id='42')
+
+        resolver = MagicMock()
+        resolver.resolve = AsyncMock(return_value='legacy-storage-token')
+        with patch('keboola_mcp_server.mcp.StorageTokenResolver', return_value=resolver) as resolver_cls:
+            token = await SessionStateMiddleware._exchange_programmatic_token(config)
+
+        assert token == 'legacy-storage-token'
+        resolver_cls.assert_called_once_with(
+            storage_api_url='https://connection.keboola.com', kubernetes_token_path='/var/run/secrets/token'
+        )
+        resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
+
+    @pytest.mark.asyncio
+    async def test_create_session_state_skips_exchange_for_list_requests(self, monkeypatch) -> None:
+        # The resolver call has up to a ~35s timeout; tools/list must stay fast, so
+        # create_session_state(skip_token_exchange=True) must never reach it -- a raw, unexchanged
+        # programmatic token is used instead (storage/metastore calls with it fail fast, not slow).
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc', project_id='42')
+        runtime_info = ServerRuntimeInfo(transport='http-compat/streamable-http')
+
+        with patch('keboola_mcp_server.mcp.StorageTokenResolver') as resolver_cls:
+            state = await SessionStateMiddleware.create_session_state(
+                config, runtime_info, own_stack_storage_api_url=None, skip_token_exchange=True
+            )
+
+        resolver_cls.assert_not_called()
+        client = state[KeboolaClient.STATE_KEY]
+        assert client.token == 'kbc_at_abc'
