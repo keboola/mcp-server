@@ -52,17 +52,27 @@ narrower scope specifically calls for:
    `5xx`/timeout/network map to `502`. No token material is ever logged.
 2. **`config.py`**: new `project_id` field, mapping `X-KBC-ProjectId` (via alias) and
    `KBC_PROJECT_ID`.
-3. **`mcp.py`**: `SessionStateMiddleware.create_session_state` detects a programmatic token and
+3. **`mcp.py`**: the token itself arrives only as `Authorization: Bearer kbc_at_...`/`kbc_pat_...`
+   — never as a Storage-token header or alias, so `Config.replace_by`'s generic header-to-field
+   mapping cannot route it into `storage_token` (caught in review: an earlier version of this
+   change read `config.storage_token` in the exchange path without ever populating it from
+   `Authorization`, so the exchange never actually triggered for the traffic this RFC exists to
+   fix). `SessionStateMiddleware.apply_request_config` now reads the `Authorization` header
+   directly, and — only when it's empty and the header value looks like a programmatic token —
+   populates `storage_token` from it (stripping the `Bearer` scheme). An explicit
+   `X-Storage-(Api-)Token` always wins; a non-programmatic `Authorization` value (e.g. this
+   server's own OAuth bearer) is never forwarded as a Storage token.
+4. **`mcp.py`**: `SessionStateMiddleware.create_session_state` detects a programmatic token and
    exchanges it before building `KeboolaClient`, using `config.project_id` to pin the exchange to
    one project. No scope object, no multi-project fan-out, no ask-first gate — a session either has
    a legacy token (used as today) or a bearer token + project id (exchanged once, used as today
    from that point on).
-4. **`clients/client.py`**: `jobs_queue`, `ai_service`, and `sync_actions` are switched onto the
+5. **`clients/client.py`**: `jobs_queue`, `ai_service`, and `sync_actions` are switched onto the
    already-existing `bearer_or_sapi_token` (storage/scheduler/data-science/metastore already use
    it) instead of the raw `self._token`. Without this, a resolved token still 401s on
    `get_jobs`/`run_job` because those three clients were wired to send the pre-exchange raw token.
    Cherry-picked from later in the PSGO-261 branch, where this exact gap was found and fixed.
-5. **New for this narrower scope — skip the exchange on `/list`.** The resolver call has up to a
+6. **New for this narrower scope — skip the exchange on `/list`.** The resolver call has up to a
    ~35s timeout (`connect=5s, read=30s`); a client's initial `tools/list` fetch must be fast, and
    this server already has a precedent for this exact trade-off (branch-id validation is likewise
    skipped for `/list`). `create_session_state` gains a `skip_token_exchange` flag, set from
@@ -72,6 +82,32 @@ narrower scope specifically calls for:
    `project_has_semantic_models` fails closed on any exception. This directly forecloses the
    `tools/list`-hangs-under-a-bad-credential failure mode this incident is about, for the new
    bearer-token path specifically.
+
+## Security review notes
+
+- **Token leakage**: `apply_request_config`'s pre-existing debug log used to dump the full inbound
+  headers mapping (`headers={http_rq.headers}`), which already covered `X-Storage-(Api-)Token`.
+  Adding `Authorization` as a second live-credential-bearing header this server actually consumes
+  widened that log line's blast radius, so it now logs header **names** only, never values.
+  `StorageTokenResolver`/`StorageTokenExchangeError` never log or place token material in exception
+  messages (existing behavior, re-verified); `Config.__repr__` already redacts any field whose name
+  contains `token`/`password`/`secret`, so `LOG.info(f'...{config}.')` in `create_session_state`
+  stays safe.
+- **SSRF / stack pinning**: `StorageTokenResolver`'s own `connection.`-prefix hostname check is a
+  weak allowlist (matches `connection.attacker.tld` too) — the same known gap as the parent RFC's
+  increment-7 finding #4, deliberately not re-fixed here (that fix is a separate, larger increment).
+  It is not independently reachable in the deployed case this feature runs in: `apply_request_config`
+  already pins `storage_api_url` back to the server's own configured stack before the resolver ever
+  sees it, whenever the server has one configured (the normal, expected shape of a deployed
+  server). A deployed server started with no stack of its own would lose that pinning — a
+  misconfiguration, not a state this change introduces.
+- **Authorization scope**: only a value that already looks like `kbc_at_`/`kbc_pat_` is ever copied
+  out of `Authorization` into `storage_token`; this server's own OAuth bearer (or any other scheme)
+  is left untouched, and an explicit `X-Storage-(Api-)Token` always takes precedence.
+- **Access control**: this server does not itself decide whether `subject_token`'s owner may access
+  `X-KBC-ProjectId` — that authorization boundary is Connection's resolver endpoint, exactly as the
+  parent RFC's contract already specifies. A caller supplying a project id it has no access to gets
+  the resolver's own 400/401/403, passed through unchanged.
 
 ## Scope
 
@@ -103,6 +139,14 @@ data-science, scheduler) work with the resolved token for that one pinned projec
 - `tests/clients/test_client.py`: parametrized token-selection test across all six
   bearer-capable clients (storage, scheduler, data-science, metastore, jobs-queue, ai-service,
   sync-actions), confirming a bearer token takes precedence over the raw token everywhere.
+- `tests/test_mcp.py` (`test_apply_request_config_reads_programmatic_token_from_authorization_header`,
+  `test_end_to_end_from_authorization_header_and_x_kbc_project_id`): regression for the review
+  finding above — a bearer token in `Authorization` reaches `storage_token`, an explicit
+  `X-Storage-(Api-)Token` always wins, a non-programmatic `Authorization` value is never forwarded,
+  and the full `Authorization` + `X-KBC-ProjectId` → resolver chain is exercised end to end.
+- `tests/test_mcp.py` (`test_apply_request_config_never_logs_header_values`): regression for the
+  logging fix — asserts neither an `Authorization` nor an `X-Storage-Api-Token` value ever appears
+  in the debug log `apply_request_config` emits.
 - `tox` (pytest, ruff, check-tools-docs) green.
 - Manual/integration verification against a dev stack (bearer token + `X-KBC-ProjectId` against a
   real `tools/list` and a real `get_jobs`) is still pending — no dev-stack access from this

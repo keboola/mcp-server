@@ -29,7 +29,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token
+from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, is_same_stack
@@ -282,6 +282,12 @@ class SessionStateMiddleware(fmw.Middleware):
         is kept. The check is an exact host match against that single known URL (see
         `is_same_stack()`); no prefix or pattern matching is used.
 
+        A programmatic bearer token (`kbc_at_`/`kbc_pat_`) is likewise treated specially: it
+        arrives only as `Authorization: Bearer <token>`, which `Config.replace_by` cannot route
+        into `storage_token` (no header/alias maps to it), so it is read directly off the request
+        here into an otherwise-empty `storage_token` slot for `create_session_state`'s exchange to
+        pick up.
+
         :param http_rq: The incoming HTTP request whose headers are applied.
         :param config: The server's own configuration (from CLI parameters and environment).
         :param own_stack_storage_api_url: The Storage API URL of the server's own stack
@@ -289,8 +295,21 @@ class SessionStateMiddleware(fmw.Middleware):
             therefore takes the URL from the request. It must never come from a request header.
         :return: The configuration to use for this request.
         """
-        LOG.debug(f'Injecting headers: http_rq={http_rq}, headers={http_rq.headers}')
+        # Header names only, never values -- Authorization and the X-Storage-(Api-)Token variants
+        # carry live credentials, and this server now also routes a programmatic bearer token out
+        # of Authorization (see below), so the set of sensitive header names logging could sweep up
+        # here is no longer just Storage tokens.
+        LOG.debug(f'Injecting headers: http_rq={http_rq}, header_names={list(http_rq.headers.keys())}')
         config = config.replace_by(http_rq.headers)
+
+        # A programmatic bearer token (kbc_at_/kbc_pat_) is sent as `Authorization: Bearer <token>`,
+        # never as a Storage-token header/alias -- `Config.replace_by` above has no way to route it
+        # into `storage_token` (`Authorization` matches no field name or alias). Read it here, but
+        # only into an otherwise-empty slot and only when it actually looks like one of these
+        # tokens, so this never overrides an explicit X-Storage-(Api-)Token or forwards an unrelated
+        # bearer scheme downstream as if it were a Storage token.
+        if not config.storage_token and is_programmatic_token(auth_header := http_rq.headers.get('Authorization')):
+            config = dataclasses.replace(config, storage_token=strip_bearer(auth_header))
 
         if own_stack_storage_api_url and not is_same_stack(config.storage_api_url, own_stack_storage_api_url):
             LOG.warning(

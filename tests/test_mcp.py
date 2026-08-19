@@ -9,6 +9,7 @@ from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 
+from keboola_mcp_server.clients.auth_bridge import is_programmatic_token
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
@@ -656,6 +657,21 @@ class TestToolsFilteringMiddleware:
 
 
 class TestSessionStateMiddleware:
+    def test_apply_request_config_never_logs_header_values(self, mocker) -> None:
+        # Authorization (a live programmatic bearer token) and X-Storage-Api-Token must never
+        # appear in the debug log this method emits -- only header names, never values.
+        log_debug = mocker.patch('keboola_mcp_server.mcp.LOG.debug')
+        config = Config(storage_api_url='https://connection.keboola.com')
+        http_rq = MagicMock(spec=Request)
+        http_rq.headers = {'Authorization': 'Bearer kbc_at_super_secret', 'X-Storage-Api-Token': 'legacy-secret'}
+        http_rq.scope = {}
+
+        SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
+
+        logged = ' '.join(str(call) for call in log_debug.call_args_list)
+        assert 'kbc_at_super_secret' not in logged
+        assert 'legacy-secret' not in logged
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('method', 'expected_branch_id', 'expected_skip_token_exchange'),
@@ -807,6 +823,42 @@ class TestSessionStateMiddleware:
         assert applied.storage_token == headers.get('X-Storage-Api-Token', 'server-token')
         assert applied.branch_id == headers.get('X-Branch-Id')
 
+    @pytest.mark.parametrize(
+        ('headers', 'expected_storage_token'),
+        [
+            # A programmatic bearer token arrives only via Authorization -- no Storage-token
+            # header/alias reaches it, so apply_request_config must read it directly.
+            ({'Authorization': 'Bearer kbc_at_abc'}, 'kbc_at_abc'),
+            ({'Authorization': 'Bearer kbc_pat_abc'}, 'kbc_pat_abc'),
+            # Case-insensitive "bearer" scheme, matching is_programmatic_token/strip_bearer.
+            ({'Authorization': 'bearer kbc_at_abc'}, 'kbc_at_abc'),
+            # An explicit Storage-token header always wins; Authorization is never consulted.
+            ({'Authorization': 'Bearer kbc_at_abc', 'X-Storage-Api-Token': 'legacy-token'}, 'legacy-token'),
+            # A non-programmatic Authorization value must never be forwarded as a Storage token.
+            ({'Authorization': 'Bearer some-other-oauth-token'}, None),
+            ({}, None),
+        ],
+        ids=[
+            'bearer_access_token',
+            'bearer_pat',
+            'lowercase_bearer_scheme',
+            'explicit_storage_token_wins',
+            'non_programmatic_bearer_ignored',
+            'no_authorization_header',
+        ],
+    )
+    def test_apply_request_config_reads_programmatic_token_from_authorization_header(
+        self, headers: dict[str, str], expected_storage_token: str | None
+    ) -> None:
+        config = Config(storage_api_url='https://connection.keboola.com')
+        http_rq = MagicMock(spec=Request)
+        http_rq.headers = headers
+        http_rq.scope = {}
+
+        applied = SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
+
+        assert applied.storage_token == expected_storage_token
+
 
 class TestProgrammaticTokenExchange:
     """SessionStateMiddleware exchanges programmatic tokens via the auth-bridge resolver (PSGO-261)."""
@@ -848,6 +900,29 @@ class TestProgrammaticTokenExchange:
         resolver_cls.assert_called_once_with(
             storage_api_url='https://connection.keboola.com', kubernetes_token_path='/var/run/secrets/token'
         )
+        resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
+
+    @pytest.mark.asyncio
+    async def test_end_to_end_from_authorization_header_and_x_kbc_project_id(self, monkeypatch) -> None:
+        # Regression for the actual inbound shape this feature exists for: Kai's bearer sessions
+        # send the token only as Authorization, never as a Storage-token header (that's the sapi
+        # branch). apply_request_config must route it into storage_token before
+        # _exchange_programmatic_token ever runs, or the exchange never triggers at all.
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        config = Config(storage_api_url='https://connection.keboola.com')
+        http_rq = MagicMock(spec=Request)
+        http_rq.headers = {'Authorization': 'Bearer kbc_at_abc', 'X-KBC-ProjectId': '42'}
+        http_rq.scope = {}
+
+        applied = SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
+        assert is_programmatic_token(applied.storage_token)
+
+        resolver = MagicMock()
+        resolver.resolve = AsyncMock(return_value='legacy-storage-token')
+        with patch('keboola_mcp_server.mcp.StorageTokenResolver', return_value=resolver):
+            token = await SessionStateMiddleware._exchange_programmatic_token(applied)
+
+        assert token == 'legacy-storage-token'
         resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
 
     @pytest.mark.asyncio
