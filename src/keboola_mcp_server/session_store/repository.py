@@ -13,7 +13,7 @@ from typing import Protocol
 
 import asyncpg
 
-from keboola_mcp_server.session_store import crypto
+from keboola_mcp_server.session_store import crypto, guard_db_errors
 
 # Length of the opaque, randomly-generated access/refresh tokens handed to the MCP client. 256
 # bits: not guessable, and this is the *entire* security check for these tokens (no signature to
@@ -138,6 +138,7 @@ class PostgresSessionStore:
             scope_scoped_expires_at=row['scope_scoped_expires_at'],
         )
 
+    @guard_db_errors
     async def create(
         self,
         *,
@@ -169,6 +170,7 @@ class PostgresSessionStore:
         assert row is not None
         return access_token, refresh_token, self._to_session(row)
 
+    @guard_db_errors
     async def get_by_access_token(self, access_token: str) -> OAuthSession | None:
         pool = await self._get_pool()
         row = await pool.fetchrow(
@@ -178,6 +180,7 @@ class PostgresSessionStore:
         )
         return self._to_session(row) if row is not None else None
 
+    @guard_db_errors
     async def get_by_refresh_token(self, refresh_token: str) -> OAuthSession | None:
         pool = await self._get_pool()
         row = await pool.fetchrow(
@@ -186,6 +189,7 @@ class PostgresSessionStore:
         )
         return self._to_session(row) if row is not None else None
 
+    @guard_db_errors
     async def rotate_kbc_tokens(
         self, session_id: str, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
     ) -> None:
@@ -203,6 +207,7 @@ class PostgresSessionStore:
             kbc_access_expires_at,
         )
 
+    @guard_db_errors
     async def rotate_opaque_tokens(self, session_id: str) -> tuple[str, str]:
         access_token = generate_opaque_token()
         refresh_token = generate_opaque_token()
@@ -219,6 +224,7 @@ class PostgresSessionStore:
         )
         return access_token, refresh_token
 
+    @guard_db_errors
     async def update_scope(
         self,
         session_id: str,
@@ -245,6 +251,7 @@ class PostgresSessionStore:
             scoped_expires_at,
         )
 
+    @guard_db_errors
     async def revoke(self, session_id: str) -> None:
         pool = await self._get_pool()
         await pool.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', session_id)

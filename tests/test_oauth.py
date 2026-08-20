@@ -18,6 +18,7 @@ from pydantic import AnyHttpUrl, AnyUrl
 from keboola_mcp_server.auth_login import Introspection, ProjectAccess, ScopedToken
 from keboola_mcp_server.clients.auth_bridge import OAuthTokenExchangeError
 from keboola_mcp_server.oauth import (
+    DatabaseUnavailableMiddleware,
     ProxyRefreshToken,
     SimpleOAuthProvider,
     _ExtendedAuthorizationCode,
@@ -109,6 +110,78 @@ class FakeSessionStore:
 
     async def revoke(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
+
+
+class TestDatabaseUnavailableMiddleware:
+    """A Postgres outage during bearer-token verification must surface as a clean, retryable 503
+    -- not Starlette's bare "Internal Server Error" default. See DatabaseUnavailableMiddleware's
+    docstring: a non-AuthenticationError raised inside AuthenticationBackend.authenticate() (this
+    server's load_access_token) bypasses AuthenticationMiddleware's own exception handling, and
+    FastMCP's Starlette app registers no exception_handlers at all -- this middleware is the only
+    layer that can turn it into a response.
+    """
+
+    @pytest.fixture
+    def oauth_provider(self) -> SimpleOAuthProvider:
+        return SimpleOAuthProvider(
+            storage_api_url='https://sapi',
+            mcp_server_url='https://mcp',
+            callback_endpoint='/callback',
+            client_id='mcp-server-id',
+            client_secret='mcp-server-secret',
+            server_url='https://oauth',
+            scope='scope',
+            jwt_secret=JWT_KEY,
+            session_store=FakeSessionStore(),
+        )
+
+    def test_get_middleware_prepends_database_unavailable_middleware(self, oauth_provider: SimpleOAuthProvider) -> None:
+        middleware = oauth_provider.get_middleware()
+        assert middleware[0].cls is DatabaseUnavailableMiddleware
+        # The base class's AuthenticationMiddleware/AuthContextMiddleware must still follow --
+        # confirms this wraps, rather than replaces, the inherited middleware.
+        assert any(m.cls.__name__ == 'AuthenticationMiddleware' for m in middleware[1:])
+
+    @pytest.mark.asyncio
+    async def test_translates_database_unavailable_error_to_503(self) -> None:
+        from starlette.applications import Starlette
+        from starlette.middleware import Middleware
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+
+        from keboola_mcp_server.session_store import DatabaseUnavailableError
+
+        async def endpoint(request):
+            raise DatabaseUnavailableError('Postgres is unavailable (OSError).')
+
+        app = Starlette(
+            routes=[Route('/', endpoint)],
+            middleware=[Middleware(DatabaseUnavailableMiddleware)],
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+
+        response = client.get('/')
+
+        assert response.status_code == 503
+        assert response.json() == {'message': 'Service temporarily unavailable: the session database is unreachable.'}
+
+    @pytest.mark.asyncio
+    async def test_lets_other_errors_and_websockets_through_unchanged(self) -> None:
+        from starlette.applications import Starlette
+        from starlette.middleware import Middleware
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+
+        async def endpoint(request):
+            raise ValueError('a genuine bug')
+
+        app = Starlette(routes=[Route('/', endpoint)], middleware=[Middleware(DatabaseUnavailableMiddleware)])
+        client = TestClient(app, raise_server_exceptions=False)
+
+        response = client.get('/')
+
+        # Not our concern to handle -- falls through to Starlette's own error handling, unchanged.
+        assert response.status_code == 500
 
 
 class TestSimpleOAuthProvider:

@@ -25,6 +25,9 @@ from mcp.server.auth.settings import ClientRegistrationOptions
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl, AnyUrl
 from starlette.exceptions import HTTPException
+from starlette.middleware import Middleware
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import (
     TokenSet,
@@ -36,6 +39,7 @@ from keboola_mcp_server.auth_login import (
 from keboola_mcp_server.clients.auth_bridge import OAuthSessionExchanger, OAuthTokenExchangeError
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
+from keboola_mcp_server.session_store import DatabaseUnavailableError
 from keboola_mcp_server.session_store.repository import SessionStore
 
 # The OAuth scope this server always requests at /oauth/consent (see authorize()) -- fixed for
@@ -158,6 +162,40 @@ class ProxyRefreshToken(RefreshToken):
     session_id: str | None = None
 
 
+class DatabaseUnavailableMiddleware:
+    """Translates a Postgres outage during bearer-token verification into a clean, retryable 503.
+
+    Must wrap `AuthenticationMiddleware` from the outside (placed before it in
+    `SimpleOAuthProvider.get_middleware()`'s returned list): a `DatabaseUnavailableError` raised
+    inside `AuthenticationBackend.authenticate()` (this server's `load_access_token`, called once
+    per request, before routing) is not a Starlette `AuthenticationError`, so
+    `AuthenticationMiddleware` does not catch it -- it propagates past that middleware to whatever
+    wraps it next. FastMCP's own Starlette app for this provider (`create_base_app`) registers no
+    `exception_handlers` at all, and it is a separately *mounted* ASGI app, so the outer app's own
+    `exception_handlers` (`cli.py`) never see it either -- verified empirically with
+    `starlette.testclient.TestClient` against both FastMCP's actual `create_base_app` shape and a
+    minimal repro. This middleware is the only place in the stack that can turn it into a response
+    instead of Starlette's bare, unhelpful "Internal Server Error" default.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope['type'] != 'http':
+            await self._app(scope, receive, send)
+            return
+        try:
+            await self._app(scope, receive, send)
+        except DatabaseUnavailableError as e:
+            LOG.error(f'Postgres is unavailable: {e}')
+            response = JSONResponse(
+                {'message': 'Service temporarily unavailable: the session database is unreachable.'},
+                status_code=503,
+            )
+            await response(scope, receive, send)
+
+
 class SimpleOAuthProvider(OAuthProvider):
     def __init__(
         self,
@@ -202,6 +240,13 @@ class SimpleOAuthProvider(OAuthProvider):
         self._oauth_server_token_url = urljoin(server_url, '/oauth/token')
         self._oauth_scope = scope
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
+
+    def get_middleware(self) -> list[Middleware]:
+        """Prepends `DatabaseUnavailableMiddleware` ahead of the base class's
+        `AuthenticationMiddleware`/`AuthContextMiddleware` -- see that middleware's docstring for
+        why it must sit outside (wrap) `AuthenticationMiddleware` rather than rely on any
+        `exception_handlers` dict."""
+        return [Middleware(DatabaseUnavailableMiddleware), *super().get_middleware()]
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         """

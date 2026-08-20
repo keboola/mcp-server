@@ -538,25 +538,30 @@ class SessionStateMiddleware(fmw.Middleware):
         trusting stale access -- if a previously scoped project is no longer reachable by the
         current token; callers see this as "no scope yet" and are steered back through
         get_accessible_projects / set_project_scope.
+
+        Best-effort end to end -- a Postgres outage (`DatabaseUnavailableError`) degrades the same
+        way an introspection failure already does: "no scope yet" rather than a crashed request.
+        This is the one Postgres-touching path outside the OAuth bearer-auth flow (see
+        `DatabaseUnavailableMiddleware`), reachable even without OAuth configured.
         """
         try:
             introspection = await introspect_token(
                 config.storage_api_url, subject_token=strip_bearer(config.storage_token)
             )
+            if introspection.user_id is None:
+                return None
+            stored = await store.get(config.conversation_id, introspection.user_id)
+            if stored is None:
+                return None
+            current_project_ids = {p.id for p in introspection.projects}
+            if not set(stored.project_ids).issubset(current_project_ids):
+                LOG.info('Persisted Kai scope references a project no longer reachable; dropping it.')
+                await store.drop(config.conversation_id, introspection.user_id)
+                return None
+            return SessionScope(project_ids=stored.project_ids, read_only=stored.read_only, confirmed=stored.confirmed)
         except Exception as e:
-            LOG.warning(f'Could not introspect Kai token for persisted scope lookup: {e}', exc_info=True)
+            LOG.warning(f'Could not resolve persisted Kai scope: {e}', exc_info=True)
             return None
-        if introspection.user_id is None:
-            return None
-        stored = await store.get(config.conversation_id, introspection.user_id)
-        if stored is None:
-            return None
-        current_project_ids = {p.id for p in introspection.projects}
-        if not set(stored.project_ids).issubset(current_project_ids):
-            LOG.info('Persisted Kai scope references a project no longer reachable; dropping it.')
-            await store.drop(config.conversation_id, introspection.user_id)
-            return None
-        return SessionScope(project_ids=stored.project_ids, read_only=stored.read_only, confirmed=stored.confirmed)
 
     @classmethod
     def _is_local_programmatic(cls, config: Config) -> bool:

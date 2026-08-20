@@ -23,6 +23,7 @@ from starlette.responses import JSONResponse
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ForwardSlashMiddleware, is_read_only_tool, is_semantic_tool
 from keboola_mcp_server.server import CustomRoutes, create_server
+from keboola_mcp_server.session_store import DatabaseUnavailableError
 
 LOG = logging.getLogger(__name__)
 
@@ -203,12 +204,36 @@ async def _http_exception_handler(request: Request, exc: HTTPException):
 
 
 _bad_request_handler = _create_exception_handler(status_code=400)
+_database_unavailable_handler = _create_exception_handler(status_code=503, log_exception=True)
+_generic_500_handler = _create_exception_handler(status_code=500, log_exception=True)
+
+
+async def _catch_all_handler(request: Request, exc: Exception):
+    """The handler Starlette actually uses for anything keyed on `Exception`/500: it becomes
+    `ServerErrorMiddleware`'s single global handler, the *outermost* layer, wrapping every other
+    middleware -- unlike every other entry in `_exception_handlers` below, which only ever sees
+    exceptions raised *inside* a route handler (via `ExceptionMiddleware`, the innermost layer).
+    OAuth bearer-token verification runs once per request in `AuthenticationMiddleware`, *before*
+    routing, so a `DatabaseUnavailableError` raised there (Postgres down) would never reach the
+    `DatabaseUnavailableError` entry below -- only this catch-all sees it. Verified empirically:
+    a `starlette.testclient.TestClient` probe confirmed a non-`HTTPException` raised inside an
+    `AuthenticationBackend.authenticate()` bypasses the `exception_handlers` dict entirely and is
+    only ever seen here.
+    """
+    if isinstance(exc, DatabaseUnavailableError):
+        return await _database_unavailable_handler(request, exc)
+    return await _generic_500_handler(request, exc)
+
+
 _exception_handlers = {
     HTTPException: _http_exception_handler,
     json.JSONDecodeError: _bad_request_handler,
     pydantic.ValidationError: _bad_request_handler,
     ValueError: _bad_request_handler,
-    Exception: _create_exception_handler(status_code=500, log_exception=True),
+    # Covers a DatabaseUnavailableError raised *inside* a route handler (e.g. the OAuth token
+    # exchange endpoint) -- the bearer-auth-time case is handled by _catch_all_handler instead.
+    DatabaseUnavailableError: _database_unavailable_handler,
+    Exception: _catch_all_handler,
 }
 
 

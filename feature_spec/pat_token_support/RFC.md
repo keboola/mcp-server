@@ -1109,3 +1109,48 @@ that, which is exactly the branch this fix doesn't apply to). A `scope_token` mi
 caller A's request now fails AES-GCM authentication -- and is treated as "no scope", same as any
 other invalid token -- when replayed by caller B, whose own `storage_token` hashes to a different
 `aad`.
+
+## Extension: Postgres unavailable surfaced as an opaque 500 (increment 15)
+
+Raised in review: what happens when Postgres itself is down at runtime (not just absent at
+startup, which `server.py` already refuses to start on -- see the "Security hardening" RFC
+increment's `resolve_encryption_key` finding). Traced empirically (`starlette.testclient.TestClient`
+against both a minimal repro and FastMCP's actual app-construction shape):
+
+- `PostgresSessionStore`/`PostgresKaiScopeStore` had no exception handling at all around
+  `asyncpg` calls. `load_access_token` (backing OAuth bearer-token verification) calls
+  `get_by_access_token` on **every** authenticated request, before routing.
+- A non-`AuthenticationError` raised inside `AuthenticationBackend.authenticate()` bypasses
+  Starlette's `AuthenticationMiddleware` (which only catches `AuthenticationError`) entirely.
+- FastMCP's own Starlette app (`create_base_app`) registers **no** `exception_handlers` at all,
+  and it is a separately-**mounted** ASGI app (`cli.py`'s outer `Starlette(...).mount(...)`) --
+  Starlette's mount semantics fully isolate the two, so `cli.py`'s own `_exception_handlers`
+  dict never sees anything raised inside it either, confirmed empirically.
+- Net effect, today: a Postgres outage crashes every authenticated request with Starlette's bare,
+  unhelpful "Internal Server Error" default -- not even the JSON-formatted 500 `cli.py` appears
+  to promise, since that handler is registered on the wrong (outer) app.
+
+**Fix:**
+- `session_store/__init__.py` adds `DatabaseUnavailableError` and a `@guard_db_errors` decorator
+  translating connection-level `asyncpg`/`OSError`/`TimeoutError` exceptions into it (a genuine
+  query/logic error against a reachable database is a bug, not a "Postgres is down" condition,
+  and must not be swallowed into a misleadingly retryable response) -- applied to every public
+  method of both `PostgresSessionStore` and `PostgresKaiScopeStore`.
+- `oauth.py` adds `DatabaseUnavailableMiddleware`, a raw ASGI middleware translating
+  `DatabaseUnavailableError` into a `503 {"message": "..."}"` response; `SimpleOAuthProvider`
+  overrides `get_middleware()` to prepend it ahead of the base class's `AuthenticationMiddleware`
+  -- the only position from which it can actually catch what escapes that middleware. This is the
+  fix for the primary, every-request path.
+- `mcp.py`'s `_read_persisted_kai_scope` (the one Postgres-touching path reachable **without**
+  OAuth configured -- Kai's own header-token sessions) already degraded gracefully on an
+  introspection failure ("no scope yet"); the fix widens that same `try/except` to also cover the
+  `KaiScopeStore.get`/`drop` calls, so a DB outage there degrades identically instead of crashing.
+- `cli.py`'s `_exception_handlers` still gains a `DatabaseUnavailableError: ...503` entry, kept as
+  a secondary, defense-in-depth path: it correctly covers a `DatabaseUnavailableError` raised
+  *inside* one of that app's own route handlers (e.g. a future custom route), which genuinely is
+  caught by that dict's `ExceptionMiddleware` layer -- verified separately from the bearer-auth
+  case above.
+
+**Explicitly not fixed here:** the deployed `KeboolaClient`'s own request path has nothing to do
+with Postgres (Storage API calls don't touch this server's session database), so it needs no
+equivalent guard.

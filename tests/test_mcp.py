@@ -1068,6 +1068,26 @@ class TestReadPersistedKaiScope:
         store.drop.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_database_outage_degrades_to_no_scope(self) -> None:
+        # A Postgres outage on store.get()/drop() must degrade the same way an introspection
+        # failure already does -- "no scope yet" -- not crash the request. Regression for the
+        # gap where only the introspect_token call was wrapped, not the store calls.
+        from keboola_mcp_server.session_store import DatabaseUnavailableError
+
+        config = Config(storage_api_url='https://connection.test.keboola.com', storage_token='kbc_at_x')
+        config = dataclasses.replace(config, conversation_id='conv-1')
+        store = AsyncMock()
+        store.get.side_effect = DatabaseUnavailableError('Postgres is unavailable (OSError).')
+
+        with patch(
+            'keboola_mcp_server.mcp.introspect_token',
+            AsyncMock(return_value=self._introspection([18, 83])),
+        ):
+            scope = await SessionStateMiddleware._read_persisted_kai_scope(config, store)
+
+        assert scope is None
+
+    @pytest.mark.asyncio
     async def test_drops_scope_when_a_project_is_no_longer_reachable(self) -> None:
         from keboola_mcp_server.session_store.kai_scope import KaiScope
 

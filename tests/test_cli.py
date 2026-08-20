@@ -6,6 +6,7 @@ import pytest
 from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import TokenSet
 from keboola_mcp_server.cli import (
+    _exception_handlers,
     _local_login_fallback,
     _run_gc_sessions,
     _run_login,
@@ -14,6 +15,7 @@ from keboola_mcp_server.cli import (
     parse_args,
 )
 from keboola_mcp_server.config import Config
+from keboola_mcp_server.session_store import DatabaseUnavailableError
 
 STACK = 'https://connection.keboola.com'
 
@@ -23,6 +25,46 @@ def creds_file(tmp_path, monkeypatch):
     path = tmp_path / 'creds' / 'credentials.json'
     monkeypatch.setattr(auth_login, '_CREDENTIALS_PATH', path)
     return path
+
+
+class TestExceptionHandlers:
+    """`DatabaseUnavailableError` raised *inside a route handler* on cli.py's own Starlette app
+    (as opposed to during bearer-token verification in FastMCP's separately-mounted app -- see
+    `TestDatabaseUnavailableMiddleware` in test_oauth.py for that case) must map to 503, via
+    either registered path: the per-type `_exception_handlers` dict entry (ExceptionMiddleware,
+    for errors raised inside routing) or the `Exception`-keyed catch-all (ServerErrorMiddleware,
+    for errors escaping every other middleware, outermost)."""
+
+    @staticmethod
+    def _app(raise_exc: Exception):
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+
+        async def endpoint(request):
+            raise raise_exc
+
+        return Starlette(routes=[Route('/', endpoint)], exception_handlers=_exception_handlers)
+
+    def test_database_unavailable_error_from_a_route_maps_to_503(self) -> None:
+        from starlette.testclient import TestClient
+
+        client = TestClient(
+            self._app(DatabaseUnavailableError('Postgres is unavailable (OSError).')), raise_server_exceptions=False
+        )
+
+        response = client.get('/', headers={})
+
+        assert response.status_code == 503
+        assert 'DatabaseUnavailableError' in response.json()['message']
+
+    def test_generic_exception_from_a_route_still_maps_to_500(self) -> None:
+        from starlette.testclient import TestClient
+
+        client = TestClient(self._app(RuntimeError('boom')), raise_server_exceptions=False)
+
+        response = client.get('/')
+
+        assert response.status_code == 500
 
 
 def test_parse_args_migrate() -> None:

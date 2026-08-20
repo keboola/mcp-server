@@ -14,6 +14,8 @@ from typing import Protocol
 
 import asyncpg
 
+from keboola_mcp_server.session_store import guard_db_errors
+
 
 def _hash_key(conversation_id: str, user_id: int) -> bytes:
     return hashlib.sha256(f'{conversation_id}:{user_id}'.encode()).digest()
@@ -58,6 +60,7 @@ class PostgresKaiScopeStore:
         if self._pool is not None:
             await self._pool.close()
 
+    @guard_db_errors
     async def get(self, conversation_id: str, user_id: int) -> KaiScope | None:
         pool = await self._get_pool()
         row = await pool.fetchrow(
@@ -68,6 +71,7 @@ class PostgresKaiScopeStore:
             return None
         return KaiScope(project_ids=list(row['project_ids']), read_only=row['read_only'], confirmed=row['confirmed'])
 
+    @guard_db_errors
     async def upsert(
         self, conversation_id: str, user_id: int, *, project_ids: list[int], read_only: bool, confirmed: bool
     ) -> None:
@@ -86,6 +90,7 @@ class PostgresKaiScopeStore:
             confirmed,
         )
 
+    @guard_db_errors
     async def drop(self, conversation_id: str, user_id: int) -> None:
         pool = await self._get_pool()
         await pool.execute('DELETE FROM kai_sessions WHERE session_key = $1', _hash_key(conversation_id, user_id))
