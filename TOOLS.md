@@ -351,6 +351,19 @@ EXAMPLES:
       ],
       "default": null,
       "description": "Variable definitions to attach to this configuration. Each entry specifies a name, type (\"string\" or \"vault\"), and an optional default value. On creation, both `None` (omitted) and `[]` (empty list) mean \"do not attach variables\" \u2014 no `keboola.variables` config is created. To remove variables from an existing configuration, use `update_config` with `variables=[]`."
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Runtime settings such as \"parallelism\" (parallel row processing) and backend configuration. Only provide if the component supports it."
     }
   },
   "required": [
@@ -1075,6 +1088,19 @@ WORKFLOW:
       ],
       "default": null,
       "description": "Variable definitions for this configuration. Provide a non-empty list to create or replace all variable definitions. Provide an empty list ([]) to remove all variables. Omit (None) to leave existing variables unchanged."
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Runtime settings such as \"parallelism\" (parallel row processing) and backend configuration. Only provide if updating runtime settings - this replaces the ENTIRE runtime configuration. Leave unfilled to preserve the existing runtime configuration."
     }
   },
   "required": [
