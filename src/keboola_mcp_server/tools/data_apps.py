@@ -119,11 +119,16 @@ _DEFAULT_PACKAGES = ['pandas', 'httpx']
 # for `git clone` to accept the URL without prompting.
 _MANAGED_GIT_REPO_USERNAME = 'kai'
 
-# Default branch name used for the very first draft of a brand-new prod app, when the agent
-# doesn't supply a descriptive branch via `branch=`. Uniqueness across drafts is the agent's
-# responsibility — if `init` collides with an existing branch on the prod's repo, the agent
-# will see the error from its own `git push` or from `deploy_data_app`.
-_DEFAULT_DRAFT_BRANCH = 'init'
+# Prefix of the auto-generated default draft branch, used when the agent doesn't supply a
+# descriptive branch via `branch=`. The generated name carries a random suffix, mirroring the
+# unique `-draft-<hex>` slug suffix produced by `_derive_slug_from_name`.
+#
+# This was the fixed literal `init` until AJDA-3161: every default-branch draft on a given prod
+# app landed on the SAME branch name, and `git checkout init` in a fresh clone where `origin/init`
+# already exists silently checks out that stale remote tip instead of branching off `main`. The
+# draft then previewed — and could promote — outdated code, with no error raised anywhere
+# (SUPPORT-17342). A unique name per draft makes that collision impossible.
+_DEFAULT_DRAFT_BRANCH_PREFIX = 'draft'
 
 # How much of an AppRun's diagnostics is surfaced in tool output. `failure_message` can embed the
 # entire startup log (StartupProbeFailed duplicates it verbatim), so both are trimmed to keep the
@@ -419,9 +424,11 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
         default=None,
         description=(
             'Draft branch the new draft is pinned to (set in `parameters.dataApp.git.branch`). Only populated '
-            'on the **draft create path** — defaults to `init` when the caller does not pass `branch`. The '
-            'agent should `git checkout <branch>` (creating it if needed) and push code on this branch before '
-            'calling `deploy_data_app(mode="dev")`. None on prod create and on update.'
+            'on the **draft create path** — defaults to a freshly generated `draft-<hex>` when the caller does '
+            'not pass `branch`. Create it from the current production code — '
+            '`git fetch origin && git checkout -B <branch> origin/main` — and push code on this branch before '
+            'calling `deploy_data_app(mode="dev")`. A bare `git checkout <branch>` is unsafe: if the branch '
+            'already exists on the remote it resolves to that stale tip. None on prod create and on update.'
         ),
     )
     links: list[Link] = Field(description='Navigation links for the web interface.')
@@ -909,10 +916,11 @@ async def modify_python_js_data_app(
             description=(
                 'Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n'
                 '- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft '
-                'to. Defaults to `init` when unset (a sensible name for the first draft of a brand-new '
-                'prod app). For subsequent edit-existing drafts, pass a descriptive name like '
-                "'add-revenue-filter'. Must not be `main` (reserved for the prod app). Rejected on prod "
-                'create.\n'
+                'to. Defaults to a generated `draft-<hex>` when unset — unique per draft, so it can never '
+                "collide with a branch an earlier draft left behind. Pass a descriptive name like "
+                "'add-revenue-filter' when it helps the user; a name you supply may already exist on the "
+                'repo, so branch it off `origin/main` explicitly rather than with a bare `git checkout`. '
+                'Must not be `main` (reserved for the prod app). Rejected on prod create.\n'
                 '- **On update** (with `configuration_id`): repoints an existing **external-git** app to '
                 'a different branch (e.g. flip a repo-backed app from `main` to a feature branch for '
                 'testing, then back). Only valid for external-git apps — a draft, or an app bound to an '
@@ -985,14 +993,16 @@ async def modify_python_js_data_app(
     1. `modify_python_js_data_app(slug='demo')` → `(configuration_id=PROD, repo_url=R)`.
        PROD owns the only managed repo for this app.
     2. `modify_python_js_data_app(slug='demo-draft', parent_configuration_id=PROD)`
-       → `(configuration_id=DRAFT, repo_url=R, git_clone_url=U, branch='init')`.
-       Default draft branch is `'init'`. Override with `branch=<name>` for a descriptive name.
-    3. YOU: `git clone U`; `git checkout init` (creating it if the repo is empty); write source;
-       `git push origin init`.
+       → `(configuration_id=DRAFT, repo_url=R, git_clone_url=U, branch='draft-<hex>')`.
+       The default branch is generated fresh per draft (`draft-<hex>`) so it can never collide
+       with a branch left behind by an earlier draft. Override with `branch=<name>` for a
+       descriptive name — if you do, YOU own uniqueness (see step 3).
+    3. YOU: `git clone U`; `git checkout -b <branch>` (the repo of a brand-new prod app is empty,
+       so there is no `main` to branch from yet); write source; `git push origin <branch>`.
     4. `deploy_data_app(action='deploy', configuration_id=DRAFT, mode='dev')`
-       → preview URL serving the `init` branch as a dev version. Iterate with the user.
-    5. Once approved — YOU: `git checkout main`; `git merge init`; `git push origin main`;
-       `git push origin --delete init`.
+       → preview URL serving the draft's pinned branch as a dev version. Iterate with the user.
+    5. Once approved — YOU: `git checkout main`; `git merge <branch>`; `git push origin main`;
+       `git push origin --delete <branch>` (branch deletes ARE permitted on managed repos).
     6. `deploy_data_app(action='deploy', configuration_id=PROD)`
        → prod URL now serves the merged `main`.
     7. `delete_python_js_data_app_draft(configuration_id=DRAFT)`
@@ -1009,8 +1019,11 @@ async def modify_python_js_data_app(
             parent_configuration_id=PROD,
             branch='<describes-the-change>',   # e.g. 'add-revenue-filter'
        )` → `(DRAFT, R, U2, branch)`. Use U2 (it has its own fresh token).
-    3. YOU: `git clone U2`; `git checkout <branch>` (creating it from `main`); edit source;
-       `git push origin <branch>`.
+    3. YOU: `git clone U2`; `git fetch origin && git checkout -B <branch> origin/main` — state the
+       base explicitly. NEVER a bare `git checkout <branch>`: when that branch already exists on
+       the remote (a descriptive name reused from an earlier session), git silently checks out its
+       stale tip instead of branching from `main`, and the preview then serves outdated code with
+       no error. Edit source; `git push origin <branch>`.
     4–7. Same as Scenario A steps 4–7.
 
     ## Scenario C — Continue an unfinished draft
@@ -1024,7 +1037,10 @@ async def modify_python_js_data_app(
     2. `create_python_js_data_app_git_credential(configuration_id=PROD)`
        → fresh `git_clone_url U` (the previous one was minted in a wiped sandbox and is lost).
        Drafts have no managed repo of their own — always mint against PROD.
-    3. YOU: `git clone U`; `git checkout <draft's pinned branch>`; resume work; `git push`.
+    3. YOU: `git clone U`; `git checkout <draft's pinned branch>`. Here you DO want the existing
+       branch — but confirm it is current before you build on it:
+       `git rev-list --count <branch>..origin/main` must print 0, otherwise `git merge origin/main`
+       first. Resume work; `git push`.
     4. `deploy_data_app(action='deploy', configuration_id=<DRAFT>, mode='dev')` → preview URL.
        The draft's branch is already pinned in its config.
     5–7. Same promote/cleanup sequence as Scenario A steps 5–7.
@@ -1033,7 +1049,9 @@ async def modify_python_js_data_app(
 
     - `parent_configuration_id` is **create-only**. Rejected on update.
     - `branch` on **create** is only valid when `parent_configuration_id` is set (pins the new
-      draft's branch). Defaults to `'init'`. Must not be `'main'`. Rejected on prod create.
+      draft's branch). Defaults to a generated, collision-free `'draft-<hex>'`. Must not be
+      `'main'`. Rejected on prod create. A branch you supply yourself may already exist on the
+      repo — branch it off `origin/main` explicitly (see Scenario B step 3).
       On **update** `branch` repoints an existing **external-git** app's pinned branch (see below).
     - `slug` is optional on create (auto-derived from `name` when omitted; drafts get a unique
       suffix) and immutable after.
@@ -1190,7 +1208,7 @@ async def modify_python_js_data_app(
                     f'Parent python-js data app "{parent_configuration_id}" has no managed git repo URL. '
                     'This indicates a platform-side bug — retry or contact support.'
                 )
-            draft_branch = (branch or _DEFAULT_DRAFT_BRANCH).strip()
+            draft_branch = (branch or _generate_default_draft_branch()).strip()
             if not draft_branch or any(c.isspace() for c in draft_branch):
                 raise ValueError(f'branch "{branch}" is not a valid git branch name.')
             if draft_branch == 'main':
@@ -1283,9 +1301,16 @@ async def modify_python_js_data_app(
         )
         data_app_summary = DataAppSummary.from_api_response(data_app_resp)
         data_app_summary.repo_url = repo_url
+        # On the draft create path, spell out the safe checkout. `git checkout <branch>` alone is
+        # the AJDA-3161 trap: when the branch already exists on the remote (an agent-supplied
+        # descriptive name reused across sessions — the generated default cannot collide), git
+        # resolves it to that stale remote tip instead of branching off `main`, and the draft
+        # previews outdated code without erroring anywhere.
+        checkout_hint = _draft_checkout_hint(draft_branch) if draft_branch else None
+        change_summary = '\n'.join(note for note in (folder_hint, checkout_hint) if note) or None
         return ModifiedPythonJsDataAppOutput(
             response='created',
-            change_summary=folder_hint,
+            change_summary=change_summary,
             data_app=data_app_summary,
             repo_url=repo_url,
             git_clone_url=git_clone_url,
@@ -2099,6 +2124,46 @@ def _get_data_app_slug(name: str) -> str:
             f'converting to lowercase, replacing spaces with hyphens, and removing special characters.'
         )
     return slug
+
+
+def _draft_checkout_hint(draft_branch: str) -> str:
+    """Build the agent-facing hint describing how to safely check out a new draft's branch.
+
+    Surfaced in `modify_python_js_data_app`'s `change_summary` on the draft create path. A bare
+    ``git checkout <branch>`` silently resolves to an existing ``origin/<branch>`` when one exists,
+    checking out its stale tip instead of branching off ``main`` — the draft then previews (and can
+    promote) outdated code with no error anywhere (AJDA-3161). ``checkout -B ... origin/main``
+    states the intended base explicitly; the ``rev-list`` check covers the case where the agent
+    deliberately resumes an existing branch.
+
+    :param draft_branch: The branch the draft was pinned to
+    :return: A hint string for the tool's `change_summary`
+    """
+    return (
+        f"Draft pinned to branch '{draft_branch}'. Base it on current production explicitly: "
+        f'`git fetch origin && git checkout -B {draft_branch} origin/main` '
+        f'(on a brand-new prod app the repo is still empty and `origin/main` does not exist yet — '
+        f'use `git checkout -b {draft_branch}` there). Do NOT use a bare '
+        f'`git checkout {draft_branch}`: if that branch already exists on the remote, git checks '
+        f'out its stale tip instead of branching from `main`, and the preview will serve outdated '
+        f'code without any error. If you intentionally resume an existing branch, verify it is '
+        f'current first — `git rev-list --count {draft_branch}..origin/main` must print 0, '
+        f'otherwise `git merge origin/main` before you push.'
+    )
+
+
+def _generate_default_draft_branch() -> str:
+    """Generate the default git branch a new draft is pinned to when the caller omits ``branch``.
+
+    Returns ``draft-<6 hex chars>`` — unique per call, mirroring the unique ``-draft-<hex>`` slug
+    suffix produced by :func:`_derive_slug_from_name`. Uniqueness is the whole point: a fixed
+    default (the previous ``init``) collides with the branch left behind by an earlier draft of the
+    same prod app, and a plain ``git checkout <branch>`` then resolves to that stale remote tip
+    rather than branching off ``main`` — silently serving outdated code (AJDA-3161).
+
+    :return: A fresh, collision-free draft branch name
+    """
+    return f'{_DEFAULT_DRAFT_BRANCH_PREFIX}-{secrets.token_hex(3)}'  # e.g. 'draft-a1b2c3'
 
 
 def _derive_slug_from_name(name: str, *, draft: bool) -> str:

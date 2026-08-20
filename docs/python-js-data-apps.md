@@ -33,7 +33,7 @@ Drafts are surfaced in the Keboola UI under their parent prod app. They are also
 │   │                │                       │  { repo: R,    │ │
 │   │                │                       │    #password,  │ │
 │   │                │                       │    branch:     │ │
-│   │                │                       │     init }     │ │
+│   │                │                       │  draft-<hex> } │ │
 │   └────────────────┘                       └────────────────┘ │
 │         │                                            │         │
 │         ▼                                            ▼         │
@@ -57,7 +57,7 @@ The data-science platform does not yet support sharing a managed repo across app
 
 | Tool | Change in v1.64.0 | Purpose |
 |---|---|---|
-| `modify_python_js_data_app` | Default draft branch is now `'init'` (was `iter-<6-hex>`). Drafts persist `parameters.dataApp.parentConfigurationId` so they can be discovered cheaply. Docstring rewritten to drop "dev twin". | Create/update a prod app; create a draft bound to the parent prod app's managed repo. |
+| `modify_python_js_data_app` | Default draft branch is a generated, unique `'draft-<6-hex>'` (v1.64 shipped the fixed literal `'init'`; AJDA-3161 replaced it — see below). Drafts persist `parameters.dataApp.parentConfigurationId` so they can be discovered cheaply. Docstring rewritten to drop "dev twin". | Create/update a prod app; create a draft bound to the parent prod app's managed repo. |
 | `deploy_data_app` | No behaviour change. Docstring reframes `mode='dev'` as "deploys the draft as a **dev version of the data app**" (hot reload + auto-auth for iframe preview). | Deploy/redeploy or stop. `mode='dev'` only meaningful on drafts. |
 | `create_python_js_data_app_git_credential` | No behaviour change. Docstring tightens the prod-only contract: drafts have no managed repo, always mint against prod. | Mint a one-time HTTPS token on a python-js prod app's managed repo. |
 | `get_data_apps` | Detail responses for python-js **prod** apps now include a `drafts: [...]` array of `DataAppSummary` entries — every draft (`isDraft=true`, `parentConfigurationId == <prod-cfg>`) parented to that prod, fetched with one extra `configuration_list` round-trip. Empty for drafts themselves and for Streamlit apps. | List or detail-fetch data apps; discover drafts. |
@@ -108,7 +108,7 @@ Step 2: modify_python_js_data_app(
             slug='demo-draft',
             parent_configuration_id=PROD,
         )                    ──► { configuration_id: DRAFT, repo_url: R,
-                                   git_clone_url: U, branch: 'init' }
+                                   git_clone_url: U, branch: 'draft-<hex>' }
                                   (U = https://kai:<secret>@host/path.git)
                                         │
                                         ▼
@@ -120,7 +120,7 @@ Step 4: deploy_data_app(
             action='deploy',
             configuration_id=DRAFT,
             mode='dev',
-        )                    ──► preview URL serving 'init' as a dev version
+        )                    ──► preview URL serving the draft branch as a dev version
                                  (hot reload + auto-auth iframe preview)
                                         │
                                         ▼ (user approves)
@@ -292,7 +292,8 @@ Always call against the **prod** app's configuration ID — the draft has no man
 
 - **Type**: `Optional[str]`
 - **When valid**: draft create only (must be paired with `parent_configuration_id`). Rejected on prod create and on update.
-- **Semantics**: pins the draft to this branch (`parameters.dataApp.git.branch`). When unset, defaults to `'init'` (a sensible default for the first draft of a brand-new prod app — descriptive branches are agent-supplied on edit-existing flows). Must not be `main` (reserved for the prod app); must be non-empty and contain no whitespace. **Uniqueness across drafts is the agent's responsibility** — if `'init'` collides with an existing branch on the prod's repo, the agent sees the error from its own `git push` or from `deploy_data_app`.
+- **Semantics**: pins the draft to this branch (`parameters.dataApp.git.branch`). When unset, defaults to a freshly generated `'draft-<6-hex>'` (`_generate_default_draft_branch`), unique per draft. Must not be `main` (reserved for the prod app); must be non-empty and contain no whitespace.
+- **Uniqueness**: the generated default cannot collide. A branch the **agent supplies** still can — a descriptive name like `'add-revenue-filter'` reused across sessions already exists on the repo. That does not fail loudly: a bare `git checkout add-revenue-filter` in a fresh clone resolves to the stale `origin/add-revenue-filter` tip instead of branching off `main`. The tool's `change_summary` therefore instructs the agent to branch explicitly (`git fetch origin && git checkout -B <branch> origin/main`) and, when deliberately resuming a branch, to verify `git rev-list --count <branch>..origin/main` is 0. See **The stale-branch failure mode** below.
 
 ### `deploy_data_app(mode=...)`
 
@@ -366,18 +367,19 @@ Against `data-science.canary-orion.keboola.dev`:
 **Create flow**
 
 - [ ] `modify_python_js_data_app(slug='demo')` returns `(PROD, R)`. `R` starts with `https://` (no `git@`).
-- [ ] `modify_python_js_data_app(slug='demo-draft', parent_configuration_id=PROD)` returns `(DRAFT, R, git_clone_url, 'init')`. `git_clone_url` matches `https://kai:<secret>@<host>/<path>.git`.
+- [ ] `modify_python_js_data_app(slug='demo-draft', parent_configuration_id=PROD)` returns `(DRAFT, R, git_clone_url, 'draft-<hex>')`. `git_clone_url` matches `https://kai:<secret>@<host>/<path>.git`.
+- [ ] Creating a second default-branch draft on the same PROD returns a **different** branch name.
 - [ ] Inspect `DRAFT`'s Storage config in the UI:
   - [ ] `parameters.dataApp.git.repository == R`.
   - [ ] `parameters.dataApp.git.#password` is encrypted ciphertext (`KBC::ConfigSecureGKMS::...`).
-  - [ ] `parameters.dataApp.git.branch == 'init'`.
+  - [ ] `parameters.dataApp.git.branch` matches `draft-[0-9a-f]{6}` and equals the returned `branch`.
   - [ ] `parameters.dataApp.isDraft == true`.
   - [ ] `parameters.dataApp.parentConfigurationId == <PROD cfg id>`.
 - [ ] `git clone <git_clone_url>` works with no local key plumbing.
-- [ ] Push a minimal `app.py` on the `init` branch.
+- [ ] Push a minimal `app.py` on the returned draft branch.
 - [ ] `deploy_data_app(configuration_id=DRAFT, mode='dev')` produces a working preview URL serving the branch as a dev version.
 - [ ] `get_data_apps(configuration_ids=[PROD])` returns prod detail with `DRAFT` listed in `drafts: [...]`.
-- [ ] Locally `git checkout main && git merge init && git push && git push origin --delete init`.
+- [ ] Locally `git checkout main && git merge <branch> && git push && git push origin --delete <branch>`.
 - [ ] `deploy_data_app(configuration_id=PROD)` produces a working prod URL serving merged `main`.
 - [ ] `delete_python_js_data_app_draft(configuration_id=DRAFT)` returns `{response: 'deleted', parent_configuration_id: PROD}` and `DRAFT` disappears from `drafts: [...]` on the next `get_data_apps(configuration_ids=[PROD])`.
 
@@ -413,14 +415,47 @@ Against `data-science.canary-orion.keboola.dev`:
 
 ---
 
+## The stale-branch failure mode (AJDA-3161)
+
+**Symptom (SUPPORT-17342):** creating a draft for an *existing* app produced a preview running
+outdated code. Promoting that draft could regress production. Nothing errored anywhere.
+
+**Cause — two halves, both required:**
+
+1. v1.64 made the default draft branch the fixed literal `'init'`, so every default-branch draft of
+   a given prod app asked for the same branch name.
+2. Git's checkout DWIM did the rest. In a full clone where `origin/init` exists, `git checkout init`
+   creates a local `init` **tracking the stale remote tip** — it does not branch off `main`, and it
+   does not warn. The v1.64 docstring said `git checkout <branch> (creating it from main)`; the
+   parenthetical is advice, the DWIM is behavior.
+
+The branch is deleted at promote time (`git push origin --delete <branch>`, step 5), so `init`
+lingers only when that step was skipped or failed — an abandoned draft, a manual promote, an
+interrupted session. That matches the "apps that were previously iterated on" in the report.
+
+**Fix:**
+
+- The generated default is unique per draft (`draft-<6-hex>`), so the default path cannot collide.
+- An agent-supplied branch can still collide, and the server must not silently rename what the
+  caller asked for. Instead the draft-create response carries an explicit instruction to branch off
+  `origin/main` (`git checkout -B <branch> origin/main`) plus a `rev-list` behind-check for the
+  deliberate-resume case.
+
+**Still missing on the platform side:** the data-science API exposes only
+`GET /apps/{id}/git-repo` and `POST /apps/{id}/git-repo/credentials` — there is **no branch-list
+endpoint**, so MCP cannot detect a collision server-side and reject or auto-suffix a colliding
+agent-supplied branch. If such an endpoint lands, that check belongs on the draft create path.
+
+---
+
 ## v1.63 → v1.64 migration
 
-The dev-twin terminology is gone. Internally, "dev twin" → "draft"; in the wire, drafts now persist `parentConfigurationId` and the default branch is `'init'` (not `iter-<6-hex>`). User-facing tool parameters did not change shape — `parent_configuration_id` and `branch` keep their names — but the doc framing, docstrings, and default branch differ. A new tool `delete_python_js_data_app_draft` ships in v1.64.0.
+The dev-twin terminology is gone. Internally, "dev twin" → "draft"; in the wire, drafts now persist `parentConfigurationId`. (v1.64 also changed the default branch from `iter-<6-hex>` to the literal `'init'`; AJDA-3161 reverted that half to a random `draft-<6-hex>` — see the section above.) User-facing tool parameters did not change shape — `parent_configuration_id` and `branch` keep their names — but the doc framing, docstrings, and default branch differ. A new tool `delete_python_js_data_app_draft` ships in v1.64.0.
 
 | | v1.63 (MVP) | v1.64 (this doc) |
 |---|---|---|
 | Iteration entity name | "dev twin" | "draft" |
-| Default iteration branch | `iter-<6-hex>` (random) | `'init'` (literal; descriptive branches agent-supplied for edits) |
+| Default iteration branch | `iter-<6-hex>` (random) | `'init'` (literal) — superseded by `draft-<6-hex>` (random) in AJDA-3161 |
 | Draft → prod linkage on the wire | (not stored) | `parameters.dataApp.parentConfigurationId` (Storage config; create-only) |
 | Drafts of a prod, discovery | Scan all configs and filter by repo URL (no MCP surface) | `get_data_apps(configuration_ids=[PROD])` returns `drafts: [...]` |
 | Cleanup affordance | UI "Discard" button only | `delete_python_js_data_app_draft` MCP tool |
