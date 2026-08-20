@@ -532,8 +532,9 @@ def test_configuration_root_processors_normalization(processors_value: Any, expe
         ({'parallelism': 5}, {'parallelism': 5}),
         (None, None),
         ('omit', None),
+        ({'#secret_token': 'plain_value'}, {'#secret_token': '[REDACTED]'}),
     ],
-    ids=['parallelism_passthrough', 'none_passthrough', 'field_omitted'],
+    ids=['parallelism_passthrough', 'none_passthrough', 'field_omitted', 'secret_redacted'],
 )
 def test_configuration_root_runtime_passthrough(runtime_value: Any, expected: Any) -> None:
     """ConfigurationRoot.from_api_response surfaces the runtime section (e.g. parallelism)."""
@@ -1437,6 +1438,7 @@ async def test_create_config(
     description = 'Test configuration description'
     parameters = {'test_param': 'test_value'}
     storage = {'input': {'tables': []}}
+    runtime = {'parallelism': '4'}
 
     # Test the create_component_root_configuration tool
     result = await create_config(
@@ -1446,6 +1448,7 @@ async def test_create_config(
         component_id=component_id,
         parameters=parameters,
         storage=storage,
+        runtime=runtime,
     )
 
     assert isinstance(result, ConfigToolOutput)
@@ -1461,7 +1464,7 @@ async def test_create_config(
         component_id=component_id,
         name=name,
         description=description,
-        configuration={'storage': storage, 'parameters': parameters},
+        configuration={'storage': storage, 'parameters': parameters, 'runtime': runtime},
     )
 
 
@@ -1522,7 +1525,7 @@ async def test_add_config_row(
 
 
 @pytest.mark.parametrize(
-    ('parameter_updates', 'storage', 'expected_config'),
+    ('parameter_updates', 'storage', 'runtime', 'expected_config'),
     [
         pytest.param(
             [
@@ -1530,6 +1533,7 @@ async def test_add_config_row(
                 ConfigParamReplace(op='str_replace', path='database.host', search_for='old', replace_with='new'),
                 ConfigParamRemove(op='remove', path='deprecated_field'),
             ],
+            None,
             None,
             {
                 'parameters': {
@@ -1548,6 +1552,7 @@ async def test_add_config_row(
                 ConfigParamRemove(op='remove', path='existing_param'),
                 ConfigParamSet(op='set', path='updated_param', value='updated_value'),
             ],
+            None,
             None,
             {
                 'parameters': {
@@ -1568,6 +1573,7 @@ async def test_add_config_row(
                 ConfigParamSet(op='set', path='updated_param', value='updated_value'),
             ],
             {'output': {'tables': []}},
+            None,
             {
                 'parameters': {
                     'api_key': 'old_api_key',
@@ -1584,6 +1590,7 @@ async def test_add_config_row(
         pytest.param(
             None,
             {'output': {'tables': []}},
+            None,
             {
                 'parameters': {
                     'api_key': 'old_api_key',
@@ -1596,6 +1603,39 @@ async def test_add_config_row(
             },
             id='storage_only',
         ),
+        pytest.param(
+            None,
+            None,
+            {'parallelism': '4'},
+            {
+                'parameters': {
+                    'api_key': 'old_api_key',
+                    'database': {'host': 'old_host', 'port': 5432},
+                    'deprecated_field': 'old_value',
+                    'existing_param': 'existing_value',
+                },
+                'storage': {'input': {'tables': ['existing_table']}},
+                'other_field': 'should_be_preserved',
+                'runtime': {'parallelism': '4'},
+            },
+            id='runtime_only',
+        ),
+        pytest.param(
+            None,
+            None,
+            None,
+            {
+                'parameters': {
+                    'api_key': 'old_api_key',
+                    'database': {'host': 'old_host', 'port': 5432},
+                    'deprecated_field': 'old_value',
+                    'existing_param': 'existing_value',
+                },
+                'storage': {'input': {'tables': ['existing_table']}},
+                'other_field': 'should_be_preserved',
+            },
+            id='runtime_omitted_is_preserved',
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -1605,6 +1645,7 @@ async def test_update_config(
     mock_component: dict[str, Any],
     parameter_updates: list[ConfigParamUpdate] | None,
     storage: dict[str, Any] | None,
+    runtime: dict[str, Any] | None,
     expected_config: dict[str, Any],
 ):
     """Test update_component_root_configuration tool with parameter_updates."""
@@ -1660,6 +1701,7 @@ async def test_update_config(
         configuration_id=configuration_id,
         parameter_updates=parameter_updates,
         storage=storage,
+        runtime=runtime,
     )
 
     assert isinstance(result, ConfigToolOutput)
