@@ -76,13 +76,13 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Docker Hub login
-        uses: docker/login-action@v4.5.2
+        uses: docker/login-action@v4.6.0
         with:
           username: keboolabot
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: GHCR login
-        uses: docker/login-action@v4.5.2
+        uses: docker/login-action@v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
