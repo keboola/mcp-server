@@ -1117,6 +1117,15 @@ async def create_config(
             ),
         ),
     ] = None,
+    runtime: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description=(
+                'Runtime settings such as "parallelism" (parallel row processing) and backend configuration. '
+                'Only provide if the component supports it.'
+            ),
+        ),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
@@ -1181,6 +1190,9 @@ async def create_config(
             initial_message='The "processors_after" field is not valid.',
         )
         set_nested_value(configuration_payload, 'processors.after', processors_after)
+
+    if runtime:
+        configuration_payload['runtime'] = runtime
 
     new_raw_configuration = cast(
         dict[str, Any],
@@ -1463,6 +1475,16 @@ async def update_config(
             ),
         ),
     ] = None,
+    runtime: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description=(
+                'Runtime settings such as "parallelism" (parallel row processing) and backend configuration. '
+                'Only provide if updating runtime settings - this replaces the ENTIRE runtime configuration. '
+                'Leave unfilled to preserve the existing runtime configuration.'
+            ),
+        ),
+    ] = None,
 ) -> ConfigToolOutput:
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
@@ -1520,6 +1542,7 @@ async def update_config(
         storage=storage,
         processors_before=processors_before,
         processors_after=processors_after,
+        runtime=runtime,
     )
 
     vars_config_id_to_delete: str | None = None
@@ -1591,6 +1614,7 @@ async def update_config_internal(
     storage: dict[str, Any] | None = None,
     processors_before: list[dict[str, Any]] | None = None,
     processors_after: list[dict[str, Any]] | None = None,
+    runtime: dict[str, Any] | None = None,
 ) -> tuple[JsonDict, JsonDict]:
     check_suitable('update_config', component_id)
 
@@ -1627,6 +1651,9 @@ async def update_config_internal(
             initial_message='The "processors_after" field is not valid.',
         )
         set_nested_value(configuration_payload, 'processors.after', processors_after)
+
+    if runtime is not None:
+        configuration_payload['runtime'] = runtime
 
     if parameter_updates:
         current_params = configuration_payload.get('parameters', {})

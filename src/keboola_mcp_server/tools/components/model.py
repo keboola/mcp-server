@@ -293,7 +293,7 @@ class ConfigurationRoot(BaseModel):
             parameters=redact_secrets(api_config.configuration.get('parameters', {})),
             storage=api_config.configuration.get('storage'),
             processors=redact_secrets(api_config.configuration.get('processors')),
-            runtime=api_config.configuration.get('runtime'),
+            runtime=redact_secrets(api_config.configuration.get('runtime')),
             variables_id=api_config.configuration.get('variables_id'),
             variables_values_id=api_config.configuration.get('variables_values_id'),
             variables=api_config.configuration.get('variables'),
