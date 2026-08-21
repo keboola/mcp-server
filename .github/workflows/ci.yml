@@ -191,7 +191,12 @@ jobs:
         env:
           EVAL_RESULT: ${{ needs.kaibench.result }}
           REGRESSIONS: ${{ needs.kaibench.outputs.regressions }}
+          REGRESSED_QIDS: ${{ needs.kaibench.outputs.regressed_qids }}
+          FLAKY_REGRESSIONS: ${{ needs.kaibench.outputs.flaky_regressions }}
+          FLAKY_REGRESSED_QIDS: ${{ needs.kaibench.outputs.flaky_regressed_qids }}
           BASELINE_RUN: ${{ needs.kaibench.outputs.baseline_run }}
+          BASELINE_OVERLAP: ${{ needs.kaibench.outputs.baseline_overlap }}
+          BASELINE_SHARED: ${{ needs.kaibench.outputs.baseline_shared }}
           PASSED: ${{ needs.kaibench.outputs.passed }}
           TOTAL: ${{ needs.kaibench.outputs.total }}
           PASS_RATE: ${{ needs.kaibench.outputs.pass_rate }}
@@ -206,9 +211,20 @@ jobs:
             echo "::warning::No baseline artifact available, so no regression comparison was made — this check passing does NOT mean the PR is regression-free"
             exit 0
           fi
-          echo "Compared against baseline run: $BASELINE_RUN"
+          echo "Compared against baseline run: $BASELINE_RUN (covers ${BASELINE_SHARED:-?} of $TOTAL questions, ${BASELINE_OVERLAP:-?}%)"
+          # A targeted run (dispatched with `questions`) yields a valid artifact that is nonetheless a
+          # near-empty baseline. Real regressions inside a thin overlap are still worth failing on, but a
+          # pass must not read as full coverage.
+          if [ "${BASELINE_OVERLAP:-0}" -lt 50 ]; then
+            echo "::warning::Baseline covers only ${BASELINE_OVERLAP:-0}% of this run's questions (${BASELINE_SHARED:-0}/$TOTAL) — most questions were NOT compared against anything. Treat a pass here as unverified; run the full suite on main to establish a comparable baseline."
+          fi
+          # Surface excluded questions every time, so coverage given up here stays visible
+          # instead of quietly shrinking what this check actually verifies.
+          if [ "${FLAKY_REGRESSIONS:-0}" -gt 0 ]; then
+            echo "::warning::Ignored $FLAKY_REGRESSIONS regression(s) on known-unstable question(s): ${FLAKY_REGRESSED_QIDS} — these are excluded via .github/kaibench-flaky-questions.txt and are NOT verified by this check"
+          fi
           if [ "${REGRESSIONS:-0}" -gt 0 ]; then
-            echo "::error::$REGRESSIONS question(s) regressed vs the previous run — see the step summary for details"
+            echo "::error::$REGRESSIONS question(s) regressed vs the previous run: ${REGRESSED_QIDS} — see the step summary for details"
             exit 1
           fi
           echo "No regressions."
