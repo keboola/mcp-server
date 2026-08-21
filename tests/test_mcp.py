@@ -859,6 +859,54 @@ class TestSessionStateMiddleware:
 
         assert applied.storage_token == expected_storage_token
 
+    @pytest.mark.parametrize(
+        ('server_kwargs', 'headers', 'expected_workspace_id', 'expected_workspace_schema', 'expect_warning'),
+        [
+            # server pinned by id: header asking for a different id/schema is ignored outright.
+            ({'workspace_id': '111'}, {'X-Workspace-Id': '222'}, '111', None, True),
+            ({'workspace_id': '111'}, {'X-Workspace-Schema': 'OTHER'}, '111', None, True),
+            ({'workspace_id': '111'}, {'X-Workspace-Id': '111'}, '111', None, False),
+            ({'workspace_id': '111'}, {}, '111', None, False),
+            # server pinned by schema: same treatment.
+            ({'workspace_schema': 'SERVER_SCHEMA'}, {'X-Workspace-Schema': 'OTHER'}, None, 'SERVER_SCHEMA', True),
+            # no server-side pin (the shared multi-tenant / AJDA-3052 Data App flow): the header
+            # is the only source, so it keeps working.
+            ({}, {'X-Workspace-Id': '222'}, '222', None, False),
+        ],
+        ids=[
+            'id_overridden',
+            'id_overridden_by_schema_header',
+            'id_unchanged',
+            'id_no_header',
+            'schema_overridden',
+            'no_server_pin',
+        ],
+    )
+    def test_apply_request_config_pins_workspace(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        server_kwargs: dict[str, str],
+        headers: dict[str, str],
+        expected_workspace_id: str | None,
+        expected_workspace_schema: str | None,
+        expect_warning: bool,
+    ):
+        """A workspace pin configured on the server must be authoritative over a request header
+        -- mirroring the Storage API URL check above -- but a server with no pin of its own must
+        keep taking it from the request (AI-3669 review, workspace.py:836 thread)."""
+        config = Config(storage_token='server-token', **server_kwargs)
+        http_rq = MagicMock(spec=Request)
+        http_rq.headers = headers
+        http_rq.scope = {}
+
+        with caplog.at_level('WARNING'):
+            applied = SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
+
+        assert applied.workspace_id == expected_workspace_id
+        assert applied.workspace_schema == expected_workspace_schema
+        warned = any('is pinned' in r.message for r in caplog.records)
+        assert warned is expect_warning
+
 
 class TestProgrammaticTokenExchange:
     """SessionStateMiddleware exchanges programmatic tokens via the auth-bridge resolver (PSGO-261)."""

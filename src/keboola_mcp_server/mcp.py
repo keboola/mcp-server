@@ -300,6 +300,7 @@ class SessionStateMiddleware(fmw.Middleware):
         # of Authorization (see below), so the set of sensitive header names logging could sweep up
         # here is no longer just Storage tokens.
         LOG.debug(f'Injecting headers: http_rq={http_rq}, header_names={list(http_rq.headers.keys())}')
+        server_config = config
         config = config.replace_by(http_rq.headers)
 
         # A programmatic bearer token (kbc_at_/kbc_pat_) is sent as `Authorization: Bearer <token>`,
@@ -310,6 +311,26 @@ class SessionStateMiddleware(fmw.Middleware):
         # bearer scheme downstream as if it were a Storage token.
         if not config.storage_token and is_programmatic_token(auth_header := http_rq.headers.get('Authorization')):
             config = dataclasses.replace(config, storage_token=strip_bearer(auth_header))
+
+        # A workspace pin (`workspace_id`/`workspace_schema`) configured on the server fences
+        # off which project data a request can reach -- mirror the `own_stack_storage_api_url`
+        # reasoning above: a deployment that pinned itself must not be overridable by a header.
+        # A server with no pin of its own (the shared multi-tenant case, e.g. AJDA-3052's Data
+        # App flow) keeps taking the pin from the request, which is the only source it has.
+        if (server_config.workspace_id or server_config.workspace_schema) and (
+            config.workspace_id != server_config.workspace_id
+            or config.workspace_schema != server_config.workspace_schema
+        ):
+            LOG.warning(
+                f'Ignoring the requested workspace pin (workspace_id={config.workspace_id!r}, '
+                f'workspace_schema={config.workspace_schema!r}); this server is pinned to '
+                f'workspace_id={server_config.workspace_id!r}, workspace_schema={server_config.workspace_schema!r}.'
+            )
+            config = dataclasses.replace(
+                config,
+                workspace_id=server_config.workspace_id,
+                workspace_schema=server_config.workspace_schema,
+            )
 
         if own_stack_storage_api_url and not is_same_stack(config.storage_api_url, own_stack_storage_api_url):
             LOG.warning(
@@ -435,7 +456,10 @@ class SessionStateMiddleware(fmw.Middleware):
             # therefore attaches the JWT only when the target is this server's own stack.
             kubernetes_token_path = os.environ.get('KBC_KUBERNETES_TOKEN_PATH')
             workspace_manager = await WorkspaceManager.create(
-                client, config.workspace_schema, kubernetes_token_path=kubernetes_token_path
+                client,
+                config.workspace_schema,
+                kubernetes_token_path=kubernetes_token_path,
+                workspace_id=config.workspace_id,
             )
             state[WorkspaceManager.STATE_KEY] = workspace_manager
             LOG.info('Successfully initialized Storage API Workspace manager.')

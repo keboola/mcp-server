@@ -27,6 +27,26 @@ class TestConfig:
                 Config(storage_token='foo', workspace_schema='bar'),
             ),
             (
+                # workspace_id requires the KBC_/X- prefix -- a bare `workspace_id`/`WORKSPACE_ID`
+                # key must NOT be picked up (it collides with the variable Keboola injects into
+                # Data App containers).
+                {'storage_token': 'foo', 'workspace_id': '123'},
+                Config(storage_token='foo'),
+            ),
+            (
+                {'storage_token': 'foo', 'KBC_WORKSPACE_ID': '123'},
+                Config(storage_token='foo', workspace_id='123'),
+            ),
+            (
+                {'X-Workspace-Id': '123'},
+                Config(workspace_id='123'),
+            ),
+            (
+                # An empty value means "not provided" for workspace_id.
+                {'X-Workspace-Id': ''},
+                Config(),
+            ),
+            (
                 {'foo': 'bar', 'storage_api_url': 'http://nowhere'},
                 Config(storage_api_url='http://nowhere'),
             ),
@@ -67,6 +87,45 @@ class TestConfig:
             (Config(branch_id='foo'), {'branch-id': 'Null'}, Config()),
             (Config(branch_id='foo'), {'branch-id': 'Default'}, Config()),
             (Config(branch_id='foo'), {'branch-id': 'pRoDuCtIoN'}, Config()),
+            (
+                Config(),
+                {'storage_token': 'foo', 'workspace_id': '123'},
+                Config(storage_token='foo'),
+            ),
+            (
+                Config(),
+                {'storage_token': 'foo', 'KBC_WORKSPACE_ID': '123'},
+                Config(storage_token='foo', workspace_id='123'),
+            ),
+            (
+                # An empty header must not un-pin a server-configured workspace_id.
+                Config(workspace_id='999'),
+                {'X-Workspace-Id': ''},
+                Config(workspace_id='999'),
+            ),
+            (
+                # Unlike workspace_id, an empty workspace_schema header must still clear a
+                # server default (to the falsy '', same as pre-existing main behavior) -- this is
+                # the multi-user opt-out the README describes for X-Workspace-Schema, and must
+                # not regress into keeping the server's pin.
+                Config(workspace_schema='SERVER'),
+                {'X-Workspace-Schema': ''},
+                Config(workspace_schema=''),
+            ),
+            (
+                # A malformed workspace_id header must degrade to "not provided" rather than
+                # raising -- it is untrusted per-request input, so a junk value from a client
+                # should drop the pin, not turn into an unhandled server error.
+                Config(),
+                {'X-Workspace-Id': 'abc'},
+                Config(),
+            ),
+            (
+                # A malformed header must not clear an existing server-configured pin either.
+                Config(workspace_id='999'),
+                {'X-Workspace-Id': 'abc'},
+                Config(workspace_id='999'),
+            ),
         ],
     )
     def test_replace_by(self, orig: Config, d: Mapping[str, str], expected: Config) -> None:
@@ -81,10 +140,15 @@ class TestConfig:
         config = Config(storage_token='foo')
         assert str(config) == (
             "Config(storage_api_url=None, storage_token='****', branch_id=None, workspace_schema=None, "
+            'workspace_id=None, '
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
             'jwt_secret=None, bearer_token=None, conversation_id=None, project_id=None)'
         )
+
+    def test_workspace_id_must_be_numeric(self) -> None:
+        with pytest.raises(ValueError, match='Invalid workspace_id'):
+            Config(workspace_id='not-a-valid-id')
 
     @pytest.mark.parametrize(
         ('url', 'expected'),

@@ -942,9 +942,9 @@ class TestPreviewConfigDiff:
 
         # Mock WorkspaceManager
         mock_workspace_manager = mocker.AsyncMock()
-        mock_workspace_manager.get_workspace_id = mocker.AsyncMock(return_value=123)
-        mock_workspace_manager.get_branch_id = mocker.AsyncMock(return_value=456)
-        mock_workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='snowflake')
+        mock_workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value=123)
+        mock_workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value=456)
+        mock_workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='snowflake')
 
         mocker.patch(
             'keboola_mcp_server.preview.WorkspaceManager.from_state',

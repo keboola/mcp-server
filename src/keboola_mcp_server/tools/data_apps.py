@@ -552,9 +552,9 @@ async def modify_streamlit_data_app(
     links_manager = await ProjectLinksManager.from_client(client)
 
     project_id = await client.storage_client.project_id()
-    workspace_id = await workspace_manager.get_workspace_id()
-    sql_dialect = await workspace_manager.get_sql_dialect()
-    branch_id = await workspace_manager.get_branch_id()
+    workspace_id = await workspace_manager.get_data_app_workspace_id()
+    sql_dialect = await workspace_manager.get_data_app_sql_dialect()
+    branch_id = await workspace_manager.get_data_app_branch_id()
 
     secrets = _get_secrets(
         workspace_id=str(workspace_id),
@@ -708,8 +708,8 @@ async def modify_streamlit_data_app_internal(
     folder: str | None = None,
 ) -> tuple[DataApp, JsonDict, dict | None]:
     secrets = _get_secrets(
-        workspace_id=str(await workspace_manager.get_workspace_id()),
-        branch_id=str(await workspace_manager.get_branch_id()),
+        workspace_id=str(await workspace_manager.get_data_app_workspace_id()),
+        branch_id=str(await workspace_manager.get_data_app_branch_id()),
     )
     data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
     existing_config = data_app.configuration
@@ -720,7 +720,7 @@ async def modify_streamlit_data_app_internal(
         packages,
         authentication_type,
         secrets,
-        await workspace_manager.get_sql_dialect(),
+        await workspace_manager.get_data_app_sql_dialect(),
     )
     updated_config = cast(
         JsonDict,
@@ -1096,7 +1096,7 @@ async def modify_python_js_data_app(
     legacy_secrets: dict[str, Any] | None = None
     if not has_storage_workspace:
         workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-        legacy_secrets = {SECRET_WORKSPACE_ID: str(await workspace_manager.get_workspace_id())}
+        legacy_secrets = {SECRET_WORKSPACE_ID: str(await workspace_manager.get_data_app_workspace_id())}
 
     if configuration_id:
         # Update existing python-js data app
