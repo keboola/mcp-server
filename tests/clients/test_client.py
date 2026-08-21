@@ -416,21 +416,16 @@ class TestKeboolaClient:
         assert client.metastore_client.raw_client.base_api_url == 'https://metastore.canary-orion.keboola.dev'
         assert client.metastore_client.raw_client.headers['X-StorageAPI-Token'] == 'sapi_token_456'
 
-    # All clients below use the bearer token (Authorization header) when one is available and fall
-    # back to the raw storage token (X-StorageAPI-Token) otherwise. The jobs-queue/ai-service/
-    # sync-actions clients were switched onto the bearer token so PAT (kbc_at_/kbc_pat_) sessions
-    # work end-to-end — the queue accepts `Authorization: Bearer kbc_at_...` + X-KBC-ProjectId but
-    # rejects the PAT sent as X-StorageAPI-Token (PSGO-261). Data-science needs it for admin-context
-    # git-credential endpoints (AI-3398).
+    # The clients below use the bearer token (Authorization header) when one is available and fall
+    # back to the raw storage token (X-StorageAPI-Token) otherwise. Data-science needs it for
+    # admin-context git-credential endpoints (AI-3398). Jobs-queue/AI-service/sync-actions are
+    # deliberately NOT in this list — see test_queue_backed_clients_never_use_bearer_token.
     @pytest.mark.parametrize(
         'client_attr',
         [
             'scheduler_client',
             'metastore_client',
             'data_science_client',
-            'jobs_queue_client',
-            'ai_service_client',
-            'sync_actions_client',
         ],
     )
     @pytest.mark.parametrize(
@@ -460,6 +455,29 @@ class TestKeboolaClient:
         else:
             assert headers.get('X-StorageAPI-Token') == expected_token
             assert 'Authorization' not in headers
+
+    @pytest.mark.parametrize(
+        'client_attr',
+        ['jobs_queue_client', 'ai_service_client', 'sync_actions_client'],
+    )
+    def test_queue_backed_clients_never_use_bearer_token(self, client_attr: str) -> None:
+        """Regression for INC-02580 / SUPPORT-17416.
+
+        The Job Queue re-sends the credential it receives to Storage as a legacy Storage token
+        (NewJobFactory, hardcoded AuthType::STORAGE_TOKEN), so an OAuth bearer forwarded here comes
+        back as `Invalid access token` and every run_job of an OAuth session fails. These three
+        clients must therefore always send the Storage token, even when a bearer token is present.
+        """
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token='sapi_token_456',
+            bearer_token='oauth_bearer_123',
+        )
+
+        headers = getattr(client, client_attr).raw_client.headers
+
+        assert headers.get('X-StorageAPI-Token') == 'sapi_token_456'
+        assert 'Authorization' not in headers
 
 
 def test_flow_schema_cache_roundtrip():
