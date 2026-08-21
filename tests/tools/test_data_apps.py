@@ -2233,6 +2233,13 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
     assert result.git_clone_url is not None
     assert result.git_clone_url.startswith('https://kai:token-xyz@managed.repo/')
 
+    # An agent-supplied branch cannot be uniquified by the server, so the response spells out the
+    # safe checkout instead — a bare `git checkout iter-feat` would resolve to an existing
+    # `origin/iter-feat` and serve its stale tip (AJDA-3161).
+    assert result.change_summary is not None
+    assert 'git checkout -B iter-feat origin/main' in result.change_summary
+    assert 'git rev-list --count iter-feat..origin/main' in result.change_summary
+
     # Credential was minted on the parent, not the new dev twin.
     keboola_client.data_science_client.create_app_git_credential.assert_awaited_once_with(parent_data_app_id)
 
@@ -2263,13 +2270,19 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
 
 
 @pytest.mark.asyncio
-async def test_modify_python_js_data_app_create_draft_defaults_branch_to_init(
+async def test_modify_python_js_data_app_create_draft_defaults_branch_to_unique_name(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
 ) -> None:
-    """Omitting `branch` pins the draft to the literal `init` branch (sensible default for the very
-    first draft of a brand-new prod app — descriptive branches are agent-supplied on edits)."""
+    """Omitting `branch` pins the draft to a freshly generated, unique `draft-<hex>` branch.
+
+    Regression test for AJDA-3161 / SUPPORT-17342: the default used to be the fixed literal
+    `init`, so every default-branch draft of the same prod app reused one branch name. A later
+    draft's `git checkout init` then resolved to the stale `origin/init` left behind by an earlier
+    one instead of branching off `main`, and the draft silently previewed outdated code. Two
+    consecutive default creates must therefore yield two different branch names.
+    """
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -2291,20 +2304,34 @@ async def test_modify_python_js_data_app_create_draft_defaults_branch_to_init(
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
 
-    result = await modify_python_js_data_app(
-        ctx=mcp_context_client,
-        name='Draft',
-        description='draft iteration',
-        slug='demo-draft',
-        parent_configuration_id='cfg-prod-1',
-    )
+    branches: list[str] = []
+    for _ in range(2):
+        result = await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='Draft',
+            description='draft iteration',
+            slug='demo-draft',
+            parent_configuration_id='cfg-prod-1',
+        )
 
-    assert result.branch == 'init'
-    # And the stored config carries the same branch as the pin and the parent linkage.
-    create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
-    serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
-    assert serialized['parameters']['dataApp']['git']['branch'] == 'init'
-    assert serialized['parameters']['dataApp']['parentConfigurationId'] == 'cfg-prod-1'
+        assert result.branch is not None
+        assert re.fullmatch(r'draft-[0-9a-f]{6}', result.branch), result.branch
+        branches.append(result.branch)
+
+        # The stored config carries the same branch as the pin, plus the parent linkage.
+        create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
+        serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
+        assert serialized['parameters']['dataApp']['git']['branch'] == result.branch
+        assert serialized['parameters']['dataApp']['parentConfigurationId'] == 'cfg-prod-1'
+
+        # The agent is told to branch off `origin/main` explicitly — a bare `git checkout` is what
+        # silently resolves to a stale remote tip.
+        assert result.change_summary is not None
+        assert f'git checkout -B {result.branch} origin/main' in result.change_summary
+        assert f'git rev-list --count {result.branch}..origin/main' in result.change_summary
+
+    # The heart of the regression: consecutive default creates must not share a branch name.
+    assert branches[0] != branches[1]
 
 
 @pytest.mark.asyncio
