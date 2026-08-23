@@ -317,23 +317,24 @@ class SessionStateMiddleware(fmw.Middleware):
         # reasoning above: a deployment that pinned itself must not be overridable by a header.
         # A server with no pin of its own (the shared multi-tenant case, e.g. AJDA-3052's Data
         # App flow) keeps taking the pin from the request, which is the only source it has.
-        # Each field is gated independently -- a server pinned only by `workspace_schema` (the
-        # README's documented `KBC_WORKSPACE_SCHEMA` setup) must not veto a request's
-        # `X-Workspace-Id`, and vice versa; the two are alternative keys for the same pin, not a
-        # pair that should be vetoed together.
-        if server_config.workspace_id and config.workspace_id != server_config.workspace_id:
+        # Checked/restored together (not per-field): the same silent-override risk that justifies
+        # this for an id-based server pin applies just as much to a schema-based one, and a
+        # schema-pinned server is a single-project deployment that isn't a target for per-request
+        # `X-Workspace-Id` headers in the first place -- see the mcp.py:320 review thread.
+        if (server_config.workspace_id or server_config.workspace_schema) and (
+            config.workspace_id != server_config.workspace_id
+            or config.workspace_schema != server_config.workspace_schema
+        ):
             LOG.warning(
-                f'Ignoring the requested workspace_id={config.workspace_id!r}; this server is '
-                f'pinned to workspace_id={server_config.workspace_id!r}.'
+                f'Ignoring the requested workspace pin (workspace_id={config.workspace_id!r}, '
+                f'workspace_schema={config.workspace_schema!r}); this server is pinned to '
+                f'workspace_id={server_config.workspace_id!r}, workspace_schema={server_config.workspace_schema!r}.'
             )
-            config = dataclasses.replace(config, workspace_id=server_config.workspace_id)
-
-        if server_config.workspace_schema and config.workspace_schema != server_config.workspace_schema:
-            LOG.warning(
-                f'Ignoring the requested workspace_schema={config.workspace_schema!r}; this server is '
-                f'pinned to workspace_schema={server_config.workspace_schema!r}.'
+            config = dataclasses.replace(
+                config,
+                workspace_id=server_config.workspace_id,
+                workspace_schema=server_config.workspace_schema,
             )
-            config = dataclasses.replace(config, workspace_schema=server_config.workspace_schema)
 
         if own_stack_storage_api_url and not is_same_stack(config.storage_api_url, own_stack_storage_api_url):
             LOG.warning(
