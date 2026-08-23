@@ -151,13 +151,18 @@ class Config:
         A malformed `workspace_id` (the only field `__post_init__` validates) degrades to "not
         provided" rather than raising: `d` is untrusted per-request input (an HTTP header), so a
         junk value from a client should drop the pin, not turn into an unhandled server error.
+        Any other `ValueError` (e.g. a malformed URL) is not ours to fix by dropping `workspace_id`
+        -- re-raise it unchanged so the request still fails, instead of logging a misleading
+        "ignoring" message for a value that was in fact never touched.
         """
         options = self._read_options(d)
         try:
             return dataclasses.replace(self, **options)
         except ValueError as e:
+            if 'workspace_id' not in options:
+                raise
             LOG.warning(f'Ignoring invalid request header value(s): {e}')
-            options.pop('workspace_id', None)
+            options.pop('workspace_id')
             return dataclasses.replace(self, **options)
 
     def __repr__(self) -> str:

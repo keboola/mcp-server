@@ -692,6 +692,7 @@ class WorkspaceManager:
         except HTTPStatusError as e:
             not_found_codes = (404,) if strict else (400, 403, 404)
             if e.response.status_code in not_found_codes:
+                LOG.debug(f'Workspace {workspace_id} not resolved on this client: status={e.response.status_code}.')
                 return None
             raise
 
@@ -835,7 +836,12 @@ class WorkspaceManager:
 
                 workspace_id = job_results['id']
                 LOG.info(f'Created workspace: {workspace_id}')
-                return await self._find_ws_by_id(workspace_id, strict=True)
+                # Provisioned through `self._client`, so it is by construction in this manager's
+                # own branch -- fetch it directly rather than through `_find_ws_by_id`, whose
+                # production-branch fallback exists for caller-supplied ids, not ones we just
+                # created ourselves.
+                info = await self._fetch_ws(self._client, workspace_id, strict=True)
+                return (info, self._client) if info else None
 
             elif duration > timeout_sec:
                 LOG.info(f'Workspace creation timed out after {duration:.2f} seconds.')
@@ -894,6 +900,17 @@ class WorkspaceManager:
                     f'No Keboola workspace found: workspace_id={self._workspace_id}, branch_id={self._client.branch_id}'
                 )
             info, resolved_client = result
+            if resolved_client is not self._client:
+                # The pin only resolved via the production-branch fallback (see `_find_ws_by_id`);
+                # `self._client` -- and everything else this manager looks up (get_tables,
+                # get_bucket_detail, get_table_detail) -- stays on this session's own branch, so
+                # queries against this workspace and metadata reads about it now describe two
+                # different branches. Not fixable here without rebinding the whole manager onto
+                # the wrong branch; at minimum make it diagnosable from logs.
+                LOG.warning(
+                    f'Pinned workspace {self._workspace_id} resolved via the production-branch '
+                    f'fallback; other lookups for this session still use branch_id={self._client.branch_id!r}.'
+                )
             if not info.readonly:
                 # Every other resolution path enforces read-only storage access; this is a
                 # caller-supplied id, so it *could* widen `query_data` from read-only to

@@ -172,6 +172,39 @@ async def test_workspace_creation_cleans_up_config_on_failure():
 
 
 @pytest.mark.asyncio
+async def test_create_ws_does_not_use_prod_branch_fallback() -> None:
+    """`_create_ws` provisions through `self._client`, so the workspace is by construction in
+    this manager's own branch -- it must fetch the just-created id directly rather than through
+    `_find_ws_by_id`, whose production-branch fallback exists for caller-supplied ids, not ones
+    this manager just created itself (AI-3669 review, workspace.py:838 thread). A transient 404
+    on the fresh id here must surface as "creation failed", not silently resolve to a different
+    workspace with the same id on the production branch."""
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.branch_id = '456'
+    mock_storage_client = AsyncMock()
+    mock_client.storage_client = mock_storage_client
+    mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': 'snowflake'}}
+    mock_storage_client.configuration_create.return_value = {'id': 'test-config-123', 'name': 'test'}
+    mock_storage_client.workspace_create_for_config.return_value = {'id': 42}
+    mock_storage_client.job_detail.return_value = {'status': 'success', 'results': {'id': 42}}
+
+    mock_response = Mock(spec=Response)
+    mock_response.status_code = 404
+    mock_request = Mock(spec=Request)
+    mock_storage_client.workspace_detail = AsyncMock(
+        side_effect=HTTPStatusError('not found', request=mock_request, response=mock_response)
+    )
+    mock_client.with_branch_id = AsyncMock()
+
+    manager = WorkspaceManager(mock_client)
+
+    result = await manager._create_ws()
+
+    assert result is None
+    mock_client.with_branch_id.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('input_branch_id', 'has_sb_feature', 'workspace_schema', 'workspace_id', 'expected_bound_branch_id'),
     [
@@ -445,11 +478,51 @@ async def test_pin_resolution_via_prod_fallback_does_not_leak_into_managed_looku
 
 
 @pytest.mark.asyncio
+async def test_get_workspace_warns_when_pin_resolves_via_prod_fallback(caplog: pytest.LogCaptureFixture) -> None:
+    """When a `workspace_id` pin only resolves via the production-branch fallback, `self._client`
+    stays on the dev branch for every other lookup (get_tables, get_bucket_detail, ...) while
+    queries run against the prod-branch workspace -- nothing else makes that branch mismatch
+    diagnosable, so it must at least be logged (AI-3669 review, workspace.py:908 thread)."""
+    dev_client = Mock(spec=KeboolaClient)
+    dev_client.branch_id = '456'
+    dev_client.storage_client = AsyncMock()
+    mock_response = Mock(spec=Response)
+    mock_response.status_code = 404
+    mock_request = Mock(spec=Request)
+    dev_client.storage_client.workspace_detail = AsyncMock(
+        side_effect=HTTPStatusError('not found', request=mock_request, response=mock_response)
+    )
+
+    prod_client = Mock(spec=KeboolaClient)
+    prod_client.branch_id = None
+    prod_client.storage_client = AsyncMock()
+    prod_client.storage_client.workspace_detail = AsyncMock(
+        return_value={
+            'id': 123,
+            'connection': {'backend': 'snowflake', 'schema': 'APP_SCHEMA', 'user': None},
+            'readOnlyStorageAccess': True,
+        }
+    )
+    dev_client.with_branch_id = AsyncMock(return_value=prod_client)
+
+    manager = WorkspaceManager(dev_client, workspace_id='123')
+
+    with caplog.at_level('WARNING'):
+        workspace = await manager._get_workspace()
+
+    assert workspace.id == 123
+    assert any('production-branch fallback' in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('status_code', [400, 403, 404])
-async def test_find_ws_by_id_treats_400_403_404_alike(status_code: int) -> None:
+async def test_find_ws_by_id_treats_400_403_404_alike(status_code: int, caplog: pytest.LogCaptureFixture) -> None:
     """The header value is unvalidated: a non-numeric id (400), an id the token can't read
     (403), and a nonexistent id (404) must all mean the same thing -- "not usable" -- rather
-    than 400/403 bypassing the intended `ValueError` and surfacing a raw `HTTPStatusError`."""
+    than 400/403 bypassing the intended `ValueError` and surfacing a raw `HTTPStatusError`. The
+    status code is still logged, so a permissions problem (403) is distinguishable from a typo
+    (404) in server logs even though both resolve to the same "not found" `ValueError` (AI-3669
+    review, workspace.py:696 thread)."""
     mock_client = Mock(spec=KeboolaClient)
     mock_client.branch_id = None
     mock_client.storage_client = AsyncMock()
@@ -462,7 +535,9 @@ async def test_find_ws_by_id_treats_400_403_404_alike(status_code: int) -> None:
 
     manager = WorkspaceManager(mock_client, workspace_id='not-a-valid-id')
 
-    assert await manager._find_ws_by_id('not-a-valid-id') is None
+    with caplog.at_level('DEBUG'):
+        assert await manager._find_ws_by_id('not-a-valid-id') is None
+    assert any(str(status_code) in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -665,7 +740,7 @@ async def test_workspace_creation_uses_step_up_client(tmp_path):
 
     manager = WorkspaceManager(mock_client, kubernetes_token_path=str(token_file))
     # Stop the flow right after the provisioning calls we want to assert on.
-    manager._find_ws_by_id = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    manager._fetch_ws = AsyncMock(return_value=None)  # type: ignore[method-assign]
     mock_storage_client.job_detail.return_value = {'status': 'success', 'results': {'id': 42}}
 
     await manager._create_ws()

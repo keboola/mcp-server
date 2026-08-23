@@ -125,15 +125,17 @@ async def run_server(args: list[str] | None = None) -> None:
             stream=sys.stderr,
         )
 
-    # Create config from the CLI arguments
-    config = Config(
-        storage_api_url=parsed_args.api_url,
-        storage_token=parsed_args.storage_token,
-        workspace_schema=parsed_args.workspace_schema,
-        workspace_id=parsed_args.workspace_id,
-    )
-
     try:
+        # Create config from the CLI arguments -- inside the `try` so a malformed flag (e.g.
+        # a non-numeric `--workspace-id`) is reported via the same log-and-exit path as any
+        # other startup failure, instead of an unhandled traceback.
+        config = Config(
+            storage_api_url=parsed_args.api_url,
+            storage_token=parsed_args.storage_token,
+            workspace_schema=parsed_args.workspace_schema,
+            workspace_id=parsed_args.workspace_id,
+        )
+
         # Create and run the server
         if parsed_args.transport == 'stdio':
             runtime_config = ServerRuntimeInfo(transport=parsed_args.transport)

@@ -862,23 +862,31 @@ class TestSessionStateMiddleware:
     @pytest.mark.parametrize(
         ('server_kwargs', 'headers', 'expected_workspace_id', 'expected_workspace_schema', 'expect_warning'),
         [
-            # server pinned by id: header asking for a different id/schema is ignored outright.
+            # server pinned by id: a header asking for a different id is ignored outright, but a
+            # `workspace_schema` header is a different field -- the server has no schema pin, so
+            # it passes through untouched (Miro review, mcp.py:320 thread: a schema-only server
+            # pin must not veto a request's X-Workspace-Id, and symmetrically here).
             ({'workspace_id': '111'}, {'X-Workspace-Id': '222'}, '111', None, True),
-            ({'workspace_id': '111'}, {'X-Workspace-Schema': 'OTHER'}, '111', None, True),
+            ({'workspace_id': '111'}, {'X-Workspace-Schema': 'OTHER'}, '111', 'OTHER', False),
             ({'workspace_id': '111'}, {'X-Workspace-Id': '111'}, '111', None, False),
             ({'workspace_id': '111'}, {}, '111', None, False),
-            # server pinned by schema: same treatment.
+            # server pinned by schema: same treatment, and symmetrically an id header passes
+            # through since the server has no id pin (the actual regression Miro flagged: a
+            # deployment that only sets KBC_WORKSPACE_SCHEMA -- the README's documented setup --
+            # must not silently discard a request's X-Workspace-Id).
             ({'workspace_schema': 'SERVER_SCHEMA'}, {'X-Workspace-Schema': 'OTHER'}, None, 'SERVER_SCHEMA', True),
+            ({'workspace_schema': 'SERVER_SCHEMA'}, {'X-Workspace-Id': '222'}, '222', 'SERVER_SCHEMA', False),
             # no server-side pin (the shared multi-tenant / AJDA-3052 Data App flow): the header
             # is the only source, so it keeps working.
             ({}, {'X-Workspace-Id': '222'}, '222', None, False),
         ],
         ids=[
             'id_overridden',
-            'id_overridden_by_schema_header',
+            'schema_header_passes_when_only_id_pinned',
             'id_unchanged',
             'id_no_header',
             'schema_overridden',
+            'id_header_passes_when_only_schema_pinned',
             'no_server_pin',
         ],
     )
@@ -893,7 +901,8 @@ class TestSessionStateMiddleware:
     ):
         """A workspace pin configured on the server must be authoritative over a request header
         -- mirroring the Storage API URL check above -- but a server with no pin of its own must
-        keep taking it from the request (AI-3669 review, workspace.py:836 thread)."""
+        keep taking it from the request (AI-3669 review, workspace.py:836 thread). Each field is
+        gated independently: a pin on one field must not veto a header for the other."""
         config = Config(storage_token='server-token', **server_kwargs)
         http_rq = MagicMock(spec=Request)
         http_rq.headers = headers

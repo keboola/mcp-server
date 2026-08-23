@@ -131,6 +131,14 @@ class TestConfig:
     def test_replace_by(self, orig: Config, d: Mapping[str, str], expected: Config) -> None:
         assert orig.replace_by(d) == expected
 
+    def test_replace_by_reraises_non_workspace_id_error(self) -> None:
+        """A malformed value for a field other than `workspace_id` (e.g. a header that fails the
+        URL check) must not be masked by the `workspace_id` degrade-to-absent path -- there is no
+        junk `workspace_id` here to drop, so the request should still fail loudly rather than log
+        a misleading "ignoring" message and re-raise the same, still-unhandled error anyway."""
+        with pytest.raises(ValueError, match='Invalid URL'):
+            Config().replace_by({'X-Storage-Api-Url': '???'})
+
     def test_defaults(self) -> None:
         config = Config()
         for f in dataclasses.fields(Config):
