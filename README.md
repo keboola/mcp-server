@@ -39,7 +39,7 @@ Our remote server is hosted on every multi-tenant Keboola stack and supports OAu
 1. **Get your remote server URL**: Navigate to your Keboola Project Settings → `MCP Server` tab
 2. **Copy the server URL**: It will look like `https://mcp.<YOUR_REGION>.keboola.com/mcp`
 3. **Configure your AI assistant**: Paste the URL into your AI assistant's MCP settings
-4. **Authenticate**: You'll be prompted to authenticate with your Keboola account and select your project
+4. **Authenticate**: You'll be prompted to log in with your Keboola account. Which project(s) to work on is chosen afterwards, in the conversation (e.g. "list my Keboola projects" / "use project X")
 
 ### Supported Clients
 
@@ -82,10 +82,9 @@ Once installed, you can use the Keboola MCP Server in Claude Code by typing `/mc
 
 When you first use the Keboola MCP Server in Claude Code, a browser window will open prompting you to:
 1. Log in with your Keboola account
-2. Select the project you want to connect to
-3. Authorize the connection
+2. Authorize the connection
 
-After authentication, you can start using Keboola tools directly from Claude Code.
+After authentication, you can start using Keboola tools directly from Claude Code. Project selection happens afterward, in the conversation — just ask Claude which Keboola project(s) to use.
 
 For detailed setup instructions and region-specific URLs, see our [Remote Server Setup documentation](https://help.keboola.com/ai/mcp-server/#remote-server-setup).
 
