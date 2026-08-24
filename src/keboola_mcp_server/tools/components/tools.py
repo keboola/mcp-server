@@ -473,9 +473,11 @@ async def create_sql_transformation(
         - returns the created SQL transformation configuration if successful.
     """
 
-    # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery)
+    # Get the SQL dialect to use the correct transformation ID (Snowflake or BigQuery). This is
+    # project-level identity (which component the transformation runs under), not the session's
+    # query target -- must not follow a `workspace_id` pin, same as `get_data_app_workspace_id()`.
     # This can raise an exception if workspace is not set or different backend than BigQuery or Snowflake is used
-    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()
+    sql_dialect = await WorkspaceManager.from_state(ctx.session.state).get_data_app_sql_dialect()
     component_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     LOG.info(f'Creating transformation. SQL dialect: {sql_dialect}, using transformation ID: {component_id}')
 
@@ -854,7 +856,9 @@ async def update_sql_transformation(
     """
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    sql_dialect = await workspace_manager.get_sql_dialect()
+    # Project-level identity (which component the transformation runs under) -- must not follow a
+    # `workspace_id` pin, same as `get_data_app_workspace_id()`.
+    sql_dialect = await workspace_manager.get_data_app_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
 
     links_manager = await ProjectLinksManager.from_client(client)
@@ -985,7 +989,9 @@ async def update_sql_transformation_internal(
     storage: dict[str, Any] | None = None,
     folder: str | None = None,
 ) -> tuple[JsonDict, JsonDict, str, dict | None]:
-    sql_dialect = await workspace_manager.get_sql_dialect()
+    # Project-level identity (which component the transformation runs under) -- must not follow a
+    # `workspace_id` pin, same as `get_data_app_workspace_id()`.
+    sql_dialect = await workspace_manager.get_data_app_sql_dialect()
     sql_transformation_id = get_sql_transformation_id_from_sql_dialect(sql_dialect)
     try:
         config_details = await client.storage_client.configuration_detail(

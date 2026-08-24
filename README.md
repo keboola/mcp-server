@@ -135,9 +135,10 @@ For client–server communication, Keboola credentials must be provided to enabl
 - For personal use (mainly with stdio transport): set the environment variables before starting the server. All requests will reuse these predefined credentials.
 - For multi-user use: include the variables in the request headers so that each request uses the credentials provided with it.
 
-Two of the variables are not taken from the request headers:
+Some of the variables are not taken from the request headers:
 - `KBC_STORAGE_API_URL`: a server that was started with its own Storage API URL (the `--api-url` parameter or the `KBC_STORAGE_API_URL` environment variable) only serves that one Keboola stack. An `X-Storage-Api-Url` header asking for a different host is ignored (a warning is logged) — the server keeps its own URL for the request. Start the server without a Storage API URL of its own if you want each request to choose its stack.
 - `KBC_KUBERNETES_TOKEN_PATH` (deployed servers only, see [docs/kubernetes-sa-auth.md](docs/kubernetes-sa-auth.md)): read from the environment only, never from a header.
+- `KBC_WORKSPACE_ID` / `KBC_WORKSPACE_SCHEMA`: same idea as the Storage API URL above — a server started with its own workspace pin (via either variable, or `--workspace-id`) keeps that pin for every request; an `X-Workspace-Id` or `X-Workspace-Schema` header asking for a different workspace is ignored (a warning is logged). A server with no pin of its own (the shared multi-user case) keeps taking the pin from the request, per-request, as described below.
 
 
 ### KBC_STORAGE_TOKEN
@@ -158,6 +159,12 @@ This identifies your workspace in Keboola and is used for SQL queries. However, 
 **Note**: When creating a workspace manually, check Grant read-only access to all Project data option
 
 **Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in BigQuery workspaces, you simply click connect and copy the Dataset Name
+
+### KBC_WORKSPACE_ID
+
+Pins queries to one specific, already-existing workspace by its ID instead of the schema-based lookup above, and takes precedence over `KBC_WORKSPACE_SCHEMA` when both are set. This is the option a Data App / kai-agent caller supplies, as the `X-Workspace-Id` header, so that Kai embedded in that app queries only through its own workspace.
+
+Set via the `KBC_WORKSPACE_ID` environment variable, the `--workspace-id` CLI flag, or (per-request, for multi-user deployments) the `X-Workspace-Id` header.
 
 ### KBC_STORAGE_API_URL (Keboola Region)
 
@@ -438,7 +445,7 @@ For a complete list of available tools with detailed descriptions, parameters, a
 | Issue | Solution |
 |-------|----------|
 | **Authentication Errors** | Verify `KBC_STORAGE_TOKEN` is valid |
-| **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` is correct |
+| **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` / `KBC_WORKSPACE_ID` is correct |
 | **Connection Timeout** | Check network connectivity |
 
 ## Development
