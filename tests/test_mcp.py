@@ -708,6 +708,21 @@ class TestToolsFilteringMiddleware:
 
 
 class TestSessionStateMiddleware:
+    def test_apply_request_config_never_logs_header_values(self, mocker) -> None:
+        # Authorization (a live programmatic bearer token) and X-Storage-Api-Token must never
+        # appear in the debug log this method emits -- only header names, never values.
+        log_debug = mocker.patch('keboola_mcp_server.mcp.LOG.debug')
+        config = Config(storage_api_url='https://connection.keboola.com')
+        http_rq = MagicMock(spec=Request)
+        http_rq.headers = {'Authorization': 'Bearer kbc_at_super_secret', 'X-Storage-Api-Token': 'legacy-secret'}
+        http_rq.scope = {}
+
+        SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
+
+        logged = ' '.join(str(call) for call in log_debug.call_args_list)
+        assert 'kbc_at_super_secret' not in logged
+        assert 'legacy-secret' not in logged
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('method', 'expected_branch_id'),
@@ -892,6 +907,102 @@ class TestSessionStateMiddleware:
         # Only the Storage API URL is pinned; the other per-request headers keep working.
         assert applied.storage_token == headers.get('X-Storage-Api-Token', 'server-token')
         assert applied.branch_id == headers.get('X-Branch-Id')
+
+    @pytest.mark.parametrize(
+        ('headers', 'expected_storage_token'),
+        [
+            # A programmatic bearer token arrives only via Authorization -- no Storage-token
+            # header/alias reaches it, so apply_request_config must read it directly.
+            ({'Authorization': 'Bearer kbc_at_abc'}, 'kbc_at_abc'),
+            ({'Authorization': 'Bearer kbc_pat_abc'}, 'kbc_pat_abc'),
+            # Case-insensitive "bearer" scheme, matching is_programmatic_token/strip_bearer.
+            ({'Authorization': 'bearer kbc_at_abc'}, 'kbc_at_abc'),
+            # An explicit Storage-token header always wins; Authorization is never consulted.
+            ({'Authorization': 'Bearer kbc_at_abc', 'X-Storage-Api-Token': 'legacy-token'}, 'legacy-token'),
+            # A non-programmatic Authorization value must never be forwarded as a Storage token.
+            ({'Authorization': 'Bearer some-other-oauth-token'}, None),
+            ({}, None),
+        ],
+        ids=[
+            'bearer_access_token',
+            'bearer_pat',
+            'lowercase_bearer_scheme',
+            'explicit_storage_token_wins',
+            'non_programmatic_bearer_ignored',
+            'no_authorization_header',
+        ],
+    )
+    def test_apply_request_config_reads_programmatic_token_from_authorization_header(
+        self, headers: dict[str, str], expected_storage_token: str | None
+    ) -> None:
+        config = Config(storage_api_url='https://connection.keboola.com')
+        http_rq = MagicMock(spec=Request)
+        http_rq.headers = headers
+        http_rq.scope = {}
+
+        applied = SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
+
+        assert applied.storage_token == expected_storage_token
+
+    @pytest.mark.parametrize(
+        ('server_kwargs', 'headers', 'expected_workspace_id', 'expected_workspace_schema', 'expect_warning'),
+        [
+            # server pinned by id: header asking for a different id/schema is ignored outright.
+            ({'workspace_id': '111'}, {'X-Workspace-Id': '222'}, '111', None, True),
+            ({'workspace_id': '111'}, {'X-Workspace-Schema': 'OTHER'}, '111', None, True),
+            ({'workspace_id': '111'}, {'X-Workspace-Id': '111'}, '111', None, False),
+            ({'workspace_id': '111'}, {}, '111', None, False),
+            # server pinned by schema: same treatment, checked/restored together with `workspace_id`
+            # rather than per-field -- a schema-pinned server is a single-project deployment that
+            # doesn't receive per-request X-Workspace-Id headers in the first place, so an id header
+            # here is also dropped (the one previously-uncovered cell from the mcp.py:320 thread).
+            ({'workspace_schema': 'SERVER_SCHEMA'}, {'X-Workspace-Schema': 'OTHER'}, None, 'SERVER_SCHEMA', True),
+            ({'workspace_schema': 'SERVER_SCHEMA'}, {'X-Workspace-Id': '222'}, None, 'SERVER_SCHEMA', True),
+            # an empty schema header is the multi-user opt-out (README), not an override -- it
+            # must not restore the server's schema pin.
+            ({'workspace_schema': 'SERVER_SCHEMA'}, {'X-Workspace-Schema': ''}, None, '', False),
+            # no server-side pin (the shared multi-tenant / AJDA-3052 Data App flow): the header
+            # is the only source, so it keeps working.
+            ({}, {'X-Workspace-Id': '222'}, '222', None, False),
+        ],
+        ids=[
+            'id_overridden',
+            'id_overridden_by_schema_header',
+            'id_unchanged',
+            'id_no_header',
+            'schema_overridden',
+            'schema_pin_also_drops_id_header',
+            'empty_schema_header_is_opt_out_not_override',
+            'no_server_pin',
+        ],
+    )
+    def test_apply_request_config_pins_workspace(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        server_kwargs: dict[str, str],
+        headers: dict[str, str],
+        expected_workspace_id: str | None,
+        expected_workspace_schema: str | None,
+        expect_warning: bool,
+    ):
+        """A workspace pin configured on the server must be authoritative over a request header
+        -- mirroring the Storage API URL check above -- but a server with no pin of its own must
+        keep taking it from the request (AI-3669 review, workspace.py:836 thread). `workspace_id`
+        and `workspace_schema` are checked/restored together, not per-field: the same
+        silent-override risk applies to either kind of server pin (AI-3669 review, mcp.py:320
+        thread)."""
+        config = Config(storage_token='server-token', **server_kwargs)
+        http_rq = MagicMock(spec=Request)
+        http_rq.headers = headers
+        http_rq.scope = {}
+
+        with caplog.at_level('WARNING'):
+            applied = SessionStateMiddleware.apply_request_config(http_rq, config, own_stack_storage_api_url=None)
+
+        assert applied.workspace_id == expected_workspace_id
+        assert applied.workspace_schema == expected_workspace_schema
+        warned = any('is pinned' in r.message for r in caplog.records)
+        assert warned is expect_warning
 
     def test_apply_request_config_injects_exchanged_session_token(self):
         from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser

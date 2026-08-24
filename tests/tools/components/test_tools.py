@@ -765,7 +765,7 @@ async def test_create_sql_transformation(
 
     # Mock the WorkspaceManager
     workspace_manager = WorkspaceManager.from_state(context.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
     # Mock the KeboolaClient
     keboola_client = KeboolaClient.from_state(context.session.state)
     component = mock_component
@@ -852,7 +852,7 @@ async def test_sql_transformation_rejects_oversized_sql(
     """
     context = mcp_context_components_configs
     workspace_manager = WorkspaceManager.from_state(context.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
 
     keboola_client = KeboolaClient.from_state(context.session.state)
     keboola_client.ai_service_client = mocker.MagicMock()
@@ -923,7 +923,7 @@ async def test_create_sql_transformation_fail(
     """Test create_sql_transformation tool which should raise an error if the sql dialect is unknown."""
     context = mcp_context_components_configs
     workspace_manager = WorkspaceManager.from_state(context.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
 
     with pytest.raises(ValueError, match='Unsupported SQL dialect'):
         _ = await create_sql_transformation(
@@ -966,7 +966,7 @@ async def test_create_sql_transformation_folder(
     """Test folder metadata and change_summary hint for create_sql_transformation."""
     context = mcp_context_components_configs
     workspace_manager = WorkspaceManager.from_state(context.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
     keboola_client = KeboolaClient.from_state(context.session.state)
     mock_component['id'] = 'keboola.snowflake-transformation'
     mock_configuration['id'] = '9999'
@@ -1039,7 +1039,7 @@ async def test_update_sql_transformation_folder(
     """Test folder metadata and change_summary hint for update_sql_transformation."""
     context = mcp_context_components_configs
     workspace_manager = WorkspaceManager.from_state(context.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
     keboola_client = KeboolaClient.from_state(context.session.state)
     mock_component['id'] = 'keboola.snowflake-transformation'
     configuration_id = 'cfg-folder-test'
@@ -1117,7 +1117,7 @@ async def test_update_sql_transformation_folder_metadata_error_is_swallowed(
     """Metadata errors in update_sql_transformation are swallowed and logged, not raised."""
     context = mcp_context_components_configs
     workspace_manager = WorkspaceManager.from_state(context.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
     keboola_client = KeboolaClient.from_state(context.session.state)
     mock_component['id'] = 'keboola.snowflake-transformation'
     configuration_id = 'cfg-error-test'
@@ -1243,7 +1243,7 @@ async def test_update_sql_transformation(
     keboola_client = KeboolaClient.from_state(context.session.state)
     # Mock the WorkspaceManager
     workspace_manager = WorkspaceManager.from_state(context.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value=sql_dialect)
 
     component_id = mock_component['id'] = expected_component_id
     configuration_id = 'test-config-id'
@@ -1320,7 +1320,7 @@ async def test_update_sql_transformation_wrong_component_type(
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
     workspace_manager = WorkspaceManager.from_state(context.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
 
     # Simulate Storage returning 404: the config exists under python-transformation-v2,
     # not under keboola.snowflake-transformation.
@@ -2364,7 +2364,7 @@ async def test_create_sql_transformation_variables(
 ) -> None:
     context = mcp_context_components_configs
     workspace_manager = WorkspaceManager.from_state(context.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
     keboola_client = KeboolaClient.from_state(context.session.state)
 
     component = mock_component
@@ -2508,7 +2508,7 @@ async def test_update_sql_transformation_variables(
 ) -> None:
     context = mcp_context_components_configs
     workspace_manager = WorkspaceManager.from_state(context.session.state)
-    workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+    workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
     keboola_client = KeboolaClient.from_state(context.session.state)
 
     component = mock_component

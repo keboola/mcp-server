@@ -190,15 +190,17 @@ class KeboolaClient:
             readonly=readonly,
             encryption_client=self._encryption_client,
         )
+        # Jobs-queue / AI-service / sync-actions keep the raw Storage token and must NOT be given
+        # the OAuth bearer: the queue's NewJobFactory re-sends whatever it receives to Storage as a
+        # legacy X-StorageApi-Token (hardcoded AuthType::STORAGE_TOKEN), so an OAuth bearer arrives
+        # there as an invalid Storage token and every run_job 401s (INC-02580 / SUPPORT-17416).
+        # Reverts the client.py part of AI-3755; the programmatic-token path is unaffected, see the
+        # PR description.
         self._jobs_queue_client = JobsQueueClient.create(
-            root_url=queue_api_url,
-            token=bearer_or_sapi_token,
-            branch_id=branch_id,
-            headers=self._headers,
-            readonly=readonly,
+            root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._headers, readonly=readonly
         )
         self._ai_service_client = AIServiceClient.create(
-            root_url=ai_service_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
+            root_url=ai_service_api_url, token=self._token, headers=self._headers, readonly=readonly
         )
         # Data-science (sandboxes-service) git-repo credential endpoints require an admin-context
         # token (CanManageAppRepoCredentials -> StorageApiToken::isAdminToken()). The OAuth bearer
@@ -217,7 +219,7 @@ class KeboolaClient:
         )
         self._sync_actions_client = SyncActionsClient.create(
             root_url=sync_actions_api_url,
-            token=bearer_or_sapi_token,
+            token=self._token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,

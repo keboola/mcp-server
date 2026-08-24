@@ -57,6 +57,7 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument('--storage-token', metavar='STR', help='Keboola Storage API token.')
     parser.add_argument('--workspace-schema', metavar='STR', help='Keboola Storage API workspace schema.')
+    parser.add_argument('--workspace-id', metavar='STR', help='Keboola Storage API workspace ID.')
     parser.add_argument('--host', default='localhost', metavar='STR', help='The host to listen on.')
     parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
     parser.add_argument(
@@ -549,33 +550,36 @@ async def run_server(args: list[str] | None = None) -> None:
         await _run_gc_sessions()
         return
 
-    # Create config from the CLI arguments, then apply KBC_* environment overrides up front (not
-    # just inside create_server, which does this again but too late for the local-login fallback
-    # below to see an env-configured OAuth client id / storage token).
-    config = Config(
-        storage_api_url=parsed_args.api_url,
-        storage_token=parsed_args.storage_token,
-        workspace_schema=parsed_args.workspace_schema,
-    ).replace_by(os.environ)
-
-    # Local dev convenience, for stdio and streamable-http alike: with no token configured (CLI,
-    # env, or OAuth) and a Storage API URL known, use the tokens leased by a prior browser `login`
-    # (refreshing them as needed) instead of requiring --storage-token/KBC_STORAGE_TOKEN to be
-    # passed explicitly. No-op for a deployed/OAuth-configured server -- see
-    # `_local_login_fallback`.
-    #
-    # Only run the interactive browser login when a real terminal is attached. For stdio, an MCP
-    # client launches this process with stdin/stdout as pipes (no TTY) and stdout as the JSON-RPC
-    # channel -- an interactive login there would corrupt the protocol and block the initialize
-    # handshake. In that case (and for any non-interactive streamable-http launch, e.g. a
-    # container) require a prior `login` (or a configured token) and fail fast with guidance
-    # instead.
-    allow_interactive = sys.stdin.isatty() and sys.stderr.isatty()
-    config = await _local_login_fallback(
-        config, allow_interactive=allow_interactive, required=parsed_args.transport == 'stdio'
-    )
-
     try:
+        # Create config from the CLI arguments, then apply KBC_* environment overrides up front (not
+        # just inside create_server, which does this again but too late for the local-login fallback
+        # below to see an env-configured OAuth client id / storage token). Inside the `try` so a
+        # malformed flag (e.g. a non-numeric `--workspace-id`) is reported via the same log-and-exit
+        # path as any other startup failure, instead of an unhandled traceback.
+        config = Config(
+            storage_api_url=parsed_args.api_url,
+            storage_token=parsed_args.storage_token,
+            workspace_schema=parsed_args.workspace_schema,
+            workspace_id=parsed_args.workspace_id,
+        ).replace_by(os.environ)
+
+        # Local dev convenience, for stdio and streamable-http alike: with no token configured (CLI,
+        # env, or OAuth) and a Storage API URL known, use the tokens leased by a prior browser `login`
+        # (refreshing them as needed) instead of requiring --storage-token/KBC_STORAGE_TOKEN to be
+        # passed explicitly. No-op for a deployed/OAuth-configured server -- see
+        # `_local_login_fallback`.
+        #
+        # Only run the interactive browser login when a real terminal is attached. For stdio, an MCP
+        # client launches this process with stdin/stdout as pipes (no TTY) and stdout as the JSON-RPC
+        # channel -- an interactive login there would corrupt the protocol and block the initialize
+        # handshake. In that case (and for any non-interactive streamable-http launch, e.g. a
+        # container) require a prior `login` (or a configured token) and fail fast with guidance
+        # instead.
+        allow_interactive = sys.stdin.isatty() and sys.stderr.isatty()
+        config = await _local_login_fallback(
+            config, allow_interactive=allow_interactive, required=parsed_args.transport == 'stdio'
+        )
+
         # Create and run the server
         if parsed_args.transport == 'stdio':
             runtime_config = ServerRuntimeInfo(transport=parsed_args.transport)

@@ -45,6 +45,15 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 
 class TestServer:
+    def test_create_server_fails_loudly_on_malformed_env_workspace_id(self, monkeypatch) -> None:
+        """`create_server()` merges `os.environ` into the config via `Config.replace_by()`
+        (KBC_WORKSPACE_ID is trusted operator input, not an untrusted per-request header) -- a
+        malformed value here must crash startup, the same way a malformed `--workspace-id` CLI
+        flag already does, instead of silently starting the server unpinned."""
+        monkeypatch.setenv('KBC_WORKSPACE_ID', 'not-a-valid-id')
+        with pytest.raises(ValueError, match='Invalid workspace_id'):
+            create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+
     @pytest.mark.asyncio
     async def test_list_tools(self):
         server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))

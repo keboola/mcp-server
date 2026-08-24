@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.76.4"
+version = "1.78.0"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
-    "fastmcp == 3.4.4",
+    "fastmcp == 3.4.5",
     "mcp == 1.28.1",
     "httpx ~= 0.28",
     "httpx-retries~=0.5",
@@ -19,7 +19,7 @@ dependencies = [
     "jsonschema ~= 4.26",
     "pyjwt ~= 2.13",
     "json-log-formatter ~= 1.1",
-    "cryptography ~= 49.0",
+    "cryptography ~= 50.0",
     "asyncpg ~= 0.31",
     "pydantic ~= 2.13.0",
     "sqlglot ~= 30.0",
@@ -64,6 +64,12 @@ keboola-mcp-server = "keboola_mcp_server.cli:main"
 # Temporarily relax this (e.g. `--exclude-newer` on the CLI) when an urgent
 # security fix needs to be picked up before the window elapses.
 exclude-newer = "7 days"
+
+# kbcstorage 0.9.5 (latest on PyPI) hard-pins urllib3<2.0.0, which blocks patching
+# GHSA (dependabot alert #38, urllib3 cross-origin header leak on proxied redirects).
+# kbcstorage never imports urllib3 directly (only via `requests`), so overriding is
+# safe. Drop this override once kbcstorage relaxes its own pin upstream.
+override-dependencies = ["urllib3>=2.7.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/keboola_mcp_server"]

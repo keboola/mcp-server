@@ -38,6 +38,18 @@ class Config:
     """The branch ID to access the storage API using the MCP tools."""
     workspace_schema: str | None = None
     """Workspace schema to access the buckets, tables and execute sql queries."""
+    workspace_id: str | None = field(default=None, metadata={'empty_means_absent': True, 'require_prefix': True})
+    """Workspace ID to access the buckets, tables and execute sql queries (e.g. a Data App's own
+    workspace, supplied per-request via the 'X-Workspace-Id' header). Takes precedence over
+    `workspace_schema` when both are set.
+
+    `require_prefix` is set because the bare `WORKSPACE_ID` env var is what Keboola injects into
+    Data App containers -- without it, that variable would pin every session on such a server.
+    `empty_means_absent` is set so an unset header template (`X-Workspace-Id:`) forwarded as an
+    empty string is not mistaken for an explicit pin to override a server-side default with. This
+    intentionally does NOT apply to `workspace_schema` (an empty `X-Workspace-Schema` header must
+    keep clearing it back to the MCP-managed workspace, same as `branch_id` below) nor to most
+    other fields -- it is opt-in per field precisely to avoid that kind of regression."""
     oauth_client_id: str | None = None
     """OAuth client ID registered in the Keboola OAuth Server."""
     oauth_client_secret: str | None = None
@@ -75,12 +87,15 @@ class Config:
     # allowlist, a header literally named (in any of the exact/`KBC_`/`X-` spellings `_read_options`
     # accepts) e.g. `Jwt-Secret` would let a caller choose the HMAC key that verifies their own
     # `scope_token`, forging arbitrary `project_ids` -- see the "Security hardening" RFC increment.
+    # `workspace_id` is included since `X-Workspace-Id` is a legitimate per-request pin (see its
+    # field docstring above).
     _HEADER_ELIGIBLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             'storage_api_url',
             'storage_token',
             'branch_id',
             'workspace_schema',
+            'workspace_id',
             'bearer_token',
             'conversation_id',
             'project_id',
@@ -110,6 +125,9 @@ class Config:
         if self.branch_id is not None and self.branch_id.lower() in ['', 'none', 'null', 'default', 'production']:
             object.__setattr__(self, 'branch_id', None)
 
+        if self.workspace_id is not None and not self.workspace_id.isdigit():
+            raise ValueError(f'Invalid workspace_id: {self.workspace_id!r}')
+
     @staticmethod
     def _normalize(name: str) -> str:
         """Removes dashes and underscores from the input string and turns it into lowercase."""
@@ -130,19 +148,27 @@ class Config:
                 continue
             field_names = [f.name] + f.metadata.get('aliases', [])
 
+            require_prefix = f.metadata.get('require_prefix', False)
+            empty_means_absent = f.metadata.get('empty_means_absent', False)
+
             for name in field_names:
                 value: str | None = _NO_VALUE_MARKER
+                # `require_prefix` skips the bare field name -- only the KBC_/X- prefixed forms
+                # count as "provided". Needed for fields whose bare name collides with a
+                # variable set by something other than this server's own config (see
+                # `workspace_id`'s docstring).
+                candidates = (f'KBC_{name}', f'X-{name}') if require_prefix else (name, f'KBC_{name}', f'X-{name}')
 
-                if (dict_name := cls._normalize(name)) in data:
-                    value = data[dict_name]
-
-                elif (dict_name := cls._normalize(f'KBC_{name}')) in data:
-                    # environment variables start with KBC_
-                    value = data[dict_name]
-
-                elif (dict_name := cls._normalize(f'X-{name}')) in data:
-                    # HTTP headers start with X-
-                    value = data[dict_name]
+                for candidate in candidates:
+                    if (dict_name := cls._normalize(candidate)) in data:
+                        candidate_value = data[dict_name]
+                        # An empty value means "not provided" for opted-in fields only -- an
+                        # unset header template (e.g. `X-Workspace-Id:`) must not be mistaken
+                        # for an explicit request to override a server-side default with ''.
+                        if empty_means_absent and candidate_value == '':
+                            continue
+                        value = candidate_value
+                        break
 
                 if value is not _NO_VALUE_MARKER:
                     if f.type == (bool | None):
@@ -173,6 +199,13 @@ class Config:
         For a per-request HTTP request's headers (untrusted caller input), use
         `replace_by_headers` instead -- this method leaves every field reachable, which is only
         safe for operator-trusted input (the process environment, CLI args).
+
+        A malformed `workspace_id` (or any other invalid value `__post_init__` rejects) always
+        raises -- same as every other field. A per-request caller (e.g.
+        `SessionStateMiddleware.apply_request_config`) that degrades this into "not provided"
+        would silently widen an unpinned multi-tenant session's scope instead of rejecting the
+        bad request; a trusted caller (the startup env merge in `create_server()`) needs it to
+        fail loudly, the same way a malformed `--workspace-id` CLI flag already does.
         """
         return dataclasses.replace(self, **self._read_options(d))
 

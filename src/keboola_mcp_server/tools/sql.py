@@ -25,7 +25,7 @@ from keboola_mcp_server.workspace import JobSubmittedInfo, QueryResult, SqlSelec
 LOG = logging.getLogger(__name__)
 
 SQL_TOOLS_TAG = 'sql'
-MAX_ROWS = 1_000
+MAX_ROWS = 10_000
 MAX_CHARS = 50_000
 # How often to check whether the HTTP client has disconnected during a long query.
 # Mirrors the 1 s job-poll cadence in `_Workspace.execute_query`.
@@ -295,7 +295,13 @@ async def query_data(
     * Check for division by zero using NULLIF(denominator, 0)
     * Always use the LIMIT clause in your SELECT statements when fetching data. There are hard limits imposed
       by this tool on the maximum number of rows that can be fetched and the maximum number of characters.
-      The tool will truncate the data if those limits are exceeded.
+      The tool will truncate the data if those limits are exceeded. Pick the LIMIT to match the actual need:
+      - Use a small LIMIT (<=100) for inspection, sampling, or checking distinct values.
+      - Compute aggregates (COUNT, GROUP BY, SUM, AVG, etc.) in SQL rather than pulling raw rows to aggregate
+        them yourself — a large LIMIT does not make row-level aggregation in context correct or efficient.
+      - Only use a large LIMIT when the user explicitly asked for row-level data.
+      - A truncated result is a contiguous prefix of the query's output, not a random sample: any aggregate
+        computed over truncated data is wrong, not just incomplete.
 
     DATA VALIDATION:
     * When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
