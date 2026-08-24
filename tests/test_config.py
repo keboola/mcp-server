@@ -112,30 +112,31 @@ class TestConfig:
                 {'X-Workspace-Schema': ''},
                 Config(workspace_schema=''),
             ),
-            (
-                # A malformed workspace_id header must degrade to "not provided" rather than
-                # raising -- it is untrusted per-request input, so a junk value from a client
-                # should drop the pin, not turn into an unhandled server error.
-                Config(),
-                {'X-Workspace-Id': 'abc'},
-                Config(),
-            ),
-            (
-                # A malformed header must not clear an existing server-configured pin either.
-                Config(workspace_id='999'),
-                {'X-Workspace-Id': 'abc'},
-                Config(workspace_id='999'),
-            ),
         ],
     )
     def test_replace_by(self, orig: Config, d: Mapping[str, str], expected: Config) -> None:
         assert orig.replace_by(d) == expected
 
-    def test_replace_by_reraises_non_workspace_id_error(self) -> None:
-        """A malformed value for a field other than `workspace_id` (e.g. a header that fails the
-        URL check) must not be masked by the `workspace_id` degrade-to-absent path -- there is no
-        junk `workspace_id` here to drop, so the request should still fail loudly rather than log
-        a misleading "ignoring" message and re-raise the same, still-unhandled error anyway."""
+    @pytest.mark.parametrize(
+        ('orig', 'd'),
+        [
+            # A malformed workspace_id always raises, same as any other invalid field -- it is
+            # a per-request caller's job (e.g. `apply_request_config`) to decide how to turn that
+            # into a clean rejection, not `replace_by`'s job to silently drop the pin (which would
+            # widen an unpinned multi-tenant session's scope instead of rejecting the request).
+            (Config(), {'X-Workspace-Id': 'abc'}),
+            # A malformed header must not be treated any differently when it would have
+            # overridden an existing server-configured pin.
+            (Config(workspace_id='999'), {'X-Workspace-Id': 'abc'}),
+        ],
+    )
+    def test_replace_by_reraises_malformed_workspace_id(self, orig: Config, d: Mapping[str, str]) -> None:
+        with pytest.raises(ValueError, match='Invalid workspace_id'):
+            orig.replace_by(d)
+
+    def test_replace_by_reraises_other_errors(self) -> None:
+        """A malformed value for an unrelated field (e.g. a header that fails the URL check)
+        must also raise, exactly like a malformed `workspace_id` does."""
         with pytest.raises(ValueError, match='Invalid URL'):
             Config().replace_by({'X-Storage-Api-Url': '???'})
 

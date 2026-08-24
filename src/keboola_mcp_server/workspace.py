@@ -700,11 +700,12 @@ class WorkspaceManager:
         wi = _WspInfo.from_sapi_info(sapi_wsp_info)  # type: ignore[attr-defined]
         if wi.id and wi.backend and wi.schema:
             return wi
-        raise ValueError(f'Invalid workspace info: {sapi_wsp_info}')
+        # `wi!r` (not `sapi_wsp_info`), so `_WspInfo.__repr__`'s credential redaction actually
+        # applies here -- the raw dict's `connection.user` is the backend's credential blob, and
+        # `workspace_id` is now caller-supplied, so this path is reachable with untrusted input.
+        raise ValueError(f'Invalid workspace info: {wi!r}')
 
-    async def _find_ws_by_id(
-        self, workspace_id: str | int, *, strict: bool = False
-    ) -> tuple[_WspInfo, KeboolaClient] | None:
+    async def _find_ws_by_id(self, workspace_id: str | int) -> tuple[_WspInfo, KeboolaClient] | None:
         """Finds the workspace info by its ID, together with the client it was actually resolved
         on.
 
@@ -717,14 +718,12 @@ class WorkspaceManager:
         so that resolving one pinned workspace this way does not silently rebind *this manager's*
         client -- and with it every other lookup this manager makes (e.g. the MCP-managed
         workspace via `_find_ws_in_branch`) -- onto a different branch.
-
-        :param strict: see `_fetch_ws`.
         """
-        if info := await self._fetch_ws(self._client, workspace_id, strict=strict):
+        if info := await self._fetch_ws(self._client, workspace_id):
             return info, self._client
         if self._client.branch_id is not None:
             prod_client = await self._client.with_branch_id(None)
-            if info := await self._fetch_ws(prod_client, workspace_id, strict=strict):
+            if info := await self._fetch_ws(prod_client, workspace_id):
                 return info, prod_client
         return None
 
@@ -969,7 +968,9 @@ class WorkspaceManager:
             # available" case, not something to paper over by creating one.
             raise ValueError(
                 f'No MCP-managed workspace exists for this project/branch, and one will not be '
-                f'created for a session pinned to workspace_id={self._workspace_id}.'
+                f'created for a session pinned to workspace_id={self._workspace_id}. Run one '
+                f'unpinned session (without an X-Workspace-Id header) against this project/branch '
+                f'first to provision it.'
             )
 
         # create a new workspace under the MCP component

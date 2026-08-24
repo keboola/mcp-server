@@ -321,9 +321,16 @@ class SessionStateMiddleware(fmw.Middleware):
         # this for an id-based server pin applies just as much to a schema-based one, and a
         # schema-pinned server is a single-project deployment that isn't a target for per-request
         # `X-Workspace-Id` headers in the first place -- see the mcp.py:320 review thread.
+        #
+        # `workspace_schema` has no `empty_means_absent` (unlike `workspace_id`), so an explicit
+        # `X-Workspace-Schema: ''` opt-out (the multi-user pattern the README describes) survives
+        # `replace_by` as `''`, not `None` -- comparing it directly against the server's pin here
+        # would treat that falsy-but-set value as an override and restore the pin right back,
+        # defeating the opt-out. Only a genuinely non-empty, different value counts as a request
+        # to override.
         if (server_config.workspace_id or server_config.workspace_schema) and (
             config.workspace_id != server_config.workspace_id
-            or config.workspace_schema != server_config.workspace_schema
+            or (config.workspace_schema and config.workspace_schema != server_config.workspace_schema)
         ):
             LOG.warning(
                 f'Ignoring the requested workspace pin (workspace_id={config.workspace_id!r}, '

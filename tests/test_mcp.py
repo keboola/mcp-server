@@ -873,6 +873,9 @@ class TestSessionStateMiddleware:
             # here is also dropped (the one previously-uncovered cell from the mcp.py:320 thread).
             ({'workspace_schema': 'SERVER_SCHEMA'}, {'X-Workspace-Schema': 'OTHER'}, None, 'SERVER_SCHEMA', True),
             ({'workspace_schema': 'SERVER_SCHEMA'}, {'X-Workspace-Id': '222'}, None, 'SERVER_SCHEMA', True),
+            # an empty schema header is the multi-user opt-out (README), not an override -- it
+            # must not restore the server's schema pin.
+            ({'workspace_schema': 'SERVER_SCHEMA'}, {'X-Workspace-Schema': ''}, None, '', False),
             # no server-side pin (the shared multi-tenant / AJDA-3052 Data App flow): the header
             # is the only source, so it keeps working.
             ({}, {'X-Workspace-Id': '222'}, '222', None, False),
@@ -884,6 +887,7 @@ class TestSessionStateMiddleware:
             'id_no_header',
             'schema_overridden',
             'schema_pin_also_drops_id_header',
+            'empty_schema_header_is_opt_out_not_override',
             'no_server_pin',
         ],
     )

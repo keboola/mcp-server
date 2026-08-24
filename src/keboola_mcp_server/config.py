@@ -148,22 +148,14 @@ class Config:
         The keys in the input mapping can either be the names of the fields in `Config` class
         or their uppercase variant prefixed with 'KBC_'.
 
-        A malformed `workspace_id` (the only field `__post_init__` validates) degrades to "not
-        provided" rather than raising: `d` is untrusted per-request input (an HTTP header), so a
-        junk value from a client should drop the pin, not turn into an unhandled server error.
-        Any other `ValueError` (e.g. a malformed URL) is not ours to fix by dropping `workspace_id`
-        -- re-raise it unchanged so the request still fails, instead of logging a misleading
-        "ignoring" message for a value that was in fact never touched.
+        A malformed `workspace_id` (or any other invalid value `__post_init__` rejects) always
+        raises -- same as every other field. A per-request caller (e.g.
+        `SessionStateMiddleware.apply_request_config`) that degrades this into "not provided"
+        would silently widen an unpinned multi-tenant session's scope instead of rejecting the
+        bad request; a trusted caller (the startup env merge in `create_server()`) needs it to
+        fail loudly, the same way a malformed `--workspace-id` CLI flag already does.
         """
-        options = self._read_options(d)
-        try:
-            return dataclasses.replace(self, **options)
-        except ValueError as e:
-            if 'workspace_id' not in options:
-                raise
-            LOG.warning(f'Ignoring invalid request header value(s): {e}')
-            options.pop('workspace_id')
-            return dataclasses.replace(self, **options)
+        return dataclasses.replace(self, **self._read_options(d))
 
     def __repr__(self) -> str:
         params: list[str] = []

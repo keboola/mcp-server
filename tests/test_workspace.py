@@ -542,11 +542,13 @@ async def test_find_ws_by_id_treats_400_403_404_alike(status_code: int, caplog: 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('status_code', [400, 403])
-async def test_find_ws_by_id_strict_reraises_400_403(status_code: int) -> None:
+async def test_fetch_ws_strict_reraises_400_403(status_code: int) -> None:
     """`strict=True` (used for the id of a workspace this server just created, e.g. in
     `_create_ws`) must only treat a 404 as "not found" -- a 400/403 on that known-good id is a
     real failure (e.g. the creating token can't read what it just provisioned) that must not be
-    silently swallowed into a generic "workspace creation failed" error."""
+    silently swallowed into a generic "workspace creation failed" error. `strict` only exists on
+    `_fetch_ws` -- `_find_ws_by_id` (the pin-lookup caller) has no legitimate use for it, since a
+    caller-supplied id is unvalidated by definition."""
     mock_client = Mock(spec=KeboolaClient)
     mock_client.branch_id = None
     mock_client.storage_client = AsyncMock()
@@ -557,10 +559,34 @@ async def test_find_ws_by_id_strict_reraises_400_403(status_code: int) -> None:
         side_effect=HTTPStatusError('error', request=mock_request, response=mock_response)
     )
 
-    manager = WorkspaceManager(mock_client, workspace_id='123')
-
     with pytest.raises(HTTPStatusError):
-        await manager._find_ws_by_id('123', strict=True)
+        await WorkspaceManager._fetch_ws(mock_client, '123', strict=True)
+
+
+@pytest.mark.asyncio
+async def test_fetch_ws_raises_without_leaking_credentials() -> None:
+    """A workspace whose detail 200s but has an empty `backend`/`schema` (e.g. a non-SQL/sandbox
+    workspace) raises `ValueError` -- since `workspace_id` is now caller-supplied via
+    `X-Workspace-Id`, this path is reachable with untrusted input, so the raw Storage API payload
+    (whose `connection.user` is the backend's credential blob, e.g. a BigQuery service-account
+    JSON) must never end up in the error message that server logs / client responses / Storage
+    events pick up."""
+    secret = 'super-secret-service-account-json'
+    mock_client = Mock(spec=KeboolaClient)
+    mock_client.storage_client = AsyncMock()
+    mock_client.storage_client.workspace_detail = AsyncMock(
+        return_value={
+            'id': 123,
+            'connection': {'backend': '', 'schema': '', 'user': secret},
+            'readOnlyStorageAccess': True,
+        }
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        await WorkspaceManager._fetch_ws(mock_client, '123')
+
+    assert secret not in str(exc_info.value)
+    assert 'credentials=****' in str(exc_info.value)
 
 
 @pytest.mark.asyncio
