@@ -108,7 +108,10 @@ async def _extract_coordinates(
             configuration_row_id=tool_params.get('configuration_row_id'),
         )
     elif tool_name == 'update_sql_transformation':
-        sql_dialect = await workspace_manager.get_sql_dialect()
+        # The SQL-transformation component id is project-level identity (which component a
+        # transformation runs under), not the session's query target -- must not follow a
+        # `workspace_id` pin, same reasoning as `get_data_app_workspace_id()`.
+        sql_dialect = await workspace_manager.get_data_app_sql_dialect()
         return ConfigCoordinates(
             component_id=get_sql_transformation_id_from_sql_dialect(sql_dialect),
             configuration_id=tool_params.get('configuration_id'),
