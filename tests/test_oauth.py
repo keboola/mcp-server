@@ -1,15 +1,187 @@
+import dataclasses
+import logging
+import secrets
 import time
 from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
+from http import HTTPStatus
 from typing import Any
+from unittest import mock
+from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
-from mcp.server.auth.provider import AccessToken, RefreshToken
+from mcp.server.auth.provider import AccessToken, AuthorizationParams, RefreshToken, TokenError
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull
 from pydantic import AnyHttpUrl, AnyUrl
 
-from keboola_mcp_server.oauth import SimpleOAuthProvider, _ExtendedAuthorizationCode, _OAuthClientInformationFull
+from keboola_mcp_server.auth_login import Introspection, ProjectAccess, ScopedToken
+from keboola_mcp_server.clients.auth_bridge import OAuthTokenExchangeError
+from keboola_mcp_server.oauth import (
+    DatabaseUnavailableMiddleware,
+    ProxyRefreshToken,
+    SimpleOAuthProvider,
+    _ExtendedAuthorizationCode,
+    _OAuthClientInformationFull,
+)
+from keboola_mcp_server.session_store.repository import OAuthSession
 
 JWT_KEY = 'secret'
+
+
+def _project(project_id: int) -> ProjectAccess:
+    return ProjectAccess(id=project_id, name=None, role=None)
+
+
+class FakeSessionStore:
+    """In-memory `SessionStore` (no real Postgres) for exercising `SimpleOAuthProvider` in isolation."""
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, OAuthSession] = {}
+        self._access_tokens: dict[str, str] = {}
+        self._refresh_tokens: dict[str, str] = {}
+        self._next_id = 0
+
+    def _new_token_pair(self, session_id: str) -> tuple[str, str]:
+        access_token = f'at_{session_id}_{secrets.token_hex(4)}'
+        refresh_token = f'rt_{session_id}_{secrets.token_hex(4)}'
+        self._access_tokens[access_token] = session_id
+        self._refresh_tokens[refresh_token] = session_id
+        return access_token, refresh_token
+
+    async def create(
+        self, *, client_id, user_email, kbc_access_token, kbc_refresh_token, kbc_access_expires_at
+    ) -> tuple[str, str, OAuthSession]:
+        self._next_id += 1
+        session_id = str(self._next_id)
+        session = OAuthSession(
+            id=session_id,
+            client_id=client_id,
+            user_email=user_email,
+            kbc_access_token=kbc_access_token,
+            kbc_refresh_token=kbc_refresh_token,
+            kbc_access_expires_at=kbc_access_expires_at,
+            scope_project_ids=None,
+            scope_read_only=False,
+            scope_confirmed=False,
+            scope_scoped_token=None,
+            scope_scoped_expires_at=None,
+        )
+        self._sessions[session_id] = session
+        access_token, refresh_token = self._new_token_pair(session_id)
+        return access_token, refresh_token, session
+
+    async def get_by_access_token(self, access_token: str) -> OAuthSession | None:
+        session_id = self._access_tokens.get(access_token)
+        return self._sessions.get(session_id) if session_id else None
+
+    async def get_by_refresh_token(self, refresh_token: str) -> OAuthSession | None:
+        session_id = self._refresh_tokens.get(refresh_token)
+        return self._sessions.get(session_id) if session_id else None
+
+    async def rotate_kbc_tokens(
+        self, session_id: str, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
+    ) -> None:
+        session = self._sessions[session_id]
+        self._sessions[session_id] = dataclasses.replace(
+            session,
+            kbc_access_token=kbc_access_token,
+            kbc_refresh_token=kbc_refresh_token,
+            kbc_access_expires_at=kbc_access_expires_at,
+        )
+
+    async def rotate_opaque_tokens(self, session_id: str) -> tuple[str, str]:
+        self._access_tokens = {k: v for k, v in self._access_tokens.items() if v != session_id}
+        self._refresh_tokens = {k: v for k, v in self._refresh_tokens.items() if v != session_id}
+        return self._new_token_pair(session_id)
+
+    async def update_scope(
+        self, session_id: str, *, project_ids, read_only, confirmed, scoped_token, scoped_expires_at
+    ) -> None:
+        session = self._sessions[session_id]
+        self._sessions[session_id] = dataclasses.replace(
+            session,
+            scope_project_ids=project_ids,
+            scope_read_only=read_only,
+            scope_confirmed=confirmed,
+            scope_scoped_token=scoped_token,
+            scope_scoped_expires_at=scoped_expires_at,
+        )
+
+    async def revoke(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
+
+
+class TestDatabaseUnavailableMiddleware:
+    """A Postgres outage during bearer-token verification must surface as a clean, retryable 503
+    -- not Starlette's bare "Internal Server Error" default. See DatabaseUnavailableMiddleware's
+    docstring: a non-AuthenticationError raised inside AuthenticationBackend.authenticate() (this
+    server's load_access_token) bypasses AuthenticationMiddleware's own exception handling, and
+    FastMCP's Starlette app registers no exception_handlers at all -- this middleware is the only
+    layer that can turn it into a response.
+    """
+
+    @pytest.fixture
+    def oauth_provider(self) -> SimpleOAuthProvider:
+        return SimpleOAuthProvider(
+            storage_api_url='https://sapi',
+            mcp_server_url='https://mcp',
+            callback_endpoint='/callback',
+            client_id='mcp-server-id',
+            client_secret='mcp-server-secret',
+            server_url='https://oauth',
+            scope='scope',
+            jwt_secret=JWT_KEY,
+            session_store=FakeSessionStore(),
+        )
+
+    def test_get_middleware_prepends_database_unavailable_middleware(self, oauth_provider: SimpleOAuthProvider) -> None:
+        middleware = oauth_provider.get_middleware()
+        assert middleware[0].cls is DatabaseUnavailableMiddleware
+        # The base class's AuthenticationMiddleware/AuthContextMiddleware must still follow --
+        # confirms this wraps, rather than replaces, the inherited middleware.
+        assert any(m.cls.__name__ == 'AuthenticationMiddleware' for m in middleware[1:])
+
+    @pytest.mark.asyncio
+    async def test_translates_database_unavailable_error_to_503(self) -> None:
+        from starlette.applications import Starlette
+        from starlette.middleware import Middleware
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+
+        from keboola_mcp_server.session_store import DatabaseUnavailableError
+
+        async def endpoint(request):
+            raise DatabaseUnavailableError('Postgres is unavailable (OSError).')
+
+        app = Starlette(
+            routes=[Route('/', endpoint)],
+            middleware=[Middleware(DatabaseUnavailableMiddleware)],
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+
+        response = client.get('/')
+
+        assert response.status_code == 503
+        assert response.json() == {'message': 'Service temporarily unavailable: the session database is unreachable.'}
+
+    @pytest.mark.asyncio
+    async def test_lets_other_errors_and_websockets_through_unchanged(self) -> None:
+        from starlette.applications import Starlette
+        from starlette.middleware import Middleware
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+
+        async def endpoint(request):
+            raise ValueError('a genuine bug')
+
+        app = Starlette(routes=[Route('/', endpoint)], middleware=[Middleware(DatabaseUnavailableMiddleware)])
+        client = TestClient(app, raise_server_exceptions=False)
+
+        response = client.get('/')
+
+        # Not our concern to handle -- falls through to Starlette's own error handling, unchanged.
+        assert response.status_code == 500
 
 
 class TestSimpleOAuthProvider:
@@ -24,6 +196,7 @@ class TestSimpleOAuthProvider:
             server_url='https://oauth',
             scope='scope',
             jwt_secret=JWT_KEY,
+            session_store=FakeSessionStore(),
         )
 
     @staticmethod
@@ -217,3 +390,356 @@ class TestSimpleOAuthProvider:
         else:
             with pytest.raises(InvalidRedirectUriError):
                 info.validate_redirect_uri(uri)
+
+    @pytest.mark.asyncio
+    async def test_authorize_redirects_to_consent_with_claudai_projectless_scope(
+        self, oauth_provider: SimpleOAuthProvider
+    ):
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('http://foo/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+        auth_url = await oauth_provider.authorize(client, params)
+
+        parsed = urlparse(auth_url)
+        assert parsed.path == '/oauth/consent'
+        query = parse_qs(parsed.query)
+        assert query['scope'] == ['claudai projectless']
+
+    @staticmethod
+    def _stub_exchanger(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
+        from keboola_mcp_server import oauth as oauth_module
+
+        class _FakeExchanger:
+            def __init__(self, **kwargs):
+                captured['init_kwargs'] = kwargs
+
+            async def exchange(self, *, oauth_access_token: str):
+                captured['oauth_access_token'] = oauth_access_token
+                return {'accessToken': 'kbc_at_new', 'refreshToken': 'kbc_rt_new', 'expiresIn': 3600}
+
+        monkeypatch.setattr(oauth_module, 'OAuthSessionExchanger', _FakeExchanger)
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_exchanges_for_session(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        # Two reachable projects: not the single-project auto-confirm case, so the session should
+        # stay unconfirmed exactly as before that feature existed. Also proves introspection failures
+        # here are non-fatal to login -- see test_exchange_authorization_code_introspection_failure_is_non_fatal.
+        monkeypatch.setattr(
+            oauth_module,
+            'introspect_token',
+            mock.AsyncMock(
+                return_value=Introspection(
+                    user_id=1, user_email=None, user_name=None, projects=[_project(1), _project(2)]
+                )
+            ),
+        )
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+
+        oauth_token = await oauth_provider.exchange_authorization_code(client, auth_code)
+
+        assert captured['oauth_access_token'] == 'oauth-access-token'
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.kbc_access_token == 'kbc_at_new'
+        # The refresh token is carried on ProxyRefreshToken only, not duplicated onto the (more
+        # frequently sent/handled) access token.
+        assert not hasattr(loaded, 'kbc_refresh_token')
+        loaded_refresh = await oauth_provider.load_refresh_token(client, oauth_token.refresh_token)
+        assert loaded_refresh is not None
+        assert loaded_refresh.kbc_refresh_token == 'kbc_rt_new'
+        # Neither opaque token carries a client-visible expiry (oauth_session_persistence RFC): the
+        # server refreshes the underlying Keboola credential transparently on lookup, so there's no
+        # forced-relogin window tied to the (1h) Keboola access token's lifetime.
+        assert loaded.expires_at is None
+        assert loaded_refresh.expires_at is None
+        assert loaded.scope_confirmed is False
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_auto_confirms_single_project(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        # No real scoping choice to make with only one reachable project -- see the "Security
+        # hardening" RFC increment: mirrors the same auto-confirm the local `login` flow does.
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        monkeypatch.setattr(
+            oauth_module,
+            'introspect_token',
+            mock.AsyncMock(
+                return_value=Introspection(user_id=1, user_email=None, user_name=None, projects=[_project(42)])
+            ),
+        )
+        monkeypatch.setattr(
+            oauth_module,
+            'exchange_scoped_token',
+            mock.AsyncMock(
+                return_value=ScopedToken(
+                    access_token='kbc_at_scoped', expires_at=time.time() + 3600, project_ids=[42], read_only=False
+                )
+            ),
+        )
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+        oauth_token = await oauth_provider.exchange_authorization_code(client, auth_code)
+
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.scope_confirmed is True
+        assert loaded.scope_project_ids == [42]
+        assert loaded.scope_read_only is False
+        assert loaded.scope_scoped_token == 'kbc_at_scoped'
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_introspection_failure_is_non_fatal(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Login must still succeed even if the best-effort auto-confirm can't run at all.
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        monkeypatch.setattr(
+            oauth_module, 'introspect_token', mock.AsyncMock(side_effect=httpx.ConnectError('unreachable'))
+        )
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+        oauth_token = await oauth_provider.exchange_authorization_code(client, auth_code)
+
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.scope_confirmed is False
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_maps_exchange_error(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+
+        class _FailingExchanger:
+            def __init__(self, **kwargs):
+                pass
+
+            async def exchange(self, *, oauth_access_token: str):
+                raise OAuthTokenExchangeError('rejected', status_code=int(HTTPStatus.FORBIDDEN))
+
+        monkeypatch.setattr(oauth_module, 'OAuthSessionExchanger', _FailingExchanger)
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+
+        # Raised as TokenError (not HTTPException): the mcp SDK's /token handler only recognizes
+        # TokenError and turns it into a spec-compliant TokenErrorResponse body.
+        with pytest.raises(TokenError) as exc:
+            await oauth_provider.exchange_authorization_code(client, auth_code)
+        assert exc.value.error == 'invalid_grant'
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_missing_sa_token_path(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: None)
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+
+        with pytest.raises(TokenError) as exc:
+            await oauth_provider.exchange_authorization_code(client, auth_code)
+        assert exc.value.error == 'invalid_request'
+
+    @pytest.mark.asyncio
+    async def test_exchange_refresh_token_calls_refresh_tokens_directly(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.auth_login import TokenSet
+
+        captured: dict[str, Any] = {}
+
+        async def _fake_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
+            captured['storage_api_url'] = storage_api_url
+            captured['refresh_token'] = refresh_token
+            return TokenSet(
+                access_token='kbc_at_rotated', refresh_token='kbc_rt_rotated', expires_at=time.time() + 3600
+            )
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _fake_refresh_tokens)
+        # If exchange_refresh_token ever called Connection's league OAuth server, this transport
+        # would raise, proving the refresh is fully decoupled from it (RFC Decision §4).
+        oauth_provider._create_http_client = lambda: (_ for _ in ()).throw(  # type: ignore[method-assign]
+            AssertionError('exchange_refresh_token must not call the league OAuth server')
+        )
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        _at, _rt, session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at_old',
+            kbc_refresh_token='kbc_rt_old',
+            kbc_access_expires_at=datetime.now(timezone.utc),
+        )
+        refresh_token = ProxyRefreshToken(
+            token='mcp_old',
+            client_id='foo-client-id',
+            scopes=['claudai', 'projectless'],
+            expires_at=None,
+            kbc_refresh_token='kbc_rt_old',
+            session_id=session.id,
+        )
+
+        oauth_token = await oauth_provider.exchange_refresh_token(client, refresh_token, [])
+
+        assert captured['refresh_token'] == 'kbc_rt_old'
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.kbc_access_token == 'kbc_at_rotated'
+        loaded_refresh = await oauth_provider.load_refresh_token(client, oauth_token.refresh_token)
+        assert loaded_refresh is not None
+        assert loaded_refresh.kbc_refresh_token == 'kbc_rt_rotated'
+
+    @pytest.mark.asyncio
+    async def test_exchange_refresh_token_maps_network_error_to_token_error(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        async def _failing_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
+            raise httpx.ConnectError('boom')
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _failing_refresh_tokens)
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        _at, _rt, session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at_old',
+            kbc_refresh_token='kbc_rt_old',
+            kbc_access_expires_at=datetime.now(timezone.utc),
+        )
+        refresh_token = ProxyRefreshToken(
+            token='mcp_old',
+            client_id='foo-client-id',
+            scopes=['claudai', 'projectless'],
+            expires_at=None,
+            kbc_refresh_token='kbc_rt_old',
+            session_id=session.id,
+        )
+
+        # A network failure talking to Connection must surface as a clean TokenError, not
+        # propagate as a raw httpx error (which the mcp SDK's /token handler can't format).
+        with pytest.raises(TokenError) as exc:
+            await oauth_provider.exchange_refresh_token(client, refresh_token, [])
+        assert exc.value.error == 'invalid_grant'
+
+    @pytest.mark.asyncio
+    async def test_load_access_token_refreshes_near_expiry_session_transparently(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.auth_login import TokenSet
+
+        access_token, _rt, session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at_stale',
+            kbc_refresh_token='kbc_rt_stale',
+            kbc_access_expires_at=datetime.now(timezone.utc),  # already at/past expiry
+        )
+
+        async def _fake_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
+            assert refresh_token == 'kbc_rt_stale'
+            return TokenSet(access_token='kbc_at_fresh', refresh_token='kbc_rt_fresh', expires_at=time.time() + 3600)
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _fake_refresh_tokens)
+
+        with caplog.at_level(logging.INFO):
+            loaded = await oauth_provider.load_access_token(access_token)
+
+        assert loaded is not None
+        assert loaded.kbc_access_token == 'kbc_at_fresh'
+        # The refresh is persisted, not just returned once -- a second lookup sees it too.
+        stored = await oauth_provider._session_store.get_by_access_token(access_token)
+        assert stored is not None
+        assert stored.kbc_access_token == 'kbc_at_fresh'
+        assert stored.kbc_refresh_token == 'kbc_rt_fresh'
+        # Observable in logs (session id only, no token values) -- previously silent on success.
+        refresh_logs = [r for r in caplog.records if 'Lazily refreshed near-expiry' in r.message]
+        assert len(refresh_logs) == 1
+        assert session.id in refresh_logs[0].message
+        assert 'kbc_at_fresh' not in refresh_logs[0].message
+        assert 'kbc_rt_fresh' not in refresh_logs[0].message
+
+    @pytest.mark.asyncio
+    async def test_load_access_token_tolerates_refresh_failure(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        # A refresh hiccup must not break the current request -- the (soon-to-expire) credential
+        # already on the session may still work; the next lookup retries the refresh.
+        from keboola_mcp_server import oauth as oauth_module
+
+        access_token, _rt, _session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at_stale',
+            kbc_refresh_token='kbc_rt_stale',
+            kbc_access_expires_at=datetime.now(timezone.utc),
+        )
+
+        async def _failing_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
+            raise httpx.ConnectError('boom')
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _failing_refresh_tokens)
+
+        loaded = await oauth_provider.load_access_token(access_token)
+
+        assert loaded is not None
+        assert loaded.kbc_access_token == 'kbc_at_stale'  # unchanged, refresh failed but didn't raise
+
+    @pytest.mark.asyncio
+    async def test_load_access_token_unknown_token_returns_none(self, oauth_provider: SimpleOAuthProvider) -> None:
+        assert await oauth_provider.load_access_token('never-issued') is None
+
+    @pytest.mark.asyncio
+    async def test_revoke_token_invalidates_both_access_and_refresh_token(
+        self, oauth_provider: SimpleOAuthProvider
+    ) -> None:
+        access_token, refresh_token, _session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at_x',
+            kbc_refresh_token='kbc_rt_x',
+            kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+        await oauth_provider.revoke_token(access_token)
+
+        assert await oauth_provider.load_access_token(access_token) is None
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        assert await oauth_provider.load_refresh_token(client, refresh_token) is None
+
+    @pytest.mark.asyncio
+    async def test_revoke_token_unknown_token_is_a_noop(self, oauth_provider: SimpleOAuthProvider) -> None:
+        await oauth_provider.revoke_token('never-issued')  # must not raise

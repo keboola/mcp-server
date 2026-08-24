@@ -26,6 +26,7 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact
+from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.utils import (
     apply_folder_metadata,
     folder_field_description,
@@ -519,6 +520,7 @@ async def modify_streamlit_data_app(
         str | None,
         Field(description=folder_field_description('data app', 'data apps')),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> ModifiedDataAppOutput:
     """Creates or updates a Streamlit data app.
 
@@ -957,6 +959,7 @@ async def modify_python_js_data_app(
         str | None,
         Field(description=folder_field_description('data app', 'data apps')),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> ModifiedPythonJsDataAppOutput:
     """Creates or updates a python-js data app.
 
@@ -1298,6 +1301,7 @@ async def modify_python_js_data_app(
 async def create_python_js_data_app_git_credential(
     ctx: Context,
     configuration_id: Annotated[str, Field(description='Storage configuration ID of the python-js data app.')],
+    project_id: ProjectIdArg = None,
 ) -> CreatedGitCredentialOutput:
     """Mints a one-time HTTPS token on a python-js **prod** data app so the caller can clone, pull,
     and push to the app's managed git repo over HTTPS.
@@ -1620,6 +1624,7 @@ async def deploy_data_app(
             ),
         ),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> DeploymentDataAppOutput:
     """Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
     action and the configuration ID.
@@ -1703,6 +1708,7 @@ async def delete_python_js_data_app_draft(
     configuration_id: Annotated[
         str, Field(description='Storage configuration ID of the python-js draft data app to delete.')
     ],
+    project_id: ProjectIdArg = None,
 ) -> DeletedDraftOutput:
     """Deletes a python-js DRAFT data app — both the data-app instance (DSAPI) and its Storage
     configuration.

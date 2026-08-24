@@ -206,3 +206,951 @@ OAuth is **not** removed (the MCP protocol needs it for HTTP transport). The OAu
 3. **Refresh token** — treated as an opaque string (no prefix assumptions).
 4. **SA token path env var** — align with the workspace step-up var (`b971146f`) and the Go services' `*_KUBERNETES_TOKEN_PATH` convention; share one file-read helper.
 5. **Refresh + dead token** — the server **always refreshes during usage** when it holds the token pair; when the token is dead (refresh fails), it clears stored credentials and **enforces re-login**.
+
+1. **`project_id`/scope is explicit session state, never silently derived from the token itself** —
+   a whole-stack PAT has no implicit project. `get_accessible_projects` + `set_project_scope` are
+   the only mechanism; there is no separate "select-project" tool or header-only path once a scope
+   exists.
+2. **In-conversation narrowing (`set_project_scope`) and the single-project auto-confirms (local
+   `login`, OAuth) mint a real token via `pat/exchange` when they can**, preferred over
+   advisory-only narrowing so a bug elsewhere can't reach an out-of-scope project even by accident;
+   the fallback (unminted, per-request-header-narrowed) exists only for stacks lacking the exchange
+   endpoint and says so explicitly to the caller. `login`'s own project-selection prompt (a genuine
+   subset, not the single-project case) is narrower: it persists the choice but does not mint a
+   token for it, relying on this server's own per-request guard alone.
+3. **Fan-out via active-project indirection, not a per-tool `projects[]` parameter** — existing
+   tool call sites are unchanged; a dispatch-layer middleware swaps the active client/workspace for
+   the duration of one call. Read results use a per-project envelope, never a semantic merge.
+4. **Writes require an explicit `project_id` tool argument once 2+ projects are scoped** — chosen
+   over implicitly targeting the "active" project, which was reported as confusing (re-scoping to
+   change a write's target also reordered every subsequent read fan-out).
+5. **Scope persistence is per-session-type, not a single shared mechanism** — OAuth and Kai
+   sessions persist server-side (Postgres) since the client already sends a stable identifier on
+   every request; local/stateless sessions round-trip an opaque, encrypted `scope_token` instead,
+   since there's no server-side store to key against.
+6. **Security fixes address the flow, not just the symptom** — e.g. local sessions are scoped at
+   `login` time (removing the unconfirmed-by-default state entirely) rather than documented as a
+   limitation; credential races are closed by removing the shared state (per-interface keying)
+   rather than only adding a lock around it.
+7. **`clientId` for PKCE** is the demo value `keboola-cli-demo`, configurable via
+   `KBC_PKCE_CLIENT_ID`; refresh tokens are treated as opaque strings (no prefix assumptions).
+
+# Extension: Multi-project scope via introspect + scoped exchange (PSGO-261, increment 2)
+
+> This section extends the RFC above. Parts A/B (programmatic-token exchange, PKCE login) are unchanged
+> and are the substrate this builds on. It revises decisions **D1** and **D2** (see below).
+
+## New problem
+
+Parts A/B give the server a programmatic token and a single `project_id`. A whole-stack PAT/AT can
+actually reach **many** projects, and the Kai multi-project workflows (the parent driver, PAT-1838)
+need one agent session to act across several of them. Two gaps remain:
+
+1. **Discovery.** The server has no way to enumerate which projects the inbound token can reach.
+   (Brainstorm left this as an open question: "the exact stack-level endpoint to enumerate
+   PAT-accessible projects.")
+2. **Scope.** `project_id` is a single value. There is no way to (a) operate over a set of projects,
+   nor (b) *narrow* a whole-stack token down to a reviewed subset for the rest of the session.
+
+## Token-contract additions (authoritative, from connection auth API)
+
+### Introspect — enumerate accessible projects
+
+```
+GET {connection}/v1/auth/token/introspect
+Headers: Authorization: Bearer <kbc_at_* | kbc_pat_*>
+
+200:
+{ "sessionId": "...", "user": { "id", "email", "name" },
+  "grantType": "authorization_code", "expiresAt": "<ISO8601>",
+  "projects": [ { "id": <int>, "name": "...", "role": "admin|..." }, ... ] }
+```
+
+This is the discovery endpoint. It works for any programmatic token and is the source of truth for
+"which projects can this session touch."
+
+### Scoped exchange — mint a token narrowed to chosen projects
+
+```
+POST {connection}/v1/auth/pat/exchange
+Headers: Authorization: Bearer <current subject token>
+Body:    { "expiresIn": null|<int>, "scope": { "projects": ["<id>",...]|null, "readOnly": true|null } }
+         # NB: project ids are sent as STRINGS — the exchange API 400s on integers (auth_login.py:166)
+
+201:
+{ "accessToken": "<scoped kbc_at_*>", "tokenType": "Bearer", "expiresIn": <int>,
+  "scope": {...}, "readOnly": <bool>, "parentTokenId": "...", "parentTokenType": "session",
+  "expiresAt": "<ISO8601>", "pat": { "id", "name", "scope", "projects": [...], "readOnly", ... } }
+```
+
+`scope.projects = null` → all projects (whole-stack). A non-null list mints a token that can reach
+**only** those projects. `readOnly: true` mints a read-only token. The returned `accessToken` becomes
+the session's subject token for all downstream exchange/forwarding.
+
+## Required behavior
+
+1. **Discovery tool.** `get_accessible_projects()` calls introspect and returns the projects list
+   (id, name, role) plus the user identity. Read-only, no side effects.
+2. **Scope-selection tool.** `set_project_scope(project_ids: list[int] | "all", read_only: bool=false)`:
+   - `"all"` → scope = every introspected project id; keep the current (whole-stack) token.
+   - a subset → call `/v1/auth/pat/exchange` with `scope.projects=project_ids` (+ `readOnly`), store
+     the returned scoped `accessToken` as the **session subject token**, set scope = `project_ids`,
+     and clear the per-project client cache so it rebuilds against the scoped token.
+3. **Conversation-start nudge.** Server instructions tell the agent: on first interaction call
+   `get_accessible_projects`, present them, and ask the user **"work across all of these, or a
+   subset?"**; call `set_project_scope` with the answer. (MCP has no protocol-level startup prompt —
+   this is the idiomatic discovery-tool + instructions pattern, same shape as `get_project_info`.)
+4. **Transparent multi-project execution.** Once scope is set, existing tools run **once per project
+   in scope** with no per-tool `projects[]` argument. Mechanism (decision D6):
+   - Session state holds `scope` (ordered project_ids), `active_project_id`, and a lazy
+     `project_id -> KeboolaClient` cache. `KeboolaClient.from_state(state)` returns the client for
+     `active_project_id`. **All 43 existing call sites are unchanged.**
+   - A dispatch-layer wrapper (`SessionStateMiddleware.on_call_tool`) reads the scope:
+     - **1 project** (or legacy single-project session): set `active_project_id`, call the tool once,
+       return its result **raw** — byte-for-byte today's behavior.
+     - **N projects, read tool:** loop the scope, set `active_project_id` per iteration, collect into a
+       per-project envelope `[{ "project_id": <int>, "result": <tool result> }, ...]`. No semantic
+       merge — the envelope preserves each tool's native return shape (this is the answer to the
+       "merging arbitrary shapes is lossy" risk: we wrap, we don't merge).
+     - **N projects, write tool:** do **not** fan out. Require a single target project; if scope has
+       >1 and no explicit single target was confirmed, return a clear error instructing the agent to
+       confirm with the user and target one project (decision D8).
+   - Per-project clients build lazily: deployed → resolver exchange per project (Part A) using the
+     scoped subject token; local → forward bearer + `X-KBC-ProjectId: <project>`.
+   - Fan-out is sequential in v1. `# ponytail: sequential fan-out; asyncio.gather if N-project latency bites.`
+5. **Read/write classification.** An explicit set of mutating tool names (or a registration-time flag)
+   drives the write-policy branch. Explicit list over magic — there are few write tools.
+
+## Mode / availability matrix (additions)
+
+| Inbound credential | Introspect / scope tooling | Multi-project |
+| --- | --- | --- |
+| programmatic (`kbc_at_*`/`kbc_pat_*`, PKCE or Bearer) | available | yes |
+| legacy `KBC_STORAGE_TOKEN` | n/a (project-bound token) | no — single project, unchanged |
+| OAuth `SimpleOAuthProvider` (current SAPI mint) | n/a until OAuth→PAT PR lands | no (interim) |
+
+## Revised decisions
+
+- **D1 (revised) — scope narrowing is now token-enforced, not advisory.** The original D1 said
+  "no minting; narrowing is runtime-only session state." With the user choosing the `pat/exchange`
+  path, narrowing to a subset **mints a scoped token** (in-memory, session-lived, never persisted).
+  The *stored* (on-disk PKCE) credential is still whole-stack — D1's storage stance holds — but the
+  *active* session token is the scoped one, so a tool can no longer reach an out-of-scope project even
+  by bug. Strictly stronger than the original advisory model.
+- **D2 (extended) — `project_id` → project scope (a set).** Still explicit session state, never
+  silently derived. An explicit `KBC_PROJECT_ID` / `X-KBC-ProjectId` pins a single project
+  (backward compatible). _(as-built: when a local programmatic session sets **no** explicit project,
+  `SessionStateMiddleware._autolease_default_scope` introspects and defaults to **all** reachable
+  projects — multi-project by default — gated by an ask-first confirmation (`SessionScope.confirmed`,
+  `_BOOTSTRAP_TOOLS`); it is not single-project-by-default.)_ `get_accessible_projects` +
+  `set_project_scope` replace the previously-hypothetical "select-project tool"; introspect closes
+  the open enumeration question.
+- **D6 (new) — transparent fan-out via active-project indirection.** Tools take no `projects[]` arg;
+  the dispatch wrapper swaps `active_project_id` and the per-project client cache. Multi-project
+  results use a per-project envelope, never a semantic merge. Zero changes to the 43 `from_state`
+  sites. (Chosen over a per-tool `projects[]` param.)
+- **D7 (new) — scoped exchange uses `/v1/auth/pat/exchange`.** Not `/v1/auth/pat` (PAT create). The
+  exchange yields a child token (`parentTokenType: session`) tied to the current session, which is the
+  right lifetime for a session-scoped narrowing.
+- **D8 (new) — multi-project writes are user-driven only.** Read/query/search tools fan out freely.
+  Mutating tools (create/update/run config, flow, job, data-app, transformation) never fan out
+  automatically: with >1 project in scope they require a single confirmed target project. Server
+  instructions state: **the agent must never write to more than one project without explicit user
+  guidance or confirmation.** Bulk multi-project writes are possible but only on that explicit signal.
+  _(How "confirmed target" is expressed evolved — see "Decisions (increment 5)" below: an explicit
+  `project_id` tool argument, not the interim active-project/re-scope indirection.)_
+
+## Scope changes (relative to the base RFC)
+
+**Moved into scope:** introspect-based project enumeration; `/v1/auth/pat/exchange` scoped token
+minting; multi-project read fan-out; user-confirmed multi-project writes;
+`get_accessible_projects` + `set_project_scope` tools; per-project client cache.
+
+**Still out of scope:** OAuth→PAT exchange (separate PR); caching of resolver results; keyring/DB
+credential storage; `/v1/auth/pat` PAT lifecycle management (create/list/revoke) tools; parallel
+fan-out (sequential in v1).
+
+## Delivery plan (phased, compact)
+
+**Phase 1 — Discovery (low risk, read-only).**
+- `clients/auth_bridge.py` (or a new `clients/auth.py`): `introspect(subject_token) -> Introspection`
+  (user + projects[]). GET `/v1/auth/token/introspect`, token redaction same as the resolver.
+- `tools/project.py`: `get_accessible_projects()` tool.
+- Server instructions: add the "ask all-vs-subset at start" nudge.
+- Tests: introspect success/parse, 401/timeout mapping, no-token-in-logs; tool returns projects.
+
+**Phase 2 — Scoped exchange + session scope state (revises D1).**
+- `exchange_scope(subject_token, project_ids|None, read_only, expires_in) -> scoped token` (POST
+  `/v1/auth/pat/exchange`).
+- Session scope state: `scope: list[int]`, `read_only: bool`, scoped subject token; default scope from
+  `project_id`. `set_project_scope` tool wires exchange → state → cache invalidation.
+- Tests: subset → exchange called with right body, scoped token stored; "all" → no exchange; read_only
+  propagates; scope defaults to single project when unset.
+
+**Phase 3 — Transparent fan-out (the core refactor, D6/D8).**
+- Session state: `active_project_id` + lazy `project_id -> KeboolaClient` cache; `from_state` returns
+  the active client (indirection only — call sites unchanged).
+- `SessionStateMiddleware.on_call_tool` wrapper: 1-project raw passthrough; N-project read envelope;
+  N-project write guard.
+- Explicit write-tool name set.
+- Tests: single-project unchanged (regression); 2-project read returns enveloped per-project results;
+  write tool with N-project scope refuses without a confirmed target; per-project client built with the
+  right token/header.
+
+**Cross-cutting:** version bump (minor — new capability), `uv.lock`, `TOOLS.md` regen (new tools +
+the per-project envelope shape change the docs), integration tests on a dev stack with a real
+`kbc_pat_*` across ≥2 projects.
+
+## Open questions (new)
+
+- [ ] **Envelope vs raw for exactly-1-in-scope-but-explicitly-multi.** Confirm: a scope of exactly one
+  project returns raw (not a 1-element envelope) so single-project UX never regresses. (Assumed yes.)
+- [ ] **`expiresIn` for the scoped exchange.** Use `null` (inherit parent/default) in v1, or pin to the
+  remaining parent lifetime? Affects mid-session expiry of the scoped token.
+- [ ] **Scope change mid-session re-introspect.** After `set_project_scope`, do we re-introspect to
+  validate the subset is still reachable, or trust the prior introspect? (Lean: trust; resolver/exchange
+  will reject an out-of-scope project anyway.)
+- [ ] **Write-target confirmation mechanism.** Is the "confirmed single target" a tool argument
+  (`project_id` on the write tool), a separate `set_write_target` call, or purely instruction-driven?
+  (Lean: explicit `project_id` arg on write tools, honored only when scope >1.)
+
+## Resolutions (2026-06-30) — answers to the increment-2 open questions
+
+- **Scoping requires a dedicated tool (`set_project_scope`); it is the only mechanism.** The MCP
+  server receives nothing from the conversation except tool calls — plain chat text never reaches the
+  server. Scope is server-side state (scoped token + per-project client cache + active project), so the
+  user's in-conversation intent can only change scope by the agent invoking the tool. The tool is
+  callable **at any point mid-conversation**, not just at start; the conversation-start nudge is an
+  instruction-level suggestion, not a gate. The user drives scope changes by saying so; the agent
+  translates that into the tool call. (Resolves the recurring "do I need a tool / is it user-driven"
+  question: yes, a tool; driven by the user via conversation, any time.)
+- **The tool does not swap a single client — it invalidates the cache (D6).** `set_project_scope`
+  stores the new scope + scoped token and **clears the per-project client cache**. `from_state` then
+  lazily rebuilds each project's client against the new scoped token. Cleaner than replacing one
+  `KeboolaClient` object in state.
+- **Q2 (scoped-token lifetime) — resolved: the child token is re-minted, not independently refreshed.**
+  The `pat/exchange` response carries `accessToken` + `expiresAt` but **no `refreshToken`** — the child
+  (scoped) token is not refreshable on its own. The refreshable credential is the **parent** PKCE
+  session token (Part B, `/v1/auth/token/refresh`). MCP **remembers the scope selection**
+  (`project_ids`, `readOnly`); when the scoped child nears expiry it **re-runs `pat/exchange`** against
+  the still-valid (refresh-backed) parent token to lease a fresh scoped token. `expiresIn: null` at
+  exchange time (inherit server default) is fine because we re-mint on demand. *Flag: confirm against
+  the auth API that the child token genuinely has no own refresh token.*
+- **Q3 (re-introspect on scope change) — resolved: trust prior, let exchange reject.** When the user
+  picks a subset, MCP goes straight to `pat/exchange` without re-calling `introspect`. The exchange
+  endpoint itself rejects any project the token can't reach, so a pre-check is redundant — one fewer
+  round-trip, and the exchange is the authority.
+- **Q1 (exactly-1-in-scope) — confirmed: a single-project scope returns the raw result, not a
+  1-element envelope.** Single-project UX is byte-for-byte unchanged.
+- **Q4 (write-target confirmation) — lean: explicit `project_id` arg on write tools, honored only when
+  scope > 1.** (Resolved as leaned — see "Decisions (increment 5)" below.)
+
+# Extension: query fan-out, dialect-aware bootstrap, per-service token gaps (PSGO-261, increment 3)
+
+## Context
+
+Increment 2 delivered read fan-out + scope tools but left three rough edges: `query_data` was
+pinned to the active project's workspace, `get_accessible_projects` returned only id/name/role
+(forcing a `get_project_info` per project for the SQL dialect), and only Storage + the Query
+Service actually honor the multi-project token narrowing. This increment addresses the first two
+and documents the third.
+
+## `query_data` fan-out + per-project workspace
+
+`query_data` is now a normal fan-out read tool — it was removed from `_NO_FANOUT_TOOLS`. The fan-out
+swaps **both** the `KeboolaClient` **and** a `WorkspaceManager` built on it into session state for
+the duration of a call (`MultiProjectMiddleware._swap_project`), so the SQL runs inside the targeted
+project's own read-only workspace (its BigQuery dataset / Snowflake schema), not the active
+project's.
+
+- Narrow to one project with the `project_ids` filter (`query_data(project_ids=[86])`), or run
+  across all scoped projects.
+- Per-project workspaces are provisioned lazily on first use. `ponytail:` the manager is rebuilt
+  per call; a cache surviving the per-request state rebuild is a follow-up if provisioning latency
+  shows up.
+- Merged `structured_content` for a fanned-out query keeps the first project's `csv_data` (scalar
+  deep-merge); every project's full result is present in the per-project text envelopes. Structured
+  multi-CSV merge is deferred.
+
+### Known limitations (accepted, not solved this increment)
+- **Read-only scope can't provision a first-time workspace** (workspace creation is a POST). The
+  first `query_data` into a project without an existing MCP workspace needs a non-read-only scope.
+  Verified: read-only scope → `Forbidden POST operation on a readonly client` on workspace create.
+- **No cross-project SQL in a single statement.** BigQuery has no cross-project data access;
+  Snowflake reaches another project only via a *materialized* linked-bucket alias. A single
+  `query_data` call always executes inside exactly one project's workspace. This is a backend
+  constraint, not an MCP limitation — a future increment could add FQN-aware routing, but the join
+  itself is impossible in one statement regardless.
+
+## `get_accessible_projects` as the dialect-aware bootstrap call
+
+`get_accessible_projects` now compacts several API calls into one bootstrap result so the assistant
+does not need a `get_project_info` per project:
+
+- **Introspection** → reachable projects (id, name, role).
+- **Per-project token verify** (parent token narrowed with `X-KBC-ProjectId`, run concurrently) →
+  each project's `sql_dialect`, derived from `owner.defaultBackend` — **no workspace provisioned**.
+- **Current scope surfaced** → `scoped_project_ids`, `active_project_id`, `read_only`, and
+  per-project `in_scope` / `is_active` flags. (There is no separate scope-introspection tool; this
+  is the read side of scope state without mutating the token.)
+- **Optional base instructions** → `with_llm_instruction=true` returns `base_instructions`: a
+  top-level array grouped by SQL dialect (deduplicated, **not** copied per project), e.g.
+  `[{project_ids:[18,86], sql_dialect:"BigQuery", instructions:"…"}, {project_ids:[95],
+  sql_dialect:"Snowflake", instructions:"…"}]`. Request once at the start of a conversation.
+
+`workspace_id` is intentionally omitted here (not needed for bootstrap). The result keeps the
+codebase-wide singular `llm_instruction` field (how-to-use-this-result guidance) distinct from the
+plural `base_instructions` (the working system prompts).
+
+### `get_project_info` caveat
+`get_project_info` stays in `_NO_FANOUT_TOOLS` and reports only the active project. In a
+mixed-dialect scope its single `sql_dialect` / dialect-specific `llm_instruction` is misleading for
+the other projects. Prefer `get_accessible_projects` for multi-project bootstrap. Follow-up: fan out
+`get_project_info`, or split its static prompt from the per-project dialect/branch/workspace facts.
+
+## Per-service token support under multi-project scope
+
+Fan-out narrows a call to one project via the **`X-KBC-ProjectId` header** on a shared token. Only
+services that read that header work under header-narrowing. Current wiring (`clients/client.py`):
+
+| Service | Token today | PAT / multi-project status |
+|---|---|---|
+| Storage (`connection`) | `bearer_or_sapi_token` + `X-KBC-ProjectId` | ✅ works |
+| Query Service | workspace bearer | ✅ per-project workspace |
+| Metastore (semantic) | `bearer_or_sapi_token` | ✅ PAT/bearer-first, SAPI fallback (guarded); feature-gated, untested on stacks without `mcp-semantic-tooling` |
+| Data Science (sandboxes) | `bearer_or_sapi_token` + `X-KBC-ProjectId` | ✅ PAT + project header (verified: data-app create + deploy) |
+| Scheduler | `bearer_or_sapi_token` | ✅ bearer-first (writes only) |
+| **Jobs Queue** | `bearer_or_sapi_token` + `X-KBC-ProjectId` | ✅ bearer/PAT-first, SAPI fallback |
+| **AI Service** | `bearer_or_sapi_token` | ✅ bearer/PAT-first, SAPI fallback |
+| **Sync Actions** | `bearer_or_sapi_token` + `X-KBC-ProjectId` | ✅ bearer/PAT-first, SAPI fallback |
+
+### Resolved: Queue / AI / Sync-Actions now speak bearer/PAT
+`jobs_queue`, `ai_service`, and `sync_actions` originally passed the raw `self._token`, so under a
+PAT/multi-project session the satellite service rejected it (`get_jobs` → 401 "Invalid access
+token" from the Queue API). Fixed in commit `5b8c65ed`: all three are now wired with
+`bearer_or_sapi_token` (`clients/client.py:169,184,190,209`), which forwards `Authorization:
+Bearer <token>` for programmatic sessions and falls back to `X-StorageAPI-Token` for legacy SAPI —
+matching metastore/data-science/scheduler. The queue accepts `Authorization: Bearer kbc_at_…` +
+`X-KBC-ProjectId` (verified by hand against the Queue API).
+
+## Decisions (increment 3)
+
+- **`query_data` fans out with a per-project workspace** rather than being pinned to the active
+  project. Single-project targeting via the `project_ids` filter; cross-project SQL stays out of
+  scope (backend-impossible in one statement).
+- **`get_accessible_projects` is the multi-project bootstrap**: per-project dialect via token verify
+  (no workspace), current scope surfaced, base instructions grouped by dialect behind
+  `with_llm_instruction`.
+- **Queue / AI / SyncActions now use the bearer/PAT path** (commit `5b8c65ed`), joining
+  metastore + data-science in satisfying the PAT/bearer + `X-KBC-ProjectId` contract.
+
+# Extension: scope-first tool visibility + reviewer feedback (PSGO-261, increment 4)
+
+## Context — reviewer feedback vs. PR #451
+
+An earlier MPA attempt (PR #451, `davidesner`) took a different shape: static numbered SAPI tokens
+(`KBC_STORAGE_TOKEN_1..N`) in `.mcp.json`, a middleware that injects a `project_id`/`branch_id`
+parameter into every tool schema, and the **agent** passing `project_id` per call (so covering N
+projects means the agent calls the tool N times). Two critiques of our fan-out/scope model were
+raised against that backdrop. Verdict after analysis:
+
+- **"Fan-out is worse than N explicit calls."** Partly conceded, partly not:
+  - *Relevance / context bloat* — not a real differentiator: the user can scope the token or use the
+    `project_ids` filter to target one project, and a genuine all-projects request bloats context in
+    either design.
+  - *Latency* — fixable: the fan-out loop should run **concurrently** (it is currently sequential).
+  - *Attribution & error isolation* — the one real gap (see below). Kept as follow-up.
+- **"Active project while unscoped feels weird; expect tools to load after the first scope."** —
+  Accepted. Implemented as scope-first tool visibility (below).
+
+## Attribution & error isolation (the remaining fan-out gap)
+
+Concrete, with a 2-project read:
+
+- **Attribution.** `get_buckets` fan-out concatenates both projects' `buckets` lists via
+  `_deep_merge`; each bucket has `source_project: null`, so the merged `structured_content` cannot
+  say which project a bucket came from (only the `=== project N ===` text envelope can, which
+  structured-output clients don't parse). Two explicit calls each carry their project by construction.
+- **Error isolation.** The fan-out loop is `for p in targets: results.append(await call_next())` —
+  if one project raises (e.g. `get_jobs` → Queue 401 on project 95 while 86 succeeds), the exception
+  propagates and the **whole** call fails, discarding project 86's good result. Two explicit calls
+  isolate the failure (86 returns jobs, 95 returns its 401).
+
+Follow-up (not in this increment): make fan-out concurrent, catch per-project errors into a
+per-project `{project_id, ok|error}` envelope, and stamp `source_project` on merged rows.
+
+## Resolved: structured_content attribution (PSGO-261, follow-up to the fan-out gap above)
+
+Error isolation shipped separately (`MultiProjectMiddleware.on_call_tool`'s per-project try/except,
+collecting failures into retry-hint text notes rather than failing the whole call — see the code).
+This closes the remaining half: attribution in `structured_content`.
+
+- **Field name is `_scope_project_id`, not `source_project` as originally sketched above.**
+  `source_project` is already a real field on bucket/table output models (`storage/tools.py:127,331`)
+  — Keboola's own cross-project *linked-bucket* provenance (which project a shared/linked bucket
+  originated from), a pre-existing and unrelated concept. Stamping that name here would have silently
+  overwritten real data on any linked bucket/table in a fanned-out result. `_scope_project_id` (leading
+  underscore, MCP-scope-specific name) avoids the collision; no output model in this codebase uses
+  that name today.
+- **Mechanism:** `MultiProjectMiddleware._tag_items_with_project` stamps `_scope_project_id` onto every
+  dict item inside each project's structured payload, before `_deep_merge` concatenates the per-project
+  lists together — so the field survives the merge on every list item, not just the top level.
+  Non-dict list items (e.g. a plain list of ids) are left untouched — nothing to attribute.
+- **Only applies to genuine fan-out (2+ targets).** A single-target call (scope of one, or narrowed to
+  one via `project_ids`) returns `call_next()` directly and never reaches `_merge` — it doesn't need
+  the tag, the whole session already knows which project it hit.
+- **Schema safety:** no output model in this codebase sets `extra='forbid'` (`ConfigDict`), so no
+  generated JSON schema declares `additionalProperties: false` — adding this key doesn't violate any
+  existing tool's declared output schema.
+- Text-content attribution (`=== project N ===`) is unchanged and still emitted alongside — this adds
+  the same information to `structured_content` for callers that only read that half of the result.
+
+## Tool gating: call-time, not list-time (why hide-then-reveal was reverted)
+
+We first tried **scope-first tool visibility**: while a programmatic session's scope was unconfirmed,
+`on_list_tools` advertised only the scoping tools, and `set_project_scope` emitted
+`notifications/tools/list_changed` to reveal the rest. **This does not work on Claude Code** (and
+likely other clients): the client does **not re-fetch the tool list** after `list_changed`
+mid-session, so the newly-unlocked tools never enter its inventory (and `ToolSearch` can't find them)
+until a reconnect. Hiding therefore left the session stuck with only two tools.
+
+**Reverted to call-time gating** (robust on every client, no reconnect):
+- **All tools stay listed** from connect. No hide.
+- The **call-time ask-first gate** (`on_call_tool`) blocks data tools with a "confirm a scope first"
+  error until `set_project_scope` is called. After scoping, the already-listed tools just work.
+- `set_project_scope` still emits `notifications/tools/list_changed` — now only meaningful because a
+  **confirmed multi-project scope adds the `project_ids` filter param** to read tools (a real schema
+  change); clients that honor it refresh, clients that don't still work (the param is optional).
+- The `project_ids` filter is injected only for a **confirmed** scope of >1 project.
+
+This keeps the reviewer's other win (no phantom active project *before* a scope exists) without
+depending on a client capability that isn't there. The "tools appear after scope" ideal is only
+achievable on clients that re-fetch on `list_changed`; we don't rely on it.
+
+## Decisions (increment 4)
+
+- **Call-time gate, not list-time hiding** — hide-then-reveal needs client `list_changed` re-fetch
+  (absent in Claude Code mid-session), so all tools stay listed and data tools are gated at call time.
+- **No phantom active project before a scope is confirmed**; after `set_project_scope` the
+  `active_project_id` is the write / `query_data`-default target and is surfaced intentionally.
+  _(Superseded for writes by "Decisions (increment 5)" below: writes now take an explicit
+  `project_id` argument instead of implicitly targeting `active_project_id`.)_
+- **Fan-out stays**, with the relevance/latency critiques answered by the `project_ids` filter and a
+  (follow-up) concurrent loop; per-project error isolation is now implemented (partial results).
+- Fixed a latent bug: `set_project_scope` referenced `minted.read_only` on the exchange-failure path
+  where `minted` is unbound — now uses the stored scope's `read_only`.
+
+## Scale: count-first fan-out with a safety cap
+
+Fan-out's saving is a *fixed* structural overhead (deduped envelopes/wrappers/turns, ~a few hundred
+tokens across N projects) — it does **not** compress data. So as projects grow, the percentage cut
+trends to zero and the binding cost becomes raw **data volume**:
+
+| buckets/proj (×6) | data | fan-out | explicit | cut % |
+|---|--:|--:|--:|--:|
+| 5 | 3,375 tok | 3,658 | 3,978 | 8.0% |
+| 50 | 33,750 | 34,033 | 34,353 | 0.9% |
+| 500 | 337,500 | 337,783 | 338,103 | 0.1% |
+
+An unbounded enumerator (`get_buckets`/`get_tables` have no `limit`/`offset`) fanned out across N
+big projects returns hundreds of thousands of tokens in one tool result — overflowing the context
+window in *either* model. Fan-out is a round-trip/turn optimizer, not a data-volume one.
+
+**Fix — `MultiProjectMiddleware._merge` degrades to count-first past a cap** (`_FANOUT_MAX_ITEMS`,
+default 200 total items across projects):
+- Under the cap: unchanged — per-project text envelopes + fully merged lists.
+- Over the cap: return a single guidance note with **per-project item counts**, a **truncated sample**
+  (first `_FANOUT_MAX_ITEMS`, schema-safe — a shorter list still validates), and steer the agent to
+  **narrow with `project_ids`** or **use `search`**. Counters (e.g. `bucket_counts`, search `total`)
+  are summed by `_deep_merge`, so they keep reflecting the true totals even when the item lists are
+  truncated. The per-project full text dumps are dropped in this path (that is the context saving).
+
+This makes the multi-project path safe on humongous projects: it can never wedge the session, and it
+nudges toward the scalable access patterns (search / per-project drill-down) instead of bulk-listing.
+Follow-up: real `limit`/`offset` pagination on the enumerators, and concurrent fan-out.
+
+## Transport note: multi-project scope is carried by the caller, not the session (superseded)
+
+**Superseded.** This section originally assumed multi-project scope had to live in the MCP
+**session** state (`ctx.session.state[SCOPE_KEY]`), read back on each request, and that this only
+persists when the transport keeps the session alive across requests — fine on stdio (one long-lived
+process), broken on the deployed default (`stateless_http=True`, a fresh empty session per request,
+confirmed live via Datadog trace evidence: three separate `POST /mcp/` requests sharing one
+process/`runtime-id` yet never seeing each other's session state), and only working around that with
+`--no-stateless-http` (a single-replica-only workaround, and itself in tension with the direction the
+MCP spec is taking: the 2026-07-28 RC removes `Mcp-Session-Id`/session pinning from the protocol
+entirely, in favor of stateless-by-default operation).
+
+**As built:** `set_project_scope`/`get_accessible_projects` sign the confirmed `SessionScope` into an
+opaque `scope_token` (`SessionScope.to_token`/`from_token`, `mcp.py`; HMAC-JWT, the same
+gzip+`jwt.api_jws` mechanism `SimpleOAuthProvider` already uses for OAuth tokens, extracted into
+`jwt_utils.py`) and return it to the caller, who resends it as a tool-call argument on every
+subsequent call. `SessionStateMiddleware` decodes it fresh from the request each time
+(`_read_scope_from_request`) instead of reading `ctx.session.state` from a prior request. This is
+stateless by construction: it works identically on stdio, one HTTP replica, or many, with no shared
+store, no sticky routing, and no `--no-stateless-http` workaround needed. The signing secret is
+`config.jwt_secret` (`KBC_JWT_SECRET`) when set — required to be shared across replicas for the
+existing OAuth JWTs already, so scope tokens ride along for free — or a process-local fallback
+(fine for stdio, since one process serves exactly one conversation).
+
+Separately, the deployed session no longer needs to be single-project via a resolver exchange at
+all: `create_session_state` forwards any programmatic token (`kbc_at_*`/`kbc_pat_*`) as
+`Authorization: Bearer`, narrowed by `X-KBC-ProjectId` once a project is known — the
+`resolve-storage-token` auth-bridge exchange this section referenced has been removed (see
+`oauth_session_exchange/RFC.md` Decision §6). Full multi-project scope now works the same way on
+the deployed server as it does locally.
+
+## Decisions (increment 5) — explicit `project_id` on write tools (resolves Q4)
+
+**Q4 (write-target confirmation), previously "still open; not blocking," is now resolved as leaned:
+explicit `project_id` argument on every write/modify/delete tool, required once 2+ projects are
+scoped.** Superseded is the interim behavior described above (line ~604, "increment 4"): a write
+targeting `active_project_id` (the first scoped project) with no per-call target, requiring
+`set_project_scope` to change which project a write lands on. That indirection was reported as
+confusing in practice — writing to a different scoped project needlessly demanded a re-scope, which
+also reorders the scope for every subsequent read fan-out.
+
+- **Every write tool now declares `project_id: str | None = None`** (a real, schema-visible
+  parameter — not a middleware-injected one, unlike the read-side `project_ids` filter). The LLM
+  states its target explicitly in the conversation.
+- **`MultiProjectMiddleware._dispatch_write`** (not the tool body) resolves and swaps the target,
+  for the same reason `_swap_project` already runs ahead of `ToolsFilteringMiddleware` for read
+  fan-out: role/feature/branch authorization must be evaluated against the *targeted* project's
+  client, not whatever was active before the call.
+- **Ambiguity is now a hard error, not a silent default:** 2+ scoped projects and no `project_id` →
+  `ToolError` naming the scoped projects and asking for one. Exactly one scoped project still
+  defaults `project_id` to it (unchanged single-project UX).
+- **Read tools are unaffected** — they keep the existing `project_ids`-filtered fan-out; listing
+  needs no single target.
+
+This also folds in the one still-useful idea from the earlier, superseded MPA RFC (PR #500,
+AI-3027, closed as superseded by this RFC): its "`project_id` as an explicit tool argument, chosen
+over a header/middleware-only approach" recommendation, including the ambiguity rule (`from_project`
+raising when 2+ projects are active and no `project_id` is given). Everything else in PR #500 (token
+taxonomy, append-only project registry, Kai integration flow, 24h idle refresh) is already covered
+by this RFC and the as-built code under different names.
+
+---
+
+# Extension: Kai (header-token) session-scope persistence (PSGO-261, increment 6)
+
+## Context
+
+Kai currently authorizes with a legacy, project-bound Storage token and will transition to a
+stack-wide programmatic token (`kbc_at_`/`kbc_pat_`), refreshed by Kai's own regime rather than
+this server's PKCE store. Once that happens, every request Kai sends carries an **unscoped**
+whole-stack token, and `set_project_scope`/`get_accessible_projects` need the same server-side
+scope persistence OAuth sessions already get (§"Transport note", increment 5) — pushing the
+`scope_token` round-trip onto an LLM-driven client is unreliable (nothing guarantees it survives
+compaction, a fresh turn, or simply gets echoed back correctly).
+
+OAuth's persistence trick doesn't transfer directly, though: `SimpleOAuthProvider` mints its own
+opaque token at login, so `sha256(opaque_token)` (`session_store/repository.py`) is a stable
+Postgres key for the life of the session even as the *real* Keboola credential is refreshed
+underneath it. Kai's raw token has no such stability — confirmed against the actual refresh code
+in `auth_login.py`: `refresh_tokens()` returns a brand-new access-token string on every rotation,
+and `create_pat()`'s response carries no separate token-id to key on either. Hashing the raw
+inbound token would therefore silently drop the persisted scope on every Kai-side refresh.
+
+## Required behavior
+
+- **Persistence key:** `sha256(f'{conversation_id}:{user_id}')`, where `conversation_id` is the
+  existing `X-Conversation-Id`-derived `Config.conversation_id` (already flowing on every request
+  for tracing, confirmed stable for the life of one Kai chat session) and `user_id` is
+  `Introspection.user_id` (`auth_login.py`) resolved from the *current* request's token. Binding
+  to `user_id` — not just `conversation_id` — closes the gap a low-entropy or client-chosen
+  `conversation_id` would otherwise leave open: a collision (or reuse) only matches an existing row
+  if it also resolves to the same underlying Keboola identity, so a mismatched identity is a cache
+  miss, not a leaked scope, with no separate post-lookup equality check to forget.
+- **Stored row:** `project_ids`, `read_only`, `confirmed` only — no `scoped_token`/expiry fields,
+  since Kai refreshes its own Keboola credential independently of this table; nothing here needs
+  to track the parent token's freshness.
+- **Read-time validation, not a superset/subset hash:** a hash can only express exact-match
+  equality, not "grew is fine, shrank is not" — so the monotonicity rule is enforced in code, at
+  read time, against introspection data already being fetched: if
+  `set(row.project_ids) - {p.id for p in introspection.projects}` is non-empty (some previously
+  scoped project is no longer reachable), the row is dropped and the scope is treated as
+  unconfirmed. Projects *added* to the token's reach never invalidate an existing scope, since the
+  subset relation still holds.
+- **On invalidation, drop the whole scope** (not auto-narrow to the intersection) — force a full
+  `get_accessible_projects` → `set_project_scope` redo so an access change is surfaced to the user
+  rather than silently absorbed.
+- Applies only to deployed, non-OAuth, programmatic-token sessions with a `conversation_id`
+  present (`deployed_sa_token_path()` set, `is_programmatic_token(config.storage_token)`, no
+  `AuthenticatedUser`/`ProxyAccessToken` on the request). OAuth sessions keep using
+  `oauth_sessions`; local PKCE sessions keep using `ctx.session.state` (`session_state_persists`);
+  neither is affected by this table.
+
+## Resolution strategy
+
+- New table `kai_sessions` (migration `0004_kai_sessions.sql`), unpartitioned initially — same
+  starting point `oauth_sessions` had before partitioning became necessary (increment/migration
+  `0002`); add partitioning here too if/when retention needs it.
+- New `session_store/kai_scope.py`: `KaiScope` (data) + `KaiScopeStore` (Protocol) +
+  `PostgresKaiScopeStore` (impl), deliberately **not** folded into `SessionStore`/`OAuthSession` —
+  different key scheme (composite hash vs. opaque-token hash), no encrypted credential fields (no
+  secret is stored, just a project-id list and two flags), different invalidation semantics
+  (subset-check + drop vs. revoke). Keeping it a separate small store avoids overloading the
+  OAuth-shaped `SessionStore` protocol with a second, structurally different session concept.
+  Same lazy-pool-on-first-use pattern as `PostgresSessionStore`.
+- `ServerState.kai_scope_store: KaiScopeStore | None`, constructed in `server.py` whenever
+  `config.postgres_dsn` is set — **independent of whether OAuth is configured**, since Kai's path
+  needs no `oauth_client_id`/`session_encryption_key` (no OAuth login, no encrypted fields here).
+- `SessionStateMiddleware.on_request` (`mcp.py`): a new fallback,
+  `_read_persisted_kai_scope`, slotted after `_read_persisted_local_scope` and before
+  `_autolease_default_scope` — mirrors `_read_persisted_oauth_scope`'s position in the chain but
+  reads from `kai_scope_store` instead of the OAuth session row, gated on the "deployed,
+  non-OAuth, programmatic, has conversation_id" condition above. Skipped for `/list` like every
+  other network-touching step in this chain.
+- `tools/project.py`'s `set_project_scope`: a new `_persist_kai_scope`, called alongside the
+  existing `_persist_oauth_scope` — whichever one applies persists server-side and suppresses
+  `scope_token` in the response (`persisted = await _persist_oauth_scope(...) or await
+  _persist_kai_scope(...) or session_state_persists`, unchanged shape, one more branch).
+
+## Decisions (increment 6)
+
+- **Server-side persistence over client-side round-tripping**, confirmed: pushing scope state
+  into Kai/the LLM's own context is fragile (no guarantee of faithful round-trip across turns or
+  compaction); persisting server-side, looked up automatically on every request, needs no
+  cooperation from the calling LLM beyond sending the `conversation_id` header it already sends.
+- **Composite key (`conversation_id` + `user_id`) over either alone.** `conversation_id` alone is
+  client-supplied and not guaranteed high-entropy; `user_id` alone is not conversation-scoped
+  (would incorrectly share scope across unrelated chats from the same person). Together they give
+  a key that's both stable across Kai's token refreshes and safe against a `conversation_id`
+  collision or reuse.
+- **Drop-whole-scope over auto-narrow on a reachability shrink** — an explicit user decision
+  (over the friendlier-but-quieter auto-narrow-to-intersection alternative): surfacing an access
+  change via a forced re-scope beats silently continuing with whatever subset still works.
+- **A new store/table over extending `oauth_sessions`/`SessionStore`** — the two session kinds
+  differ enough (key scheme, no encrypted fields, no OAuth-specific lifecycle) that folding Kai
+  scope into the OAuth-shaped protocol would blur its single responsibility for no real code
+  reuse (the two stores would share almost no method bodies).
+
+---
+
+# Extension: Security hardening — response to review (PSGO-261, increment 7)
+
+## Context
+
+Tomas Fejfar's review of PR #604 (2026-08-07, "Agentic review") raised 9 concerns. Each was
+independently re-verified against the as-built code (file:line evidence) and cross-checked with a
+second, independent security-review pass before any fix was designed — this section documents
+what was actually found, not just what was claimed, since two items turned out different from
+the original framing (one narrower, one broader; see below).
+
+## Verified findings
+
+1. **Header injection into `Config` → forgeable `scope_token`, CONFIRMED.**
+   `SessionStateMiddleware.apply_request_config` calls `config.replace_by(http_rq.headers)` with
+   no allowlist; `Config._read_options` matches *any* dataclass field against an `X-{name}`
+   header, including `jwt_secret`. Since `resolve_scope_secret(config)` reads `config.jwt_secret`
+   from that same per-request config, an `X-Jwt-Secret` header lets a caller choose the HMAC key
+   that both signs and verifies their own `scope_token` — full `project_ids` forgery.
+2. **`scope_token` embeds a live bearer token, signed but not encrypted, CONFIRMED — broader than
+   first framed.** `jwt_utils.py`'s `encode_jwt`/`decode_jwt` are JWS (signature only) over
+   gzip+JSON; the payload is base64+gunzip-recoverable by anyone, without the secret.
+   `SessionScope.scoped_token` — a real, live Keboola access token, not just non-secret metadata
+   like `project_ids` — is itself a dataclass field, so it's embedded verbatim in the
+   client-visible token returned by `set_project_scope`/`get_accessible_projects` and resent as a
+   tool-call argument on every subsequent call: it lands in LLM context, client transcripts, and
+   client-side logs. No `exp` enforcement; decode failures (tampered, expired, or malformed) all
+   collapse into the same "no scope" outcome, with no revocation path.
+3. **`read_only=True` fails open, CONFIRMED — broader scope than reported.** Not just
+   single-project scopes as originally described: `MultiProjectMiddleware` skips `_swap_project`
+   (the only code path that ever passes `readonly=scope.read_only` into a `KeboolaClient`)
+   whenever a call targets `scope.active_project_id` — true for every single-project scope *and*
+   the first/active project of any multi-project scope. `SessionStateMiddleware.create_session_state`
+   never passes `readonly=` at all from `on_request`, regardless of scope. So the active
+   project's writes are never locally read-only-restricted — enforcement depends entirely on the
+   minted `scoped_token` being genuinely read-only server-side, which doesn't exist when the
+   `/v1/auth/pat/exchange` call fails. Only *non-active* projects in a 2+ project scope get real
+   local enforcement today (via `client_for_project(readonly=scope.read_only or None)`).
+4. **`normalize_storage_api_url` is a prefix check, not a domain allowlist, CONFIRMED.**
+   `hostname.startswith('connection.')` lets `connection.attacker.tld` pass. `is_same_stack` is a
+   correct exact-host match, but it's only ever applied when the server has its own configured
+   stack (`own_stack_storage_api_url` set); a server with no stack of its own (local mode, by
+   design, since it must accept the caller's URL) has no equivalent check before a caller-supplied
+   `X-Storage-Api-Url` host receives the live bearer token.
+5. **`resolve_encryption_key`'s silent process-local fallback — REFUTED, already mitigated.**
+   `server.py` already refuses to start (`raise RuntimeError`) if OAuth is configured
+   (`oauth_client_id`/`oauth_client_secret` both set) without `KBC_SESSION_ENCRYPTION_KEY`, and
+   `PostgresSessionStore` is never constructed via any other path. The cross-replica
+   silent-decrypt-failure scenario the review described can't actually happen today. Documented
+   here so it isn't re-flagged as a live gap.
+6. **MFA codes as CLI arguments, CONFIRMED.** `login --totp`/`--recovery` are plain `argparse`
+   string options — visible in shell history and `ps`/`/proc/<pid>/cmdline` for the process
+   lifetime. Recovery codes are single-use, high-value.
+7. **Verbatim auth-endpoint error bodies, CONFIRMED (minor nuance).** `elevate_session`/
+   `create_pat` both raise `RuntimeError` including the raw `response.text` (`create_pat` also
+   `{payload=}`, which is `{name, expiresIn, scope}` — the MFA code itself is not in either
+   logged payload). Still real: no redaction, contradicting this RFC's general redaction stance.
+8. **"Ask-first" is prompt-text, not access control — CONFIRMED, but narrower than it first
+   appears.** Re-verified exactly where this matters: the ask-first gate
+   (`MultiProjectMiddleware.on_call_tool`) only ever fires because `_autolease_default_scope`
+   (gated on a *local* programmatic session) auto-leases an unconfirmed, all-projects
+   `SessionScope` by default. OAuth and Kai sessions never do this — they simply have **no** scope
+   at all (not an auto-leased one) until `set_project_scope` runs, so neither grants usable
+   all-project access before an explicit choice; only the local `login`/env-var-token path has
+   this gap, and it's closed structurally rather than by better wording — see §Required behavior
+   below.
+9. **Cross-process credential race, CONFIRMED.** No `asyncio`/`fcntl`/lock import anywhere in
+   `auth_login.py`; `save_tokens` does an unlocked read-modify-write on
+   `~/.keboola/mcp/credentials.json` with a rotating refresh token. As-built, `_store_key()` is
+   `hostname` alone, so two different local MCP client processes for the *same stack* (e.g. Claude
+   Desktop and a terminal `login`) genuinely share one entry today — this is confirmed as a real
+   design gap, not just a hypothetical.
+
+## Required behavior
+
+- **Config field allowlist for header-derived values.** `Config` gains an explicit
+  `_HEADER_ELIGIBLE_FIELDS` set (the fields legitimately meant to vary per request:
+  `storage_api_url`, `storage_token`, `branch_id`, `workspace_schema`, `workspace_id`,
+  `bearer_token`, `conversation_id`, `project_id`) and a new `replace_by_headers()` method that
+  only resolves `X-{name}` headers for fields in that set. `apply_request_config` uses it instead
+  of the unrestricted `replace_by`. Deployment-level fields (`jwt_secret`, `postgres_dsn`,
+  `session_encryption_key`, `oauth_client_id`/`oauth_client_secret`, `oauth_server_url`,
+  `mcp_server_url`) become permanently unreachable from any request header. Env-var (`KBC_{name}`)
+  and CLI-derived resolution is untouched — that input is already operator-trusted.
+- **Keboola-domain allowlist for `normalize_storage_api_url`.** Replace the bare `connection.`
+  prefix check with a regex requiring both the `connection.` label and a genuine
+  `*.keboola.(com|dev)` suffix, mirroring the pattern `oauth.py`'s `_ALLOWED_DOMAINS` already uses
+  for redirect URIs. Applies uniformly to deployed (already double-covered by `is_same_stack`)
+  and local (previously uncovered) servers alike.
+- **`read_only` is enforced locally for the active project too**, not just relying on the remote
+  scoped token: `create_session_state` now receives `readonly=(True if scope and scope.read_only
+  else None)` from `on_request`, so the base session client is built read-only whenever the
+  confirmed scope requests it — success or failure of the token exchange. Workspace provisioning
+  (a server-side plumbing GET+POST pair, not a user-visible mutation) is explicitly exempted via a
+  new `KeboolaClient.writable_storage_client`, so `query_data` keeps working against a read-only
+  scope that has no workspace yet. The `MultiProjectMiddleware` active-project shortcuts (read
+  fan-out and the write-dispatch path) are guarded with a `KeboolaClient.readonly` check so they
+  only skip the per-project client swap when the base client already matches the scope's
+  `read_only` — defense in depth, zero added cost for the common case once the above makes that
+  the normal state. `set_project_scope`'s exchange-failure fallback keeps working (some stacks
+  lack the exchange endpoint) but its `llm_instruction` now says explicitly whether read-only is
+  server-enforced (a real `scoped_token` exists) or only locally enforced (fallback path).
+  `KeboolaClient.with_branch_id()` — which rebuilds a fresh client for any non-default-branch
+  call (routine on a dev branch, not just adversarial) — is fixed to forward `readonly` into the
+  new client; a fresh `security-scanner` pass on the implementation caught this dropping
+  `readonly` silently, which would have reopened this exact fail-open bug on every branch switch.
+- **`scope_token`'s payload is encrypted, not just signed.** `SessionScope.to_token`/`from_token`
+  move from `jwt_utils`'s JWS to AES-GCM authenticated encryption via the already-existing
+  `session_store/crypto.py` helpers and `resolve_encryption_key` — the same key OAuth sessions
+  already encrypt with. `resolve_scope_secret`/`_FALLBACK_SCOPE_SECRET` are removed in favour of
+  `resolve_scope_key`. A new `scope_token` is therefore ciphertext, not a
+  base64+gzip-recoverable signed blob; the live `scoped_token` it may carry is no longer readable
+  without the key. No backward-compatible legacy-JWS decode path: this feature has not shipped to
+  production (main has none of PSGO-261 yet), so there are no live tokens to migrate — a clean
+  replacement, not a staged one. (A separate design considered and rejected: a new
+  Postgres-backed `scope_sessions` table mirroring `kai_scope.py`, giving every client an opaque
+  handle instead of any client-held credential. Rejected as unwarranted complexity —
+  `scope_token` is only actually issued in the narrow
+  remaining case where neither OAuth nor Kai's Postgres-backed persistence applies; OAuth and Kai
+  sessions already never hand the client a live credential at all.)
+- **MFA codes: prompt, don't require a CLI argument.** `login --pat` still accepts
+  `--totp`/`--recovery` as opt-in overrides for scripted/CI use (documented in `--help` as
+  shell-history/`ps`-visible), but when neither is supplied, prompts via `getpass.getpass()` —
+  hidden input on a real TTY, and a graceful (though visible, with a stderr warning) read from
+  stdin when piped/non-interactive, so scripted input still works without extra plumbing.
+- **Auth-endpoint errors are redacted.** `elevate_session`/`create_pat` raise a generic
+  `RuntimeError(f'... failed ({status}). See debug logs for details.')`; the raw `response.text`/
+  request `payload` move to `LOG.debug(...)` only.
+- **Local sessions are scoped at login time, never auto-leased to everything.** This replaces
+  "document ask-first as guidance" with a structural fix: `login` (and `login --pat`) now require
+  an explicit project choice — prompted interactively (same "show projects, pick all or a subset"
+  flow already used in-conversation by `get_accessible_projects`/`set_project_scope`) when run
+  from a TTY without `--project-ids`/`--all`, required explicitly otherwise. `lease_pat`, which
+  previously always requested every accessible project, takes the same explicit choice. The
+  confirmed `project_ids`/`read_only` are persisted alongside the access/refresh tokens in the
+  stored credential entry, and the local-session bootstrap in `mcp.py` reads them back as an
+  already-`confirmed=True` `SessionScope` — `_autolease_default_scope`'s implicit
+  all-projects-then-ask-first default is removed for any session with a persisted choice. Since
+  OAuth and Kai sessions already never auto-lease (finding #8), this closes the gap at its actual
+  source (a local session existing before any explicit choice) rather than trying to make an
+  LLM-facing instruction into an enforcement boundary.
+- **Credentials are keyed per interface, not just per stack.** `login` gains a profile identifier
+  (`--profile <name>` / `KBC_LOGIN_PROFILE`, defaulting to `'default'` so single-interface setups
+  are unaffected) naming which calling interface (Claude Desktop, Cursor, a terminal session) this
+  login is for. `_store_key()` becomes `(hostname, profile)`, and the on-disk schema nests entries
+  accordingly — removing finding #9's race by construction, since independent interfaces no
+  longer share an entry at all. The narrower race that remains — two concurrent requests *within
+  one process* both seeing "near expiry" and both refreshing — is closed with a plain
+  `asyncio.Lock` per `(hostname, profile)` in `get_access_token` (in-process; no file locking
+  needed for this case). A non-blocking `fcntl.flock` on a sibling `.lock` file around the on-disk
+  read-modify-write is kept as cheap defense-in-depth insurance (polling `LOCK_EX | LOCK_NB`,
+  never a blocking flock — degrades with a warning rather than stalling the event loop/MCP
+  handshake; the `fcntl` import is guarded for non-POSIX platforms), covering accidental
+  profile-sharing or a `login` run racing an already-running server for the same profile.
+
+## Explicitly out of scope this increment
+
+- Real MCP-elicitation-based (`elicitation/create`) human-in-the-loop confirmation for scoping —
+  superseded by login-time scoping, which removes the need for any runtime confirmation gate on
+  the local path. Worth revisiting only if a future flow reintroduces an unconfirmed-by-default
+  state.
+- Windows-native file locking for the credential-lock insurance layer — CI and the documented
+  supported platforms are POSIX-only today; the `fcntl` import degrades cleanly rather than
+  crashing where absent.
+
+## Decisions (increment 7)
+
+- **Fix the flow, don't just document the gap**, for both #8 (ask-first) and #9 (credential
+  race): in both cases a structural fix (scope at login time; key credentials per interface) was
+  available and preferred over accepting the gap as a documented limitation.
+- **Eliminate shared state before adding a lock**: #9's primary fix is removing the sharing
+  (per-profile keying), not the `fcntl.flock` layer, which is retained only as insurance for
+  whatever narrow sharing remains (in-process concurrency, accidental profile reuse).
+- **Encrypt the existing `scope_token` fallback rather than build new server-side infrastructure**
+  for #2/#4: since OAuth and Kai already keep credentials server-side, the client-held-token case
+  is narrow enough that AES-GCM-encrypting the existing JWS payload is proportionate; a new
+  Postgres table mirroring `kai_scope.py` was considered and rejected as unneeded complexity for
+  that narrow remaining surface.
+
+## Extension: single-project sessions never need scoping (increment 8)
+
+Follow-up observation, not from the review above: for both the local `login` flow (increment 7,
+item 7) and the OAuth flow, a session whose token can reach exactly one project has no real
+scoping decision to make -- prompting for it (locally) or requiring an explicit
+`set_project_scope` call (OAuth) is pure friction. This is distinct from the "N of M projects"
+case, which stays genuinely ambiguous for this server's OAuth grant (`claudai projectless` scope,
+always whole-stack) -- introspection's count there is just the user's real total org membership,
+not evidence of a prior scoping choice, so it isn't auto-confirmed.
+
+**Fix:**
+- `cli.py`'s `_prompt_project_selection` skips the "which projects" question when introspection
+  returns exactly one project -- still asks read-only, then persists the single-project scope the
+  same way an explicit choice would be.
+- `oauth.py`'s `exchange_authorization_code` introspects the freshly-exchanged session token
+  immediately after creating it; if exactly one project is reachable, it mints a scoped token
+  (mirroring `set_project_scope`'s own exchange-with-fallback pattern) and persists
+  `scope_confirmed=True`/`scope_project_ids=[that id]` on the session row right away -- no
+  `set_project_scope` call ever needed for that session. Best-effort: any introspection/exchange
+  failure here just leaves the session unconfirmed, exactly as before this fix; login itself never
+  fails because of it.
+- `lease_pat`/`login --pat` need no separate change -- they already take an explicit
+  `project_ids` argument (increment 7), which now flows from the auto-detected single project when
+  applicable.
+
+## Extension: `X-KBC-ProjectId` could override a confirmed scope (increment 12)
+
+Found by a full-PR security audit, not from the original review: `project_id` is a header-eligible
+`Config` field (`_HEADER_ELIGIBLE_FIELDS`), and `_resolve_local_tokens`'s deployed/OAuth branch
+only applied a confirmed scope's active project id when `config.project_id` wasn't already set
+(`if scope and scope.project_ids and not config.project_id: ...`). A request carrying
+`X-KBC-ProjectId` therefore kept that header's value even after `set_project_scope` confirmed a
+different, narrower scope -- and `MultiProjectMiddleware`'s active-project fast paths only compare
+the *logical* target against `scope.active_project_id`, never inspect what project the base
+client was actually built with, so the mismatched client was used unnoticed. Net effect: any
+caller able to attach one header could redirect every default-target call to a project outside
+what the user confirmed, using the full unscoped token -- defeating the scoping guarantee for
+OAuth and Kai/header-token sessions (the local-programmatic branch was never affected -- it
+already unconditionally overwrote `project_id` from the scope, no guard).
+
+**Fix:** drop the `not config.project_id` guard -- once a confirmed multi-project scope exists,
+`project_id` always comes from `scope.active_project_id`, matching the local branch's existing
+(safe) behavior. A tool wanting a *different* scoped project still has its own `project_id`
+argument, validated against `scope.project_ids` by `MultiProjectMiddleware._dispatch_single_target`
+-- this only affects which project the un-swapped base client targets. Considered and rejected: an
+additional check on `MultiProjectMiddleware`'s side comparing the base client's actual
+`X-KBC-ProjectId` header against the scope (defense-in-depth) -- redundant once the root cause is
+fixed at the source, and it broke existing mock-based tests for no real security benefit; the
+mcp.py-side fix alone closes the gap.
+
+## Fix: `_local_login_fallback` broke streamable-http with no configured token (increment 13)
+
+CI regression, caught by the integration-test suite (`integtests/test_mcp_server.py::test_remote_setup`,
+`test_http_multiple_clients`): the increment-that-extended-`_local_login_fallback`-to-streamable-http
+(RFC increment referenced above) made *any* transport attempt `ensure_access_token` whenever no
+token/OAuth is configured, not just `stdio`. But `streamable-http`/`http-compat` legitimately run
+with no default token at all, relying entirely on a per-request header (`X-Storage-Token`) --
+exactly what these integration tests deliberately exercise. With `allow_interactive=False` (no TTY
+in CI) and no stored local-login credential, `ensure_access_token` raised `RuntimeError: No stored
+credentials...`, uncaught, killing the server subprocess before it could even start listening.
+
+**Fix:** `_local_login_fallback` gains a `required: bool` parameter. `stdio` passes `True` (no
+other token source exists there, so a missing credential must still fail startup with the "run
+login" guidance -- unchanged behavior). `streamable-http`/`http-compat` pass `False`: a missing
+local credential there is caught and logged, not raised -- `config` is returned unchanged and the
+server starts normally, expecting a token per request.
+
+## Extension: `scope_token` was replayable across callers (increment 14)
+
+Raised in review (Tomas Fejfar), distinct from increment 7's finding #2: that fix
+(`SessionScope.to_token`/`from_token` moving from JWS to AES-GCM) addressed *confidentiality* --
+the embedded live `scoped_token` is no longer recoverable without the key. It did nothing about
+*replay*: `scope_token` decryption never checked who was presenting it, only that the ciphertext
+authenticated against the single deployment-wide key. Anyone who obtained a valid `scope_token`
+string some other way -- a shared/exported conversation transcript, client-side logs, an
+observability platform sitting on the MCP traffic -- could resend it verbatim as their own
+`scope_token` argument from an unrelated (even freshly self-registered) session on the same
+deployment, and `MultiProjectMiddleware` would use the embedded `scoped_token` as `base_token` for
+every fanned-out call, read *and* write (`multiproject.py`'s `base_token = scope.scoped_token or
+...`), fully impersonating whoever the scope was minted for.
+
+This only matters on the deployed server: `set_project_scope`/`get_accessible_projects` only ever
+return `scope_token` to the client when the scope isn't persisted server-side (`persisted =
+_persist_oauth_scope(...) or _persist_kai_scope(...) or session_state_persists`) --  OAuth and Kai
+sessions persist it in Postgres instead, and `stdio`/`--no-stateless-http` local sessions keep it
+in `ctx.session.state`. A local server has no cross-caller boundary to defend in the first place
+(`login` already grants its one user the whole stack), so the fix below is a no-op there by
+design, not by omission.
+
+**Fix:** `session_store/crypto.py`'s `encrypt`/`decrypt` gain an optional `aad` (AES-GCM
+additional authenticated data) parameter -- authenticated but never transmitted, so both sides
+must already agree on it out of band. `scope.py` adds `resolve_scope_binding_aad(storage_token)`,
+returning `sha256(storage_token)` when `deployed_sa_token_path()` is set (and the caller has a
+token), `None` otherwise (local). `SessionScope.to_token`/`from_token` take an `aad` param and
+thread it into `encrypt`/`decrypt`. Both mint sites (`set_project_scope`, `get_accessible_projects`
+in `tools/project.py`) bind to `client.token`; the read side
+(`SessionStateMiddleware._read_scope_from_request`) binds to `config.storage_token` -- the same
+underlying value, since the deployed branch of `_resolve_local_tokens` never overwrites
+`config.storage_token` with a narrowed `scoped_token` (only the local-programmatic branch does
+that, which is exactly the branch this fix doesn't apply to). A `scope_token` minted while serving
+caller A's request now fails AES-GCM authentication -- and is treated as "no scope", same as any
+other invalid token -- when replayed by caller B, whose own `storage_token` hashes to a different
+`aad`.
+
+## Extension: Postgres unavailable surfaced as an opaque 500 (increment 15)
+
+Raised in review: what happens when Postgres itself is down at runtime (not just absent at
+startup, which `server.py` already refuses to start on -- see the "Security hardening" RFC
+increment's `resolve_encryption_key` finding). Traced empirically (`starlette.testclient.TestClient`
+against both a minimal repro and FastMCP's actual app-construction shape):
+
+- `PostgresSessionStore`/`PostgresKaiScopeStore` had no exception handling at all around
+  `asyncpg` calls. `load_access_token` (backing OAuth bearer-token verification) calls
+  `get_by_access_token` on **every** authenticated request, before routing.
+- A non-`AuthenticationError` raised inside `AuthenticationBackend.authenticate()` bypasses
+  Starlette's `AuthenticationMiddleware` (which only catches `AuthenticationError`) entirely.
+- FastMCP's own Starlette app (`create_base_app`) registers **no** `exception_handlers` at all,
+  and it is a separately-**mounted** ASGI app (`cli.py`'s outer `Starlette(...).mount(...)`) --
+  Starlette's mount semantics fully isolate the two, so `cli.py`'s own `_exception_handlers`
+  dict never sees anything raised inside it either, confirmed empirically.
+- Net effect, today: a Postgres outage crashes every authenticated request with Starlette's bare,
+  unhelpful "Internal Server Error" default -- not even the JSON-formatted 500 `cli.py` appears
+  to promise, since that handler is registered on the wrong (outer) app.
+
+**Fix:**
+- `session_store/__init__.py` adds `DatabaseUnavailableError` and a `@guard_db_errors` decorator
+  translating connection-level `asyncpg`/`OSError`/`TimeoutError` exceptions into it (a genuine
+  query/logic error against a reachable database is a bug, not a "Postgres is down" condition,
+  and must not be swallowed into a misleadingly retryable response) -- applied to every public
+  method of both `PostgresSessionStore` and `PostgresKaiScopeStore`.
+- `oauth.py` adds `DatabaseUnavailableMiddleware`, a raw ASGI middleware translating
+  `DatabaseUnavailableError` into a `503 {"message": "..."}"` response; `SimpleOAuthProvider`
+  overrides `get_middleware()` to prepend it ahead of the base class's `AuthenticationMiddleware`
+  -- the only position from which it can actually catch what escapes that middleware. This is the
+  fix for the primary, every-request path.
+- `mcp.py`'s `_read_persisted_kai_scope` (the one Postgres-touching path reachable **without**
+  OAuth configured -- Kai's own header-token sessions) already degraded gracefully on an
+  introspection failure ("no scope yet"); the fix widens that same `try/except` to also cover the
+  `KaiScopeStore.get`/`drop` calls, so a DB outage there degrades identically instead of crashing.
+- `cli.py`'s `_exception_handlers` still gains a `DatabaseUnavailableError: ...503` entry, kept as
+  a secondary, defense-in-depth path: it correctly covers a `DatabaseUnavailableError` raised
+  *inside* one of that app's own route handlers (e.g. a future custom route), which genuinely is
+  caught by that dict's `ExceptionMiddleware` layer -- verified separately from the bearer-auth
+  case above.
+
+**Explicitly not fixed here:** the deployed `KeboolaClient`'s own request path has nothing to do
+with Postgres (Storage API calls don't touch this server's session database), so it needs no
+equivalent guard.

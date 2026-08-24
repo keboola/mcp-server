@@ -12,12 +12,12 @@ from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import ServerRuntimeInfo
-from keboola_mcp_server.mcp import SessionStateMiddleware
+from keboola_mcp_server.mcp import build_tracing_headers
 
 
 @pytest.fixture
 def keboola_client() -> KeboolaClient:
-    return KeboolaClient(storage_api_url='https://connection.nowhere', storage_api_token='test-token')
+    return KeboolaClient(storage_api_url='https://connection.test.keboola.com', storage_api_token='test-token')
 
 
 @pytest.fixture
@@ -257,7 +257,7 @@ class TestAsyncStorageClient:
                 if value
             }
             mock_client.post.assert_called_once_with(
-                'https://connection.nowhere/v2/storage/events',
+                'https://connection.test.keboola.com/v2/storage/events',
                 params=None,
                 headers={
                     'Content-Type': 'application/json',
@@ -327,7 +327,7 @@ class TestAsyncStorageClient:
 
             # Verify the API call was made with correct parameters
             mock_client.post.assert_called_once_with(
-                'https://connection.nowhere/v2/storage/tokens',
+                'https://connection.test.keboola.com/v2/storage/tokens',
                 params=None,
                 headers={
                     'Content-Type': 'application/json',
@@ -345,9 +345,9 @@ class TestKeboolaClient:
 
     @pytest.fixture
     def keboola_client_with_headers(self, runtime_config: ServerRuntimeInfo) -> KeboolaClient:
-        headers = SessionStateMiddleware._get_headers(runtime_config)
+        headers = build_tracing_headers(runtime_config)
         return KeboolaClient(
-            storage_api_url='https://connection.nowhere', storage_api_token='test-token', headers=headers
+            storage_api_url='https://connection.test.keboola.com', storage_api_token='test-token', headers=headers
         )
 
     @pytest.mark.asyncio
@@ -363,7 +363,7 @@ class TestKeboolaClient:
             mcp_version = importlib.metadata.version('mcp')
             fastmcp_version = importlib.metadata.version('fastmcp')
             mock_client.get.assert_called_once_with(
-                'https://connection.nowhere/v2/storage/tokens/verify',
+                'https://connection.test.keboola.com/v2/storage/tokens/verify',
                 params=None,
                 headers={
                     'Content-Type': 'application/json',
@@ -765,8 +765,28 @@ class TestStepUpStorageClient:
         # ... and pre-existing headers are preserved.
         assert headers['User-Agent'] == 'test'
 
+    def test_uses_bearer_for_programmatic_token(self, tmp_path):
+        # A programmatic (kbc_at_/kbc_pat_) session's token must ride as Authorization: Bearer, not
+        # X-StorageAPI-Token, which Storage API rejects outright for that token shape.
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt')
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token='kbc_at_abc',
+            bearer_token='kbc_at_abc',
+        )
+
+        stepped = client.step_up_storage_client(str(token_file))
+
+        headers = stepped.raw_client.headers
+        assert headers['Authorization'] == 'Bearer kbc_at_abc'
+        assert 'X-StorageAPI-Token' not in headers
+
     @pytest.mark.parametrize('readonly', [None, True, False])
-    def test_propagates_readonly_guard(self, tmp_path, readonly):
+    def test_always_writable_regardless_of_client_readonly(self, tmp_path, readonly):
+        # Provisioning (what step-up exists for) is server-side plumbing, not a user-visible
+        # mutation -- it must succeed even under a read-only confirmed scope. See the "Security
+        # hardening" RFC increment.
         token_file = tmp_path / 'token'
         token_file.write_text('sa-jwt')
         client = KeboolaClient(
@@ -778,7 +798,7 @@ class TestStepUpStorageClient:
 
         stepped = client.step_up_storage_client(str(token_file))
 
-        assert stepped.raw_client.readonly == client.storage_client.raw_client.readonly
+        assert stepped.raw_client.readonly is None
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize('branch_id', [None, '123'], ids=['main_branch', 'dev_branch'])
@@ -801,6 +821,27 @@ class TestStepUpStorageClient:
             branched.step_up_storage_client(str(token_file)).raw_client.headers['X-Kubernetes-Authorization']
             == 'Bearer sa-jwt'
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('branch_id', [None, '123'], ids=['main_branch', 'dev_branch'])
+    @pytest.mark.parametrize('readonly', [None, True, False])
+    async def test_with_branch_id_preserves_readonly(self, mocker, branch_id, readonly):
+        # Regression: with_branch_id() constructs a brand-new KeboolaClient for a non-default
+        # branch_id, and previously dropped `readonly` in doing so -- silently making a read-only
+        # confirmed scope's client writable again on the routine (non-adversarial) act of switching
+        # to a dev branch. See the "Security hardening" RFC increment.
+        client = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token='user-token',
+            branch_id='999',
+            readonly=readonly,
+        )
+        client.storage_client.dev_branch_detail = mocker.AsyncMock(return_value={'isDefault': False})
+
+        branched = await client.with_branch_id(branch_id)
+
+        assert branched is not client
+        assert branched.readonly == readonly
 
     def test_fails_loudly_on_empty_token_file(self, tmp_path):
         token_file = tmp_path / 'token'
@@ -827,18 +868,14 @@ class TestStepUpStorageClient:
     @pytest.mark.parametrize(
         ('storage_api_url', 'own_stack_storage_api_url'),
         [
-            # Another Keboola stack ...
+            # Another (genuine) Keboola stack ...
             ('https://connection.north-europe.azure.keboola.com', OWN_STACK_URL),
-            # ... and hosts that only look like this server's stack. All of them satisfy the
-            # 'connection.' prefix that the Storage API URL itself is required to have.
-            ('https://connection.keboola.com.attacker.example', OWN_STACK_URL),
-            ('https://connection.attacker.example', OWN_STACK_URL),
             # A genuinely different port is a different endpoint.
             (OWN_STACK_URL, f'{OWN_STACK_URL}:8443'),
             # A server with no stack of its own (locally run) has no stack to step up on.
             (OWN_STACK_URL, None),
         ],
-        ids=['other_stack', 'lookalike_suffix', 'foreign_domain', 'other_port', 'no_own_stack'],
+        ids=['other_stack', 'other_port', 'no_own_stack'],
     )
     def test_no_step_up_header_for_foreign_stack(self, tmp_path, storage_api_url, own_stack_storage_api_url):
         """The ServiceAccount JWT belongs to this server's stack and must not travel anywhere else."""
@@ -855,4 +892,41 @@ class TestStepUpStorageClient:
         stepped = client.step_up_storage_client(str(token_file))
 
         assert 'X-Kubernetes-Authorization' not in (stepped.raw_client.headers or {})
-        assert stepped is client.storage_client
+        # Falls back to the plain client, but still writable -- see `writable_storage_client`.
+        assert stepped.raw_client.readonly is None
+
+    @pytest.mark.parametrize(
+        'lookalike_url',
+        [
+            # Satisfies the old 'connection.' prefix check but not a genuine keboola.com/dev
+            # suffix -- normalize_storage_api_url (Security hardening RFC increment) now rejects
+            # these outright, so they can never even become a session's storage_api_url, let
+            # alone reach the step-up destination check.
+            'https://connection.keboola.com.attacker.example',
+            'https://connection.attacker.example',
+        ],
+    )
+    def test_lookalike_domain_rejected_before_construction(self, lookalike_url) -> None:
+        with pytest.raises(ValueError, match='Invalid Keboola Storage API URL'):
+            KeboolaClient(
+                storage_api_url=lookalike_url,
+                storage_api_token='user-token',
+                own_stack_storage_api_url=self.OWN_STACK_URL,
+            )
+
+    def test_foreign_stack_fallback_is_writable_even_under_a_readonly_client(self, tmp_path):
+        # The exemption must hold even when the caller's own client is genuinely read-only --
+        # provisioning is server-side plumbing, not a user-visible mutation.
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt')
+        client = KeboolaClient(
+            storage_api_url='https://connection.other.keboola.com',
+            storage_api_token='user-token',
+            readonly=True,
+            own_stack_storage_api_url=self.OWN_STACK_URL,
+        )
+        assert client.readonly is True  # sanity: the client itself really is read-only
+
+        stepped = client.step_up_storage_client(str(token_file))
+
+        assert stepped.raw_client.readonly is None

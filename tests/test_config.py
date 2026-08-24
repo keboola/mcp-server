@@ -3,7 +3,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from keboola_mcp_server.config import Config, get_env_storage_api_url, is_same_stack
+from keboola_mcp_server.config import Config, ServerRuntimeInfo, get_env_storage_api_url, is_same_stack
 
 
 class TestConfig:
@@ -53,6 +53,26 @@ class TestConfig:
             (
                 {'X-Conversation-ID': '1234'},
                 Config(conversation_id='1234'),
+            ),
+            (
+                {'KBC_PROJECT_ID': '1888'},
+                Config(project_id='1888'),
+            ),
+            (
+                {'X-KBC-ProjectId': '1888'},
+                Config(project_id='1888'),
+            ),
+            (
+                {'MCP_DB_URL': 'postgresql://u:p@host/db'},
+                Config(postgres_dsn='postgresql://u:p@host/db'),
+            ),
+            (
+                {'KBC_MCP_DB_URL': 'postgresql://u:p@host/db'},
+                Config(postgres_dsn='postgresql://u:p@host/db'),
+            ),
+            (
+                {'KBC_POSTGRES_DSN': 'postgresql://u:p@host/db'},
+                Config(postgres_dsn='postgresql://u:p@host/db'),
             ),
         ],
     )
@@ -146,13 +166,14 @@ class TestConfig:
             assert getattr(config, f.name) is None, f'Expected default value for {f.name} to be None'
 
     def test_no_token_password_in_repr(self) -> None:
-        config = Config(storage_token='foo')
+        config = Config(storage_token='foo', postgres_dsn='postgresql://u:p@host/db', session_encryption_key='abc')
         assert str(config) == (
             "Config(storage_api_url=None, storage_token='****', branch_id=None, workspace_schema=None, "
             'workspace_id=None, '
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
-            'jwt_secret=None, bearer_token=None, conversation_id=None, project_id=None)'
+            "jwt_secret=None, postgres_dsn='****', session_encryption_key='****', "
+            'bearer_token=None, conversation_id=None, project_id=None)'
         )
 
     def test_workspace_id_must_be_numeric(self) -> None:
@@ -181,6 +202,78 @@ class TestConfig:
         assert config.storage_api_url == expected
         assert config.oauth_server_url == expected
         assert config.mcp_server_url == expected
+
+
+class TestReplaceByHeaders:
+    """Deployment-level fields must never be settable by a per-request header, under any of the
+    exact/`KBC_`/`X-` name spellings `_read_options` accepts -- see the "Security hardening" RFC
+    increment (a caller-controlled `Jwt-Secret` header would otherwise let them forge their own
+    `scope_token`)."""
+
+    @pytest.mark.parametrize(
+        'headers',
+        [
+            {'Jwt-Secret': 'attacker-chosen'},
+            {'X-Jwt-Secret': 'attacker-chosen'},
+            {'KBC-Jwt-Secret': 'attacker-chosen'},
+            {'X-Postgres-Dsn': 'postgresql://evil'},
+            {'X-Session-Encryption-Key': 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='},
+            {'X-Oauth-Client-Id': 'evil'},
+            {'X-Oauth-Client-Secret': 'evil'},
+            {'X-Oauth-Server-Url': 'https://evil.example'},
+            {'X-Mcp-Server-Url': 'https://evil.example'},
+        ],
+        ids=[
+            'jwt_secret_bare',
+            'jwt_secret_x_prefixed',
+            'jwt_secret_kbc_prefixed',
+            'postgres_dsn',
+            'session_encryption_key',
+            'oauth_client_id',
+            'oauth_client_secret',
+            'oauth_server_url',
+            'mcp_server_url',
+        ],
+    )
+    def test_deployment_level_fields_are_unreachable(self, headers: Mapping[str, str]) -> None:
+        config = Config(jwt_secret='real-secret', postgres_dsn='postgresql://real')
+        out = config.replace_by_headers(headers)
+        assert out == config  # nothing changed -- every one of these headers was ignored
+
+    def test_allowlisted_fields_still_work(self) -> None:
+        config = Config()
+        out = config.replace_by_headers(
+            {
+                'X-Storage-Api-Url': 'https://connection.keboola.com',
+                'X-Branch-Id': '123',
+                'X-Conversation-Id': 'conv-1',
+            }
+        )
+        assert out.storage_api_url == 'https://connection.keboola.com'
+        assert out.branch_id == '123'
+        assert out.conversation_id == 'conv-1'
+
+    def test_replace_by_is_unrestricted_for_trusted_input(self) -> None:
+        # replace_by (env/CLI, operator-trusted) is deliberately NOT subject to the same
+        # allowlist -- only replace_by_headers (untrusted per-request input) is restricted.
+        config = Config()
+        out = config.replace_by({'jwt_secret': 'ops-configured'})
+        assert out.jwt_secret == 'ops-configured'
+
+
+class TestServerRuntimeInfoSessionStatePersists:
+    def test_stdio_always_persists_regardless_of_stateless_http(self) -> None:
+        # stdio is one process/one session for the whole conversation -- the flag is meaningless there.
+        assert ServerRuntimeInfo(transport='stdio', stateless_http=True).session_state_persists is True
+        assert ServerRuntimeInfo(transport='stdio', stateless_http=False).session_state_persists is True
+
+    def test_streamable_http_follows_stateless_http_flag(self) -> None:
+        assert ServerRuntimeInfo(transport='streamable-http', stateless_http=True).session_state_persists is False
+        assert ServerRuntimeInfo(transport='streamable-http', stateless_http=False).session_state_persists is True
+
+    def test_defaults_to_stateless(self) -> None:
+        # Matches the CLI's --stateless-http default (scaled/deployed-safe).
+        assert ServerRuntimeInfo(transport='streamable-http').session_state_persists is False
 
 
 class TestEnvStorageApiUrl:

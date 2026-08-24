@@ -39,7 +39,7 @@ Our remote server is hosted on every multi-tenant Keboola stack and supports OAu
 1. **Get your remote server URL**: Navigate to your Keboola Project Settings → `MCP Server` tab
 2. **Copy the server URL**: It will look like `https://mcp.<YOUR_REGION>.keboola.com/mcp`
 3. **Configure your AI assistant**: Paste the URL into your AI assistant's MCP settings
-4. **Authenticate**: You'll be prompted to authenticate with your Keboola account and select your project
+4. **Authenticate**: You'll be prompted to log in with your Keboola account. Which project(s) to work on is chosen afterwards, in the conversation (e.g. "list my Keboola projects" / "use project X")
 
 ### Supported Clients
 
@@ -82,10 +82,9 @@ Once installed, you can use the Keboola MCP Server in Claude Code by typing `/mc
 
 When you first use the Keboola MCP Server in Claude Code, a browser window will open prompting you to:
 1. Log in with your Keboola account
-2. Select the project you want to connect to
-3. Authorize the connection
+2. Authorize the connection
 
-After authentication, you can start using Keboola tools directly from Claude Code.
+After authentication, you can start using Keboola tools directly from Claude Code. Project selection happens afterward, in the conversation — just ask Claude which Keboola project(s) to use.
 
 For detailed setup instructions and region-specific URLs, see our [Remote Server Setup documentation](https://help.keboola.com/ai/mcp-server/#remote-server-setup).
 
@@ -124,41 +123,42 @@ For detailed documentation, see [developers.keboola.com/integrate/mcp/#tool-auth
 
 ## Local MCP Server Setup (Custom or Dev Way)
 
-Run the MCP server on your own machine for full control and easy development. Choose this when you want to customize tools, debug locally, or iterate quickly. You’ll clone the repo, set Keboola credentials via environment variables or headers depending on the server transport, install dependencies, and start the server. This approach offers maximum flexibility (custom tools, local logging, offline iteration) but requires manual setup and you manage updates and secrets yourself.
+Run the MCP server on your own machine for full control and easy development. Choose this when you want to customize tools, debug locally, or iterate quickly. You’ll install the server, authenticate (a one-time browser login — no token to paste), and start it. This approach offers maximum flexibility (custom tools, local logging, offline iteration) but requires manual setup and you manage updates and secrets yourself.
 
 The server supports multiple **transport** options, which can be selected by providing the `--transport <transport>` argument when starting the server:
 - `stdio` - Default when `--transport` is not specified. Standard input/output, typically used for local deployment with a single client.
 - `streamable-http` - Runs the server remotely over HTTP with a bidirectional streaming channel, allowing the client and server to continuously exchange messages. Connect via <url>/mcp (e.g., http://localhost:8000/mcp).
 - `http-compat` - An alias for `streamable-http`, kept for backwards compatibility.
 
-For client–server communication, Keboola credentials must be provided to enable working with your project in your Keboola Region. The following are required: `KBC_STORAGE_TOKEN`, `KBC_STORAGE_API_URL`, `KBC_WORKSPACE_SCHEMA` and optionally `KBC_BRANCH_ID`. You can provide these in two ways:
-- For personal use (mainly with stdio transport): set the environment variables before starting the server. All requests will reuse these predefined credentials.
-- For multi-user use: include the variables in the request headers so that each request uses the credentials provided with it.
+To work with your Keboola project the server needs two things: your **Keboola Region** (`KBC_STORAGE_API_URL`) and a way to **authenticate**. The recommended way is a one-time browser **login** — you never create, copy, or paste a token. Optionally set `KBC_BRANCH_ID` to work inside a development branch.
 
 Some of the variables are not taken from the request headers:
 - `KBC_STORAGE_API_URL`: a server that was started with its own Storage API URL (the `--api-url` parameter or the `KBC_STORAGE_API_URL` environment variable) only serves that one Keboola stack. An `X-Storage-Api-Url` header asking for a different host is ignored (a warning is logged) — the server keeps its own URL for the request. Start the server without a Storage API URL of its own if you want each request to choose its stack.
 - `KBC_KUBERNETES_TOKEN_PATH` (deployed servers only, see [docs/kubernetes-sa-auth.md](docs/kubernetes-sa-auth.md)): read from the environment only, never from a header.
 - `KBC_WORKSPACE_ID` / `KBC_WORKSPACE_SCHEMA`: same idea as the Storage API URL above — a server started with its own workspace pin (via either variable, or `--workspace-id`) keeps that pin for every request; an `X-Workspace-Id` or `X-Workspace-Schema` header asking for a different workspace is ignored (a warning is logged). A server with no pin of its own (the shared multi-user case) keeps taking the pin from the request, per-request, as described below.
 
+### Logging in
 
-### KBC_STORAGE_TOKEN
+Sign in once with your browser; the server stores the session and refreshes it automatically, so there are no tokens to manage:
 
-This is your authentication token for Keboola:
+```bash
+uvx keboola_mcp_server login --api-url https://connection.YOUR_REGION.keboola.com
+```
 
-For instructions on how to create and manage Storage API tokens, refer to the [official Keboola documentation](https://help.keboola.com/management/project/tokens/).
+This opens your browser to sign in to Keboola, then saves the stack-wide session to `~/.keboola/mcp/credentials.json` (readable only by you, one entry per stack). Afterwards, start the server with only `KBC_STORAGE_API_URL` set — no token required. Which project(s) to work on is chosen afterwards, in the conversation (`get_accessible_projects` / `set_project_scope`), not during login.
 
-**Note**: If you want the MCP server to have limited access, use custom storage token, if you want the MCP to access everything in your project, use the master token.
+| Command | What it does |
+|---------|--------------|
+| `login --api-url <url>` | Sign in to a stack |
+| `login --force` | Sign in again / switch account |
+| `login --show-token` | Print the current session token (debugging) |
+| `logout [--api-url <url>] [--all]` | Remove the stored session for a stack (or all stacks) |
 
-### KBC_WORKSPACE_SCHEMA
+When you start the server over **stdio in an interactive terminal** with no stored session, it runs this browser login automatically on first start. MCP clients (Claude, Cursor, …) launch the server in the background where a browser can't open, so run `login` once yourself first.
 
-This identifies your workspace in Keboola and is used for SQL queries. However, this is **only required if you're using a custom storage token** instead of the Master Token:
+#### Authenticating without a browser
 
-- If using [Master Token](https://help.keboola.com/management/project/tokens/#master-tokens): The workspace is created automatically behind the scenes
-- If using [custom storage token](https://help.keboola.com/management/project/tokens/#limited-tokens): Follow this [Keboola guide](https://help.keboola.com/tutorial/manipulate/workspace/) to get your KBC_WORKSPACE_SCHEMA
-
-**Note**: When creating a workspace manually, check Grant read-only access to all Project data option
-
-**Note**: KBC_WORKSPACE_SCHEMA is called Dataset Name in BigQuery workspaces, you simply click connect and copy the Dataset Name
+For containers or CI where a browser login isn't possible, provide a Keboola [access or personal access token](https://help.keboola.com/management/project/tokens/) directly — set `KBC_STORAGE_TOKEN` (env var) or send the `X-StorageAPI-Token` header — together with `KBC_PROJECT_ID` (or the `X-KBC-ProjectId` header) to select the project. On HTTP transports these can be supplied per request as headers, so each request carries its own credentials.
 
 ### KBC_WORKSPACE_ID
 
@@ -230,10 +230,14 @@ There are four ways to use the Keboola MCP Server, depending on your needs:
 
 ### Option A: Integrated Mode (Recommended)
 
-In this mode, Claude or Cursor automatically starts the MCP server for you. **You do not need to run any commands in your terminal**.
+In this mode, Claude or Cursor automatically starts the MCP server for you.
 
-1. Configure your MCP client (Claude/Cursor) with the appropriate settings
-2. The client will automatically launch the MCP server when needed
+1. **Log in once** in a terminal so a session is stored (the client launches the server in the background, where a browser can't open):
+   ```bash
+   uvx keboola_mcp_server login --api-url https://connection.YOUR_REGION.keboola.com
+   ```
+2. Configure your MCP client (Claude/Cursor) with the settings below — only `KBC_STORAGE_API_URL` is needed.
+3. The client will automatically launch the MCP server when needed.
 
 #### Claude Desktop Configuration
 
@@ -249,8 +253,6 @@ In this mode, Claude or Cursor automatically starts the MCP server for you. **Yo
       "args": ["keboola_mcp_server --transport <transport>"],
       "env": {
         "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
-        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
-        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema",
         "KBC_BRANCH_ID": "your_branch_id_optional"
       }
     }
@@ -277,8 +279,6 @@ Config file locations:
       "args": ["keboola_mcp_server --transport <transport>"],
       "env": {
         "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
-        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
-        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema",
         "KBC_BRANCH_ID": "your_branch_id_optional"
       }
     }
@@ -302,8 +302,6 @@ When running the MCP server from Windows Subsystem for Linux with Cursor AI, use
           "bash",
           "-c '",
           "export KBC_STORAGE_API_URL=https://connection.YOUR_REGION.keboola.com &&",
-          "export KBC_STORAGE_TOKEN=your_keboola_storage_token &&",
-          "export KBC_WORKSPACE_SCHEMA=your_workspace_schema &&",
           "export KBC_BRANCH_ID=your_branch_id_optional &&",
           "/snap/bin/uvx keboola_mcp_server --transport <transport>",
           "'"
@@ -331,8 +329,6 @@ For developers working on the MCP server code itself:
       ],
       "env": {
         "KBC_STORAGE_API_URL": "https://connection.YOUR_REGION.keboola.com",
-        "KBC_STORAGE_TOKEN": "your_keboola_storage_token",
-        "KBC_WORKSPACE_SCHEMA": "your_workspace_schema",
         "KBC_BRANCH_ID": "your_branch_id_optional"
       }
     }
@@ -345,11 +341,9 @@ For developers working on the MCP server code itself:
 You can run the server manually in a terminal for testing or debugging:
 
 ```bash
-# Set environment variables
+# Sign in once (stores a session under ~/.keboola/mcp), then start the server.
 export KBC_STORAGE_API_URL=https://connection.YOUR_REGION.keboola.com
-export KBC_STORAGE_TOKEN=your_keboola_storage_token
-export KBC_WORKSPACE_SCHEMA=your_workspace_schema
-export KBC_BRANCH_ID=your_branch_id_optional
+uvx keboola_mcp_server login --api-url "$KBC_STORAGE_API_URL"
 
 uvx keboola_mcp_server --transport streamable-http
 ```
@@ -362,6 +356,8 @@ uvx keboola_mcp_server --transport streamable-http
 
 ### Option D: Using Docker
 
+A container can't open a browser, so authenticate with a token (see [Authenticating without a browser](#authenticating-without-a-browser)): set `KBC_STORAGE_TOKEN` to a Keboola access/personal access token and `KBC_PROJECT_ID` to the target project. (Over HTTP you can instead pass `X-StorageAPI-Token` / `X-KBC-ProjectId` headers per request and omit these.)
+
 ```shell
 docker pull keboola/mcp-server:latest
 
@@ -371,8 +367,8 @@ docker run \
   -it \
   -p 127.0.0.1:8000:8000 \
   -e KBC_STORAGE_API_URL="https://connection.YOUR_REGION.keboola.com" \
-  -e KBC_STORAGE_TOKEN="YOUR_KEBOOLA_STORAGE_TOKEN" \
-  -e KBC_WORKSPACE_SCHEMA="YOUR_WORKSPACE_SCHEMA" \
+  -e KBC_STORAGE_TOKEN="YOUR_KEBOOLA_TOKEN" \
+  -e KBC_PROJECT_ID="YOUR_PROJECT_ID" \
   -e KBC_BRANCH_ID="YOUR_BRANCH_ID_OPTIONAL" \
   keboola/mcp-server:latest \
   --transport streamable-http \
@@ -444,8 +440,7 @@ For a complete list of available tools with detailed descriptions, parameters, a
 
 | Issue | Solution |
 |-------|----------|
-| **Authentication Errors** | Verify `KBC_STORAGE_TOKEN` is valid |
-| **Workspace Issues** | Confirm `KBC_WORKSPACE_SCHEMA` / `KBC_WORKSPACE_ID` is correct |
+| **Authentication Errors** | Re-run `keboola_mcp_server login` (or, if authenticating with a token, verify the token and `KBC_PROJECT_ID`) |
 | **Connection Timeout** | Check network connectivity |
 
 ## Development

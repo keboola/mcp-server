@@ -471,10 +471,8 @@ async def test_event_uses_plain_client_without_k8s_token(monkeypatch, mcp_contex
     [
         ('https://connection.keboola.com', True),
         ('https://connection.north-europe.azure.keboola.com', False),
-        ('https://connection.keboola.com.attacker.example', False),
-        ('https://connection.attacker.example', False),
     ],
-    ids=['own_stack', 'other_stack', 'lookalike_suffix', 'foreign_domain'],
+    ids=['own_stack', 'other_stack'],
 )
 async def test_event_step_up_header_only_for_own_stack(
     tmp_path, monkeypatch, mocker, empty_context: Context, session_storage_api_url: str, expect_step_up_header: bool

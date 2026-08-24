@@ -138,6 +138,10 @@ jobs:
           INTEGTEST_STORAGE_TOKENS: ${{ secrets.INTEGTEST_STORAGE_TOKENS }}
           INTEGTEST_POOL_STORAGE_API_URL: ${{ vars.INTEGTEST_POOL_STORAGE_API_URL }}
           INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES: ${{ secrets.INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES }}
+          # A single programmatic token (kbc_pat_/kbc_at_) whose user is a member of all pool projects.
+          # Drives the PAT/MPA auth modes against the SAME pool projects (uses the pool URL). PAT-auth
+          # tests in integtests/test_pat_multiproject.py skip when it is unset.
+          INTEGTEST_STORAGE_PAT: ${{ secrets.INTEGTEST_STORAGE_PAT }}
         run: |
           uv run tox -e integtests
 
