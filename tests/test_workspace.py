@@ -184,6 +184,7 @@ async def test_create_ws_does_not_use_prod_branch_fallback() -> None:
     mock_client.branch_id = '456'
     mock_storage_client = AsyncMock()
     mock_client.storage_client = mock_storage_client
+    mock_client.writable_storage_client = mock_storage_client
     mock_storage_client.verify_token.return_value = {'owner': {'defaultBackend': 'snowflake'}}
     mock_storage_client.configuration_create.return_value = {'id': 'test-config-123', 'name': 'test'}
     mock_storage_client.workspace_create_for_config.return_value = {'id': 42}
