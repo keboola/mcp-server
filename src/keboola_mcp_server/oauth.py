@@ -58,6 +58,10 @@ _ALLOWED_DOMAINS = {
         re.compile(r'^(?!(?:.*\.)?hub\.).+\.keboola\.(com|dev)$', re.IGNORECASE),
         re.compile(r'^(.*\.)?chatgpt\.com$', re.IGNORECASE),
         re.compile(r'^(.*\.)?claude\.ai$', re.IGNORECASE),
+        # Agnes lives on its own TLD, outside the keboola.(com|dev) pattern above. Exact host, no
+        # wildcard: AI-3591 is retiring this whole list in favour of Connection's client registry
+        # and flags its wildcards as a subdomain-takeover risk, so don't add another one (AI-3773).
+        re.compile(r'^agnes\.keboola\.systems$', re.IGNORECASE),  # no subdomains allowed
         re.compile(r'^librechat\.glami-ml\.com$', re.IGNORECASE),  # no subdomains allowed
         re.compile(r'^(.*\.)?make\.com$', re.IGNORECASE),
         re.compile(r'^api\.devin\.ai$', re.IGNORECASE),  # devin.ai API domain
