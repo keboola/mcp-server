@@ -24,6 +24,8 @@ class TestNormalizeStorageApiUrl:
             ('https://connection.canary-orion.keboola.dev', 'https://connection.canary-orion.keboola.dev'),
             ('https://connection.keboola.com:443', 'https://connection.keboola.com'),
             ('https://connection.keboola.com/v2/storage', 'https://connection.keboola.com'),
+            ('https://connection.acme.keboola.cloud', 'https://connection.acme.keboola.cloud'),
+            ('https://connection.example-tenant.keboola.cloud', 'https://connection.example-tenant.keboola.cloud'),
         ],
     )
     def test_accepts_genuine_keboola_stack_hosts(self, url: str, expected: str) -> None:
