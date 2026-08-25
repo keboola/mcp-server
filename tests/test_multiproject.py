@@ -306,6 +306,65 @@ class TestMultiProjectMiddleware:
             assert call.kwargs.get('kubernetes_token_path') == '/var/run/secrets/token'
 
     @pytest.mark.asyncio
+    async def test_fan_out_uses_bearer_token_not_active_project_resolved_token(self) -> None:
+        # No scoped_token (auto-leased scope, or set_project_scope's exchange-failure fallback) with
+        # a real active client whose .token has been narrowed to the active project's resolved legacy
+        # Storage token by create_session_state, while .bearer_token stays the whole-stack subject
+        # token. Fanning out to a DIFFERENT project must use .bearer_token, never that narrowed
+        # .token -- reusing it would run the fanned-out call against the WRONG project (PSGO-280).
+        scope = SessionScope(project_ids=[11, 22], confirmed=True)
+        context, state = self._ctx(scope, 'get_tables', read_only=True)
+        state[KeboolaClient.STATE_KEY] = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token='legacy-project-11-token',
+            bearer_token='kbc_at_whole_stack',
+        )
+        seen_tokens: list = []
+
+        async def fake_client_for_project(_ss, _url, token, pid, _ro):
+            seen_tokens.append(token)
+            return f'client-{pid}'
+
+        async def call_next(_):
+            return self._result('rows')
+
+        with (
+            patch.object(MultiProjectMiddleware, 'client_for_project', AsyncMock(side_effect=fake_client_for_project)),
+            patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')),
+        ):
+            await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        assert seen_tokens == ['kbc_at_whole_stack', 'kbc_at_whole_stack']
+
+    @pytest.mark.asyncio
+    async def test_single_target_dispatch_uses_bearer_token_not_active_project_resolved_token(self) -> None:
+        # Same hazard as above, for the write/get_project_info single-target dispatch path.
+        scope = SessionScope(project_ids=[11, 22], confirmed=True)
+        context, state = self._ctx(scope, 'update_config', read_only=False, arguments={'project_id': '22'})
+        state[KeboolaClient.STATE_KEY] = KeboolaClient(
+            storage_api_url='https://connection.keboola.com',
+            storage_api_token='legacy-project-11-token',
+            bearer_token='kbc_at_whole_stack',
+        )
+        seen_tokens: list = []
+
+        async def call_next(_):
+            return self._result('updated')
+
+        with (
+            patch.object(
+                MultiProjectMiddleware,
+                'client_for_project',
+                AsyncMock(side_effect=lambda _ss, _url, token, pid, _ro: seen_tokens.append(token) or f'client-{pid}'),
+            ),
+            patch.object(WorkspaceManager, 'create', AsyncMock(return_value='wsm')),
+        ):
+            result = await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        assert seen_tokens == ['kbc_at_whole_stack']
+        assert result.content[0].text == 'updated'
+
+    @pytest.mark.asyncio
     async def test_query_data_targets_single_project_workspace(self) -> None:
         # query_data is no longer excluded: with the project_ids filter it runs once against that
         # project's own workspace, so the user can query any scoped project without re-scoping.

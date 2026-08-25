@@ -135,8 +135,12 @@ class MultiProjectMiddleware(fmw.Middleware):
         original_client = state.get(KeboolaClient.STATE_KEY)
         original_workspace = state.get(WorkspaceManager.STATE_KEY)
         is_real_client = isinstance(original_client, KeboolaClient)
-        # Default (auto-leased) scope carries no minted token; fall back to the active client's token.
-        base_token = scope.scoped_token or (original_client.token if is_real_client else '')
+        # Default (auto-leased) scope carries no minted token; fall back to the active client's
+        # bearer token -- the whole-stack kbc_at_/kbc_pat_ subject token. `.token` is the wrong
+        # property here: for a deployed, project-scoped session it may be the *active* project's
+        # resolved legacy Storage token (see create_session_state), which must not be reused as the
+        # subject token for a *different* target project below.
+        base_token = scope.scoped_token or (original_client.bearer_token if is_real_client else '')
         # The active client's own URL — the current request/session's, not the startup config's
         # (which can differ or be unset for streamable-HTTP setups that supply it per request).
         storage_api_url = original_client.storage_api_url if is_real_client else server_state.config.storage_api_url
@@ -233,7 +237,8 @@ class MultiProjectMiddleware(fmw.Middleware):
         original_client = state.get(KeboolaClient.STATE_KEY)
         original_workspace = state.get(WorkspaceManager.STATE_KEY)
         is_real_client = isinstance(original_client, KeboolaClient)
-        base_token = scope.scoped_token or (original_client.token if is_real_client else '')
+        # See the identical fallback in on_call_tool above for why .bearer_token, not .token.
+        base_token = scope.scoped_token or (original_client.bearer_token if is_real_client else '')
         storage_api_url = original_client.storage_api_url if is_real_client else server_state.config.storage_api_url
         try:
             await self._swap_project(state, server_state, storage_api_url, base_token, target, scope.read_only)
