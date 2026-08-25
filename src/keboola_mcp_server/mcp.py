@@ -29,7 +29,12 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token, load_tokens
-from keboola_mcp_server.clients.auth_bridge import is_programmatic_token, strip_bearer
+from keboola_mcp_server.clients.auth_bridge import (
+    StorageTokenExchangeError,
+    StorageTokenResolver,
+    is_programmatic_token,
+    strip_bearer,
+)
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import (
@@ -827,16 +832,37 @@ class SessionStateMiddleware(fmw.Middleware):
             bearer_token = config.bearer_token
             extra_headers: dict[str, Any] = {}
             if is_programmatic_token(storage_token):
-                # A programmatic token (kbc_at_/kbc_pat_) is forwarded downstream as a Bearer --
-                # KeboolaClient already sends it that way to every service it wraps (Storage, Queue,
-                # AI, etc.), so no legacy per-project Storage token needs to be minted for it. Strip
-                # any inbound `Bearer ` scheme so the client's own `Bearer ` prefixing can't produce
-                # `Bearer Bearer …`. Narrow to a specific project via X-KBC-ProjectId when known
-                # (header, or a prior scope selection) -- unset (whole-stack) is exactly what
-                # get_accessible_projects/set_project_scope need before a project is chosen.
+                # A programmatic token (kbc_at_/kbc_pat_) is forwarded downstream as a Bearer for
+                # Storage/data-science/scheduler/metastore. Strip any inbound `Bearer ` scheme so
+                # the client's own `Bearer ` prefixing can't produce `Bearer Bearer …`. Narrow to a
+                # specific project via X-KBC-ProjectId when known (header, or a prior scope
+                # selection) -- unset (whole-stack) is exactly what get_accessible_projects/
+                # set_project_scope need before a project is chosen.
                 bearer_token = strip_bearer(storage_token)
                 if config.project_id:
                     extra_headers['X-KBC-ProjectId'] = config.project_id
+                    # jobs-queue/AI-service/sync-actions forward whatever they receive to Storage
+                    # as a legacy X-StorageApi-Token (see client.py) -- a kbc_at_/kbc_pat_ token
+                    # 401s there (INC-02580's fix was correct for that; it just can't help this
+                    # token type). Resolve the real per-project Storage token via the auth-bridge
+                    # for those three clients. Only possible on the deployed server (needs the SA
+                    # JWT to call the resolver); on failure (e.g. the resolver's Manage scope isn't
+                    # granted on this stack yet, see 78a0bf6e) keep the raw token so this degrades
+                    # to the pre-existing 401 instead of breaking session creation outright.
+                    if kubernetes_token_path := deployed_sa_token_path():
+                        try:
+                            storage_token = await StorageTokenResolver(
+                                storage_api_url=config.storage_api_url,
+                                kubernetes_token_path=kubernetes_token_path,
+                            ).resolve(subject_token=bearer_token, project_id=int(config.project_id))
+                        except (StorageTokenExchangeError, OSError, ValueError) as e:
+                            # OSError/ValueError: the projected SA JWT file is missing/empty (should
+                            # never happen when KBC_KUBERNETES_TOKEN_PATH is set on a real deployment,
+                            # but must not crash session creation if it does).
+                            LOG.warning(
+                                'Could not resolve a legacy Storage token for jobs-queue/AI-service/'
+                                f'sync-actions calls; those calls will keep 401ing: {e}'
+                            )
 
             client = await KeboolaClient(
                 storage_api_url=config.storage_api_url,

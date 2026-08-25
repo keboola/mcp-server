@@ -192,10 +192,13 @@ class KeboolaClient:
         )
         # Jobs-queue / AI-service / sync-actions keep the raw Storage token and must NOT be given
         # the OAuth bearer: the queue's NewJobFactory re-sends whatever it receives to Storage as a
-        # legacy X-StorageApi-Token (hardcoded AuthType::STORAGE_TOKEN), so an OAuth bearer arrives
-        # there as an invalid Storage token and every run_job 401s (INC-02580 / SUPPORT-17416).
-        # Reverts the client.py part of AI-3755; the programmatic-token path is unaffected, see the
-        # PR description.
+        # legacy X-StorageApi-Token (hardcoded AuthType::STORAGE_TOKEN), so a bearer-shaped credential
+        # arrives there as an invalid Storage token and every run_job 401s (INC-02580 / SUPPORT-17416).
+        # Reverts the client.py part of AI-3755. For a programmatic token (kbc_at_/kbc_pat_), it is
+        # `self._token`'s job to already be the legacy per-project Storage token by the time it gets
+        # here -- SessionStateMiddleware.create_session_state resolves it via the auth-bridge
+        # (StorageTokenResolver) before constructing this client; a raw, unresolved kbc_at_/kbc_pat_
+        # string 401s here exactly like an OAuth bearer would.
         self._jobs_queue_client = JobsQueueClient.create(
             root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._headers, readonly=readonly
         )
