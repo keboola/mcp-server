@@ -8,14 +8,16 @@ exception messages.
 
 `StorageTokenResolver` exchanges a programmatic bearer token (`kbc_at_*` access token or
 `kbc_pat_*` personal access token) for the legacy per-project Storage token, for downstream
-services that only understand that format.
+services that only understand that format (jobs-queue, AI-service, sync-actions -- see
+`SessionStateMiddleware.create_session_state`, which calls this before building `KeboolaClient`
+whenever a project is known).
 
 `OAuthSessionExchanger` exchanges a league OAuth access token from the remote/HTTP OAuth
 login flow (`oauth.py`) for a whole-stack Keboola programmatic session (`kbc_at_*`). The
 resulting session feeds into the same downstream pipe as a directly-supplied programmatic
-token -- forwarded as a Bearer to every service `KeboolaClient` wraps (Storage, Queue, AI,
-etc.), narrowed to a project via `X-KBC-ProjectId` once known. No further exchange into a
-legacy per-project Storage token is needed or performed for those services.
+token -- forwarded as a Bearer to Storage/data-science/scheduler/metastore, narrowed to a
+project via `X-KBC-ProjectId` once known, and separately resolved via `StorageTokenResolver`
+above for jobs-queue/AI-service/sync-actions, which don't accept that Bearer (INC-02580).
 """
 
 import logging
