@@ -1152,14 +1152,6 @@ async def create_config(
     - `keboola.data-apps` → use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app`
     - `keboola.snowflake-transformation` / `keboola.google-bigquery-transformation` → use `create_sql_transformation`
 
-    DUCKDB TRANSFORMATION EXAMPLE (`component_id='keboola.duckdb-transformation'`) — `get_config_examples`
-    may not have real-world examples for this component yet, so `parameters` follows the same
-    `blocks[].codes[].script` shape as `create_sql_transformation`, using DuckDB SQL:
-        {"blocks": [{"name": "Clean data", "codes": [{"name": "Dedupe", "script": [
-            'CREATE OR REPLACE TABLE "clean" AS SELECT * FROM "raw" '
-            'QUALIFY ROW_NUMBER() OVER (PARTITION BY "id" ORDER BY "updated_at" DESC) = 1;'
-        ]}]}]}
-
     EXAMPLES:
     - user_input: `Create a new configuration for component X with these settings`
         - set the component_id and configuration parameters accordingly
