@@ -364,8 +364,7 @@ def _sync_storage_client(storage_api_token: str, storage_api_url: str) -> SyncSt
     client = SyncStorageClient(storage_api_url, storage_api_token)
     token_info = client.tokens.verify()
     LOG.info(
-        f'Authorized as "{token_info["description"]}" ({token_info["id"]}) '
-        f'to project "{token_info["owner"]["name"]}" ({token_info["owner"]["id"]}) '
+        f'Authorized to project "{token_info["owner"]["name"]}" ({token_info["owner"]["id"]}) '
         f'at "{client.root_url}" stack.'
     )
     return client
