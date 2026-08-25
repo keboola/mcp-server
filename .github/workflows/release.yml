@@ -76,8 +76,8 @@ jobs:
           tags: |
             type=sha,format=long
             # Production: clean v* / agent-v* tags -> production stacks.
-            type=raw,value=production-${{ github.sha }},enable=${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/agent-v')) && !contains(github.ref, '-dev.') }}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev.') }}
+            type=raw,value=production-${{ github.sha }},enable=${{ (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/agent-v')) && !contains(github.ref, '-dev') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev') }}
             # Canary: canary-orion-v* / canary-orion-agent* tags -> canary-orion stacks.
             type=raw,value=canary-orion-${{ github.sha }},enable=${{ startsWith(github.ref, 'refs/tags/canary-orion-') }}
             # Dev: dev-v* / dev-agent* tags -> testing stacks.
@@ -128,7 +128,7 @@ jobs:
 
       - name: Trigger image tag update for production
         uses: ./.github/actions/trigger-image-tag-update
-        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev.')
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
         with:
           helm-chart: "mcp-server"
           image-tag: production-${{ github.sha }}
@@ -152,7 +152,7 @@ jobs:
 
       - name: Trigger image tag update for production (agent)
         uses: ./.github/actions/trigger-image-tag-update
-        if: startsWith(github.ref, 'refs/tags/agent-v') && !contains(github.ref, '-dev.')
+        if: startsWith(github.ref, 'refs/tags/agent-v') && !contains(github.ref, '-dev')
         with:
           helm-chart: "mcp-server-agent"
           image-tag: production-${{ github.sha }}
@@ -173,7 +173,7 @@ jobs:
   release-notes:
     name: Release notes
     needs: build-and-push
-    if: needs.build-and-push.result == 'success' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev.')
+    if: needs.build-and-push.result == 'success' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
     runs-on: ubuntu-latest
     permissions:
       contents: write        # create the GitHub Release
@@ -220,6 +220,6 @@ jobs:
   kaibench:
     name: KaiBench Evaluation
     needs: build-and-push
-    if: needs.build-and-push.result == 'success' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev.')
+    if: needs.build-and-push.result == 'success' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
     uses: ./.github/workflows/kaibench.yml
     secrets: inherit
