@@ -9,6 +9,7 @@ from fastmcp.tools.tool import ToolResult
 from mcp import types as mt
 from pydantic import ValidationError as PydanticValidationError
 
+from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ServerState
@@ -281,7 +282,7 @@ class TestMultiProjectMiddleware:
         context, state = self._ctx(scope, 'get_tables', read_only=True)
         # server_state.config carries a different (stale/absent) URL than the active request client.
         state[KeboolaClient.STATE_KEY] = KeboolaClient(
-            storage_api_url='https://connection.request.keboola.com', storage_api_token='kbc_at_s'
+            storage_api_url='https://connection.request.keboola.com', legacy_storage_token='kbc_at_s'
         )
         seen_calls: list = []
 
@@ -308,15 +309,16 @@ class TestMultiProjectMiddleware:
     @pytest.mark.asyncio
     async def test_fan_out_uses_bearer_token_not_active_project_resolved_token(self) -> None:
         # No scoped_token (auto-leased scope, or set_project_scope's exchange-failure fallback) with
-        # a real active client whose .token has been narrowed to the active project's resolved legacy
-        # Storage token by create_session_state, while .bearer_token stays the whole-stack subject
-        # token. Fanning out to a DIFFERENT project must use .bearer_token, never that narrowed
-        # .token -- reusing it would run the fanned-out call against the WRONG project (PSGO-280).
+        # a real active client whose .legacy_storage_token has been narrowed to the active project's
+        # resolved legacy Storage token by KeboolaClient.create, while .bearer_token stays the
+        # whole-stack subject token. Fanning out to a DIFFERENT project must use .bearer_token,
+        # never that narrowed .legacy_storage_token -- reusing it would run the fanned-out call
+        # against the WRONG project (PSGO-280).
         scope = SessionScope(project_ids=[11, 22], confirmed=True)
         context, state = self._ctx(scope, 'get_tables', read_only=True)
         state[KeboolaClient.STATE_KEY] = KeboolaClient(
             storage_api_url='https://connection.keboola.com',
-            storage_api_token='legacy-project-11-token',
+            legacy_storage_token='legacy-project-11-token',
             bearer_token='kbc_at_whole_stack',
         )
         seen_tokens: list = []
@@ -343,7 +345,7 @@ class TestMultiProjectMiddleware:
         context, state = self._ctx(scope, 'update_config', read_only=False, arguments={'project_id': '22'})
         state[KeboolaClient.STATE_KEY] = KeboolaClient(
             storage_api_url='https://connection.keboola.com',
-            storage_api_token='legacy-project-11-token',
+            legacy_storage_token='legacy-project-11-token',
             bearer_token='kbc_at_whole_stack',
         )
         seen_tokens: list = []
@@ -679,7 +681,7 @@ class TestActiveProjectReadOnlyGuard:
     def _ctx_with_client(scope: SessionScope, tool_name: str, read_only_tool: bool, client_readonly) -> tuple:
         client = MagicMock(spec=KeboolaClient)
         client.readonly = client_readonly
-        client.token = 'kbc_at_x'
+        client.legacy_storage_token = 'kbc_at_x'
         client.storage_api_url = 'https://connection.keboola.com'
         state: dict = {KeboolaClient.STATE_KEY: client, SCOPE_KEY: scope}
         ctx = MagicMock(spec=Context)
@@ -735,60 +737,40 @@ class TestActiveProjectReadOnlyGuard:
 
 
 class TestClientForProject:
-    """`client_for_project` resolves a legacy per-project Storage token via the auth-bridge for a
-    deployed session, so jobs-queue/AI-service/sync-actions calls against a fanned-out (non-active)
-    project don't 401 the same way the primary session client's used to (INC-02580 / PSGO-261)."""
+    """`client_for_project` just asks `ServerState.storage_token_resolver` for the (possibly-None)
+    auth-bridge resolver and hands it to `KeboolaClient.create` -- the resolve-success/failure/
+    no-resolver behavior itself is covered once, in
+    tests/clients/test_client.py::TestKeboolaClientCreate."""
 
     @pytest.mark.asyncio
-    async def test_resolves_legacy_token_when_deployed(self, monkeypatch, mocker) -> None:
-        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+    async def test_uses_the_resolver_server_state_provides(self, mocker) -> None:
         server_state = ServerState(
             config=Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x'),
             runtime_info=ServerRuntimeInfo(transport='http'),
         )
-        resolver = AsyncMock()
+        resolver = AsyncMock(spec=StorageTokenResolver)
         resolver.resolve = AsyncMock(return_value='legacy-storage-token-789')
-        mocker.patch('keboola_mcp_server.multiproject.StorageTokenResolver', return_value=resolver)
+        get_resolver = mocker.patch.object(ServerState, 'storage_token_resolver', return_value=resolver)
 
         client = await MultiProjectMiddleware.client_for_project(
             server_state, 'https://connection.keboola.com', 'kbc_at_abc', 11, False
         )
 
         assert client.bearer_token == 'kbc_at_abc'
-        assert client.token == 'legacy-storage-token-789'
+        assert client.legacy_storage_token == 'legacy-storage-token-789'
         resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=11)
+        get_resolver.assert_called_once_with('https://connection.keboola.com')
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_raw_token_when_resolver_fails(self, monkeypatch, mocker) -> None:
-        from keboola_mcp_server.clients.auth_bridge import StorageTokenExchangeError
-
-        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-        server_state = ServerState(
-            config=Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x'),
-            runtime_info=ServerRuntimeInfo(transport='http'),
-        )
-        resolver = AsyncMock()
-        resolver.resolve = AsyncMock(side_effect=StorageTokenExchangeError('resolver rejected', status_code=403))
-        mocker.patch('keboola_mcp_server.multiproject.StorageTokenResolver', return_value=resolver)
-
-        client = await MultiProjectMiddleware.client_for_project(
-            server_state, 'https://connection.keboola.com', 'kbc_at_abc', 11, False
-        )
-
-        assert client.token == 'kbc_at_abc'
-
-    @pytest.mark.asyncio
-    async def test_keeps_raw_token_when_not_deployed(self, monkeypatch, mocker) -> None:
+    async def test_no_resolver_when_not_deployed(self, monkeypatch) -> None:
         monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
         server_state = ServerState(
             config=Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x'),
             runtime_info=ServerRuntimeInfo(transport='stdio'),
         )
-        resolver_cls = mocker.patch('keboola_mcp_server.multiproject.StorageTokenResolver')
 
         client = await MultiProjectMiddleware.client_for_project(
             server_state, 'https://connection.keboola.com', 'kbc_at_abc', 11, False
         )
 
-        resolver_cls.assert_not_called()
-        assert client.token == 'kbc_at_abc'
+        assert client.legacy_storage_token == 'kbc_at_abc'

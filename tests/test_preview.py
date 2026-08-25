@@ -923,7 +923,7 @@ class TestPreviewConfigDiff:
         # Mock the KeboolaClient
         mock_client = mocker.AsyncMock(KeboolaClient)
         _configure_preview_auth(mock_client, mocker)  # admin/main default; overridden below where needed
-        mock_client.token = 'test-token'
+        mock_client.legacy_storage_token = 'test-token'
         mock_client.storage_api_url = 'https://connection.test.keboola.com'
 
         async def mock_config_detail(**kwargs):

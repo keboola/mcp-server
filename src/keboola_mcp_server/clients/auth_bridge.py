@@ -107,10 +107,27 @@ class StorageTokenResolver:
         self._kubernetes_token_path = kubernetes_token_path
         self._timeout = timeout or httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
         self._transport = transport
+        self._http: httpx.AsyncClient | None = None
 
     def _read_sa_jwt(self) -> str:
         # Read per call — the kubelet rotates the projected token in place.
         return read_service_account_jwt(self._kubernetes_token_path)
+
+    def _client(self) -> httpx.AsyncClient:
+        """One client -- one connection pool -- reused across resolves.
+
+        A resolver is held for the life of the server (`ServerState.storage_token_resolver`), so a
+        multi-project fan-out (and every request after it) pays one TLS handshake instead of one
+        per resolve. Created lazily so `__init__` stays synchronous.
+        """
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(timeout=self._timeout, transport=self._transport)
+        return self._http
+
+    async def aclose(self) -> None:
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
 
     async def resolve(self, *, subject_token: str, project_id: int) -> str:
         """
@@ -126,12 +143,11 @@ class StorageTokenResolver:
             'X-Subject-Token': f'Bearer {strip_bearer(subject_token)}',
         }
         try:
-            async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
-                response = await client.post(
-                    f'{self._base_url}/{_RESOLVE_ENDPOINT}',
-                    headers=headers,
-                    json={'projectId': project_id},
-                )
+            response = await self._client().post(
+                f'{self._base_url}/{_RESOLVE_ENDPOINT}',
+                headers=headers,
+                json={'projectId': project_id},
+            )
         except httpx.HTTPError as e:
             # Network / timeout failure. Raise without chaining so no request (and thus no
             # token material) can surface in a traceback.

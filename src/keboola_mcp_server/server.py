@@ -99,7 +99,10 @@ def create_keboola_lifespan(
         - it could handle OAuth token, client access, Redis database connection for storing sessions, access
         to the Relational DB, etc.
         """
-        yield server_state
+        try:
+            yield server_state
+        finally:
+            await server_state.aclose()
 
     return keboola_lifespan
 

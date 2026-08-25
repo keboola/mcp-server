@@ -295,7 +295,11 @@ async def preview_config_diff(rq: Request) -> Response:
         rq, server_state.config, own_stack_storage_api_url=own_stack_storage_api_url
     )
     state = await SessionStateMiddleware.create_session_state(
-        config, server_state.runtime_info, readonly=True, own_stack_storage_api_url=own_stack_storage_api_url
+        config,
+        server_state.runtime_info,
+        readonly=True,
+        own_stack_storage_api_url=own_stack_storage_api_url,
+        token_resolver=server_state.storage_token_resolver(config.storage_api_url),
     )
     client = KeboolaClient.from_state(state)
     workspace_manager = WorkspaceManager.from_state(state)

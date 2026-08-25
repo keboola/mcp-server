@@ -22,7 +22,7 @@ def keboola_client(mocker) -> KeboolaClient:
     client = mocker.AsyncMock(KeboolaClient)
     client.storage_api_url = 'https://connection.test.keboola.com'
     client.branch_id = None
-    client.token = 'test-token'
+    client.legacy_storage_token = 'test-token'
     client.bearer_token = None  # Default to no bearer token
     client.hostname_suffix = 'test.keboola.com'
     client.headers = {}
