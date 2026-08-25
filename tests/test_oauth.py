@@ -315,6 +315,12 @@ class TestSimpleOAuthProvider:
             (AnyUrl('https://claude.ai'), True),
             (AnyUrl('https://foo.claude.ai/bar'), True),
             (AnyUrl('https://claude.ai/api/mcp/auth_callback'), True),
+            # Agnes (exact host only -- its own TLD, outside the keboola.(com|dev) pattern) [AI-3773]
+            (AnyUrl('https://agnes.keboola.systems'), True),
+            (AnyUrl('https://agnes.keboola.systems/api/mcp/oauth-client/callback'), True),
+            (AnyUrl('https://foo.agnes.keboola.systems/bar'), False),  # no subdomains allowed
+            (AnyUrl('https://keboola.systems/callback'), False),  # must be agnes.keboola.systems
+            (AnyUrl('https://evil.keboola.systems/callback'), False),  # no sibling hosts
             # LibreChat (no subdomains allowed)
             (AnyUrl('https://librechat.glami-ml.com'), True),
             (AnyUrl('https://librechat.glami-ml.com/api/mcp/keboola/oauth/callback'), True),
