@@ -9,10 +9,11 @@ from pytest_mock import MockerFixture
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
 from keboola_mcp_server.scope import (
     OAUTH_SESSION_ID_KEY,
     SCOPE_KEY,
+    SCOPE_TOKEN_ARG,
     SessionScope,
     resolve_scope_binding_aad,
     resolve_scope_key,
@@ -475,7 +476,9 @@ async def test_set_project_scope_binds_scope_token_to_caller_on_deployed_server(
     mcp_context_client: Context, mocker: MockerFixture, monkeypatch
 ) -> None:
     # The replay fix: on a deployed server, the returned scope_token must only decrypt alongside
-    # the same caller's own storage token (client.token) it was minted for -- see
+    # the same caller's own bearer token (client.bearer_token, the un-narrowed whole-stack subject
+    # token -- see PSGO-280: it must NOT be client.legacy_storage_token, which on a project-scoped
+    # session can be a server-minted, per-project token) it was minted for -- see
     # resolve_scope_binding_aad. A different caller's token must fail, even with the right key.
     monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
     mcp_context_client.request_context.lifespan_context = ServerState(
@@ -489,9 +492,45 @@ async def test_set_project_scope_binds_scope_token_to_caller_on_deployed_server(
 
     scope = mcp_context_client.session.state[SCOPE_KEY]
     key = resolve_scope_key(Config())
-    assert SessionScope.from_token(result.scope_token, key, aad=resolve_scope_binding_aad('test-token')) == scope
+    assert SessionScope.from_token(result.scope_token, key, aad=resolve_scope_binding_aad('kbc_at_parent')) == scope
     with pytest.raises(Exception, match='.+'):
         SessionScope.from_token(result.scope_token, key, aad=resolve_scope_binding_aad('kbc_at_someone_else'))
+
+
+@pytest.mark.asyncio
+async def test_set_project_scope_token_round_trips_through_read_scope_from_request(
+    mcp_context_client: Context, mocker: MockerFixture, monkeypatch
+) -> None:
+    """Regression (PSGO-280): the scope_token minted by set_project_scope must actually decrypt
+    on the very next request via `SessionStateMiddleware._read_scope_from_request` -- not just
+    against a hand-picked AAD in isolation (see the test above). That method seals with
+    `config.storage_token` -- the caller's raw presented credential -- which on a deployed,
+    project-scoped programmatic session is NOT the same string as `client.legacy_storage_token`
+    (the server-minted, per-project legacy Storage token). Sealing with the wrong one here would
+    silently evaporate every confirmed scope on the next call.
+    """
+    monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+    mcp_context_client.request_context.lifespan_context = ServerState(
+        Config(), ServerRuntimeInfo(transport='http-compat/streamable-http', stateless_http=True)
+    )
+    client = _prep_client(mcp_context_client, mocker)
+    # Simulate a resolved session: the caller presented 'kbc_at_parent', but the active project's
+    # legacy_storage_token has already been swapped for a server-minted per-project token by
+    # KeboolaClient.create -- a different string from the caller's own credential.
+    client.legacy_storage_token = 'legacy-storage-token-for-active-project'
+    minted = SimpleNamespace(access_token='kbc_at_scoped', expires_at=time.time() + 3600, read_only=False)
+    mocker.patch('keboola_mcp_server.tools.project.exchange_scoped_token', new=mocker.AsyncMock(return_value=minted))
+
+    result = await set_project_scope(mcp_context_client, project_ids=[18, 83])
+    scope = mcp_context_client.session.state[SCOPE_KEY]
+
+    # The next request presents the same raw credential the caller always had.
+    config = Config(storage_token='kbc_at_parent')
+    context = SimpleNamespace(
+        message=SimpleNamespace(name='get_tables', arguments={SCOPE_TOKEN_ARG: result.scope_token}),
+        method='tools/call',
+    )
+    assert SessionStateMiddleware._read_scope_from_request(context, config) == scope
 
 
 @pytest.mark.asyncio
