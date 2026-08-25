@@ -33,7 +33,7 @@ async def test_query_client_token_selection(bearer_token: str | None, storage_to
     """Test QueryServiceClient uses bearer token when available, falls back to storage token."""
     # Create mock KeboolaClient with different token configurations
     mock_client = Mock(spec=KeboolaClient)
-    mock_client.token = storage_token
+    mock_client.legacy_storage_token = storage_token
     mock_client.bearer_token = bearer_token
     mock_client.hostname_suffix = 'keboola.com'
     mock_client.branch_id = '12345'
@@ -72,7 +72,7 @@ async def test_query_client_token_selection_with_branch_lookup():
     """Test QueryServiceClient token selection when branch_id needs to be looked up."""
     # Create mock KeboolaClient with bearer token but no branch_id
     mock_client = Mock(spec=KeboolaClient)
-    mock_client.token = 'sapi_token_456'
+    mock_client.legacy_storage_token = 'sapi_token_456'
     mock_client.bearer_token = 'oauth_bearer_123'
     mock_client.hostname_suffix = 'keboola.com'
     mock_client.branch_id = None  # No branch_id, will trigger lookup

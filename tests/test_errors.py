@@ -487,7 +487,7 @@ async def test_event_step_up_header_only_for_own_stack(
     # stack is the one it was configured with when it started (see `ServerState.own_stack_storage_api_url`).
     client = KeboolaClient(
         storage_api_url=session_storage_api_url,
-        storage_api_token='user-token',
+        legacy_storage_token='user-token',
         own_stack_storage_api_url='https://connection.keboola.com',
     )
     empty_context.session.state[KeboolaClient.STATE_KEY] = client

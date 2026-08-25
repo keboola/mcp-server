@@ -358,7 +358,7 @@ async def _build_context(
     """Build an MCP context bound to a specific branch (or the default branch when None)."""
     keboola_client = KeboolaClient(
         storage_api_url=branch_project.storage_api_url,
-        storage_api_token=branch_project.storage_api_token,
+        legacy_storage_token=branch_project.storage_api_token,
         headers={'User-Agent': 'KeboolaMCPServer/integtest'},
     )
     if branch_id is not None:

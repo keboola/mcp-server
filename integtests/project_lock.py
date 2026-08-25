@@ -57,12 +57,8 @@ class ProjectEndpoint:
     token_description: str = ''
 
     def describe(self) -> str:
-        """Return a human-readable summary of the project and token."""
-        return (
-            f'Authorized as "{self.token_description}" ({self.token_id}, ...{self.storage_api_token[-4:]}) '
-            f'to project "{self.project_name}" ({self.project_id}) '
-            f'at "{self.storage_api_url}" stack.'
-        )
+        """Return a human-readable summary of the project. Never includes token material."""
+        return f'Authorized to project "{self.project_name}" ({self.project_id}) at "{self.storage_api_url}" stack.'
 
 
 @dataclass(frozen=True)

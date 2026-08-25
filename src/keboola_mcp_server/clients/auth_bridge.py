@@ -8,14 +8,16 @@ exception messages.
 
 `StorageTokenResolver` exchanges a programmatic bearer token (`kbc_at_*` access token or
 `kbc_pat_*` personal access token) for the legacy per-project Storage token, for downstream
-services that only understand that format.
+services that only understand that format (jobs-queue, AI-service, sync-actions -- see
+`SessionStateMiddleware.create_session_state`, which calls this before building `KeboolaClient`
+whenever a project is known).
 
 `OAuthSessionExchanger` exchanges a league OAuth access token from the remote/HTTP OAuth
 login flow (`oauth.py`) for a whole-stack Keboola programmatic session (`kbc_at_*`). The
 resulting session feeds into the same downstream pipe as a directly-supplied programmatic
-token -- forwarded as a Bearer to every service `KeboolaClient` wraps (Storage, Queue, AI,
-etc.), narrowed to a project via `X-KBC-ProjectId` once known. No further exchange into a
-legacy per-project Storage token is needed or performed for those services.
+token -- forwarded as a Bearer to Storage/data-science/scheduler/metastore, narrowed to a
+project via `X-KBC-ProjectId` once known, and separately resolved via `StorageTokenResolver`
+above for jobs-queue/AI-service/sync-actions, which don't accept that Bearer (INC-02580).
 """
 
 import logging
@@ -105,10 +107,27 @@ class StorageTokenResolver:
         self._kubernetes_token_path = kubernetes_token_path
         self._timeout = timeout or httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
         self._transport = transport
+        self._http: httpx.AsyncClient | None = None
 
     def _read_sa_jwt(self) -> str:
         # Read per call — the kubelet rotates the projected token in place.
         return read_service_account_jwt(self._kubernetes_token_path)
+
+    def _client(self) -> httpx.AsyncClient:
+        """One client -- one connection pool -- reused across resolves.
+
+        A resolver is held for the life of the server (`ServerState.storage_token_resolver`), so a
+        multi-project fan-out (and every request after it) pays one TLS handshake instead of one
+        per resolve. Created lazily so `__init__` stays synchronous.
+        """
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(timeout=self._timeout, transport=self._transport)
+        return self._http
+
+    async def aclose(self) -> None:
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
 
     async def resolve(self, *, subject_token: str, project_id: int) -> str:
         """
@@ -124,12 +143,11 @@ class StorageTokenResolver:
             'X-Subject-Token': f'Bearer {strip_bearer(subject_token)}',
         }
         try:
-            async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
-                response = await client.post(
-                    f'{self._base_url}/{_RESOLVE_ENDPOINT}',
-                    headers=headers,
-                    json={'projectId': project_id},
-                )
+            response = await self._client().post(
+                f'{self._base_url}/{_RESOLVE_ENDPOINT}',
+                headers=headers,
+                json={'projectId': project_id},
+            )
         except httpx.HTTPError as e:
             # Network / timeout failure. Raise without chaining so no request (and thus no
             # token material) can surface in a traceback.

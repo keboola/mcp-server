@@ -16,7 +16,6 @@ from fastmcp.tools.tool import ToolResult
 from mcp import types as mt
 from pydantic import ValidationError as PydanticValidationError
 
-from keboola_mcp_server.clients.auth_bridge import strip_bearer
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import build_tracing_headers, deployed_sa_token_path
 from keboola_mcp_server.mcp import ServerState, is_read_only_tool
@@ -135,8 +134,12 @@ class MultiProjectMiddleware(fmw.Middleware):
         original_client = state.get(KeboolaClient.STATE_KEY)
         original_workspace = state.get(WorkspaceManager.STATE_KEY)
         is_real_client = isinstance(original_client, KeboolaClient)
-        # Default (auto-leased) scope carries no minted token; fall back to the active client's token.
-        base_token = scope.scoped_token or (original_client.token if is_real_client else '')
+        # Default (auto-leased) scope carries no minted token; fall back to the active client's
+        # bearer token -- the whole-stack kbc_at_/kbc_pat_ subject token. `.legacy_storage_token`
+        # is the wrong property here: for a deployed, project-scoped session it may be the
+        # *active* project's resolved legacy Storage token (see KeboolaClient.create), which must
+        # not be reused as the subject token for a *different* target project below.
+        base_token = scope.scoped_token or (original_client.bearer_token if is_real_client else '')
         # The active client's own URL — the current request/session's, not the startup config's
         # (which can differ or be unset for streamable-HTTP setups that supply it per request).
         storage_api_url = original_client.storage_api_url if is_real_client else server_state.config.storage_api_url
@@ -233,7 +236,9 @@ class MultiProjectMiddleware(fmw.Middleware):
         original_client = state.get(KeboolaClient.STATE_KEY)
         original_workspace = state.get(WorkspaceManager.STATE_KEY)
         is_real_client = isinstance(original_client, KeboolaClient)
-        base_token = scope.scoped_token or (original_client.token if is_real_client else '')
+        # See the identical fallback in on_call_tool above for why .bearer_token, not
+        # .legacy_storage_token.
+        base_token = scope.scoped_token or (original_client.bearer_token if is_real_client else '')
         storage_api_url = original_client.storage_api_url if is_real_client else server_state.config.storage_api_url
         try:
             await self._swap_project(state, server_state, storage_api_url, base_token, target, scope.read_only)
@@ -321,19 +326,21 @@ class MultiProjectMiddleware(fmw.Middleware):
         # `storage_api_url` is the current request/session URL (e.g. the active `KeboolaClient`'s),
         # not `server_state.config.storage_api_url` — that's the startup/lifespan config, which can
         # differ (or be unset) for streamable-HTTP setups that supply the URL per request.
-        # Normalize any inbound `Bearer ` scheme; KeboolaClient adds it back for bearer tokens,
-        # so a pre-prefixed value would otherwise become `Authorization: Bearer Bearer …`.
-        token = strip_bearer(token)
-        return await KeboolaClient(
+        # `KeboolaClient.create` classifies `token` (strips any inbound `Bearer ` scheme) and, for a
+        # programmatic token, resolves this project's legacy Storage token so a fanned-out call
+        # doesn't 401 on jobs-queue/AI-service/sync-actions (INC-02580 / PSGO-261).
+        return await KeboolaClient.create(
             storage_api_url=storage_api_url,
-            storage_api_token=token,
-            bearer_token=token,
+            storage_token=token,
+            branch_id=None,
+            project_id=project_id,
+            token_resolver=server_state.storage_token_resolver(storage_api_url),
             headers={
                 **build_tracing_headers(server_state.runtime_info),
                 'X-KBC-ProjectId': str(project_id),
             },
             readonly=read_only or None,
-        ).with_branch_id(None)
+        )
 
     @staticmethod
     def _deep_merge(a: Any, b: Any) -> Any:

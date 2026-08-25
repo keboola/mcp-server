@@ -68,6 +68,34 @@ async def test_resolve_success_sends_expected_request(sa_token_file: Path) -> No
     assert rq.headers['X-Subject-Token'] == 'Bearer kbc_pat_abc'
 
 
+@pytest.mark.asyncio
+async def test_resolve_reuses_one_client_across_calls(sa_token_file: Path) -> None:
+    # PSGO-280 (P1): a resolver is held for the life of the server and reused across an
+    # N-project fan-out, so it must pool one connection rather than handshaking per resolve.
+    seen_clients = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(HTTPStatus.OK, json={'storageToken': 'legacy-token'})
+
+    resolver = _resolver(sa_token_file, handler)
+
+    for _ in range(3):
+        seen_clients.append(resolver._client())
+        await resolver.resolve(subject_token='kbc_at_abc', project_id=1)
+
+    assert len({id(c) for c in seen_clients}) == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_creates_a_new_client_after_aclose(sa_token_file: Path) -> None:
+    resolver = _resolver(sa_token_file, lambda rq: httpx.Response(HTTPStatus.OK, json={'storageToken': 'x'}))
+    first = resolver._client()
+
+    await resolver.aclose()
+
+    assert resolver._client() is not first
+
+
 @pytest.mark.parametrize('status', [HTTPStatus.BAD_REQUEST, HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN])
 @pytest.mark.asyncio
 async def test_resolve_passes_through_client_errors(sa_token_file: Path, status: HTTPStatus) -> None:

@@ -534,7 +534,7 @@ async def get_accessible_projects(
         scoped_project_ids=scoped_ids,
         read_only=scope.read_only if scoped_ids is not None else None,
         scope_token=(
-            scope.to_token(resolve_scope_key(server_state.config), aad=resolve_scope_binding_aad(client.token))
+            scope.to_token(resolve_scope_key(server_state.config), aad=resolve_scope_binding_aad(client.bearer_token))
             if scoped_ids is not None and not is_persisted
             else None
         ),
@@ -632,7 +632,7 @@ async def set_project_scope(
     scope_token = (
         None
         if persisted
-        else scope.to_token(resolve_scope_key(server_state.config), aad=resolve_scope_binding_aad(client.token))
+        else scope.to_token(resolve_scope_key(server_state.config), aad=resolve_scope_binding_aad(client.bearer_token))
     )
     resend_instruction = (
         'The server persists this scope server-side for the rest of the conversation -- no need to resend it.'

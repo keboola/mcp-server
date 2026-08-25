@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
 
+from keboola_mcp_server.clients.auth_bridge import strip_bearer
 from keboola_mcp_server.config import Config, deployed_sa_token_path
 from keboola_mcp_server.session_store.crypto import decrypt, encrypt, resolve_encryption_key
 
@@ -81,7 +82,10 @@ def resolve_scope_binding_aad(storage_token: str | None) -> bytes | None:
     """
     if not deployed_sa_token_path() or not storage_token:
         return None
-    return hashlib.sha256(storage_token.encode('utf-8')).digest()
+    # Normalize a `Bearer `-prefixed inbound token so the seal side (KeboolaClient.bearer_token,
+    # always stripped) and the unseal side (config.storage_token, stripped on most but not
+    # necessarily every inbound path) can never drift on the scheme alone.
+    return hashlib.sha256(strip_bearer(storage_token).encode('utf-8')).digest()
 
 
 @dataclasses.dataclass(frozen=True)

@@ -8,6 +8,7 @@ import httpx
 import pytest
 from pytest_mock import MockerFixture
 
+from keboola_mcp_server.clients.auth_bridge import StorageTokenExchangeError, StorageTokenResolver
 from keboola_mcp_server.clients.base import RawKeboolaClient
 from keboola_mcp_server.clients.client import KeboolaClient, get_metadata_property
 from keboola_mcp_server.clients.storage import AsyncStorageClient
@@ -17,7 +18,7 @@ from keboola_mcp_server.mcp import build_tracing_headers
 
 @pytest.fixture
 def keboola_client() -> KeboolaClient:
-    return KeboolaClient(storage_api_url='https://connection.test.keboola.com', storage_api_token='test-token')
+    return KeboolaClient(storage_api_url='https://connection.test.keboola.com', legacy_storage_token='test-token')
 
 
 @pytest.fixture
@@ -347,7 +348,7 @@ class TestKeboolaClient:
     def keboola_client_with_headers(self, runtime_config: ServerRuntimeInfo) -> KeboolaClient:
         headers = build_tracing_headers(runtime_config)
         return KeboolaClient(
-            storage_api_url='https://connection.test.keboola.com', storage_api_token='test-token', headers=headers
+            storage_api_url='https://connection.test.keboola.com', legacy_storage_token='test-token', headers=headers
         )
 
     @pytest.mark.asyncio
@@ -410,7 +411,7 @@ class TestKeboolaClient:
     def test_metastore_client_url_derivation(self) -> None:
         client = KeboolaClient(
             storage_api_url='https://connection.canary-orion.keboola.dev',
-            storage_api_token='sapi_token_456',
+            legacy_storage_token='sapi_token_456',
         )
 
         assert client.metastore_client.raw_client.base_api_url == 'https://metastore.canary-orion.keboola.dev'
@@ -443,7 +444,7 @@ class TestKeboolaClient:
         """Clients use the bearer token when available, falling back to the storage token."""
         client = KeboolaClient(
             storage_api_url='https://connection.keboola.com',
-            storage_api_token=storage_token,
+            legacy_storage_token=storage_token,
             bearer_token=bearer_token,
         )
 
@@ -470,7 +471,7 @@ class TestKeboolaClient:
         """
         client = KeboolaClient(
             storage_api_url='https://connection.keboola.com',
-            storage_api_token='sapi_token_456',
+            legacy_storage_token='sapi_token_456',
             bearer_token='oauth_bearer_123',
         )
 
@@ -483,7 +484,7 @@ class TestKeboolaClient:
 def test_flow_schema_cache_roundtrip():
     client = KeboolaClient(
         storage_api_url='https://connection.keboola.com',
-        storage_api_token='dummy-token',
+        legacy_storage_token='dummy-token',
     )
     assert client.get_cached_flow_schema('keboola.flow') is None
     schema = {'type': 'object'}
@@ -724,6 +725,160 @@ def test_get_metadata_property(
     assert result == expected
 
 
+class TestKeboolaClientCreate:
+    """`KeboolaClient.create` classifies a raw caller credential into `legacy_storage_token` /
+    `bearer_token` and, for a programmatic token narrowed to one project, exchanges it for that
+    project's legacy Storage token via the auth-bridge -- the one place PSGO-280's fix lives,
+    replacing the near-identical logic that used to be duplicated in `create_session_state`
+    (mcp.py) and `client_for_project` (multiproject.py)."""
+
+    @pytest.mark.asyncio
+    async def test_legacy_token_passes_through_untouched(self) -> None:
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456'
+        )
+
+        assert client.legacy_storage_token == 'sapi_token_456'
+        assert client.bearer_token is None
+
+    @pytest.mark.asyncio
+    async def test_legacy_token_with_separate_oauth_bearer(self) -> None:
+        # An OAuth session: a legacy Storage token plus a separately-supplied bearer. Neither is
+        # programmatic-shaped, so no resolver call is attempted even when one is available.
+        resolver = AsyncMock(spec=StorageTokenResolver)
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com',
+            storage_token='sapi_token_456',
+            bearer_token='oauth_bearer_123',
+            project_id='42',
+            token_resolver=resolver,
+        )
+
+        assert client.legacy_storage_token == 'sapi_token_456'
+        assert client.bearer_token == 'oauth_bearer_123'
+        resolver.resolve.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('project_id', [None, '42', 42], ids=['no_project', 'str_project', 'int_project'])
+    async def test_programmatic_token_without_resolver_is_untouched(self, project_id) -> None:
+        # No token_resolver at all (e.g. a local/non-deployed server) -- never attempt an exchange,
+        # regardless of whether a project is known.
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc', project_id=project_id
+        )
+
+        assert client.bearer_token == 'kbc_at_abc'
+        assert client.legacy_storage_token == 'kbc_at_abc'
+
+    @pytest.mark.asyncio
+    async def test_programmatic_token_without_project_id_skips_resolve(self) -> None:
+        # A resolver is available, but with no project known yet (e.g. before
+        # get_accessible_projects/set_project_scope) there is nothing to resolve against.
+        resolver = AsyncMock(spec=StorageTokenResolver)
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc', token_resolver=resolver
+        )
+
+        assert client.bearer_token == 'kbc_at_abc'
+        assert client.legacy_storage_token == 'kbc_at_abc'
+        resolver.resolve.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_programmatic_token_strips_bearer_scheme_before_resolving(self) -> None:
+        resolver = AsyncMock(spec=StorageTokenResolver)
+        resolver.resolve = AsyncMock(return_value='legacy-project-42-token')
+
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com',
+            storage_token='Bearer kbc_at_abc',
+            project_id='42',
+            token_resolver=resolver,
+        )
+
+        assert client.bearer_token == 'kbc_at_abc'
+        assert client.legacy_storage_token == 'legacy-project-42-token'
+        resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
+
+    @pytest.mark.asyncio
+    async def test_programmatic_token_resolves_legacy_token_for_the_given_project(self) -> None:
+        resolver = AsyncMock(spec=StorageTokenResolver)
+        resolver.resolve = AsyncMock(return_value='legacy-project-42-token')
+
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com',
+            storage_token='kbc_at_abc',
+            project_id='42',
+            token_resolver=resolver,
+        )
+
+        # The Bearer form (Storage/data-science/scheduler/metastore) still carries the original
+        # programmatic token; only legacy_storage_token (queue/AI-service/sync-actions) is swapped.
+        assert client.bearer_token == 'kbc_at_abc'
+        assert client.legacy_storage_token == 'legacy-project-42-token'
+        resolver.resolve.assert_awaited_once_with(subject_token='kbc_at_abc', project_id=42)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'error',
+        [
+            StorageTokenExchangeError('resolver rejected', status_code=403),
+            OSError('token file missing'),
+            ValueError('token file empty'),
+        ],
+        ids=['exchange_error', 'os_error', 'value_error'],
+    )
+    async def test_falls_back_to_raw_token_when_resolve_fails(self, error: Exception) -> None:
+        resolver = AsyncMock(spec=StorageTokenResolver)
+        resolver.resolve = AsyncMock(side_effect=error)
+
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com',
+            storage_token='kbc_at_abc',
+            project_id='42',
+            token_resolver=resolver,
+        )
+
+        assert client.bearer_token == 'kbc_at_abc'
+        assert client.legacy_storage_token == 'kbc_at_abc'
+
+    @pytest.mark.asyncio
+    async def test_non_numeric_project_id_degrades_to_fallback_not_500(self) -> None:
+        # project_id can come straight off the caller-supplied X-KBC-ProjectId header -- a
+        # malformed value must degrade like any other resolver failure, not crash the request.
+        resolver = AsyncMock(spec=StorageTokenResolver)
+
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com',
+            storage_token='kbc_at_abc',
+            project_id='not-a-number',
+            token_resolver=resolver,
+        )
+
+        assert client.legacy_storage_token == 'kbc_at_abc'
+        resolver.resolve.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_branch_id_is_applied(self, mocker) -> None:
+        mocker.patch.object(KeboolaClient, 'with_branch_id', AsyncMock(return_value='branched'))
+
+        result = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456', branch_id='123'
+        )
+
+        assert result == 'branched'
+        KeboolaClient.with_branch_id.assert_awaited_once_with('123')
+
+    @pytest.mark.asyncio
+    async def test_raises_on_missing_storage_api_url(self) -> None:
+        with pytest.raises(ValueError, match='Storage API URL'):
+            await KeboolaClient.create(storage_api_url='', storage_token='sapi_token_456')
+
+    @pytest.mark.asyncio
+    async def test_raises_on_missing_storage_token(self) -> None:
+        with pytest.raises(ValueError, match='Storage API token'):
+            await KeboolaClient.create(storage_api_url='https://connection.keboola.com', storage_token='')
+
+
 class TestStepUpStorageClient:
     """
     KeboolaClient.step_up_storage_client builds the Kubernetes step-up Storage client.
@@ -750,7 +905,7 @@ class TestStepUpStorageClient:
         token_file.write_text('sa-jwt\n')
         client = KeboolaClient(
             storage_api_url=self.OWN_STACK_URL,
-            storage_api_token='user-token',
+            legacy_storage_token='user-token',
             headers={'User-Agent': 'test'},
             own_stack_storage_api_url=own_stack_storage_api_url,
         )
@@ -772,7 +927,7 @@ class TestStepUpStorageClient:
         token_file.write_text('sa-jwt')
         client = KeboolaClient(
             storage_api_url='https://connection.keboola.com',
-            storage_api_token='kbc_at_abc',
+            legacy_storage_token='kbc_at_abc',
             bearer_token='kbc_at_abc',
         )
 
@@ -791,7 +946,7 @@ class TestStepUpStorageClient:
         token_file.write_text('sa-jwt')
         client = KeboolaClient(
             storage_api_url=self.OWN_STACK_URL,
-            storage_api_token='user-token',
+            legacy_storage_token='user-token',
             readonly=readonly,
             own_stack_storage_api_url=self.OWN_STACK_URL,
         )
@@ -808,7 +963,7 @@ class TestStepUpStorageClient:
         token_file.write_text('sa-jwt')
         client = KeboolaClient(
             storage_api_url=self.OWN_STACK_URL,
-            storage_api_token='user-token',
+            legacy_storage_token='user-token',
             branch_id='999',
             own_stack_storage_api_url=self.OWN_STACK_URL,
         )
@@ -832,7 +987,7 @@ class TestStepUpStorageClient:
         # to a dev branch. See the "Security hardening" RFC increment.
         client = KeboolaClient(
             storage_api_url='https://connection.keboola.com',
-            storage_api_token='user-token',
+            legacy_storage_token='user-token',
             branch_id='999',
             readonly=readonly,
         )
@@ -848,7 +1003,7 @@ class TestStepUpStorageClient:
         token_file.write_text('  \n')
         client = KeboolaClient(
             storage_api_url=self.OWN_STACK_URL,
-            storage_api_token='user-token',
+            legacy_storage_token='user-token',
             own_stack_storage_api_url=self.OWN_STACK_URL,
         )
 
@@ -858,7 +1013,7 @@ class TestStepUpStorageClient:
     def test_fails_loudly_on_missing_token_file(self, tmp_path):
         client = KeboolaClient(
             storage_api_url=self.OWN_STACK_URL,
-            storage_api_token='user-token',
+            legacy_storage_token='user-token',
             own_stack_storage_api_url=self.OWN_STACK_URL,
         )
 
@@ -885,7 +1040,7 @@ class TestStepUpStorageClient:
         token_file.write_text('sa-jwt')
         client = KeboolaClient(
             storage_api_url=storage_api_url,
-            storage_api_token='user-token',
+            legacy_storage_token='user-token',
             own_stack_storage_api_url=own_stack_storage_api_url,
         )
 
@@ -910,7 +1065,7 @@ class TestStepUpStorageClient:
         with pytest.raises(ValueError, match='Invalid Keboola Storage API URL'):
             KeboolaClient(
                 storage_api_url=lookalike_url,
-                storage_api_token='user-token',
+                legacy_storage_token='user-token',
                 own_stack_storage_api_url=self.OWN_STACK_URL,
             )
 
@@ -921,7 +1076,7 @@ class TestStepUpStorageClient:
         token_file.write_text('sa-jwt')
         client = KeboolaClient(
             storage_api_url='https://connection.other.keboola.com',
-            storage_api_token='user-token',
+            legacy_storage_token='user-token',
             readonly=True,
             own_stack_storage_api_url=self.OWN_STACK_URL,
         )

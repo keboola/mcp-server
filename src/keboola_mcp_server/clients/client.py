@@ -8,6 +8,12 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from keboola_mcp_server.clients.ai_service import AIServiceClient
+from keboola_mcp_server.clients.auth_bridge import (
+    StorageTokenExchangeError,
+    StorageTokenResolver,
+    is_programmatic_token,
+    strip_bearer,
+)
 from keboola_mcp_server.clients.base import normalize_storage_api_url, read_service_account_jwt
 from keboola_mcp_server.clients.data_science import DataScienceClient
 from keboola_mcp_server.clients.encryption import EncryptionClient
@@ -86,6 +92,82 @@ class KeboolaClient:
         assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 
+    @classmethod
+    async def create(
+        cls,
+        *,
+        storage_api_url: str,
+        storage_token: str,
+        bearer_token: str | None = None,
+        branch_id: str | None = None,
+        project_id: str | int | None = None,
+        token_resolver: StorageTokenResolver | None = None,
+        headers: Mapping[str, Any] | None = None,
+        readonly: bool | None = None,
+        own_stack_storage_api_url: str | None = None,
+    ) -> 'KeboolaClient':
+        """
+        Builds a client from the credential a caller was handed, classifying it and -- when it is
+        a programmatic token narrowed to one project -- exchanging it for that project's legacy
+        Storage token.
+
+        `__init__` takes the two *already-classified* credentials (`legacy_storage_token` and
+        `bearer_token`); this factory is the one place that decides which is which:
+
+        * A programmatic token (``kbc_at_``/``kbc_pat_``) is forwarded downstream as a Bearer for
+          Storage/data-science/scheduler/metastore. Jobs-queue/AI-service/sync-actions re-send
+          whatever they receive to Storage as a legacy ``X-StorageApi-Token``, so that Bearer 401s
+          there (INC-02580 / SUPPORT-17416); with `project_id` and a `token_resolver` we exchange
+          it for the real per-project Storage token via the auth-bridge. On failure we keep the raw
+          token, degrading to the pre-existing 401 rather than breaking session creation.
+        * Anything else (a legacy project-bound Storage token, or an OAuth session whose bearer is
+          supplied separately) is passed through untouched.
+
+        :param storage_token: The credential the caller presented (legacy Storage token, or a
+            programmatic kbc_at_/kbc_pat_ token, with or without a `Bearer ` scheme).
+        :param bearer_token: An OAuth bearer, when the session has one alongside a legacy Storage
+            token. Ignored (overwritten) for a programmatic `storage_token`.
+        :param project_id: The project this client is narrowed to, if any. Only used to pick the
+            project for the legacy-token exchange -- the caller still owns the X-KBC-ProjectId
+            header.
+        :param token_resolver: The auth-bridge resolver, or None to skip the exchange (a local/
+            non-deployed server, or a request that must add no auth round-trips -- see
+            `SessionStateMiddleware.on_request`'s `is_list`).
+        """
+        if not storage_api_url:
+            raise ValueError('Storage API URL is not provided.')
+        if not storage_token:
+            raise ValueError('Storage API token is not provided.')
+
+        legacy_storage_token = storage_token
+        if is_programmatic_token(storage_token):
+            bearer_token = strip_bearer(storage_token)
+        if token_resolver is not None and project_id is not None and is_programmatic_token(bearer_token):
+            try:
+                # int() stays INSIDE the try: project_id can come from the caller-supplied
+                # X-KBC-ProjectId header, and a non-numeric value must degrade to the warning
+                # below, not 500 the request.
+                legacy_storage_token = await token_resolver.resolve(
+                    subject_token=cast(str, bearer_token), project_id=int(project_id)
+                )
+            except (StorageTokenExchangeError, OSError, ValueError) as e:
+                # OSError/ValueError: the projected ServiceAccount JWT file is missing or empty.
+                LOG.warning(
+                    'Could not resolve a legacy Storage token for jobs-queue/AI-service/sync-actions '
+                    f'calls on project {project_id}; those calls will keep 401ing: {e}',
+                    exc_info=True,
+                )
+
+        client = cls(
+            storage_api_url=storage_api_url,
+            legacy_storage_token=legacy_storage_token,
+            bearer_token=bearer_token,
+            headers=headers,
+            readonly=readonly,
+            own_stack_storage_api_url=own_stack_storage_api_url,
+        )
+        return await client.with_branch_id(branch_id)
+
     async def with_branch_id(self, branch_id: str | None) -> 'KeboolaClient':
         """
         Gets a KeboolaClient configured for the given branch. It verifies that the branch exists
@@ -96,7 +178,7 @@ class KeboolaClient:
         elif not branch_id:
             return KeboolaClient(
                 storage_api_url=self.storage_api_url,
-                storage_api_token=self.token,
+                legacy_storage_token=self.legacy_storage_token,
                 bearer_token=self._bearer_token,
                 branch_id=None,
                 headers=self._headers,
@@ -121,7 +203,7 @@ class KeboolaClient:
             normalized_branch_id = None if is_default else branch_id
             return KeboolaClient(
                 storage_api_url=self.storage_api_url,
-                storage_api_token=self.token,
+                legacy_storage_token=self.legacy_storage_token,
                 bearer_token=self._bearer_token,
                 branch_id=normalized_branch_id,
                 headers=self._headers,
@@ -133,7 +215,7 @@ class KeboolaClient:
         self,
         *,
         storage_api_url: str,
-        storage_api_token: str,
+        legacy_storage_token: str,
         bearer_token: str | None = None,
         branch_id: str | None = None,
         headers: Mapping[str, Any] | None = None,
@@ -141,9 +223,14 @@ class KeboolaClient:
         own_stack_storage_api_url: str | None = None,
     ) -> None:
         """
-        Initialize the client.
+        Initialize the client from two already-classified credentials. A raw, not-yet-classified
+        caller credential (e.g. straight off a request) should go through `create()` instead,
+        which decides `legacy_storage_token` vs `bearer_token` and performs the legacy-token
+        exchange when applicable.
 
-        :param storage_api_token: Keboola Storage API token
+        :param legacy_storage_token: A legacy project-scoped Storage API token. Sent as-is to
+            jobs-queue/AI-service/sync-actions; also used for every other service when no
+            `bearer_token` is given.
         :param storage_api_url: Keboola Storage API URL
         :param bearer_token: The access token issued by Keboola OAuth server
         :param branch_id: Keboola branch ID
@@ -156,7 +243,7 @@ class KeboolaClient:
             Kubernetes ServiceAccount credential may be sent to `storage_api_url`; when it is None,
             the step-up is never attempted. See `step_up_storage_client()`.
         """
-        self._token = storage_api_token
+        self._legacy_storage_token = legacy_storage_token
         self._bearer_token = bearer_token
         self._branch_id = branch_id
         self._own_stack_storage_api_url = own_stack_storage_api_url
@@ -177,7 +264,9 @@ class KeboolaClient:
         sync_actions_api_url = urlunparse(('https', f'sync-actions.{self._hostname_suffix}', '', '', '', ''))
 
         # Initialize clients for individual services
-        bearer_or_sapi_token = self._bearer_or_sapi_token = f'Bearer {bearer_token}' if bearer_token else self._token
+        bearer_or_sapi_token = self._bearer_or_sapi_token = (
+            f'Bearer {bearer_token}' if bearer_token else self._legacy_storage_token
+        )
         # The encryption service does not require an authorization header, so we pass None as the token
         self._encryption_client = EncryptionClient.create(
             root_url=encryption_api_url, token=None, headers=self._headers
@@ -190,17 +279,23 @@ class KeboolaClient:
             readonly=readonly,
             encryption_client=self._encryption_client,
         )
-        # Jobs-queue / AI-service / sync-actions keep the raw Storage token and must NOT be given
+        # Jobs-queue / AI-service / sync-actions keep the legacy Storage token and must NOT be given
         # the OAuth bearer: the queue's NewJobFactory re-sends whatever it receives to Storage as a
-        # legacy X-StorageApi-Token (hardcoded AuthType::STORAGE_TOKEN), so an OAuth bearer arrives
-        # there as an invalid Storage token and every run_job 401s (INC-02580 / SUPPORT-17416).
-        # Reverts the client.py part of AI-3755; the programmatic-token path is unaffected, see the
-        # PR description.
+        # legacy X-StorageApi-Token (hardcoded AuthType::STORAGE_TOKEN), so a bearer-shaped credential
+        # arrives there as an invalid Storage token and every run_job 401s (INC-02580 / SUPPORT-17416).
+        # Reverts the client.py part of AI-3755. For a programmatic token (kbc_at_/kbc_pat_), it is
+        # `create()`'s job to already have exchanged it for the legacy per-project Storage token via
+        # the auth-bridge (StorageTokenResolver) before this constructor runs; a raw, unresolved
+        # kbc_at_/kbc_pat_ string 401s here exactly like an OAuth bearer would.
         self._jobs_queue_client = JobsQueueClient.create(
-            root_url=queue_api_url, token=self._token, branch_id=branch_id, headers=self._headers, readonly=readonly
+            root_url=queue_api_url,
+            token=self._legacy_storage_token,
+            branch_id=branch_id,
+            headers=self._headers,
+            readonly=readonly,
         )
         self._ai_service_client = AIServiceClient.create(
-            root_url=ai_service_api_url, token=self._token, headers=self._headers, readonly=readonly
+            root_url=ai_service_api_url, token=self._legacy_storage_token, headers=self._headers, readonly=readonly
         )
         # Data-science (sandboxes-service) git-repo credential endpoints require an admin-context
         # token (CanManageAppRepoCredentials -> StorageApiToken::isAdminToken()). The OAuth bearer
@@ -219,7 +314,7 @@ class KeboolaClient:
         )
         self._sync_actions_client = SyncActionsClient.create(
             root_url=sync_actions_api_url,
-            token=self._token,
+            token=self._legacy_storage_token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
@@ -241,8 +336,8 @@ class KeboolaClient:
         return self._storage_api_url
 
     @property
-    def token(self) -> str:
-        return self._token
+    def legacy_storage_token(self) -> str:
+        return self._legacy_storage_token
 
     @property
     def bearer_token(self) -> str | None:
@@ -347,7 +442,7 @@ class KeboolaClient:
         headers['X-Kubernetes-Authorization'] = f'Bearer {jwt}'
         return AsyncStorageClient.create(
             root_url=self._storage_api_url,
-            # Bearer, not the raw storage_api_token: for a programmatic (kbc_at_/kbc_pat_) session
+            # Bearer, not the raw legacy_storage_token: for a programmatic (kbc_at_/kbc_pat_) session
             # the raw token would be sent as X-StorageAPI-Token, which Storage API rejects outright
             # -- it only accepts a programmatic token via Authorization: Bearer.
             token=self._bearer_or_sapi_token,

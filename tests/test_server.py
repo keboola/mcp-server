@@ -260,7 +260,7 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
 
         keboola_client = KeboolaClient.from_state(ctx.session.state)
         assert keboola_client is not None
-        assert keboola_client.token == 'SAPI_1234'
+        assert keboola_client.legacy_storage_token == 'SAPI_1234'
 
         workspace_manager = WorkspaceManager.from_state(ctx.session.state)
         assert workspace_manager is not None
@@ -386,7 +386,7 @@ async def test_keboola_injection_and_lifespan(
         server_state = ServerState.from_context(ctx)
         assert asdict(server_state.config) == asdict(config) | os_environ_params
 
-        assert client.token == expected_params['storage_token']
+        assert client.legacy_storage_token == expected_params['storage_token']
         assert workspace._workspace_schema == expected_params['workspace_schema']
 
         return param

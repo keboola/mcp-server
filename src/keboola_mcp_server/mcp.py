@@ -29,7 +29,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token, load_tokens
-from keboola_mcp_server.clients.auth_bridge import is_programmatic_token, strip_bearer
+from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import (
@@ -123,6 +123,38 @@ class ServerState:
     runtime_info: ServerRuntimeInfo
     session_store: SessionStore | None = None
     kai_scope_store: KaiScopeStore | None = None
+    _token_resolvers: dict[str, StorageTokenResolver] = dataclasses.field(
+        default_factory=dict, compare=False, repr=False
+    )
+
+    def storage_token_resolver(self, storage_api_url: str | None) -> StorageTokenResolver | None:
+        """The auth-bridge resolver for `storage_api_url`, or None when this process is not the
+        deployed server.
+
+        One instance per stack URL, reused for the life of the server -- each holds its own pooled
+        `httpx.AsyncClient` (see `StorageTokenResolver`), so a fanned-out multi-project call, and
+        every request after it, reuse one connection instead of a TLS handshake per resolve. This
+        is also the single place that answers "am I the deployed server?" for token exchange --
+        `KeboolaClient.create` just uses the resolver it is handed, or skips the exchange when
+        handed None.
+        """
+        path = deployed_sa_token_path()
+        if not path or not storage_api_url:
+            return None
+        # `path` is not part of the cache key: it comes from the process environment only
+        # (KBC_KUBERNETES_TOKEN_PATH), so it is a constant for the life of this ServerState.
+        if (resolver := self._token_resolvers.get(storage_api_url)) is None:
+            resolver = self._token_resolvers[storage_api_url] = StorageTokenResolver(
+                storage_api_url=storage_api_url, kubernetes_token_path=path
+            )
+        return resolver
+
+    async def aclose(self) -> None:
+        """Closes every pooled connection held by `storage_token_resolver`. Call once, from the
+        server's lifespan teardown."""
+        for resolver in self._token_resolvers.values():
+            await resolver.aclose()
+        self._token_resolvers.clear()
 
     @property
     def own_stack_storage_api_url(self) -> str | None:
@@ -345,6 +377,9 @@ class SessionStateMiddleware(fmw.Middleware):
                 runtime_info,
                 readonly=readonly,
                 own_stack_storage_api_url=own_stack_storage_api_url,
+                # /list must add no Connection auth round-trips (see the is_list comment above):
+                # no resolver means no auth-bridge exchange. Mirrors `refresh=not is_list` above.
+                token_resolver=None if is_list else server_state.storage_token_resolver(config.storage_api_url),
             )
             if scope is not None:
                 state[SCOPE_KEY] = scope
@@ -799,6 +834,7 @@ class SessionStateMiddleware(fmw.Middleware):
         readonly: bool | None = None,
         *,
         own_stack_storage_api_url: str | None,
+        token_resolver: StorageTokenResolver | None = None,
     ) -> dict[str, Any]:
         """
         Creates `KeboolaClient` and `WorkspaceManager` instances and returns them in the session state.
@@ -812,6 +848,10 @@ class SessionStateMiddleware(fmw.Middleware):
             to the `KeboolaClient`, which sends the Kubernetes ServiceAccount step-up header only when
             the session talks to that stack. It must never come from a request header, so it is passed
             separately instead of being read off `config`, whose Storage API URL a header can set.
+        :param token_resolver: The auth-bridge resolver `KeboolaClient.create` uses to exchange a
+            programmatic token for a project's legacy Storage token, or None to skip that exchange
+            (a local/non-deployed server, or a request -- `/list` -- that must add no auth
+            round-trips; see the `on_request` call site).
         :return: The session state dictionary containing the created client and workspace manager instances.
         """
         LOG.info(f'Creating SessionState from config: {config}.')
@@ -823,29 +863,26 @@ class SessionStateMiddleware(fmw.Middleware):
             if not config.storage_api_url:
                 raise ValueError('Storage API URL is not provided.')
 
-            storage_token = config.storage_token
-            bearer_token = config.bearer_token
-            extra_headers: dict[str, Any] = {}
-            if is_programmatic_token(storage_token):
-                # A programmatic token (kbc_at_/kbc_pat_) is forwarded downstream as a Bearer --
-                # KeboolaClient already sends it that way to every service it wraps (Storage, Queue,
-                # AI, etc.), so no legacy per-project Storage token needs to be minted for it. Strip
-                # any inbound `Bearer ` scheme so the client's own `Bearer ` prefixing can't produce
-                # `Bearer Bearer …`. Narrow to a specific project via X-KBC-ProjectId when known
-                # (header, or a prior scope selection) -- unset (whole-stack) is exactly what
-                # get_accessible_projects/set_project_scope need before a project is chosen.
-                bearer_token = strip_bearer(storage_token)
-                if config.project_id:
-                    extra_headers['X-KBC-ProjectId'] = config.project_id
-
-            client = await KeboolaClient(
+            # A programmatic token (kbc_at_/kbc_pat_) is narrowed to a specific project via
+            # X-KBC-ProjectId when known (header, or a prior scope selection) -- unset
+            # (whole-stack) is exactly what get_accessible_projects/set_project_scope need before
+            # a project is chosen. A legacy project-bound Storage token derives its project from
+            # the token itself and must not get the header.
+            project_id = config.project_id if is_programmatic_token(config.storage_token) else None
+            client = await KeboolaClient.create(
                 storage_api_url=config.storage_api_url,
-                storage_api_token=storage_token,
-                bearer_token=bearer_token,
-                headers={**build_tracing_headers(runtime_info), **extra_headers},
+                storage_token=config.storage_token,
+                bearer_token=config.bearer_token,
+                branch_id=config.branch_id,
+                project_id=project_id,
+                token_resolver=token_resolver,
+                headers={
+                    **build_tracing_headers(runtime_info),
+                    **({'X-KBC-ProjectId': project_id} if project_id else {}),
+                },
                 readonly=readonly,
                 own_stack_storage_api_url=own_stack_storage_api_url,
-            ).with_branch_id(config.branch_id)
+            )
 
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
@@ -954,7 +991,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         # programmatic sessions and advertise the superset; the on_call_tool guards still enforce every
         # feature/role/branch rule per project (with the right project_id) when a tool is invoked.
         client = KeboolaClient.from_state(context.fastmcp_context.session.state)
-        if is_programmatic_token(client.token):
+        if is_programmatic_token(client.bearer_token):
             return tools
 
         token_info = await self.get_token_info(context.fastmcp_context)
