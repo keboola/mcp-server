@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import socket
 import subprocess
 import time
 from collections.abc import AsyncGenerator, Iterable
@@ -253,6 +254,18 @@ async def _assert_get_component_details_tool_call(client: Client, config: Config
     assert component_config.configuration_rows is None
 
 
+def _wait_for_port(port: int, timeout: float = 10.0) -> None:
+    """Poll until something is listening on 127.0.0.1:port, or raise TimeoutError."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(('127.0.0.1', port), timeout=0.5):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise TimeoutError(f'MCP server did not start listening on port {port} within {timeout}s')
+
+
 def _run_server_remote(storage_api_url: str, transport: HttpTransportStr) -> Iterable[str]:
     """
     Run the server in a subprocess.
@@ -291,7 +304,7 @@ def _run_server_remote(storage_api_url: str, transport: HttpTransportStr) -> Ite
             raise ValueError(f'Unknown transport: {transport}')
 
         LOG.info(f'Running MCP server in subprocess with {transport} transport, listening on: {urls}')
-        time.sleep(5)  # wait for the server to start
+        _wait_for_port(port)
         yield from urls
     finally:
         LOG.info('Terminating MCP server subprocess.')
