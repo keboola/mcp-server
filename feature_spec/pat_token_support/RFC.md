@@ -1154,3 +1154,47 @@ against both a minimal repro and FastMCP's actual app-construction shape):
 **Explicitly not fixed here:** the deployed `KeboolaClient`'s own request path has nothing to do
 with Postgres (Storage API calls don't touch this server's session database), so it needs no
 equivalent guard.
+
+## Extension: multi-project OAuth sessions never auto-confirmed (increment 16)
+
+Increment 8's premise -- "this server's OAuth grant is always whole-stack (`claudai projectless`
+scope), so introspection's count there is just the user's real total org membership, not evidence
+of a prior scoping choice" -- predates the league's `/oauth/consent` screen letting the user
+themselves pick "all projects" or freeze access to a specific subset (checkboxes per org/project,
+screenshot reviewed in the reporting conversation). That screen *is* the scoping decision; by the
+time `exchange_authorization_code` runs, the user has already made it, whether they kept "All
+projects" or picked a subset. Auto-confirming only when introspection returned exactly one project
+left every other session -- including a deliberate 2-of-N pick -- stuck at `confirmed=False`, so
+the ask-first gate in `multiproject.py` 401'd every data-tool call in `main` until the agent called
+`set_project_scope` again for a choice the user had already made once.
+
+**Fix:** `oauth.py`'s `_auto_confirm_single_project_scope` (renamed
+`_auto_confirm_project_scope`) drops the `len(introspection.projects) != 1` guard and confirms the
+scope to whatever the freshly-exchanged token can reach, at any count -- mirroring
+`set_project_scope`'s own "omit/null project_ids -> introspect and scope to everything returned"
+behavior in `tools/project.py`. Still best-effort and still a no-op on zero reachable projects
+(nothing to scope to); an explicit `set_project_scope` call still works afterwards to re-scope
+mid-conversation.
+
+## Extension: a real 401 gave the agent no reason to try scoping (increment 17)
+
+Companion fix to increment 16, prompted by a reproduced example in the reporting conversation: an
+agent hit a genuine `401 Unauthorized` from a Storage-backed call (not the `multiproject.py`
+ask-first `ToolError`, an actual HTTP 401 propagating from `RawKeboolaClient._raise_for_status`)
+and, with nothing in the error text pointing at scoping, told the user their connector's token had
+expired and to reconnect it -- the wrong diagnosis when the real fix is `get_accessible_projects`
++ `set_project_scope`. The message an agent sees for any 401 is genuinely ambiguous between "bad
+credential" and "no/stale project scope" -- this server can't tell which from inside
+`_raise_for_status` (it has no view of `SessionScope`), so the fix nudges towards the
+usually-cheaper, usually-right hypothesis rather than leaving the agent to guess.
+
+**Fix:** `clients/base.py`'s `RawKeboolaClient._raise_for_status` appends a fixed hint to the
+raised `HTTPStatusError`'s message whenever `response.status_code == 401`, naming
+`get_accessible_projects`/`set_project_scope` explicitly and saying this is a common cause of a
+401 that doesn't necessarily mean the credential itself is invalid. Unconditional -- every
+Keboola-API-backed client (`storage`, `jobs_queue`, `ai_service`, `sync_actions`, `scheduler`,
+`data_science`, `metastore`, `query`) shares this one `_raise_for_status`, so the hint applies
+everywhere a 401 can surface, regardless of session type. Harmless when scoping genuinely doesn't
+apply to the session (e.g. a deployed session pinned to one project via `X-KBC-ProjectId`): those
+two tools just report that no programmatic token is present, which is itself useful signal that
+the 401 has some other cause.

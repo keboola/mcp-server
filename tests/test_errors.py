@@ -1,6 +1,7 @@
 import json
 import logging
 import uuid
+from collections.abc import Sequence
 from importlib.metadata import distribution
 from unittest.mock import ANY
 
@@ -363,6 +364,50 @@ class TestPydanticValidationErrors:
             assert len(lines) > 0, 'Empty error message'
             assert lines[0] == 'MCP tool "foo" call failed. ToolError: Found 1 validation error(s) for TableColumnInfo'
             assert expected_error_details == yaml.safe_load('\n'.join(lines[1:]))
+
+    @staticmethod
+    @tool_errors()
+    async def echo_ids(_ctx: Context, ids: Sequence[str] = ()) -> list[str]:
+        return list(ids)
+
+    @pytest.mark.asyncio
+    async def test_empty_string_array_argument_is_coerced_to_empty_list(self, mocker, mcp_server: FastMCP):
+        # Some tool-calling clients send `""` instead of omitting/`[]` an unset array-typed
+        # argument (observed live against `get_configs`'s `component_types`/`component_ids`),
+        # which pydantic-core always rejects for a `Sequence[...]` field. The declared `array`
+        # schema type means `""` is never a legitimate value, so it's coerced to `[]` before the
+        # tool ever sees it, rather than surfacing a validation error at all.
+        mocker.patch(
+            'keboola_mcp_server.clients.base.KeboolaServiceClient.get',
+            return_value={'owner': {'id': '123'}},
+        )
+        mocker.patch(
+            'keboola_mcp_server.clients.base.KeboolaServiceClient.post',
+            return_value={'id': '13008826', 'uuid': '01958f48-b1fc-7f05-b9b9-8a4a7b385bc3'},
+        )
+        mcp_server.add_tool(FunctionTool.from_function(self.echo_ids))
+
+        async with Client(mcp_server) as client:
+            result = await client.call_tool('echo_ids', arguments={'ids': ''})
+
+        assert result.structured_content == {'result': []}
+
+    @pytest.mark.asyncio
+    async def test_non_empty_array_argument_is_untouched(self, mocker, mcp_server: FastMCP):
+        mocker.patch(
+            'keboola_mcp_server.clients.base.KeboolaServiceClient.get',
+            return_value={'owner': {'id': '123'}},
+        )
+        mocker.patch(
+            'keboola_mcp_server.clients.base.KeboolaServiceClient.post',
+            return_value={'id': '13008826', 'uuid': '01958f48-b1fc-7f05-b9b9-8a4a7b385bc3'},
+        )
+        mcp_server.add_tool(FunctionTool.from_function(self.echo_ids))
+
+        async with Client(mcp_server) as client:
+            result = await client.call_tool('echo_ids', arguments={'ids': ['keboola.ex-db-mysql']})
+
+        assert result.structured_content == {'result': ['keboola.ex-db-mysql']}
 
 
 @pytest.mark.asyncio

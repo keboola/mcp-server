@@ -439,9 +439,11 @@ class TestSimpleOAuthProvider:
         monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
         captured: dict[str, Any] = {}
         self._stub_exchanger(monkeypatch, captured)
-        # Two reachable projects: not the single-project auto-confirm case, so the session should
-        # stay unconfirmed exactly as before that feature existed. Also proves introspection failures
-        # here are non-fatal to login -- see test_exchange_authorization_code_introspection_failure_is_non_fatal.
+        # Two reachable projects: the consent screen already made this the user's deliberate choice
+        # (whether "all projects" or a picked subset), so the session should still auto-confirm --
+        # see test_exchange_authorization_code_auto_confirms_multiple_projects. Also proves
+        # introspection failures here are non-fatal to login -- see
+        # test_exchange_authorization_code_introspection_failure_is_non_fatal.
         monkeypatch.setattr(
             oauth_module,
             'introspect_token',
@@ -450,6 +452,9 @@ class TestSimpleOAuthProvider:
                     user_id=1, user_email=None, user_name=None, projects=[_project(1), _project(2)]
                 )
             ),
+        )
+        monkeypatch.setattr(
+            oauth_module, 'exchange_scoped_token', mock.AsyncMock(side_effect=httpx.ConnectError('unreachable'))
         )
 
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
@@ -472,7 +477,10 @@ class TestSimpleOAuthProvider:
         # forced-relogin window tied to the (1h) Keboola access token's lifetime.
         assert loaded.expires_at is None
         assert loaded_refresh.expires_at is None
-        assert loaded.scope_confirmed is False
+        # Still confirmed even though the scoped-token exchange itself failed (best-effort fallback).
+        assert loaded.scope_confirmed is True
+        assert loaded.scope_project_ids == [1, 2]
+        assert loaded.scope_scoped_token is None
 
     @pytest.mark.asyncio
     async def test_exchange_authorization_code_auto_confirms_single_project(
@@ -510,6 +518,49 @@ class TestSimpleOAuthProvider:
         assert loaded is not None
         assert loaded.scope_confirmed is True
         assert loaded.scope_project_ids == [42]
+        assert loaded.scope_read_only is False
+        assert loaded.scope_scoped_token == 'kbc_at_scoped'
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_auto_confirms_multiple_projects(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        # The league consent screen already lets the user pick "all projects" or freeze access to a
+        # specific subset -- either way that's the user's deliberate scoping choice, made before this
+        # code path ever runs, so a session reaching more than one project must still auto-confirm
+        # instead of making the agent ask the user again via set_project_scope.
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        monkeypatch.setattr(
+            oauth_module,
+            'introspect_token',
+            mock.AsyncMock(
+                return_value=Introspection(
+                    user_id=1, user_email=None, user_name=None, projects=[_project(1), _project(2)]
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            oauth_module,
+            'exchange_scoped_token',
+            mock.AsyncMock(
+                return_value=ScopedToken(
+                    access_token='kbc_at_scoped', expires_at=time.time() + 3600, project_ids=[1, 2], read_only=False
+                )
+            ),
+        )
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+        oauth_token = await oauth_provider.exchange_authorization_code(client, auth_code)
+
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.scope_confirmed is True
+        assert loaded.scope_project_ids == [1, 2]
         assert loaded.scope_read_only is False
         assert loaded.scope_scoped_token == 'kbc_at_scoped'
 

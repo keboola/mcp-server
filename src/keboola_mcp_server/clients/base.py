@@ -133,6 +133,19 @@ class RawKeboolaClient:
                 except Exception:
                     LOG.debug('Failed to read response.text while building the error message.', exc_info=True)
 
+            if response.status_code == HTTPStatus.UNAUTHORIZED:
+                # A 401 here is often a project scope that was never confirmed (or has gone stale),
+                # not an actually-invalid credential -- steer the agent toward the tools that fix
+                # that instead of telling the user to re-authenticate. Harmless to suggest even when
+                # scoping doesn't apply to this session (e.g. a single pinned project): those tools
+                # just say so.
+                message_parts.append(
+                    'If this session\'s Keboola project scope may be unset or stale, call '
+                    '"get_accessible_projects" to see which project(s) this session can reach, then '
+                    '"set_project_scope" to (re-)confirm which one(s) to work with -- this is a common '
+                    'cause of a 401 here and does not necessarily mean the credential itself is invalid.'
+                )
+
             raise httpx.HTTPStatusError('\n'.join(message_parts), request=response.request, response=response) from e
 
     async def get(
