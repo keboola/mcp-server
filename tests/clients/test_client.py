@@ -60,6 +60,21 @@ def mock_http_response_404(mock_http_request: httpx.Request) -> httpx.Response:
     return response
 
 
+@pytest.fixture
+def mock_http_response_401(mock_http_request: httpx.Request) -> httpx.Response:
+    """Create a mock HTTP response with 401 status."""
+    response = Mock(spec=httpx.Response)
+    response.status_code = 401
+    response.reason_phrase = 'Unauthorized'
+    response.url = 'https://api.example.com/test'
+    response.request = mock_http_request
+    response.is_error = True
+    response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        message=f"{response.reason_phrase} for url '{response.url}'", request=mock_http_request, response=response
+    )
+    return response
+
+
 class TestRawKeboolaClient:
     """Test suite for enhanced HTTP client error handling."""
 
@@ -132,6 +147,19 @@ class TestRawKeboolaClient:
         )
         with pytest.raises(httpx.HTTPStatusError, match=match):
             raw_client._raise_for_status(mock_http_response_404)
+
+    def test_raise_for_status_401_suggests_project_scope_tools(
+        self, raw_client: RawKeboolaClient, mock_http_response_401: httpx.Response
+    ):
+        """A 401 often means the session's project scope was never confirmed or has gone stale --
+        the error message should steer the agent to get_accessible_projects/set_project_scope
+        instead of implying the credential itself is invalid."""
+
+        mock_http_response_401.json.return_value = {'error': 'Invalid access token', 'code': 'storage.tokenInvalid'}
+
+        with pytest.raises(httpx.HTTPStatusError, match='get_accessible_projects') as exc_info:
+            raw_client._raise_for_status(mock_http_response_401)
+        assert 'set_project_scope' in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_get_method_integration_with_enhanced_error_handling(
