@@ -173,6 +173,19 @@ class MultiProjectMiddleware(fmw.Middleware):
                     # every project, so fanning out would emit N identical copies plus a confusing
                     # "failed for all N projects" aggregate. Abort and surface the single clean error.
                     raise
+                except ToolError as e:
+                    # ValidationErrorMiddleware sits inner of this middleware (see server.py's
+                    # registration order) and already converted a FastMCPValidationError raised
+                    # during argument validation into a ToolError -- via `raise ToolError(...) from
+                    # e` -- before it ever reaches the except clause above, so that clause never
+                    # actually fires for this case in practice. Detect it the same way
+                    # ValidationErrorMiddleware itself does (its `from e` sets `__cause__`) and
+                    # re-raise for the same reason: the same bad arguments fail identically in
+                    # every project.
+                    if isinstance(e.__cause__, FastMCPValidationError):
+                        raise
+                    LOG.warning(f'Fan-out call failed for project {project_id}: {e}', exc_info=True)
+                    errors.append((project_id, str(e)))
                 except Exception as e:
                     LOG.warning(f'Fan-out call failed for project {project_id}: {e}', exc_info=True)
                     errors.append((project_id, str(e)))

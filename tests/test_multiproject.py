@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.tools.tool import ToolResult
 from mcp import types as mt
 from pydantic import ValidationError as PydanticValidationError
@@ -655,6 +656,45 @@ class TestMultiProjectMiddleware:
 
         # Aborted after the first project; not retried across the rest.
         assert calls == ['client-11']
+
+    @pytest.mark.asyncio
+    async def test_fan_out_validation_error_wrapped_in_tool_error_raised_once(self) -> None:
+        # In practice, `ValidationErrorMiddleware` (registered inner of this middleware -- see
+        # server.py's registration order) converts a FastMCPValidationError raised during argument
+        # validation into a ToolError (`raise ToolError(...) from e`) before it ever reaches this
+        # middleware's except clauses, so the bare-PydanticValidationError case covered by
+        # test_fan_out_validation_error_raised_once_not_per_project never actually happens on a
+        # real server (reproduced live: `get_configs` called with `component_types=""`). This must
+        # still surface as ONE clean error, not N duplicated copies + a confusing aggregate.
+        scope = SessionScope(project_ids=[120, 512], scoped_token='kbc_at_s', confirmed=True)
+        context, state = self._ctx(scope, 'get_tables', read_only=True)
+        calls = []
+
+        async def call_next(_):
+            calls.append(state[KeboolaClient.STATE_KEY])
+            cause = FastMCPValidationError('Found 2 validation error(s) for call[get_configs]')
+            cause.__cause__ = PydanticValidationError.from_exception_data('get_configs', [])
+            err = ToolError('Found 2 validation error(s) for call[get_configs]')
+            err.__cause__ = cause
+            raise err
+
+        with (
+            patch.object(
+                MultiProjectMiddleware,
+                'client_for_project',
+                AsyncMock(side_effect=lambda _ss, _url, _token, pid, _ro: f'client-{pid}'),
+            ),
+            patch.object(
+                WorkspaceManager,
+                'create',
+                AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
+            ),
+            pytest.raises(ToolError, match=r'^Found 2 validation error\(s\) for call\[get_configs\]$'),
+        ):
+            await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        # Aborted after the first project; not retried (and duplicated) across the rest.
+        assert calls == ['client-120']
 
     def test_merge_large_degrades_to_count_first(self, monkeypatch) -> None:
         # Lower the cap so a modest result trips the count-first path.
