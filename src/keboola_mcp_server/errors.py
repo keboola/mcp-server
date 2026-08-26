@@ -261,6 +261,7 @@ class ValidationErrorMiddleware(fmw.Middleware):
         context: MiddlewareContext[mt.CallToolRequestParams],
         call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
     ) -> mt.CallToolResult:
+        await self._coerce_empty_string_arrays(context)
         try:
             return await call_next(context)
         except ValidationError as e:
@@ -271,3 +272,27 @@ class ValidationErrorMiddleware(fmw.Middleware):
             if isinstance(e.__cause__, ValidationError):
                 raise ToolError(prettify_validation_error(e.__cause__)) from e
             raise
+
+    @staticmethod
+    async def _coerce_empty_string_arrays(context: MiddlewareContext[mt.CallToolRequestParams]) -> None:
+        """Some tool-calling clients send `""` instead of omitting/`[]` for an unset array-typed
+        argument (observed live: `get_configs` called with `component_types=""`,
+        `component_ids=""`), which pydantic-core always rejects for a `Sequence[...]` field
+        ("'str' instances are not allowed as a Sequence value") -- a plain string is never a valid
+        value for an argument the tool's own schema declares as `array`, so there's no legitimate
+        case this coercion could clobber. Mutates ``context.message.arguments`` in place before
+        ``call_next`` so the tool never sees the invalid input at all, rather than just prettifying
+        the resulting error.
+        """
+        ctx = context.fastmcp_context
+        args = getattr(context.message, 'arguments', None)
+        if ctx is None or not isinstance(args, dict):
+            return
+        try:
+            tool = await ctx.fastmcp.get_tool(context.message.name)
+        except Exception:
+            return
+        props = (tool.parameters or {}).get('properties', {}) if tool else {}
+        for key, value in args.items():
+            if value == '' and props.get(key, {}).get('type') == 'array':
+                args[key] = []

@@ -481,17 +481,23 @@ class SimpleOAuthProvider(OAuthProvider):
             kbc_refresh_token=token_set.refresh_token,
             kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
         )
-        await self._auto_confirm_single_project_scope(session.id, token_set.access_token)
+        await self._auto_confirm_project_scope(session.id, token_set.access_token)
         return self._oauth_token(access_token, refresh_token, authorization_code.scopes)
 
-    async def _auto_confirm_single_project_scope(self, session_id: str, subject_token: str) -> None:
-        """If this freshly-created session's token can reach exactly one project, there's no real
-        scoping choice for the user to make -- confirm it immediately so the session is usable
-        without ever calling ``set_project_scope`` (mirrors the local ``login``/``login --pat``
-        flow, which does the same for the same reason -- see the "Security hardening" RFC
-        increment). Any project count other than 1 is left untouched: this server's OAuth grant is
-        always whole-stack (``claudai projectless`` scope), so introspection's count there is just
-        the user's real total org membership, not a scoping decision to defer to.
+    async def _auto_confirm_project_scope(self, session_id: str, subject_token: str) -> None:
+        """The league consent screen (`/oauth/consent`) already makes the user pick "all projects"
+        or a specific subset before this code path ever runs -- there is no separate scoping
+        decision left for the MCP session to defer to via ``set_project_scope``. Confirm the scope
+        immediately to whatever the freshly-exchanged token can reach, so the session is usable
+        right away (mirrors the local ``login``/``login --pat`` flow, which does the same for the
+        same reason -- see the "Security hardening" RFC increment).
+
+        This used to only auto-confirm when introspection returned exactly one project, on the
+        assumption that this server's OAuth grant was always whole-stack (``claudai projectless``
+        scope) and any other count was just the user's total org membership, not a deliberate
+        choice. That assumption no longer holds now that the consent screen itself lets the user
+        freeze access to a specific subset -- see the "increment 8" extension in the RFC and its
+        follow-up note.
 
         Best-effort: introspection/exchange failures here just leave the session unconfirmed, same
         as before this method existed -- an explicit ``set_project_scope`` call still works.
@@ -499,30 +505,30 @@ class SimpleOAuthProvider(OAuthProvider):
         try:
             introspection = await introspect_token(self._storage_api_url, subject_token=subject_token)
         except Exception as e:
-            LOG.warning(f'Could not introspect new OAuth session for single-project auto-scope: {e}', exc_info=True)
+            LOG.warning(f'Could not introspect new OAuth session for scope auto-confirm: {e}', exc_info=True)
             return
-        if len(introspection.projects) != 1:
+        if not introspection.projects:
             return
-        project_id = introspection.projects[0].id
+        project_ids = [p.id for p in introspection.projects]
         scoped_token: str | None = None
         scoped_expires_at: datetime | None = None
         try:
             minted = await exchange_scoped_token(
-                self._storage_api_url, subject_token=subject_token, project_ids=[project_id], read_only=False
+                self._storage_api_url, subject_token=subject_token, project_ids=project_ids, read_only=False
             )
             scoped_token = minted.access_token
             scoped_expires_at = datetime.fromtimestamp(minted.expires_at, tz=timezone.utc)
         except Exception as e:
-            LOG.warning(f'Scoped-token exchange failed while auto-confirming single project: {e}', exc_info=True)
+            LOG.warning(f'Scoped-token exchange failed while auto-confirming project scope: {e}', exc_info=True)
         await self._session_store.update_scope(
             session_id,
-            project_ids=[project_id],
+            project_ids=project_ids,
             read_only=False,
             confirmed=True,
             scoped_token=scoped_token,
             scoped_expires_at=scoped_expires_at,
         )
-        LOG.info(f'Session {session_id} auto-confirmed to its only accessible project ({project_id}).')
+        LOG.info(f'Session {session_id} auto-confirmed to its accessible project(s) {project_ids}.')
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         """
