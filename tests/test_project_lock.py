@@ -474,7 +474,7 @@ def test_max_wait_exceeded_raises(mocker):
 
 
 def _make_endpoint(
-    url: str = 'https://connection.keboola.com',
+    url: str = 'https://connection.invalid',
     token: str = 'test-token',
     project_id: str = 'proj-001',
     project_name: str = 'Test Project',
@@ -838,6 +838,9 @@ def test_pool_timeout_raises(mocker):
     """Raises TimeoutError when no project can be acquired within max_wait_minutes."""
     pool = _make_pool(max_wait_minutes=0)
     mocker.patch('time.sleep')
+    # max_wait_minutes=0 makes the deadline check a race with the loop's first pass
+    # (see acquire()); mock _make_lock so a lost race can't reach a real endpoint.
+    mocker.patch.object(pool, '_make_lock', return_value=MagicMock(**{'_try_acquire_once.return_value': None}))
 
     with pytest.raises(TimeoutError, match='Could not acquire any project lock'):
         pool.acquire()
