@@ -112,18 +112,16 @@ jobs:
     # run this job only for push events (not pull requests)
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-      # This ensures tests run sequentially, not in parallel
-      max-parallel: 1
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python ${{ matrix.python-version }}
+      # Integration tests hit the real Storage API and are Python-version-agnostic in behavior,
+      # so we only run them once (matching the interpreter used in production) rather than across
+      # the full unit-test matrix — unit tests in the `build` job already cover 3.10/3.11/3.12.
+      - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
@@ -159,7 +157,7 @@ jobs:
         # publish results only when actual tests were run (same repository)
         if: (always()) && github.repository == github.event.repository.full_name
         with:
-          name: Integration test results (${{ matrix.python-version }})
+          name: Integration test results
           path: ./integtest-results.xml
           reporter: 'java-junit'
 

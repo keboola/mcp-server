@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.78.4"
+version = "1.78.5"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -78,6 +78,9 @@ packages = ["src/keboola_mcp_server"]
 addopts = [
     "--import-mode=importlib",
 ]
+# Repo root on sys.path so `tests/` can import the `integtests` namespace package
+# (e.g. tests/test_project_lock.py imports integtests/project_lock.py).
+pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"
 log_cli = false
