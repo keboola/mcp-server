@@ -102,8 +102,11 @@ class ProjectLinksManager:
     def get_project_detail_link(self) -> Link:
         return Link.detail(title='Project Dashboard', url=self._url(''))
 
+    def get_project_settings_link(self) -> Link:
+        return Link.detail(title='Project Settings', url=self._url('project-settings'))
+
     def get_project_links(self) -> list[Link]:
-        return [self.get_project_detail_link()]
+        return [self.get_project_detail_link(), self.get_project_settings_link()]
 
     # --- Flows ---
     def get_flow_detail_link(self, flow_id: str | int, flow_name: str, flow_type: FlowType) -> Link:
