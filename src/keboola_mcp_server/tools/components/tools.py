@@ -465,6 +465,8 @@ async def create_sql_transformation(
     - This is THE tool for creating `keboola.snowflake-transformation` and `keboola.google-bigquery-transformation`
       components (do NOT use `create_config` for these); the transformation ID is derived automatically from the
       workspace SQL dialect.
+    - Snowflake/BigQuery only. For Python, R, or DuckDB transformations, use `create_config` with the appropriate
+      `component_id` instead — this tool cannot create them.
 
     EXAMPLES:
     - user_input: `Can you create a new transformation out of this sql query?`
@@ -678,7 +680,7 @@ async def update_sql_transformation(
     Use this for modifying SQL transformations created with create_sql_transformation.
 
     WHEN TO USE:
-    - SQL transformations only (Snowflake/BigQuery); use update_config for Python/R transformations
+    - SQL transformations only (Snowflake/BigQuery); use update_config for Python/R/DuckDB transformations
     - Modifying SQL queries in transformation (add/edit/remove SQL statements)
     - Updating transformation block or code block names
     - Changing input/output table mappings for the transformation
@@ -1004,9 +1006,9 @@ async def update_sql_transformation_internal(
         if e.response.status_code == 404:
             raise ToolError(
                 f"Configuration '{configuration_id}' was not found under SQL transformation component "
-                f"'{sql_transformation_id}'. If this is a Python or R transformation, use 'update_config' "
-                f"with component_id 'keboola.python-transformation-v2' or 'keboola.r-transformation-v2' "
-                f"instead of 'update_sql_transformation'."
+                f"'{sql_transformation_id}'. If this is a Python, R, or DuckDB transformation, use 'update_config' "
+                f"with component_id 'keboola.python-transformation-v2', 'keboola.r-transformation-v2', or "
+                f"'keboola.duckdb-transformation' instead of 'update_sql_transformation'."
             ) from e
         raise
     api_component = await fetch_component(client=client, component_id=sql_transformation_id)
@@ -1131,7 +1133,9 @@ async def create_config(
     """
     Creates a root component configuration using the specified name, component ID, configuration JSON, and description.
     Not for SQL transformations (`keboola.snowflake-transformation` / `keboola.google-bigquery-transformation`),
-    data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE).
+    data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE). This IS the tool for
+    Python (`keboola.python-transformation-v2`), R (`keboola.r-transformation-v2`) and DuckDB
+    (`keboola.duckdb-transformation`) transformations.
 
     BEFORE CALLING - REQUIRED STEPS:
     1. Call `get_components([component_id])` to retrieve the component's `configuration_schema`.
@@ -1479,7 +1483,9 @@ async def update_config(
     """
     Updates an existing root component configuration by modifying its parameters, storage mappings, name or description.
     Not for SQL transformations (`keboola.snowflake-transformation` / `keboola.google-bigquery-transformation`),
-    data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE).
+    data apps (`keboola.data-apps`) or flows — use the dedicated tools (see WHEN NOT TO USE). This IS the tool for
+    updating Python (`keboola.python-transformation-v2`), R (`keboola.r-transformation-v2`) and DuckDB
+    (`keboola.duckdb-transformation`) transformations.
 
     This tool allows PARTIAL parameter updates - you only need to provide the fields you want to change.
     All other fields will remain unchanged.
