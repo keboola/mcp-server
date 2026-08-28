@@ -254,10 +254,13 @@ async def _assert_get_component_details_tool_call(client: Client, config: Config
     assert component_config.configuration_rows is None
 
 
-def _wait_for_port(port: int, timeout: float = 10.0) -> None:
-    """Poll until something is listening on 127.0.0.1:port, or raise TimeoutError."""
+def _wait_for_port(port: int, p: subprocess.Popen, timeout: float = 10.0) -> None:
+    """Poll until something is listening on 127.0.0.1:port, or raise if the subprocess died or timed out."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if p.poll() is not None:
+            _, stderr = p.communicate()
+            raise RuntimeError(f'MCP server exited with {p.returncode} before listening:\n{stderr}')
         try:
             with socket.create_connection(('127.0.0.1', port), timeout=0.5):
                 return
@@ -304,7 +307,7 @@ def _run_server_remote(storage_api_url: str, transport: HttpTransportStr) -> Ite
             raise ValueError(f'Unknown transport: {transport}')
 
         LOG.info(f'Running MCP server in subprocess with {transport} transport, listening on: {urls}')
-        _wait_for_port(port)
+        _wait_for_port(port, p)
         yield from urls
     finally:
         LOG.info('Terminating MCP server subprocess.')
