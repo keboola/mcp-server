@@ -63,6 +63,7 @@ _ALLOWED_DOMAINS = {
         # and flags its wildcards as a subdomain-takeover risk, so don't add another one (AI-3773).
         re.compile(r'^agnes\.keboola\.systems$', re.IGNORECASE),  # no subdomains allowed
         re.compile(r'^librechat\.glami-ml\.com$', re.IGNORECASE),  # no subdomains allowed
+        re.compile(r'^ai\.euromedia\.cz$', re.IGNORECASE),  # Kofola/Euromedia Open WebUI (AI-3797), no subdomains
         re.compile(r'^(.*\.)?make\.com$', re.IGNORECASE),
         re.compile(r'^api\.devin\.ai$', re.IGNORECASE),  # devin.ai API domain
         re.compile(r'^cloud\.onyx\.app$', re.IGNORECASE),  # onyx.app OAuth callback

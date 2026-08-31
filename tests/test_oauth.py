@@ -325,6 +325,12 @@ class TestSimpleOAuthProvider:
             (AnyUrl('https://librechat.glami-ml.com'), True),
             (AnyUrl('https://librechat.glami-ml.com/api/mcp/keboola/oauth/callback'), True),
             (AnyUrl('https://foo.librechat.glami-ml.com/bar'), False),  # no subdomains allowed
+            # Kofola/Euromedia Open WebUI (exact host only, no subdomains) [AI-3797]
+            (AnyUrl('https://ai.euromedia.cz'), True),
+            (AnyUrl('https://ai.euromedia.cz/oauth/clients/mcp:keboola/callback'), True),
+            (AnyUrl('https://ai.euromedia.cz/oauth/clients/mcp%3Akeboola/callback'), True),
+            (AnyUrl('https://foo.ai.euromedia.cz/bar'), False),  # no subdomains allowed
+            (AnyUrl('https://euromedia.cz/callback'), False),  # must be ai.euromedia.cz
             # Make.com (subdomain optional)
             (AnyUrl('https://make.com'), True),
             (AnyUrl('https://foo.make.com/bar'), True),
