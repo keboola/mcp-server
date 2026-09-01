@@ -54,6 +54,10 @@ class CompactSemanticObject(BaseModel):
     target_project_ids: tuple[int, ...] | None = Field(
         default=None, description='Sibling project ids granted read access. Only present for "targeted" scope.'
     )
+    scope_elevation_requested_at: str | None = Field(
+        default=None,
+        description='Set while a "project"-scope object has a pending request to promote it to "organization".',
+    )
 
 
 def _meta_fields(obj: semantic_service.SemanticServiceData) -> dict[str, Any]:
@@ -65,6 +69,7 @@ def _meta_fields(obj: semantic_service.SemanticServiceData) -> dict[str, Any]:
         'scope': meta.scope,
         'project_id': meta.project_id,
         'source_project_id': meta.source_project_id,
+        'scope_elevation_requested_at': meta.scope_elevation_requested_at,
         'target_project_ids': meta.target_project_ids,
     }
 

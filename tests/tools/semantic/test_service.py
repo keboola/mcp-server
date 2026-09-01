@@ -28,13 +28,14 @@ def _metastore_object(
     *,
     name: str,
     attributes: Mapping[str, object] | None = None,
+    meta: Mapping[str, object] | None = None,
 ) -> MetastoreObject:
     return MetastoreObject.model_validate(
         {
             'type': object_type.value,
             'id': object_id,
             'attributes': dict(attributes or {}),
-            'meta': {'name': name},
+            'meta': {'name': name, **(meta or {})},
         }
     )
 

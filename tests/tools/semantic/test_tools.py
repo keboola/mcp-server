@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-
-from keboola_mcp_server.clients.metastore import MetastoreObject
 from keboola_mcp_server.tools.semantic.model import SemanticObjectType
 from keboola_mcp_server.tools.semantic.service import _to_semantic_service_data
 from keboola_mcp_server.tools.semantic.tools import (
@@ -10,24 +7,7 @@ from keboola_mcp_server.tools.semantic.tools import (
     SemanticObject,
     _compact_semantic_object,
 )
-
-
-def _metastore_object(
-    object_type: SemanticObjectType,
-    object_id: str,
-    *,
-    name: str,
-    meta: Mapping[str, object] | None = None,
-    attributes: Mapping[str, object] | None = None,
-) -> MetastoreObject:
-    return MetastoreObject.model_validate(
-        {
-            'type': object_type.value,
-            'id': object_id,
-            'attributes': dict(attributes or {}),
-            'meta': {'name': name, **(meta or {})},
-        }
-    )
+from tests.tools.semantic.test_service import _metastore_object
 
 
 def test_compact_object_carries_scope_and_visibility_fields() -> None:
@@ -40,6 +20,7 @@ def test_compact_object_carries_scope_and_visibility_fields() -> None:
             'projectId': 123,
             'sourceProjectId': 456,
             'targetProjectIds': [999999999],
+            'scopeElevationRequestedAt': '2026-01-03T00:00:00Z',
         },
     )
 
@@ -50,6 +31,7 @@ def test_compact_object_carries_scope_and_visibility_fields() -> None:
     assert compact.project_id == 123
     assert compact.source_project_id == 456
     assert compact.target_project_ids == (999999999,)
+    assert compact.scope_elevation_requested_at == '2026-01-03T00:00:00Z'
 
 
 def test_compact_object_leaves_scope_fields_absent_when_meta_has_none() -> None:
@@ -61,6 +43,7 @@ def test_compact_object_leaves_scope_fields_absent_when_meta_has_none() -> None:
     assert compact.project_id is None
     assert compact.source_project_id is None
     assert compact.target_project_ids is None
+    assert compact.scope_elevation_requested_at is None
 
 
 def test_full_semantic_object_also_carries_scope() -> None:
