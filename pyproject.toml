@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.79.0"
+version = "1.79.1"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
-    "fastmcp == 3.4.5",
+    "fastmcp == 3.4.7",
     "mcp == 1.28.1",
     "httpx ~= 0.28",
     "httpx-retries~=0.5",
