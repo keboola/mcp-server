@@ -38,6 +38,40 @@ class ConstraintValidationFinding(BaseModel):
 class CompactSemanticObject(BaseModel):
     id: str
     name: str | None = None
+    scope: str | None = Field(
+        default=None, description='Who can see this object: "project", "organization", or "targeted".'
+    )
+    project_id: int | None = Field(
+        default=None, description='Owning project id. Absent once promoted to "organization" scope.'
+    )
+    source_project_id: int | None = Field(
+        default=None,
+        description=(
+            'The project this object was created in or promoted from. Only ever present for '
+            '"organization" scope, and optional even there.'
+        ),
+    )
+    target_project_ids: tuple[int, ...] | None = Field(
+        default=None, description='Sibling project ids granted read access. Only present for "targeted" scope.'
+    )
+    scope_elevation_requested_at: str | None = Field(
+        default=None,
+        description='Set while a "project"-scope object has a pending request to promote it to "organization".',
+    )
+
+
+def _meta_fields(obj: semantic_service.SemanticServiceData) -> dict[str, Any]:
+    """Scope/visibility fields shared by every compact and full semantic object view."""
+    meta = obj.data.meta
+    if meta is None:
+        return {}
+    return {
+        'scope': meta.scope,
+        'project_id': meta.project_id,
+        'source_project_id': meta.source_project_id,
+        'scope_elevation_requested_at': meta.scope_elevation_requested_at,
+        'target_project_ids': meta.target_project_ids,
+    }
 
 
 class SemanticModelCompact(CompactSemanticObject):
@@ -52,6 +86,7 @@ class SemanticModelCompact(CompactSemanticObject):
             name=obj.display_name,
             description=attributes.get('description'),
             sql_dialect=attributes.get('sql_dialect'),
+            **_meta_fields(obj),
         )
 
 
@@ -73,6 +108,7 @@ class SemanticDatasetCompact(CompactSemanticObject):
             description=attributes.get('description'),
             model_uuid=attributes.get('modelUUID'),
             fqn=attributes.get('fqn'),
+            **_meta_fields(obj),
         )
 
 
@@ -90,6 +126,7 @@ class SemanticMetricCompact(CompactSemanticObject):
             description=attributes.get('description'),
             dataset=attributes.get('dataset'),
             model_uuid=attributes.get('modelUUID'),
+            **_meta_fields(obj),
         )
 
 
@@ -111,6 +148,7 @@ class SemanticRelationshipCompact(CompactSemanticObject):
             type=attributes.get('type'),
             on=attributes.get('on'),
             model_uuid=attributes.get('modelUUID'),
+            **_meta_fields(obj),
         )
 
 
@@ -128,6 +166,7 @@ class SemanticGlossaryCompact(CompactSemanticObject):
             term=attributes.get('term'),
             definition=attributes.get('definition'),
             model_uuid=attributes.get('modelUUID'),
+            **_meta_fields(obj),
         )
 
 
@@ -149,6 +188,7 @@ class SemanticConstraintCompact(CompactSemanticObject):
             rule=attributes.get('rule'),
             severity=attributes.get('severity'),
             model_uuid=attributes.get('modelUUID'),
+            **_meta_fields(obj),
         )
 
 
@@ -161,6 +201,7 @@ class SemanticObject(CompactSemanticObject):
             id=obj.id,
             name=obj.display_name,
             attributes=obj.data.attributes or {},
+            **_meta_fields(obj),
         )
 
 
@@ -534,6 +575,8 @@ async def search_semantic_context(
     following their corresponding JSON schema.
     - The search can be scoped to specific semantic models or semantic object types but prefer broader search without
     scoping unless required by the context.
+    - Matches carry the same `scope`/`project_id`/`source_project_id`/`target_project_ids` fields as
+    `get_semantic_context` -- see that tool's CONSIDERATIONS for what they mean and imply.
 
     WHEN TO USE:
     - When you need to discover which semantic objects are relevant to a user request.
@@ -631,6 +674,19 @@ async def get_semantic_context(
     - If a selection has empty `ids`, the tool returns all objects of that type in compact form.
     - If a selection has non-empty `ids`, the tool returns only those specific objects with full attributes.
     - `semantic_model_ids` optionally narrows the lookup to specific semantic models.
+    - Every object carries `scope` ("project", "organization", or "targeted"), `project_id`,
+      `source_project_id` (which project an "organization"-scope object came from, if known), and
+      `target_project_ids` (the sibling projects granted read access, for "targeted" scope).
+      `scope` describes visibility of the metastore object itself, not whether its underlying
+      Keboola Storage table is actually reachable from every project that can see it -- a
+      "targeted"/"organization" object's data may still need its bucket separately shared and
+      linked (`get_shared_buckets`/`link_shared_bucket`) before a query against it will work
+      outside the owning project.
+    - A `semantic-model`'s `scope_elevation_requested_at` being set means a project has asked an
+      organization admin to promote it from "project" to "organization" scope, and the request is
+      still pending. Treat this as a forward-looking signal: once approved, the model (and its
+      datasets' underlying tables) becomes visible org-wide, which may require separately sharing
+      the physical data too -- promotion alone does not do that automatically.
 
     WHEN TO USE:
     - When you already know IDs of the semantic objects you want to load and want to inspect them in detail.
@@ -786,6 +842,11 @@ async def validate_semantic_query(
     - This tool confirms the SQL dialect, surfaces semantic constraint violations, and provides post-execution checks.
     - Only proceed to query_data once this tool returns valid=True and violations is empty. If violations are found,
     fix the query first or consider the limitations of this tool.
+    - Entries under `semantic_models` carry `scope`/`project_id`/`source_project_id`/
+    `target_project_ids` -- see `get_semantic_context`'s CONSIDERATIONS for what they mean. A
+    "targeted"/"organization"-scope model does not guarantee the query is actually runnable from
+    every project that can see it; this tool validates against the semantic layer, not against
+    whether the underlying Storage tables are reachable here.
 
     WHEN TO USE:
     - Before generating or approving a query that should follow a semantic model.
