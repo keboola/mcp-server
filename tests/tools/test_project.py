@@ -8,7 +8,7 @@ from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
-from keboola_mcp_server.links import Link
+from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
 from keboola_mcp_server.scope import (
     OAUTH_SESSION_ID_KEY,
@@ -31,6 +31,22 @@ from keboola_mcp_server.tools.project import (
 from keboola_mcp_server.workspace import WorkspaceManager
 
 STACK = 'https://connection.test.keboola.com'
+
+
+@pytest.mark.parametrize(
+    ('branch_id', 'project_base_url'),
+    [
+        (None, f'{STACK}/admin/projects/proj-123'),
+        ('456', f'{STACK}/admin/projects/proj-123/branch/456'),
+    ],
+)
+def test_get_project_links(branch_id: str | None, project_base_url: str) -> None:
+    links_manager = ProjectLinksManager(base_url=STACK, project_id='proj-123', branch_id=branch_id)
+
+    assert links_manager.get_project_links() == [
+        Link.detail(title='Project Dashboard', url=f'{project_base_url}/'),
+        Link.detail(title='Project Settings', url=f'{project_base_url}/project-settings'),
+    ]
 
 
 @pytest.mark.parametrize(
