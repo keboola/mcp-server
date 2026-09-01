@@ -4210,7 +4210,8 @@ CONSIDERATIONS:
   Keboola Storage table is actually reachable from every project that can see it -- a
   "targeted"/"organization" object's data may still need its bucket separately shared and
   linked (`get_shared_buckets`/`link_shared_bucket`) before a query against it will work
-  outside the owning project.
+  outside the owning project. Pass `resolve_data_location=True` to check this directly instead
+  of inferring it from scope alone.
 - A `semantic-model`'s `scope_elevation_requested_at` being set means a project has asked an
   organization admin to promote it from "project" to "organization" scope, and the request is
   still pending. Treat this as a forward-looking signal: once approved, the model (and its
@@ -4291,6 +4292,11 @@ EXAMPLES:
         "type": "string"
       },
       "type": "array"
+    },
+    "resolve_data_location": {
+      "default": false,
+      "description": "For semantic-dataset objects, resolve whether their underlying Storage table is actually reachable from this project and attach it as `data_location`. Off by default: it costs extra Storage API calls per dataset (bucket_list/shared_bucket_list), so only turn it on when you specifically need to know if a dataset is queryable here, not on every routine load.",
+      "type": "boolean"
     }
   },
   "required": [
@@ -4491,7 +4497,8 @@ fix the query first or consider the limitations of this tool.
 `target_project_ids` -- see `get_semantic_context`'s CONSIDERATIONS for what they mean. A
 "targeted"/"organization"-scope model does not guarantee the query is actually runnable from
 every project that can see it; this tool validates against the semantic layer, not against
-whether the underlying Storage tables are reachable here.
+whether the underlying Storage tables are reachable here. Pass `resolve_data_location=True` to
+check that directly for every used dataset instead of inferring it from scope alone.
 
 WHEN TO USE:
 - Before generating or approving a query that should follow a semantic model.
@@ -4569,6 +4576,11 @@ EXAMPLES:
         "$ref": "#/$defs/SemanticObjectTypeSelection"
       },
       "type": "array"
+    },
+    "resolve_data_location": {
+      "default": false,
+      "description": "For each dataset the SQL is detected to use, resolve whether its underlying Storage table is actually reachable from this project and, if not, add a warning-severity violation explaining why. Off by default: it costs extra Storage API calls per used dataset.",
+      "type": "boolean"
     }
   },
   "required": [
