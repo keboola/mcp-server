@@ -38,6 +38,35 @@ class ConstraintValidationFinding(BaseModel):
 class CompactSemanticObject(BaseModel):
     id: str
     name: str | None = None
+    scope: str | None = Field(
+        default=None, description='Who can see this object: "project", "organization", or "targeted".'
+    )
+    project_id: int | None = Field(
+        default=None, description='Owning project id. Absent once promoted to "organization" scope.'
+    )
+    source_project_id: int | None = Field(
+        default=None,
+        description=(
+            'The project this object was created in or promoted from. Only ever present for '
+            '"organization" scope, and optional even there.'
+        ),
+    )
+    target_project_ids: tuple[int, ...] | None = Field(
+        default=None, description='Sibling project ids granted read access. Only present for "targeted" scope.'
+    )
+
+
+def _meta_fields(obj: semantic_service.SemanticServiceData) -> dict[str, Any]:
+    """Scope/visibility fields shared by every compact and full semantic object view."""
+    meta = obj.data.meta
+    if meta is None:
+        return {}
+    return {
+        'scope': meta.scope,
+        'project_id': meta.project_id,
+        'source_project_id': meta.source_project_id,
+        'target_project_ids': meta.target_project_ids,
+    }
 
 
 class SemanticModelCompact(CompactSemanticObject):
@@ -52,6 +81,7 @@ class SemanticModelCompact(CompactSemanticObject):
             name=obj.display_name,
             description=attributes.get('description'),
             sql_dialect=attributes.get('sql_dialect'),
+            **_meta_fields(obj),
         )
 
 
@@ -73,6 +103,7 @@ class SemanticDatasetCompact(CompactSemanticObject):
             description=attributes.get('description'),
             model_uuid=attributes.get('modelUUID'),
             fqn=attributes.get('fqn'),
+            **_meta_fields(obj),
         )
 
 
@@ -90,6 +121,7 @@ class SemanticMetricCompact(CompactSemanticObject):
             description=attributes.get('description'),
             dataset=attributes.get('dataset'),
             model_uuid=attributes.get('modelUUID'),
+            **_meta_fields(obj),
         )
 
 
@@ -111,6 +143,7 @@ class SemanticRelationshipCompact(CompactSemanticObject):
             type=attributes.get('type'),
             on=attributes.get('on'),
             model_uuid=attributes.get('modelUUID'),
+            **_meta_fields(obj),
         )
 
 
@@ -128,6 +161,7 @@ class SemanticGlossaryCompact(CompactSemanticObject):
             term=attributes.get('term'),
             definition=attributes.get('definition'),
             model_uuid=attributes.get('modelUUID'),
+            **_meta_fields(obj),
         )
 
 
@@ -149,6 +183,7 @@ class SemanticConstraintCompact(CompactSemanticObject):
             rule=attributes.get('rule'),
             severity=attributes.get('severity'),
             model_uuid=attributes.get('modelUUID'),
+            **_meta_fields(obj),
         )
 
 
@@ -161,6 +196,7 @@ class SemanticObject(CompactSemanticObject):
             id=obj.id,
             name=obj.display_name,
             attributes=obj.data.attributes or {},
+            **_meta_fields(obj),
         )
 
 
