@@ -358,6 +358,28 @@ class TestRewriteQuery:
                 ["invoices: country = 'CZ'"],
             ),
             (
+                # A whole statement in parentheses means the statement inside them.
+                '(SELECT * FROM invoices)',
+                'snowflake',
+                "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices",
+                ["invoices: country = 'CZ'"],
+            ),
+            (
+                '((SELECT * FROM invoices))',
+                'snowflake',
+                "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices",
+                ["invoices: country = 'CZ'"],
+            ),
+            (
+                '(SELECT id FROM invoices UNION ALL SELECT id FROM orders)',
+                'snowflake',
+                (
+                    "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                    'UNION ALL SELECT id FROM (SELECT * FROM orders WHERE FALSE) AS orders'
+                ),
+                ["invoices: country = 'CZ'", 'orders: FALSE'],
+            ),
+            (
                 # A trailing semicolon is still exactly one statement.
                 'SELECT * FROM invoices;',
                 'snowflake',
@@ -619,6 +641,30 @@ class TestRewriteQuery:
         wrong = bq_rules if dialect == 'snowflake' else rules
         with pytest.raises(RlsError, match=f'rules are for dialect .* but the workspace is {dialect}'):
             rewrite_query('SELECT * FROM invoices', user='petr', dialect=dialect, rules=wrong)
+
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            'SELECT * FROM in.c-crm.orders',
+            'SELECT * FROM out.c-main.tbl',
+            'SELECT a, FROM in.c-crm.orders WHERE',
+        ],
+    )
+    def test_parse_errors_are_clean_text_with_a_bucket_hint(self, rules: RlsRules, sql: str) -> None:
+        """A parse error is shown to a user and a model, so it must not carry sqlglot's ANSI
+        underline escapes -- and when the cause is an unquoted bucket path, it should say so."""
+        with pytest.raises(RlsError) as excinfo:
+            rewrite_query(sql, user='petr', dialect='snowflake', rules=rules)
+
+        message = str(excinfo.value)
+        assert '\x1b' not in message
+        assert 'quote the bucket, e.g. "in.c-crm"."orders"' in message
+
+    def test_parse_error_without_a_bucket_path_gets_no_hint(self, rules: RlsRules) -> None:
+        with pytest.raises(RlsError) as excinfo:
+            rewrite_query('SELECT * FROM t WHERE', user='petr', dialect='snowflake', rules=rules)
+
+        assert 'quote the bucket' not in str(excinfo.value)
 
     def test_cte_colliding_with_qualified_rule_key_fails_closed(self) -> None:
         """A CTE alias is always bare, so it can never equal a `<schema>.<table>` rule key

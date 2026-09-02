@@ -75,9 +75,59 @@ _FROMLESS_ALLOWED_FUNC_TYPES = (
 # `NOW()` has no dedicated node -- it parses as an `exp.Anonymous`, so it is allowed by name.
 _FROMLESS_ALLOWED_FUNC_NAMES = frozenset({'NOW', 'CURRENT_DATE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP'})
 
+# sqlglot underlines the offending token in a parse error with ANSI escapes.
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+# An unquoted Keboola bucket path (`in.c-crm.orders`), i.e. the single most common reason a query
+# fails to parse here. Matched on the SQL, not on the error text, because the parser gives up at a
+# different token -- and with a different message -- depending on where the dots and hyphens fall.
+_BUCKET_PATH_RE = re.compile(r'(?<![\w."`])(?:in|out)\.[A-Za-z0-9_-]+\.', re.IGNORECASE)
+
 
 class RlsError(ValueError):
     """Any RLS failure: bad rules file, unsupported SQL, missing rule. Always means "no data"."""
+
+
+def _clean_error(error: Exception) -> str:
+    """A sqlglot error message fit to put in front of a user (or a model).
+
+    sqlglot underlines the offending token with ANSI escapes. They render as mojibake in a JSON tool
+    result, an MCP client transcript or a log file, so they come out here.
+    """
+    return _ANSI_RE.sub('', str(error))
+
+
+def _parse_error_hint(sql: str) -> str:
+    """An extra sentence for a parse failure, when the SQL shows a known, fixable mistake.
+
+    Keboola bucket names contain dots, so `in.c-crm.orders` written bare is four name parts to the
+    parser and it gives up somewhere in the middle. The fix is quoting, and saying so turns an
+    opaque token error into something actionable.
+    """
+    if _BUCKET_PATH_RE.search(sql):
+        return ' -- quote the bucket, e.g. "in.c-crm"."orders"'
+    return ''
+
+
+def _unwrap_parenthesised(tree: exp.Expression) -> exp.Expression:
+    """Strip parentheses that merely wrap a whole statement, so `(SELECT ...)` is checked as SELECT.
+
+    A top-level `(SELECT ...)` is legal SQL and means exactly the SELECT inside it, but it parses as
+    an `exp.Subquery` and would be refused as "not a SELECT" -- a false refusal, and one that invites
+    the caller to go looking for a formulation that slips through. Only a bare wrapper is unwrapped:
+    anything hanging off it (an alias, an ORDER BY, a LIMIT) means the node is more than parentheses
+    and is left alone for the gate below to judge.
+    """
+    while isinstance(tree, (exp.Paren, exp.Subquery)):
+        if any(key != 'this' and value is not None and value != [] for key, value in tree.args.items()):
+            break
+        inner = tree.this
+        if not isinstance(inner, (exp.Select, exp.SetOperation, exp.Paren, exp.Subquery)):
+            break
+        tree = inner
+    # The scope-chain walks below climb `parent` pointers; the discarded wrapper must not be on them.
+    tree.parent = None
+    return tree
 
 
 def _is_boolean_condition(node: exp.Expression) -> bool:
@@ -170,7 +220,8 @@ class RlsRules:
                     parsed = sqlglot.parse_one(predicate, dialect=dialect, into=exp.Condition)
                 except sqlglot.errors.ParseError as e:
                     raise RlsError(
-                        f"RLS predicate for table '{table_key}', user '{user}' is not valid {dialect} SQL: {e}"
+                        f"RLS predicate for table '{table_key}', user '{user}' "
+                        f'is not valid {dialect} SQL: {_clean_error(e)}'
                     ) from e
                 if not _is_boolean_condition(parsed):
                     raise RlsError(
@@ -428,7 +479,7 @@ def _check_output(sql: str, *, dialect: str, predicates: Mapping[str, str]) -> N
     try:
         statements = sqlglot.parse(sql, dialect=dialect)
     except sqlglot.errors.SqlglotError as e:
-        raise RlsError(f'RLS: rewrite produced SQL that cannot be re-parsed: {e}') from e
+        raise RlsError(f'RLS: rewrite produced SQL that cannot be re-parsed: {_clean_error(e)}') from e
     if len(statements) != 1 or not isinstance(statements[0], (exp.Select, exp.SetOperation)):
         raise RlsError('RLS: rewrite produced a non-SELECT statement')
     tree = statements[0]
@@ -461,7 +512,9 @@ def _check_output(sql: str, *, dialect: str, predicates: Mapping[str, str]) -> N
         try:
             expected = sqlglot.parse_one(predicates[key], dialect=dialect, into=exp.Condition)
         except sqlglot.errors.SqlglotError as e:
-            raise RlsError(f"RLS: predicate for table '{key}' is not valid SQL for dialect {dialect!r}: {e}") from e
+            raise RlsError(
+                f"RLS: predicate for table '{key}' is not valid SQL for dialect {dialect!r}: {_clean_error(e)}"
+            ) from e
         # Compared as generated text in the same dialect, so the two sides are normalised the same
         # way and only a real difference in the condition can fail this.
         if where.this.sql(dialect=dialect) != expected.sql(dialect=dialect):
@@ -489,10 +542,10 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
     try:
         statements = sqlglot.parse(sql, dialect=dialect)
     except sqlglot.errors.SqlglotError as e:
-        raise RlsError(f'RLS: cannot parse SQL: {e}') from e
+        raise RlsError(f'RLS: cannot parse SQL: {_clean_error(e)}{_parse_error_hint(sql)}') from e
     if len(statements) != 1 or statements[0] is None:
         raise RlsError('RLS: exactly one statement is allowed')
-    tree = statements[0]
+    tree = _unwrap_parenthesised(statements[0])
     # `exp.SetOperation` covers UNION, EXCEPT and INTERSECT alike.
     if not isinstance(tree, (exp.Select, exp.SetOperation)):
         raise RlsError(f'RLS: only SELECT statements are allowed, got {type(tree).__name__}')
@@ -557,7 +610,9 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
         try:
             predicate_expr = sqlglot.parse_one(predicate, dialect=dialect, into=exp.Condition)
         except sqlglot.errors.SqlglotError as e:
-            raise RlsError(f"RLS: predicate for table '{key}' is not valid SQL for dialect {dialect!r}: {e}") from e
+            raise RlsError(
+                f"RLS: predicate for table '{key}' is not valid SQL for dialect {dialect!r}: {_clean_error(e)}"
+            ) from e
         filtered = exp.select('*').from_(inner).where(predicate_expr)
         # Returning a new node stops `transform` from descending into it, so the inner table is
         # not wrapped a second time.
