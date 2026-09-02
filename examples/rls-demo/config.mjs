@@ -22,6 +22,9 @@ const DEFAULTS = {
   RLS_RULES_PATH: './rls.yaml',
   RLS_DEMO_PORT: '8787',
   RLS_DEMO_HOST: '127.0.0.1',
+  // The MCP server is started as a local streamable-HTTP server so this app can assert the signed-in
+  // principal in a per-request header. It listens on loopback only — see `mcp.host` below.
+  RLS_DEMO_MCP_PORT: '8788',
   KEBOOLA_MCP_COMMAND: 'keboola_mcp_server',
   RLS_DEMO_PYTHON: 'python3',
 };
@@ -71,9 +74,20 @@ function env(name) {
   return resolved;
 }
 
-const port = Number(env('RLS_DEMO_PORT'));
-if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-  console.error(`[rls-demo] FATAL: RLS_DEMO_PORT must be a TCP port number, got "${env('RLS_DEMO_PORT')}"`);
+/** @param {string} name */
+function portFromEnv(name) {
+  const value = Number(env(name));
+  if (!Number.isInteger(value) || value <= 0 || value > 65535) {
+    console.error(`[rls-demo] FATAL: ${name} must be a TCP port number, got "${env(name)}"`);
+    process.exit(1);
+  }
+  return value;
+}
+
+const port = portFromEnv('RLS_DEMO_PORT');
+const mcpPort = portFromEnv('RLS_DEMO_MCP_PORT');
+if (mcpPort === port) {
+  console.error('[rls-demo] FATAL: RLS_DEMO_PORT and RLS_DEMO_MCP_PORT must differ');
   process.exit(1);
 }
 
@@ -106,18 +120,38 @@ export const config = {
     rulesBackupPath: `${rulesPath}.bak`,
     clientName: 'rls-demo',
     clientVersion: '1.0.0',
-    // The rewrite preview and every tool call go through the same single stdio session.
+    // The MCP server is spawned as a local streamable-HTTP server, bound to loopback: it trusts the
+    // X-RLS-Principal header this app sends, so nothing but this app may be able to reach it.
+    host: '127.0.0.1',
+    port: mcpPort,
+    url: `http://127.0.0.1:${mcpPort}/mcp`,
+    healthUrl: `http://127.0.0.1:${mcpPort}/health-check`,
+    // The MCP server takes the principal from this header (KBC_RLS_PRINCIPAL_SOURCE=header), never
+    // from a tool argument. Both are set in one place so the demo cannot drift from the server.
+    principalHeader: 'X-RLS-Principal',
+    principalSource: 'header',
     dialect: 'snowflake',
     expectedTool: 'query_data_rls',
     forbiddenTool: 'query_data',
     startupTimeoutMs: 60000,
+    // How long to wait for the spawned server's /health-check to answer, and how often to retry.
+    readyTimeoutMs: 60000,
+    readyPollIntervalMs: 250,
+    // How long to wait for the spawned server to exit on SIGTERM before sending SIGKILL.
+    shutdownTimeoutMs: 10000,
     callTimeoutMs: 180000,
     rewriteTimeoutMs: 30000,
     validateTimeoutMs: 30000,
+  },
+  session: {
+    // Mock sign-in cookie. This stands in for whatever a real wrapper application uses (an AD /
+    // Google / Okta session, its own JWT); the demo keeps the mapping in memory only.
+    cookieName: 'rls_demo_session',
   },
   ui: {
     defaultQueryName: 'RLS demo query',
     // Debounce for the live "Rewritten SQL" panel in the browser.
     rewriteDebounceMs: 400,
+    idpLabel: 'mock IdP',
   },
 };

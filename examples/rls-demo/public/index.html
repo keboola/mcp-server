@@ -126,11 +126,24 @@
         padding: 0;
       }
 
-      /* Users strip */
+      /* Sign-in strip */
       .strip {
         display: flex;
         gap: 8px;
         flex-wrap: wrap;
+      }
+      .signed-in {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+        font-size: 12.5px;
+        color: var(--ink-soft);
+      }
+      .signed-in .who {
+        font-family: 'IBM Plex Mono', monospace;
+        font-weight: 600;
+        color: var(--ink);
       }
       .persona {
         border: 1px solid var(--line-strong);
@@ -555,14 +568,15 @@
   <body>
     <header>
       <h1>Keboola MCP Server — Row-Level Security</h1>
-      <span class="sub">pilot demo · local only · read-only queries</span>
+      <span class="sub">pilot demo · authenticating wrapper · local only · read-only queries</span>
       <span class="status" id="status"><span class="dot"></span><span id="status-text">connecting…</span></span>
     </header>
 
     <main>
       <section class="card">
-        <h2>Users</h2>
+        <h2>Sign in</h2>
         <div class="body">
+          <div class="signed-in" id="signed-in"></div>
           <div class="strip" id="users"></div>
         </div>
       </section>
@@ -598,7 +612,7 @@
         <h2>Result</h2>
         <div class="tabs" id="result-tabs" role="tablist" aria-label="Result per user" hidden></div>
         <div class="body" id="result">
-          <div class="callout info">Pick a user, choose or type a query, then run it.</div>
+          <div class="callout info">Sign in, choose or type a query, then run it.</div>
         </div>
       </section>
 
@@ -631,10 +645,11 @@
     </main>
 
     <footer>
-      Every query is rewritten server-side: each referenced table becomes
-      <span class="mono">(SELECT * FROM table WHERE &lt;predicate&gt;)</span>. Fail-closed — a table without a rule for
-      the user is refused. Saving rules rewrites the rules file (keeping a
-      <span class="mono">.bak</span> copy) and restarts the MCP server process.
+      This page never names the user: the demo signs you in and asserts that principal to the MCP server in the
+      <span class="mono">X-RLS-Principal</span> header on every call. Every query is then rewritten server-side —
+      each referenced table becomes <span class="mono">(SELECT * FROM table WHERE &lt;predicate&gt;)</span>.
+      Fail-closed — a table without a rule for the principal is refused. Saving rules rewrites the rules file
+      (keeping a <span class="mono">.bak</span> copy) and restarts the MCP server process.
     </footer>
 
     <script>
@@ -686,8 +701,9 @@
 
       const $ = (id) => document.getElementById(id);
 
-      // Replaced by the first user from the rules file if this one is not present there.
-      let currentUser = 'alice';
+      /** The signed-in principal, or null. Set only by the server's /api/session and /api/login —
+          the page never picks an identity for a query, it only asks to be signed in as one. */
+      let currentUser = null;
       /** Rules as last loaded from the server: {users, tables, yaml}. */
       let rules = { users: [], tables: {}, yaml: '' };
       /** Editable copy driving the Rules panel. */
@@ -863,7 +879,9 @@
         return known.concat(list.filter((u) => !USER_ORDER.includes(u)));
       }
 
-      // --- users strip -------------------------------------------------------------------------
+      // --- mock sign-in ------------------------------------------------------------------------
+      // Choosing a persona IS the login: it posts to /api/login, which is where the demo (playing
+      // the wrapper application) decides who the user is. From then on the browser sends only SQL.
 
       function renderUsers() {
         const order = userOrder(rules.users);
@@ -878,18 +896,41 @@
           })
           .join('');
         for (const el of $('users').querySelectorAll('.persona')) {
-          el.addEventListener('click', () => {
-            currentUser = el.dataset.user;
-            renderUsers();
-            $('btn-run').textContent = `Run as ${currentUser}`;
-            scheduleRewrite();
-          });
+          el.addEventListener('click', () => signIn(el.dataset.user));
         }
-        if (!order.includes(currentUser) && order.length) {
-          currentUser = order[0];
-          $('btn-run').textContent = `Run as ${currentUser}`;
-          renderUsers();
+        renderSignedIn();
+      }
+
+      function renderSignedIn() {
+        const idp = uiConfig?.idpLabel ?? 'mock IdP';
+        $('signed-in').innerHTML = currentUser
+          ? `Signed in as <span class="who">${esc(currentUser)}</span> (${esc(idp)}) ` +
+            '<button type="button" class="btn small" id="btn-signout">Sign out</button>'
+          : `<span>Not signed in — choose a user below to sign in (${esc(idp)}).</span>`;
+        const out = $('btn-signout');
+        if (out) out.addEventListener('click', signOut);
+        $('btn-run').textContent = currentUser ? `Run as ${currentUser}` : 'Run';
+        $('btn-run').disabled = !currentUser;
+        $('btn-all').disabled = !currentUser;
+      }
+
+      async function signIn(principal) {
+        const r = await postJson('/api/login', { principal });
+        if (!r.ok) {
+          $('result').innerHTML = refusalHtml(r.error);
+          return;
         }
+        currentUser = r.principal;
+        renderUsers();
+        scheduleRewrite();
+      }
+
+      async function signOut() {
+        await postJson('/api/logout', {});
+        currentUser = null;
+        renderUsers();
+        $('rewrite-pane').innerHTML = '<div class="callout info">Sign in to see how a query is rewritten.</div>';
+        $('rewrite-title').textContent = 'Rewritten SQL';
       }
 
       // --- rewrite panel (live, debounced) -----------------------------------------------------
@@ -908,6 +949,11 @@
 
       async function runRewrite() {
         const sql = $('sql').value.trim();
+        if (!currentUser) {
+          $('rewrite-title').textContent = 'Rewritten SQL';
+          $('rewrite-pane').innerHTML = '<div class="callout info">Sign in to see how a query is rewritten.</div>';
+          return;
+        }
         $('rewrite-title').textContent = `Rewritten SQL for ${currentUser}`;
         if (!sql) {
           $('rewrite-pane').innerHTML = '<div class="callout info">Type a query to see how it is rewritten.</div>';
@@ -915,7 +961,7 @@
         }
         const token = ++rewriteToken;
         try {
-          const r = await postJson('/api/rewrite', { user: currentUser, sql });
+          const r = await postJson('/api/rewrite', { sql });
           if (token !== rewriteToken) return; // a newer request already won
           $('rewrite-pane').innerHTML = r.ok
             ? chipsHtml(r.applied_rules) + `<pre class="sqlout">${esc(formatSql(r.sql))}</pre>`
@@ -988,15 +1034,17 @@
 
       function setBusy(on, text) {
         $('busy').textContent = on ? text || 'working…' : '';
-        for (const id of ['btn-run', 'btn-all']) $(id).disabled = on;
+        // Signed out is also "cannot run": the run buttons stay disabled until there is a principal.
+        for (const id of ['btn-run', 'btn-all']) $(id).disabled = on || !currentUser;
       }
 
       async function doRun() {
         const sql = $('sql').value.trim();
-        if (!sql) return;
+        if (!sql || !currentUser) return;
         setBusy(true, `running as ${currentUser}…`);
         try {
-          const r = await postJson('/api/query', { user: currentUser, sql });
+          // No principal in the body: the server takes it from the session it signed us into.
+          const r = await postJson('/api/query', { sql });
           showResult([{ key: currentUser, label: currentUser, html: singleResultHtml(currentUser, r) }]);
         } finally {
           setBusy(false);
@@ -1005,16 +1053,17 @@
 
       async function doRunAll() {
         const sql = $('sql').value.trim();
-        if (!sql) return;
-        const order = userOrder(rules.users);
-        const results = [];
+        if (!sql || !currentUser) return;
         setBusy(true, 'running for all users…');
         try {
-          for (const user of order) {
-            $('busy').textContent = `running as ${user}…`;
-            const r = await postJson('/api/query', { user, sql });
-            results.push({ user, r });
+          // Admin-style comparison: the server iterates the sign-ins, so the browser still never
+          // names a principal.
+          const all = await postJson('/api/query-all', { sql });
+          if (!all.ok) {
+            showResult([{ key: 'error', label: 'Error', html: refusalHtml(all.error) }]);
+            return;
           }
+          const results = all.results.map(({ principal, result }) => ({ user: principal, r: result }));
           const rows = results
             .map(({ user, r }) => {
               if (!r.ok) {
@@ -1070,13 +1119,17 @@
         const lines = [
           '# Row-level security rules for the RLS pilot demo (Keboola MCP Server).',
           '#',
-          '# table -> user -> SQL predicate. Each predicate is inserted verbatim into',
+          '# table -> principal -> SQL predicate. Each predicate is inserted verbatim into',
           '#   SELECT * FROM <table> WHERE <predicate>',
           '# and must be valid SQL in the workspace dialect (Snowflake here).',
           '#',
-          '# Fail-closed: a table with no rule for the user is refused. Unrestricted access must be',
-          '# written explicitly as TRUE. Keys use the <bucket>.<table> form; user names are matched',
-          '# case-insensitively.',
+          '# The principals are whatever strings the calling application asserts in X-RLS-Principal',
+          '# (here: the demo\'s mock sign-in). E-mail addresses, IdP subject ids and group names all',
+          '# work, as long as they match what the application sends.',
+          '#',
+          '# Fail-closed: a table with no rule for the principal is refused. Unrestricted access must',
+          '# be written explicitly as TRUE. Keys use the <bucket>.<table> form; principals are',
+          '# matched case-insensitively.',
           '#',
           '# Written by the RLS demo rules editor.',
           '',
@@ -1221,6 +1274,8 @@
         } finally {
           for (const id of ['btn-save', 'btn-discard', 'btn-add-user', 'btn-add-table', 'btn-run', 'btn-all'])
             $(id).disabled = false;
+          // ... except the run buttons, which stay disabled while signed out.
+          renderSignedIn();
         }
       }
 
@@ -1301,9 +1356,11 @@
         const cfg = await (await fetch('/api/config')).json();
         uiConfig = cfg.ui;
 
+        // Who the server says we are (a page reload keeps the mock sign-in cookie).
+        currentUser = (await (await fetch('/api/session')).json()).principal ?? null;
+
         applyRules(await (await fetch('/api/rules')).json());
 
-        $('btn-run').textContent = `Run as ${currentUser}`;
         $('btn-run').addEventListener('click', doRun);
         $('btn-all').addEventListener('click', doRunAll);
         $('sql').addEventListener('input', scheduleRewrite);

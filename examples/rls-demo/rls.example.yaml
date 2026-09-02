@@ -4,14 +4,18 @@
 # (RLS_RULES_PATH, `rls.yaml` by default), which is git-ignored — edit that copy, or edit the rules
 # in the UI, and this template stays untouched.
 #
-# table -> user -> SQL predicate. Predicates are inserted verbatim into
+# table -> principal -> SQL predicate. Predicates are inserted verbatim into
 #   SELECT * FROM <table> WHERE <predicate>
 # and must be written in the workspace dialect (Snowflake here). Fail-closed:
-# a table without a rule for the user, or a user without a rule on a table, is refused.
+# a table without a rule for the principal, or a principal without a rule on a table, is refused.
 # Unrestricted access must be written explicitly as TRUE.
 #
+# The principals are whatever strings the calling application asserts in the X-RLS-Principal header
+# (here: the demo's mock sign-in). E-mail addresses, IdP subject ids or group names work just as
+# well as the short names below — they only have to match what the application sends.
+#
 # Keys are always <bucket>.<table>, so a rule only ever covers that one table in that one
-# bucket; a query must name the bucket too. User names are matched case-insensitively.
+# bucket; a query must name the bucket too. Principals are matched case-insensitively.
 #
 # Demo personas (the tables are assumed to have a `country` column):
 #   alice - Czech market only
