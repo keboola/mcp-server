@@ -20,6 +20,7 @@ const REQUIRED_ENV = ['KBC_STORAGE_API_URL', 'KBC_STORAGE_TOKEN'];
 /** Defaults for the optional variables. Required ones deliberately have none. */
 const DEFAULTS = {
   RLS_RULES_PATH: './rls.yaml',
+  RLS_DEMO_CONFIG_PATH: './demo.json',
   RLS_DEMO_PORT: '8787',
   RLS_DEMO_HOST: '127.0.0.1',
   // The MCP server is started as a local streamable-HTTP server so this app can assert the signed-in
@@ -92,6 +93,7 @@ if (mcpPort === port) {
 }
 
 const rulesPath = path.resolve(APP_DIR, env('RLS_RULES_PATH'));
+const demoConfigPath = path.resolve(APP_DIR, env('RLS_DEMO_CONFIG_PATH'));
 
 export const config = {
   appDir: APP_DIR,
@@ -105,6 +107,13 @@ export const config = {
     token: process.env.KBC_STORAGE_TOKEN,
     // Optional: when unset, the MCP server manages its own workspace.
     workspaceId: String(process.env.KBC_WORKSPACE_ID ?? '').trim() || null,
+  },
+  demo: {
+    // Personas + example queries shown in the UI. When this file does not exist, `loadDemoConfig()`
+    // falls back to `BUILTIN_DEMO_CONFIG` below (after `ensureDemoConfigFile()` in server.mjs has had
+    // a chance to seed it from `exampleConfigPath`, the same way the rules file is seeded).
+    configPath: demoConfigPath,
+    exampleConfigPath: path.join(APP_DIR, 'demo.example.json'),
   },
   mcp: {
     // The Keboola MCP Server executable. Defaults to the CLI on PATH; point it at a checkout with
@@ -155,3 +164,130 @@ export const config = {
     idpLabel: 'mock IdP',
   },
 };
+
+// --- demo.json (personas + example queries) ---------------------------------------------------
+//
+// Deployment-specific content that used to be hardcoded in public/index.html: the one-line persona
+// descriptions shown next to each sign-in button, and the example queries in the "Examples"
+// dropdown. Kept here (not in public/index.html) so a deployment can swap them without touching
+// code — see demo.example.json and README.md.
+
+/**
+ * Generic content used only when `config.demo.configPath` does not exist AND could not be seeded
+ * from `config.demo.exampleConfigPath` (see `ensureDemoConfigFile()` in server.mjs). Mirrors
+ * demo.example.json exactly.
+ */
+export const BUILTIN_DEMO_CONFIG = {
+  personas: {
+    alice: 'Czech market only',
+    bob: 'Poland + Slovakia',
+    carol: 'DACH + Benelux (DE, AT, NL, BE)',
+    dave: 'Southern markets (ES, IT, FR), no in.c-sales.deals',
+    admin: 'Sees everything',
+  },
+  examples: [
+    {
+      label: 'Rows per country — invoices',
+      sql: 'SELECT country, COUNT(*) AS n\nFROM "in.c-crm"."invoices"\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 20',
+    },
+    {
+      label: 'Top 10 invoices by amount',
+      sql: 'SELECT id, country, amount\nFROM "in.c-crm"."invoices"\nORDER BY amount DESC\nLIMIT 10',
+    },
+    {
+      label: 'Orders by country and status',
+      sql:
+        'SELECT country, status, COUNT(*) AS n\nFROM "in.c-crm"."orders"\nWHERE status IS NOT NULL\n' +
+        'GROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 25',
+    },
+    {
+      label: 'Join invoices and orders per country',
+      sql:
+        'SELECT i.country, COUNT(*) AS matched_rows, COUNT(DISTINCT o.id) AS orders\n' +
+        'FROM "in.c-crm"."invoices" AS i\nJOIN "in.c-crm"."orders" AS o ON o.customer_id = i.customer_id\n' +
+        'GROUP BY 1\nORDER BY 2 DESC\nLIMIT 20',
+    },
+    {
+      label: 'Deals by stage — in.c-sales.deals (refused for dave)',
+      sql: 'SELECT country, stage, COUNT(*) AS n\nFROM "in.c-sales"."deals"\nGROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 25',
+    },
+    {
+      label: 'Refused — RESULT_SCAN escape attempt',
+      sql: 'SELECT *\nFROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))\nLIMIT 10',
+    },
+    {
+      label: 'Refused — non-SELECT statement',
+      sql: "DELETE FROM \"in.c-crm\".\"invoices\"\nWHERE country = 'CZ'",
+    },
+  ],
+};
+
+/**
+ * Validate the shape of a candidate demo config object. Throws with a clear, specific message on
+ * the first problem found — never silently coerces or drops bad data.
+ * @param {unknown} data
+ * @returns {{personas: Record<string, string>, examples: {label: string, sql: string}[]}}
+ */
+export function validateDemoConfig(data) {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('demo config must be a JSON object with "personas" and "examples" fields');
+  }
+  const { personas, examples } = /** @type {Record<string, unknown>} */ (data);
+
+  if (personas === null || typeof personas !== 'object' || Array.isArray(personas)) {
+    throw new Error('demo config "personas" must be an object mapping user name -> description string');
+  }
+  for (const [user, desc] of Object.entries(personas)) {
+    if (typeof desc !== 'string') {
+      throw new Error(`demo config "personas.${user}" must be a string, got ${typeof desc}`);
+    }
+  }
+
+  if (!Array.isArray(examples)) {
+    throw new Error('demo config "examples" must be an array of {label, sql} objects');
+  }
+  examples.forEach((entry, i) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`demo config "examples[${i}]" must be an object with "label" and "sql" strings`);
+    }
+    const { label, sql } = /** @type {Record<string, unknown>} */ (entry);
+    if (typeof label !== 'string' || !label.trim()) {
+      throw new Error(`demo config "examples[${i}].label" must be a non-empty string`);
+    }
+    if (typeof sql !== 'string' || !sql.trim()) {
+      throw new Error(`demo config "examples[${i}].sql" must be a non-empty string`);
+    }
+  });
+
+  return {
+    personas: /** @type {Record<string, string>} */ (personas),
+    examples: /** @type {{label: string, sql: string}[]} */ (examples),
+  };
+}
+
+/**
+ * Load and validate the demo config from `filePath`. When `filePath` does not exist, resolves to
+ * `BUILTIN_DEMO_CONFIG` with `source: 'built-in'`. An existing-but-invalid file is a fatal error —
+ * the caller is expected to print it and exit(1), never to fall back silently.
+ * @param {string} filePath
+ * @returns {Promise<{source: string, personas: Record<string, string>, examples: {label: string, sql: string}[]}>}
+ */
+export async function loadDemoConfig(filePath) {
+  if (!existsSync(filePath)) {
+    return { source: 'built-in', personas: BUILTIN_DEMO_CONFIG.personas, examples: BUILTIN_DEMO_CONFIG.examples };
+  }
+  let raw;
+  try {
+    raw = readFileSync(filePath, 'utf8');
+  } catch (e) {
+    throw new Error(`cannot read demo config ${filePath}: ${e?.message ?? e}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`${filePath} is not valid JSON: ${e?.message ?? e}`);
+  }
+  const validated = validateDemoConfig(parsed);
+  return { source: filePath, ...validated };
+}

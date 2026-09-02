@@ -35,7 +35,7 @@ import YAML from 'yaml';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-import { config } from './config.mjs';
+import { config, loadDemoConfig } from './config.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(HERE, 'public');
@@ -56,6 +56,36 @@ async function ensureRulesFile() {
   await copyFile(config.mcp.exampleRulesPath, config.mcp.rulesPath);
   console.log(
     `[rls-demo] ${config.mcp.rulesPath} did not exist — seeded it from ${config.mcp.exampleRulesPath}`
+  );
+}
+
+// --- demo config (personas + example queries) -------------------------------------------------
+
+/**
+ * Copy the shipped `demo.example.json` to the configured demo config path when that file does not
+ * exist yet, same pattern as `ensureRulesFile()`. When the example itself is missing (should not
+ * happen in a checkout), this is a no-op — `loadDemoConfig()` then falls back to the built-in
+ * generic content baked into config.mjs.
+ */
+async function ensureDemoConfigFile() {
+  try {
+    await access(config.demo.configPath);
+    return;
+  } catch {
+    /* not there yet — fall through and try to seed it */
+  }
+  try {
+    await access(config.demo.exampleConfigPath);
+  } catch {
+    console.warn(
+      `[rls-demo] ${config.demo.exampleConfigPath} not found — cannot seed ${config.demo.configPath}; ` +
+        'falling back to the built-in generic personas/examples.'
+    );
+    return;
+  }
+  await copyFile(config.demo.exampleConfigPath, config.demo.configPath);
+  console.log(
+    `[rls-demo] ${config.demo.configPath} did not exist — seeded it from ${config.demo.exampleConfigPath}`
   );
 }
 
@@ -90,6 +120,9 @@ async function loadRules() {
 
 /** Current rules, replaced in place by a successful `PUT /api/rules`. */
 let rules = { users: [], tables: {}, yaml: '' };
+
+/** Personas + example queries served via `GET /api/config`. Loaded once at startup. */
+let demoConfig = { personas: {}, examples: [] };
 
 // Validation runs in the MCP server's Python environment against a TEMP copy of the candidate YAML.
 // The path is passed as argv[1] — never interpolated into the script — so no file name can become
@@ -527,7 +560,7 @@ async function handle(req, res) {
 
   if (req.method === 'GET' && url.pathname === '/api/config') {
     // UI-only constants (no secrets, no paths) so index.html hardcodes nothing.
-    sendJson(res, 200, { ui: config.ui });
+    sendJson(res, 200, { ui: config.ui, personas: demoConfig.personas, examples: demoConfig.examples });
     return;
   }
 
@@ -674,6 +707,20 @@ async function main() {
   await ensureRulesFile();
   rules = await loadRules();
   console.log(`[rls-demo] rules loaded from ${config.mcp.rulesPath}: users = ${rules.users.join(', ')}`);
+
+  await ensureDemoConfigFile();
+  try {
+    demoConfig = await loadDemoConfig(config.demo.configPath);
+  } catch (e) {
+    // Fail fast: an existing-but-invalid demo config is a configuration error, never silently
+    // ignored or replaced with an invented default.
+    console.error(`[rls-demo] FATAL: invalid demo config at ${config.demo.configPath}: ${e?.message ?? e}`);
+    process.exit(1);
+  }
+  console.log(
+    `[rls-demo] demo config: ${demoConfig.source === 'built-in' ? 'built-in generic content' : demoConfig.source} ` +
+      `(${Object.keys(demoConfig.personas).length} personas, ${demoConfig.examples.length} examples)`
+  );
   console.log(
     `[rls-demo] starting the Keboola MCP Server (streamable-http on ${config.mcp.host}:${config.mcp.port}, ` +
       `RLS mode, principal from the ${config.mcp.principalHeader} header) via "${config.mcp.command}"...`

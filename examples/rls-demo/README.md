@@ -57,6 +57,7 @@ invented defaults.
 | `RLS_DEMO_MCP_PORT` | no | `8788` | Port the spawned MCP server listens on (always bound to `127.0.0.1`) |
 | `KEBOOLA_MCP_COMMAND` | no | `keboola_mcp_server` | The server executable. Point it at a checkout with `/path/to/mcp-server/.venv/bin/keboola_mcp_server` |
 | `RLS_DEMO_PYTHON` | no | `python3` | Interpreter for the rewrite preview and the rules validation. Must be a Python where `keboola_mcp_server` is importable, e.g. `/path/to/mcp-server/.venv/bin/python` |
+| `RLS_DEMO_CONFIG_PATH` | no | `./demo.json` | Persona descriptions + example queries shown in the UI, relative to this directory. See "Customising the demo" below. |
 
 ## Rules
 
@@ -64,8 +65,34 @@ invented defaults.
 `in.c-sales.deals`) and users (`alice`, `bob`, `carol`, `dave`, `admin`). On first start the app
 copies it to the configured rules file (`rls.yaml` by default, git-ignored) and logs that it did.
 Edit that copy — in a text editor or in the app's Rules panel — and replace the table keys with
-tables that exist in your own project. The example queries in `public/index.html` reference the same
-placeholder tables, so change them together.
+tables that exist in your own project. The example queries in `demo.json` (see below) reference the
+same placeholder tables, so change them together.
+
+## Customising the demo
+
+The persona descriptions shown next to each sign-in button, and the queries in the "Examples"
+dropdown, are **not** hardcoded in `public/index.html` — they come from `demo.json`, served by the
+app via `GET /api/config`. On first start the app copies the shipped `demo.example.json` template to
+the configured path (`demo.json` by default, git-ignored, see `RLS_DEMO_CONFIG_PATH`), the same way
+`rls.example.yaml` seeds `rls.yaml`. Edit that copy to match your own users and tables:
+
+```json
+{
+  "personas": { "alice": "Czech market only", "bob": "..." },
+  "examples": [{ "label": "Rows per country — invoices", "sql": "SELECT ... LIMIT 20" }]
+}
+```
+
+- `personas` maps a user name (matched case-insensitively against the rules file's principals) to a
+  one-line description. A user with no entry here still signs in fine — the UI shows a muted
+  "no description" instead.
+- `examples` is the list backing the "Examples" dropdown, in order.
+
+The file is validated on load (`personas` must be a string → string map, `examples` an array of
+`{label, sql}` string pairs); an invalid file makes the app print a clear error and exit — there is
+no silent fallback to a half-broken config. If `demo.json` cannot be found or seeded at all, the app
+falls back to the generic built-in personas/examples baked into `config.mjs` (the same content as
+`demo.example.json`) and logs that it did so.
 
 ## Run
 
@@ -113,12 +140,13 @@ lists the tools and refuses to start if `query_data_rls` is missing or `query_da
 | `server.mjs` | HTTP server + mock sign-in + per-principal MCP HTTP clients + rewrite-preview helper. |
 | `public/index.html` | Single-file UI (inline CSS/JS). |
 | `rls.example.yaml` | Rules template, copied to the rules file on first start. |
+| `demo.example.json` | Personas + example queries template, copied to the demo config file on first start. |
 
 ## API
 
 | Endpoint | Result |
 | --- | --- |
-| `GET /api/config` | `{ui}` — UI-only constants, no secrets |
+| `GET /api/config` | `{ui, personas, examples}` — UI-only constants plus deployment-specific personas/examples from `demo.json`, no secrets |
 | `GET /api/session` | `{principal}` — the current sign-in, or `null` |
 | `POST /api/login` `{principal}` | `{ok: true, principal}` + session cookie, or `{ok: false, error}` (400) |
 | `POST /api/logout` | `{ok: true, principal: null}` and the cookie is cleared |

@@ -653,53 +653,25 @@
     </footer>
 
     <script>
-      // One-line persona descriptions, matching the comments in rls.example.yaml. Users that are
-      // not listed here still work — they simply render without a description.
-      const USER_DESCRIPTIONS = {
-        alice: 'Czech market only',
-        bob: 'Poland + Slovakia',
-        carol: 'DACH + Benelux (DE, AT, NL, BE)',
-        dave: 'Southern markets (ES, IT, FR), no in.c-sales.deals',
-        admin: 'Sees everything',
-      };
+      // Persona descriptions and example queries are deployment-specific content served by the
+      // server from demo.json (see /api/config) — never hardcoded here. Populated by init() before
+      // anything below reads them. A user with no matching entry in USER_DESCRIPTIONS still works —
+      // it simply renders with a muted "no description".
+      let USER_DESCRIPTIONS = {};
       const USER_ORDER = ['alice', 'bob', 'carol', 'dave', 'admin'];
-      // Buckets used by the example queries. They match the keys in rls.example.yaml — point them
-      // at your own buckets together with the rules.
-      const CRM = '"in.c-crm"';
-      const SALES = '"in.c-sales"';
-
-      const EXAMPLES = [
-        {
-          label: 'Rows per country — invoices',
-          sql: `SELECT country, COUNT(*) AS n\nFROM ${CRM}."invoices"\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 20`,
-        },
-        {
-          label: 'Top 10 invoices by amount',
-          sql: `SELECT id, country, amount\nFROM ${CRM}."invoices"\nORDER BY amount DESC\nLIMIT 10`,
-        },
-        {
-          label: 'Orders by country and status',
-          sql: `SELECT country, status, COUNT(*) AS n\nFROM ${CRM}."orders"\nWHERE status IS NOT NULL\nGROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 25`,
-        },
-        {
-          label: 'Join invoices and orders per country',
-          sql: `SELECT i.country, COUNT(*) AS matched_rows, COUNT(DISTINCT o.id) AS orders\nFROM ${CRM}."invoices" AS i\nJOIN ${CRM}."orders" AS o ON o.customer_id = i.customer_id\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 20`,
-        },
-        {
-          label: 'Deals by stage — in.c-sales.deals (refused for dave)',
-          sql: `SELECT country, stage, COUNT(*) AS n\nFROM ${SALES}."deals"\nGROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 25`,
-        },
-        {
-          label: 'Refused — RESULT_SCAN escape attempt',
-          sql: `SELECT *\nFROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))\nLIMIT 10`,
-        },
-        {
-          label: 'Refused — non-SELECT statement',
-          sql: `DELETE FROM ${CRM}."invoices"\nWHERE country = 'CZ'`,
-        },
-      ];
+      let EXAMPLES = [];
 
       const $ = (id) => document.getElementById(id);
+
+      /** Case-insensitive lookup into USER_DESCRIPTIONS, since rules users are matched
+          case-insensitively server-side too. */
+      function personaDescription(user) {
+        const needle = String(user ?? '').toLowerCase();
+        for (const [name, desc] of Object.entries(USER_DESCRIPTIONS)) {
+          if (name.toLowerCase() === needle) return desc;
+        }
+        return null;
+      }
 
       /** The signed-in principal, or null. Set only by the server's /api/session and /api/login —
           the page never picks an identity for a query, it only asks to be signed in as one. */
@@ -887,11 +859,14 @@
         const order = userOrder(rules.users);
         $('users').innerHTML = order
           .map((u) => {
-            const desc = USER_DESCRIPTIONS[u] ?? 'no description';
+            const desc = personaDescription(u);
+            const descHtml = desc
+              ? `<span class="desc">${esc(desc)}</span>`
+              : '<span class="desc" style="opacity:.55;font-style:italic">no description</span>';
             return (
-              `<button type="button" class="persona" data-user="${esc(u)}" title="${esc(desc)}" ` +
+              `<button type="button" class="persona" data-user="${esc(u)}" title="${esc(desc ?? 'no description')}" ` +
               `aria-pressed="${u === currentUser}">` +
-              `<span class="name">${esc(u)}</span><span class="desc">${esc(desc)}</span></button>`
+              `<span class="name">${esc(u)}</span>${descHtml}</button>`
             );
           })
           .join('');
@@ -1350,11 +1325,13 @@
       }
 
       async function init() {
-        renderExamples();
-        $('sql').value = EXAMPLES[0].sql;
-
         const cfg = await (await fetch('/api/config')).json();
         uiConfig = cfg.ui;
+        USER_DESCRIPTIONS = cfg.personas ?? {};
+        EXAMPLES = cfg.examples ?? [];
+
+        renderExamples();
+        if (EXAMPLES.length) $('sql').value = EXAMPLES[0].sql;
 
         // Who the server says we are (a page reload keeps the mock sign-in cookie).
         currentUser = (await (await fetch('/api/session')).json()).principal ?? null;

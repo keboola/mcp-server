@@ -1,0 +1,39 @@
+{
+  "personas": {
+    "alice": "Czech market only",
+    "bob": "Poland + Slovakia",
+    "carol": "DACH + Benelux (DE, AT, NL, BE)",
+    "dave": "Southern markets (ES, IT, FR), no in.c-sales.deals",
+    "admin": "Sees everything"
+  },
+  "examples": [
+    {
+      "label": "Rows per country — invoices",
+      "sql": "SELECT country, COUNT(*) AS n\nFROM \"in.c-crm\".\"invoices\"\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 20"
+    },
+    {
+      "label": "Top 10 invoices by amount",
+      "sql": "SELECT id, country, amount\nFROM \"in.c-crm\".\"invoices\"\nORDER BY amount DESC\nLIMIT 10"
+    },
+    {
+      "label": "Orders by country and status",
+      "sql": "SELECT country, status, COUNT(*) AS n\nFROM \"in.c-crm\".\"orders\"\nWHERE status IS NOT NULL\nGROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 25"
+    },
+    {
+      "label": "Join invoices and orders per country",
+      "sql": "SELECT i.country, COUNT(*) AS matched_rows, COUNT(DISTINCT o.id) AS orders\nFROM \"in.c-crm\".\"invoices\" AS i\nJOIN \"in.c-crm\".\"orders\" AS o ON o.customer_id = i.customer_id\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 20"
+    },
+    {
+      "label": "Deals by stage — in.c-sales.deals (refused for dave)",
+      "sql": "SELECT country, stage, COUNT(*) AS n\nFROM \"in.c-sales\".\"deals\"\nGROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 25"
+    },
+    {
+      "label": "Refused — RESULT_SCAN escape attempt",
+      "sql": "SELECT *\nFROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))\nLIMIT 10"
+    },
+    {
+      "label": "Refused — non-SELECT statement",
+      "sql": "DELETE FROM \"in.c-crm\".\"invoices\"\nWHERE country = 'CZ'"
+    }
+  ]
+}
