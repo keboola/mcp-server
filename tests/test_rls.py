@@ -323,11 +323,23 @@ class TestRewriteQuery:
                 [],
             ),
             (
-                # Metadata functions are out of scope for RLS: they take no table source, so there is
-                # nothing to rewrite. They are allowed through unchanged, like any other FROM-less SELECT.
-                "SELECT GET_DDL('table', 'invoices')",
+                # A FROM-less SELECT may still read the clock and do scalar arithmetic: no predicate
+                # could shape such a result, but neither can it disclose anything.
+                'SELECT CURRENT_DATE',
                 'snowflake',
-                "SELECT GET_DDL('table', 'invoices')",
+                'SELECT CURRENT_DATE',
+                [],
+            ),
+            (
+                'SELECT 1 + 1 AS x',
+                'snowflake',
+                'SELECT 1 + 1 AS x',
+                [],
+            ),
+            (
+                "SELECT CAST('1' AS INT) AS x, COALESCE(NULL, 1) AS y, CONCAT('a', 'b') AS z",
+                'snowflake',
+                "SELECT CAST('1' AS INT) AS x, COALESCE(NULL, 1) AS y, CONCAT('a', 'b') AS z",
                 [],
             ),
             (
@@ -571,6 +583,24 @@ class TestRewriteQuery:
                 'another scope',
             ),
             ('WITH secret AS (SELECT 1) SELECT * FROM public.secret', 'petr', 'snowflake', "table 'secret'"),
+            # --- functions in a query with nothing to filter ---
+            # `GET_DDL` reads the catalog, so RLS shapes nothing about what it returns.
+            ("SELECT GET_DDL('table', 'invoices')", 'petr', 'snowflake', 'without FROM'),
+            ('SELECT LAST_QUERY_ID()', 'petr', 'snowflake', 'without FROM'),
+            ('SELECT COUNT(*)', 'petr', 'snowflake', 'without FROM'),
+            # A dummy CTE gives the query an `exp.Table` node but still no table to filter, so the
+            # ban must look through it rather than count the CTE reference as a real source.
+            ("WITH t AS (SELECT 1) SELECT GET_DDL('table', 'invoices') FROM t", 'petr', 'snowflake', 'without FROM'),
+            # --- functions banned everywhere, FROM or no FROM ---
+            ('SELECT SYSTEM$CANCEL_ALL_QUERIES()', 'petr', 'snowflake', 'not allowed: SYSTEM'),
+            ("SELECT * FROM invoices WHERE SYSTEM$TYPEOF(x) = 'a'", 'petr', 'snowflake', 'not allowed: SYSTEM'),
+            ("SELECT SNOWFLAKE.CORTEX.COMPLETE('m', 'p')", 'petr', 'snowflake', 'not allowed: SNOWFLAKE.CORTEX'),
+            (
+                'SELECT SNOWFLAKE.CORTEX.SENTIMENT(c) FROM invoices',
+                'petr',
+                'snowflake',
+                'not allowed: SNOWFLAKE.CORTEX',
+            ),
         ],
     )
     def test_rewrite_fails_closed(self, rules: RlsRules, bq_rules: RlsRules, sql, user, dialect, match) -> None:

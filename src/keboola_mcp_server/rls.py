@@ -55,6 +55,26 @@ _RULE_KEY_HINT = 'keys must be non-empty strings of letters, digits, underscore,
 # function call, a CASE expression -- is not a filter a rules author can reason about.
 _BOOLEAN_ROOTS = (exp.Predicate, exp.And, exp.Or, exp.Not, exp.Boolean)
 
+# What a query with no real table may still call. Everything here either reads the clock or is a
+# pure scalar expression over its own arguments -- nothing that reaches the catalog, the query
+# history or a model. `exp.Localtime`/`exp.Localtimestamp` are what Snowflake's `CURRENT_TIME` and
+# BigQuery's `CURRENT_DATETIME` parse into; `exp.If` is a `CASE` branch.
+_FROMLESS_ALLOWED_FUNC_TYPES = (
+    exp.CurrentDate,
+    exp.CurrentTime,
+    exp.CurrentTimestamp,
+    exp.Localtime,
+    exp.Localtimestamp,
+    exp.Cast,
+    exp.TryCast,
+    exp.Concat,
+    exp.Coalesce,
+    exp.Case,
+    exp.If,
+)
+# `NOW()` has no dedicated node -- it parses as an `exp.Anonymous`, so it is allowed by name.
+_FROMLESS_ALLOWED_FUNC_NAMES = frozenset({'NOW', 'CURRENT_DATE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP'})
+
 
 class RlsError(ValueError):
     """Any RLS failure: bad rules file, unsupported SQL, missing rule. Always means "no data"."""
@@ -328,6 +348,59 @@ def _is_cte_reference(node: exp.Table, cte_names: set[str]) -> bool:
     raise RlsError(f'RLS: table reference shadowed by a CTE declared in another scope: {node.name}')
 
 
+def _function_name(node: exp.Expression) -> str:
+    """The name a function call goes by, including any `db.schema.` prefix it was written with.
+
+    sqlglot parses `SNOWFLAKE.CORTEX.COMPLETE(...)` as a `Dot` chain whose rightmost element is an
+    `exp.Anonymous` named only `COMPLETE`, so the qualification -- the part that says which function
+    family this is -- lives in the ancestors and has to be walked back in.
+    """
+    if isinstance(node, exp.Anonymous):
+        name = node.name
+        current: exp.Expression = node
+        parent = current.parent
+        while isinstance(parent, exp.Dot) and parent.expression is current:
+            # The left side of such a `Dot` is identifiers only, so rendering it is safe.
+            name = f'{parent.this.sql()}.{name}'
+            current, parent = parent, parent.parent
+        return name
+    return node.sql_name() if isinstance(node, exp.Func) else type(node).__name__
+
+
+def _check_functions(tree: exp.Expression, cte_names: set[str]) -> None:
+    """Refuse function calls that RLS cannot reason about; raise `RlsError` if any is present.
+
+    Two bans, both allowlist-shaped where it matters:
+
+    * `SYSTEM$...` and anything under `CORTEX` are refused wherever they appear. They read metadata,
+      cancel queries or hand text to an LLM -- none of which the row filter constrains, however
+      thoroughly the FROM clause is rewritten.
+    * A query with no real table to filter (`SELECT GET_DDL(...)`, or the same thing dressed up with
+      a dummy CTE) is not a data query at all: whatever it returns, no predicate shaped it. Only a
+      small set of clock functions and pure scalar expressions is allowed there.
+    """
+    for node in tree.find_all(exp.Anonymous):
+        name = _function_name(node)
+        if any(part.upper().startswith('SYSTEM$') for part in name.split('.')) or 'CORTEX' in name.upper():
+            raise RlsError(f'RLS: function call is not allowed: {name}')
+
+    # An `exp.Table` naming a CTE in scope is not a real table. Resolution goes through
+    # `_is_cte_reference` rather than the cheap name set so that a name which only *looks* like a
+    # CTE is refused with the reason it deserves ("declared in another scope") instead of being
+    # counted as a non-table here and reported as a stray function call.
+    for table in tree.find_all(exp.Table):
+        if not isinstance(table.this, exp.Identifier) or not _is_cte_reference(table, cte_names):
+            return  # there is a real table here; the rewrite will filter it
+
+    for node in tree.find_all(exp.Func):
+        if isinstance(node, _FROMLESS_ALLOWED_FUNC_TYPES):
+            continue
+        name = _function_name(node)
+        if name.upper() in _FROMLESS_ALLOWED_FUNC_NAMES:
+            continue
+        raise RlsError(f'RLS: function calls are not allowed in a query without FROM: {name}')
+
+
 def _check_output(sql: str, *, dialect: str) -> None:
     """Assert the generated SQL is still a plain SELECT over wrapped tables; raise `RlsError` if not.
 
@@ -414,6 +487,7 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
         raise RlsError(f'RLS: CTE name(s) collide with protected table(s): {", ".join(collisions)}')
 
     _check_from_sources(tree)
+    _check_functions(tree, cte_names)
 
     applied: list[str] = []
 
