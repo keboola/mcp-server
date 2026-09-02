@@ -578,17 +578,15 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
     if any(select.args.get('into') is not None for select in tree.find_all(exp.Select)):
         raise RlsError('RLS: SELECT INTO is not allowed')
 
+    # A CTE may be named after a protected table -- `WITH orders AS (SELECT * FROM "in.c-crm"."orders"
+    # WHERE amount > 0)` is the natural way to write such a query, and refusing it taught callers to
+    # go looking for a formulation that slips through instead. It is safe because a rules key names a
+    # bucket (see `RlsRules`) and a CTE alias never can: a protected table is always referenced with
+    # its bucket, and `_is_cte_reference` never treats a qualified reference as a CTE. What remains
+    # is the shadowing that is real -- a bare name resolved against the wrong scope, a quoting
+    # mismatch between declaration and reference, a CTE reading its own name without RECURSIVE -- and
+    # every one of those is still refused, where it happens, by `_is_cte_reference`.
     cte_names = _cte_names(tree)
-    # A CTE named like a protected table would shadow the real table inside its own body and let
-    # the reference through unfiltered. Refuse instead of trying to be clever (fail-closed).
-    # A CTE alias is always bare, so it is a rule key's bare table name it shadows: `in.c-crm.orders`
-    # is guarded by `orders`. The full keys are compared too, for a bare key like `invoices`.
-    # Unlike `_identifier_key`, this comparison stays case- and quoting-insensitive on purpose: rule
-    # keys are stored lower-cased and have no quoting of their own, so anything that merely *looks*
-    # like a protected table's name has to collide here rather than be resolved later.
-    rule_keys = {key.lower() for key in rules.tables}
-    if collisions := sorted(cte_names & (rule_keys | {key.rsplit('.', 1)[-1] for key in rule_keys})):
-        raise RlsError(f'RLS: CTE name(s) collide with protected table(s): {", ".join(collisions)}')
 
     _check_from_sources(tree)
     _check_functions(tree, cte_names)

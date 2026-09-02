@@ -127,11 +127,13 @@ addition to the rules above, `rewrite_query` refuses (with `RlsError`):
 - `SELECT ... INTO` (sqlglot generates `CREATE TABLE ... AS` for it);
 - table modifiers that the wrapper cannot preserve: `SAMPLE`/`TABLESAMPLE`, `AT`/`BEFORE`/`CHANGES`,
   `PIVOT`/`UNPIVOT`, `FOR SYSTEM_TIME AS OF`, alias column lists (`AS x(a, b)`);
-- CTE names that shadow anything: a CTE may not share its name with any rules key (bare or qualified);
-  a table reference is treated as a CTE reference only when the CTE is declared in the reference's own
-  enclosing scope chain (earlier siblings included; self-reference only under `RECURSIVE`); quoted
-  identifiers are compared case-sensitively and a quoting mismatch between alias and reference is
-  refused.
+- CTE references that cannot be resolved with certainty. A CTE *may* be named after a protected
+  table (`WITH orders AS (SELECT * FROM "in.c-crm"."orders" WHERE amount > 0)`) — it shadows nothing,
+  because a protected table is always referenced with its bucket and a CTE alias never carries one.
+  What is refused is real shadowing: a table reference counts as a CTE reference only when the CTE is
+  declared in the reference's own enclosing scope chain (earlier siblings included; self-reference
+  only under `RECURSIVE`); quoted identifiers are compared case-sensitively and a quoting mismatch
+  between alias and reference is refused.
 
 After generating the rewritten SQL the function re-parses it and asserts that it is still exactly one
 `SELECT`/set operation and that every real table sits inside a subquery the rewriter generated.

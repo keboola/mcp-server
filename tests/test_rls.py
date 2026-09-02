@@ -435,6 +435,32 @@ class TestRewriteQuery:
                 ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
+                # A CTE named after a protected table shadows nothing: the protected reference always
+                # carries its bucket, and a CTE alias never can.
+                (
+                    'WITH RECURSIVE invoices AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM invoices WHERE n < 3) '
+                    'SELECT * FROM invoices'
+                ),
+                'snowflake',
+                (
+                    'WITH RECURSIVE invoices AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM invoices WHERE n < 3) '
+                    'SELECT * FROM invoices'
+                ),
+                [],
+            ),
+            (
+                'WITH "Invoices" AS (SELECT 1) SELECT * FROM "Invoices"',
+                'snowflake',
+                'WITH "Invoices" AS (SELECT 1) SELECT * FROM "Invoices"',
+                [],
+            ),
+            (
+                'WITH `Invoices` AS (SELECT 1) SELECT * FROM `Invoices`',
+                'bigquery',
+                'WITH `Invoices` AS (SELECT 1) SELECT * FROM `Invoices`',
+                [],
+            ),
+            (
                 # A recursive CTE named after nothing protected, joined with a protected table.
                 (
                     'WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) '
@@ -470,11 +496,16 @@ class TestRewriteQuery:
             ('SELECT * FROM "in.c-crm.invoices"', 'petr', 'snowflake', 'must be qualified'),
             # The rule is keyed by bucket: the same table name in another bucket is not covered.
             ('SELECT * FROM "in.c-sales"."invoices"', 'petr', 'snowflake', "table 'in.c-sales.invoices'"),
-            # A CTE named like a protected table would shadow it inside its own body -- refuse.
-            ('WITH invoices AS (SELECT * FROM invoices) SELECT * FROM invoices', 'petr', 'snowflake', 'collide'),
-            # ... whatever the quoting of either side: a quoted `"orders"` CTE and the rule key
-            # `orders` are the same name.
-            ('WITH "orders" AS (SELECT 1) SELECT * FROM ORDERS', 'petr', 'snowflake', 'collide'),
+            # A CTE reading its own name without RECURSIVE resolves to the base table on the
+            # engine, whatever the CTE is called.
+            (
+                'WITH invoices AS (SELECT * FROM invoices) SELECT * FROM invoices',
+                'petr',
+                'snowflake',
+                'without RECURSIVE',
+            ),
+            # A reference whose quoting differs from the declaration is ambiguous either way.
+            ('WITH "orders" AS (SELECT 1) SELECT * FROM ORDERS', 'petr', 'snowflake', 'ambiguous'),
             # A CTE declared in a nested scope must not make a top-level real table look like a CTE
             # reference. Each of these used to pass through verbatim, unfiltered.
             (
@@ -496,12 +527,13 @@ class TestRewriteQuery:
                 'snowflake',
                 'another scope',
             ),
-            # Same trick aimed at a table that does have a rule: caught by the collision guard.
+            # Same trick aimed at a table that does have a rule: the CTE is declared in a nested
+            # scope, so it cannot excuse the outer reference.
             (
                 'SELECT * FROM invoices WHERE 1 IN (WITH invoices AS (SELECT 1) SELECT 1)',
                 'petr',
                 'snowflake',
-                'collide',
+                'another scope',
             ),
             # A CTE reference whose quoting differs from the declaration is ambiguous -- the engine
             # and the rewriter can disagree about whether it resolves to the CTE or a real table.
@@ -650,17 +682,6 @@ class TestRewriteQuery:
             ),
             # --- CTE shadowing, remaining shapes ---
             (
-                (
-                    'WITH RECURSIVE invoices AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM invoices WHERE n < 3) '
-                    'SELECT * FROM invoices'
-                ),
-                'petr',
-                'snowflake',
-                'collide',
-            ),
-            ('WITH "Invoices" AS (SELECT 1) SELECT * FROM "Invoices"', 'petr', 'snowflake', 'collide'),
-            ('WITH `Invoices` AS (SELECT 1) SELECT * FROM `Invoices`', 'petr', 'bigquery', 'collide'),
-            (
                 'SELECT * FROM secret JOIN (WITH secret AS (SELECT 1) SELECT * FROM secret) s ON TRUE',
                 'petr',
                 'snowflake',
@@ -755,20 +776,23 @@ class TestRewriteQuery:
 
         assert 'quote the bucket' not in str(excinfo.value)
 
-    def test_cte_colliding_with_qualified_rule_key_fails_closed(self) -> None:
-        """A CTE alias is always bare, so it can never equal a `<schema>.<table>` rule key
-        literally -- it is the key's bare table name it shadows. The collision guard must compare
-        against that, otherwise `WITH invoices AS (...)` slips past rules keyed
-        `in.c-crm.invoices`.
+    def test_cte_named_after_a_protected_table_still_wraps_the_table(self, rules: RlsRules) -> None:
+        """A CTE alias is always bare and a rules key always names a bucket, so a CTE can never
+        stand in for a protected table. Naming one after a table is therefore allowed -- and it is
+        the natural way to write this query -- while the real reference inside it is still wrapped.
         """
-        scoped_rules = RlsRules(tables={'in.c-crm.invoices': {'petr': "country = 'CZ'"}}, dialect='snowflake')
-        with pytest.raises(RlsError, match='collide'):
-            rewrite_query(
-                'SELECT * FROM invoices WHERE 1 IN (WITH invoices AS (SELECT 1) SELECT 1)',
-                user='petr',
-                dialect='snowflake',
-                rules=scoped_rules,
-            )
+        out = rewrite_query(
+            'WITH invoices AS (SELECT * FROM "in.c-crm"."invoices" WHERE amount > 0) SELECT COUNT(*) FROM invoices',
+            user='petr',
+            dialect='snowflake',
+            rules=rules,
+        )
+
+        assert out.sql == (
+            'WITH invoices AS (SELECT * FROM (SELECT * FROM "in.c-crm"."invoices" '
+            'WHERE country = \'CZ\') AS "invoices" WHERE amount > 0) SELECT COUNT(*) FROM invoices'
+        )
+        assert out.applied_rules == ["in.c-crm.invoices: country = 'CZ'"]
 
     def test_rewrite_predicate_invalid_for_dialect_fails_closed(self) -> None:
         """A predicate can pass `RlsRules.load()`'s dialect-agnostic check yet still fail to parse
