@@ -884,9 +884,14 @@
           : `<span>Not signed in — choose a user below to sign in (${esc(idp)}).</span>`;
         const out = $('btn-signout');
         if (out) out.addEventListener('click', signOut);
-        $('btn-run').textContent = currentUser ? `Run as ${currentUser}` : 'Run';
+        // Nothing runs without a principal: the wrapper never sends a query on behalf of "nobody",
+        // so the buttons say why they are disabled instead of just greying out.
+        const hint = `Sign in above (${idp}) first — every query runs as someone.`;
+        $('btn-run').textContent = currentUser ? `Run as ${currentUser}` : 'Sign in to run';
         $('btn-run').disabled = !currentUser;
+        $('btn-run').title = currentUser ? '' : hint;
         $('btn-all').disabled = !currentUser;
+        $('btn-all').title = currentUser ? '' : hint;
       }
 
       async function signIn(principal) {
