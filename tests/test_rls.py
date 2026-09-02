@@ -22,6 +22,9 @@ VALID_YAML = textwrap.dedent(
 
 BIGQUERY_YAML = VALID_YAML.replace('dialect: snowflake', 'dialect: bigquery')
 
+# The predicates a rewrite of the hand-built SQL in `TestOutputInvariant` would have inserted.
+OUTPUT_PREDICATES = {'invoices': "country = 'CZ'", 'orders': 'FALSE', 'secret': 'TRUE'}
+
 
 @pytest.fixture
 def rules(tmp_path: Path) -> RlsRules:
@@ -662,7 +665,8 @@ class TestRewriteQuery:
 class TestOutputInvariant:
     """`_check_output` is the last-resort safety net: whatever the rewrite produced, it must be one
     SELECT (or set operation) in which every real table sits inside a `(SELECT * FROM t WHERE ...)`
-    wrapper we generated. It is checked on the re-parsed output, so it does not trust the rewrite.
+    wrapper we generated, carrying exactly the predicate the rewrite inserted. It is checked on the
+    re-parsed output, so it does not trust the rewrite.
     """
 
     @pytest.mark.parametrize(
@@ -687,11 +691,23 @@ class TestOutputInvariant:
             # A table function has no name to check a wrapper against; the output check must refuse
             # it on its own, exactly as `_check_from_sources` and `_transform` do on the way in.
             ('SELECT * FROM my_udtf(1)', 'rewrite left an unsupported table reference'),
+            # A wrapper with no WHERE at all is the whole table: the shape looks right and the data
+            # is unfiltered, which is exactly what this net exists to catch.
+            ('SELECT * FROM (SELECT * FROM invoices) AS invoices', 'wrapper without a WHERE clause'),
+            # A WHERE that is not the rule -- weakened, negated or simply a different condition.
+            ("SELECT * FROM (SELECT * FROM invoices WHERE country = 'DE') AS invoices", 'not the rule for table'),
+            ('SELECT * FROM (SELECT * FROM invoices WHERE TRUE) AS invoices', 'not the rule for table'),
+            (
+                "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ' OR TRUE) AS invoices",
+                'not the rule for table',
+            ),
+            # A table that was wrapped although no rule was ever looked up for it.
+            ('SELECT * FROM (SELECT * FROM customers WHERE TRUE) AS customers', 'no rule was looked up for'),
         ],
     )
     def test_rejects(self, sql: str, match: str) -> None:
         with pytest.raises(RlsError, match=match):
-            _check_output(sql, dialect='snowflake')
+            _check_output(sql, dialect='snowflake', predicates=OUTPUT_PREDICATES)
 
     @pytest.mark.parametrize(
         'sql',
@@ -724,4 +740,4 @@ class TestOutputInvariant:
         ],
     )
     def test_accepts(self, sql: str) -> None:
-        _check_output(sql, dialect='snowflake')
+        _check_output(sql, dialect='snowflake', predicates=OUTPUT_PREDICATES)

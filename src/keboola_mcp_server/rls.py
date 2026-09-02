@@ -401,13 +401,25 @@ def _check_functions(tree: exp.Expression, cte_names: set[str]) -> None:
         raise RlsError(f'RLS: function calls are not allowed in a query without FROM: {name}')
 
 
-def _check_output(sql: str, *, dialect: str) -> None:
+def _matching_key(table: exp.Table, keys: Mapping[str, str]) -> str | None:
+    """The rules key `table` was wrapped under, in the same order `predicate_for` tries them."""
+    candidates = [f'{table.db}.{table.name}'.lower()] if table.db else []
+    candidates.append(table.name.lower())
+    return next((key for key in candidates if key in keys), None)
+
+
+def _check_output(sql: str, *, dialect: str, predicates: Mapping[str, str]) -> None:
     """Assert the generated SQL is still a plain SELECT over wrapped tables; raise `RlsError` if not.
 
     This is the safety net: it re-parses the rewriter's own output and checks it from scratch, so a
     bug or an unforeseen node type upstream cannot smuggle DDL, a second statement or an unfiltered
     table past it. The only table shape the rewrite ever produces is
     `(SELECT * FROM <table> WHERE <predicate>) AS <alias>`; anything else is a defect, not data.
+
+    `predicates` maps each rules key the rewrite matched to the predicate text it inserted for it.
+    A wrapper is only accepted when its WHERE is present AND generates back to exactly that
+    predicate: "wrapped in something" is not the invariant, "wrapped in the filter the admin wrote"
+    is. Without the comparison a wrapper carrying a weakened or empty condition would pass.
 
     Consequence worth knowing when authoring rules: a predicate that itself references another table
     (`id IN (SELECT id FROM other)`) leaves a table outside a wrapper and is refused. Predicates must
@@ -439,6 +451,21 @@ def _check_output(sql: str, *, dialect: str) -> None:
         )
         if not wrapped:
             raise RlsError(f'RLS: rewrite left an unwrapped table reference: {table.name}')
+        assert isinstance(select, exp.Select)  # narrowed by `wrapped`
+        key = _matching_key(table, predicates)
+        if key is None:
+            raise RlsError(f'RLS: rewrite wrapped a table no rule was looked up for: {table.name}')
+        where = select.args.get('where')
+        if where is None:
+            raise RlsError(f'RLS: rewrite left a wrapper without a WHERE clause: {table.name}')
+        try:
+            expected = sqlglot.parse_one(predicates[key], dialect=dialect, into=exp.Condition)
+        except sqlglot.errors.SqlglotError as e:
+            raise RlsError(f"RLS: predicate for table '{key}' is not valid SQL for dialect {dialect!r}: {e}") from e
+        # Compared as generated text in the same dialect, so the two sides are normalised the same
+        # way and only a real difference in the condition can fail this.
+        if where.this.sql(dialect=dialect) != expected.sql(dialect=dialect):
+            raise RlsError(f"RLS: rewrite produced a WHERE that is not the rule for table '{key}'")
 
 
 def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> RewrittenQuery:
@@ -490,6 +517,9 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
     _check_functions(tree, cte_names)
 
     applied: list[str] = []
+    # The predicate the rewrite actually inserted for each matched key, handed to `_check_output` so
+    # the safety net can verify the WHERE it finds is the rule, not merely some WHERE.
+    inserted: dict[str, str] = {}
 
     def _transform(node: exp.Expression) -> exp.Expression:
         if not isinstance(node, exp.Table):
@@ -513,6 +543,7 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
             raise RlsError(f'RLS: table modifiers are not supported on {node.name!r}: {sorted(extra_args)}')
         key, predicate = rules.predicate_for(table_name=node.name, schema=node.db or None, user=user)
         applied.append(f'{key}: {predicate}')
+        inserted[key] = predicate
         # Reuse the original alias identifier as-is (preserving its own quoting) so references to
         # it elsewhere in the query (e.g. an unquoted `o.id` in an ON clause) still resolve. Only
         # fall back to the table's own name/quoting when the table was not aliased at all -- using
@@ -533,7 +564,7 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
         return exp.Subquery(this=filtered, alias=exp.TableAlias(this=alias_identifier))
 
     rewritten_sql = tree.transform(_transform, copy=True).sql(dialect=dialect)
-    _check_output(rewritten_sql, dialect=dialect)
+    _check_output(rewritten_sql, dialect=dialect, predicates=inserted)
     # `dict.fromkeys` deduplicates while preserving first-seen order: a table joined or unioned with
     # itself is disclosed once.
     return RewrittenQuery(sql=rewritten_sql, applied_rules=list(dict.fromkeys(applied)))
