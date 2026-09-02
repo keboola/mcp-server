@@ -19,7 +19,8 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import get_http_request_or_none
+from keboola_mcp_server.mcp import ServerState, get_http_request_or_none
+from keboola_mcp_server.rls import RlsRules, rewrite_query
 from keboola_mcp_server.workspace import JobSubmittedInfo, QueryResult, SqlSelectData, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -220,16 +221,88 @@ class QueryDataOutput(BaseModel):
     message: str | None = Field(default=None, description='A message from the query execution')
 
 
-def add_sql_tools(mcp: FastMCP) -> None:
-    """Add tools to the MCP server."""
+class RlsQueryDataOutput(QueryDataOutput):
+    """Output of `query_data_rls`: the data plus a disclosure of which RLS rules shaped it."""
+
+    applied_rules: list[str] = Field(
+        description='RLS rules applied to the query, one per table, as "<table>: <predicate>". '
+        'The result is a filtered slice of the data, never the whole table.'
+    )
+
+
+def add_sql_tools(mcp: FastMCP, *, rls_rules: RlsRules | None = None) -> None:
+    """Add SQL tools to the MCP server.
+
+    With `rls_rules` the server exposes only `query_data_rls`; the unrestricted `query_data` is not
+    registered at all, so no per-request header (`X-Allowed-Tools`, ...) can bring it back.
+    """
+    if rls_rules is None:
+        tool = query_data
+    else:
+        tool = query_data_rls
     mcp.add_tool(
         FunctionTool.from_function(
-            query_data,
+            tool,
             annotations=ToolAnnotations(readOnlyHint=True),
             tags={SQL_TOOLS_TAG},
         )
     )
-    LOG.info('SQL tools added to the MCP server.')
+    LOG.info(f'SQL tools added to the MCP server: {tool.__name__}.')
+
+
+async def _execute_and_serialize(sql_query: str, query_name: str, ctx: Context) -> tuple[SqlSelectData, str | None]:
+    """Run `sql_query` in the workspace and return `(data, message)`; raises `ValueError` on failure.
+
+    Shared by `query_data` and `query_data_rls` so progress notifications, disconnect watching and
+    error mapping live in exactly one place.
+    """
+    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+
+    progress_token = _client_progress_token(ctx)
+
+    async def _on_job_submitted(info: JobSubmittedInfo) -> None:
+        await _emit_job_submitted_progress(ctx, progress_token, info)
+
+    query_coro = workspace_manager.execute_query(
+        sql_query,
+        max_rows=MAX_ROWS,
+        max_chars=MAX_CHARS,
+        on_job_submitted=_on_job_submitted if progress_token is not None else None,
+    )
+    # The disconnect race only buys us anything on the HTTP path, where the client can actually
+    # drop the socket (Kai kills the sandbox SDK process on STOP). With no HTTP request bound
+    # (stdio / background workers) nothing can disconnect, so run the query directly.
+    request = get_http_request_or_none()
+    if request is None:
+        result = await query_coro
+    else:
+        result = await _execute_watching_disconnect(query_coro, request, query_name)
+    if result.is_ok:
+        LOG.info(' '.join(filter(None, [f'Query "{query_name}" executed successfully.', result.message])))
+        if result.data:
+            data = result.data
+        else:
+            # non-SELECT query, this should not really happen, because this tool is for running SELECT queries
+            data = SqlSelectData(columns=['message'], rows=[{'message': result.message}])
+        return data, result.message
+
+    # Surface cancellation cleanly: the workspace already produced a precise message
+    # ("Query was cancelled") for the cancel-by-client case, so don't wrap it in a
+    # generic "Failed to run SQL query, error: ..." prefix that hides what happened.
+    # A client-initiated cancel is expected, so log it at INFO; genuine failures at WARNING.
+    if result.message == 'Query was cancelled':
+        LOG.info(f'Query "{query_name}" was cancelled.')
+        raise ValueError('Query was cancelled')
+    LOG.warning(' '.join(filter(None, [f'Query "{query_name}" failed.', result.message])))
+    raise ValueError(f'Failed to run SQL query, error: {result.message}')
+
+
+def _to_csv(data: SqlSelectData) -> str:
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=data.columns)
+    writer.writeheader()
+    writer.writerows(data.rows)
+    return output.getvalue()
 
 
 @tool_errors()
@@ -307,50 +380,67 @@ async def query_data(
     * When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
     * Ensure valid filtering by checking actual data values first
     """
+    data, message = await _execute_and_serialize(sql_query, query_name, ctx)
+    return QueryDataOutput(query_name=query_name, csv_data=_to_csv(data), message=message)
+
+
+@tool_errors()
+async def query_data_rls(
+    sql_query: Annotated[str, Field(description='SQL SELECT query to run.')],
+    query_name: Annotated[
+        str,
+        Field(
+            description=(
+                'A concise, human-readable name for this query based on its purpose and what data it retrieves. '
+                'Use normal words with spaces (e.g., "Customer Orders Last Month", "Top Selling Products", '
+                '"User Activity Summary").'
+            )
+        ),
+    ],
+    user: Annotated[
+        str,
+        Field(
+            description=(
+                'Name of the user on whose behalf the query runs. Row-level-security rules are selected by this '
+                'name; every table in the query must have a rule for it, otherwise the query is refused.'
+            )
+        ),
+    ],
+    ctx: Context,
+) -> RlsQueryDataOutput:
+    """
+    Executes an SQL SELECT query with row-level security applied for the given user.
+
+    Every table referenced by the query is replaced by a filtered view defined by the server-side RLS
+    rules for `user`. The result is therefore a SLICE of the data, never the whole table; the
+    `applied_rules` field of the output says exactly which filters were applied — always tell the user.
+    Tables that have no rule for `user`, non-SELECT statements and multi-statement input are refused.
+
+    The SQL requirements below are identical to the `query_data` tool.
+
+    BEFORE QUERYING:
+    * Always verify the table has a non-null fullyQualifiedName from get_tables tool.
+      If it does not, the table is not SQL-accessible from this workspace — do not attempt the query and inform user.
+
+    CRITICAL SQL REQUIREMENTS:
+
+    * ALWAYS check the SQL dialect before constructing queries.
+    * Do not include any comments in the SQL code
+    * Use delimited identifiers and FQN format for the current SQL dialect.
+    * Always use the LIMIT clause in your SELECT statements when fetching data; the tool truncates
+      results beyond its row/character limits and a truncated result is a contiguous prefix, not a sample.
+    * Compute aggregates (COUNT, GROUP BY, SUM, AVG, etc.) in SQL rather than pulling raw rows.
+    """
+    rules = ServerState.from_context(ctx).rls_rules
+    if rules is None:
+        raise ValueError('RLS rules are not configured on this server.')
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+    dialect = (await workspace_manager.get_sql_dialect()).lower()
+    # Raises RlsError (a ValueError) before anything is sent to the workspace -- fail-closed.
+    rewritten = rewrite_query(sql_query, user=user, dialect=dialect, rules=rules)
+    LOG.info(f'RLS applied for user "{user}" in query "{query_name}": {rewritten.applied_rules}')
 
-    progress_token = _client_progress_token(ctx)
-
-    async def _on_job_submitted(info: JobSubmittedInfo) -> None:
-        await _emit_job_submitted_progress(ctx, progress_token, info)
-
-    query_coro = workspace_manager.execute_query(
-        sql_query,
-        max_rows=MAX_ROWS,
-        max_chars=MAX_CHARS,
-        on_job_submitted=_on_job_submitted if progress_token is not None else None,
+    data, message = await _execute_and_serialize(rewritten.sql, query_name, ctx)
+    return RlsQueryDataOutput(
+        query_name=query_name, csv_data=_to_csv(data), message=message, applied_rules=rewritten.applied_rules
     )
-    # The disconnect race only buys us anything on the HTTP path, where the client can actually
-    # drop the socket (Kai kills the sandbox SDK process on STOP). With no HTTP request bound
-    # (stdio / background workers) nothing can disconnect, so run the query directly.
-    request = get_http_request_or_none()
-    if request is None:
-        result = await query_coro
-    else:
-        result = await _execute_watching_disconnect(query_coro, request, query_name)
-    if result.is_ok:
-        LOG.info(' '.join(filter(None, [f'Query "{query_name}" executed successfully.', result.message])))
-        if result.data:
-            data = result.data
-        else:
-            # non-SELECT query, this should not really happen, because this tool is for running SELECT queries
-            data = SqlSelectData(columns=['message'], rows=[{'message': result.message}])
-
-        # Convert to CSV
-        output = StringIO()
-        writer = csv.DictWriter(output, fieldnames=data.columns)
-        writer.writeheader()
-        writer.writerows(data.rows)
-
-        return QueryDataOutput(query_name=query_name, csv_data=output.getvalue(), message=result.message)
-
-    else:
-        # Surface cancellation cleanly: the workspace already produced a precise message
-        # ("Query was cancelled") for the cancel-by-client case, so don't wrap it in a
-        # generic "Failed to run SQL query, error: ..." prefix that hides what happened.
-        # A client-initiated cancel is expected, so log it at INFO; genuine failures at WARNING.
-        if result.message == 'Query was cancelled':
-            LOG.info(f'Query "{query_name}" was cancelled.')
-            raise ValueError('Query was cancelled')
-        LOG.warning(' '.join(filter(None, [f'Query "{query_name}" failed.', result.message])))
-        raise ValueError(f'Failed to run SQL query, error: {result.message}')
