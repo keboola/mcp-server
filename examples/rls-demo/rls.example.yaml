@@ -22,6 +22,10 @@
 #
 # The tables below are placeholders: replace them with tables that exist in your own project.
 
+# Required: the workspace backend these predicates are written for. Predicates are never
+# transpiled, so the server refuses to apply this file to a workspace of any other dialect.
+dialect: snowflake
+
 tables:
   in.c-crm.invoices:
     alice: "country = 'CZ'"

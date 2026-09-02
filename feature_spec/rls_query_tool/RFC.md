@@ -29,6 +29,7 @@ read from an HTTP header (the `Config` field is not in `_HEADER_ELIGIBLE_FIELDS`
 
 ```yaml
 # table -> user -> SQL predicate (inserted into WHERE verbatim, in the workspace dialect)
+dialect: snowflake                      # required: snowflake or bigquery
 tables:
   invoices:
     petr: "country = 'CZ'"
@@ -42,10 +43,13 @@ tables:
   bucket-qualified key (`<bucket>.<table>`, i.e. `<schema>.<name>` in the workspace) is tried
   first, then the bare table name.
 - User keys are matched case-insensitively.
+- The required top-level `dialect` key (`snowflake` or `bigquery`) pins the workspace backend the
+  predicates are written for. Predicates are never transpiled, so `rewrite_query` refuses to apply
+  the rules to a workspace of any other dialect.
 - The file is loaded and validated **once at server start**. Every predicate must parse as a SQL
-  condition (`sqlglot`, dialect-agnostic parse). An unreadable, malformed or empty file, or an
-  unparseable predicate, makes the server fail to start with a message naming the offending
-  table/user. No silent defaults.
+  condition (`sqlglot`, in the pinned dialect). An unreadable, malformed or empty file, a missing or
+  unknown `dialect`, or an unparseable predicate, makes the server fail to start with a message
+  naming the offending table/user. No silent defaults.
 
 ### SQL rewrite
 

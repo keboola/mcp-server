@@ -386,6 +386,7 @@ exposes `query_data_rls` **instead of** `query_data`; the unrestricted tool is n
 
 ```yaml
 # rls.yaml -- table -> user -> SQL predicate (workspace dialect, inserted into WHERE verbatim)
+dialect: snowflake             # required: snowflake or bigquery; predicates are never transpiled
 tables:
   invoices:
     petr: "country = 'CZ'"
@@ -399,7 +400,8 @@ tables:
 `(SELECT * FROM <table> WHERE <predicate>)` for that user, runs it, and reports the applied rules in
 `applied_rules`. It is fail-closed: a table without a rule for the user, a non-SELECT statement, or an
 unparseable query is refused and nothing is executed. The file is validated at startup; a broken file
-stops the server.
+stops the server. `dialect` pins the workspace backend the predicates are written for: every predicate
+is parsed in that dialect at startup, and a query against a workspace of any other dialect is refused.
 
 A bare key such as `invoices` matches a table of that name in every schema/bucket; use the
 `<bucket>.<table>` form to scope a rule.

@@ -692,7 +692,7 @@ class TestCreateServerOAuthSessionStore:
 @pytest.mark.asyncio
 async def test_rls_swaps_query_tool(tmp_path) -> None:
     rules_file = tmp_path / 'rls.yaml'
-    rules_file.write_text("tables:\n  invoices:\n    petr: \"country = 'CZ'\"\n")
+    rules_file.write_text("dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: \"country = 'CZ'\"\n")
 
     server = create_server(Config(rls_rules_path=str(rules_file)), runtime_info=ServerRuntimeInfo(transport='stdio'))
     tool_names = {tool.name for tool in await server.list_tools(run_middleware=False)}
@@ -703,7 +703,7 @@ async def test_rls_swaps_query_tool(tmp_path) -> None:
 
 def test_rls_invalid_rules_file_fails_startup(tmp_path) -> None:
     rules_file = tmp_path / 'rls.yaml'
-    rules_file.write_text('tables:\n  invoices:\n    petr: ""\n')
+    rules_file.write_text('dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: ""\n')
 
     with pytest.raises(RlsError, match='petr'):
         create_server(Config(rls_rules_path=str(rules_file)), runtime_info=ServerRuntimeInfo(transport='stdio'))

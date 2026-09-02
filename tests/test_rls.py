@@ -7,6 +7,7 @@ from keboola_mcp_server.rls import RewrittenQuery, RlsError, RlsRules, _check_ou
 
 VALID_YAML = textwrap.dedent(
     """
+    dialect: snowflake
     tables:
       invoices:
         petr: "country = 'CZ'"
@@ -19,11 +20,21 @@ VALID_YAML = textwrap.dedent(
     """
 )
 
+BIGQUERY_YAML = VALID_YAML.replace('dialect: snowflake', 'dialect: bigquery')
+
 
 @pytest.fixture
 def rules(tmp_path: Path) -> RlsRules:
     path = tmp_path / 'rls.yaml'
     path.write_text(VALID_YAML)
+    return RlsRules.load(str(path))
+
+
+@pytest.fixture
+def bq_rules(tmp_path: Path) -> RlsRules:
+    """The same rules pinned to BigQuery -- `rewrite_query` refuses a dialect the rules are not for."""
+    path = tmp_path / 'rls-bigquery.yaml'
+    path.write_text(BIGQUERY_YAML)
     return RlsRules.load(str(path))
 
 
@@ -33,16 +44,42 @@ class TestLoad:
         assert rules.tables['in.c-crm.orders']['petr'] == "country = 'CZ' AND status <> 'draft'"
 
     @pytest.mark.parametrize(
+        ('value', 'expected'),
+        [('snowflake', 'snowflake'), ('bigquery', 'bigquery'), ('SnowFlake', 'snowflake'), (' bigquery ', 'bigquery')],
+    )
+    def test_load_reads_dialect(self, tmp_path: Path, value: str, expected: str) -> None:
+        path = tmp_path / 'rls.yaml'
+        path.write_text(f'dialect: "{value}"\ntables:\n  invoices:\n    petr: "TRUE"\n')
+        assert RlsRules.load(str(path)).dialect == expected
+
+    def test_load_parses_predicates_in_the_pinned_dialect(self, tmp_path: Path) -> None:
+        """The load-time check must be real: Snowflake's `data:name` path syntax is not BigQuery SQL,
+        so the same file is accepted under one pin and refused under the other."""
+        predicate = "payload:country = 'CZ'"
+        path = tmp_path / 'rls.yaml'
+        path.write_text(f'dialect: snowflake\ntables:\n  invoices:\n    petr: "{predicate}"\n')
+        assert RlsRules.load(str(path)).tables['invoices']['petr'] == predicate
+
+        path.write_text(f'dialect: bigquery\ntables:\n  invoices:\n    petr: "{predicate}"\n')
+        with pytest.raises(RlsError, match='not valid bigquery SQL'):
+            RlsRules.load(str(path))
+
+    @pytest.mark.parametrize(
         ('content', 'match'),
         [
             ('', 'empty'),
-            ('tables: {}', 'no tables'),
-            ('foo: bar', "'tables'"),
-            ('tables:\n  invoices: "not a mapping"', "'invoices'"),
-            ('tables:\n  invoices:\n    petr: 42', "'petr'"),
-            ('tables:\n  invoices:\n    petr: "country = = 1"', 'petr'),
-            ('tables:\n  invoices:\n    petr: ""', 'petr'),
+            ('dialect: snowflake\ntables: {}', 'no tables'),
+            ('dialect: snowflake\nfoo: bar', "'tables'"),
+            ('dialect: snowflake\ntables:\n  invoices: "not a mapping"', "'invoices'"),
+            ('dialect: snowflake\ntables:\n  invoices:\n    petr: 42', "'petr'"),
+            ('dialect: snowflake\ntables:\n  invoices:\n    petr: "country = = 1"', 'petr'),
+            ('dialect: snowflake\ntables:\n  invoices:\n    petr: ""', 'petr'),
             ('tables: [\n', 'YAML'),
+            # The dialect pin is required and must name one of the two supported backends.
+            ('tables:\n  invoices:\n    petr: "TRUE"', "'dialect'"),
+            ('dialect: postgres\ntables:\n  invoices:\n    petr: "TRUE"', "'dialect'"),
+            ('dialect: 42\ntables:\n  invoices:\n    petr: "TRUE"', "'dialect'"),
+            ('dialect:\ntables:\n  invoices:\n    petr: "TRUE"', "'dialect'"),
         ],
     )
     def test_load_rejects_invalid_file(self, tmp_path: Path, content: str, match: str) -> None:
@@ -288,8 +325,9 @@ class TestRewriteQuery:
             ),
         ],
     )
-    def test_rewrite(self, rules: RlsRules, sql, dialect, expected_sql, expected_rules) -> None:
-        out = rewrite_query(sql, user='petr', dialect=dialect, rules=rules)
+    def test_rewrite(self, rules: RlsRules, bq_rules: RlsRules, sql, dialect, expected_sql, expected_rules) -> None:
+        # The rules file pins its own dialect, so a BigQuery query needs the BigQuery rules object.
+        out = rewrite_query(sql, user='petr', dialect=dialect, rules=bq_rules if dialect == 'bigquery' else rules)
         assert out == RewrittenQuery(sql=expected_sql, applied_rules=expected_rules)
 
     @pytest.mark.parametrize(
@@ -475,9 +513,19 @@ class TestRewriteQuery:
             ('WITH secret AS (SELECT 1) SELECT * FROM public.secret', 'petr', 'snowflake', "table 'secret'"),
         ],
     )
-    def test_rewrite_fails_closed(self, rules: RlsRules, sql, user, dialect, match) -> None:
+    def test_rewrite_fails_closed(self, rules: RlsRules, bq_rules: RlsRules, sql, user, dialect, match) -> None:
         with pytest.raises(RlsError, match=match):
-            rewrite_query(sql, user=user, dialect=dialect, rules=rules)
+            rewrite_query(sql, user=user, dialect=dialect, rules=bq_rules if dialect == 'bigquery' else rules)
+
+    @pytest.mark.parametrize('dialect', ['snowflake', 'bigquery'])
+    def test_rewrite_refuses_a_dialect_the_rules_are_not_for(
+        self, rules: RlsRules, bq_rules: RlsRules, dialect
+    ) -> None:
+        """A predicate is never transpiled, so running Snowflake rules against a BigQuery workspace
+        (or the other way round) would silently change what the filter means. Refuse instead."""
+        wrong = bq_rules if dialect == 'snowflake' else rules
+        with pytest.raises(RlsError, match=f'rules are for dialect .* but the workspace is {dialect}'):
+            rewrite_query('SELECT * FROM invoices', user='petr', dialect=dialect, rules=wrong)
 
     def test_cte_colliding_with_qualified_rule_key_fails_closed(self) -> None:
         """A CTE alias is always bare, so it can never equal a `<schema>.<table>` rule key
@@ -485,7 +533,7 @@ class TestRewriteQuery:
         against that, otherwise `WITH invoices AS (...)` slips past rules keyed
         `in.c-crm.invoices`.
         """
-        scoped_rules = RlsRules(tables={'in.c-crm.invoices': {'petr': "country = 'CZ'"}})
+        scoped_rules = RlsRules(tables={'in.c-crm.invoices': {'petr': "country = 'CZ'"}}, dialect='snowflake')
         with pytest.raises(RlsError, match='collide'):
             rewrite_query(
                 'SELECT * FROM invoices WHERE 1 IN (WITH invoices AS (SELECT 1) SELECT 1)',
@@ -501,7 +549,7 @@ class TestRewriteQuery:
         own; the underlying `sqlglot.parse_one(..., dialect=dialect)` call must not raise a raw
         `sqlglot` exception.
         """
-        bad_rules = RlsRules(tables={'invoices': {'petr': 'country = = 1'}})
+        bad_rules = RlsRules(tables={'invoices': {'petr': 'country = = 1'}}, dialect='snowflake')
         with pytest.raises(RlsError):
             rewrite_query('SELECT * FROM invoices', user='petr', dialect='snowflake', rules=bad_rules)
 
@@ -516,7 +564,7 @@ class TestRewriteQuery:
         ],
     )
     def test_rewrite_rejects_predicates_that_are_not_plain_conditions(self, predicate: str, match: str) -> None:
-        bad_rules = RlsRules(tables={'invoices': {'petr': predicate}})
+        bad_rules = RlsRules(tables={'invoices': {'petr': predicate}}, dialect='snowflake')
         with pytest.raises(RlsError, match=match):
             rewrite_query('SELECT * FROM invoices', user='petr', dialect='snowflake', rules=bad_rules)
 

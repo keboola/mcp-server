@@ -101,7 +101,7 @@ async def test_query_data(
 @pytest.fixture
 def rls_context(mcp_context_client: Context, mocker) -> tuple[Context, WorkspaceManager]:
     """`mcp_context_client` with RLS rules in the server state and a Snowflake workspace mock."""
-    rules = RlsRules(tables={'invoices': {'petr': "country = 'CZ'"}})
+    rules = RlsRules(tables={'invoices': {'petr': "country = 'CZ'"}}, dialect='snowflake')
     state = mcp_context_client.request_context.lifespan_context
     mcp_context_client.request_context.lifespan_context = dataclasses.replace(state, rls_rules=rules)
     manager = mocker.AsyncMock(WorkspaceManager)
@@ -171,7 +171,7 @@ async def test_query_data_rls_requires_rules_in_state(mcp_context_client: Contex
     ('rls_rules', 'expected_tools'),
     [
         (None, ['query_data']),
-        (RlsRules(tables={'invoices': {'petr': 'TRUE'}}), ['query_data_rls']),
+        (RlsRules(tables={'invoices': {'petr': 'TRUE'}}, dialect='snowflake'), ['query_data_rls']),
     ],
 )
 async def test_add_sql_tools_registers_exactly_one_query_tool(rls_rules, expected_tools) -> None:

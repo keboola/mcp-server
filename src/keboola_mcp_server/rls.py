@@ -9,8 +9,9 @@ and no SQL is executed. See `feature_spec/rls_query_tool/RFC.md`.
 Predicates are authored in the workspace's own SQL dialect and are never transpiled: a rules file
 written for Snowflake is not portable to a BigQuery workspace (e.g. a double-quoted identifier is
 a column reference on Snowflake but a string literal on BigQuery). One rules file serves one
-workspace backend. `RlsRules.load()` only performs a dialect-agnostic syntax check; the real,
-dialect-specific parse happens in `rewrite_query()` at rewrite time and is fail-closed too.
+workspace backend, and says so: a required top-level `dialect:` key pins it. Every predicate is
+parsed in that dialect at load time, and `rewrite_query()` refuses outright when the workspace it
+is asked to rewrite for is not the dialect the rules were written for.
 """
 
 import dataclasses
@@ -36,6 +37,9 @@ _ALLOWED_FROM_SOURCES = (exp.Table, exp.Subquery, exp.Unnest, exp.Values, exp.La
 # silently dropped when the table is rebuilt inside the wrapper, changing what the query means.
 _ALLOWED_TABLE_ARGS = frozenset({'this', 'db', 'catalog', 'alias'})
 
+# The workspace backends the RLS pilot supports. A rules file must pin exactly one of them.
+_SUPPORTED_DIALECTS = ('bigquery', 'snowflake')
+
 
 class RlsError(ValueError):
     """Any RLS failure: bad rules file, unsupported SQL, missing rule. Always means "no data"."""
@@ -55,20 +59,23 @@ class RlsRules:
     A table key is either a bare table name (`invoices`) or `<schema>.<name>` (`in.c-crm.invoices`);
     the qualified form takes precedence during lookup. A bare key such as `invoices` matches a table
     of that name in every schema/bucket; use the `<bucket>.<table>` form to scope a rule.
+
+    `dialect` is the workspace backend the predicates were written for; it is not a default but a
+    pin, and `rewrite_query()` refuses to run these rules against any other backend.
     """
 
     tables: Mapping[str, Mapping[str, str]]
+    dialect: str
 
     @classmethod
     def load(cls, path: str) -> 'RlsRules':
         """Read and validate the YAML rules file. Raises `RlsError` on any problem.
 
-        This only checks that each predicate is well-formed, dialect-agnostic SQL -- it does not
-        know which workspace dialect the predicate will eventually run under. A double-quoted
-        identifier, for instance, is a column reference on Snowflake but a string literal on
-        BigQuery; that mismatch is not, and cannot be, caught here. Predicates must be written for
-        the dialect of the workspace they are used against; `rewrite_query()` does the real,
-        dialect-specific parse (and fails closed if that parse fails too).
+        The file's required top-level `dialect:` key says which workspace backend the predicates are
+        written for, and every predicate is parsed in exactly that dialect -- so the load-time check
+        is the real one, not an approximation. (A double-quoted identifier, for instance, is a column
+        reference on Snowflake but a string literal on BigQuery; without the pin that mismatch could
+        not be caught here at all.)
         """
         file = Path(path)
         if not file.is_file():
@@ -81,6 +88,15 @@ class RlsRules:
             raise RlsError(f'RLS rules file {path} is empty')
         if not isinstance(raw, Mapping) or 'tables' not in raw:
             raise RlsError(f"RLS rules file {path} must have a top-level 'tables' mapping")
+        dialect_raw = raw.get('dialect')
+        # `isinstance(..., str)` also rejects the YAML scalars that are not strings at all -- a bare
+        # `dialect:` (None), a number, or `on`/`yes` (booleans).
+        if not isinstance(dialect_raw, str) or dialect_raw.strip().lower() not in _SUPPORTED_DIALECTS:
+            raise RlsError(
+                f"RLS rules file {path} must have a top-level 'dialect' of "
+                f'{" or ".join(_SUPPORTED_DIALECTS)}, got {dialect_raw!r}'
+            )
+        dialect = dialect_raw.strip().lower()
         tables_raw = raw['tables']
         if not isinstance(tables_raw, Mapping) or not tables_raw:
             raise RlsError(f'RLS rules file {path} has no tables defined')
@@ -94,15 +110,17 @@ class RlsRules:
                 if not isinstance(predicate, str) or not predicate.strip():
                     raise RlsError(f"RLS predicate for table '{table_key}', user '{user}' must be a non-empty string")
                 try:
-                    # Dialect-agnostic parse: we only check the predicate is a well-formed condition.
-                    sqlglot.parse_one(predicate, into=exp.Condition)
+                    # Parsed in the file's own pinned dialect, so this check is the real one.
+                    sqlglot.parse_one(predicate, dialect=dialect, into=exp.Condition)
                 except sqlglot.errors.ParseError as e:
-                    raise RlsError(f"RLS predicate for table '{table_key}', user '{user}' is not valid SQL: {e}") from e
+                    raise RlsError(
+                        f"RLS predicate for table '{table_key}', user '{user}' is not valid {dialect} SQL: {e}"
+                    ) from e
                 users[str(user).lower()] = predicate
             tables[str(table_key).lower()] = users
 
-        LOG.info(f'Loaded RLS rules for {len(tables)} table(s) from {path}')
-        return cls(tables=tables)
+        LOG.info(f'Loaded RLS rules for {len(tables)} table(s) from {path} (dialect {dialect})')
+        return cls(tables=tables, dialect=dialect)
 
     def predicate_for(self, *, table_name: str, schema: str | None, user: str) -> tuple[str, str]:
         """Return `(matched_key, predicate)` for the table/user, or raise `RlsError`.
@@ -316,6 +334,11 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
         sqlglot.Dialect.get_or_raise(dialect)
     except Exception as e:
         raise RlsError(f'RLS: unsupported SQL dialect {dialect!r}') from e
+    # Predicates are never transpiled, so rules written for one backend must not be applied to
+    # another: the same text can mean different things (or silently nothing) under a different
+    # dialect. Fail closed rather than rewrite with a filter whose meaning we cannot vouch for.
+    if rules.dialect != dialect.lower():
+        raise RlsError(f'RLS: rules are for dialect {rules.dialect} but the workspace is {dialect.lower()}')
     try:
         statements = sqlglot.parse(sql, dialect=dialect)
     except sqlglot.errors.SqlglotError as e:
