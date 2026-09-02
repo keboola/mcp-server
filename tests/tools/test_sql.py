@@ -101,7 +101,7 @@ async def test_query_data(
 @pytest.fixture
 def rls_context(mcp_context_client: Context, mocker) -> tuple[Context, WorkspaceManager]:
     """`mcp_context_client` with RLS rules in the server state and a Snowflake workspace mock."""
-    rules = RlsRules(tables={'invoices': {'petr': "country = 'CZ'"}}, dialect='snowflake')
+    rules = RlsRules(tables={'in.c-crm.invoices': {'petr': "country = 'CZ'"}}, dialect='snowflake')
     state = mcp_context_client.request_context.lifespan_context
     mcp_context_client.request_context.lifespan_context = dataclasses.replace(state, rls_rules=rules)
     manager = mocker.AsyncMock(WorkspaceManager)
@@ -117,13 +117,15 @@ def rls_context(mcp_context_client: Context, mocker) -> tuple[Context, Workspace
 async def test_query_data_rls_rewrites_and_discloses(rls_context) -> None:
     ctx, manager = rls_context
 
-    result = await query_data_rls('SELECT COUNT(*) AS n FROM invoices', 'Invoice Count', 'Petr', ctx)
+    result = await query_data_rls('SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"', 'Invoice Count', 'Petr', ctx)
 
     assert isinstance(result, RlsQueryDataOutput)
     assert result.csv_data == 'n\r\n3\r\n'
-    assert result.applied_rules == ["invoices: country = 'CZ'"]
+    assert result.applied_rules == ["in.c-crm.invoices: country = 'CZ'"]
     sent_sql = manager.execute_query.call_args.args[0]
-    assert sent_sql == "SELECT COUNT(*) AS n FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices"
+    assert sent_sql == (
+        'SELECT COUNT(*) AS n FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices"'
+    )
 
 
 @pytest.mark.asyncio
@@ -133,11 +135,15 @@ async def test_query_data_rls_strips_user_and_logs_it_quoted(rls_context, caplog
     ctx, manager = rls_context
 
     with caplog.at_level('INFO', logger='keboola_mcp_server.tools.sql'):
-        result = await query_data_rls('SELECT COUNT(*) AS n FROM invoices', 'Invoice Count', '  Petr\n', ctx)
+        result = await query_data_rls(
+            'SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"', 'Invoice Count', '  Petr\n', ctx
+        )
 
-    assert result.applied_rules == ["invoices: country = 'CZ'"]
+    assert result.applied_rules == ["in.c-crm.invoices: country = 'CZ'"]
     sent_sql = manager.execute_query.call_args.args[0]
-    assert sent_sql == "SELECT COUNT(*) AS n FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices"
+    assert sent_sql == (
+        'SELECT COUNT(*) AS n FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices"'
+    )
     assert "'Petr'" in caplog.text
 
 
@@ -145,8 +151,10 @@ async def test_query_data_rls_strips_user_and_logs_it_quoted(rls_context, caplog
 @pytest.mark.parametrize(
     ('sql', 'user', 'match'),
     [
-        ('SELECT * FROM invoices', 'nobody', "user 'nobody'"),
-        ('SELECT * FROM customers', 'petr', "table 'customers'"),
+        ('SELECT * FROM "in.c-crm"."invoices"', 'nobody', "user 'nobody'"),
+        ('SELECT * FROM "in.c-crm"."customers"', 'petr', "table 'in.c-crm.customers'"),
+        # A reference with no bucket has no rule key to match, so it is refused too.
+        ('SELECT * FROM invoices', 'petr', 'must be qualified'),
         ('DELETE FROM invoices', 'petr', 'SELECT'),
     ],
 )
@@ -171,7 +179,7 @@ async def test_query_data_rls_requires_rules_in_state(mcp_context_client: Contex
     ('rls_rules', 'expected_tools'),
     [
         (None, ['query_data']),
-        (RlsRules(tables={'invoices': {'petr': 'TRUE'}}, dialect='snowflake'), ['query_data_rls']),
+        (RlsRules(tables={'in.c-crm.invoices': {'petr': 'TRUE'}}, dialect='snowflake'), ['query_data_rls']),
     ],
 )
 async def test_add_sql_tools_registers_exactly_one_query_tool(rls_rules, expected_tools) -> None:

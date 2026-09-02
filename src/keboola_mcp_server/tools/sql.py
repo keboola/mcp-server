@@ -416,7 +416,8 @@ async def query_data_rls(
     rules for `user`. The result is therefore a SLICE of the data, never the whole table; the
     `applied_rules` field of the output says exactly which filters were applied — always tell the user.
     Tables that have no rule for `user`, non-SELECT statements and multi-statement input are refused.
-    A rule written for a bare table name applies to that table name in every schema/bucket.
+    Rules are keyed `<bucket>.<table>`, so every table in the query must be written with its bucket
+    (`"in.c-crm"."orders"` on Snowflake, `` `in_c_crm`.`orders` `` on BigQuery); a bare table name is refused.
 
     The SQL requirements below are identical to the `query_data` tool.
 

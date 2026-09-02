@@ -9,13 +9,13 @@ VALID_YAML = textwrap.dedent(
     """
     dialect: snowflake
     tables:
-      invoices:
+      in.c-crm.invoices:
         petr: "country = 'CZ'"
         Monika: "country = 'DE'"
         admin: "TRUE"
       in.c-crm.orders:
         petr: "country = 'CZ' AND status <> 'draft'"
-      orders:
+      in.c-sales.orders:
         petr: "FALSE"
     """
 )
@@ -23,7 +23,11 @@ VALID_YAML = textwrap.dedent(
 BIGQUERY_YAML = VALID_YAML.replace('dialect: snowflake', 'dialect: bigquery')
 
 # The predicates a rewrite of the hand-built SQL in `TestOutputInvariant` would have inserted.
-OUTPUT_PREDICATES = {'invoices': "country = 'CZ'", 'orders': 'FALSE', 'secret': 'TRUE'}
+OUTPUT_PREDICATES = {
+    'in.c-crm.invoices': "country = 'CZ'",
+    'in.c-sales.orders': 'FALSE',
+    'in.c-crm.secret': 'TRUE',
+}
 
 
 @pytest.fixture
@@ -43,7 +47,7 @@ def bq_rules(tmp_path: Path) -> RlsRules:
 
 class TestLoad:
     def test_load_normalizes_keys(self, rules: RlsRules) -> None:
-        assert rules.tables['invoices']['monika'] == "country = 'DE'"
+        assert rules.tables['in.c-crm.invoices']['monika'] == "country = 'DE'"
         assert rules.tables['in.c-crm.orders']['petr'] == "country = 'CZ' AND status <> 'draft'"
 
     @pytest.mark.parametrize(
@@ -52,7 +56,7 @@ class TestLoad:
     )
     def test_load_reads_dialect(self, tmp_path: Path, value: str, expected: str) -> None:
         path = tmp_path / 'rls.yaml'
-        path.write_text(f'dialect: "{value}"\ntables:\n  invoices:\n    petr: "TRUE"\n')
+        path.write_text(f'dialect: "{value}"\ntables:\n  in.c-crm.invoices:\n    petr: "TRUE"\n')
         assert RlsRules.load(str(path)).dialect == expected
 
     def test_load_parses_predicates_in_the_pinned_dialect(self, tmp_path: Path) -> None:
@@ -60,10 +64,10 @@ class TestLoad:
         so the same file is accepted under one pin and refused under the other."""
         predicate = "payload:country = 'CZ'"
         path = tmp_path / 'rls.yaml'
-        path.write_text(f'dialect: snowflake\ntables:\n  invoices:\n    petr: "{predicate}"\n')
-        assert RlsRules.load(str(path)).tables['invoices']['petr'] == predicate
+        path.write_text(f'dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: "{predicate}"\n')
+        assert RlsRules.load(str(path)).tables['in.c-crm.invoices']['petr'] == predicate
 
-        path.write_text(f'dialect: bigquery\ntables:\n  invoices:\n    petr: "{predicate}"\n')
+        path.write_text(f'dialect: bigquery\ntables:\n  in.c-crm.invoices:\n    petr: "{predicate}"\n')
         with pytest.raises(RlsError, match='not valid bigquery SQL'):
             RlsRules.load(str(path))
 
@@ -73,53 +77,53 @@ class TestLoad:
             ('', 'empty'),
             ('dialect: snowflake\ntables: {}', 'no tables'),
             ('dialect: snowflake\nfoo: bar', "'tables'"),
-            ('dialect: snowflake\ntables:\n  invoices: "not a mapping"', "'invoices'"),
-            ('dialect: snowflake\ntables:\n  invoices:\n    petr: 42', "'petr'"),
-            ('dialect: snowflake\ntables:\n  invoices:\n    petr: "country = = 1"', 'petr'),
-            ('dialect: snowflake\ntables:\n  invoices:\n    petr: ""', 'petr'),
+            ('dialect: snowflake\ntables:\n  in.c-crm.invoices: "not a mapping"', "'in.c-crm.invoices'"),
+            ('dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: 42', "'petr'"),
+            ('dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: "country = = 1"', 'petr'),
+            ('dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: ""', 'petr'),
             ('tables: [\n', 'YAML'),
             # The dialect pin is required and must name one of the two supported backends.
-            ('tables:\n  invoices:\n    petr: "TRUE"', "'dialect'"),
-            ('dialect: postgres\ntables:\n  invoices:\n    petr: "TRUE"', "'dialect'"),
-            ('dialect: 42\ntables:\n  invoices:\n    petr: "TRUE"', "'dialect'"),
-            ('dialect:\ntables:\n  invoices:\n    petr: "TRUE"', "'dialect'"),
+            ('tables:\n  in.c-crm.invoices:\n    petr: "TRUE"', "'dialect'"),
+            ('dialect: postgres\ntables:\n  in.c-crm.invoices:\n    petr: "TRUE"', "'dialect'"),
+            ('dialect: 42\ntables:\n  in.c-crm.invoices:\n    petr: "TRUE"', "'dialect'"),
+            ('dialect:\ntables:\n  in.c-crm.invoices:\n    petr: "TRUE"', "'dialect'"),
             # Two keys that normalize to one: the later would silently win, so refuse both.
             (
-                'dialect: snowflake\ntables:\n  Invoices:\n    petr: "TRUE"\n  invoices:\n    petr: "FALSE"',
-                "duplicate table key 'invoices'",
+                'dialect: snowflake\ntables:\n  in.c-crm.Invoices:\n    petr: "TRUE"\n  in.c-crm.invoices:\n    petr: "FALSE"',
+                "duplicate table key 'in.c-crm.invoices'",
             ),
             (
-                'dialect: snowflake\ntables:\n  invoices:\n    Petr: "TRUE"\n    petr: "FALSE"',
+                'dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    Petr: "TRUE"\n    petr: "FALSE"',
                 "duplicate user key 'petr'",
             ),
             # YAML 1.1 turns bare `yes`/`on`/`no` into booleans, so such a key is not a table name
             # at all -- and would otherwise be stringified into something the admin never wrote.
             ('dialect: snowflake\ntables:\n  yes:\n    petr: "TRUE"', 'invalid table key'),
-            ('dialect: snowflake\ntables:\n  invoices:\n    on: "TRUE"', 'invalid user key'),
+            ('dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    on: "TRUE"', 'invalid user key'),
             ('dialect: snowflake\ntables:\n  42:\n    petr: "TRUE"', 'invalid table key'),
             ('dialect: snowflake\ntables:\n  "":\n    petr: "TRUE"', 'invalid table key'),
-            ('dialect: snowflake\ntables:\n  "*":\n    petr: "TRUE"', 'invalid table key'),
-            ('dialect: snowflake\ntables:\n  \'"invoices"\':\n    petr: "TRUE"', 'invalid table key'),
-            ('dialect: snowflake\ntables:\n  my table:\n    petr: "TRUE"', 'invalid table key'),
-            ('dialect: snowflake\ntables:\n  invoices:\n    "":\n      petr: "TRUE"', 'invalid user key'),
-            ('dialect: snowflake\ntables:\n  invoices:\n    "pe tr": "TRUE"', 'invalid user key'),
+            ('dialect: snowflake\ntables:\n  "in.c-crm.*":\n    petr: "TRUE"', 'invalid table key'),
+            ('dialect: snowflake\ntables:\n  \'in.c-crm."invoices"\':\n    petr: "TRUE"', 'invalid table key'),
+            ('dialect: snowflake\ntables:\n  in.c-crm.my table:\n    petr: "TRUE"', 'invalid table key'),
+            ('dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    "":\n      petr: "TRUE"', 'invalid user key'),
+            ('dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    "pe tr": "TRUE"', 'invalid user key'),
             # A predicate must be a boolean condition, not an arbitrary expression that happens to
             # parse: `WHERE 1` or `WHERE f(x)` is not a filter the admin can reason about.
-            ('dialect: snowflake\ntables:\n  invoices:\n    petr: "1"', 'boolean condition'),
-            ('dialect: snowflake\ntables:\n  invoices:\n    petr: "is_active"', 'boolean condition'),
-            ('dialect: snowflake\ntables:\n  invoices:\n    petr: "f(x)"', 'boolean condition'),
+            ('dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: "1"', 'boolean condition'),
+            ('dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: "is_active"', 'boolean condition'),
+            ('dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: "f(x)"', 'boolean condition'),
             (
-                'dialect: snowflake\ntables:\n  invoices:\n    petr: "CASE WHEN a THEN TRUE ELSE FALSE END"',
+                'dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: "CASE WHEN a THEN TRUE ELSE FALSE END"',
                 'boolean condition',
             ),
             # A predicate that reaches for another table cannot be wrapped -- refuse it at load time
             # rather than at the first query that happens to trip the output invariant.
             (
-                'dialect: snowflake\ntables:\n  invoices:\n    petr: "id IN (SELECT id FROM secret)"',
+                'dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: "id IN (SELECT id FROM secret)"',
                 'must not reference a table or subquery',
             ),
             (
-                'dialect: snowflake\ntables:\n  invoices:\n    petr: "EXISTS (SELECT 1 FROM secret)"',
+                'dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: "EXISTS (SELECT 1 FROM secret)"',
                 'must not reference a table or subquery',
             ),
         ],
@@ -148,8 +152,17 @@ class TestLoad:
     )
     def test_load_accepts_boolean_predicates(self, tmp_path: Path, predicate: str) -> None:
         path = tmp_path / 'rls.yaml'
-        path.write_text(f'dialect: snowflake\ntables:\n  invoices:\n    petr: "{predicate}"\n')
-        assert RlsRules.load(str(path)).tables['invoices']['petr'] == predicate
+        path.write_text(f'dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: "{predicate}"\n')
+        assert RlsRules.load(str(path)).tables['in.c-crm.invoices']['petr'] == predicate
+
+    @pytest.mark.parametrize('key', ['invoices', '.invoices', 'invoices.', '.'])
+    def test_load_rejects_unqualified_table_keys(self, tmp_path: Path, key: str) -> None:
+        """A rule has to say which bucket it protects: a bare `invoices` would silently cover every
+        table of that name in every bucket, including ones its author never saw."""
+        path = tmp_path / 'rls.yaml'
+        path.write_text(f'dialect: snowflake\ntables:\n  "{key}":\n    petr: "TRUE"\n')
+        with pytest.raises(RlsError, match='table key|invalid table key'):
+            RlsRules.load(str(path))
 
     def test_load_missing_file(self, tmp_path: Path) -> None:
         with pytest.raises(RlsError, match='not found'):
@@ -160,11 +173,12 @@ class TestPredicateFor:
     @pytest.mark.parametrize(
         ('table_name', 'schema', 'user', 'expected'),
         [
-            ('invoices', None, 'petr', ('invoices', "country = 'CZ'")),
-            ('INVOICES', None, 'PETR', ('invoices', "country = 'CZ'")),
-            ('invoices', 'in.c-main', 'monika', ('invoices', "country = 'DE'")),  # falls back to bare name
+            ('invoices', 'in.c-crm', 'petr', ('in.c-crm.invoices', "country = 'CZ'")),
+            ('INVOICES', 'IN.C-CRM', 'PETR', ('in.c-crm.invoices', "country = 'CZ'")),
+            ('invoices', 'in.c-crm', 'monika', ('in.c-crm.invoices', "country = 'DE'")),
             ('orders', 'in.c-crm', 'petr', ('in.c-crm.orders', "country = 'CZ' AND status <> 'draft'")),
-            ('orders', None, 'petr', ('orders', 'FALSE')),
+            # The same table name in another bucket is another rule, not the same one.
+            ('orders', 'in.c-sales', 'petr', ('in.c-sales.orders', 'FALSE')),
         ],
     )
     def test_lookup(self, rules: RlsRules, table_name, schema, user, expected) -> None:
@@ -173,9 +187,14 @@ class TestPredicateFor:
     @pytest.mark.parametrize(
         ('table_name', 'schema', 'user', 'match'),
         [
-            ('customers', None, 'petr', "table 'customers'"),
-            ('invoices', None, 'nobody', "user 'nobody'"),
-            ('orders', 'in.c-crm', 'monika', "user 'monika'"),  # qualified key wins even if bare key has no user
+            ('customers', 'in.c-crm', 'petr', "table 'in.c-crm.customers'"),
+            ('invoices', 'in.c-crm', 'nobody', "user 'nobody'"),
+            ('orders', 'in.c-crm', 'monika', "user 'monika'"),
+            # A rule for the table in one bucket says nothing about the table in another.
+            ('invoices', 'in.c-sales', 'petr', "table 'in.c-sales.invoices'"),
+            # No bucket at all: there is no key to look up, so there is nothing to allow.
+            ('invoices', None, 'petr', 'must be qualified'),
+            ('invoices', '', 'petr', 'must be qualified'),
         ],
     )
     def test_lookup_denied(self, rules: RlsRules, table_name, schema, user, match) -> None:
@@ -188,135 +207,135 @@ class TestRewriteQuery:
         ('sql', 'dialect', 'expected_sql', 'expected_rules'),
         [
             (
-                'SELECT COUNT(*) FROM invoices',
+                'SELECT COUNT(*) FROM "in.c-crm"."invoices"',
                 'snowflake',
-                "SELECT COUNT(*) FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices",
-                ["invoices: country = 'CZ'"],
+                "SELECT COUNT(*) FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"",
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
-                'SELECT i.id FROM invoices i JOIN "in.c-crm"."orders" AS o ON o.id = i.id',
+                'SELECT i.id FROM "in.c-crm"."invoices" i JOIN "in.c-crm"."orders" AS o ON o.id = i.id',
                 'snowflake',
                 (
-                    "SELECT i.id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS i "
+                    "SELECT i.id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS i "
                     "JOIN (SELECT * FROM \"in.c-crm\".\"orders\" WHERE country = 'CZ' AND status <> 'draft') AS o "
                     'ON o.id = i.id'
                 ),
-                ["invoices: country = 'CZ'", "in.c-crm.orders: country = 'CZ' AND status <> 'draft'"],
+                ["in.c-crm.invoices: country = 'CZ'", "in.c-crm.orders: country = 'CZ' AND status <> 'draft'"],
             ),
             (
                 # The original alias is quoted -- the rewrite must keep it quoted, not borrow the
                 # table identifier's own (unquoted) quoting.
-                'SELECT "I".id FROM invoices AS "I"',
+                'SELECT "I".id FROM "in.c-crm"."invoices" AS "I"',
                 'snowflake',
-                'SELECT "I".id FROM (SELECT * FROM invoices WHERE country = \'CZ\') AS "I"',
-                ["invoices: country = 'CZ'"],
+                'SELECT "I".id FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "I"',
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
-                'WITH x AS (SELECT * FROM invoices) SELECT * FROM x',
+                'WITH x AS (SELECT * FROM "in.c-crm"."invoices") SELECT * FROM x',
                 'snowflake',
-                "WITH x AS (SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices) SELECT * FROM x",
-                ["invoices: country = 'CZ'"],
+                "WITH x AS (SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\") SELECT * FROM x",
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
                 # A CTE may reference an earlier sibling CTE.
-                'WITH a AS (SELECT * FROM invoices), b AS (SELECT * FROM a) SELECT * FROM b',
+                'WITH a AS (SELECT * FROM "in.c-crm"."invoices"), b AS (SELECT * FROM a) SELECT * FROM b',
                 'snowflake',
                 (
-                    "WITH a AS (SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices), "
+                    "WITH a AS (SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"), "
                     'b AS (SELECT * FROM a) SELECT * FROM b'
                 ),
-                ["invoices: country = 'CZ'"],
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
                 # A recursive CTE references itself from inside its own body.
-                'WITH RECURSIVE r AS (SELECT id FROM invoices UNION ALL SELECT id FROM r) SELECT * FROM r',
+                'WITH RECURSIVE r AS (SELECT id FROM "in.c-crm"."invoices" UNION ALL SELECT id FROM r) SELECT * FROM r',
                 'snowflake',
                 (
-                    "WITH RECURSIVE r AS (SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                    "WITH RECURSIVE r AS (SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
                     'UNION ALL SELECT id FROM r) SELECT * FROM r'
                 ),
-                ["invoices: country = 'CZ'"],
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
                 # Quoted CTE alias, quoted reference, same case: the same name on both engines.
-                'WITH "X" AS (SELECT * FROM invoices) SELECT * FROM "X"',
+                'WITH "X" AS (SELECT * FROM "in.c-crm"."invoices") SELECT * FROM "X"',
                 'snowflake',
                 (
-                    'WITH "X" AS (SELECT * FROM (SELECT * FROM invoices WHERE country = \'CZ\') AS invoices) '
+                    'WITH "X" AS (SELECT * FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices") '
                     'SELECT * FROM "X"'
                 ),
-                ["invoices: country = 'CZ'"],
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
                 # Unquoted identifiers fold case on both Snowflake and BigQuery, so `x` and `X` are
                 # the same name and this is an ordinary CTE reference -- it must not be refused.
-                'WITH x AS (SELECT * FROM invoices) SELECT * FROM X',
+                'WITH x AS (SELECT * FROM "in.c-crm"."invoices") SELECT * FROM X',
                 'snowflake',
-                "WITH x AS (SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices) SELECT * FROM X",
-                ["invoices: country = 'CZ'"],
+                "WITH x AS (SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\") SELECT * FROM X",
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
-                'WITH `X` AS (SELECT * FROM invoices) SELECT * FROM `X`',
+                'WITH `X` AS (SELECT * FROM `in_c_crm`.`invoices`) SELECT * FROM `X`',
                 'bigquery',
                 (
-                    "WITH `X` AS (SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices) "
-                    'SELECT * FROM `X`'
+                    'WITH `X` AS (SELECT * FROM (SELECT * FROM `in_c_crm`.`invoices` '
+                    "WHERE country = 'CZ') AS `invoices`) SELECT * FROM `X`"
                 ),
-                ["invoices: country = 'CZ'"],
+                ["in_c_crm.invoices: country = 'CZ'"],
             ),
             (
                 # A subquery may declare its own CTE as long as the name shadows nothing outside it.
-                'SELECT * FROM invoices WHERE 1 IN (WITH t AS (SELECT 1) SELECT * FROM t)',
+                'SELECT * FROM "in.c-crm"."invoices" WHERE 1 IN (WITH t AS (SELECT 1) SELECT * FROM t)',
                 'snowflake',
                 (
-                    "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                    "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
                     'WHERE 1 IN (WITH t AS (SELECT 1) SELECT * FROM t)'
                 ),
-                ["invoices: country = 'CZ'"],
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
-                'SELECT * FROM (SELECT id FROM invoices) sub',
+                'SELECT * FROM (SELECT id FROM "in.c-crm"."invoices") sub',
                 'snowflake',
-                "SELECT * FROM (SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices) AS sub",
-                ["invoices: country = 'CZ'"],
+                "SELECT * FROM (SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\") AS sub",
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
-                'SELECT id FROM invoices UNION ALL SELECT id FROM orders',
-                'snowflake',
-                (
-                    "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
-                    'UNION ALL SELECT id FROM (SELECT * FROM orders WHERE FALSE) AS orders'
-                ),
-                ["invoices: country = 'CZ'", 'orders: FALSE'],
-            ),
-            (
-                'SELECT id FROM invoices EXCEPT SELECT id FROM orders',
+                'SELECT id FROM "in.c-crm"."invoices" UNION ALL SELECT id FROM "in.c-sales"."orders"',
                 'snowflake',
                 (
-                    "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
-                    'EXCEPT SELECT id FROM (SELECT * FROM orders WHERE FALSE) AS orders'
+                    "SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
+                    'UNION ALL SELECT id FROM (SELECT * FROM "in.c-sales"."orders" WHERE FALSE) AS "orders"'
                 ),
-                ["invoices: country = 'CZ'", 'orders: FALSE'],
+                ["in.c-crm.invoices: country = 'CZ'", 'in.c-sales.orders: FALSE'],
             ),
             (
-                'SELECT id FROM invoices INTERSECT SELECT id FROM orders',
+                'SELECT id FROM "in.c-crm"."invoices" EXCEPT SELECT id FROM "in.c-sales"."orders"',
                 'snowflake',
                 (
-                    "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
-                    'INTERSECT SELECT id FROM (SELECT * FROM orders WHERE FALSE) AS orders'
+                    "SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
+                    'EXCEPT SELECT id FROM (SELECT * FROM "in.c-sales"."orders" WHERE FALSE) AS "orders"'
                 ),
-                ["invoices: country = 'CZ'", 'orders: FALSE'],
+                ["in.c-crm.invoices: country = 'CZ'", 'in.c-sales.orders: FALSE'],
+            ),
+            (
+                'SELECT id FROM "in.c-crm"."invoices" INTERSECT SELECT id FROM "in.c-sales"."orders"',
+                'snowflake',
+                (
+                    "SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
+                    'INTERSECT SELECT id FROM (SELECT * FROM "in.c-sales"."orders" WHERE FALSE) AS "orders"'
+                ),
+                ["in.c-crm.invoices: country = 'CZ'", 'in.c-sales.orders: FALSE'],
             ),
             (
                 # The same table twice: both references are rewritten, but the disclosure lists the
                 # rule once (deduplicated, in first-seen order).
-                'SELECT id FROM invoices UNION ALL SELECT id FROM invoices',
+                'SELECT id FROM "in.c-crm"."invoices" UNION ALL SELECT id FROM "in.c-crm"."invoices"',
                 'snowflake',
                 (
-                    "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
-                    "UNION ALL SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices"
+                    "SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
+                    "UNION ALL SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\""
                 ),
-                ["invoices: country = 'CZ'"],
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
                 # No FROM at all: nothing to filter, nothing to disclose -- must still pass.
@@ -346,79 +365,87 @@ class TestRewriteQuery:
                 [],
             ),
             (
-                'SELECT COUNT(*) FROM `proj.ds.invoices`',
+                # A project/database name in front of the dataset is ignored: the workspace can
+                # only reach its own project, so the bucket and table are what identify the rule.
+                'SELECT COUNT(*) FROM `proj.in_c_crm.invoices`',
                 'bigquery',
-                "SELECT COUNT(*) FROM (SELECT * FROM `proj`.`ds`.`invoices` WHERE country = 'CZ') AS `invoices`",
-                ["invoices: country = 'CZ'"],
+                (
+                    'SELECT COUNT(*) FROM (SELECT * FROM `proj`.`in_c_crm`.`invoices` '
+                    "WHERE country = 'CZ') AS `invoices`"
+                ),
+                ["in_c_crm.invoices: country = 'CZ'"],
             ),
             (
-                'SELECT COUNT(*) FROM `ds`.`invoices` LIMIT 10',
+                'SELECT COUNT(*) FROM `in_c_crm`.`invoices` LIMIT 10',
                 'bigquery',
-                "SELECT COUNT(*) FROM (SELECT * FROM `ds`.`invoices` WHERE country = 'CZ') AS `invoices` LIMIT 10",
-                ["invoices: country = 'CZ'"],
+                (
+                    'SELECT COUNT(*) FROM (SELECT * FROM `in_c_crm`.`invoices` '
+                    "WHERE country = 'CZ') AS `invoices` LIMIT 10"
+                ),
+                ["in_c_crm.invoices: country = 'CZ'"],
             ),
             (
                 # A whole statement in parentheses means the statement inside them.
-                '(SELECT * FROM invoices)',
+                '(SELECT * FROM "in.c-crm"."invoices")',
                 'snowflake',
-                "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices",
-                ["invoices: country = 'CZ'"],
+                "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"",
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
-                '((SELECT * FROM invoices))',
+                '((SELECT * FROM "in.c-crm"."invoices"))',
                 'snowflake',
-                "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices",
-                ["invoices: country = 'CZ'"],
+                "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"",
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
-                '(SELECT id FROM invoices UNION ALL SELECT id FROM orders)',
+                '(SELECT id FROM "in.c-crm"."invoices" UNION ALL SELECT id FROM "in.c-sales"."orders")',
                 'snowflake',
                 (
-                    "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
-                    'UNION ALL SELECT id FROM (SELECT * FROM orders WHERE FALSE) AS orders'
+                    "SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
+                    'UNION ALL SELECT id FROM (SELECT * FROM "in.c-sales"."orders" WHERE FALSE) AS "orders"'
                 ),
-                ["invoices: country = 'CZ'", 'orders: FALSE'],
+                ["in.c-crm.invoices: country = 'CZ'", 'in.c-sales.orders: FALSE'],
             ),
             (
                 # A trailing semicolon is still exactly one statement.
-                'SELECT * FROM invoices;',
+                'SELECT * FROM "in.c-crm"."invoices";',
                 'snowflake',
-                "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices",
-                ["invoices: country = 'CZ'"],
+                "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"",
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
                 # `UNNET(...) WITH OFFSET` is an allowed FROM source and the correlated `t.items`
                 # still resolves because the wrapper keeps the original alias.
-                'SELECT * FROM invoices AS t, UNNEST(t.items) AS item WITH OFFSET AS off',
+                'SELECT * FROM `in_c_crm`.`invoices` AS t, UNNEST(t.items) AS item WITH OFFSET AS off',
                 'bigquery',
                 (
-                    "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS t "
+                    "SELECT * FROM (SELECT * FROM `in_c_crm`.`invoices` WHERE country = 'CZ') AS t "
                     'CROSS JOIN UNNEST(t.items) AS item WITH OFFSET AS off'
                 ),
-                ["invoices: country = 'CZ'"],
+                ["in_c_crm.invoices: country = 'CZ'"],
             ),
             (
                 # Window function + QUALIFY over a protected table.
-                'SELECT id, ROW_NUMBER() OVER (PARTITION BY country ORDER BY id) rn FROM invoices QUALIFY rn = 1',
+                'SELECT id, ROW_NUMBER() OVER (PARTITION BY country ORDER BY id) rn FROM "in.c-crm"."invoices" QUALIFY rn = 1',
                 'snowflake',
                 (
                     'SELECT id, ROW_NUMBER() OVER (PARTITION BY country ORDER BY id) AS rn '
-                    "FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices QUALIFY rn = 1"
+                    "FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" QUALIFY rn = 1"
                 ),
-                ["invoices: country = 'CZ'"],
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
             (
                 # A recursive CTE named after nothing protected, joined with a protected table.
                 (
                     'WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) '
-                    'SELECT * FROM r, invoices'
+                    'SELECT * FROM r, "in.c-crm"."invoices"'
                 ),
                 'snowflake',
                 (
                     'WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) '
-                    "SELECT * FROM r, (SELECT * FROM invoices WHERE country = 'CZ') AS invoices"
+                    "SELECT * FROM r, (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\""
                 ),
-                ["invoices: country = 'CZ'"],
+                ["in.c-crm.invoices: country = 'CZ'"],
             ),
         ],
     )
@@ -434,8 +461,15 @@ class TestRewriteQuery:
             ('INSERT INTO invoices SELECT * FROM orders', 'petr', 'snowflake', 'SELECT'),
             ('SELECT 1; SELECT 2', 'petr', 'snowflake', 'one statement'),
             ('SELCT nonsense', 'petr', 'snowflake', 'SELECT'),
-            ('SELECT * FROM customers', 'petr', 'snowflake', "table 'customers'"),
-            ('SELECT * FROM invoices', 'nobody', 'snowflake', "user 'nobody'"),
+            ('SELECT * FROM "in.c-crm"."customers"', 'petr', 'snowflake', "table 'in.c-crm.customers'"),
+            ('SELECT * FROM "in.c-crm"."invoices"', 'nobody', 'snowflake', "user 'nobody'"),
+            # A reference with no bucket cannot be matched against a rule, so it is refused outright.
+            ('SELECT * FROM invoices', 'petr', 'snowflake', 'must be qualified'),
+            ('SELECT COUNT(*) FROM invoices', 'petr', 'snowflake', 'must be qualified'),
+            # One quoted identifier that happens to contain dots is a table name, not a bucket path.
+            ('SELECT * FROM "in.c-crm.invoices"', 'petr', 'snowflake', 'must be qualified'),
+            # The rule is keyed by bucket: the same table name in another bucket is not covered.
+            ('SELECT * FROM "in.c-sales"."invoices"', 'petr', 'snowflake', "table 'in.c-sales.invoices'"),
             # A CTE named like a protected table would shadow it inside its own body -- refuse.
             ('WITH invoices AS (SELECT * FROM invoices) SELECT * FROM invoices', 'petr', 'snowflake', 'collide'),
             # ... whatever the quoting of either side: a quoted `"orders"` CTE and the rule key
@@ -498,7 +532,7 @@ class TestRewriteQuery:
             ('SELECT * FROM invoices(1)', 'petr', 'snowflake', 'unsupported table reference'),
             ('', 'petr', 'snowflake', 'one statement'),
             # An unknown/unsupported dialect must not let a raw sqlglot exception escape.
-            ('SELECT * FROM invoices', 'petr', 'not-a-real-dialect', 'dialect'),
+            ('SELECT * FROM "in.c-crm"."invoices"', 'petr', 'not-a-real-dialect', 'dialect'),
             # FROM sources that are not tables/subqueries: sqlglot parses `TABLE(...)` as a
             # TableFromRows wrapping a function call, so there is no exp.Table to rewrite and the
             # query would otherwise reach the workspace unfiltered.
@@ -546,24 +580,74 @@ class TestRewriteQuery:
             ('SELECT * FROM ML.PREDICT(MODEL `m`, TABLE invoices)', 'petr', 'bigquery', 'unsupported table reference'),
             ("EXECUTE IMMEDIATE 'SELECT * FROM invoices'", 'petr', 'bigquery', 'SELECT'),
             (
-                'SELECT * FROM invoices, LATERAL FLATTEN(input => invoices.items) f',
+                'SELECT * FROM "in.c-crm"."invoices", LATERAL FLATTEN(input => invoices.items) f',
                 'petr',
                 'snowflake',
                 'unsupported FROM source',
             ),
             # --- a table without a rule, in every position a subquery can appear ---
-            ('SELECT (SELECT MAX(x) FROM secret) FROM invoices', 'petr', 'snowflake', "table 'secret'"),
-            ('SELECT * FROM invoices WHERE EXISTS (SELECT 1 FROM secret)', 'petr', 'snowflake', "table 'secret'"),
-            ('SELECT * FROM invoices, LATERAL (SELECT * FROM secret) s', 'petr', 'snowflake', "table 'secret'"),
-            ('SELECT * FROM invoices ORDER BY (SELECT MAX(x) FROM secret)', 'petr', 'snowflake', "table 'secret'"),
-            ('SELECT * FROM invoices LIMIT (SELECT COUNT(*) FROM secret)', 'petr', 'snowflake', "table 'secret'"),
-            ('SELECT * FROM invoices QUALIFY id IN (SELECT id FROM secret)', 'petr', 'snowflake', "table 'secret'"),
-            ('SELECT * FROM (VALUES ((SELECT MAX(x) FROM secret))) v', 'petr', 'snowflake', "table 'secret'"),
-            ('SELECT * FROM UNNEST((SELECT ARRAY_AGG(x) FROM secret))', 'petr', 'bigquery', "table 'secret'"),
-            ('SELECT * FROM (secret)', 'petr', 'snowflake', "table 'secret'"),
+            (
+                'SELECT (SELECT MAX(x) FROM "in.c-crm"."secret") FROM "in.c-crm"."invoices"',
+                'petr',
+                'snowflake',
+                "table 'in.c-crm.secret'",
+            ),
+            (
+                'SELECT * FROM "in.c-crm"."invoices" WHERE EXISTS (SELECT 1 FROM "in.c-crm"."secret")',
+                'petr',
+                'snowflake',
+                "table 'in.c-crm.secret'",
+            ),
+            (
+                'SELECT * FROM "in.c-crm"."invoices", LATERAL (SELECT * FROM "in.c-crm"."secret") s',
+                'petr',
+                'snowflake',
+                "table 'in.c-crm.secret'",
+            ),
+            (
+                'SELECT * FROM "in.c-crm"."invoices" ORDER BY (SELECT MAX(x) FROM "in.c-crm"."secret")',
+                'petr',
+                'snowflake',
+                "table 'in.c-crm.secret'",
+            ),
+            (
+                'SELECT * FROM "in.c-crm"."invoices" LIMIT (SELECT COUNT(*) FROM "in.c-crm"."secret")',
+                'petr',
+                'snowflake',
+                "table 'in.c-crm.secret'",
+            ),
+            (
+                'SELECT * FROM "in.c-crm"."invoices" QUALIFY id IN (SELECT id FROM "in.c-crm"."secret")',
+                'petr',
+                'snowflake',
+                "table 'in.c-crm.secret'",
+            ),
+            (
+                'SELECT * FROM (VALUES ((SELECT MAX(x) FROM "in.c-crm"."secret"))) v',
+                'petr',
+                'snowflake',
+                "table 'in.c-crm.secret'",
+            ),
+            (
+                'SELECT * FROM UNNEST((SELECT ARRAY_AGG(x) FROM `in_c_crm`.`secret`))',
+                'petr',
+                'bigquery',
+                "table 'in_c_crm.secret'",
+            ),
+            ('SELECT * FROM ("in.c-crm"."secret")', 'petr', 'snowflake', "table 'in.c-crm.secret'"),
             # an alias equal to a protected table name must not stand in for a rule
-            ('SELECT * FROM secret AS invoices', 'petr', 'snowflake', "table 'secret'"),
-            ('SELECT * FROM (SELECT * FROM secret) AS invoices', 'petr', 'snowflake', "table 'secret'"),
+            (
+                'SELECT * FROM "in.c-crm"."secret" AS invoices',
+                'petr',
+                'snowflake',
+                "table 'in.c-crm.secret'",
+            ),
+            (
+                'SELECT * FROM (SELECT * FROM "in.c-crm"."secret") AS invoices',
+                'petr',
+                'snowflake',
+                "table 'in.c-crm.secret'",
+            ),
             # --- CTE shadowing, remaining shapes ---
             (
                 (
@@ -607,7 +691,7 @@ class TestRewriteQuery:
                 'snowflake',
                 'another scope',
             ),
-            ('WITH secret AS (SELECT 1) SELECT * FROM public.secret', 'petr', 'snowflake', "table 'secret'"),
+            ('WITH secret AS (SELECT 1) SELECT * FROM public.secret', 'petr', 'snowflake', "table 'public.secret'"),
             # --- functions in a query with nothing to filter ---
             # `GET_DDL` reads the catalog, so RLS shapes nothing about what it returns.
             ("SELECT GET_DDL('table', 'invoices')", 'petr', 'snowflake', 'without FROM'),
@@ -618,10 +702,15 @@ class TestRewriteQuery:
             ("WITH t AS (SELECT 1) SELECT GET_DDL('table', 'invoices') FROM t", 'petr', 'snowflake', 'without FROM'),
             # --- functions banned everywhere, FROM or no FROM ---
             ('SELECT SYSTEM$CANCEL_ALL_QUERIES()', 'petr', 'snowflake', 'not allowed: SYSTEM'),
-            ("SELECT * FROM invoices WHERE SYSTEM$TYPEOF(x) = 'a'", 'petr', 'snowflake', 'not allowed: SYSTEM'),
+            (
+                'SELECT * FROM "in.c-crm"."invoices" WHERE SYSTEM$TYPEOF(x) = \'a\'',
+                'petr',
+                'snowflake',
+                'not allowed: SYSTEM',
+            ),
             ("SELECT SNOWFLAKE.CORTEX.COMPLETE('m', 'p')", 'petr', 'snowflake', 'not allowed: SNOWFLAKE.CORTEX'),
             (
-                'SELECT SNOWFLAKE.CORTEX.SENTIMENT(c) FROM invoices',
+                'SELECT SNOWFLAKE.CORTEX.SENTIMENT(c) FROM "in.c-crm"."invoices"',
                 'petr',
                 'snowflake',
                 'not allowed: SNOWFLAKE.CORTEX',
@@ -640,7 +729,7 @@ class TestRewriteQuery:
         (or the other way round) would silently change what the filter means. Refuse instead."""
         wrong = bq_rules if dialect == 'snowflake' else rules
         with pytest.raises(RlsError, match=f'rules are for dialect .* but the workspace is {dialect}'):
-            rewrite_query('SELECT * FROM invoices', user='petr', dialect=dialect, rules=wrong)
+            rewrite_query('SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect=dialect, rules=wrong)
 
     @pytest.mark.parametrize(
         'sql',
@@ -688,9 +777,9 @@ class TestRewriteQuery:
         own; the underlying `sqlglot.parse_one(..., dialect=dialect)` call must not raise a raw
         `sqlglot` exception.
         """
-        bad_rules = RlsRules(tables={'invoices': {'petr': 'country = = 1'}}, dialect='snowflake')
+        bad_rules = RlsRules(tables={'in.c-crm.invoices': {'petr': 'country = = 1'}}, dialect='snowflake')
         with pytest.raises(RlsError):
-            rewrite_query('SELECT * FROM invoices', user='petr', dialect='snowflake', rules=bad_rules)
+            rewrite_query('SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect='snowflake', rules=bad_rules)
 
     @pytest.mark.parametrize(
         ('predicate', 'match'),
@@ -703,9 +792,9 @@ class TestRewriteQuery:
         ],
     )
     def test_rewrite_rejects_predicates_that_are_not_plain_conditions(self, predicate: str, match: str) -> None:
-        bad_rules = RlsRules(tables={'invoices': {'petr': predicate}}, dialect='snowflake')
+        bad_rules = RlsRules(tables={'in.c-crm.invoices': {'petr': predicate}}, dialect='snowflake')
         with pytest.raises(RlsError, match=match):
-            rewrite_query('SELECT * FROM invoices', user='petr', dialect='snowflake', rules=bad_rules)
+            rewrite_query('SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect='snowflake', rules=bad_rules)
 
 
 class TestOutputInvariant:
@@ -723,9 +812,12 @@ class TestOutputInvariant:
             ('SELECT 1; SELECT 2', 'non-SELECT statement'),
             ('SELCT nonsense', 'non-SELECT statement'),
             ('SELECT * FROM invoices', 'unwrapped table reference'),
-            ("SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS i JOIN orders o ON TRUE", 'unwrapped'),
+            (
+                "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS i JOIN orders o ON TRUE",
+                'unwrapped',
+            ),
             # A wrapper that is not `SELECT *` would silently drop the RLS predicate's columns.
-            ('SELECT * FROM (SELECT id FROM invoices) AS invoices', 'unwrapped table reference'),
+            ('SELECT * FROM (SELECT id FROM "in.c-crm"."invoices") AS "invoices"', 'unwrapped table reference'),
             # The CTE that would excuse `secret` is declared in a nested scope, so it excuses
             # nothing: `secret` is a real, unwrapped table here.
             ('SELECT * FROM secret WHERE 1 IN (WITH secret AS (SELECT 1) SELECT 1)', 'another scope'),
@@ -739,12 +831,15 @@ class TestOutputInvariant:
             ('SELECT * FROM my_udtf(1)', 'rewrite left an unsupported table reference'),
             # A wrapper with no WHERE at all is the whole table: the shape looks right and the data
             # is unfiltered, which is exactly what this net exists to catch.
-            ('SELECT * FROM (SELECT * FROM invoices) AS invoices', 'wrapper without a WHERE clause'),
+            ('SELECT * FROM (SELECT * FROM "in.c-crm"."invoices") AS "invoices"', 'wrapper without a WHERE clause'),
             # A WHERE that is not the rule -- weakened, negated or simply a different condition.
-            ("SELECT * FROM (SELECT * FROM invoices WHERE country = 'DE') AS invoices", 'not the rule for table'),
-            ('SELECT * FROM (SELECT * FROM invoices WHERE TRUE) AS invoices', 'not the rule for table'),
             (
-                "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ' OR TRUE) AS invoices",
+                "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'DE') AS \"invoices\"",
+                'not the rule for table',
+            ),
+            ('SELECT * FROM (SELECT * FROM "in.c-crm"."invoices" WHERE TRUE) AS "invoices"', 'not the rule for table'),
+            (
+                "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ' OR TRUE) AS \"invoices\"",
                 'not the rule for table',
             ),
             # A table that was wrapped although no rule was ever looked up for it.
@@ -759,28 +854,28 @@ class TestOutputInvariant:
         'sql',
         [
             'SELECT 1',
-            "SELECT COUNT(*) FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices",
-            "WITH x AS (SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices) SELECT * FROM x",
+            "SELECT COUNT(*) FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"",
+            "WITH x AS (SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\") SELECT * FROM x",
             (
-                "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
-                'UNION ALL SELECT id FROM (SELECT * FROM orders WHERE FALSE) AS orders'
+                "SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
+                'UNION ALL SELECT id FROM (SELECT * FROM "in.c-sales"."orders" WHERE FALSE) AS "orders"'
             ),
             # A CTE reference from a scope that really does declare it, at every nesting shape.
             (
-                "WITH a AS (SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices), "
+                "WITH a AS (SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"), "
                 'b AS (SELECT * FROM a) SELECT * FROM b'
             ),
             (
-                "WITH RECURSIVE r AS (SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                "WITH RECURSIVE r AS (SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
                 'UNION ALL SELECT id FROM r) SELECT * FROM r'
             ),
             (
-                "SELECT 1 FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                "SELECT 1 FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
                 'WHERE 1 IN (WITH t AS (SELECT 1) SELECT * FROM t)'
             ),
             # Quoted CTE alias and quoted reference agreeing in case: an ordinary CTE reference.
             (
-                'WITH "X" AS (SELECT * FROM (SELECT * FROM invoices WHERE country = \'CZ\') AS invoices) '
+                'WITH "X" AS (SELECT * FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices") '
                 'SELECT * FROM "X"'
             ),
         ],

@@ -130,6 +130,17 @@ def _unwrap_parenthesised(tree: exp.Expression) -> exp.Expression:
     return tree
 
 
+def _normalize_schema(schema: str, dialect: str) -> str:
+    """The bucket part of a rules key, as the workspace actually spells it.
+
+    Snowflake keeps a Keboola bucket name verbatim as the schema (`"in.c-crm"`). BigQuery cannot:
+    dataset names allow neither dots nor hyphens, so the server maps bucket `in.c-crm` to dataset
+    `in_c_crm`. Normalising the key at load time means the rules file is written the same way for
+    both backends -- in Keboola's own bucket names -- and still matches what the query says.
+    """
+    return schema.replace('.', '_').replace('-', '_') if dialect == 'bigquery' else schema
+
+
 def _is_boolean_condition(node: exp.Expression) -> bool:
     """Whether `node` is a boolean-valued condition, looking through any wrapping parentheses."""
     while isinstance(node, exp.Paren):
@@ -148,12 +159,21 @@ class RewrittenQuery:
 class RlsRules:
     """RLS rules keyed by lower-cased table key, then lower-cased user name.
 
-    A table key is either a bare table name (`invoices`) or `<schema>.<name>` (`in.c-crm.invoices`);
-    the qualified form takes precedence during lookup. A bare key such as `invoices` matches a table
-    of that name in every schema/bucket; use the `<bucket>.<table>` form to scope a rule.
+    A table key is always `<bucket>.<table>` (`in.c-crm.invoices`) -- the table part is the text
+    after the LAST dot, because a Keboola bucket name contains dots of its own. There is no bare-name
+    form: a rule must say which bucket it protects, and a query must say which bucket it reads, or
+    neither side can be sure they mean the same table.
+
+    Only the bucket and table parts are matched. A reference may also carry a database/project name
+    (`OTHER_DB."in.c-crm"."orders"`, `` `proj`.`in_c_crm`.`invoices` ``) and that part is ignored: the
+    workspace credentials reach exactly one project database, so a rule keyed by bucket and table
+    cannot be side-stepped by naming a different database in front of it.
 
     `dialect` is the workspace backend the predicates were written for; it is not a default but a
-    pin, and `rewrite_query()` refuses to run these rules against any other backend.
+    pin, and `rewrite_query()` refuses to run these rules against any other backend. It also decides
+    how the bucket part of a key is normalised: BigQuery datasets cannot contain dots or hyphens, so
+    the server names the dataset for bucket `in.c-crm` `in_c_crm`, and a key written the Keboola way
+    is normalised to match at load time.
     """
 
     tables: Mapping[str, Mapping[str, str]]
@@ -197,7 +217,12 @@ class RlsRules:
         for table_key, users_raw in tables_raw.items():
             if not isinstance(table_key, str) or not _RULE_KEY_RE.match(table_key):
                 raise RlsError(f'RLS rules file {path} has an invalid table key {table_key!r}: {_RULE_KEY_HINT}')
-            key = table_key.lower()
+            bucket, _, table = table_key.rpartition('.')
+            if not bucket or not table:
+                raise RlsError(
+                    f"RLS rules file {path} has an unqualified table key '{table_key}': keys must be <bucket>.<table>"
+                )
+            key = f'{_normalize_schema(bucket, dialect)}.{table}'.lower()
             if key in tables:
                 # Only reachable when two YAML keys differ solely in case: the second would silently
                 # replace the first, so the admin would be reading a rule that is not in force.
@@ -243,22 +268,20 @@ class RlsRules:
     def predicate_for(self, *, table_name: str, schema: str | None, user: str) -> tuple[str, str]:
         """Return `(matched_key, predicate)` for the table/user, or raise `RlsError`.
 
-        The `<schema>.<name>` key is tried first, then the bare name. When a key matches but has
-        no entry for `user`, that is a denial -- we do not fall through to a less specific key.
+        `schema` is the bucket/dataset the reference names; without it there is no key to look up and
+        the reference is refused. There is deliberately no fall-back to a bare table name: a rule
+        that matched `invoices` in every bucket would silently cover tables its author never saw.
         """
-        candidates: list[str] = []
-        if schema:
-            candidates.append(f'{schema}.{table_name}'.lower())
-        candidates.append(table_name.lower())
-        for key in candidates:
-            users = self.tables.get(key)
-            if users is None:
-                continue
-            predicate = users.get(user.lower())
-            if predicate is None:
-                raise RlsError(f"RLS: no rule for user '{user.lower()}' on table '{key}'")
-            return key, predicate
-        raise RlsError(f"RLS: no rule for table '{table_name}'")
+        if not schema:
+            raise RlsError(f"RLS: table reference must be qualified as <bucket>.<table>: '{table_name}'")
+        key = f'{schema}.{table_name}'.lower()
+        users = self.tables.get(key)
+        if users is None:
+            raise RlsError(f"RLS: no rule for table '{key}'")
+        predicate = users.get(user.lower())
+        if predicate is None:
+            raise RlsError(f"RLS: no rule for user '{user.lower()}' on table '{key}'")
+        return key, predicate
 
 
 def _check_from_sources(tree: exp.Expression) -> None:
@@ -453,10 +476,11 @@ def _check_functions(tree: exp.Expression, cte_names: set[str]) -> None:
 
 
 def _matching_key(table: exp.Table, keys: Mapping[str, str]) -> str | None:
-    """The rules key `table` was wrapped under, in the same order `predicate_for` tries them."""
-    candidates = [f'{table.db}.{table.name}'.lower()] if table.db else []
-    candidates.append(table.name.lower())
-    return next((key for key in candidates if key in keys), None)
+    """The rules key `table` was wrapped under -- built exactly as `predicate_for` builds it."""
+    if not table.db:
+        return None
+    key = f'{table.db}.{table.name}'.lower()
+    return key if key in keys else None
 
 
 def _check_output(sql: str, *, dialect: str, predicates: Mapping[str, str]) -> None:

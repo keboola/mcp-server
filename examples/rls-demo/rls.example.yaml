@@ -10,8 +10,8 @@
 # a table without a rule for the user, or a user without a rule on a table, is refused.
 # Unrestricted access must be written explicitly as TRUE.
 #
-# Keys use the <bucket>.<table> form so they only match tables in that bucket.
-# User names are matched case-insensitively.
+# Keys are always <bucket>.<table>, so a rule only ever covers that one table in that one
+# bucket; a query must name the bucket too. User names are matched case-insensitively.
 #
 # Demo personas (the tables are assumed to have a `country` column):
 #   alice - Czech market only

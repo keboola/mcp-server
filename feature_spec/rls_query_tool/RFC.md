@@ -31,17 +31,20 @@ read from an HTTP header (the `Config` field is not in `_HEADER_ELIGIBLE_FIELDS`
 # table -> user -> SQL predicate (inserted into WHERE verbatim, in the workspace dialect)
 dialect: snowflake                      # required: snowflake or bigquery
 tables:
-  invoices:
+  in.c-crm.invoices:                    # keys are always <bucket>.<table>
     petr: "country = 'CZ'"
     monika: "country = 'DE'"
     admin: "TRUE"                       # unrestricted access must be written explicitly
-  in.c-crm.orders:                      # bucket-qualified key, takes precedence over a bare name
+  in.c-crm.orders:
     petr: "country = 'CZ' AND status <> 'draft'"
 ```
 
-- Table keys are matched case-insensitively against the table reference in the SQL. A
-  bucket-qualified key (`<bucket>.<table>`, i.e. `<schema>.<name>` in the workspace) is tried
-  first, then the bare table name.
+- Table keys are always `<bucket>.<table>` (`<schema>.<name>` in the workspace) and are matched
+  case-insensitively against the table reference in the SQL. The table name is the part after the
+  last dot, because bucket names contain dots. There is no bare-name form and no fall-back to one:
+  a query that names a table without its bucket is refused. A database/project name in front of the
+  bucket is ignored -- the workspace reaches only its own project database. On BigQuery the bucket
+  part of a key is normalised to the dataset name the server uses (`in.c-crm` -> `in_c_crm`).
 - User keys are matched case-insensitively.
 - The required top-level `dialect` key (`snowflake` or `bigquery`) pins the workspace backend the
   predicates are written for. Predicates are never transpiled, so `rewrite_query` refuses to apply

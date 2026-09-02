@@ -388,11 +388,11 @@ exposes `query_data_rls` **instead of** `query_data`; the unrestricted tool is n
 # rls.yaml -- table -> user -> SQL predicate (workspace dialect, inserted into WHERE verbatim)
 dialect: snowflake             # required: snowflake or bigquery; predicates are never transpiled
 tables:
-  invoices:
+  in.c-crm.invoices:           # keys are always <bucket>.<table>
     petr: "country = 'CZ'"
     monika: "country = 'DE'"
     admin: "TRUE"              # unrestricted access must be written explicitly
-  in.c-crm.orders:             # <bucket>.<table> key takes precedence over a bare table name
+  in.c-crm.orders:
     petr: "country = 'CZ' AND status <> 'draft'"
 ```
 
@@ -403,8 +403,13 @@ unparseable query is refused and nothing is executed. The file is validated at s
 stops the server. `dialect` pins the workspace backend the predicates are written for: every predicate
 is parsed in that dialect at startup, and a query against a workspace of any other dialect is refused.
 
-A bare key such as `invoices` matches a table of that name in every schema/bucket; use the
-`<bucket>.<table>` form to scope a rule.
+Every key is `<bucket>.<table>` — the table name is the part after the last dot, since bucket names
+contain dots of their own. There is no bare-name form, and a query must name the bucket too
+(`"in.c-crm"."orders"` on Snowflake, `` `in_c_crm`.`orders` `` on BigQuery): an unqualified table
+reference is refused. A database/project name in front of the bucket is ignored — the workspace can
+only reach its own project. On BigQuery the bucket part of a key is normalised the way the server
+names datasets (`in.c-crm` → `in_c_crm`), so the rules file is written in Keboola bucket names for
+both backends.
 
 Limitations:
 
