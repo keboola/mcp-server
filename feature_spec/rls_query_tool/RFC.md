@@ -39,9 +39,10 @@ tables:
     petr: "country = 'CZ' AND status <> 'draft'"
 ```
 
-- Table keys are always `<bucket>.<table>` (`<schema>.<name>` in the workspace) and are matched
-  case-insensitively against the table reference in the SQL. The table name is the part after the
-  last dot, because bucket names contain dots. There is no bare-name form and no fall-back to one:
+- Table keys are always `<bucket>.<table>` (`<schema>.<name>` in the workspace). The table name is
+  the part after the last dot, because bucket names contain dots. Matching follows the backend's own
+  name resolution: case-insensitive on Snowflake, case-sensitive on BigQuery (where dataset and
+  table names are case-sensitive, unlike CTE names). There is no bare-name form and no fall-back to one:
   a query that names a table without its bucket is refused. A database/project name in front of the
   bucket is ignored -- the workspace reaches only its own project database. On BigQuery the bucket
   part of a key is normalised to the dataset name the server uses (`in.c-crm` -> `in_c_crm`).
@@ -135,8 +136,10 @@ addition to the rules above, `rewrite_query` refuses (with `RlsError`):
   because a protected table is always referenced with its bucket and a CTE alias never carries one.
   What is refused is real shadowing: a table reference counts as a CTE reference only when the CTE is
   declared in the reference's own enclosing scope chain (earlier siblings included; self-reference
-  only under `RECURSIVE`); quoted identifiers are compared case-sensitively and a quoting mismatch
-  between alias and reference is refused.
+  only under `RECURSIVE`). How a CTE name is compared depends on the backend: on Snowflake quoted
+  identifiers are case-sensitive and a quoting mismatch between alias and reference is refused; on
+  BigQuery CTE names fold case and backticks around them mean nothing, so those shapes resolve as
+  CTE references instead of being refused.
 
 After generating the rewritten SQL the function re-parses it and asserts that it is still exactly one
 `SELECT`/set operation and that every real table sits inside a subquery the rewriter generated.

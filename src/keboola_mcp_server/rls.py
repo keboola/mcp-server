@@ -146,6 +146,23 @@ def _normalize_schema(schema: str, dialect: str) -> str:
     return schema.replace('.', '_').replace('-', '_') if dialect == 'bigquery' else schema
 
 
+def _rule_key(schema: str, table: str, dialect: str) -> str:
+    """The rules-file key a `<schema>.<table>` reference is looked up under.
+
+    Case handling follows the backend's own object-name resolution, so a rule matches exactly the
+    table the engine would read:
+
+    * Snowflake folds unquoted names and the workspace hands out fully-qualified names quoted in the
+      storage case, so keys are compared case-insensitively -- `"IN.C-CRM"."INVOICES"` and
+      `"in.c-crm"."invoices"` name the same table there.
+    * BigQuery dataset and table names are case-SENSITIVE: `in_c_crm.Invoices` is a different table
+      from `in_c_crm.invoices`, so a rule for one must not cover the other. Keys keep their case and
+      a mismatch simply finds no rule -- which is a refusal.
+    """
+    key = f'{schema}.{table}'
+    return key if dialect == 'bigquery' else key.lower()
+
+
 def _is_boolean_condition(node: exp.Expression) -> bool:
     """Whether `node` is a boolean-valued condition, looking through any wrapping parentheses."""
     while isinstance(node, exp.Paren):
@@ -168,7 +185,7 @@ class RewrittenQuery:
 
 @dataclasses.dataclass(frozen=True)
 class RlsRules:
-    """RLS rules keyed by lower-cased table key, then lower-cased user name.
+    """RLS rules keyed by table key, then lower-cased user name.
 
     A table key is always `<bucket>.<table>` (`in.c-crm.invoices`) -- the table part is the text
     after the LAST dot, because a Keboola bucket name contains dots of its own. There is no bare-name
@@ -182,9 +199,11 @@ class RlsRules:
 
     `dialect` is the workspace backend the predicates were written for; it is not a default but a
     pin, and `rewrite_query()` refuses to run these rules against any other backend. It also decides
-    how the bucket part of a key is normalised: BigQuery datasets cannot contain dots or hyphens, so
-    the server names the dataset for bucket `in.c-crm` `in_c_crm`, and a key written the Keboola way
-    is normalised to match at load time.
+    two things about the keys, each following that backend's own name resolution: how the bucket part
+    is spelled (BigQuery datasets take neither dots nor hyphens, so bucket `in.c-crm` is dataset
+    `in_c_crm` -- normalised at load, see `_normalize_schema`) and whether case matters (it does on
+    BigQuery, where table and dataset names are case-sensitive; it does not on Snowflake -- see
+    `_rule_key`).
     """
 
     tables: Mapping[str, Mapping[str, str]]
@@ -233,7 +252,7 @@ class RlsRules:
                 raise RlsError(
                     f"RLS rules file {path} has an unqualified table key '{table_key}': keys must be <bucket>.<table>"
                 )
-            key = f'{_normalize_schema(bucket, dialect)}.{table}'.lower()
+            key = _rule_key(_normalize_schema(bucket, dialect), table, dialect)
             if key in tables:
                 # Only reachable when two YAML keys differ solely in case: the second would silently
                 # replace the first, so the admin would be reading a rule that is not in force.
@@ -285,7 +304,7 @@ class RlsRules:
         """
         if not schema:
             raise RlsError(f"RLS: table reference must be qualified as <bucket>.<table>: '{table_name}'")
-        key = f'{schema}.{table_name}'.lower()
+        key = _rule_key(schema, table_name, self.dialect)
         users = self.tables.get(key)
         if users is None:
             raise RlsError(f"RLS: no rule for table '{key}'")
@@ -323,26 +342,36 @@ def _cte_names(tree: exp.Expression) -> set[str]:
     return {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
 
 
-def _identifier_key(text: str, quoted: bool) -> tuple[str, bool]:
-    """Reduce an identifier to a comparison key that matches engine name resolution.
+def _identifier_key(text: str, quoted: bool, *, dialect: str) -> tuple[str, bool]:
+    """Reduce a CTE name to a comparison key that matches how the engine resolves it.
 
-    Snowflake and BigQuery fold unquoted identifiers to a canonical case but treat quoted ones as
-    literal, so `"secret"` and `"SECRET"` are two different names while `secret` and `SECRET` are
-    one. Comparing everything lower-cased would bind a quoted reference to a differently-cased
-    quoted CTE that the engine resolves to the *base table* -- and pass that table through
-    unfiltered. Quoted and unquoted forms of the same text stay distinct too (Ruling 14): the
-    caller decides whether that mismatch is a refusal or merely a non-match.
+    The two backends do not agree, and the difference decides whether a reference binds to the CTE
+    or falls through to the base table -- so it is keyed on the dialect rather than guessed:
+
+    * Snowflake folds unquoted identifiers to a canonical case but treats quoted ones literally, so
+      `"secret"` and `"SECRET"` are two different names while `secret` and `SECRET` are one.
+      Comparing everything lower-cased would bind a quoted reference to a differently-cased quoted
+      CTE that the engine resolves to the *base table* -- and pass that table through unfiltered.
+      Quoted and unquoted forms of the same text stay distinct too (Ruling 14); the caller decides
+      whether that mismatch is a refusal or merely a non-match.
+    * BigQuery resolves CTE names case-insensitively and backticks around one carry no meaning at
+      all (verified against a live workspace): `WITH secret AS (...) SELECT * FROM \\`SECRET\\`` reads the
+      CTE. Keeping Snowflake's rule there would refuse ordinary queries as "ambiguous" while
+      protecting nothing. (BigQuery *table* and *dataset* names are case-sensitive -- that is a
+      separate question, settled by the rules-key lookup, not here.)
     """
+    if dialect == 'bigquery':
+        return text.lower(), False
     return text if quoted else text.lower(), quoted
 
 
-def _cte_key(cte: exp.CTE) -> tuple[str, bool]:
+def _cte_key(cte: exp.CTE, *, dialect: str) -> tuple[str, bool]:
     """A CTE declaration as an `_identifier_key` -- the same shape a table reference is reduced to
     in `_is_cte_reference`."""
     alias = cte.args.get('alias')
     identifier = alias.this if isinstance(alias, exp.TableAlias) else None
     quoted = isinstance(identifier, exp.Identifier) and identifier.quoted
-    return _identifier_key(cte.alias_or_name, quoted)
+    return _identifier_key(cte.alias_or_name, quoted, dialect=dialect)
 
 
 def _with_clause(node: exp.Expression) -> exp.With | None:
@@ -358,7 +387,7 @@ def _with_clause(node: exp.Expression) -> exp.With | None:
     return None
 
 
-def _cte_names_in_scope(node: exp.Expression) -> set[tuple[str, bool]]:
+def _cte_names_in_scope(node: exp.Expression, *, dialect: str) -> set[tuple[str, bool]]:
     """CTE aliases visible from `node`, as `_identifier_key` pairs.
 
     Walks `node`'s own ancestor chain outwards: a statement's WITH clause is visible to that
@@ -379,16 +408,16 @@ def _cte_names_in_scope(node: exp.Expression) -> set[tuple[str, bool]]:
             for cte in parent.expressions:
                 if cte is child and not parent.args.get('recursive'):
                     break
-                names.add(_cte_key(cte))
+                names.add(_cte_key(cte, dialect=dialect))
                 if cte is child:
                     break
         elif (with_clause := _with_clause(parent)) is not None and with_clause is not child:
-            names.update(_cte_key(cte) for cte in with_clause.expressions)
+            names.update(_cte_key(cte, dialect=dialect) for cte in with_clause.expressions)
         child, parent = parent, parent.parent
     return names
 
 
-def _is_non_recursive_self_reference(node: exp.Table, key: tuple[str, bool]) -> bool:
+def _is_non_recursive_self_reference(node: exp.Table, key: tuple[str, bool], *, dialect: str) -> bool:
     """Whether `node` sits inside the body of a CTE named `key` whose WITH lacks `RECURSIVE`.
 
     Only used to explain a refusal: `_cte_names_in_scope` has already decided such a name is not a
@@ -400,14 +429,14 @@ def _is_non_recursive_self_reference(node: exp.Table, key: tuple[str, bool]) -> 
         if (
             isinstance(parent, exp.With)
             and not parent.args.get('recursive')
-            and any(cte is child and _cte_key(cte) == key for cte in parent.expressions)
+            and any(cte is child and _cte_key(cte, dialect=dialect) == key for cte in parent.expressions)
         ):
             return True
         child, parent = parent, parent.parent
     return False
 
 
-def _is_cte_reference(node: exp.Table, cte_names: set[str]) -> bool:
+def _is_cte_reference(node: exp.Table, cte_names: set[str], *, dialect: str) -> bool:
     """Whether `node` names a CTE declared in its own enclosing scope chain (and so is not a table).
 
     `cte_names` is `_cte_names()` for the whole statement. Matching the whole-tree set is not
@@ -422,13 +451,13 @@ def _is_cte_reference(node: exp.Table, cte_names: set[str]) -> bool:
         return False  # a qualified or non-identifier source is never a CTE reference
     if node.name.lower() not in cte_names:
         return False
-    key = _identifier_key(node.name, node.this.quoted)
-    in_scope = _cte_names_in_scope(node)
+    key = _identifier_key(node.name, node.this.quoted, dialect=dialect)
+    in_scope = _cte_names_in_scope(node, dialect=dialect)
     if key in in_scope:
         return True
     if any(scoped_name == key[0] for scoped_name, _ in in_scope):
         raise RlsError(f'RLS: ambiguous CTE reference, quoting differs from the declaration: {node.name}')
-    if _is_non_recursive_self_reference(node, key):
+    if _is_non_recursive_self_reference(node, key, dialect=dialect):
         raise RlsError(f'RLS: a CTE cannot reference itself without RECURSIVE: {node.name}')
     raise RlsError(f'RLS: table reference shadowed by a CTE declared in another scope: {node.name}')
 
@@ -452,7 +481,7 @@ def _function_name(node: exp.Expression) -> str:
     return node.sql_name() if isinstance(node, exp.Func) else type(node).__name__
 
 
-def _check_functions(tree: exp.Expression, cte_names: set[str]) -> None:
+def _check_functions(tree: exp.Expression, cte_names: set[str], *, dialect: str) -> None:
     """Refuse function calls that RLS cannot reason about; raise `RlsError` if any is present.
 
     Two bans, both allowlist-shaped where it matters:
@@ -474,7 +503,7 @@ def _check_functions(tree: exp.Expression, cte_names: set[str]) -> None:
     # CTE is refused with the reason it deserves ("declared in another scope") instead of being
     # counted as a non-table here and reported as a stray function call.
     for table in tree.find_all(exp.Table):
-        if not isinstance(table.this, exp.Identifier) or not _is_cte_reference(table, cte_names):
+        if not isinstance(table.this, exp.Identifier) or not _is_cte_reference(table, cte_names, dialect=dialect):
             return  # there is a real table here; the rewrite will filter it
 
     for node in tree.find_all(exp.Func):
@@ -486,11 +515,11 @@ def _check_functions(tree: exp.Expression, cte_names: set[str]) -> None:
         raise RlsError(f'RLS: function calls are not allowed in a query without FROM: {name}')
 
 
-def _matching_key(table: exp.Table, keys: Mapping[str, str]) -> str | None:
+def _matching_key(table: exp.Table, keys: Mapping[str, str], *, dialect: str) -> str | None:
     """The rules key `table` was wrapped under -- built exactly as `predicate_for` builds it."""
     if not table.db:
         return None
-    key = f'{table.db}.{table.name}'.lower()
+    key = _rule_key(table.db, table.name, dialect)
     return key if key in keys else None
 
 
@@ -527,7 +556,7 @@ def _check_output(sql: str, *, dialect: str, predicates: Mapping[str, str]) -> N
             # here it also stops such a node reaching the "is it wrapped?" test, which would report
             # it under an empty name.
             raise RlsError('RLS: rewrite left an unsupported table reference')
-        if _is_cte_reference(table, cte_names):
+        if _is_cte_reference(table, cte_names, dialect=dialect):
             continue  # reference to a CTE in scope here, not a real table
         select = table.parent.parent if isinstance(table.parent, exp.From) else None
         wrapped = (
@@ -541,7 +570,7 @@ def _check_output(sql: str, *, dialect: str, predicates: Mapping[str, str]) -> N
             LOG.warning(f'RLS: rewrite left an unwrapped table reference: {table.sql(dialect=dialect)}')
             raise RlsError('RLS: rewrite left an unwrapped table reference')
         assert isinstance(select, exp.Select)  # narrowed by `wrapped`
-        key = _matching_key(table, predicates)
+        key = _matching_key(table, predicates, dialect=dialect)
         if key is None:
             LOG.warning(f'RLS: rewrite wrapped a table no rule was looked up for: {table.sql(dialect=dialect)}')
             raise RlsError('RLS: rewrite wrapped a table no rule was looked up for')
@@ -609,7 +638,7 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
     cte_names = _cte_names(tree)
 
     _check_from_sources(tree)
-    _check_functions(tree, cte_names)
+    _check_functions(tree, cte_names, dialect=dialect)
 
     applied: list[str] = []
     # The predicate the rewrite actually inserted for each matched key, handed to `_check_output` so
@@ -623,7 +652,7 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
             # A table function has no name to look a rule up by -- `_check_from_sources` already
             # refuses these; this is the same guard on the rewrite path itself.
             raise RlsError(f'RLS: unsupported table reference: {node.sql()}')
-        if _is_cte_reference(node, cte_names):
+        if _is_cte_reference(node, cte_names, dialect=dialect):
             return node  # reference to a CTE in scope here, not a real table
         # The wrapper below rebuilds the table from name/db/catalog only, so any other modifier the
         # node carries would vanish and change the query's meaning. Refuse rather than drop it.

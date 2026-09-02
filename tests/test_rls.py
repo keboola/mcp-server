@@ -496,6 +496,10 @@ class TestRewriteQuery:
             ('SELECT * FROM "in.c-crm.invoices"', 'petr', 'snowflake', 'must be qualified'),
             # The rule is keyed by bucket: the same table name in another bucket is not covered.
             ('SELECT * FROM "in.c-sales"."invoices"', 'petr', 'snowflake', "table 'in.c-sales.invoices'"),
+            # BigQuery dataset and table names are case-sensitive, so a differently-cased reference
+            # names a different table -- and there is no rule for it.
+            ('SELECT * FROM `in_c_crm`.`Invoices`', 'petr', 'bigquery', "table 'in_c_crm.Invoices'"),
+            ('SELECT * FROM `IN_C_CRM`.`invoices`', 'petr', 'bigquery', "table 'IN_C_CRM.invoices'"),
             # A CTE reading its own name without RECURSIVE resolves to the base table on the
             # engine, whatever the CTE is called.
             (
@@ -543,7 +547,6 @@ class TestRewriteQuery:
             # table through unfiltered.
             ('WITH "secret" AS (SELECT 1) SELECT * FROM "SECRET"', 'petr', 'snowflake', 'another scope'),
             ('WITH "SECRET" AS (SELECT 1) SELECT * FROM "secret"', 'petr', 'snowflake', 'another scope'),
-            ('WITH `secret` AS (SELECT 1) SELECT * FROM `SECRET`', 'petr', 'bigquery', 'another scope'),
             # Without RECURSIVE a CTE is not visible inside its own body: BigQuery resolves the inner
             # `secret` to the base table. Refuse rather than pass the query through verbatim.
             (
@@ -820,6 +823,68 @@ class TestRewriteQuery:
         bad_rules = RlsRules(tables={'in.c-crm.invoices': {'petr': predicate}}, dialect='snowflake')
         with pytest.raises(RlsError, match=match):
             rewrite_query('SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect='snowflake', rules=bad_rules)
+
+
+class TestDialectIdentifierSemantics:
+    """The two backends resolve names differently, and RLS follows each rather than picking one.
+
+    Verified against a live BigQuery workspace: CTE names there are case-insensitive and backticks
+    around one are semantically null, while dataset and table names ARE case-sensitive. Snowflake is
+    the other way round for the quoting question, and its workspace FQNs come back quoted in the
+    storage case, so rule keys are matched case-insensitively there.
+    """
+
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            'WITH secret AS (SELECT 1 AS x) SELECT * FROM SECRET',
+            'WITH `secret` AS (SELECT 1 AS x) SELECT * FROM secret',
+            'WITH secret AS (SELECT 1 AS x) SELECT * FROM `SECRET`',
+            'WITH Secret AS (SELECT 1 AS x) SELECT * FROM secret',
+            'WITH `Secret` AS (SELECT 1 AS x) SELECT * FROM `secret`',
+        ],
+    )
+    def test_bigquery_cte_names_ignore_case_and_backticks(self, bq_rules: RlsRules, sql: str) -> None:
+        """All five shapes return the CTE row on BigQuery, so all five are CTE references here.
+        Refusing them as "ambiguous" or "another scope" would protect nothing and reject real work.
+        """
+        out = rewrite_query(sql, user='petr', dialect='bigquery', rules=bq_rules)
+
+        assert out.applied_rules == []
+
+    @pytest.mark.parametrize(
+        ('sql', 'match'),
+        [
+            # The looser name rule does not loosen the two that matter.
+            ('WITH secret AS (SELECT * FROM `SECRET`) SELECT * FROM secret', 'without RECURSIVE'),
+            ('SELECT * FROM secret WHERE 1 IN (WITH SECRET AS (SELECT 1) SELECT 1)', 'another scope'),
+        ],
+    )
+    def test_bigquery_still_refuses_real_shadowing(self, bq_rules: RlsRules, sql: str, match: str) -> None:
+        with pytest.raises(RlsError, match=match):
+            rewrite_query(sql, user='petr', dialect='bigquery', rules=bq_rules)
+
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            # Snowflake keeps the quoted/unquoted distinction: `"SECRET"` is the base table.
+            'WITH "secret" AS (SELECT 1) SELECT * FROM "SECRET"',
+            'WITH "SECRET" AS (SELECT 1) SELECT * FROM "secret"',
+        ],
+    )
+    def test_snowflake_quoting_rules_are_unchanged(self, rules: RlsRules, sql: str) -> None:
+        with pytest.raises(RlsError, match='another scope'):
+            rewrite_query(sql, user='petr', dialect='snowflake', rules=rules)
+
+    def test_snowflake_rule_keys_stay_case_insensitive(self, rules: RlsRules) -> None:
+        """A workspace FQN from `get_tables` is quoted in the storage case, and Snowflake resolves
+        `"IN.C-CRM"."INVOICES"` and `"in.c-crm"."invoices"` to the same table."""
+        out = rewrite_query('SELECT * FROM "IN.C-CRM"."INVOICES"', user='petr', dialect='snowflake', rules=rules)
+
+        assert out.applied_rules == ['in.c-crm.invoices']
+
+    def test_bigquery_rule_keys_keep_their_case(self, bq_rules: RlsRules) -> None:
+        assert sorted(bq_rules.tables) == ['in_c_crm.invoices', 'in_c_crm.orders', 'in_c_sales.orders']
 
 
 class TestDisclosure:

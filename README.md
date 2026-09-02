@@ -412,7 +412,9 @@ contain dots of their own. There is no bare-name form, and a query must name the
 reference is refused. A database/project name in front of the bucket is ignored — the workspace can
 only reach its own project. On BigQuery the bucket part of a key is normalised the way the server
 names datasets (`in.c-crm` → `in_c_crm`), so the rules file is written in Keboola bucket names for
-both backends.
+both backends. Key matching follows each backend's own name resolution: case-insensitive on
+Snowflake, case-**sensitive** on BigQuery, where `in_c_crm.Invoices` really is a different table
+from `in_c_crm.invoices`.
 
 Limitations:
 
