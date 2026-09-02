@@ -49,7 +49,7 @@ def server_state(*, rls: bool) -> ServerState:
     return ServerState(
         config=Config(),
         runtime_info=ServerRuntimeInfo(transport='stdio'),
-        rls_rules=RlsRules(tables={'invoices': {'petr': 'TRUE'}}) if rls else None,
+        rls_rules=RlsRules(tables={'in.c-crm.invoices': {'petr': 'TRUE'}}, dialect='snowflake') if rls else None,
     )
 
 

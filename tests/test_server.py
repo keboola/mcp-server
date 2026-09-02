@@ -719,7 +719,7 @@ def _rls_server(tmp_path, mocker, *, rls: bool):
     config = Config()
     if rls:
         rules_file = tmp_path / 'rls.yaml'
-        rules_file.write_text("tables:\n  invoices:\n    petr: \"country = 'CZ'\"\n")
+        rules_file.write_text("dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: \"country = 'CZ'\"\n")
         config = Config(rls_rules_path=str(rules_file))
     return create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
 
