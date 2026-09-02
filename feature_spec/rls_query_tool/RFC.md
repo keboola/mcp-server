@@ -162,3 +162,6 @@ rules (`tests/test_server.py`).
 
 `TOOLS.md` regenerated (`tox -e check-tools-docs`). README gets a short "Row-Level Security
 (pilot)" section under the local setup.
+
+Manual/exploratory testing: `examples/rls-demo/` — a Node.js harness that runs the server in RLS
+mode against a real project and shows the rewrite, the applied rules and the refusals per user.

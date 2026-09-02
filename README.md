@@ -411,6 +411,12 @@ Limitations:
 - Other tool docstrings and the bundled project prompt still refer to `query_data`; in RLS mode the
   model must use `query_data_rls` instead. This is a known pilot limitation.
 
+To try the feature by hand, [`examples/rls-demo/`](examples/rls-demo/) is a small Node.js app that
+starts the server in RLS mode and lets you pick a user, type SQL, see the rewritten statement live
+and compare the result across users — plus edit the rules file and reload it. It is an example only:
+it is not part of the server and nothing in `src/` depends on it. See its
+[README](examples/rls-demo/README.md) for the prerequisites and configuration.
+
 ### Do I Need to Start the Server Myself?
 
 | Scenario | Need to Run Manually? | Use This Setup |
