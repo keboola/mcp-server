@@ -1,0 +1,19 @@
+# Questions excluded from the KaiBench regression gate.
+#
+# A question belongs here only when it has been MEASURED as unstable against an unmodified
+# server — not merely observed failing once. The gate compares a single trial per question,
+# so a question with a base pass rate meaningfully below 100% produces phantom regressions
+# at that rate and trains reviewers to ignore the check.
+#
+# Exclusions are reported as warnings on every gated run, so coverage lost here stays
+# visible rather than silently narrowing. Remove an entry once the underlying question is
+# made deterministic.
+#
+# Format: one question ID per line. Blank lines and #-comments ignored.
+
+# ~50% pass rate on unmodified main (6/10 vs 4/10 on a branch, Fisher exact p=0.66 — the
+# instability is the question's own, not any PR's). Six-value all-or-nothing set_comparison
+# over an underspecified multi-source join: date-overlap semantics, weekday/weekend boundary,
+# and aggregation grain are all undefined. Tracked in keboola/KaiBench#80 as the reference
+# case for the semantic layer; remove this entry once those definitions are modelled.
+12
