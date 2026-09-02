@@ -118,6 +118,36 @@ class TestRewriteQuery:
                 ["invoices: country = 'CZ'"],
             ),
             (
+                # A CTE may reference an earlier sibling CTE.
+                'WITH a AS (SELECT * FROM invoices), b AS (SELECT * FROM a) SELECT * FROM b',
+                'snowflake',
+                (
+                    "WITH a AS (SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices), "
+                    'b AS (SELECT * FROM a) SELECT * FROM b'
+                ),
+                ["invoices: country = 'CZ'"],
+            ),
+            (
+                # A recursive CTE references itself from inside its own body.
+                'WITH RECURSIVE r AS (SELECT id FROM invoices UNION ALL SELECT id FROM r) SELECT * FROM r',
+                'snowflake',
+                (
+                    "WITH RECURSIVE r AS (SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                    'UNION ALL SELECT id FROM r) SELECT * FROM r'
+                ),
+                ["invoices: country = 'CZ'"],
+            ),
+            (
+                # A subquery may declare its own CTE as long as the name shadows nothing outside it.
+                'SELECT * FROM invoices WHERE 1 IN (WITH t AS (SELECT 1) SELECT * FROM t)',
+                'snowflake',
+                (
+                    "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                    'WHERE 1 IN (WITH t AS (SELECT 1) SELECT * FROM t)'
+                ),
+                ["invoices: country = 'CZ'"],
+            ),
+            (
                 'SELECT * FROM (SELECT id FROM invoices) sub',
                 'snowflake',
                 "SELECT * FROM (SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices) AS sub",
@@ -204,7 +234,45 @@ class TestRewriteQuery:
             ('SELECT * FROM customers', 'petr', 'snowflake', "table 'customers'"),
             ('SELECT * FROM invoices', 'nobody', 'snowflake', "user 'nobody'"),
             # A CTE named like a protected table would shadow it inside its own body -- refuse.
-            ('WITH invoices AS (SELECT * FROM invoices) SELECT * FROM invoices', 'petr', 'snowflake', 'CTE'),
+            ('WITH invoices AS (SELECT * FROM invoices) SELECT * FROM invoices', 'petr', 'snowflake', 'collide'),
+            # ... whatever the quoting of either side: a quoted `"orders"` CTE and the rule key
+            # `orders` are the same name.
+            ('WITH "orders" AS (SELECT 1) SELECT * FROM ORDERS', 'petr', 'snowflake', 'collide'),
+            # A CTE declared in a nested scope must not make a top-level real table look like a CTE
+            # reference. Each of these used to pass through verbatim, unfiltered.
+            (
+                'SELECT * FROM secret WHERE 1 IN (WITH secret AS (SELECT 1) SELECT 1)',
+                'petr',
+                'snowflake',
+                'another scope',
+            ),
+            (
+                'SELECT * FROM secret WHERE 1 IN (WITH secret AS (SELECT 1) SELECT 1)',
+                'petr',
+                'bigquery',
+                'another scope',
+            ),
+            ('SELECT * FROM secret, (WITH secret AS (SELECT 1) SELECT 1) q', 'petr', 'snowflake', 'another scope'),
+            (
+                'SELECT id FROM secret UNION ALL SELECT 1 FROM (WITH secret AS (SELECT 1) SELECT 1) q',
+                'petr',
+                'snowflake',
+                'another scope',
+            ),
+            # Same trick aimed at a table that does have a rule: caught by the collision guard.
+            (
+                'SELECT * FROM invoices WHERE 1 IN (WITH invoices AS (SELECT 1) SELECT 1)',
+                'petr',
+                'snowflake',
+                'collide',
+            ),
+            # A CTE reference whose quoting differs from the declaration is ambiguous -- the engine
+            # and the rewriter can disagree about whether it resolves to the CTE or a real table.
+            ('WITH "secret" AS (SELECT 1) SELECT * FROM SECRET', 'petr', 'snowflake', 'ambiguous'),
+            # Table functions parse as an `exp.Table` whose `this` is not an identifier: there is no
+            # table name to look a rule up by, so they must be refused, not silently passed through.
+            ('SELECT * FROM my_udtf(1)', 'petr', 'snowflake', 'unsupported table reference'),
+            ('SELECT * FROM invoices(1)', 'petr', 'snowflake', 'unsupported table reference'),
             ('', 'petr', 'snowflake', 'one statement'),
             # An unknown/unsupported dialect must not let a raw sqlglot exception escape.
             ('SELECT * FROM invoices', 'petr', 'not-a-real-dialect', 'dialect'),
@@ -238,6 +306,21 @@ class TestRewriteQuery:
     def test_rewrite_fails_closed(self, rules: RlsRules, sql, user, dialect, match) -> None:
         with pytest.raises(RlsError, match=match):
             rewrite_query(sql, user=user, dialect=dialect, rules=rules)
+
+    def test_cte_colliding_with_qualified_rule_key_fails_closed(self) -> None:
+        """A CTE alias is always bare, so it can never equal a `<schema>.<table>` rule key
+        literally -- it is the key's bare table name it shadows. The collision guard must compare
+        against that, otherwise `WITH invoices AS (...)` slips past rules keyed
+        `in.c-crm.invoices`.
+        """
+        scoped_rules = RlsRules(tables={'in.c-crm.invoices': {'petr': "country = 'CZ'"}})
+        with pytest.raises(RlsError, match='collide'):
+            rewrite_query(
+                'SELECT * FROM invoices WHERE 1 IN (WITH invoices AS (SELECT 1) SELECT 1)',
+                user='petr',
+                dialect='snowflake',
+                rules=scoped_rules,
+            )
 
     def test_rewrite_predicate_invalid_for_dialect_fails_closed(self) -> None:
         """A predicate can pass `RlsRules.load()`'s dialect-agnostic check yet still fail to parse
@@ -283,6 +366,10 @@ class TestOutputInvariant:
             ("SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS i JOIN orders o ON TRUE", 'unwrapped'),
             # A wrapper that is not `SELECT *` would silently drop the RLS predicate's columns.
             ('SELECT * FROM (SELECT id FROM invoices) AS invoices', 'unwrapped table reference'),
+            # The CTE that would excuse `secret` is declared in a nested scope, so it excuses
+            # nothing: `secret` is a real, unwrapped table here.
+            ('SELECT * FROM secret WHERE 1 IN (WITH secret AS (SELECT 1) SELECT 1)', 'another scope'),
+            ('WITH "secret" AS (SELECT 1) SELECT * FROM SECRET', 'ambiguous'),
         ],
     )
     def test_rejects(self, sql: str, match: str) -> None:
@@ -298,6 +385,19 @@ class TestOutputInvariant:
             (
                 "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
                 'UNION ALL SELECT id FROM (SELECT * FROM orders WHERE FALSE) AS orders'
+            ),
+            # A CTE reference from a scope that really does declare it, at every nesting shape.
+            (
+                "WITH a AS (SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices), "
+                'b AS (SELECT * FROM a) SELECT * FROM b'
+            ),
+            (
+                "WITH RECURSIVE r AS (SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                'UNION ALL SELECT id FROM r) SELECT * FROM r'
+            ),
+            (
+                "SELECT 1 FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                'WHERE 1 IN (WITH t AS (SELECT 1) SELECT * FROM t)'
             ),
         ],
     )
