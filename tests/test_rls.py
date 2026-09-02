@@ -98,10 +98,18 @@ class TestRewriteQuery:
                 'snowflake',
                 (
                     "SELECT i.id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS i "
-                    "JOIN (SELECT * FROM \"in.c-crm\".\"orders\" WHERE country = 'CZ' AND status <> 'draft') AS \"o\" "
+                    "JOIN (SELECT * FROM \"in.c-crm\".\"orders\" WHERE country = 'CZ' AND status <> 'draft') AS o "
                     'ON o.id = i.id'
                 ),
                 ["invoices: country = 'CZ'", "in.c-crm.orders: country = 'CZ' AND status <> 'draft'"],
+            ),
+            (
+                # The original alias is quoted -- the rewrite must keep it quoted, not borrow the
+                # table identifier's own (unquoted) quoting.
+                'SELECT "I".id FROM invoices AS "I"',
+                'snowflake',
+                'SELECT "I".id FROM (SELECT * FROM invoices WHERE country = \'CZ\') AS "I"',
+                ["invoices: country = 'CZ'"],
             ),
             (
                 'WITH x AS (SELECT * FROM invoices) SELECT * FROM x',
@@ -143,19 +151,32 @@ class TestRewriteQuery:
         assert out == RewrittenQuery(sql=expected_sql, applied_rules=expected_rules)
 
     @pytest.mark.parametrize(
-        ('sql', 'user', 'match'),
+        ('sql', 'user', 'dialect', 'match'),
         [
-            ('DELETE FROM invoices', 'petr', 'SELECT'),
-            ('INSERT INTO invoices SELECT * FROM orders', 'petr', 'SELECT'),
-            ('SELECT 1; SELECT 2', 'petr', 'one statement'),
-            ('SELCT nonsense', 'petr', 'SELECT'),
-            ('SELECT * FROM customers', 'petr', "table 'customers'"),
-            ('SELECT * FROM invoices', 'nobody', "user 'nobody'"),
+            ('DELETE FROM invoices', 'petr', 'snowflake', 'SELECT'),
+            ('INSERT INTO invoices SELECT * FROM orders', 'petr', 'snowflake', 'SELECT'),
+            ('SELECT 1; SELECT 2', 'petr', 'snowflake', 'one statement'),
+            ('SELCT nonsense', 'petr', 'snowflake', 'SELECT'),
+            ('SELECT * FROM customers', 'petr', 'snowflake', "table 'customers'"),
+            ('SELECT * FROM invoices', 'nobody', 'snowflake', "user 'nobody'"),
             # A CTE named like a protected table would shadow it inside its own body -- refuse.
-            ('WITH invoices AS (SELECT * FROM invoices) SELECT * FROM invoices', 'petr', 'CTE'),
-            ('', 'petr', 'one statement'),
+            ('WITH invoices AS (SELECT * FROM invoices) SELECT * FROM invoices', 'petr', 'snowflake', 'CTE'),
+            ('', 'petr', 'snowflake', 'one statement'),
+            # An unknown/unsupported dialect must not let a raw sqlglot exception escape.
+            ('SELECT * FROM invoices', 'petr', 'not-a-real-dialect', 'dialect'),
         ],
     )
-    def test_rewrite_fails_closed(self, rules: RlsRules, sql, user, match) -> None:
+    def test_rewrite_fails_closed(self, rules: RlsRules, sql, user, dialect, match) -> None:
         with pytest.raises(RlsError, match=match):
-            rewrite_query(sql, user=user, dialect='snowflake', rules=rules)
+            rewrite_query(sql, user=user, dialect=dialect, rules=rules)
+
+    def test_rewrite_predicate_invalid_for_dialect_fails_closed(self) -> None:
+        """A predicate can pass `RlsRules.load()`'s dialect-agnostic check yet still fail to parse
+        under the workspace dialect used at rewrite time (see the module docstring). Build the
+        rules object directly, bypassing `load()`, so the rewrite-time guard is exercised on its
+        own; the underlying `sqlglot.parse_one(..., dialect=dialect)` call must not raise a raw
+        `sqlglot` exception.
+        """
+        bad_rules = RlsRules(tables={'invoices': {'petr': 'country = = 1'}})
+        with pytest.raises(RlsError):
+            rewrite_query('SELECT * FROM invoices', user='petr', dialect='snowflake', rules=bad_rules)

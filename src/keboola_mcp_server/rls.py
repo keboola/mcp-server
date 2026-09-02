@@ -5,6 +5,12 @@ replaces every table referenced by a SELECT with `(SELECT * FROM <table> WHERE <
 the caller can only ever see the slice the admin wrote down for them. Everything here is
 fail-closed: a missing rule, an unsupported statement or an unparseable query raises `RlsError`
 and no SQL is executed. See `feature_spec/rls_query_tool/RFC.md`.
+
+Predicates are authored in the workspace's own SQL dialect and are never transpiled: a rules file
+written for Snowflake is not portable to a BigQuery workspace (e.g. a double-quoted identifier is
+a column reference on Snowflake but a string literal on BigQuery). One rules file serves one
+workspace backend. `RlsRules.load()` only performs a dialect-agnostic syntax check; the real,
+dialect-specific parse happens in `rewrite_query()` at rewrite time and is fail-closed too.
 """
 
 import dataclasses
@@ -42,7 +48,15 @@ class RlsRules:
 
     @classmethod
     def load(cls, path: str) -> 'RlsRules':
-        """Read and validate the YAML rules file. Raises `RlsError` on any problem."""
+        """Read and validate the YAML rules file. Raises `RlsError` on any problem.
+
+        This only checks that each predicate is well-formed, dialect-agnostic SQL -- it does not
+        know which workspace dialect the predicate will eventually run under. A double-quoted
+        identifier, for instance, is a column reference on Snowflake but a string literal on
+        BigQuery; that mismatch is not, and cannot be, caught here. Predicates must be written for
+        the dialect of the workspace they are used against; `rewrite_query()` does the real,
+        dialect-specific parse (and fails closed if that parse fails too).
+        """
         file = Path(path)
         if not file.is_file():
             raise RlsError(f'RLS rules file not found: {path}')
@@ -108,8 +122,12 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
     :raises RlsError: on anything other than one SELECT statement whose every table has a rule
     """
     try:
+        sqlglot.Dialect.get_or_raise(dialect)
+    except Exception as e:
+        raise RlsError(f'RLS: unsupported SQL dialect {dialect!r}') from e
+    try:
         statements = sqlglot.parse(sql, dialect=dialect)
-    except sqlglot.errors.ParseError as e:
+    except sqlglot.errors.SqlglotError as e:
         raise RlsError(f'RLS: cannot parse SQL: {e}') from e
     if len(statements) != 1 or statements[0] is None:
         raise RlsError('RLS: exactly one statement is allowed')
@@ -132,12 +150,24 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
             return node  # reference to a CTE defined in this statement, not a real table
         key, predicate = rules.predicate_for(table_name=node.name, schema=node.db or None, user=user)
         applied.append(f'{key}: {predicate}')
-        alias = node.alias or node.name
+        # Reuse the original alias identifier as-is (preserving its own quoting) so references to
+        # it elsewhere in the query (e.g. an unquoted `o.id` in an ON clause) still resolve. Only
+        # fall back to the table's own name/quoting when the table was not aliased at all -- using
+        # the table identifier's quoting for an *existing* alias would silently change whether the
+        # alias is case-sensitive, breaking those other references.
+        alias_node = node.args.get('alias')
+        alias_identifier = (
+            alias_node.this.copy() if alias_node is not None else exp.to_identifier(node.name, quoted=node.this.quoted)
+        )
         inner = exp.Table(this=node.this, db=node.args.get('db'), catalog=node.args.get('catalog'))
-        filtered = exp.select('*').from_(inner).where(sqlglot.parse_one(predicate, dialect=dialect, into=exp.Condition))
+        try:
+            predicate_expr = sqlglot.parse_one(predicate, dialect=dialect, into=exp.Condition)
+        except sqlglot.errors.SqlglotError as e:
+            raise RlsError(f"RLS: predicate for table '{key}' is not valid SQL for dialect {dialect!r}: {e}") from e
+        filtered = exp.select('*').from_(inner).where(predicate_expr)
         # Returning a new node stops `transform` from descending into it, so the inner table is
         # not wrapped a second time.
-        return exp.Subquery(this=filtered, alias=exp.TableAlias(this=exp.to_identifier(alias, quoted=node.this.quoted)))
+        return exp.Subquery(this=filtered, alias=exp.TableAlias(this=alias_identifier))
 
     rewritten = tree.transform(_transform, copy=True)
     return RewrittenQuery(sql=rewritten.sql(dialect=dialect), applied_rules=applied)
