@@ -86,10 +86,11 @@ error and no SQL is sent to the workspace.
 
 ```python
 async def query_data_rls(
-    sql_query: str,      # same semantics as query_data
-    query_name: str,     # same semantics as query_data
-    user: str,           # REQUIRED — identity used to select the RLS rules
+    sql_query: str,           # same semantics as query_data
+    query_name: str,          # same semantics as query_data
     ctx: Context,
+    principal: str | None,    # identity used to select the RLS rules; REQUIRED in `argument` mode
+                              # and REFUSED in `header` mode (see "Trust boundary")
 ) -> RlsQueryDataOutput
 ```
 
@@ -114,11 +115,29 @@ Query execution (progress notification, disconnect watching, CSV serialisation) 
 `create_server()` loads the rules when `config.rls_rules_path` is set and stores them in
 `ServerState` so the tool can read them from `ctx.request_context.lifespan_context`.
 
-### Trust boundary (documented limitation)
+### Trust boundary
 
-The `user` argument is supplied by the MCP client / model; the server cannot verify it. This is
-the same trust level as today's `X-*` request headers and is acceptable for the pilot. A later
-iteration may bind the user from an authenticated HTTP header instead of a tool argument.
+Where the principal comes from is a deployment decision, `config.rls_principal_source`
+(`KBC_RLS_PRINCIPAL_SOURCE` / `--rls-principal-source`), with no default: a server started with
+`rls_rules_path` and no source raises at startup, because neither mode is a safe default for the
+other's deployment.
+
+- `header` — the principal is the `X-RLS-Principal` request header (`Config.rls_principal`, the one
+  RLS field in `_HEADER_ELIGIBLE_FIELDS`; it is `header_only`, so no env var or CLI flag can pin it
+  server-wide). The `principal` tool argument must be omitted — passing it is refused, not ignored,
+  and a missing header is refused as well. The model can neither choose nor override the identity.
+- `argument` — the principal is the `principal` tool argument, supplied by the MCP client / model and
+  verified by nothing. A stray `X-RLS-Principal` header is ignored with a WARNING. This is the pilot
+  mode, acceptable only behind a trusted client.
+
+The intended production shape is a wrapper application: it authenticates its own end users (AD,
+Google, Okta, its own sessions), it is the only client of the MCP server, and it asserts the
+authenticated user in `X-RLS-Principal` on every request. The MCP server does not verify that header
+— it trusts the wrapper — so the MCP endpoint must be reachable only from the wrapper, never directly
+from an LLM, an end user's MCP client, or the public internet. Rule keys are consequently whatever
+strings the wrapper asserts: e-mail addresses, IdP subject ids or group names all work, provided the
+rules file spells them exactly as the wrapper sends them. Each call is logged with `source=` so a
+header-bound deployment can be audited for calls that were not.
 
 ### Fail-closed guards added after adversarial review
 

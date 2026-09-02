@@ -381,7 +381,9 @@ docker run \
 ### Row-Level Security (pilot)
 
 Restrict what each user can read from a shared table by giving the server a YAML rules file and
-starting it with `--rls-rules-path <file>` (or `KBC_RLS_RULES_PATH=<file>`). When set, the server
+starting it with `--rls-rules-path <file>` (or `KBC_RLS_RULES_PATH=<file>`), plus
+`--rls-principal-source header|argument` (or `KBC_RLS_PRINCIPAL_SOURCE`) to say where the identity
+comes from — see [Who is the principal?](#who-is-the-principal) below. When set, the server
 exposes `query_data_rls` **instead of** `query_data`; the unrestricted tool is not registered at all.
 
 ```yaml
@@ -396,8 +398,8 @@ tables:
     petr: "country = 'CZ' AND status <> 'draft'"
 ```
 
-`query_data_rls(sql_query, query_name, user)` rewrites every table in the SELECT to
-`(SELECT * FROM <table> WHERE <predicate>)` for that user, runs it, and reports which tables were
+`query_data_rls(sql_query, query_name, principal)` rewrites every table in the SELECT to
+`(SELECT * FROM <table> WHERE <predicate>)` for that principal, runs it, and reports which tables were
 filtered in `applied_rules`. That list holds table keys only — the predicates themselves are never
 returned to the caller, since the filter is the admin's policy and disclosing it tells the reader
 what was withheld; failures that involve a predicate say only which rule could not be applied, with
@@ -416,18 +418,54 @@ both backends. Key matching follows each backend's own name resolution: case-ins
 Snowflake, case-**sensitive** on BigQuery, where `in_c_crm.Invoices` really is a different table
 from `in_c_crm.invoices`.
 
-Limitations:
+`query_data_rls` refuses any query longer than 20,000 characters, and any query too deeply nested for
+the rewriter to parse, before it reaches the workspace. The rewrite itself runs off the event loop, so
+a pathological query slows down only the session that sent it.
 
-- The `user` argument is supplied by the MCP client / model and is not verified by the server
-  (same trust level as the `X-*` request headers). Suitable for a pilot behind a trusted client.
-- Other tool docstrings and the bundled project prompt still refer to `query_data`; in RLS mode the
-  model must use `query_data_rls` instead. This is a known pilot limitation.
+A server started with `--rls-rules-path` is read-only as a whole: it exposes, and accepts calls to,
+only tools annotated `readOnlyHint=True`. Write tools such as `run_job`, `create_config`,
+`create_sql_transformation` or `deploy_data_app` are absent from `tools/list` and are refused if
+called, regardless of `X-Allowed-Tools` or the token role.
+
+#### Who is the principal?
+
+The principal is the identity the rules are keyed by. Where it comes from is a deployment decision,
+made once with `--rls-principal-source` / `KBC_RLS_PRINCIPAL_SOURCE`; a server with a rules file and
+no source refuses to start, because neither mode is a safe default for the other's deployment.
+
+- **`header`** (production shape) — the principal is the `X-RLS-Principal` request header. The
+  `principal` tool argument must be omitted; passing it is refused rather than ignored, and a request
+  without the header is refused too. The model can neither choose nor override the identity.
+- **`argument`** (pilot/demo) — the principal is the `principal` tool argument, supplied by the MCP
+  client or the model and not verified by anything. An `X-RLS-Principal` header is ignored in this
+  mode, with a warning in the log.
+
+The wrapper architecture behind `header` mode: an application authenticates its own end users
+(Active Directory, Google, Okta, its own session cookie — the MCP server has no opinion). That
+application is the only client of this MCP server, and it asserts the authenticated user on every
+request in the `X-RLS-Principal` header. The server does **not** verify the header — it trusts the
+wrapper — so the MCP endpoint must be reachable only from that application, never directly from an
+LLM, an end user's MCP client, or the public internet.
+
+Rule keys are therefore whatever strings the calling application asserts: e-mail addresses
+(`petr@example.com`), IdP subject ids (`a1b2c3-...`), or group names (`sales-cz`) all work equally
+well, as long as the rules file uses the very same strings the wrapper sends. Every query is logged
+with `outcome=`, `principal=` and `source=header|argument`, so a deployment that is meant to be
+header-bound can be audited for calls that were not.
 
 To try the feature by hand, [`examples/rls-demo/`](examples/rls-demo/) is a small Node.js app that
-starts the server in RLS mode and lets you pick a user, type SQL, see the rewritten statement live
-and compare the result across users — plus edit the rules file and reload it. It is an example only:
-it is not part of the server and nothing in `src/` depends on it. See its
-[README](examples/rls-demo/README.md) for the prerequisites and configuration.
+plays the wrapper role: it runs the server in RLS header mode, offers a mock sign-in, and lets you
+type SQL, see the rewritten statement live and compare the result across sign-ins — plus edit the
+rules file and reload it. It is an example only: it is not part of the server and nothing in `src/`
+depends on it. See its [README](examples/rls-demo/README.md) for the prerequisites and configuration.
+
+Limitations:
+
+- The server never verifies the principal itself. In `header` mode that trust is placed in the
+  calling application (which must be the only client able to reach the server); in `argument` mode it
+  is placed in the MCP client / model, which is suitable only for a pilot behind a trusted client.
+- Other tool docstrings and the bundled project prompt still refer to `query_data`; in RLS mode the
+  model must use `query_data_rls` instead. This is a known pilot limitation.
 
 ### Do I Need to Start the Server Myself?
 

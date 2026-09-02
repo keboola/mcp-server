@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import ServerState, get_http_request_or_none
+from keboola_mcp_server.mcp import RLS_PRINCIPAL, ServerState, get_http_request_or_none
 from keboola_mcp_server.rls import RlsRules, rewrite_query
 from keboola_mcp_server.workspace import JobSubmittedInfo, QueryResult, SqlSelectData, WorkspaceManager
 
@@ -316,7 +316,8 @@ def _rule_table_keys(applied_rules: list[str]) -> list[str]:
 def _log_rls_outcome(
     outcome: str,
     *,
-    user: str,
+    principal: str | None,
+    source: str | None,
     query_name: str,
     tables: list[str] | None = None,
     rows: int | None = None,
@@ -324,12 +325,15 @@ def _log_rls_outcome(
 ) -> None:
     """Emit the one audit line per `query_data_rls` call: `outcome=ok` or `outcome=refused`.
 
-    One shape for both outcomes so the log is evaluable — an operator can count refusals per user, or
-    find which tables a user actually read, without parsing free-form messages. `user`, `query_name`
-    and `reason` are all model-supplied, so they are quoted with `!r`: a newline or a fake `outcome=`
-    inside them cannot forge a second log line.
+    One shape for both outcomes so the log is evaluable — an operator can count refusals per
+    principal, or find which tables a principal actually read, without parsing free-form messages.
+    `source` records which of the two modes answered "who is this?" for this very call, so a
+    deployment that is supposed to be header-bound can be audited for `source=argument` lines.
+    `principal` (in argument mode), `query_name` and `reason` are model-supplied, so they are quoted
+    with `!r`: a newline or a fake `outcome=` inside them cannot forge a second log line. Both
+    `principal` and `source` are None when the call was refused before the identity was resolved.
     """
-    fields = [f'outcome={outcome}', f'user={user!r}', f'query={query_name!r}']
+    fields = [f'outcome={outcome}', f'principal={principal!r}', f'source={source}', f'query={query_name!r}']
     if tables is not None:
         fields.append(f'tables={tables}')
     if rows is not None:
@@ -341,6 +345,48 @@ def _log_rls_outcome(
         LOG.info(line)
     else:
         LOG.warning(line)
+
+
+def _resolve_rls_principal(ctx: Context, argument: str | None) -> tuple[str, str]:
+    """Answer "on whose behalf does this query run?" and return `(principal, source)`.
+
+    The answer comes from exactly one place, chosen at deployment time by
+    `Config.rls_principal_source` — never from whichever of the two happens to be present:
+
+    * `header`: the `X-RLS-Principal` value the calling application asserted for this request
+      (`Config.rls_principal`, carried into the session state per request). A missing header is a
+      refusal, and so is a `principal` tool argument — falling back to a model-supplied name, or
+      quietly dropping it, would both defeat the point of binding the identity to the transport.
+    * `argument`: the `principal` tool argument (the pilot mode; the model names the user). A stray
+      header is ignored with a warning rather than honoured, so a proxy that adds one cannot switch
+      identities behind the operator's back.
+
+    :raises ValueError: when the configured source cannot produce exactly one principal.
+    """
+    source = ServerState.from_context(ctx).config.rls_principal_source
+    header_value = (ctx.session.state.get(RLS_PRINCIPAL) or '').strip()
+    # The model may send whitespace or an empty string; both mean "not supplied".
+    argument_value = (argument or '').strip()
+
+    if source == 'header':
+        if argument is not None:
+            raise ValueError('RLS: principal must not be passed as an argument in header mode')
+        if not header_value:
+            raise ValueError('RLS: X-RLS-Principal header is required')
+        return header_value, 'header'
+
+    if source == 'argument':
+        if header_value:
+            LOG.warning(
+                'RLS: ignoring the X-RLS-Principal header -- this server is configured with '
+                'rls_principal_source=argument, so the principal comes from the tool argument.'
+            )
+        if not argument_value:
+            raise ValueError('RLS: principal argument is required')
+        return argument_value, 'argument'
+
+    # Unreachable on a server built by `create_server()`, which refuses to start without a source.
+    raise ValueError('RLS: no principal source is configured on this server.')
 
 
 def _to_csv(data: SqlSelectData) -> str:
@@ -443,27 +489,37 @@ async def query_data_rls(
             )
         ),
     ],
-    user: Annotated[
-        str,
+    ctx: Context,
+    principal: Annotated[
+        str | None,
         Field(
             description=(
-                'Name of the user on whose behalf the query runs. Row-level-security rules are selected by this '
-                'name; every table in the query must have a rule for it, otherwise the query is refused. '
-                'Leading/trailing whitespace is ignored; matching is case-insensitive.'
+                'Name of the user (the "principal") on whose behalf the query runs. Row-level-security rules are '
+                'selected by this name; every table in the query must have a rule for it, otherwise the query is '
+                'refused. Leading/trailing whitespace is ignored; matching is case-insensitive. '
+                'OMIT this argument when the server takes the principal from the X-RLS-Principal request header '
+                '(the calling application asserts it) -- passing it there is refused, not ignored.'
             )
         ),
-    ],
-    ctx: Context,
+    ] = None,
 ) -> RlsQueryDataOutput:
     """
-    Executes an SQL SELECT query with row-level security applied for the given user.
+    Executes an SQL SELECT query with row-level security applied for one principal (user).
 
     Every table referenced by the query is replaced by a filtered view defined by the server-side RLS
-    rules for `user`. The result is therefore a SLICE of the data, never the whole table; the
+    rules for that principal. The result is therefore a SLICE of the data, never the whole table; the
     `applied_rules` field of the output names the tables that were filtered — always tell the user.
-    Tables that have no rule for `user`, non-SELECT statements and multi-statement input are refused.
-    Rules are keyed `<bucket>.<table>`, so every table in the query must be written with its bucket
+    Tables that have no rule for the principal, non-SELECT statements and multi-statement input are
+    refused. Rules are keyed `<bucket>.<table>`, so every table in the query must be written with its bucket
     (`"in.c-crm"."orders"` on Snowflake, `` `in_c_crm`.`orders` `` on BigQuery); a bare table name is refused.
+
+    WHO THE PRINCIPAL IS — one of two server-configured modes:
+    * `header` mode: the principal is the `X-RLS-Principal` header that the calling application sets
+      after authenticating its own user. OMIT the `principal` argument; passing it is refused.
+    * `argument` mode: pass the principal as the `principal` argument.
+    The server does not verify the principal in either mode: in header mode it trusts the calling
+    application (which must be the only client that can reach the server), and in argument mode it
+    trusts the MCP client.
 
     The SQL requirements below are identical to the `query_data` tool.
 
@@ -480,13 +536,16 @@ async def query_data_rls(
       results beyond its row/character limits and a truncated result is a contiguous prefix, not a sample.
     * Compute aggregates (COUNT, GROUP BY, SUM, AVG, etc.) in SQL rather than pulling raw rows.
     """
-    # The user name comes from the model, so it may carry stray whitespace; rule lookup itself is
-    # case-insensitive. Stripped up front so every log line below names the user we actually matched.
-    user = user.strip()
+    # Set as soon as the identity is known, so a refusal before that point still logs one line --
+    # with `principal=None source=None` rather than a name it never actually resolved.
+    resolved: str | None = None
+    source: str | None = None
     try:
         rules = ServerState.from_context(ctx).rls_rules
         if rules is None:
             raise ValueError('RLS rules are not configured on this server.')
+        # Whitespace is stripped inside; rule lookup itself is case-insensitive.
+        resolved, source = _resolve_rls_principal(ctx, principal)
         # Refuse oversized input before touching the workspace or the parser: the size cap is the
         # cheapest check we have, and it must not be paid for with a round-trip.
         if len(sql_query) > RLS_MAX_QUERY_CHARS:
@@ -498,7 +557,7 @@ async def query_data_rls(
         # the rewrite runs in a worker thread: a pathological (but under-cap) query then slows down
         # this one session instead of stalling the event loop for every other in-flight request.
         try:
-            rewritten = await asyncio.to_thread(rewrite_query, sql_query, user=user, dialect=dialect, rules=rules)
+            rewritten = await asyncio.to_thread(rewrite_query, sql_query, user=resolved, dialect=dialect, rules=rules)
         except RecursionError as e:
             # sqlglot's parser recurses per nesting level, so deeply nested input hits Python's
             # recursion limit. Turn it into an ordinary refusal -- the caller gets a refusal, not a
@@ -506,13 +565,18 @@ async def query_data_rls(
             raise ValueError('RLS: query too deeply nested') from e
     except ValueError as e:
         # Every fail-closed path lands here: no data has left the workspace, so this is a refusal.
-        _log_rls_outcome('refused', user=user, query_name=query_name, reason=str(e))
+        _log_rls_outcome('refused', principal=resolved, source=source, query_name=query_name, reason=str(e))
         raise
 
-    LOG.debug(f'RLS applied for user {user!r} in query {query_name!r}: {rewritten.applied_rules}')
+    LOG.debug(f'RLS applied for principal {resolved!r} in query {query_name!r}: {rewritten.applied_rules}')
     data, message = await _execute_and_serialize(rewritten.sql, query_name, ctx)
     _log_rls_outcome(
-        'ok', user=user, query_name=query_name, tables=_rule_table_keys(rewritten.applied_rules), rows=len(data.rows)
+        'ok',
+        principal=resolved,
+        source=source,
+        query_name=query_name,
+        tables=_rule_table_keys(rewritten.applied_rules),
+        rows=len(data.rows),
     )
     return RlsQueryDataOutput(
         query_name=query_name, csv_data=_to_csv(data), message=message, applied_rules=rewritten.applied_rules

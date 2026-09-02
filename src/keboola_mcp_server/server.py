@@ -258,6 +258,19 @@ def create_server(
     # startup, so a broken file refuses to start the server instead of failing the first query.
     rls_rules = RlsRules.load(config.rls_rules_path) if config.rls_rules_path else None
 
+    # Where the principal comes from is a security decision, not a convenience: 'header' means an
+    # authenticating wrapper asserts the identity per request, 'argument' means the model names it.
+    # Neither is a safe default for the other's deployment, so RLS mode refuses to start until the
+    # operator has said which one this is.
+    if rls_rules is not None and not config.rls_principal_source:
+        raise RuntimeError(
+            'RLS is enabled (rls_rules_path) but no principal source is configured. Set '
+            'KBC_RLS_PRINCIPAL_SOURCE (or --rls-principal-source) to "header" -- the principal is '
+            'taken from the X-RLS-Principal header asserted by the calling application, which must '
+            'be the only client able to reach this server -- or to "argument", where the MCP client '
+            'or model supplies it as the `principal` tool argument (pilot/demo only, unverified).'
+        )
+
     # Initialize FastMCP server with system lifespan
     LOG.info(f'Creating server with config: {config}')
     server_state = ServerState(

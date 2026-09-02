@@ -63,6 +63,14 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         metavar='PATH',
         help='YAML file with row-level-security rules. When set, only the query_data_rls tool is registered.',
     )
+    parser.add_argument(
+        '--rls-principal-source',
+        choices=['header', 'argument'],
+        help='Where query_data_rls takes the RLS principal from: "header" (the X-RLS-Principal header '
+        'asserted by the calling application, which must be the only client able to reach this server) '
+        'or "argument" (the `principal` tool argument supplied by the MCP client/model -- pilot only). '
+        'Required whenever --rls-rules-path is set; there is no default.',
+    )
     parser.add_argument('--host', default='localhost', metavar='STR', help='The host to listen on.')
     parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
     parser.add_argument(
@@ -567,6 +575,7 @@ async def run_server(args: list[str] | None = None) -> None:
             workspace_schema=parsed_args.workspace_schema,
             workspace_id=parsed_args.workspace_id,
             rls_rules_path=parsed_args.rls_rules_path,
+            rls_principal_source=parsed_args.rls_principal_source,
         ).replace_by(os.environ)
 
         # Local dev convenience, for stdio and streamable-http alike: with no token configured (CLI,

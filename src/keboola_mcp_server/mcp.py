@@ -64,6 +64,11 @@ if TYPE_CHECKING:
 
 LOG = logging.getLogger(__name__)
 CONVERSATION_ID = 'conversation_id'
+RLS_PRINCIPAL = 'rls_principal'
+"""Session-state key holding this request's `X-RLS-Principal` value (None when the header was
+absent). Written by `create_session_state` from the per-request `Config`, which is rebuilt from the
+request's headers on every single request -- so `query_data_rls` reads the principal of the call it
+is serving, never one left over from an earlier call on a persisted session."""
 
 R = TypeVar('R')
 T = TypeVar('T')
@@ -916,6 +921,10 @@ class SessionStateMiddleware(fmw.Middleware):
             raise
 
         state[CONVERSATION_ID] = config.conversation_id
+        # The RLS principal is per-request by construction (`Config.rls_principal` is header-only),
+        # so it is carried into the session state the same way as the conversation id -- the state
+        # dict is rebuilt for every request, so nothing here can outlive the call it belongs to.
+        state[RLS_PRINCIPAL] = config.rls_principal
         return state
 
 

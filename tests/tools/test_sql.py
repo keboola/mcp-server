@@ -14,6 +14,7 @@ from mcp.types import ProgressNotification
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
+from keboola_mcp_server.mcp import RLS_PRINCIPAL
 from keboola_mcp_server.rls import RlsRules
 from keboola_mcp_server.tools import sql as sql_tools
 from keboola_mcp_server.tools.sql import (
@@ -101,12 +102,25 @@ async def test_query_data(
     assert result.csv_data == expected_csv
 
 
+def _set_principal_source(ctx: Context, source: str | None) -> None:
+    """Switch the server's deployment-level RLS principal source (`header` or `argument`)."""
+    state = ctx.request_context.lifespan_context
+    ctx.request_context.lifespan_context = dataclasses.replace(
+        state, config=dataclasses.replace(state.config, rls_principal_source=source)
+    )
+
+
 @pytest.fixture
 def rls_context(mcp_context_client: Context, mocker) -> tuple[Context, WorkspaceManager]:
-    """`mcp_context_client` with RLS rules in the server state and a Snowflake workspace mock."""
+    """`mcp_context_client` with RLS rules in the server state and a Snowflake workspace mock.
+
+    Defaults to `argument` mode -- the header-mode tests switch it with `_set_principal_source`.
+    """
     rules = RlsRules(tables={'in.c-crm.invoices': {'petr': "country = 'CZ'"}}, dialect='snowflake')
     state = mcp_context_client.request_context.lifespan_context
-    mcp_context_client.request_context.lifespan_context = dataclasses.replace(state, rls_rules=rules)
+    mcp_context_client.request_context.lifespan_context = dataclasses.replace(
+        state, rls_rules=rules, config=dataclasses.replace(state.config, rls_principal_source='argument')
+    )
     manager = mocker.AsyncMock(WorkspaceManager)
     manager.get_sql_dialect.return_value = 'Snowflake'
     manager.execute_query.return_value = QueryResult(
@@ -120,7 +134,9 @@ def rls_context(mcp_context_client: Context, mocker) -> tuple[Context, Workspace
 async def test_query_data_rls_rewrites_and_discloses(rls_context) -> None:
     ctx, manager = rls_context
 
-    result = await query_data_rls('SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"', 'Invoice Count', 'Petr', ctx)
+    result = await query_data_rls(
+        'SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"', 'Invoice Count', ctx, principal='Petr'
+    )
 
     assert isinstance(result, RlsQueryDataOutput)
     assert result.csv_data == 'n\r\n3\r\n'
@@ -132,14 +148,14 @@ async def test_query_data_rls_rewrites_and_discloses(rls_context) -> None:
 
 
 @pytest.mark.asyncio
-async def test_query_data_rls_strips_user_and_logs_it_quoted(rls_context, caplog) -> None:
-    """The `user` value comes from the model, so it may carry stray whitespace (matching must still
-    work) and arbitrary characters (the log line must quote it rather than splice it in raw)."""
+async def test_query_data_rls_strips_principal_and_logs_it_quoted(rls_context, caplog) -> None:
+    """The principal may carry stray whitespace (matching must still work) and arbitrary characters
+    (the log line must quote it rather than splice it in raw)."""
     ctx, manager = rls_context
 
     with caplog.at_level('INFO', logger='keboola_mcp_server.tools.sql'):
         result = await query_data_rls(
-            'SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"', 'Invoice Count', '  Petr\n', ctx
+            'SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"', 'Invoice Count', ctx, principal='  Petr\n'
         )
 
     assert result.applied_rules == ['in.c-crm.invoices']
@@ -165,7 +181,104 @@ async def test_query_data_rls_fails_closed(rls_context, sql: str, user: str, mat
     ctx, manager = rls_context
 
     with pytest.raises(ValueError, match=match):
-        await query_data_rls(sql, 'Bad Query', user, ctx)
+        await query_data_rls(sql, 'Bad Query', ctx, principal=user)
+
+    manager.execute_query.assert_not_called()
+
+
+_RLS_SQL = 'SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"'
+_RLS_REWRITTEN = 'SELECT COUNT(*) AS n FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices"'
+
+
+@pytest.mark.asyncio
+async def test_query_data_rls_header_mode_takes_the_principal_from_the_header(rls_context, caplog) -> None:
+    """In header mode the identity comes from the authenticating wrapper, not from the model: the
+    tool argument is absent and the `X-RLS-Principal` value drives the rule lookup."""
+    ctx, manager = rls_context
+    _set_principal_source(ctx, 'header')
+    ctx.session.state[RLS_PRINCIPAL] = 'Petr'
+
+    with caplog.at_level('INFO', logger='keboola_mcp_server.tools.sql'):
+        result = await query_data_rls(_RLS_SQL, 'Invoice Count', ctx)
+
+    assert result.applied_rules == ['in.c-crm.invoices']
+    assert manager.execute_query.call_args.args[0] == _RLS_REWRITTEN
+    assert 'source=header' in caplog.text
+    assert "principal='Petr'" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('header_value', [None, '', '   '])
+async def test_query_data_rls_header_mode_refuses_without_the_header(rls_context, header_value) -> None:
+    """No header, no query: falling back to anything (a default principal, the model's own idea of
+    who it is) would hand out unfiltered or wrongly filtered rows to an unauthenticated caller."""
+    ctx, manager = rls_context
+    _set_principal_source(ctx, 'header')
+    if header_value is not None:
+        ctx.session.state[RLS_PRINCIPAL] = header_value
+
+    with pytest.raises(ValueError, match='RLS: X-RLS-Principal header is required'):
+        await query_data_rls(_RLS_SQL, 'Invoice Count', ctx)
+
+    manager.get_sql_dialect.assert_not_called()
+    manager.execute_query.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('header_value', [None, 'Petr'])
+async def test_query_data_rls_header_mode_refuses_a_principal_argument(rls_context, header_value) -> None:
+    """A model-supplied `principal` in header mode is refused outright -- whether or not the header
+    agrees. Silently ignoring it would let a caller believe it chose the identity, and honouring it
+    would let it actually do so."""
+    ctx, manager = rls_context
+    _set_principal_source(ctx, 'header')
+    if header_value is not None:
+        ctx.session.state[RLS_PRINCIPAL] = header_value
+
+    with pytest.raises(ValueError, match='RLS: principal must not be passed as an argument in header mode'):
+        await query_data_rls(_RLS_SQL, 'Invoice Count', ctx, principal='monika')
+
+    manager.execute_query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_query_data_rls_argument_mode_requires_the_argument(rls_context) -> None:
+    ctx, manager = rls_context
+
+    with pytest.raises(ValueError, match='RLS: principal argument is required'):
+        await query_data_rls(_RLS_SQL, 'Invoice Count', ctx)
+
+    manager.execute_query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_query_data_rls_argument_mode_ignores_a_stray_header_and_warns(rls_context, caplog) -> None:
+    """A server configured for argument mode must not silently switch identities because a proxy
+    added a header -- but the operator should see that it happened."""
+    ctx, manager = rls_context
+    ctx.session.state[RLS_PRINCIPAL] = 'monika'
+
+    with caplog.at_level('INFO', logger='keboola_mcp_server.tools.sql'):
+        result = await query_data_rls(_RLS_SQL, 'Invoice Count', ctx, principal='Petr')
+
+    assert result.applied_rules == ['in.c-crm.invoices']
+    assert manager.execute_query.call_args.args[0] == _RLS_REWRITTEN
+    assert 'source=argument' in caplog.text
+    assert any(r.levelname == 'WARNING' and 'X-RLS-Principal' in r.message for r in caplog.records), caplog.text
+    # The header value is not the identity here, and must not be logged as if it were.
+    assert "principal='Petr'" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_query_data_rls_refuses_when_no_principal_source_is_configured(rls_context) -> None:
+    """`create_server()` refuses to start without a source, so this is defence in depth -- but an
+    unconfigured server must never fall back to trusting the model."""
+    ctx, manager = rls_context
+    _set_principal_source(ctx, None)
+    ctx.session.state[RLS_PRINCIPAL] = 'Petr'
+
+    with pytest.raises(ValueError, match='RLS: no principal source is configured'):
+        await query_data_rls(_RLS_SQL, 'Invoice Count', ctx, principal='Petr')
 
     manager.execute_query.assert_not_called()
 
@@ -174,7 +287,7 @@ async def test_query_data_rls_fails_closed(rls_context, sql: str, user: str, mat
 async def test_query_data_rls_requires_rules_in_state(mcp_context_client: Context) -> None:
     # Defensive: the tool is only registered when rules exist, but never run unfiltered if they are missing.
     with pytest.raises(ValueError, match='RLS rules'):
-        await query_data_rls('SELECT 1', 'No Rules', 'petr', mcp_context_client)
+        await query_data_rls('SELECT 1', 'No Rules', mcp_context_client, principal='petr')
 
 
 @pytest.mark.asyncio
@@ -185,7 +298,7 @@ async def test_query_data_rls_refuses_oversized_query(rls_context) -> None:
     oversized = f"SELECT * FROM invoices WHERE note = '{'a' * (RLS_MAX_QUERY_CHARS + 1)}'"
 
     with pytest.raises(ValueError, match='RLS: query too long'):
-        await query_data_rls(oversized, 'Huge Query', 'petr', ctx)
+        await query_data_rls(oversized, 'Huge Query', ctx, principal='petr')
 
     manager.get_sql_dialect.assert_not_called()
     manager.execute_query.assert_not_called()
@@ -199,7 +312,7 @@ async def test_query_data_rls_turns_recursion_error_into_a_plain_refusal(rls_con
     nested = 'SELECT ' + '(' * 3_000 + '1' + ')' * 3_000
 
     with pytest.raises(ValueError, match='RLS: query too deeply nested'):
-        await query_data_rls(nested, 'Nested Query', 'petr', ctx)
+        await query_data_rls(nested, 'Nested Query', ctx, principal='petr')
 
     manager.execute_query.assert_not_called()
 
@@ -218,7 +331,7 @@ async def test_query_data_rls_runs_the_rewrite_off_the_event_loop(rls_context, m
 
     mocker.patch.object(sql_tools, 'rewrite_query', _recording_rewrite)
 
-    await query_data_rls('SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"', 'Invoice Count', 'petr', ctx)
+    await query_data_rls('SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"', 'Invoice Count', ctx, principal='petr')
 
     assert threads and threads[0] != threading.current_thread().name
 
@@ -230,10 +343,10 @@ async def test_query_data_rls_logs_refusal_with_user_and_outcome(rls_context, ca
     ctx, manager = rls_context
 
     with caplog.at_level('WARNING', logger='keboola_mcp_server.tools.sql'), pytest.raises(ValueError):
-        await query_data_rls('SELECT * FROM customers', 'Forbidden Table', 'Petr', ctx)
+        await query_data_rls('SELECT * FROM customers', 'Forbidden Table', ctx, principal='Petr')
 
     assert 'outcome=refused' in caplog.text
-    assert "user='Petr'" in caplog.text
+    assert "principal='Petr'" in caplog.text
     assert "query='Forbidden Table'" in caplog.text
     assert 'customers' in caplog.text
     manager.execute_query.assert_not_called()
@@ -244,10 +357,10 @@ async def test_query_data_rls_logs_success_with_tables_and_row_count(rls_context
     ctx, _manager = rls_context
 
     with caplog.at_level('INFO', logger='keboola_mcp_server.tools.sql'):
-        await query_data_rls('SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"', 'Invoice Count', 'Petr', ctx)
+        await query_data_rls('SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"', 'Invoice Count', ctx, principal='Petr')
 
     assert 'outcome=ok' in caplog.text
-    assert "user='Petr'" in caplog.text
+    assert "principal='Petr'" in caplog.text
     assert "query='Invoice Count'" in caplog.text
     assert "tables=['in.c-crm.invoices']" in caplog.text
     assert 'rows=1' in caplog.text

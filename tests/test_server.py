@@ -695,11 +695,40 @@ async def test_rls_swaps_query_tool(tmp_path) -> None:
     rules_file = tmp_path / 'rls.yaml'
     rules_file.write_text("dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: \"country = 'CZ'\"\n")
 
-    server = create_server(Config(rls_rules_path=str(rules_file)), runtime_info=ServerRuntimeInfo(transport='stdio'))
+    server = create_server(
+        Config(rls_rules_path=str(rules_file), rls_principal_source='argument'),
+        runtime_info=ServerRuntimeInfo(transport='stdio'),
+    )
     tool_names = {tool.name for tool in await server.list_tools(run_middleware=False)}
 
     assert 'query_data_rls' in tool_names
     assert 'query_data' not in tool_names
+
+
+@pytest.mark.parametrize('source', ['header', 'argument'])
+def test_rls_principal_source_must_be_chosen_explicitly(tmp_path, source: str) -> None:
+    """Whether the principal comes from the authenticated wrapper (`header`) or from the model
+    (`argument`) decides whether RLS is enforced against a verified identity at all. There is no
+    safe default to fall back to, so a rules file with no source stops the server."""
+    rules_file = tmp_path / 'rls.yaml'
+    rules_file.write_text("dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: \"country = 'CZ'\"\n")
+
+    with pytest.raises(RuntimeError, match='KBC_RLS_PRINCIPAL_SOURCE'):
+        create_server(Config(rls_rules_path=str(rules_file)), runtime_info=ServerRuntimeInfo(transport='stdio'))
+
+    server = create_server(
+        Config(rls_rules_path=str(rules_file), rls_principal_source=source),
+        runtime_info=ServerRuntimeInfo(transport='stdio'),
+    )
+    assert isinstance(server, FastMCP)
+
+
+@pytest.mark.asyncio
+async def test_rls_principal_source_without_rules_is_harmless() -> None:
+    """The source only means anything in RLS mode -- setting it on a plain server must not fail."""
+    server = create_server(Config(rls_principal_source='header'), runtime_info=ServerRuntimeInfo(transport='stdio'))
+    tool_names = {tool.name for tool in await server.list_tools(run_middleware=False)}
+    assert 'query_data' in tool_names
 
 
 def _rls_server(tmp_path, mocker, *, rls: bool):
@@ -720,7 +749,7 @@ def _rls_server(tmp_path, mocker, *, rls: bool):
     if rls:
         rules_file = tmp_path / 'rls.yaml'
         rules_file.write_text("dialect: snowflake\ntables:\n  in.c-crm.invoices:\n    petr: \"country = 'CZ'\"\n")
-        config = Config(rls_rules_path=str(rules_file))
+        config = Config(rls_rules_path=str(rules_file), rls_principal_source='argument')
     return create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
 
 

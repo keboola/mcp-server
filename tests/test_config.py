@@ -173,7 +173,8 @@ class TestConfig:
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
             "jwt_secret=None, postgres_dsn='****', session_encryption_key='****', "
-            'bearer_token=None, conversation_id=None, project_id=None, rls_rules_path=None)'
+            'bearer_token=None, conversation_id=None, project_id=None, rls_rules_path=None, '
+            'rls_principal=None, rls_principal_source=None)'
         )
 
     def test_workspace_id_must_be_numeric(self) -> None:
@@ -223,6 +224,7 @@ class TestReplaceByHeaders:
             {'X-Oauth-Server-Url': 'https://evil.example'},
             {'X-Mcp-Server-Url': 'https://evil.example'},
             {'X-Rls-Rules-Path': '/tmp/evil.yaml'},
+            {'X-Rls-Principal-Source': 'argument'},
         ],
         ids=[
             'jwt_secret_bare',
@@ -235,6 +237,7 @@ class TestReplaceByHeaders:
             'oauth_server_url',
             'mcp_server_url',
             'rls_rules_path',
+            'rls_principal_source',
         ],
     )
     def test_deployment_level_fields_are_unreachable(self, headers: Mapping[str, str]) -> None:
@@ -246,6 +249,41 @@ class TestReplaceByHeaders:
         # Deployment-level: reachable from env / CLI (trusted), never from a header (Task 2 above).
         assert Config().replace_by({'KBC_RLS_RULES_PATH': '/etc/rls.yaml'}).rls_rules_path == '/etc/rls.yaml'
         assert Config(rls_rules_path='/opt/rls.yaml').rls_rules_path == '/opt/rls.yaml'
+
+    @pytest.mark.parametrize(
+        'header_name', ['X-RLS-Principal', 'X-Rls-Principal', 'x-rls-principal', 'KBC-RLS-Principal']
+    )
+    def test_rls_principal_is_header_eligible(self, header_name: str) -> None:
+        """The principal is per-request by nature: it is the one RLS field a caller-supplied header
+        must be able to set, under every spelling `_read_options` normalises."""
+        assert Config().replace_by_headers({header_name: 'michal'}).rls_principal == 'michal'
+
+    def test_empty_rls_principal_header_is_absent_not_empty(self) -> None:
+        # An unset header template (`X-RLS-Principal:`) must read as "no principal", not as the
+        # empty-string principal -- the tool refuses on absence, and '' would match no rule anyway.
+        assert Config().replace_by_headers({'X-RLS-Principal': ''}).rls_principal is None
+
+    def test_rls_principal_is_never_read_from_env_or_cli(self) -> None:
+        """A server-wide `KBC_RLS_PRINCIPAL` would silently answer every request that carries no
+        header with one operator-chosen identity -- exactly the fail-open the header mode exists to
+        prevent. The field is settable from a header only."""
+        assert Config().replace_by({'KBC_RLS_PRINCIPAL': 'michal'}).rls_principal is None
+        assert Config().replace_by({'rls_principal': 'michal'}).rls_principal is None
+        assert Config(rls_principal='michal').replace_by({'KBC_STORAGE_TOKEN': 't'}).rls_principal == 'michal'
+
+    @pytest.mark.parametrize(('value', 'expected'), [('header', 'header'), ('ARGUMENT', 'argument'), (None, None)])
+    def test_rls_principal_source_is_normalised(self, value: str | None, expected: str | None) -> None:
+        assert Config(rls_principal_source=value).rls_principal_source == expected
+
+    @pytest.mark.parametrize('value', ['', 'both', 'headers', 'tool-argument'])
+    def test_rls_principal_source_rejects_anything_else(self, value: str) -> None:
+        with pytest.raises(ValueError, match='rls_principal_source'):
+            Config(rls_principal_source=value)
+
+    def test_rls_principal_source_from_env_and_cli(self) -> None:
+        # Deployment-level, like rls_rules_path: env / CLI only, never a header (Task 2 above).
+        assert Config().replace_by({'KBC_RLS_PRINCIPAL_SOURCE': 'header'}).rls_principal_source == 'header'
+        assert Config(rls_principal_source='argument').rls_principal_source == 'argument'
 
     def test_allowlisted_fields_still_work(self) -> None:
         config = Config()

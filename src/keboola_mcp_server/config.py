@@ -85,6 +85,27 @@ class Config:
     When set, the server registers the `query_data_rls` tool instead of `query_data`. Deployment-level:
     maps `KBC_RLS_RULES_PATH` / `--rls-rules-path` only and is deliberately absent from
     `_HEADER_ELIGIBLE_FIELDS` so a caller can never point the server at a different rules file."""
+    rls_principal: str | None = field(default=None, metadata={'empty_means_absent': True, 'header_only': True})
+    """The identity the row-level-security rules are selected by, asserted per request by the calling
+    application in the `X-RLS-Principal` header (`_normalize` folds the dashes and the case, so no
+    alias is needed). The server does not verify it -- it trusts the wrapper that authenticated the
+    end user, which is why the MCP endpoint must be reachable only from that wrapper.
+
+    Header-only (`header_only`): unlike every other field it is deliberately NOT readable from the
+    process environment or a CLI flag. A server-wide `KBC_RLS_PRINCIPAL` would answer every request
+    that carries no header with one operator-chosen identity, which is precisely the fail-open that
+    `rls_principal_source='header'` exists to prevent. `empty_means_absent` is set for the same
+    reason: an unset header template (`X-RLS-Principal:`) must read as "no principal" (refused), not
+    as the empty-string principal."""
+    rls_principal_source: str | None = None
+    """Where `query_data_rls` takes its principal from: `'header'` (the `X-RLS-Principal` header, set
+    by an authenticating wrapper application) or `'argument'` (the `principal` tool argument, chosen
+    by the model -- pilot/demo only).
+
+    Deployment-level: maps `KBC_RLS_PRINCIPAL_SOURCE` / `--rls-principal-source` only and is
+    deliberately absent from `_HEADER_ELIGIBLE_FIELDS`, since a caller who could set it to
+    `'argument'` could name themselves. There is no default: a server started with
+    `rls_rules_path` and no source refuses to start (see `create_server()`)."""
 
     # Fields a per-request HTTP header may legitimately set (see `replace_by_headers`). Everything
     # else -- jwt_secret, postgres_dsn, session_encryption_key, oauth_client_id/secret,
@@ -105,8 +126,12 @@ class Config:
             'bearer_token',
             'conversation_id',
             'project_id',
+            'rls_principal',
         }
     )
+
+    # Values the two RLS principal modes may take; see `rls_principal_source`.
+    RLS_PRINCIPAL_SOURCES: ClassVar[frozenset[str]] = frozenset({'header', 'argument'})
 
     def __post_init__(self) -> None:
         for f in dataclasses.fields(self):
@@ -134,6 +159,18 @@ class Config:
         if self.workspace_id is not None and not self.workspace_id.isdigit():
             raise ValueError(f'Invalid workspace_id: {self.workspace_id!r}')
 
+        if self.rls_principal_source is not None:
+            # Security-relevant deployment choice, so it is validated where it is set rather than
+            # where it is read: a typo ('headers', or an empty KBC_RLS_PRINCIPAL_SOURCE=) must stop
+            # the server, never fall through to some default mode at the first query.
+            normalized = self.rls_principal_source.strip().lower()
+            if normalized not in self.RLS_PRINCIPAL_SOURCES:
+                raise ValueError(
+                    f'Invalid rls_principal_source: {self.rls_principal_source!r}; '
+                    f'expected one of {sorted(self.RLS_PRINCIPAL_SOURCES)}'
+                )
+            object.__setattr__(self, 'rls_principal_source', normalized)
+
     @staticmethod
     def _normalize(name: str) -> str:
         """Removes dashes and underscores from the input string and turns it into lowercase."""
@@ -151,6 +188,11 @@ class Config:
         options: dict[str, Any] = {}
         for f in dataclasses.fields(cls):
             if allowed_fields is not None and f.name not in allowed_fields:
+                continue
+            # The mirror image of `allowed_fields`: a `header_only` field is skipped on the
+            # env/CLI path (`allowed_fields is None`), so it can only ever be set per request.
+            # See `rls_principal`, where an operator-set server-wide value would be a fail-open.
+            if allowed_fields is None and f.metadata.get('header_only', False):
                 continue
             field_names = [f.name] + f.metadata.get('aliases', [])
 
