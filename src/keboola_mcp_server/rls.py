@@ -84,6 +84,11 @@ _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 _BUCKET_PATH_RE = re.compile(r'(?<![\w."`])(?:in|out)\.[A-Za-z0-9_-]+\.', re.IGNORECASE)
 
 
+# What the caller is told when a rule exists but could not be applied. Deliberately says nothing
+# about the predicate: the caller is a model relaying to a user, and the predicate is the policy.
+_RULE_NOT_APPLIED = 'RLS: rule for table {key} could not be applied'
+
+
 class RlsError(ValueError):
     """Any RLS failure: bad rules file, unsupported SQL, missing rule. Always means "no data"."""
 
@@ -152,7 +157,13 @@ def _is_boolean_condition(node: exp.Expression) -> bool:
 class RewrittenQuery:
     sql: str
     applied_rules: list[str]
-    """Human-readable disclosure, one entry per rewritten table: `"<table key>: <predicate>"`."""
+    """Disclosure for the caller: the rules key of every table that was filtered, de-duplicated.
+
+    Keys only, never the predicate. The point of the disclosure is "this result is a slice, and here
+    is which tables were sliced" -- the predicate text is the admin's policy, and handing it to a
+    model (which relays it to the user, and which may be trying to work out what it is not allowed
+    to see) discloses the shape of the data that was withheld. The server log has the detail.
+    """
 
 
 @dataclasses.dataclass(frozen=True)
@@ -525,24 +536,33 @@ def _check_output(sql: str, *, dialect: str, predicates: Mapping[str, str]) -> N
             and isinstance(select.parent, exp.Subquery)
         )
         if not wrapped:
-            raise RlsError(f'RLS: rewrite left an unwrapped table reference: {table.name}')
+            # No name in the message: an unwrapped table can come from a predicate that reached for
+            # one, and naming it would disclose a table the caller never mentioned.
+            LOG.warning(f'RLS: rewrite left an unwrapped table reference: {table.sql(dialect=dialect)}')
+            raise RlsError('RLS: rewrite left an unwrapped table reference')
         assert isinstance(select, exp.Select)  # narrowed by `wrapped`
         key = _matching_key(table, predicates)
         if key is None:
-            raise RlsError(f'RLS: rewrite wrapped a table no rule was looked up for: {table.name}')
+            LOG.warning(f'RLS: rewrite wrapped a table no rule was looked up for: {table.sql(dialect=dialect)}')
+            raise RlsError('RLS: rewrite wrapped a table no rule was looked up for')
         where = select.args.get('where')
         if where is None:
-            raise RlsError(f'RLS: rewrite left a wrapper without a WHERE clause: {table.name}')
+            LOG.warning(f'RLS: rewrite left the wrapper around {key!r} without a WHERE clause')
+            raise RlsError(_RULE_NOT_APPLIED.format(key=key))
         try:
             expected = sqlglot.parse_one(predicates[key], dialect=dialect, into=exp.Condition)
         except sqlglot.errors.SqlglotError as e:
-            raise RlsError(
-                f"RLS: predicate for table '{key}' is not valid SQL for dialect {dialect!r}: {_clean_error(e)}"
-            ) from e
+            LOG.warning(f'RLS: predicate for table {key!r} is not valid SQL for dialect {dialect!r}: {_clean_error(e)}')
+            raise RlsError(_RULE_NOT_APPLIED.format(key=key)) from e
         # Compared as generated text in the same dialect, so the two sides are normalised the same
-        # way and only a real difference in the condition can fail this.
+        # way and only a real difference in the condition can fail this. Neither side is quoted back
+        # to the caller: the difference between them IS the predicate.
         if where.this.sql(dialect=dialect) != expected.sql(dialect=dialect):
-            raise RlsError(f"RLS: rewrite produced a WHERE that is not the rule for table '{key}'")
+            LOG.warning(
+                f'RLS: rewrite produced a WHERE that is not the rule for table {key!r}: '
+                f'{where.this.sql(dialect=dialect)!r} != {expected.sql(dialect=dialect)!r}'
+            )
+            raise RlsError(_RULE_NOT_APPLIED.format(key=key))
 
 
 def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> RewrittenQuery:
@@ -617,7 +637,7 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
         if extra_args:
             raise RlsError(f'RLS: table modifiers are not supported on {node.name!r}: {sorted(extra_args)}')
         key, predicate = rules.predicate_for(table_name=node.name, schema=node.db or None, user=user)
-        applied.append(f'{key}: {predicate}')
+        applied.append(key)
         inserted[key] = predicate
         # Reuse the original alias identifier as-is (preserving its own quoting) so references to
         # it elsewhere in the query (e.g. an unquoted `o.id` in an ON clause) still resolve. Only
@@ -632,9 +652,10 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
         try:
             predicate_expr = sqlglot.parse_one(predicate, dialect=dialect, into=exp.Condition)
         except sqlglot.errors.SqlglotError as e:
-            raise RlsError(
-                f"RLS: predicate for table '{key}' is not valid SQL for dialect {dialect!r}: {_clean_error(e)}"
-            ) from e
+            # The caller is told only that the rule could not be applied. Which predicate, and why it
+            # failed, is the admin's business and goes to the log -- the message reaches a model.
+            LOG.warning(f'RLS: predicate for table {key!r} is not valid SQL for dialect {dialect!r}: {_clean_error(e)}')
+            raise RlsError(_RULE_NOT_APPLIED.format(key=key)) from e
         filtered = exp.select('*').from_(inner).where(predicate_expr)
         # Returning a new node stops `transform` from descending into it, so the inner table is
         # not wrapped a second time.

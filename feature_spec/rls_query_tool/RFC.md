@@ -70,11 +70,13 @@ tables:
 5. Replace the node with a subquery `(SELECT * FROM <original table> WHERE <predicate>)` aliased
    to the original alias, or to the bare table name when there was no alias, so the rest of the
    query keeps resolving.
-6. Generate SQL back in the same dialect and return it together with a human-readable list of
-   applied rules, e.g. `["invoices: country = 'CZ'"]`.
+6. Generate SQL back in the same dialect and return it together with the list of table keys that
+   were filtered, e.g. `["in.c-crm.invoices"]`. Keys only: a predicate is the admin's policy, and
+   returning it to a model tells the reader the shape of the data withheld from them. Errors that
+   involve a predicate say only which rule could not be applied; the detail goes to the server log.
 
-Example — input `SELECT COUNT(*) FROM invoices` for user `petr` becomes
-`SELECT COUNT(*) FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices`.
+Example — input `SELECT COUNT(*) FROM "in.c-crm"."invoices"` for user `petr` becomes
+`SELECT COUNT(*) FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = 'CZ') AS "invoices"`.
 
 The whole path is fail-closed: any exception in parsing, lookup or rewriting propagates as a tool
 error and no SQL is sent to the workspace.
@@ -90,8 +92,9 @@ async def query_data_rls(
 ) -> RlsQueryDataOutput
 ```
 
-`RlsQueryDataOutput` extends `QueryDataOutput` with `applied_rules: list[str]` so the model and
-the human always see that the result is a filtered slice (Agnes "disclosure"). The tool is
+`RlsQueryDataOutput` extends `QueryDataOutput` with `applied_rules: list[str]` — the keys of the
+tables that were filtered — so the model and the human always see that the result is a filtered
+slice (Agnes "disclosure") without being told what the filter was. The tool is
 annotated `readOnlyHint=True` and tagged `sql` like `query_data`. Its docstring reuses the SQL
 guidance from `query_data` and adds: which user to pass, that results are filtered, and that
 tables without a rule for the user are inaccessible.

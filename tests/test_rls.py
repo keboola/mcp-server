@@ -210,7 +210,7 @@ class TestRewriteQuery:
                 'SELECT COUNT(*) FROM "in.c-crm"."invoices"',
                 'snowflake',
                 "SELECT COUNT(*) FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"",
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 'SELECT i.id FROM "in.c-crm"."invoices" i JOIN "in.c-crm"."orders" AS o ON o.id = i.id',
@@ -220,7 +220,7 @@ class TestRewriteQuery:
                     "JOIN (SELECT * FROM \"in.c-crm\".\"orders\" WHERE country = 'CZ' AND status <> 'draft') AS o "
                     'ON o.id = i.id'
                 ),
-                ["in.c-crm.invoices: country = 'CZ'", "in.c-crm.orders: country = 'CZ' AND status <> 'draft'"],
+                ['in.c-crm.invoices', 'in.c-crm.orders'],
             ),
             (
                 # The original alias is quoted -- the rewrite must keep it quoted, not borrow the
@@ -228,13 +228,13 @@ class TestRewriteQuery:
                 'SELECT "I".id FROM "in.c-crm"."invoices" AS "I"',
                 'snowflake',
                 'SELECT "I".id FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "I"',
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 'WITH x AS (SELECT * FROM "in.c-crm"."invoices") SELECT * FROM x',
                 'snowflake',
                 "WITH x AS (SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\") SELECT * FROM x",
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 # A CTE may reference an earlier sibling CTE.
@@ -244,7 +244,7 @@ class TestRewriteQuery:
                     "WITH a AS (SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"), "
                     'b AS (SELECT * FROM a) SELECT * FROM b'
                 ),
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 # A recursive CTE references itself from inside its own body.
@@ -254,7 +254,7 @@ class TestRewriteQuery:
                     "WITH RECURSIVE r AS (SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
                     'UNION ALL SELECT id FROM r) SELECT * FROM r'
                 ),
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 # Quoted CTE alias, quoted reference, same case: the same name on both engines.
@@ -264,7 +264,7 @@ class TestRewriteQuery:
                     'WITH "X" AS (SELECT * FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices") '
                     'SELECT * FROM "X"'
                 ),
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 # Unquoted identifiers fold case on both Snowflake and BigQuery, so `x` and `X` are
@@ -272,7 +272,7 @@ class TestRewriteQuery:
                 'WITH x AS (SELECT * FROM "in.c-crm"."invoices") SELECT * FROM X',
                 'snowflake',
                 "WITH x AS (SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\") SELECT * FROM X",
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 'WITH `X` AS (SELECT * FROM `in_c_crm`.`invoices`) SELECT * FROM `X`',
@@ -281,7 +281,7 @@ class TestRewriteQuery:
                     'WITH `X` AS (SELECT * FROM (SELECT * FROM `in_c_crm`.`invoices` '
                     "WHERE country = 'CZ') AS `invoices`) SELECT * FROM `X`"
                 ),
-                ["in_c_crm.invoices: country = 'CZ'"],
+                ['in_c_crm.invoices'],
             ),
             (
                 # A subquery may declare its own CTE as long as the name shadows nothing outside it.
@@ -291,13 +291,13 @@ class TestRewriteQuery:
                     "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
                     'WHERE 1 IN (WITH t AS (SELECT 1) SELECT * FROM t)'
                 ),
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 'SELECT * FROM (SELECT id FROM "in.c-crm"."invoices") sub',
                 'snowflake',
                 "SELECT * FROM (SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\") AS sub",
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 'SELECT id FROM "in.c-crm"."invoices" UNION ALL SELECT id FROM "in.c-sales"."orders"',
@@ -306,7 +306,7 @@ class TestRewriteQuery:
                     "SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
                     'UNION ALL SELECT id FROM (SELECT * FROM "in.c-sales"."orders" WHERE FALSE) AS "orders"'
                 ),
-                ["in.c-crm.invoices: country = 'CZ'", 'in.c-sales.orders: FALSE'],
+                ['in.c-crm.invoices', 'in.c-sales.orders'],
             ),
             (
                 'SELECT id FROM "in.c-crm"."invoices" EXCEPT SELECT id FROM "in.c-sales"."orders"',
@@ -315,7 +315,7 @@ class TestRewriteQuery:
                     "SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
                     'EXCEPT SELECT id FROM (SELECT * FROM "in.c-sales"."orders" WHERE FALSE) AS "orders"'
                 ),
-                ["in.c-crm.invoices: country = 'CZ'", 'in.c-sales.orders: FALSE'],
+                ['in.c-crm.invoices', 'in.c-sales.orders'],
             ),
             (
                 'SELECT id FROM "in.c-crm"."invoices" INTERSECT SELECT id FROM "in.c-sales"."orders"',
@@ -324,7 +324,7 @@ class TestRewriteQuery:
                     "SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
                     'INTERSECT SELECT id FROM (SELECT * FROM "in.c-sales"."orders" WHERE FALSE) AS "orders"'
                 ),
-                ["in.c-crm.invoices: country = 'CZ'", 'in.c-sales.orders: FALSE'],
+                ['in.c-crm.invoices', 'in.c-sales.orders'],
             ),
             (
                 # The same table twice: both references are rewritten, but the disclosure lists the
@@ -335,7 +335,7 @@ class TestRewriteQuery:
                     "SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
                     "UNION ALL SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\""
                 ),
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 # No FROM at all: nothing to filter, nothing to disclose -- must still pass.
@@ -373,7 +373,7 @@ class TestRewriteQuery:
                     'SELECT COUNT(*) FROM (SELECT * FROM `proj`.`in_c_crm`.`invoices` '
                     "WHERE country = 'CZ') AS `invoices`"
                 ),
-                ["in_c_crm.invoices: country = 'CZ'"],
+                ['in_c_crm.invoices'],
             ),
             (
                 'SELECT COUNT(*) FROM `in_c_crm`.`invoices` LIMIT 10',
@@ -382,20 +382,20 @@ class TestRewriteQuery:
                     'SELECT COUNT(*) FROM (SELECT * FROM `in_c_crm`.`invoices` '
                     "WHERE country = 'CZ') AS `invoices` LIMIT 10"
                 ),
-                ["in_c_crm.invoices: country = 'CZ'"],
+                ['in_c_crm.invoices'],
             ),
             (
                 # A whole statement in parentheses means the statement inside them.
                 '(SELECT * FROM "in.c-crm"."invoices")',
                 'snowflake',
                 "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"",
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 '((SELECT * FROM "in.c-crm"."invoices"))',
                 'snowflake',
                 "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"",
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 '(SELECT id FROM "in.c-crm"."invoices" UNION ALL SELECT id FROM "in.c-sales"."orders")',
@@ -404,14 +404,14 @@ class TestRewriteQuery:
                     "SELECT id FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" "
                     'UNION ALL SELECT id FROM (SELECT * FROM "in.c-sales"."orders" WHERE FALSE) AS "orders"'
                 ),
-                ["in.c-crm.invoices: country = 'CZ'", 'in.c-sales.orders: FALSE'],
+                ['in.c-crm.invoices', 'in.c-sales.orders'],
             ),
             (
                 # A trailing semicolon is still exactly one statement.
                 'SELECT * FROM "in.c-crm"."invoices";',
                 'snowflake',
                 "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\"",
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 # `UNNET(...) WITH OFFSET` is an allowed FROM source and the correlated `t.items`
@@ -422,7 +422,7 @@ class TestRewriteQuery:
                     "SELECT * FROM (SELECT * FROM `in_c_crm`.`invoices` WHERE country = 'CZ') AS t "
                     'CROSS JOIN UNNEST(t.items) AS item WITH OFFSET AS off'
                 ),
-                ["in_c_crm.invoices: country = 'CZ'"],
+                ['in_c_crm.invoices'],
             ),
             (
                 # Window function + QUALIFY over a protected table.
@@ -432,7 +432,7 @@ class TestRewriteQuery:
                     'SELECT id, ROW_NUMBER() OVER (PARTITION BY country ORDER BY id) AS rn '
                     "FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\" QUALIFY rn = 1"
                 ),
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
             (
                 # A CTE named after a protected table shadows nothing: the protected reference always
@@ -471,7 +471,7 @@ class TestRewriteQuery:
                     'WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) '
                     "SELECT * FROM r, (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS \"invoices\""
                 ),
-                ["in.c-crm.invoices: country = 'CZ'"],
+                ['in.c-crm.invoices'],
             ),
         ],
     )
@@ -792,7 +792,7 @@ class TestRewriteQuery:
             'WITH invoices AS (SELECT * FROM (SELECT * FROM "in.c-crm"."invoices" '
             'WHERE country = \'CZ\') AS "invoices" WHERE amount > 0) SELECT COUNT(*) FROM invoices'
         )
-        assert out.applied_rules == ["in.c-crm.invoices: country = 'CZ'"]
+        assert out.applied_rules == ['in.c-crm.invoices']
 
     def test_rewrite_predicate_invalid_for_dialect_fails_closed(self) -> None:
         """A predicate can pass `RlsRules.load()`'s dialect-agnostic check yet still fail to parse
@@ -808,8 +808,9 @@ class TestRewriteQuery:
     @pytest.mark.parametrize(
         ('predicate', 'match'),
         [
-            # Injection attempt: the predicate must parse as a bare condition, nothing more.
-            ('TRUE) AS x, (SELECT * FROM secret WHERE (TRUE', 'not valid SQL'),
+            # Injection attempt: the predicate must parse as a bare condition, nothing more. The
+            # refusal names the rule's key and nothing else -- not the predicate that failed.
+            ('TRUE) AS x, (SELECT * FROM secret WHERE (TRUE', 'rule for table in.c-crm.invoices could not be'),
             # A predicate referencing another table leaves that table outside a wrapper -- the
             # output invariant refuses it rather than letting an unfiltered reference through.
             ('id IN (SELECT id FROM secret)', 'unwrapped table reference'),
@@ -819,6 +820,44 @@ class TestRewriteQuery:
         bad_rules = RlsRules(tables={'in.c-crm.invoices': {'petr': predicate}}, dialect='snowflake')
         with pytest.raises(RlsError, match=match):
             rewrite_query('SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect='snowflake', rules=bad_rules)
+
+
+class TestDisclosure:
+    """What reaches the caller is the fact that a table was filtered -- never the filter itself."""
+
+    def test_applied_rules_are_keys_only_and_deduplicated(self, rules: RlsRules) -> None:
+        out = rewrite_query(
+            'SELECT id FROM "in.c-crm"."invoices" '
+            'UNION ALL SELECT id FROM "in.c-crm"."invoices" '
+            'UNION ALL SELECT id FROM "in.c-sales"."orders"',
+            user='petr',
+            dialect='snowflake',
+            rules=rules,
+        )
+
+        assert out.applied_rules == ['in.c-crm.invoices', 'in.c-sales.orders']
+        assert all("country = 'CZ'" not in entry and 'FALSE' not in entry for entry in out.applied_rules)
+
+    @pytest.mark.parametrize(
+        'predicate',
+        [
+            'country = = 1',  # fails to parse at rewrite time
+            'id IN (SELECT id FROM undisclosed_table)',  # leaves a table outside the wrapper
+        ],
+    )
+    def test_predicate_failures_do_not_echo_the_predicate(self, predicate: str, caplog) -> None:
+        """A rules object built directly, bypassing `load()`, so the rewrite-time guards are the
+        ones under test. The message the caller sees must not carry the predicate, nor a table name
+        that appears only inside it -- the detail belongs in the server log."""
+        bad_rules = RlsRules(tables={'in.c-crm.invoices': {'petr': predicate}}, dialect='snowflake')
+
+        with caplog.at_level('WARNING', logger='keboola_mcp_server.rls'), pytest.raises(RlsError) as excinfo:
+            rewrite_query('SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect='snowflake', rules=bad_rules)
+
+        message = str(excinfo.value)
+        assert 'undisclosed_table' not in message
+        assert 'country' not in message
+        assert caplog.text  # the detail is logged for the operator
 
 
 class TestOutputInvariant:
@@ -855,16 +894,22 @@ class TestOutputInvariant:
             ('SELECT * FROM my_udtf(1)', 'rewrite left an unsupported table reference'),
             # A wrapper with no WHERE at all is the whole table: the shape looks right and the data
             # is unfiltered, which is exactly what this net exists to catch.
-            ('SELECT * FROM (SELECT * FROM "in.c-crm"."invoices") AS "invoices"', 'wrapper without a WHERE clause'),
+            (
+                'SELECT * FROM (SELECT * FROM "in.c-crm"."invoices") AS "invoices"',
+                'rule for table in.c-crm.invoices could not be applied',
+            ),
             # A WHERE that is not the rule -- weakened, negated or simply a different condition.
             (
                 "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'DE') AS \"invoices\"",
-                'not the rule for table',
+                'rule for table in.c-crm.invoices could not be applied',
             ),
-            ('SELECT * FROM (SELECT * FROM "in.c-crm"."invoices" WHERE TRUE) AS "invoices"', 'not the rule for table'),
+            (
+                'SELECT * FROM (SELECT * FROM "in.c-crm"."invoices" WHERE TRUE) AS "invoices"',
+                'rule for table in.c-crm.invoices could not be applied',
+            ),
             (
                 "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ' OR TRUE) AS \"invoices\"",
-                'not the rule for table',
+                'rule for table in.c-crm.invoices could not be applied',
             ),
             # A table that was wrapped although no rule was ever looked up for it.
             ('SELECT * FROM (SELECT * FROM customers WHERE TRUE) AS customers', 'no rule was looked up for'),

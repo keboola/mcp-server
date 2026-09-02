@@ -397,8 +397,11 @@ tables:
 ```
 
 `query_data_rls(sql_query, query_name, user)` rewrites every table in the SELECT to
-`(SELECT * FROM <table> WHERE <predicate>)` for that user, runs it, and reports the applied rules in
-`applied_rules`. It is fail-closed: a table without a rule for the user, a non-SELECT statement, or an
+`(SELECT * FROM <table> WHERE <predicate>)` for that user, runs it, and reports which tables were
+filtered in `applied_rules`. That list holds table keys only — the predicates themselves are never
+returned to the caller, since the filter is the admin's policy and disclosing it tells the reader
+what was withheld; failures that involve a predicate say only which rule could not be applied, with
+the detail in the server log. It is fail-closed: a table without a rule for the user, a non-SELECT statement, or an
 unparseable query is refused and nothing is executed. The file is validated at startup; a broken file
 stops the server. `dialect` pins the workspace backend the predicates are written for: every predicate
 is parsed in that dialect at startup, and a query against a workspace of any other dialect is refused.

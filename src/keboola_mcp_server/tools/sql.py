@@ -225,8 +225,9 @@ class RlsQueryDataOutput(QueryDataOutput):
     """Output of `query_data_rls`: the data plus a disclosure of which RLS rules shaped it."""
 
     applied_rules: list[str] = Field(
-        description='RLS rules applied to the query, one per table, as "<table>: <predicate>". '
-        'The result is a filtered slice of the data, never the whole table.'
+        description='Tables that an RLS rule was applied to, as "<bucket>.<table>" keys. '
+        'The result is a filtered slice of those tables, never the whole table. '
+        'The filters themselves are server-side policy and are not disclosed.'
     )
 
 
@@ -414,7 +415,7 @@ async def query_data_rls(
 
     Every table referenced by the query is replaced by a filtered view defined by the server-side RLS
     rules for `user`. The result is therefore a SLICE of the data, never the whole table; the
-    `applied_rules` field of the output says exactly which filters were applied — always tell the user.
+    `applied_rules` field of the output names the tables that were filtered — always tell the user.
     Tables that have no rule for `user`, non-SELECT statements and multi-statement input are refused.
     Rules are keyed `<bucket>.<table>`, so every table in the query must be written with its bucket
     (`"in.c-crm"."orders"` on Snowflake, `` `in_c_crm`.`orders` `` on BigQuery); a bare table name is refused.

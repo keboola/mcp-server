@@ -121,7 +121,7 @@ async def test_query_data_rls_rewrites_and_discloses(rls_context) -> None:
 
     assert isinstance(result, RlsQueryDataOutput)
     assert result.csv_data == 'n\r\n3\r\n'
-    assert result.applied_rules == ["in.c-crm.invoices: country = 'CZ'"]
+    assert result.applied_rules == ['in.c-crm.invoices']
     sent_sql = manager.execute_query.call_args.args[0]
     assert sent_sql == (
         'SELECT COUNT(*) AS n FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices"'
@@ -139,7 +139,7 @@ async def test_query_data_rls_strips_user_and_logs_it_quoted(rls_context, caplog
             'SELECT COUNT(*) AS n FROM "in.c-crm"."invoices"', 'Invoice Count', '  Petr\n', ctx
         )
 
-    assert result.applied_rules == ["in.c-crm.invoices: country = 'CZ'"]
+    assert result.applied_rules == ['in.c-crm.invoices']
     sent_sql = manager.execute_query.call_args.args[0]
     assert sent_sql == (
         'SELECT COUNT(*) AS n FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices"'
