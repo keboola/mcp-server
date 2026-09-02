@@ -224,6 +224,36 @@ async def test_query_data_rls_runs_the_rewrite_off_the_event_loop(rls_context, m
 
 
 @pytest.mark.asyncio
+async def test_query_data_rls_logs_refusal_with_user_and_outcome(rls_context, caplog) -> None:
+    """Refusals must be greppable: the same one-line format as a successful query, so an operator can
+    count `outcome=refused` per user without parsing free-form messages."""
+    ctx, manager = rls_context
+
+    with caplog.at_level('WARNING', logger='keboola_mcp_server.tools.sql'), pytest.raises(ValueError):
+        await query_data_rls('SELECT * FROM customers', 'Forbidden Table', 'Petr', ctx)
+
+    assert 'outcome=refused' in caplog.text
+    assert "user='Petr'" in caplog.text
+    assert "query='Forbidden Table'" in caplog.text
+    assert 'customers' in caplog.text
+    manager.execute_query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_query_data_rls_logs_success_with_tables_and_row_count(rls_context, caplog) -> None:
+    ctx, _manager = rls_context
+
+    with caplog.at_level('INFO', logger='keboola_mcp_server.tools.sql'):
+        await query_data_rls('SELECT COUNT(*) AS n FROM invoices', 'Invoice Count', 'Petr', ctx)
+
+    assert 'outcome=ok' in caplog.text
+    assert "user='Petr'" in caplog.text
+    assert "query='Invoice Count'" in caplog.text
+    assert "tables=['invoices']" in caplog.text
+    assert 'rows=1' in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('rls_rules', 'expected_tools'),
     [

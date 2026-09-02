@@ -304,6 +304,45 @@ async def _execute_and_serialize(sql_query: str, query_name: str, ctx: Context) 
     raise ValueError(f'Failed to run SQL query, error: {result.message}')
 
 
+def _rule_table_keys(applied_rules: list[str]) -> list[str]:
+    """The table keys out of `applied_rules` entries, which are formatted as `'<table>: <predicate>'`.
+
+    Only the keys go into the audit line: the predicates can carry the values the rules filter on
+    (customer ids, e-mail addresses), which do not belong in an operational log.
+    """
+    return [rule.split(':', 1)[0].strip() for rule in applied_rules]
+
+
+def _log_rls_outcome(
+    outcome: str,
+    *,
+    user: str,
+    query_name: str,
+    tables: list[str] | None = None,
+    rows: int | None = None,
+    reason: str | None = None,
+) -> None:
+    """Emit the one audit line per `query_data_rls` call: `outcome=ok` or `outcome=refused`.
+
+    One shape for both outcomes so the log is evaluable — an operator can count refusals per user, or
+    find which tables a user actually read, without parsing free-form messages. `user`, `query_name`
+    and `reason` are all model-supplied, so they are quoted with `!r`: a newline or a fake `outcome=`
+    inside them cannot forge a second log line.
+    """
+    fields = [f'outcome={outcome}', f'user={user!r}', f'query={query_name!r}']
+    if tables is not None:
+        fields.append(f'tables={tables}')
+    if rows is not None:
+        fields.append(f'rows={rows}')
+    if reason is not None:
+        fields.append(f'reason={reason!r}')
+    line = 'RLS query ' + ' '.join(fields)
+    if outcome == 'ok':
+        LOG.info(line)
+    else:
+        LOG.warning(line)
+
+
 def _to_csv(data: SqlSelectData) -> str:
     output = StringIO()
     writer = csv.DictWriter(output, fieldnames=data.columns)
@@ -441,32 +480,40 @@ async def query_data_rls(
       results beyond its row/character limits and a truncated result is a contiguous prefix, not a sample.
     * Compute aggregates (COUNT, GROUP BY, SUM, AVG, etc.) in SQL rather than pulling raw rows.
     """
-    rules = ServerState.from_context(ctx).rls_rules
-    if rules is None:
-        raise ValueError('RLS rules are not configured on this server.')
-    # Refuse oversized input before touching the workspace or the parser: the size cap is the cheapest
-    # check we have, and it must not be paid for with a round-trip.
-    if len(sql_query) > RLS_MAX_QUERY_CHARS:
-        raise ValueError(f'RLS: query too long ({len(sql_query)} chars, limit {RLS_MAX_QUERY_CHARS})')
-    workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    dialect = (await workspace_manager.get_sql_dialect()).lower()
     # The user name comes from the model, so it may carry stray whitespace; rule lookup itself is
-    # case-insensitive.
+    # case-insensitive. Stripped up front so every log line below names the user we actually matched.
     user = user.strip()
-    # Raises RlsError (a ValueError) before anything is sent to the workspace -- fail-closed.
-    # sqlglot parsing and transformation are CPU-bound and hold the GIL only in short bursts, so the
-    # rewrite runs in a worker thread: a pathological (but under-cap) query then slows down this one
-    # session instead of stalling the event loop for every other in-flight request.
     try:
-        rewritten = await asyncio.to_thread(rewrite_query, sql_query, user=user, dialect=dialect, rules=rules)
-    except RecursionError as e:
-        # sqlglot's parser recurses per nesting level, so deeply nested input hits Python's recursion
-        # limit. Turn it into an ordinary refusal -- the caller gets a refusal, not a stack overflow.
-        raise ValueError('RLS: query too deeply nested') from e
-    # Both names are model-supplied: quote them with !r so odd characters cannot forge a log line.
-    LOG.info(f'RLS applied for user {user!r} in query {query_name!r}: {rewritten.applied_rules}')
+        rules = ServerState.from_context(ctx).rls_rules
+        if rules is None:
+            raise ValueError('RLS rules are not configured on this server.')
+        # Refuse oversized input before touching the workspace or the parser: the size cap is the
+        # cheapest check we have, and it must not be paid for with a round-trip.
+        if len(sql_query) > RLS_MAX_QUERY_CHARS:
+            raise ValueError(f'RLS: query too long ({len(sql_query)} chars, limit {RLS_MAX_QUERY_CHARS})')
+        workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+        dialect = (await workspace_manager.get_sql_dialect()).lower()
+        # Raises RlsError (a ValueError) before anything is sent to the workspace -- fail-closed.
+        # sqlglot parsing and transformation are CPU-bound and hold the GIL only in short bursts, so
+        # the rewrite runs in a worker thread: a pathological (but under-cap) query then slows down
+        # this one session instead of stalling the event loop for every other in-flight request.
+        try:
+            rewritten = await asyncio.to_thread(rewrite_query, sql_query, user=user, dialect=dialect, rules=rules)
+        except RecursionError as e:
+            # sqlglot's parser recurses per nesting level, so deeply nested input hits Python's
+            # recursion limit. Turn it into an ordinary refusal -- the caller gets a refusal, not a
+            # stack overflow.
+            raise ValueError('RLS: query too deeply nested') from e
+    except ValueError as e:
+        # Every fail-closed path lands here: no data has left the workspace, so this is a refusal.
+        _log_rls_outcome('refused', user=user, query_name=query_name, reason=str(e))
+        raise
 
+    LOG.debug(f'RLS applied for user {user!r} in query {query_name!r}: {rewritten.applied_rules}')
     data, message = await _execute_and_serialize(rewritten.sql, query_name, ctx)
+    _log_rls_outcome(
+        'ok', user=user, query_name=query_name, tables=_rule_table_keys(rewritten.applied_rules), rows=len(data.rows)
+    )
     return RlsQueryDataOutput(
         query_name=query_name, csv_data=_to_csv(data), message=message, applied_rules=rewritten.applied_rules
     )
