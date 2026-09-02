@@ -402,7 +402,8 @@ async def query_data_rls(
         Field(
             description=(
                 'Name of the user on whose behalf the query runs. Row-level-security rules are selected by this '
-                'name; every table in the query must have a rule for it, otherwise the query is refused.'
+                'name; every table in the query must have a rule for it, otherwise the query is refused. '
+                'Leading/trailing whitespace is ignored; matching is case-insensitive.'
             )
         ),
     ],
@@ -415,6 +416,7 @@ async def query_data_rls(
     rules for `user`. The result is therefore a SLICE of the data, never the whole table; the
     `applied_rules` field of the output says exactly which filters were applied — always tell the user.
     Tables that have no rule for `user`, non-SELECT statements and multi-statement input are refused.
+    A rule written for a bare table name applies to that table name in every schema/bucket.
 
     The SQL requirements below are identical to the `query_data` tool.
 
@@ -436,9 +438,13 @@ async def query_data_rls(
         raise ValueError('RLS rules are not configured on this server.')
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     dialect = (await workspace_manager.get_sql_dialect()).lower()
+    # The user name comes from the model, so it may carry stray whitespace; rule lookup itself is
+    # case-insensitive.
+    user = user.strip()
     # Raises RlsError (a ValueError) before anything is sent to the workspace -- fail-closed.
     rewritten = rewrite_query(sql_query, user=user, dialect=dialect, rules=rules)
-    LOG.info(f'RLS applied for user "{user}" in query "{query_name}": {rewritten.applied_rules}')
+    # Both names are model-supplied: quote them with !r so odd characters cannot forge a log line.
+    LOG.info(f'RLS applied for user {user!r} in query {query_name!r}: {rewritten.applied_rules}')
 
     data, message = await _execute_and_serialize(rewritten.sql, query_name, ctx)
     return RlsQueryDataOutput(

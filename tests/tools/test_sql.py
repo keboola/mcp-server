@@ -15,6 +15,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.rls import RlsRules
 from keboola_mcp_server.tools.sql import (
+    SQL_TOOLS_TAG,
     QueryDataOutput,
     RlsQueryDataOutput,
     _watch_for_http_disconnect,
@@ -126,6 +127,21 @@ async def test_query_data_rls_rewrites_and_discloses(rls_context) -> None:
 
 
 @pytest.mark.asyncio
+async def test_query_data_rls_strips_user_and_logs_it_quoted(rls_context, caplog) -> None:
+    """The `user` value comes from the model, so it may carry stray whitespace (matching must still
+    work) and arbitrary characters (the log line must quote it rather than splice it in raw)."""
+    ctx, manager = rls_context
+
+    with caplog.at_level('INFO', logger='keboola_mcp_server.tools.sql'):
+        result = await query_data_rls('SELECT COUNT(*) AS n FROM invoices', 'Invoice Count', '  Petr\n', ctx)
+
+    assert result.applied_rules == ["invoices: country = 'CZ'"]
+    sent_sql = manager.execute_query.call_args.args[0]
+    assert sent_sql == "SELECT COUNT(*) AS n FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices"
+    assert "'Petr'" in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('sql', 'user', 'match'),
     [
@@ -164,6 +180,8 @@ async def test_add_sql_tools_registers_exactly_one_query_tool(rls_rules, expecte
     tools = await mcp.list_tools(run_middleware=False)
     assert sorted(t.name for t in tools) == expected_tools
     assert all(t.annotations is not None and t.annotations.readOnlyHint is True for t in tools)
+    # The tag drives tool filtering elsewhere in the server; the RLS tool must carry it too.
+    assert all(SQL_TOOLS_TAG in t.tags for t in tools)
 
 
 @pytest.mark.asyncio

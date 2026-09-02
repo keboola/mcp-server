@@ -462,3 +462,18 @@ class TestRunLogout:
 def test_parse_args_workspace_id(args: list[str], expected: str | None) -> None:
     parsed = parse_args(args)
     assert parsed.workspace_id == expected
+
+
+@pytest.mark.parametrize(
+    ('args', 'expected'),
+    [
+        (['--rls-rules-path', '/etc/kbc/rls.yaml'], '/etc/kbc/rls.yaml'),
+        ([], None),
+    ],
+    ids=['rls_rules_path_set', 'rls_rules_path_defaults_to_none'],
+)
+def test_parse_args_rls_rules_path(args: list[str], expected: str | None) -> None:
+    # Without a default of None the server would silently start unrestricted (or crash) -- the flag
+    # is what swaps query_data for query_data_rls.
+    parsed = parse_args(args)
+    assert parsed.rls_rules_path == expected

@@ -14,6 +14,7 @@ dialect-specific parse happens in `rewrite_query()` at rewrite time and is fail-
 """
 
 import dataclasses
+import itertools
 import logging
 from collections.abc import Mapping
 from pathlib import Path
@@ -23,6 +24,17 @@ import yaml
 from sqlglot import exp
 
 LOG = logging.getLogger(__name__)
+
+# FROM/JOIN sources the rewriter knows how to secure. This is an allowlist on purpose: sqlglot has
+# many node types that read like a table but carry no `exp.Table` to wrap -- `FROM TABLE(x)` parses
+# as `exp.TableFromRows`, table functions as `exp.Anonymous` -- and those would otherwise reach the
+# workspace unfiltered. `exp.Lateral` is allowed only as a container; its own source is checked too.
+_ALLOWED_FROM_SOURCES = (exp.Table, exp.Subquery, exp.Unnest, exp.Values, exp.Lateral)
+
+# `exp.Table` args the rewrite can faithfully reproduce. Anything else -- PIVOT/UNPIVOT, SAMPLE,
+# Snowflake AT()/BEFORE()/CHANGES(), BigQuery FOR SYSTEM_TIME AS OF, an alias column list -- would be
+# silently dropped when the table is rebuilt inside the wrapper, changing what the query means.
+_ALLOWED_TABLE_ARGS = frozenset({'this', 'db', 'catalog', 'alias'})
 
 
 class RlsError(ValueError):
@@ -41,7 +53,8 @@ class RlsRules:
     """RLS rules keyed by lower-cased table key, then lower-cased user name.
 
     A table key is either a bare table name (`invoices`) or `<schema>.<name>` (`in.c-crm.invoices`);
-    the qualified form takes precedence during lookup.
+    the qualified form takes precedence during lookup. A bare key such as `invoices` matches a table
+    of that name in every schema/bucket; use the `<bucket>.<table>` form to scope a rule.
     """
 
     tables: Mapping[str, Mapping[str, str]]
@@ -112,6 +125,52 @@ class RlsRules:
         raise RlsError(f"RLS: no rule for table '{table_name}'")
 
 
+def _check_from_sources(tree: exp.Expression) -> None:
+    """Refuse any FROM/JOIN/LATERAL source that is not on `_ALLOWED_FROM_SOURCES`.
+
+    Allowlist, not denylist: the rewrite can only protect what it recognises, so an unknown source
+    type means "no data", never "pass it through".
+    """
+    for clause in itertools.chain(tree.find_all(exp.From), tree.find_all(exp.Join), tree.find_all(exp.Lateral)):
+        source = clause.this
+        if not isinstance(source, _ALLOWED_FROM_SOURCES):
+            raise RlsError(f'RLS: unsupported FROM source: {type(source).__name__}')
+
+
+def _check_output(sql: str, *, dialect: str) -> None:
+    """Assert the generated SQL is still a plain SELECT over wrapped tables; raise `RlsError` if not.
+
+    This is the safety net: it re-parses the rewriter's own output and checks it from scratch, so a
+    bug or an unforeseen node type upstream cannot smuggle DDL, a second statement or an unfiltered
+    table past it. The only table shape the rewrite ever produces is
+    `(SELECT * FROM <table> WHERE <predicate>) AS <alias>`; anything else is a defect, not data.
+
+    Consequence worth knowing when authoring rules: a predicate that itself references another table
+    (`id IN (SELECT id FROM other)`) leaves a table outside a wrapper and is refused. Predicates must
+    be plain conditions over the protected table's own columns.
+    """
+    try:
+        statements = sqlglot.parse(sql, dialect=dialect)
+    except sqlglot.errors.SqlglotError as e:
+        raise RlsError(f'RLS: rewrite produced SQL that cannot be re-parsed: {e}') from e
+    if len(statements) != 1 or not isinstance(statements[0], (exp.Select, exp.SetOperation)):
+        raise RlsError('RLS: rewrite produced a non-SELECT statement')
+    tree = statements[0]
+
+    cte_names = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
+    for table in tree.find_all(exp.Table):
+        if not table.db and table.name.lower() in cte_names:
+            continue  # reference to a CTE defined in this statement, not a real table
+        select = table.parent.parent if isinstance(table.parent, exp.From) else None
+        wrapped = (
+            isinstance(select, exp.Select)
+            and [type(e) for e in select.expressions] == [exp.Star]
+            and isinstance(select.parent, exp.Subquery)
+        )
+        if not wrapped:
+            raise RlsError(f'RLS: rewrite left an unwrapped table reference: {table.name}')
+
+
 def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> RewrittenQuery:
     """Rewrite a single SELECT so every referenced table becomes a filtered subquery.
 
@@ -132,14 +191,21 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
     if len(statements) != 1 or statements[0] is None:
         raise RlsError('RLS: exactly one statement is allowed')
     tree = statements[0]
-    if not isinstance(tree, (exp.Select, exp.Union)):
+    # `exp.SetOperation` covers UNION, EXCEPT and INTERSECT alike.
+    if not isinstance(tree, (exp.Select, exp.SetOperation)):
         raise RlsError(f'RLS: only SELECT statements are allowed, got {type(tree).__name__}')
+    # `SELECT ... INTO t` is generated back as `CREATE TABLE t AS ...` -- DDL from a read-only tool.
+    # Every SELECT is checked, not just the outermost one: set operations nest them.
+    if any(select.args.get('into') is not None for select in tree.find_all(exp.Select)):
+        raise RlsError('RLS: SELECT INTO is not allowed')
 
     cte_names = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
     # A CTE named like a protected table would shadow the real table inside its own body and let
     # the reference through unfiltered. Refuse instead of trying to be clever (fail-closed).
     if collisions := sorted(cte_names & set(rules.tables)):
         raise RlsError(f'RLS: CTE name(s) collide with protected table(s): {", ".join(collisions)}')
+
+    _check_from_sources(tree)
 
     applied: list[str] = []
 
@@ -148,6 +214,17 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
             return node
         if not node.db and node.name.lower() in cte_names:
             return node  # reference to a CTE defined in this statement, not a real table
+        # The wrapper below rebuilds the table from name/db/catalog only, so any other modifier the
+        # node carries would vanish and change the query's meaning. Refuse rather than drop it.
+        extra_args = [
+            key
+            for key, value in node.args.items()
+            if key not in _ALLOWED_TABLE_ARGS and value is not None and value != []
+        ]
+        if (alias := node.args.get('alias')) is not None and alias.args.get('columns'):
+            extra_args.append('alias columns')
+        if extra_args:
+            raise RlsError(f'RLS: table modifiers are not supported on {node.name!r}: {sorted(extra_args)}')
         key, predicate = rules.predicate_for(table_name=node.name, schema=node.db or None, user=user)
         applied.append(f'{key}: {predicate}')
         # Reuse the original alias identifier as-is (preserving its own quoting) so references to
@@ -169,5 +246,8 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
         # not wrapped a second time.
         return exp.Subquery(this=filtered, alias=exp.TableAlias(this=alias_identifier))
 
-    rewritten = tree.transform(_transform, copy=True)
-    return RewrittenQuery(sql=rewritten.sql(dialect=dialect), applied_rules=applied)
+    rewritten_sql = tree.transform(_transform, copy=True).sql(dialect=dialect)
+    _check_output(rewritten_sql, dialect=dialect)
+    # `dict.fromkeys` deduplicates while preserving first-seen order: a table joined or unioned with
+    # itself is disclosed once.
+    return RewrittenQuery(sql=rewritten_sql, applied_rules=list(dict.fromkeys(applied)))

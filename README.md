@@ -401,8 +401,15 @@ tables:
 unparseable query is refused and nothing is executed. The file is validated at startup; a broken file
 stops the server.
 
-Limitation: the `user` argument is supplied by the MCP client / model and is not verified by the server
-(same trust level as the `X-*` request headers). Suitable for a pilot behind a trusted client.
+A bare key such as `invoices` matches a table of that name in every schema/bucket; use the
+`<bucket>.<table>` form to scope a rule.
+
+Limitations:
+
+- The `user` argument is supplied by the MCP client / model and is not verified by the server
+  (same trust level as the `X-*` request headers). Suitable for a pilot behind a trusted client.
+- Other tool docstrings and the bundled project prompt still refer to `query_data`; in RLS mode the
+  model must use `query_data_rls` instead. This is a known pilot limitation.
 
 ### Do I Need to Start the Server Myself?
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from keboola_mcp_server.rls import RewrittenQuery, RlsError, RlsRules, rewrite_query
+from keboola_mcp_server.rls import RewrittenQuery, RlsError, RlsRules, _check_output, rewrite_query
 
 VALID_YAML = textwrap.dedent(
     """
@@ -133,6 +133,50 @@ class TestRewriteQuery:
                 ["invoices: country = 'CZ'", 'orders: FALSE'],
             ),
             (
+                'SELECT id FROM invoices EXCEPT SELECT id FROM orders',
+                'snowflake',
+                (
+                    "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                    'EXCEPT SELECT id FROM (SELECT * FROM orders WHERE FALSE) AS orders'
+                ),
+                ["invoices: country = 'CZ'", 'orders: FALSE'],
+            ),
+            (
+                'SELECT id FROM invoices INTERSECT SELECT id FROM orders',
+                'snowflake',
+                (
+                    "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                    'INTERSECT SELECT id FROM (SELECT * FROM orders WHERE FALSE) AS orders'
+                ),
+                ["invoices: country = 'CZ'", 'orders: FALSE'],
+            ),
+            (
+                # The same table twice: both references are rewritten, but the disclosure lists the
+                # rule once (deduplicated, in first-seen order).
+                'SELECT id FROM invoices UNION ALL SELECT id FROM invoices',
+                'snowflake',
+                (
+                    "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                    "UNION ALL SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices"
+                ),
+                ["invoices: country = 'CZ'"],
+            ),
+            (
+                # No FROM at all: nothing to filter, nothing to disclose -- must still pass.
+                'SELECT 1',
+                'snowflake',
+                'SELECT 1',
+                [],
+            ),
+            (
+                # Metadata functions are out of scope for RLS: they take no table source, so there is
+                # nothing to rewrite. They are allowed through unchanged, like any other FROM-less SELECT.
+                "SELECT GET_DDL('table', 'invoices')",
+                'snowflake',
+                "SELECT GET_DDL('table', 'invoices')",
+                [],
+            ),
+            (
                 'SELECT COUNT(*) FROM `proj.ds.invoices`',
                 'bigquery',
                 "SELECT COUNT(*) FROM (SELECT * FROM `proj`.`ds`.`invoices` WHERE country = 'CZ') AS `invoices`",
@@ -164,6 +208,31 @@ class TestRewriteQuery:
             ('', 'petr', 'snowflake', 'one statement'),
             # An unknown/unsupported dialect must not let a raw sqlglot exception escape.
             ('SELECT * FROM invoices', 'petr', 'not-a-real-dialect', 'dialect'),
+            # FROM sources that are not tables/subqueries: sqlglot parses `TABLE(...)` as a
+            # TableFromRows wrapping a function call, so there is no exp.Table to rewrite and the
+            # query would otherwise reach the workspace unfiltered.
+            ('SELECT * FROM TABLE(invoices)', 'petr', 'snowflake', 'unsupported FROM source'),
+            ('SELECT * FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))', 'petr', 'snowflake', 'unsupported FROM source'),
+            ('SELECT * FROM invoices JOIN TABLE(orders) ON TRUE', 'petr', 'snowflake', 'unsupported FROM source'),
+            # SELECT ... INTO generates CREATE TABLE DDL out of a read-only tool.
+            ('SELECT * INTO t FROM invoices', 'petr', 'snowflake', 'SELECT INTO'),
+            ('WITH t AS (SELECT 1) SELECT * INTO t FROM invoices', 'petr', 'snowflake', 'SELECT INTO'),
+            # Table modifiers cannot survive the rewrite, so they are refused rather than dropped.
+            ('SELECT * FROM invoices SAMPLE (10)', 'petr', 'snowflake', 'table modifiers'),
+            ('SELECT * FROM invoices AT(OFFSET => -60)', 'petr', 'snowflake', 'table modifiers'),
+            (
+                "SELECT * FROM invoices PIVOT(SUM(amount) FOR country IN ('CZ', 'DE'))",
+                'petr',
+                'snowflake',
+                'table modifiers',
+            ),
+            ('SELECT * FROM invoices AS x(a, b)', 'petr', 'snowflake', 'table modifiers'),
+            (
+                "SELECT * FROM invoices FOR SYSTEM_TIME AS OF TIMESTAMP('2024-01-01')",
+                'petr',
+                'bigquery',
+                'table modifiers',
+            ),
         ],
     )
     def test_rewrite_fails_closed(self, rules: RlsRules, sql, user, dialect, match) -> None:
@@ -180,3 +249,57 @@ class TestRewriteQuery:
         bad_rules = RlsRules(tables={'invoices': {'petr': 'country = = 1'}})
         with pytest.raises(RlsError):
             rewrite_query('SELECT * FROM invoices', user='petr', dialect='snowflake', rules=bad_rules)
+
+    @pytest.mark.parametrize(
+        ('predicate', 'match'),
+        [
+            # Injection attempt: the predicate must parse as a bare condition, nothing more.
+            ('TRUE) AS x, (SELECT * FROM secret WHERE (TRUE', 'not valid SQL'),
+            # A predicate referencing another table leaves that table outside a wrapper -- the
+            # output invariant refuses it rather than letting an unfiltered reference through.
+            ('id IN (SELECT id FROM secret)', 'unwrapped table reference'),
+        ],
+    )
+    def test_rewrite_rejects_predicates_that_are_not_plain_conditions(self, predicate: str, match: str) -> None:
+        bad_rules = RlsRules(tables={'invoices': {'petr': predicate}})
+        with pytest.raises(RlsError, match=match):
+            rewrite_query('SELECT * FROM invoices', user='petr', dialect='snowflake', rules=bad_rules)
+
+
+class TestOutputInvariant:
+    """`_check_output` is the last-resort safety net: whatever the rewrite produced, it must be one
+    SELECT (or set operation) in which every real table sits inside a `(SELECT * FROM t WHERE ...)`
+    wrapper we generated. It is checked on the re-parsed output, so it does not trust the rewrite.
+    """
+
+    @pytest.mark.parametrize(
+        ('sql', 'match'),
+        [
+            ('CREATE TABLE t AS SELECT 1', 'non-SELECT statement'),
+            ('DROP TABLE invoices', 'non-SELECT statement'),
+            ('SELECT 1; SELECT 2', 'non-SELECT statement'),
+            ('SELCT nonsense', 'non-SELECT statement'),
+            ('SELECT * FROM invoices', 'unwrapped table reference'),
+            ("SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS i JOIN orders o ON TRUE", 'unwrapped'),
+            # A wrapper that is not `SELECT *` would silently drop the RLS predicate's columns.
+            ('SELECT * FROM (SELECT id FROM invoices) AS invoices', 'unwrapped table reference'),
+        ],
+    )
+    def test_rejects(self, sql: str, match: str) -> None:
+        with pytest.raises(RlsError, match=match):
+            _check_output(sql, dialect='snowflake')
+
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            'SELECT 1',
+            "SELECT COUNT(*) FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices",
+            "WITH x AS (SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices) SELECT * FROM x",
+            (
+                "SELECT id FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
+                'UNION ALL SELECT id FROM (SELECT * FROM orders WHERE FALSE) AS orders'
+            ),
+        ],
+    )
+    def test_accepts(self, sql: str) -> None:
+        _check_output(sql, dialect='snowflake')
