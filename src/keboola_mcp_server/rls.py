@@ -145,19 +145,34 @@ def _check_from_sources(tree: exp.Expression) -> None:
 def _cte_names(tree: exp.Expression) -> set[str]:
     """Every CTE alias in `tree`, as raw identifier text lower-cased (quoting ignored).
 
-    Quoting is deliberately ignored on both sides of every comparison in this module: a
-    `WITH "orders"` declaration and an unquoted `ORDERS` reference are the same name for the
-    purpose of deciding whether something is dangerous.
+    Case and quoting are deliberately ignored here because this set only ever *widens* a check: it
+    is the cheap "could this name mean a CTE at all?" pre-filter for `_is_cte_reference` (which then
+    resolves the name precisely) and the collision guard against rule keys, which must fire on the
+    merest resemblance to a protected table's name.
     """
     return {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
 
 
+def _identifier_key(text: str, quoted: bool) -> tuple[str, bool]:
+    """Reduce an identifier to a comparison key that matches engine name resolution.
+
+    Snowflake and BigQuery fold unquoted identifiers to a canonical case but treat quoted ones as
+    literal, so `"secret"` and `"SECRET"` are two different names while `secret` and `SECRET` are
+    one. Comparing everything lower-cased would bind a quoted reference to a differently-cased
+    quoted CTE that the engine resolves to the *base table* -- and pass that table through
+    unfiltered. Quoted and unquoted forms of the same text stay distinct too (Ruling 14): the
+    caller decides whether that mismatch is a refusal or merely a non-match.
+    """
+    return text if quoted else text.lower(), quoted
+
+
 def _cte_key(cte: exp.CTE) -> tuple[str, bool]:
-    """A CTE declaration as `(lower-cased alias, quoted)` -- the same shape a table reference is
-    reduced to in `_is_cte_reference`."""
+    """A CTE declaration as an `_identifier_key` -- the same shape a table reference is reduced to
+    in `_is_cte_reference`."""
     alias = cte.args.get('alias')
     identifier = alias.this if isinstance(alias, exp.TableAlias) else None
-    return cte.alias_or_name.lower(), isinstance(identifier, exp.Identifier) and identifier.quoted
+    quoted = isinstance(identifier, exp.Identifier) and identifier.quoted
+    return _identifier_key(cte.alias_or_name, quoted)
 
 
 def _with_clause(node: exp.Expression) -> exp.With | None:
@@ -174,12 +189,14 @@ def _with_clause(node: exp.Expression) -> exp.With | None:
 
 
 def _cte_names_in_scope(node: exp.Expression) -> set[tuple[str, bool]]:
-    """CTE aliases visible from `node`, as `(lower-cased name, quoted)` pairs.
+    """CTE aliases visible from `node`, as `_identifier_key` pairs.
 
     Walks `node`'s own ancestor chain outwards: a statement's WITH clause is visible to that
-    statement's body, and inside a CTE body only that CTE and its earlier siblings are visible (the
-    CTE itself so `WITH RECURSIVE` works). A CTE declared in a nested or sibling scope is therefore
-    not reachable -- which is the whole point, see `_is_cte_reference`.
+    statement's body, and inside a CTE body only that CTE's earlier siblings are visible -- plus the
+    CTE itself, but *only* under `WITH RECURSIVE`, which is what makes a recursive CTE work. Without
+    `RECURSIVE` the engine resolves a CTE's own name inside its body to the base table, so counting
+    it as visible here would wave a real, unfiltered table through. A CTE declared in a nested or
+    sibling scope is not reachable either -- which is the whole point, see `_is_cte_reference`.
 
     This is a scope *chain* walk, not full SQL name resolution; it never has to be more precise
     than that because every name it fails to resolve is refused, not passed through.
@@ -190,6 +207,8 @@ def _cte_names_in_scope(node: exp.Expression) -> set[tuple[str, bool]]:
         if isinstance(parent, exp.With):
             # `child` is the CTE whose body we are in: stop at it, later siblings are not visible.
             for cte in parent.expressions:
+                if cte is child and not parent.args.get('recursive'):
+                    break
                 names.add(_cte_key(cte))
                 if cte is child:
                     break
@@ -197,6 +216,25 @@ def _cte_names_in_scope(node: exp.Expression) -> set[tuple[str, bool]]:
             names.update(_cte_key(cte) for cte in with_clause.expressions)
         child, parent = parent, parent.parent
     return names
+
+
+def _is_non_recursive_self_reference(node: exp.Table, key: tuple[str, bool]) -> bool:
+    """Whether `node` sits inside the body of a CTE named `key` whose WITH lacks `RECURSIVE`.
+
+    Only used to explain a refusal: `_cte_names_in_scope` has already decided such a name is not a
+    CTE reference. It exists so the caller gets "this needs RECURSIVE" rather than the misleading
+    "declared in another scope" -- the declaration is right here, it is just not in scope yet.
+    """
+    child, parent = node, node.parent
+    while parent is not None:
+        if (
+            isinstance(parent, exp.With)
+            and not parent.args.get('recursive')
+            and any(cte is child and _cte_key(cte) == key for cte in parent.expressions)
+        ):
+            return True
+        child, parent = parent, parent.parent
+    return False
 
 
 def _is_cte_reference(node: exp.Table, cte_names: set[str]) -> bool:
@@ -212,14 +250,16 @@ def _is_cte_reference(node: exp.Table, cte_names: set[str]) -> bool:
     """
     if node.db or node.catalog or not isinstance(node.this, exp.Identifier):
         return False  # a qualified or non-identifier source is never a CTE reference
-    name = node.name.lower()
-    if name not in cte_names:
+    if node.name.lower() not in cte_names:
         return False
+    key = _identifier_key(node.name, node.this.quoted)
     in_scope = _cte_names_in_scope(node)
-    if (name, node.this.quoted) in in_scope:
+    if key in in_scope:
         return True
-    if any(scoped_name == name for scoped_name, _ in in_scope):
+    if any(scoped_name == key[0] for scoped_name, _ in in_scope):
         raise RlsError(f'RLS: ambiguous CTE reference, quoting differs from the declaration: {node.name}')
+    if _is_non_recursive_self_reference(node, key):
+        raise RlsError(f'RLS: a CTE cannot reference itself without RECURSIVE: {node.name}')
     raise RlsError(f'RLS: table reference shadowed by a CTE declared in another scope: {node.name}')
 
 
@@ -245,6 +285,12 @@ def _check_output(sql: str, *, dialect: str) -> None:
 
     cte_names = _cte_names(tree)
     for table in tree.find_all(exp.Table):
+        if not isinstance(table.this, exp.Identifier):
+            # A table function (`FROM my_udtf(1)`) parses as an `exp.Table` with no identifier to
+            # name it. The same guard `_check_from_sources` and `_transform` apply on the way in --
+            # here it also stops such a node reaching the "is it wrapped?" test, which would report
+            # it under an empty name.
+            raise RlsError('RLS: rewrite left an unsupported table reference')
         if _is_cte_reference(table, cte_names):
             continue  # reference to a CTE in scope here, not a real table
         select = table.parent.parent if isinstance(table.parent, exp.From) else None
@@ -290,6 +336,9 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
     # the reference through unfiltered. Refuse instead of trying to be clever (fail-closed).
     # A CTE alias is always bare, so it is a rule key's bare table name it shadows: `in.c-crm.orders`
     # is guarded by `orders`. The full keys are compared too, for a bare key like `invoices`.
+    # Unlike `_identifier_key`, this comparison stays case- and quoting-insensitive on purpose: rule
+    # keys are stored lower-cased and have no quoting of their own, so anything that merely *looks*
+    # like a protected table's name has to collide here rather than be resolved later.
     rule_keys = {key.lower() for key in rules.tables}
     if collisions := sorted(cte_names & (rule_keys | {key.rsplit('.', 1)[-1] for key in rule_keys})):
         raise RlsError(f'RLS: CTE name(s) collide with protected table(s): {", ".join(collisions)}')

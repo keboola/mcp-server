@@ -138,6 +138,33 @@ class TestRewriteQuery:
                 ["invoices: country = 'CZ'"],
             ),
             (
+                # Quoted CTE alias, quoted reference, same case: the same name on both engines.
+                'WITH "X" AS (SELECT * FROM invoices) SELECT * FROM "X"',
+                'snowflake',
+                (
+                    'WITH "X" AS (SELECT * FROM (SELECT * FROM invoices WHERE country = \'CZ\') AS invoices) '
+                    'SELECT * FROM "X"'
+                ),
+                ["invoices: country = 'CZ'"],
+            ),
+            (
+                # Unquoted identifiers fold case on both Snowflake and BigQuery, so `x` and `X` are
+                # the same name and this is an ordinary CTE reference -- it must not be refused.
+                'WITH x AS (SELECT * FROM invoices) SELECT * FROM X',
+                'snowflake',
+                "WITH x AS (SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices) SELECT * FROM X",
+                ["invoices: country = 'CZ'"],
+            ),
+            (
+                'WITH `X` AS (SELECT * FROM invoices) SELECT * FROM `X`',
+                'bigquery',
+                (
+                    "WITH `X` AS (SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices) "
+                    'SELECT * FROM `X`'
+                ),
+                ["invoices: country = 'CZ'"],
+            ),
+            (
                 # A subquery may declare its own CTE as long as the name shadows nothing outside it.
                 'SELECT * FROM invoices WHERE 1 IN (WITH t AS (SELECT 1) SELECT * FROM t)',
                 'snowflake',
@@ -269,6 +296,26 @@ class TestRewriteQuery:
             # A CTE reference whose quoting differs from the declaration is ambiguous -- the engine
             # and the rewriter can disagree about whether it resolves to the CTE or a real table.
             ('WITH "secret" AS (SELECT 1) SELECT * FROM SECRET', 'petr', 'snowflake', 'ambiguous'),
+            # Quoted identifiers are case-sensitive on Snowflake and BigQuery, so `"SECRET"` binds to
+            # the base table, not to the `"secret"` CTE. Treating them as one name would let the real
+            # table through unfiltered.
+            ('WITH "secret" AS (SELECT 1) SELECT * FROM "SECRET"', 'petr', 'snowflake', 'another scope'),
+            ('WITH "SECRET" AS (SELECT 1) SELECT * FROM "secret"', 'petr', 'snowflake', 'another scope'),
+            ('WITH `secret` AS (SELECT 1) SELECT * FROM `SECRET`', 'petr', 'bigquery', 'another scope'),
+            # Without RECURSIVE a CTE is not visible inside its own body: BigQuery resolves the inner
+            # `secret` to the base table. Refuse rather than pass the query through verbatim.
+            (
+                'WITH secret AS (SELECT * FROM secret) SELECT * FROM secret',
+                'petr',
+                'snowflake',
+                'without RECURSIVE',
+            ),
+            (
+                'WITH secret AS (SELECT * FROM secret) SELECT * FROM secret',
+                'petr',
+                'bigquery',
+                'without RECURSIVE',
+            ),
             # Table functions parse as an `exp.Table` whose `this` is not an identifier: there is no
             # table name to look a rule up by, so they must be refused, not silently passed through.
             ('SELECT * FROM my_udtf(1)', 'petr', 'snowflake', 'unsupported table reference'),
@@ -370,6 +417,13 @@ class TestOutputInvariant:
             # nothing: `secret` is a real, unwrapped table here.
             ('SELECT * FROM secret WHERE 1 IN (WITH secret AS (SELECT 1) SELECT 1)', 'another scope'),
             ('WITH "secret" AS (SELECT 1) SELECT * FROM SECRET', 'ambiguous'),
+            # Quoted identifiers are case-sensitive: `"SECRET"` is the base table, not the CTE.
+            ('WITH "secret" AS (SELECT 1) SELECT * FROM "SECRET"', 'another scope'),
+            # A non-recursive CTE does not cover a reference to its own name inside its body.
+            ('WITH secret AS (SELECT * FROM secret) SELECT * FROM secret', 'without RECURSIVE'),
+            # A table function has no name to check a wrapper against; the output check must refuse
+            # it on its own, exactly as `_check_from_sources` and `_transform` do on the way in.
+            ('SELECT * FROM my_udtf(1)', 'rewrite left an unsupported table reference'),
         ],
     )
     def test_rejects(self, sql: str, match: str) -> None:
@@ -398,6 +452,11 @@ class TestOutputInvariant:
             (
                 "SELECT 1 FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices "
                 'WHERE 1 IN (WITH t AS (SELECT 1) SELECT * FROM t)'
+            ),
+            # Quoted CTE alias and quoted reference agreeing in case: an ordinary CTE reference.
+            (
+                'WITH "X" AS (SELECT * FROM (SELECT * FROM invoices WHERE country = \'CZ\') AS invoices) '
+                'SELECT * FROM "X"'
             ),
         ],
     )
