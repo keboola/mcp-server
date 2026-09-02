@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import dataclasses
 import json
+import threading
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call
 
@@ -14,7 +15,9 @@ from mcp.types import ProgressNotification
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
 from keboola_mcp_server.rls import RlsRules
+from keboola_mcp_server.tools import sql as sql_tools
 from keboola_mcp_server.tools.sql import (
+    RLS_MAX_QUERY_CHARS,
     SQL_TOOLS_TAG,
     QueryDataOutput,
     RlsQueryDataOutput,
@@ -172,6 +175,52 @@ async def test_query_data_rls_requires_rules_in_state(mcp_context_client: Contex
     # Defensive: the tool is only registered when rules exist, but never run unfiltered if they are missing.
     with pytest.raises(ValueError, match='RLS rules'):
         await query_data_rls('SELECT 1', 'No Rules', 'petr', mcp_context_client)
+
+
+@pytest.mark.asyncio
+async def test_query_data_rls_refuses_oversized_query(rls_context) -> None:
+    """A query above the size cap is refused before anything reaches the workspace -- the rewrite
+    parses model-supplied SQL, so an oversized input must never get as far as the parser."""
+    ctx, manager = rls_context
+    oversized = f"SELECT * FROM invoices WHERE note = '{'a' * (RLS_MAX_QUERY_CHARS + 1)}'"
+
+    with pytest.raises(ValueError, match='RLS: query too long'):
+        await query_data_rls(oversized, 'Huge Query', 'petr', ctx)
+
+    manager.get_sql_dialect.assert_not_called()
+    manager.execute_query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_query_data_rls_turns_recursion_error_into_a_plain_refusal(rls_context) -> None:
+    """A deeply nested expression blows sqlglot's recursive parser; the RecursionError must surface
+    as an ordinary refusal (and never reach the workspace) instead of a stack-trace-shaped 500."""
+    ctx, manager = rls_context
+    nested = 'SELECT ' + '(' * 3_000 + '1' + ')' * 3_000
+
+    with pytest.raises(ValueError, match='RLS: query too deeply nested'):
+        await query_data_rls(nested, 'Nested Query', 'petr', ctx)
+
+    manager.execute_query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_query_data_rls_runs_the_rewrite_off_the_event_loop(rls_context, mocker) -> None:
+    """`rewrite_query` is CPU-bound (full sqlglot parse + transform); running it inline would block
+    the event loop for every other in-flight session, so it must run in a worker thread."""
+    ctx, _manager = rls_context
+    real_rewrite = sql_tools.rewrite_query
+    threads: list[str] = []
+
+    def _recording_rewrite(*args, **kwargs):
+        threads.append(threading.current_thread().name)
+        return real_rewrite(*args, **kwargs)
+
+    mocker.patch.object(sql_tools, 'rewrite_query', _recording_rewrite)
+
+    await query_data_rls('SELECT COUNT(*) AS n FROM invoices', 'Invoice Count', 'petr', ctx)
+
+    assert threads and threads[0] != threading.current_thread().name
 
 
 @pytest.mark.asyncio

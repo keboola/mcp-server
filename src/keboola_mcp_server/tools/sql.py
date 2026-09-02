@@ -31,6 +31,12 @@ MAX_CHARS = 50_000
 # How often to check whether the HTTP client has disconnected during a long query.
 # Mirrors the 1 s job-poll cadence in `_Workspace.execute_query`.
 _DISCONNECT_POLL_INTERVAL = 1.0
+# Upper bound on the SQL text that `query_data_rls` will rewrite. The rewrite runs sqlglot's full
+# recursive-descent parser over model-supplied SQL, which is CPU-bound and superlinear in nesting
+# depth, so an oversized query is a cheap way to burn a worker (and, before the rewrite moved off
+# the event loop, to stall every other session). 20k characters is far more than any query a model
+# writes by hand, so the cap only ever hits pathological input.
+RLS_MAX_QUERY_CHARS = 20_000
 
 
 async def _watch_for_http_disconnect(request: Request, poll_interval: float | None = None) -> None:
@@ -438,13 +444,25 @@ async def query_data_rls(
     rules = ServerState.from_context(ctx).rls_rules
     if rules is None:
         raise ValueError('RLS rules are not configured on this server.')
+    # Refuse oversized input before touching the workspace or the parser: the size cap is the cheapest
+    # check we have, and it must not be paid for with a round-trip.
+    if len(sql_query) > RLS_MAX_QUERY_CHARS:
+        raise ValueError(f'RLS: query too long ({len(sql_query)} chars, limit {RLS_MAX_QUERY_CHARS})')
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     dialect = (await workspace_manager.get_sql_dialect()).lower()
     # The user name comes from the model, so it may carry stray whitespace; rule lookup itself is
     # case-insensitive.
     user = user.strip()
     # Raises RlsError (a ValueError) before anything is sent to the workspace -- fail-closed.
-    rewritten = rewrite_query(sql_query, user=user, dialect=dialect, rules=rules)
+    # sqlglot parsing and transformation are CPU-bound and hold the GIL only in short bursts, so the
+    # rewrite runs in a worker thread: a pathological (but under-cap) query then slows down this one
+    # session instead of stalling the event loop for every other in-flight request.
+    try:
+        rewritten = await asyncio.to_thread(rewrite_query, sql_query, user=user, dialect=dialect, rules=rules)
+    except RecursionError as e:
+        # sqlglot's parser recurses per nesting level, so deeply nested input hits Python's recursion
+        # limit. Turn it into an ordinary refusal -- the caller gets a refusal, not a stack overflow.
+        raise ValueError('RLS: query too deeply nested') from e
     # Both names are model-supplied: quote them with !r so odd characters cannot forge a log line.
     LOG.info(f'RLS applied for user {user!r} in query {query_name!r}: {rewritten.applied_rules}')
 
