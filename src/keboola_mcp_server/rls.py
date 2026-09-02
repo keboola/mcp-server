@@ -17,6 +17,7 @@ is asked to rewrite for is not the dialect the rules were written for.
 import dataclasses
 import itertools
 import logging
+import re
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -40,9 +41,30 @@ _ALLOWED_TABLE_ARGS = frozenset({'this', 'db', 'catalog', 'alias'})
 # The workspace backends the RLS pilot supports. A rules file must pin exactly one of them.
 _SUPPORTED_DIALECTS = ('bigquery', 'snowflake')
 
+# Table and user keys in the rules file. Deliberately narrow: it is the set of characters a Keboola
+# bucket/table name or a user name actually uses, and it rejects the shapes that would make a key
+# mean something other than it looks like -- an empty string, embedded quotes, whitespace, a `*`
+# that reads like a wildcard but is not one, and (via the `str` check) YAML 1.1 scalars such as
+# `yes:`/`on:`/`42:` that never were strings.
+_RULE_KEY_RE = re.compile(r'^[A-Za-z0-9_.\-]+$')
+_RULE_KEY_HINT = 'keys must be non-empty strings of letters, digits, underscore, dot or hyphen'
+
+# Expression roots a predicate may have. `exp.Predicate` covers the comparison and membership
+# operators (`=`, `IN`, `LIKE`, `IS`, `BETWEEN`, ...); the rest are the boolean connectives and
+# literals sqlglot does not classify as predicates. Anything else -- a bare column, a literal, a
+# function call, a CASE expression -- is not a filter a rules author can reason about.
+_BOOLEAN_ROOTS = (exp.Predicate, exp.And, exp.Or, exp.Not, exp.Boolean)
+
 
 class RlsError(ValueError):
     """Any RLS failure: bad rules file, unsupported SQL, missing rule. Always means "no data"."""
+
+
+def _is_boolean_condition(node: exp.Expression) -> bool:
+    """Whether `node` is a boolean-valued condition, looking through any wrapping parentheses."""
+    while isinstance(node, exp.Paren):
+        node = node.this
+    return isinstance(node, _BOOLEAN_ROOTS)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -103,21 +125,46 @@ class RlsRules:
 
         tables: dict[str, dict[str, str]] = {}
         for table_key, users_raw in tables_raw.items():
+            if not isinstance(table_key, str) or not _RULE_KEY_RE.match(table_key):
+                raise RlsError(f'RLS rules file {path} has an invalid table key {table_key!r}: {_RULE_KEY_HINT}')
+            key = table_key.lower()
+            if key in tables:
+                # Only reachable when two YAML keys differ solely in case: the second would silently
+                # replace the first, so the admin would be reading a rule that is not in force.
+                raise RlsError(f"RLS rules file {path} has a duplicate table key '{key}'")
             if not isinstance(users_raw, Mapping) or not users_raw:
                 raise RlsError(f"RLS rules for table '{table_key}' must be a non-empty mapping of user -> predicate")
             users: dict[str, str] = {}
             for user, predicate in users_raw.items():
+                if not isinstance(user, str) or not _RULE_KEY_RE.match(user):
+                    raise RlsError(
+                        f"RLS rules for table '{table_key}' have an invalid user key {user!r}: {_RULE_KEY_HINT}"
+                    )
+                user_key = user.lower()
+                if user_key in users:
+                    raise RlsError(f"RLS rules for table '{table_key}' have a duplicate user key '{user_key}'")
                 if not isinstance(predicate, str) or not predicate.strip():
                     raise RlsError(f"RLS predicate for table '{table_key}', user '{user}' must be a non-empty string")
                 try:
                     # Parsed in the file's own pinned dialect, so this check is the real one.
-                    sqlglot.parse_one(predicate, dialect=dialect, into=exp.Condition)
+                    parsed = sqlglot.parse_one(predicate, dialect=dialect, into=exp.Condition)
                 except sqlglot.errors.ParseError as e:
                     raise RlsError(
                         f"RLS predicate for table '{table_key}', user '{user}' is not valid {dialect} SQL: {e}"
                     ) from e
-                users[str(user).lower()] = predicate
-            tables[str(table_key).lower()] = users
+                if not _is_boolean_condition(parsed):
+                    raise RlsError(
+                        f"RLS predicate for table '{table_key}', user '{user}' must be a boolean condition, "
+                        f'got {type(parsed).__name__}'
+                    )
+                if next(parsed.find_all(exp.Table, exp.Subquery, exp.Select), None) is not None:
+                    # Such a predicate leaves a table outside a wrapper; `_check_output` would refuse
+                    # it at query time anyway, but the admin should hear about it at startup.
+                    raise RlsError(
+                        f"RLS predicate for table '{table_key}', user '{user}' must not reference a table or subquery"
+                    )
+                users[user_key] = predicate
+            tables[key] = users
 
         LOG.info(f'Loaded RLS rules for {len(tables)} table(s) from {path} (dialect {dialect})')
         return cls(tables=tables, dialect=dialect)

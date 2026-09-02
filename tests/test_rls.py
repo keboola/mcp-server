@@ -80,6 +80,45 @@ class TestLoad:
             ('dialect: postgres\ntables:\n  invoices:\n    petr: "TRUE"', "'dialect'"),
             ('dialect: 42\ntables:\n  invoices:\n    petr: "TRUE"', "'dialect'"),
             ('dialect:\ntables:\n  invoices:\n    petr: "TRUE"', "'dialect'"),
+            # Two keys that normalize to one: the later would silently win, so refuse both.
+            (
+                'dialect: snowflake\ntables:\n  Invoices:\n    petr: "TRUE"\n  invoices:\n    petr: "FALSE"',
+                "duplicate table key 'invoices'",
+            ),
+            (
+                'dialect: snowflake\ntables:\n  invoices:\n    Petr: "TRUE"\n    petr: "FALSE"',
+                "duplicate user key 'petr'",
+            ),
+            # YAML 1.1 turns bare `yes`/`on`/`no` into booleans, so such a key is not a table name
+            # at all -- and would otherwise be stringified into something the admin never wrote.
+            ('dialect: snowflake\ntables:\n  yes:\n    petr: "TRUE"', 'invalid table key'),
+            ('dialect: snowflake\ntables:\n  invoices:\n    on: "TRUE"', 'invalid user key'),
+            ('dialect: snowflake\ntables:\n  42:\n    petr: "TRUE"', 'invalid table key'),
+            ('dialect: snowflake\ntables:\n  "":\n    petr: "TRUE"', 'invalid table key'),
+            ('dialect: snowflake\ntables:\n  "*":\n    petr: "TRUE"', 'invalid table key'),
+            ('dialect: snowflake\ntables:\n  \'"invoices"\':\n    petr: "TRUE"', 'invalid table key'),
+            ('dialect: snowflake\ntables:\n  my table:\n    petr: "TRUE"', 'invalid table key'),
+            ('dialect: snowflake\ntables:\n  invoices:\n    "":\n      petr: "TRUE"', 'invalid user key'),
+            ('dialect: snowflake\ntables:\n  invoices:\n    "pe tr": "TRUE"', 'invalid user key'),
+            # A predicate must be a boolean condition, not an arbitrary expression that happens to
+            # parse: `WHERE 1` or `WHERE f(x)` is not a filter the admin can reason about.
+            ('dialect: snowflake\ntables:\n  invoices:\n    petr: "1"', 'boolean condition'),
+            ('dialect: snowflake\ntables:\n  invoices:\n    petr: "is_active"', 'boolean condition'),
+            ('dialect: snowflake\ntables:\n  invoices:\n    petr: "f(x)"', 'boolean condition'),
+            (
+                'dialect: snowflake\ntables:\n  invoices:\n    petr: "CASE WHEN a THEN TRUE ELSE FALSE END"',
+                'boolean condition',
+            ),
+            # A predicate that reaches for another table cannot be wrapped -- refuse it at load time
+            # rather than at the first query that happens to trip the output invariant.
+            (
+                'dialect: snowflake\ntables:\n  invoices:\n    petr: "id IN (SELECT id FROM secret)"',
+                'must not reference a table or subquery',
+            ),
+            (
+                'dialect: snowflake\ntables:\n  invoices:\n    petr: "EXISTS (SELECT 1 FROM secret)"',
+                'must not reference a table or subquery',
+            ),
         ],
     )
     def test_load_rejects_invalid_file(self, tmp_path: Path, content: str, match: str) -> None:
@@ -87,6 +126,27 @@ class TestLoad:
         path.write_text(content)
         with pytest.raises(RlsError, match=match):
             RlsRules.load(str(path))
+
+    @pytest.mark.parametrize(
+        'predicate',
+        [
+            "country = 'CZ'",
+            'TRUE',
+            'FALSE',
+            "country = 'CZ' AND status <> 'draft'",
+            "country IN ('PL', 'SK')",
+            'NOT deleted',
+            "(country = 'CZ')",
+            "((country = 'CZ' OR country = 'SK'))",
+            'x IS NULL',
+            'amount BETWEEN 1 AND 2',
+            "name LIKE 'a%'",
+        ],
+    )
+    def test_load_accepts_boolean_predicates(self, tmp_path: Path, predicate: str) -> None:
+        path = tmp_path / 'rls.yaml'
+        path.write_text(f'dialect: snowflake\ntables:\n  invoices:\n    petr: "{predicate}"\n')
+        assert RlsRules.load(str(path)).tables['invoices']['petr'] == predicate
 
     def test_load_missing_file(self, tmp_path: Path) -> None:
         with pytest.raises(RlsError, match='not found'):
