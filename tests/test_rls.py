@@ -245,6 +245,47 @@ class TestRewriteQuery:
                 "SELECT COUNT(*) FROM (SELECT * FROM `ds`.`invoices` WHERE country = 'CZ') AS `invoices` LIMIT 10",
                 ["invoices: country = 'CZ'"],
             ),
+            (
+                # A trailing semicolon is still exactly one statement.
+                'SELECT * FROM invoices;',
+                'snowflake',
+                "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices",
+                ["invoices: country = 'CZ'"],
+            ),
+            (
+                # `UNNET(...) WITH OFFSET` is an allowed FROM source and the correlated `t.items`
+                # still resolves because the wrapper keeps the original alias.
+                'SELECT * FROM invoices AS t, UNNEST(t.items) AS item WITH OFFSET AS off',
+                'bigquery',
+                (
+                    "SELECT * FROM (SELECT * FROM invoices WHERE country = 'CZ') AS t "
+                    'CROSS JOIN UNNEST(t.items) AS item WITH OFFSET AS off'
+                ),
+                ["invoices: country = 'CZ'"],
+            ),
+            (
+                # Window function + QUALIFY over a protected table.
+                'SELECT id, ROW_NUMBER() OVER (PARTITION BY country ORDER BY id) rn FROM invoices QUALIFY rn = 1',
+                'snowflake',
+                (
+                    'SELECT id, ROW_NUMBER() OVER (PARTITION BY country ORDER BY id) AS rn '
+                    "FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices QUALIFY rn = 1"
+                ),
+                ["invoices: country = 'CZ'"],
+            ),
+            (
+                # A recursive CTE named after nothing protected, joined with a protected table.
+                (
+                    'WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) '
+                    'SELECT * FROM r, invoices'
+                ),
+                'snowflake',
+                (
+                    'WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) '
+                    "SELECT * FROM r, (SELECT * FROM invoices WHERE country = 'CZ') AS invoices"
+                ),
+                ["invoices: country = 'CZ'"],
+            ),
         ],
     )
     def test_rewrite(self, rules: RlsRules, sql, dialect, expected_sql, expected_rules) -> None:
@@ -348,6 +389,90 @@ class TestRewriteQuery:
                 'bigquery',
                 'table modifiers',
             ),
+            # --- FROM sources with no plain identifier ---
+            ('SELECT * FROM IDENTIFIER($tbl)', 'petr', 'snowflake', 'unsupported table reference'),
+            ("SELECT * FROM IDENTIFIER('invoices')", 'petr', 'snowflake', 'unsupported table reference'),
+            ('SELECT $1 FROM @my_stage/invoices.csv', 'petr', 'snowflake', 'unsupported table reference'),
+            ('SELECT * FROM DIRECTORY(@stg)', 'petr', 'snowflake', 'unsupported table reference'),
+            (
+                'SELECT * FROM SEMANTIC_VIEW(sv METRICS invoices.total)',
+                'petr',
+                'snowflake',
+                'unsupported table reference',
+            ),
+            ('SELECT * FROM a.b.c.d', 'petr', 'snowflake', 'unsupported table reference'),
+            ('SELECT * FROM :tbl', 'petr', 'snowflake', 'unsupported table reference'),
+            (
+                "SELECT * FROM EXTERNAL_QUERY('conn', 'SELECT * FROM invoices')",
+                'petr',
+                'bigquery',
+                'unsupported table reference',
+            ),
+            ('SELECT * FROM ML.PREDICT(MODEL `m`, TABLE invoices)', 'petr', 'bigquery', 'unsupported table reference'),
+            ("EXECUTE IMMEDIATE 'SELECT * FROM invoices'", 'petr', 'bigquery', 'SELECT'),
+            (
+                'SELECT * FROM invoices, LATERAL FLATTEN(input => invoices.items) f',
+                'petr',
+                'snowflake',
+                'unsupported FROM source',
+            ),
+            # --- a table without a rule, in every position a subquery can appear ---
+            ('SELECT (SELECT MAX(x) FROM secret) FROM invoices', 'petr', 'snowflake', "table 'secret'"),
+            ('SELECT * FROM invoices WHERE EXISTS (SELECT 1 FROM secret)', 'petr', 'snowflake', "table 'secret'"),
+            ('SELECT * FROM invoices, LATERAL (SELECT * FROM secret) s', 'petr', 'snowflake', "table 'secret'"),
+            ('SELECT * FROM invoices ORDER BY (SELECT MAX(x) FROM secret)', 'petr', 'snowflake', "table 'secret'"),
+            ('SELECT * FROM invoices LIMIT (SELECT COUNT(*) FROM secret)', 'petr', 'snowflake', "table 'secret'"),
+            ('SELECT * FROM invoices QUALIFY id IN (SELECT id FROM secret)', 'petr', 'snowflake', "table 'secret'"),
+            ('SELECT * FROM (VALUES ((SELECT MAX(x) FROM secret))) v', 'petr', 'snowflake', "table 'secret'"),
+            ('SELECT * FROM UNNEST((SELECT ARRAY_AGG(x) FROM secret))', 'petr', 'bigquery', "table 'secret'"),
+            ('SELECT * FROM (secret)', 'petr', 'snowflake', "table 'secret'"),
+            # an alias equal to a protected table name must not stand in for a rule
+            ('SELECT * FROM secret AS invoices', 'petr', 'snowflake', "table 'secret'"),
+            ('SELECT * FROM (SELECT * FROM secret) AS invoices', 'petr', 'snowflake', "table 'secret'"),
+            # --- CTE shadowing, remaining shapes ---
+            (
+                (
+                    'WITH RECURSIVE invoices AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM invoices WHERE n < 3) '
+                    'SELECT * FROM invoices'
+                ),
+                'petr',
+                'snowflake',
+                'collide',
+            ),
+            ('WITH "Invoices" AS (SELECT 1) SELECT * FROM "Invoices"', 'petr', 'snowflake', 'collide'),
+            ('WITH `Invoices` AS (SELECT 1) SELECT * FROM `Invoices`', 'petr', 'bigquery', 'collide'),
+            (
+                'SELECT * FROM secret JOIN (WITH secret AS (SELECT 1) SELECT * FROM secret) s ON TRUE',
+                'petr',
+                'snowflake',
+                'another scope',
+            ),
+            (
+                'SELECT * FROM secret WHERE EXISTS (WITH secret AS (SELECT 1) SELECT 1)',
+                'petr',
+                'snowflake',
+                'another scope',
+            ),
+            ('SELECT (WITH secret AS (SELECT 1) SELECT 1) FROM secret', 'petr', 'snowflake', 'another scope'),
+            (
+                'SELECT * FROM secret UNION ALL (WITH secret AS (SELECT 1) SELECT * FROM secret)',
+                'petr',
+                'snowflake',
+                'another scope',
+            ),
+            (
+                'WITH a AS (WITH secret AS (SELECT 1) SELECT * FROM secret) SELECT * FROM a, secret',
+                'petr',
+                'snowflake',
+                'another scope',
+            ),
+            (
+                'WITH a AS (SELECT * FROM secret), secret AS (SELECT 1) SELECT * FROM a',
+                'petr',
+                'snowflake',
+                'another scope',
+            ),
+            ('WITH secret AS (SELECT 1) SELECT * FROM public.secret', 'petr', 'snowflake', "table 'secret'"),
         ],
     )
     def test_rewrite_fails_closed(self, rules: RlsRules, sql, user, dialect, match) -> None:
