@@ -13,6 +13,9 @@ from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 
 from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
+from keboola_mcp_server.config import Config, ServerRuntimeInfo
+from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.rls import RlsRules
 
 # Sample tools: 3 read-only (get_configs, get_buckets, query_data), 2 write (create_config, update_descriptions)
 ALL_TOOLS = {'get_configs', 'create_config', 'get_buckets', 'update_descriptions', 'query_data'}
@@ -39,6 +42,22 @@ def mock_middleware_context():
     middleware_ctx = MagicMock(spec=MiddlewareContext)
     middleware_ctx.fastmcp_context = ctx
     return middleware_ctx
+
+
+def server_state(*, rls: bool) -> ServerState:
+    """A lifespan state with or without RLS rules loaded."""
+    return ServerState(
+        config=Config(),
+        runtime_info=ServerRuntimeInfo(transport='stdio'),
+        rls_rules=RlsRules(tables={'invoices': {'petr': 'TRUE'}}) if rls else None,
+    )
+
+
+@pytest.fixture
+def rls_middleware_context(mock_middleware_context):
+    """A middleware context whose lifespan state carries RLS rules (i.e. the server runs in RLS mode)."""
+    mock_middleware_context.fastmcp_context.request_context.lifespan_context = server_state(rls=True)
+    return mock_middleware_context
 
 
 @pytest.fixture
@@ -222,3 +241,84 @@ async def test_on_call_tool(middleware, mock_middleware_context, tool_name, tool
             assert tool_name in str(exc_info.value)
             assert 'not authorized' in str(exc_info.value)
             call_next.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'headers',
+    [None, {}, {'X-Read-Only-Mode': 'false'}, {'X-Allowed-Tools': 'get_configs, create_config'}],
+    ids=['no_http_request', 'no_headers', 'read_only_mode_off', 'allowed_tools_include_a_write_tool'],
+)
+async def test_rls_mode_lists_read_only_tools_regardless_of_headers(
+    middleware, rls_middleware_context, sample_tools, headers
+):
+    """RLS mode is not a header: no combination of caller-supplied headers (including none at all,
+    as on stdio) can put a write tool back on the list."""
+    call_next = AsyncMock(return_value=sample_tools)
+    mock_request = MagicMock()
+    mock_request.headers = headers if headers else {}
+    http_request = mock_request if headers is not None else None
+
+    with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=http_request):
+        result = await middleware.on_list_tools(rls_middleware_context, call_next)
+
+    assert {t.name for t in result} <= READ_ONLY_TOOLS
+
+
+@pytest.mark.asyncio
+async def test_rls_mode_blocks_calls_to_write_tools(middleware, rls_middleware_context):
+    """Hiding a tool from tools/list is not enough -- a client that knows the name must be refused
+    too, with a message that names RLS as the reason rather than blaming the client's headers."""
+    rls_middleware_context.message = MagicMock()
+    rls_middleware_context.message.name = 'create_config'
+    rls_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(
+        return_value=create_mock_tool('create_config', read_only=False)
+    )
+    call_next = AsyncMock(return_value=MagicMock())
+
+    with (
+        patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=None),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await middleware.on_call_tool(rls_middleware_context, call_next)
+
+    assert 'read-only' in str(exc_info.value)
+    assert 'RLS' in str(exc_info.value)
+    call_next.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rls_mode_allows_calls_to_read_only_tools(middleware, rls_middleware_context):
+    rls_middleware_context.message = MagicMock()
+    rls_middleware_context.message.name = 'query_data_rls'
+    rls_middleware_context.fastmcp_context.fastmcp.get_tool = AsyncMock(
+        return_value=create_mock_tool('query_data_rls', read_only=True)
+    )
+    call_next = AsyncMock(return_value=MagicMock())
+
+    with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=None):
+        await middleware.on_call_tool(rls_middleware_context, call_next)
+
+    call_next.assert_called_once_with(rls_middleware_context)
+
+
+@pytest.mark.parametrize(('rls', 'expected_read_only'), [(True, True), (False, False)])
+def test_authorization_config_reports_rls_as_read_only(rls, expected_read_only):
+    """The raw `/preview/configuration` route reuses `_get_authorization_config` with the state it
+    reads from the Starlette app, so this is also what keeps that route from becoming a back door
+    around RLS mode."""
+    mock_request = MagicMock()
+    mock_request.headers = {}
+
+    allowed, disallowed, read_only_mode = ToolAuthorizationMiddleware._get_authorization_config(
+        mock_request, server_state=server_state(rls=rls)
+    )
+
+    assert (allowed, disallowed) == (None, None)
+    assert read_only_mode is expected_read_only
+
+
+def test_authorization_config_without_server_state_is_unrestricted():
+    """Call sites that cannot reach the lifespan state must keep behaving exactly as before."""
+    with patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=None):
+        assert ToolAuthorizationMiddleware._get_authorization_config() == (None, None, False)

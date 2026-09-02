@@ -12,6 +12,7 @@ import httpx
 import pytest
 from fastmcp import Client, Context, FastMCP
 from fastmcp.client import StreamableHttpTransport
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
@@ -699,6 +700,77 @@ async def test_rls_swaps_query_tool(tmp_path) -> None:
 
     assert 'query_data_rls' in tool_names
     assert 'query_data' not in tool_names
+
+
+def _rls_server(tmp_path, mocker, *, rls: bool):
+    """A server wired the way `Client(server)` needs it, with or without RLS rules configured."""
+    os_mock = mocker.patch('keboola_mcp_server.server.os')
+    os_mock.environ = {
+        'KBC_STORAGE_TOKEN': 'SAPI_1234',
+        'KBC_STORAGE_API_URL': 'http://connection.test.keboola.com',
+        'KBC_WORKSPACE_SCHEMA': 'WORKSPACE_1234',
+    }
+    mocker.patch(
+        'keboola_mcp_server.clients.client.AsyncStorageClient.verify_token',
+        # Deliberately the most privileged session we can build: an admin token with every feature.
+        # RLS mode must still hide the write tools, so the restriction cannot be attributed to the role.
+        return_value={'owner': {'features': ['global-search', 'conditional-flows']}, 'admin': {'role': 'admin'}},
+    )
+    config = Config()
+    if rls:
+        rules_file = tmp_path / 'rls.yaml'
+        rules_file.write_text("tables:\n  invoices:\n    petr: \"country = 'CZ'\"\n")
+        config = Config(rls_rules_path=str(rules_file))
+    return create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
+
+
+@pytest.mark.asyncio
+async def test_rls_mode_lists_read_only_tools_only(tmp_path, mocker) -> None:
+    """In RLS mode the whole server is read-only: the point of the mode is that a query can only ever
+    return an RLS-filtered slice, which is worth nothing if the same session can run a job or create a
+    transformation that copies the unfiltered table somewhere else. No header is involved -- the
+    caller cannot opt out."""
+    server = _rls_server(tmp_path, mocker, rls=True)
+    read_only_names = {
+        t.name
+        for t in await server.list_tools(run_middleware=False)
+        if t.annotations is not None and t.annotations.readOnlyHint is True
+    }
+
+    async with Client(server) as client:
+        tool_names = {t.name for t in await client.list_tools()}
+
+    assert 'query_data_rls' in tool_names
+    assert 'get_tables' in tool_names
+    assert not tool_names & {'create_sql_transformation', 'run_job', 'create_config', 'deploy_data_app'}
+    # Nothing outside the read-only set survives the filter, whatever the tool is called.
+    assert tool_names <= read_only_names
+
+
+@pytest.mark.asyncio
+async def test_rls_mode_refuses_calls_to_write_tools(tmp_path, mocker) -> None:
+    """Hiding the tools from tools/list is not enough: a client that knows the name can still call it."""
+    server = _rls_server(tmp_path, mocker, rls=True)
+
+    async with Client(server) as client:
+        with pytest.raises(ToolError) as exc_info:
+            await client.call_tool('run_job', {'component_id': 'keboola.ex-db-mysql', 'configuration_id': '123'})
+
+    message = str(exc_info.value)
+    assert 'read-only' in message
+    assert 'RLS' in message
+
+
+@pytest.mark.asyncio
+async def test_without_rls_write_tools_stay_available(tmp_path, mocker) -> None:
+    """The restriction is tied to RLS mode alone -- a plain server keeps its write tools."""
+    server = _rls_server(tmp_path, mocker, rls=False)
+
+    async with Client(server) as client:
+        tool_names = {t.name for t in await client.list_tools()}
+
+    assert 'query_data' in tool_names
+    assert {'create_sql_transformation', 'run_job', 'create_config', 'deploy_data_app'} <= tool_names
 
 
 def test_rls_invalid_rules_file_fails_startup(tmp_path) -> None:

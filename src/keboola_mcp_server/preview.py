@@ -268,13 +268,19 @@ def _prepare_mutator(
 async def preview_config_diff(rq: Request) -> Response:
     preview_rq = PreviewConfigDiffRq.model_validate(await rq.json())
 
+    server_state = ServerState.from_starlette(rq.app)
+
     # This route is a raw Starlette route outside the FastMCP middleware chain, so the tool
     # authorization that ToolAuthorizationMiddleware applies to MCP tool calls does not run here.
     # Enforce the same X-Allowed-Tools / X-Disallowed-Tools / X-Read-Only-Mode headers explicitly
     # so a restricted client cannot drive the mutator-preview path for a tool it cannot call.
+    # Passing the server state also carries the RLS read-only restriction over to this route, so it
+    # cannot become a back door around it.
     read_only_tools = getattr(rq.app.state, 'mcp_read_only_tools', set())
     is_read_only = preview_rq.tool_name in read_only_tools
-    allowed, disallowed, read_only_mode = ToolAuthorizationMiddleware._get_authorization_config(rq)
+    allowed, disallowed, read_only_mode = ToolAuthorizationMiddleware._get_authorization_config(
+        rq, server_state=server_state
+    )
     if not ToolAuthorizationMiddleware._is_tool_name_authorized(
         preview_rq.tool_name, is_read_only, allowed, disallowed, read_only_mode
     ):
@@ -287,7 +293,6 @@ async def preview_config_diff(rq: Request) -> Response:
     # Log only non-sensitive metadata; tool_params can carry user-supplied secrets.
     LOG.info(f'[preview_config_diff] tool_name={preview_rq.tool_name} param_keys={sorted(preview_rq.tool_params)}')
 
-    server_state = ServerState.from_starlette(rq.app)
     # This route builds its own session state, so it must pin the Storage API URL to the server's
     # own stack the same way the MCP middleware chain does.
     own_stack_storage_api_url = server_state.own_stack_storage_api_url
