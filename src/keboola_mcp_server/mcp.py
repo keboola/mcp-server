@@ -10,7 +10,7 @@ import dataclasses
 import logging
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from unittest.mock import MagicMock
 
 import toon_format
@@ -58,6 +58,9 @@ from keboola_mcp_server.tools.constants import (
     UPDATE_FLOW_TOOL_NAME,
 )
 from keboola_mcp_server.workspace import WorkspaceManager
+
+if TYPE_CHECKING:
+    from keboola_mcp_server.rls import RlsRules
 
 LOG = logging.getLogger(__name__)
 CONVERSATION_ID = 'conversation_id'
@@ -123,6 +126,8 @@ class ServerState:
     runtime_info: ServerRuntimeInfo
     session_store: SessionStore | None = None
     kai_scope_store: KaiScopeStore | None = None
+    rls_rules: 'RlsRules | None' = None
+    """Row-level-security rules loaded at startup from `Config.rls_rules_path`; None = RLS disabled."""
     _token_resolvers: dict[str, StorageTokenResolver] = dataclasses.field(
         default_factory=dict, compare=False, repr=False
     )

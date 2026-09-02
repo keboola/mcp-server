@@ -79,6 +79,12 @@ class Config:
     Maps the `X-KBC-ProjectId` HTTP header (via the alias) and the `KBC_PROJECT_ID` env var.
     Only consulted when the inbound Storage token is a Keboola programmatic token; the legacy
     project-bound Storage token derives its project from the token itself."""
+    rls_rules_path: str | None = None
+    """Path to the YAML row-level-security rules file (feature_spec/rls_query_tool/RFC.md).
+
+    When set, the server registers the `query_data_rls` tool instead of `query_data`. Deployment-level:
+    maps `KBC_RLS_RULES_PATH` / `--rls-rules-path` only and is deliberately absent from
+    `_HEADER_ELIGIBLE_FIELDS` so a caller can never point the server at a different rules file."""
 
     # Fields a per-request HTTP header may legitimately set (see `replace_by_headers`). Everything
     # else -- jwt_secret, postgres_dsn, session_encryption_key, oauth_client_id/secret,
