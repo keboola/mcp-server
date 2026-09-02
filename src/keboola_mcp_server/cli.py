@@ -58,6 +58,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--storage-token', metavar='STR', help='Keboola Storage API token.')
     parser.add_argument('--workspace-schema', metavar='STR', help='Keboola Storage API workspace schema.')
     parser.add_argument('--workspace-id', metavar='STR', help='Keboola Storage API workspace ID.')
+    parser.add_argument(
+        '--rls-rules-path',
+        metavar='PATH',
+        help='YAML file with row-level-security rules. When set, only the query_data_rls tool is registered.',
+    )
     parser.add_argument('--host', default='localhost', metavar='STR', help='The host to listen on.')
     parser.add_argument('--port', type=int, default=8000, metavar='INT', help='The port to listen on.')
     parser.add_argument(
@@ -561,6 +566,7 @@ async def run_server(args: list[str] | None = None) -> None:
             storage_token=parsed_args.storage_token,
             workspace_schema=parsed_args.workspace_schema,
             workspace_id=parsed_args.workspace_id,
+            rls_rules_path=parsed_args.rls_rules_path,
         ).replace_by(os.environ)
 
         # Local dev convenience, for stdio and streamable-http alike: with no token configured (CLI,

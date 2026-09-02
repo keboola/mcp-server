@@ -173,7 +173,7 @@ class TestConfig:
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
             "jwt_secret=None, postgres_dsn='****', session_encryption_key='****', "
-            'bearer_token=None, conversation_id=None, project_id=None)'
+            'bearer_token=None, conversation_id=None, project_id=None, rls_rules_path=None)'
         )
 
     def test_workspace_id_must_be_numeric(self) -> None:
@@ -222,6 +222,7 @@ class TestReplaceByHeaders:
             {'X-Oauth-Client-Secret': 'evil'},
             {'X-Oauth-Server-Url': 'https://evil.example'},
             {'X-Mcp-Server-Url': 'https://evil.example'},
+            {'X-Rls-Rules-Path': '/tmp/evil.yaml'},
         ],
         ids=[
             'jwt_secret_bare',
@@ -233,12 +234,18 @@ class TestReplaceByHeaders:
             'oauth_client_secret',
             'oauth_server_url',
             'mcp_server_url',
+            'rls_rules_path',
         ],
     )
     def test_deployment_level_fields_are_unreachable(self, headers: Mapping[str, str]) -> None:
         config = Config(jwt_secret='real-secret', postgres_dsn='postgresql://real')
         out = config.replace_by_headers(headers)
         assert out == config  # nothing changed -- every one of these headers was ignored
+
+    def test_rls_rules_path_from_env_and_cli(self) -> None:
+        # Deployment-level: reachable from env / CLI (trusted), never from a header (Task 2 above).
+        assert Config().replace_by({'KBC_RLS_RULES_PATH': '/etc/rls.yaml'}).rls_rules_path == '/etc/rls.yaml'
+        assert Config(rls_rules_path='/opt/rls.yaml').rls_rules_path == '/opt/rls.yaml'
 
     def test_allowlisted_fields_still_work(self) -> None:
         config = Config()

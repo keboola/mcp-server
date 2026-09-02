@@ -1,0 +1,1324 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Keboola MCP — Row-Level Security demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ground: #eef1f5;
+        --card: #ffffff;
+        --ink: #1b2330;
+        --ink-soft: #5a6676;
+        --ink-faint: #8b96a5;
+        --line: #dde3ea;
+        --line-strong: #c6d0da;
+        --accent: #1f5fd8;
+        --accent-soft: #e8f0fe;
+        --danger: #c02b2b;
+        --danger-soft: #fdecec;
+        --ok: #1d7a4c;
+        --ok-soft: #e6f4ec;
+        --radius: 6px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--ground);
+        color: var(--ink);
+        font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+      code,
+      pre,
+      textarea,
+      .mono {
+        font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      header {
+        background: var(--card);
+        border-bottom: 1px solid var(--line);
+        padding: 14px 24px;
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      header h1 {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+      header .sub {
+        color: var(--ink-soft);
+        font-size: 12.5px;
+      }
+      header .status {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+      header .status .dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ink-faint);
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+      header .status.up .dot {
+        background: var(--ok);
+      }
+      header .status.down .dot {
+        background: var(--danger);
+      }
+      main {
+        padding: 18px 24px 40px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        margin-bottom: 18px;
+      }
+      .card > h2 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--ink-soft);
+        font-weight: 600;
+        margin: 0;
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .card > h2 .h2-right {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+      .card > .body {
+        padding: 14px;
+      }
+      .card > .body.flush {
+        padding: 0;
+      }
+
+      /* Users strip */
+      .strip {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .persona {
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: #fff;
+        padding: 7px 12px;
+        cursor: pointer;
+        font: inherit;
+        color: inherit;
+        text-align: left;
+        min-width: 150px;
+      }
+      .persona:hover {
+        border-color: var(--accent);
+      }
+      .persona[aria-pressed='true'] {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+      }
+      .persona .name {
+        display: block;
+        font-weight: 600;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+      }
+      .persona .desc {
+        display: block;
+        color: var(--ink-soft);
+        font-size: 11.5px;
+        line-height: 1.35;
+      }
+
+      /* Query: editor + rewritten SQL side by side */
+      .split {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+      @media (max-width: 900px) {
+        .split {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      .pane-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--ink-soft);
+        font-weight: 600;
+        margin-bottom: 7px;
+      }
+      textarea#sql {
+        width: 100%;
+        min-height: 190px;
+        resize: vertical;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        padding: 10px 12px;
+        font-size: 12.5px;
+        line-height: 1.6;
+        color: var(--ink);
+        background: #fcfdfe;
+      }
+      textarea#sql:focus {
+        outline: 2px solid var(--accent-soft);
+        border-color: var(--accent);
+      }
+      #rewrite-pane {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #f6f8fb;
+        padding: 10px 12px;
+        min-height: 190px;
+      }
+      select,
+      input[type='text'] {
+        font: inherit;
+        font-size: 13px;
+        padding: 6px 8px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: #fff;
+        color: var(--ink);
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .row.gap-t {
+        margin-top: 12px;
+      }
+      label.inline {
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+      button.btn {
+        font: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        padding: 7px 14px;
+        border-radius: var(--radius);
+        border: 1px solid var(--line-strong);
+        background: #fff;
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.btn:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      button.btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      button.btn.primary:hover:not(:disabled) {
+        background: #1a51ba;
+        color: #fff;
+      }
+      button.btn.small {
+        font-size: 12px;
+        padding: 5px 10px;
+      }
+      button.btn:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+
+      /* Tabs */
+      .tabs {
+        display: flex;
+        gap: 2px;
+        flex-wrap: wrap;
+        border-bottom: 1px solid var(--line);
+        padding: 0 14px;
+      }
+      button.tab {
+        font: inherit;
+        font-size: 12.5px;
+        font-weight: 500;
+        background: transparent;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        padding: 9px 12px;
+        margin-bottom: -1px;
+        color: var(--ink-soft);
+        cursor: pointer;
+      }
+      button.tab:hover {
+        color: var(--ink);
+      }
+      button.tab[aria-selected='true'] {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+      }
+      button.tab:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
+      }
+      button.tab .badge {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 10.5px;
+        color: var(--ink-faint);
+        margin-left: 6px;
+      }
+      button.tab .badge.bad {
+        color: var(--danger);
+      }
+
+      /* Segmented control */
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        overflow: hidden;
+      }
+      .seg button {
+        font: inherit;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 5px 12px;
+        border: 0;
+        background: #fff;
+        color: var(--ink-soft);
+        cursor: pointer;
+      }
+      .seg button + button {
+        border-left: 1px solid var(--line-strong);
+      }
+      .seg button[aria-pressed='true'] {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      /* Rules editor */
+      table.grid {
+        border-collapse: collapse;
+        font-size: 11.5px;
+      }
+      table.grid th,
+      table.grid td {
+        border: 1px solid var(--line);
+        padding: 5px 7px;
+        text-align: left;
+        vertical-align: middle;
+      }
+      table.grid th {
+        background: #f6f8fb;
+        font-weight: 600;
+        color: var(--ink-soft);
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        white-space: nowrap;
+      }
+      table.grid th.rowhead {
+        font-family: 'IBM Plex Mono', monospace;
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: 11.5px;
+        white-space: nowrap;
+        font-weight: 400;
+      }
+      table.grid th.rowhead .bucket {
+        color: var(--ink-faint);
+      }
+      table.grid th.rowhead .tname {
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .colhead {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .colhead .uname {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11.5px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      button.rm {
+        font: inherit;
+        font-size: 12px;
+        line-height: 1;
+        border: 1px solid var(--line-strong);
+        background: #fff;
+        color: var(--ink-faint);
+        border-radius: 4px;
+        padding: 1px 5px;
+        cursor: pointer;
+      }
+      button.rm:hover {
+        color: var(--danger);
+        border-color: var(--danger);
+      }
+      input.cell {
+        width: 100%;
+        min-width: 210px;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11.5px;
+        padding: 5px 7px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        background: #fff;
+        color: var(--ink);
+      }
+      input.cell:hover {
+        border-color: var(--line);
+      }
+      input.cell:focus {
+        outline: none;
+        border-color: var(--accent);
+        background: #fcfdfe;
+      }
+      input.cell.empty {
+        background: var(--danger-soft);
+      }
+      input.cell::placeholder {
+        color: var(--danger);
+        opacity: 1;
+      }
+      textarea#yaml {
+        width: 100%;
+        min-height: 340px;
+        resize: vertical;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        padding: 10px 12px;
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: var(--ink);
+        background: #fcfdfe;
+      }
+      .dirty {
+        font-size: 11.5px;
+        color: var(--danger);
+      }
+      #rules-status {
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+      #rules-status.bad {
+        color: var(--danger);
+      }
+      #rules-status.good {
+        color: var(--ok);
+      }
+
+      /* Results */
+      .chips {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+      .chip {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11.5px;
+        background: var(--ok-soft);
+        color: var(--ok);
+        border: 1px solid #bfe0cd;
+        border-radius: 999px;
+        padding: 2px 10px;
+      }
+      .callout {
+        border-radius: var(--radius);
+        padding: 10px 12px;
+        font-size: 12.5px;
+      }
+      .callout.error {
+        background: var(--danger-soft);
+        border: 1px solid #f0c2c2;
+        color: var(--danger);
+      }
+      .callout.error .mono {
+        display: block;
+        margin-top: 4px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .callout.info {
+        background: #f6f8fb;
+        border: 1px solid var(--line);
+        color: var(--ink-soft);
+      }
+      .meta {
+        font-size: 12px;
+        color: var(--ink-soft);
+        margin-bottom: 8px;
+      }
+      pre.sqlout {
+        background: transparent;
+        border: 0;
+        padding: 0;
+        font-size: 12px;
+        line-height: 1.55;
+        overflow-x: auto;
+        margin: 0;
+        white-space: pre;
+      }
+      table.data {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+      }
+      table.data th,
+      table.data td {
+        border-bottom: 1px solid var(--line);
+        padding: 5px 10px;
+        text-align: left;
+        white-space: nowrap;
+      }
+      table.data th {
+        background: #f6f8fb;
+        position: sticky;
+        top: 0;
+        font-weight: 600;
+        color: var(--ink-soft);
+        font-size: 11px;
+      }
+      table.data tr:hover td {
+        background: #fafbfd;
+      }
+      .tablewrap {
+        max-height: 460px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+      }
+      .cmp td.refusal {
+        color: var(--danger);
+        white-space: normal;
+        font-size: 11px;
+      }
+      .cmp td.rules {
+        white-space: normal;
+        color: var(--ok);
+        font-size: 11px;
+        font-family: 'IBM Plex Mono', monospace;
+      }
+      .scrollx {
+        overflow-x: auto;
+      }
+      .spinner {
+        font-size: 12.5px;
+        color: var(--ink-soft);
+      }
+      footer {
+        padding: 0 24px 30px;
+        color: var(--ink-faint);
+        font-size: 11.5px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Keboola MCP Server — Row-Level Security</h1>
+      <span class="sub">pilot demo · local only · read-only queries</span>
+      <span class="status" id="status"><span class="dot"></span><span id="status-text">connecting…</span></span>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>Users</h2>
+        <div class="body">
+          <div class="strip" id="users"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Query</h2>
+        <div class="body">
+          <div class="row" style="margin-bottom: 12px">
+            <label class="inline" for="examples">Examples</label>
+            <select id="examples" style="flex: 1; max-width: 520px"></select>
+          </div>
+          <div class="split">
+            <div>
+              <div class="pane-title">SQL as the user writes it</div>
+              <textarea id="sql" spellcheck="false"></textarea>
+              <div class="row gap-t">
+                <button class="btn primary" id="btn-run">Run</button>
+                <button class="btn" id="btn-all">Run for all users</button>
+                <span class="spinner" id="busy"></span>
+              </div>
+            </div>
+            <div>
+              <div class="pane-title" id="rewrite-title">Rewritten SQL</div>
+              <div id="rewrite-pane">
+                <div class="callout info">Type a query to see how it is rewritten.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Result</h2>
+        <div class="tabs" id="result-tabs" role="tablist" aria-label="Result per user" hidden></div>
+        <div class="body" id="result">
+          <div class="callout info">Pick a user, choose or type a query, then run it.</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>
+          Rules
+          <span class="h2-right">
+            <span class="dirty" id="rules-dirty" hidden>unsaved changes</span>
+            <span class="seg" id="rules-view">
+              <button type="button" data-view="grid" aria-pressed="true">Grid</button>
+              <button type="button" data-view="yaml" aria-pressed="false">YAML</button>
+            </span>
+          </span>
+        </h2>
+        <div class="body">
+          <div id="rules-grid" class="scrollx"></div>
+          <div id="rules-yaml" hidden>
+            <textarea id="yaml" spellcheck="false"></textarea>
+          </div>
+          <div class="row gap-t">
+            <button class="btn small" id="btn-add-user">Add user</button>
+            <button class="btn small" id="btn-add-table">Add table</button>
+            <span style="flex: 1"></span>
+            <button class="btn" id="btn-discard">Discard changes</button>
+            <button class="btn primary" id="btn-save">Save and reload rules</button>
+            <span id="rules-status"></span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      Every query is rewritten server-side: each referenced table becomes
+      <span class="mono">(SELECT * FROM table WHERE &lt;predicate&gt;)</span>. Fail-closed — a table without a rule for
+      the user is refused. Saving rules rewrites the rules file (keeping a
+      <span class="mono">.bak</span> copy) and restarts the MCP server process.
+    </footer>
+
+    <script>
+      // One-line persona descriptions, matching the comments in rls.example.yaml. Users that are
+      // not listed here still work — they simply render without a description.
+      const USER_DESCRIPTIONS = {
+        alice: 'Czech market only',
+        bob: 'Poland + Slovakia',
+        carol: 'DACH + Benelux (DE, AT, NL, BE)',
+        dave: 'Southern markets (ES, IT, FR), no in.c-sales.deals',
+        admin: 'Sees everything',
+      };
+      const USER_ORDER = ['alice', 'bob', 'carol', 'dave', 'admin'];
+      // Buckets used by the example queries. They match the keys in rls.example.yaml — point them
+      // at your own buckets together with the rules.
+      const CRM = '"in.c-crm"';
+      const SALES = '"in.c-sales"';
+
+      const EXAMPLES = [
+        {
+          label: 'Rows per country — invoices',
+          sql: `SELECT country, COUNT(*) AS n\nFROM ${CRM}."invoices"\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 20`,
+        },
+        {
+          label: 'Top 10 invoices by amount',
+          sql: `SELECT id, country, amount\nFROM ${CRM}."invoices"\nORDER BY amount DESC\nLIMIT 10`,
+        },
+        {
+          label: 'Orders by country and status',
+          sql: `SELECT country, status, COUNT(*) AS n\nFROM ${CRM}."orders"\nWHERE status IS NOT NULL\nGROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 25`,
+        },
+        {
+          label: 'Join invoices and orders per country',
+          sql: `SELECT i.country, COUNT(*) AS matched_rows, COUNT(DISTINCT o.id) AS orders\nFROM ${CRM}."invoices" AS i\nJOIN ${CRM}."orders" AS o ON o.customer_id = i.customer_id\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 20`,
+        },
+        {
+          label: 'Deals by stage — in.c-sales.deals (refused for dave)',
+          sql: `SELECT country, stage, COUNT(*) AS n\nFROM ${SALES}."deals"\nGROUP BY 1, 2\nORDER BY 3 DESC\nLIMIT 25`,
+        },
+        {
+          label: 'Refused — RESULT_SCAN escape attempt',
+          sql: `SELECT *\nFROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))\nLIMIT 10`,
+        },
+        {
+          label: 'Refused — non-SELECT statement',
+          sql: `DELETE FROM ${CRM}."invoices"\nWHERE country = 'CZ'`,
+        },
+      ];
+
+      const $ = (id) => document.getElementById(id);
+
+      // Replaced by the first user from the rules file if this one is not present there.
+      let currentUser = 'alice';
+      /** Rules as last loaded from the server: {users, tables, yaml}. */
+      let rules = { users: [], tables: {}, yaml: '' };
+      /** Editable copy driving the Rules panel. */
+      let draft = { users: [], tables: {} };
+      let rulesView = 'grid';
+      let uiConfig = null;
+
+      const esc = (s) =>
+        String(s ?? '').replace(
+          /[&<>"']/g,
+          (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]
+        );
+
+      /** Minimal RFC4180 CSV parser: handles quoted fields, embedded commas, quotes and newlines. */
+      function parseCsv(text) {
+        const rows = [];
+        let row = [];
+        let field = '';
+        let inQuotes = false;
+        for (let i = 0; i < text.length; i++) {
+          const ch = text[i];
+          if (inQuotes) {
+            if (ch === '"') {
+              if (text[i + 1] === '"') {
+                field += '"';
+                i++;
+              } else inQuotes = false;
+            } else field += ch;
+            continue;
+          }
+          if (ch === '"') inQuotes = true;
+          else if (ch === ',') {
+            row.push(field);
+            field = '';
+          } else if (ch === '\n') {
+            row.push(field);
+            rows.push(row);
+            row = [];
+            field = '';
+          } else if (ch !== '\r') field += ch;
+        }
+        if (field !== '' || row.length) {
+          row.push(field);
+          rows.push(row);
+        }
+        return rows.filter((r) => !(r.length === 1 && r[0] === ''));
+      }
+
+      // --- SQL pretty printer ------------------------------------------------------------------
+      // Keyword-based, deliberately dependency-free: it only inserts line breaks (and indents by
+      // parenthesis depth) before the clause keywords below. Quoted strings and quoted identifiers
+      // are copied verbatim so a keyword inside a literal never triggers a break.
+      const SQL_BREAK_KEYWORDS = [
+        'LEFT OUTER JOIN',
+        'RIGHT OUTER JOIN',
+        'FULL OUTER JOIN',
+        'NATURAL JOIN',
+        'CROSS JOIN',
+        'INNER JOIN',
+        'LEFT JOIN',
+        'RIGHT JOIN',
+        'FULL JOIN',
+        'GROUP BY',
+        'ORDER BY',
+        'JOIN',
+        'FROM',
+        'WHERE',
+        'HAVING',
+        'LIMIT',
+      ];
+
+      function formatSql(sql) {
+        const text = String(sql ?? '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        let out = '';
+        let depth = 0;
+        let i = 0;
+        while (i < text.length) {
+          const ch = text[i];
+          if (ch === "'" || ch === '"') {
+            out += ch;
+            i++;
+            while (i < text.length) {
+              out += text[i];
+              if (text[i] === ch) {
+                if (text[i + 1] === ch) {
+                  out += text[i + 1];
+                  i += 2;
+                  continue;
+                }
+                i++;
+                break;
+              }
+              i++;
+            }
+            continue;
+          }
+          if (ch === '(') {
+            depth++;
+            out += ch;
+            i++;
+            continue;
+          }
+          if (ch === ')') {
+            depth = Math.max(0, depth - 1);
+            out += ch;
+            i++;
+            continue;
+          }
+          const atBoundary = out === '' || /[\s(]$/.test(out);
+          if (atBoundary) {
+            const rest = text.slice(i);
+            const kw = SQL_BREAK_KEYWORDS.find((k) => {
+              if (rest.slice(0, k.length).toUpperCase() !== k) return false;
+              const next = rest[k.length];
+              return next === undefined || !/[A-Za-z0-9_$]/.test(next);
+            });
+            if (kw) {
+              out = out.replace(/ +$/, '');
+              if (out !== '') out += '\n' + '  '.repeat(depth);
+              out += rest.slice(0, kw.length);
+              i += kw.length;
+              continue;
+            }
+          }
+          out += ch;
+          i++;
+        }
+        return out;
+      }
+
+      // --- shared rendering helpers ------------------------------------------------------------
+
+      function refusalHtml(msg) {
+        return `<div class="callout error"><strong>Refused</strong><span class="mono">${esc(msg)}</span></div>`;
+      }
+
+      function chipsHtml(appliedRules) {
+        if (!appliedRules || !appliedRules.length) return '';
+        return `<div class="chips">${appliedRules.map((r) => `<span class="chip">${esc(r)}</span>`).join('')}</div>`;
+      }
+
+      function csvTableHtml(csv) {
+        const rows = parseCsv(csv || '');
+        if (!rows.length) return '<div class="callout info">No rows returned.</div>';
+        const [header, ...data] = rows;
+        const thead = `<tr>${header.map((h) => `<th>${esc(h)}</th>`).join('')}</tr>`;
+        const tbody = data
+          .map((r) => `<tr>${header.map((_, i) => `<td>${esc(r[i] ?? '')}</td>`).join('')}</tr>`)
+          .join('');
+        return (
+          `<div class="meta">${data.length} row${data.length === 1 ? '' : 's'} · ${header.length} column${
+            header.length === 1 ? '' : 's'
+          }</div>` + `<div class="tablewrap"><table class="data">${thead}${tbody}</table></div>`
+        );
+      }
+
+      /** Full result panel for one user — the same markup for a single run and for a tab. */
+      function singleResultHtml(user, r) {
+        const head = `<div class="meta">Result for <strong>${esc(user)}</strong></div>`;
+        if (!r.ok) return head + refusalHtml(r.error);
+        return (
+          head +
+          chipsHtml(r.applied_rules) +
+          (r.message ? `<div class="callout info" style="margin-bottom:10px">${esc(r.message)}</div>` : '') +
+          csvTableHtml(r.csv_data)
+        );
+      }
+
+      function userOrder(list) {
+        const known = USER_ORDER.filter((u) => list.includes(u));
+        return known.concat(list.filter((u) => !USER_ORDER.includes(u)));
+      }
+
+      // --- users strip -------------------------------------------------------------------------
+
+      function renderUsers() {
+        const order = userOrder(rules.users);
+        $('users').innerHTML = order
+          .map((u) => {
+            const desc = USER_DESCRIPTIONS[u] ?? 'no description';
+            return (
+              `<button type="button" class="persona" data-user="${esc(u)}" title="${esc(desc)}" ` +
+              `aria-pressed="${u === currentUser}">` +
+              `<span class="name">${esc(u)}</span><span class="desc">${esc(desc)}</span></button>`
+            );
+          })
+          .join('');
+        for (const el of $('users').querySelectorAll('.persona')) {
+          el.addEventListener('click', () => {
+            currentUser = el.dataset.user;
+            renderUsers();
+            $('btn-run').textContent = `Run as ${currentUser}`;
+            scheduleRewrite();
+          });
+        }
+        if (!order.includes(currentUser) && order.length) {
+          currentUser = order[0];
+          $('btn-run').textContent = `Run as ${currentUser}`;
+          renderUsers();
+        }
+      }
+
+      // --- rewrite panel (live, debounced) -----------------------------------------------------
+
+      let rewriteTimer = null;
+      let rewriteToken = 0;
+
+      function scheduleRewrite() {
+        clearTimeout(rewriteTimer);
+        const delay = uiConfig?.rewriteDebounceMs;
+        if (typeof delay !== 'number') {
+          throw new Error('UI config is missing rewriteDebounceMs');
+        }
+        rewriteTimer = setTimeout(runRewrite, delay);
+      }
+
+      async function runRewrite() {
+        const sql = $('sql').value.trim();
+        $('rewrite-title').textContent = `Rewritten SQL for ${currentUser}`;
+        if (!sql) {
+          $('rewrite-pane').innerHTML = '<div class="callout info">Type a query to see how it is rewritten.</div>';
+          return;
+        }
+        const token = ++rewriteToken;
+        try {
+          const r = await postJson('/api/rewrite', { user: currentUser, sql });
+          if (token !== rewriteToken) return; // a newer request already won
+          $('rewrite-pane').innerHTML = r.ok
+            ? chipsHtml(r.applied_rules) + `<pre class="sqlout">${esc(formatSql(r.sql))}</pre>`
+            : refusalHtml(r.error);
+        } catch (e) {
+          if (token !== rewriteToken) return;
+          $('rewrite-pane').innerHTML = refusalHtml(`Rewrite preview failed: ${e.message}`);
+        }
+      }
+
+      // --- result tabs -------------------------------------------------------------------------
+
+      /** @type {{key: string, label: string, badge?: string, bad?: boolean, html: string}[]} */
+      let resultTabs = [];
+      let activeTab = 0;
+
+      function renderResultTabs() {
+        const bar = $('result-tabs');
+        if (resultTabs.length < 2) {
+          bar.hidden = true;
+          bar.innerHTML = '';
+        } else {
+          bar.hidden = false;
+          bar.innerHTML = resultTabs
+            .map(
+              (t, i) =>
+                `<button type="button" class="tab" role="tab" id="tab-${esc(t.key)}" ` +
+                `aria-selected="${i === activeTab}" aria-controls="result" tabindex="${i === activeTab ? 0 : -1}" ` +
+                `data-index="${i}">${esc(t.label)}` +
+                (t.badge ? `<span class="badge${t.bad ? ' bad' : ''}">${esc(t.badge)}</span>` : '') +
+                '</button>'
+            )
+            .join('');
+          for (const el of bar.querySelectorAll('.tab')) {
+            el.addEventListener('click', () => selectTab(Number(el.dataset.index)));
+            el.addEventListener('keydown', (ev) => {
+              if (ev.key !== 'ArrowRight' && ev.key !== 'ArrowLeft') return;
+              ev.preventDefault();
+              const step = ev.key === 'ArrowRight' ? 1 : -1;
+              const next = (Number(el.dataset.index) + step + resultTabs.length) % resultTabs.length;
+              selectTab(next);
+              bar.querySelectorAll('.tab')[next].focus();
+            });
+          }
+        }
+        $('result').innerHTML = resultTabs.length ? resultTabs[activeTab].html : '';
+      }
+
+      function selectTab(index) {
+        activeTab = index;
+        renderResultTabs();
+      }
+
+      function showResult(tabs) {
+        resultTabs = tabs;
+        activeTab = 0;
+        renderResultTabs();
+      }
+
+      // --- running queries ---------------------------------------------------------------------
+
+      async function postJson(path, body, method) {
+        const res = await fetch(path, {
+          method: method || 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        return res.json();
+      }
+
+      function setBusy(on, text) {
+        $('busy').textContent = on ? text || 'working…' : '';
+        for (const id of ['btn-run', 'btn-all']) $(id).disabled = on;
+      }
+
+      async function doRun() {
+        const sql = $('sql').value.trim();
+        if (!sql) return;
+        setBusy(true, `running as ${currentUser}…`);
+        try {
+          const r = await postJson('/api/query', { user: currentUser, sql });
+          showResult([{ key: currentUser, label: currentUser, html: singleResultHtml(currentUser, r) }]);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function doRunAll() {
+        const sql = $('sql').value.trim();
+        if (!sql) return;
+        const order = userOrder(rules.users);
+        const results = [];
+        setBusy(true, 'running for all users…');
+        try {
+          for (const user of order) {
+            $('busy').textContent = `running as ${user}…`;
+            const r = await postJson('/api/query', { user, sql });
+            results.push({ user, r });
+          }
+          const rows = results
+            .map(({ user, r }) => {
+              if (!r.ok) {
+                return `<tr><th class="rowhead">${esc(user)}</th><td class="refusal" colspan="2">${esc(
+                  r.error
+                )}</td></tr>`;
+              }
+              const parsed = parseCsv(r.csv_data || '');
+              const n = Math.max(parsed.length - 1, 0);
+              return (
+                `<tr><th class="rowhead">${esc(user)}</th>` +
+                `<td class="rules">${(r.applied_rules || []).map(esc).join('<br>')}</td>` +
+                `<td>${n} row${n === 1 ? '' : 's'}</td></tr>`
+              );
+            })
+            .join('');
+          const summary =
+            `<div class="meta">Same query, ${results.length} user${results.length === 1 ? '' : 's'}</div>` +
+            '<div class="scrollx"><table class="grid cmp">' +
+            '<tr><th>User</th><th>Applied rules</th><th>Outcome</th></tr>' +
+            rows +
+            '</table></div>';
+          showResult(
+            [{ key: 'summary', label: 'Summary', html: summary }].concat(
+              results.map(({ user, r }) => ({
+                key: user,
+                label: user,
+                badge: r.ok ? `${Math.max(parseCsv(r.csv_data || '').length - 1, 0)}` : 'refused',
+                bad: !r.ok,
+                html: singleResultHtml(user, r),
+              }))
+            )
+          );
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      // --- rules editor ------------------------------------------------------------------------
+
+      function draftFromRules() {
+        return {
+          users: userOrder(rules.users),
+          tables: Object.fromEntries(
+            Object.entries(rules.tables).map(([t, perUser]) => [t, { ...(perUser ?? {}) }])
+          ),
+        };
+      }
+
+      /** Serialise the draft back to YAML, with a short header explaining the format. */
+      function draftToYaml(d) {
+        const quote = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+        const lines = [
+          '# Row-level security rules for the RLS pilot demo (Keboola MCP Server).',
+          '#',
+          '# table -> user -> SQL predicate. Each predicate is inserted verbatim into',
+          '#   SELECT * FROM <table> WHERE <predicate>',
+          '# and must be valid SQL in the workspace dialect (Snowflake here).',
+          '#',
+          '# Fail-closed: a table with no rule for the user is refused. Unrestricted access must be',
+          '# written explicitly as TRUE. Keys use the <bucket>.<table> form; user names are matched',
+          '# case-insensitively.',
+          '#',
+          '# Written by the RLS demo rules editor.',
+          '',
+          'tables:',
+        ];
+        for (const [table, perUser] of Object.entries(d.tables)) {
+          lines.push(`  ${table}:`);
+          for (const user of d.users) {
+            const pred = (perUser?.[user] ?? '').trim();
+            if (pred) lines.push(`    ${user}: ${quote(pred)}`);
+          }
+          lines.push('');
+        }
+        return lines.join('\n');
+      }
+
+      function currentYamlFromView() {
+        return rulesView === 'yaml' ? $('yaml').value : draftToYaml(draft);
+      }
+
+      function isDirty() {
+        return rulesView === 'yaml' ? $('yaml').value !== rules.yaml : draftToYaml(draft) !== draftToYaml(draftFromRules());
+      }
+
+      function markDirty() {
+        $('rules-dirty').hidden = !isDirty();
+      }
+
+      function renderRulesGrid() {
+        const users = draft.users;
+        const head =
+          '<tr><th>Table</th>' +
+          users
+            .map(
+              (u) =>
+                `<th><span class="colhead"><span class="uname">${esc(u)}</span>` +
+                `<button type="button" class="rm" data-rm-user="${esc(u)}" title="Remove user ${esc(
+                  u
+                )}">&times;</button></span></th>`
+            )
+            .join('') +
+          '</tr>';
+        const body = Object.entries(draft.tables)
+          .map(([table, perUser]) => {
+            const dot = table.lastIndexOf('.');
+            const bucket = dot >= 0 ? table.slice(0, dot + 1) : '';
+            const shortName = dot >= 0 ? table.slice(dot + 1) : table;
+            const cells = users
+              .map((u) => {
+                const pred = perUser?.[u] ?? '';
+                return (
+                  `<td><input class="cell${pred ? '' : ' empty'}" type="text" spellcheck="false" ` +
+                  `data-table="${esc(table)}" data-user="${esc(u)}" value="${esc(pred)}" ` +
+                  `placeholder="no rule" aria-label="${esc(u)} on ${esc(table)}" /></td>`
+                );
+              })
+              .join('');
+            return (
+              `<tr><th class="rowhead" title="${esc(table)}">` +
+              `<button type="button" class="rm" data-rm-table="${esc(table)}" title="Remove table ${esc(
+                table
+              )}">&times;</button> ` +
+              `<span class="bucket">${esc(bucket)}</span><span class="tname">${esc(shortName)}</span></th>${cells}</tr>`
+            );
+          })
+          .join('');
+        $('rules-grid').innerHTML = `<table class="grid">${head}${body}</table>`;
+
+        for (const input of $('rules-grid').querySelectorAll('input.cell')) {
+          input.addEventListener('input', () => {
+            const { table, user } = input.dataset;
+            const value = input.value;
+            if (value.trim()) draft.tables[table][user] = value;
+            else delete draft.tables[table][user];
+            input.classList.toggle('empty', !value.trim());
+            markDirty();
+          });
+        }
+        for (const btn of $('rules-grid').querySelectorAll('[data-rm-user]')) {
+          btn.addEventListener('click', () => {
+            const user = btn.dataset.rmUser;
+            draft.users = draft.users.filter((u) => u !== user);
+            for (const perUser of Object.values(draft.tables)) delete perUser[user];
+            renderRulesGrid();
+            markDirty();
+          });
+        }
+        for (const btn of $('rules-grid').querySelectorAll('[data-rm-table]')) {
+          btn.addEventListener('click', () => {
+            delete draft.tables[btn.dataset.rmTable];
+            renderRulesGrid();
+            markDirty();
+          });
+        }
+      }
+
+      function setRulesView(view) {
+        // Carry edits across the switch: grid -> YAML regenerates the text, YAML -> grid re-parses.
+        if (view === 'yaml' && rulesView === 'grid') $('yaml').value = draftToYaml(draft);
+        rulesView = view;
+        for (const b of $('rules-view').querySelectorAll('button')) {
+          b.setAttribute('aria-pressed', String(b.dataset.view === view));
+        }
+        $('rules-grid').hidden = view !== 'grid';
+        $('rules-yaml').hidden = view !== 'yaml';
+        markDirty();
+      }
+
+      function setRulesStatus(text, kind) {
+        $('rules-status').textContent = text;
+        $('rules-status').className = kind || '';
+      }
+
+      function applyRules(payload) {
+        rules = { users: payload.users, tables: payload.tables, yaml: payload.yaml ?? '' };
+        draft = draftFromRules();
+        $('yaml').value = rules.yaml;
+        renderUsers();
+        renderRulesGrid();
+        markDirty();
+      }
+
+      async function saveRules() {
+        const yamlText = currentYamlFromView();
+        setRulesStatus('validating and restarting the MCP server…');
+        for (const id of ['btn-save', 'btn-discard', 'btn-add-user', 'btn-add-table', 'btn-run', 'btn-all'])
+          $(id).disabled = true;
+        try {
+          const r = await postJson('/api/rules', { yaml: yamlText }, 'PUT');
+          if (!r.ok) {
+            setRulesStatus(r.error, 'bad');
+            return;
+          }
+          applyRules(r);
+          setRulesStatus('saved · rules file rewritten · MCP server restarted', 'good');
+          await refreshStatus();
+          scheduleRewrite();
+        } catch (e) {
+          setRulesStatus(`Save failed: ${e.message}`, 'bad');
+        } finally {
+          for (const id of ['btn-save', 'btn-discard', 'btn-add-user', 'btn-add-table', 'btn-run', 'btn-all'])
+            $(id).disabled = false;
+        }
+      }
+
+      function discardRules() {
+        draft = draftFromRules();
+        $('yaml').value = rules.yaml;
+        renderRulesGrid();
+        markDirty();
+        setRulesStatus('');
+      }
+
+      function addUser() {
+        const name = (prompt('New user name (lower-case, e.g. erin)') || '').trim().toLowerCase();
+        if (!name) return;
+        if (draft.users.includes(name)) {
+          setRulesStatus(`User "${name}" already exists.`, 'bad');
+          return;
+        }
+        draft.users.push(name);
+        setRulesView('grid');
+        renderRulesGrid();
+        markDirty();
+        setRulesStatus('');
+      }
+
+      function addTable() {
+        const key = (prompt('New table key in the <bucket>.<table> form') || '').trim();
+        if (!key) return;
+        if (draft.tables[key]) {
+          setRulesStatus(`Table "${key}" already exists.`, 'bad');
+          return;
+        }
+        draft.tables[key] = {};
+        setRulesView('grid');
+        renderRulesGrid();
+        markDirty();
+        setRulesStatus('');
+      }
+
+      // --- header status -----------------------------------------------------------------------
+
+      async function refreshStatus() {
+        try {
+          const t = await (await fetch('/api/tools')).json();
+          const tools = t.tools || [];
+          const hasRls = tools.includes('query_data_rls');
+          const hasPlain = tools.includes('query_data');
+          $('status').className = 'status ' + (hasRls && !hasPlain ? 'up' : 'down');
+          $('status-text').textContent =
+            `MCP connected · ${tools.length} tools · query_data_rls ${hasRls ? 'registered' : 'MISSING'}` +
+            ` · query_data ${hasPlain ? 'REGISTERED' : 'not registered'}`;
+          $('status').title = tools.join(', ');
+        } catch (e) {
+          $('status').className = 'status down';
+          $('status-text').textContent = 'MCP server unreachable';
+        }
+      }
+
+      // --- init --------------------------------------------------------------------------------
+
+      function renderExamples() {
+        $('examples').innerHTML =
+          '<option value="">— choose an example —</option>' +
+          EXAMPLES.map((e, i) => `<option value="${i}">${esc(e.label)}</option>`).join('');
+        $('examples').addEventListener('change', (ev) => {
+          const i = ev.target.value;
+          if (i !== '') {
+            $('sql').value = EXAMPLES[Number(i)].sql;
+            scheduleRewrite();
+          }
+        });
+      }
+
+      async function init() {
+        renderExamples();
+        $('sql').value = EXAMPLES[0].sql;
+
+        const cfg = await (await fetch('/api/config')).json();
+        uiConfig = cfg.ui;
+
+        applyRules(await (await fetch('/api/rules')).json());
+
+        $('btn-run').textContent = `Run as ${currentUser}`;
+        $('btn-run').addEventListener('click', doRun);
+        $('btn-all').addEventListener('click', doRunAll);
+        $('sql').addEventListener('input', scheduleRewrite);
+        $('yaml').addEventListener('input', markDirty);
+        $('btn-save').addEventListener('click', saveRules);
+        $('btn-discard').addEventListener('click', discardRules);
+        $('btn-add-user').addEventListener('click', addUser);
+        $('btn-add-table').addEventListener('click', addTable);
+        for (const b of $('rules-view').querySelectorAll('button')) {
+          b.addEventListener('click', () => setRulesView(b.dataset.view));
+        }
+
+        await refreshStatus();
+        runRewrite();
+      }
+
+      init();
+    </script>
+  </body>
+</html>

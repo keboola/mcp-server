@@ -1,17 +1,28 @@
 import asyncio
 import contextlib
+import dataclasses
 import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, call
 
 import httpx
 import pytest
+from fastmcp import FastMCP
 from mcp.server.fastmcp import Context
 from mcp.types import ProgressNotification
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.query import QueryServiceClient
-from keboola_mcp_server.tools.sql import QueryDataOutput, _watch_for_http_disconnect, query_data
+from keboola_mcp_server.rls import RlsRules
+from keboola_mcp_server.tools.sql import (
+    SQL_TOOLS_TAG,
+    QueryDataOutput,
+    RlsQueryDataOutput,
+    _watch_for_http_disconnect,
+    add_sql_tools,
+    query_data,
+    query_data_rls,
+)
 from keboola_mcp_server.workspace import (
     JobSubmittedInfo,
     QueryResult,
@@ -85,6 +96,92 @@ async def test_query_data(
     assert isinstance(result, QueryDataOutput)
     assert result.query_name == query_name
     assert result.csv_data == expected_csv
+
+
+@pytest.fixture
+def rls_context(mcp_context_client: Context, mocker) -> tuple[Context, WorkspaceManager]:
+    """`mcp_context_client` with RLS rules in the server state and a Snowflake workspace mock."""
+    rules = RlsRules(tables={'invoices': {'petr': "country = 'CZ'"}})
+    state = mcp_context_client.request_context.lifespan_context
+    mcp_context_client.request_context.lifespan_context = dataclasses.replace(state, rls_rules=rules)
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.get_sql_dialect.return_value = 'Snowflake'
+    manager.execute_query.return_value = QueryResult(
+        status='ok', data=SqlSelectData(columns=['n'], rows=[{'n': 3}]), message=None
+    )
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+    return mcp_context_client, manager
+
+
+@pytest.mark.asyncio
+async def test_query_data_rls_rewrites_and_discloses(rls_context) -> None:
+    ctx, manager = rls_context
+
+    result = await query_data_rls('SELECT COUNT(*) AS n FROM invoices', 'Invoice Count', 'Petr', ctx)
+
+    assert isinstance(result, RlsQueryDataOutput)
+    assert result.csv_data == 'n\r\n3\r\n'
+    assert result.applied_rules == ["invoices: country = 'CZ'"]
+    sent_sql = manager.execute_query.call_args.args[0]
+    assert sent_sql == "SELECT COUNT(*) AS n FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices"
+
+
+@pytest.mark.asyncio
+async def test_query_data_rls_strips_user_and_logs_it_quoted(rls_context, caplog) -> None:
+    """The `user` value comes from the model, so it may carry stray whitespace (matching must still
+    work) and arbitrary characters (the log line must quote it rather than splice it in raw)."""
+    ctx, manager = rls_context
+
+    with caplog.at_level('INFO', logger='keboola_mcp_server.tools.sql'):
+        result = await query_data_rls('SELECT COUNT(*) AS n FROM invoices', 'Invoice Count', '  Petr\n', ctx)
+
+    assert result.applied_rules == ["invoices: country = 'CZ'"]
+    sent_sql = manager.execute_query.call_args.args[0]
+    assert sent_sql == "SELECT COUNT(*) AS n FROM (SELECT * FROM invoices WHERE country = 'CZ') AS invoices"
+    assert "'Petr'" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('sql', 'user', 'match'),
+    [
+        ('SELECT * FROM invoices', 'nobody', "user 'nobody'"),
+        ('SELECT * FROM customers', 'petr', "table 'customers'"),
+        ('DELETE FROM invoices', 'petr', 'SELECT'),
+    ],
+)
+async def test_query_data_rls_fails_closed(rls_context, sql: str, user: str, match: str) -> None:
+    ctx, manager = rls_context
+
+    with pytest.raises(ValueError, match=match):
+        await query_data_rls(sql, 'Bad Query', user, ctx)
+
+    manager.execute_query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_query_data_rls_requires_rules_in_state(mcp_context_client: Context) -> None:
+    # Defensive: the tool is only registered when rules exist, but never run unfiltered if they are missing.
+    with pytest.raises(ValueError, match='RLS rules'):
+        await query_data_rls('SELECT 1', 'No Rules', 'petr', mcp_context_client)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('rls_rules', 'expected_tools'),
+    [
+        (None, ['query_data']),
+        (RlsRules(tables={'invoices': {'petr': 'TRUE'}}), ['query_data_rls']),
+    ],
+)
+async def test_add_sql_tools_registers_exactly_one_query_tool(rls_rules, expected_tools) -> None:
+    mcp = FastMCP('test')
+    add_sql_tools(mcp, rls_rules=rls_rules)
+    tools = await mcp.list_tools(run_middleware=False)
+    assert sorted(t.name for t in tools) == expected_tools
+    assert all(t.annotations is not None and t.annotations.readOnlyHint is True for t in tools)
+    # The tag drives tool filtering elsewhere in the server; the RLS tool must carry it too.
+    assert all(SQL_TOOLS_TAG in t.tags for t in tools)
 
 
 @pytest.mark.asyncio

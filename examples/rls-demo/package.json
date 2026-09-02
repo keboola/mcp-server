@@ -1,0 +1,16 @@
+{
+  "name": "rls-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Keboola MCP Server row-level-security pilot demo app",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "yaml": "^2.9.0"
+  }
+}

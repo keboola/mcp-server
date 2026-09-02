@@ -23,6 +23,7 @@ from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
+from keboola_mcp_server.rls import RlsRules
 from keboola_mcp_server.session_store.crypto import resolve_encryption_key
 from keboola_mcp_server.session_store.kai_scope import PostgresKaiScopeStore
 from keboola_mcp_server.session_store.repository import PostgresSessionStore
@@ -253,10 +254,18 @@ def create_server(
     # oauth_client_id/secret is required. Independent of whether OAuth is configured above.
     kai_scope_store = PostgresKaiScopeStore(config.postgres_dsn) if config.postgres_dsn else None
 
+    # Row-level security (feature_spec/rls_query_tool/RFC.md): load and validate the rules once, at
+    # startup, so a broken file refuses to start the server instead of failing the first query.
+    rls_rules = RlsRules.load(config.rls_rules_path) if config.rls_rules_path else None
+
     # Initialize FastMCP server with system lifespan
     LOG.info(f'Creating server with config: {config}')
     server_state = ServerState(
-        config=config, runtime_info=runtime_info, session_store=session_store, kai_scope_store=kai_scope_store
+        config=config,
+        runtime_info=runtime_info,
+        session_store=session_store,
+        kai_scope_store=kai_scope_store,
+        rls_rules=rls_rules,
     )
     mcp = KeboolaMcpServer(
         name='Keboola MCP Server',
@@ -311,7 +320,7 @@ def create_server(
     add_project_tools(mcp)
     add_search_tools(mcp)
     add_semantic_tools(mcp)
-    add_sql_tools(mcp)
+    add_sql_tools(mcp, rls_rules=rls_rules)
     add_storage_tools(mcp)
     add_keboola_prompts(mcp)
 

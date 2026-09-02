@@ -1,0 +1,45 @@
+# Example row-level security rules for the RLS pilot demo (Keboola MCP Server).
+#
+# This file is a TEMPLATE. On first start the demo copies it to the configured rules file
+# (RLS_RULES_PATH, `rls.yaml` by default), which is git-ignored — edit that copy, or edit the rules
+# in the UI, and this template stays untouched.
+#
+# table -> user -> SQL predicate. Predicates are inserted verbatim into
+#   SELECT * FROM <table> WHERE <predicate>
+# and must be written in the workspace dialect (Snowflake here). Fail-closed:
+# a table without a rule for the user, or a user without a rule on a table, is refused.
+# Unrestricted access must be written explicitly as TRUE.
+#
+# Keys use the <bucket>.<table> form so they only match tables in that bucket.
+# User names are matched case-insensitively.
+#
+# Demo personas (the tables are assumed to have a `country` column):
+#   alice - Czech market only
+#   bob   - Poland + Slovakia
+#   carol - DACH + Benelux (DE, AT, NL, BE)
+#   dave  - southern markets (ES, IT, FR), no access to in.c-sales.deals at all
+#   admin - sees everything (TRUE)
+#
+# The tables below are placeholders: replace them with tables that exist in your own project.
+
+tables:
+  in.c-crm.invoices:
+    alice: "country = 'CZ'"
+    bob:   "country IN ('PL', 'SK')"
+    carol: "country IN ('DE', 'AT', 'NL', 'BE')"
+    dave:  "country IN ('ES', 'IT', 'FR')"
+    admin: "TRUE"
+
+  in.c-crm.orders:
+    alice: "country = 'CZ'"
+    bob:   "country IN ('PL', 'SK')"
+    carol: "country IN ('DE', 'AT', 'NL', 'BE')"
+    dave:  "country IN ('ES', 'IT', 'FR')"
+    admin: "TRUE"
+
+  in.c-sales.deals:
+    alice: "country = 'CZ'"
+    bob:   "country IN ('PL', 'SK')"
+    carol: "country IN ('DE', 'AT', 'NL', 'BE')"
+    # dave intentionally has no rule here -> any query touching in.c-sales.deals is refused for him
+    admin: "TRUE"
