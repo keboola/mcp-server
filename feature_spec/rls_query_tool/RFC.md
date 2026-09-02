@@ -109,6 +109,29 @@ The `user` argument is supplied by the MCP client / model; the server cannot ver
 the same trust level as today's `X-*` request headers and is acceptable for the pilot. A later
 iteration may bind the user from an authenticated HTTP header instead of a tool argument.
 
+### Fail-closed guards added after adversarial review
+
+The rewrite is the enforcement boundary, so it is closed-by-default rather than open-by-default. In
+addition to the rules above, `rewrite_query` refuses (with `RlsError`):
+
+- any FROM / JOIN / LATERAL source that is not a plain table, subquery, `VALUES`, `UNNEST` or a CTE
+  reference — in particular `TABLE(...)`, table functions, `RESULT_SCAN`, `EXTERNAL_QUERY`, stage
+  references (`@stage/...`) and `IDENTIFIER(...)`; a table name must be a plain identifier;
+- `SELECT ... INTO` (sqlglot generates `CREATE TABLE ... AS` for it);
+- table modifiers that the wrapper cannot preserve: `SAMPLE`/`TABLESAMPLE`, `AT`/`BEFORE`/`CHANGES`,
+  `PIVOT`/`UNPIVOT`, `FOR SYSTEM_TIME AS OF`, alias column lists (`AS x(a, b)`);
+- CTE names that shadow anything: a CTE may not share its name with any rules key (bare or qualified);
+  a table reference is treated as a CTE reference only when the CTE is declared in the reference's own
+  enclosing scope chain (earlier siblings included; self-reference only under `RECURSIVE`); quoted
+  identifiers are compared case-sensitively and a quoting mismatch between alias and reference is
+  refused.
+
+After generating the rewritten SQL the function re-parses it and asserts that it is still exactly one
+`SELECT`/set operation and that every real table sits inside a subquery the rewriter generated.
+`applied_rules` is de-duplicated. Predicates must be plain conditions over the table's own columns; a
+predicate that itself references another table is refused by the output check. These refusals are
+deliberate pilot limitations, not bugs to work around.
+
 ## Scope and Constraints
 
 - Only `SELECT` statements; no DDL/DML through the RLS tool.
