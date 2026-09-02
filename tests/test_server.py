@@ -28,6 +28,7 @@ from keboola_mcp_server.mcp import (
     toon_serializer,
     toon_serializer_compact,
 )
+from keboola_mcp_server.rls import RlsError
 from keboola_mcp_server.server import CustomRoutes, create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
@@ -686,3 +687,30 @@ class TestCreateServerOAuthSessionStore:
         server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
         assert server.auth is None
+
+
+@pytest.mark.asyncio
+async def test_rls_swaps_query_tool(tmp_path) -> None:
+    rules_file = tmp_path / 'rls.yaml'
+    rules_file.write_text("tables:\n  invoices:\n    petr: \"country = 'CZ'\"\n")
+
+    server = create_server(Config(rls_rules_path=str(rules_file)), runtime_info=ServerRuntimeInfo(transport='stdio'))
+    tool_names = {tool.name for tool in await server.list_tools(run_middleware=False)}
+
+    assert 'query_data_rls' in tool_names
+    assert 'query_data' not in tool_names
+
+
+def test_rls_invalid_rules_file_fails_startup(tmp_path) -> None:
+    rules_file = tmp_path / 'rls.yaml'
+    rules_file.write_text('tables:\n  invoices:\n    petr: ""\n')
+
+    with pytest.raises(RlsError, match='petr'):
+        create_server(Config(rls_rules_path=str(rules_file)), runtime_info=ServerRuntimeInfo(transport='stdio'))
+
+
+def test_rls_missing_rules_file_fails_startup(tmp_path) -> None:
+    with pytest.raises(RlsError, match='not found'):
+        create_server(
+            Config(rls_rules_path=str(tmp_path / 'missing.yaml')), runtime_info=ServerRuntimeInfo(transport='stdio')
+        )

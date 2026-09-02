@@ -378,6 +378,32 @@ docker run \
 > **Note**: The server will use the Streamable HTTP transport and listen on `localhost:8000` for incoming connections at `/mcp`.
 > You can change `-p` to map the container's port somewhere else.
 
+### Row-Level Security (pilot)
+
+Restrict what each user can read from a shared table by giving the server a YAML rules file and
+starting it with `--rls-rules-path <file>` (or `KBC_RLS_RULES_PATH=<file>`). When set, the server
+exposes `query_data_rls` **instead of** `query_data`; the unrestricted tool is not registered at all.
+
+```yaml
+# rls.yaml -- table -> user -> SQL predicate (workspace dialect, inserted into WHERE verbatim)
+tables:
+  invoices:
+    petr: "country = 'CZ'"
+    monika: "country = 'DE'"
+    admin: "TRUE"              # unrestricted access must be written explicitly
+  in.c-crm.orders:             # <bucket>.<table> key takes precedence over a bare table name
+    petr: "country = 'CZ' AND status <> 'draft'"
+```
+
+`query_data_rls(sql_query, query_name, user)` rewrites every table in the SELECT to
+`(SELECT * FROM <table> WHERE <predicate>)` for that user, runs it, and reports the applied rules in
+`applied_rules`. It is fail-closed: a table without a rule for the user, a non-SELECT statement, or an
+unparseable query is refused and nothing is executed. The file is validated at startup; a broken file
+stops the server.
+
+Limitation: the `user` argument is supplied by the MCP client / model and is not verified by the server
+(same trust level as the `X-*` request headers). Suitable for a pilot behind a trusted client.
+
 ### Do I Need to Start the Server Myself?
 
 | Scenario | Need to Run Manually? | Use This Setup |
