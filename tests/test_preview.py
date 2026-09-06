@@ -130,6 +130,8 @@ class TestPreviewConfigDiff:
             ('modify_streamlit_data_app', 'admin', 'dev-123', 'main production branch'),
             # update_flow is not available to admin/OAuth tokens (they use modify_flow).
             ('update_flow', 'admin', None, 'admin/OAuth'),
+            # Merge-request tools need the branches-merge-requests project feature (the preview mock has none).
+            ('create_merge_request', 'admin', None, 'branches-merge-requests'),
         ],
     )
     def test_preview_project_role_branch_authorization(
