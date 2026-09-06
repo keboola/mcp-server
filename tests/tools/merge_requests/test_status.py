@@ -218,9 +218,32 @@ def test_derive_viewer(mr: dict[str, Any], admin_id: Any, expected: Viewer) -> N
         ),
         pytest.param(
             11,
-            {'last_refusal': 'not_ready'},
-            'request a review (request_merge_request_review)',
+            {'last_refusal': 'not_ready', 'refusal_message': 'Cannot merge, branch is in "development" state.'},
+            'request a review (request_merge_request_review). Backend: Cannot merge',
             id='11_not_ready_in_development_means_request_review',
+        ),
+        pytest.param(
+            11,
+            {
+                'state': 'approved',
+                'derived_state': 'approved',
+                'last_refusal': 'not_ready',
+                'refusal_message': 'Locked.',
+            },
+            'wait for it to clear, then merge again. Backend: Locked.',
+            id='11b_not_ready_elsewhere_means_wait',
+        ),
+        pytest.param(
+            6,
+            {'last_refusal': 'conflicts'},
+            'refused because of conflicts; call get_merge_request_conflicts',
+            id='6b_conflict_refusal_without_a_list',
+        ),
+        pytest.param(
+            5,
+            {'last_refusal': 'conflicts', 'session': PRODUCTION_WRITER},
+            "session on branch 'reporting'",
+            id='5b_conflict_refusal_without_a_list_hands_off',
         ),
         pytest.param(
             12,
@@ -362,6 +385,21 @@ def test_build_status_mergeable_fail_closed(
     assert status.merge_blockers == expected_blockers
     assert status.conflicts == conflicts
     assert status.state == mr['state']
+
+
+@pytest.mark.parametrize('last_refusal', ['conflicts', 'not_ready'])
+def test_build_status_refusal_beats_local_derivation(last_refusal: str) -> None:
+    status = build_status(
+        _mr('approved'),
+        conflicts=[],
+        admin_id=10,
+        session=ON_BRANCH_WRITER,
+        branch_from_name='reporting',
+        last_refusal=last_refusal,  # type: ignore[arg-type]
+    )
+
+    assert status.mergeable is False
+    assert 'Ready: merge it' not in status.next_step
 
 
 def test_build_status_names_and_reason() -> None:
