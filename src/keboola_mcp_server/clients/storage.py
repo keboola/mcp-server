@@ -21,7 +21,7 @@ ComponentResource = Literal['configuration', 'rows', 'state']
 StorageEventType = Literal['info', 'success', 'warn', 'error']
 
 # Project features that can be checked with the is_enabled method
-ProjectFeature = Literal['global-search', 'storage-branches']
+ProjectFeature = Literal['global-search', 'storage-branches', 'branches-merge-requests']
 
 ItemType = Literal[
     'flow',
@@ -904,6 +904,105 @@ class AsyncStorageClient(KeboolaServiceClient):
         :return: Job details as dictionary
         """
         return cast(JsonDict, await self.get(endpoint=f'jobs/{job_id}'))  # TODO: no branch support
+
+    # ---- Merge requests -----------------------------------------------------------------------------
+    # Project-level endpoints (`isAvailableInBranch: false`): the paths are never branch-prefixed.
+
+    async def merge_requests_list(self) -> list[JsonDict]:
+        """Lists all merge requests of the project (the endpoint takes no filters)."""
+        return cast(list[JsonDict], await self.get(endpoint='merge-request'))
+
+    async def merge_request_detail(
+        self, merge_request_id: int | str, *, include_activity_log: bool = False
+    ) -> JsonDict:
+        """
+        Retrieves a merge request. The response carries `changeLog`; `activityLog` only when requested.
+
+        :param merge_request_id: The merge request id
+        :param include_activity_log: Whether to include the `activityLog` list in the response
+        """
+        params = {'include': 'activityLog'} if include_activity_log else None
+        return cast(JsonDict, await self.get(endpoint=f'merge-request/{merge_request_id}', params=params))
+
+    async def merge_request_conflicts(self, merge_request_id: int | str) -> list[JsonDict]:
+        """Returns the live list of conflicting configurations of a merge request (empty when mergeable)."""
+        return cast(list[JsonDict], await self.get(endpoint=f'merge-request/{merge_request_id}/conflicts'))
+
+    async def merge_request_create(
+        self,
+        *,
+        branch_from_id: int | str,
+        branch_into_id: int | str,
+        title: str,
+        description: str | None = None,
+        reviewer_ids: Sequence[int] = (),
+        auto_merge_strategy: str = 'none',
+        auto_merge_at: str | None = None,
+    ) -> JsonDict:
+        """Creates a merge request from a development branch into the default branch."""
+        payload: JsonDict = {
+            'branchFromId': int(branch_from_id),
+            'branchIntoId': int(branch_into_id),
+            'title': title,
+            'autoMergeStrategy': auto_merge_strategy,
+        }
+        if description is not None:
+            payload['description'] = description
+        if reviewer_ids:
+            payload['reviewerIds'] = list(reviewer_ids)
+        if auto_merge_at is not None:
+            payload['autoMergeAt'] = auto_merge_at
+        return cast(JsonDict, await self.post(endpoint='merge-request', data=payload))
+
+    async def merge_request_update(self, merge_request_id: int | str, payload: JsonDict) -> JsonDict:
+        """
+        Updates a merge request. Only the keys present in `payload` are changed
+        (`title`, `description`, `reviewerIds`, `autoMergeStrategy`, `autoMergeAt`).
+        """
+        return cast(JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}', data=payload))
+
+    async def merge_request_request_review(self, merge_request_id: int | str) -> JsonDict:
+        """Sends the merge request for review (`development` -> `in_review`, or `approved` when 0 approvals are required)."""
+        return cast(JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}/request-review'))
+
+    async def merge_request_approve(self, merge_request_id: int | str) -> JsonDict:
+        """Adds the caller's approval (valid only in `in_review`)."""
+        return cast(JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}/approve'))
+
+    async def merge_request_request_changes(self, merge_request_id: int | str, reason: str | None = None) -> JsonDict:
+        """Sends the merge request back to `development`; the optional reason lands in the activity log."""
+        payload: JsonDict | None = {'reason': reason} if reason is not None else None
+        return cast(
+            JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}/request-changes', data=payload)
+        )
+
+    async def merge_request_merge(self, merge_request_id: int | str) -> JsonDict:
+        """
+        Starts the merge; returns the Storage job (`{id, ...}`) to await. On a 409 the raised
+        `httpx.HTTPStatusError` carries the body with `code`, `error` and (for conflicts) `params.errors`.
+        """
+        return cast(JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}/merge'))
+
+    # Branch-scoped endpoints of the conflict-resolution flow (the current session branch).
+
+    async def configuration_diff(self, component_id: str, configuration_id: str) -> JsonDict:
+        """
+        Returns the three-way diff `{base, ours, theirs}` of a configuration on the current branch
+        against the default branch; each side is `{version, isDeleted, diff: {...}}` or null.
+        """
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}/diff'
+        return cast(JsonDict, await self.get(endpoint=endpoint))
+
+    async def configuration_rebase(
+        self, component_id: str, configuration_id: str, *, version: int, diff: JsonDict
+    ) -> JsonDict:
+        """
+        Re-anchors the branch configuration onto default-branch `version` with the resolved content `diff`
+        (`{name, description, changeDescription, isDisabled, configuration, rows}`); an empty `diff` ({})
+        is the delete resolution. The wire envelope is always exactly `{version, diff}`.
+        """
+        endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}/rebase'
+        return cast(JsonDict, await self.post(endpoint=endpoint, data={'version': version, 'diff': diff}))
 
     async def global_search(
         self,
