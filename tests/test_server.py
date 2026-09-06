@@ -32,7 +32,7 @@ from keboola_mcp_server.mcp import (
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.server import CustomRoutes, create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
-from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
+from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG, MERGE_REQUEST_TOOLS_TAG
 from keboola_mcp_server.tools.data_apps import DATA_APP_TOOLS_TAG
 from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
 from keboola_mcp_server.tools.flow.tools import FLOW_TOOLS_TAG
@@ -64,9 +64,11 @@ class TestServer:
         tools = await server.list_tools(run_middleware=False)
         assert sorted(tool.name for tool in tools) == [
             'add_config_row',
+            'approve_merge_request',
             'create_conditional_flow',
             'create_config',
             'create_flow',
+            'create_merge_request',
             'create_oauth_url',
             'create_project',
             'create_python_js_data_app_git_credential',
@@ -87,6 +89,8 @@ class TestServer:
             'get_flow_schema',
             'get_flows',
             'get_jobs',
+            'get_merge_request_conflicts',
+            'get_merge_requests',
             'get_project_info',
             'get_semantic_context',
             'get_semantic_schema',
@@ -94,10 +98,14 @@ class TestServer:
             'get_streams',
             'get_tables',
             'link_shared_bucket',
+            'merge_merge_request',
             'modify_flow',
             'modify_python_js_data_app',
             'modify_streamlit_data_app',
             'query_data',
+            'request_merge_request_changes',
+            'request_merge_request_review',
+            'resolve_merge_request_conflict',
             'run_job',
             'run_sync_action',
             'search',
@@ -107,6 +115,7 @@ class TestServer:
             'update_config_row',
             'update_descriptions',
             'update_flow',
+            'update_merge_request',
             'update_project_description',
             'update_sql_transformation',
             'validate_semantic_query',
@@ -290,8 +299,9 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
     async with Client(mcp) as client:
         tools = await client.list_tools()
         # plus the one we've added in this test minus two filtered tools
-        # create_flow() and update_flow(), and four semantic tools (feature not enabled in mock)
-        assert len(tools) == tools_count + 1 - 2 - 4
+        # create_flow() and update_flow(), four semantic tools (feature not enabled in mock)
+        # and nine merge-request tools (the 'branches-merge-requests' feature is not enabled in mock)
+        assert len(tools) == tools_count + 1 - 2 - 4 - 9
         assert tools[-1].name == 'assessed-function'
         assert tools[-1].description == 'custom text'
         # check if the input_schema contains the expected param description
