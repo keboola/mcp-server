@@ -99,6 +99,13 @@ class ProjectLinksManager:
         return []
 
     # --- Project ---
+    def get_merge_request_link(self, branch_from_id: str | int, title: str) -> Link:
+        """The Keboola UI page of a merge request: its source branch's development overview."""
+        return Link.detail(
+            title=f'Merge request: {title}' if title else 'Merge request',
+            url=self._url(f'branch/{branch_from_id}/development-overview'),
+        )
+
     def get_project_detail_link(self) -> Link:
         return Link.detail(title='Project Dashboard', url=self._url(''))
 
