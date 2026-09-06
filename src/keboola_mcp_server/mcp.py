@@ -53,6 +53,10 @@ from keboola_mcp_server.session_store.kai_scope import KaiScopeStore
 from keboola_mcp_server.session_store.repository import SessionStore
 from keboola_mcp_server.tools.constants import (
     BOOTSTRAP_TOOLS,
+    MERGE_REQUEST_BRANCH_ONLY_MESSAGE,
+    MERGE_REQUEST_BRANCH_ONLY_TOOLS,
+    MERGE_REQUEST_TOOL_NAMES,
+    MERGE_REQUESTS_FEATURE,
     MODIFY_FLOW_TOOL_NAME,
     SEMANTIC_TOOLS_TAG,
     UPDATE_FLOW_TOOL_NAME,
@@ -61,6 +65,9 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 CONVERSATION_ID = 'conversation_id'
+# Session-state key under which ToolsFilteringMiddleware.on_call_tool stores the `verify_token` result of the
+# current call, so tool bodies (merge requests: role, admin id, project id) can read it without a second call.
+TOKEN_INFO_STATE_KEY = 'token_info'
 
 R = TypeVar('R')
 T = TypeVar('T')
@@ -1015,6 +1022,14 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in DATA_APP_BRANCH_GATED_TOOLS]
 
+        # Merge-request tools: hidden when the project lacks the feature; the writes hidden for roles that cannot
+        # use them. The branch-only tools stay visible on production on purpose (call-time denial only) so the
+        # model keeps their descriptions and can hand the user off to a development-branch session.
+        if MERGE_REQUESTS_FEATURE not in features:
+            tools = [t for t in tools if t.name not in MERGE_REQUEST_TOOL_NAMES]
+        elif not (token_role in ('admin', 'share') or is_oauth):
+            tools = [t for t in tools if t.name not in MERGE_REQUEST_TOOL_NAMES or is_read_only_tool(t)]
+
         if token_role == 'readonly':
             tools = [t for t in tools if is_read_only_tool(t)]
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
@@ -1094,6 +1109,22 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         if tool_name in DATA_APP_BRANCH_GATED_TOOLS and not is_main_branch:
             return 'Data apps are supported only in the main production branch.'
 
+        if tool_name in MERGE_REQUEST_TOOL_NAMES:
+            # Three axes (RFC feature_spec/branches_merge_requests_mcp): feature, role (+ OAuth carve-out as for
+            # the flow tools above), and session branch. Reads are open to every role.
+            if MERGE_REQUESTS_FEATURE not in features:
+                return (
+                    f'The tool "{tool_name}" is not available in this project. Merge requests require the '
+                    f'"{MERGE_REQUESTS_FEATURE}" project feature; ask Keboola support to enable it.'
+                )
+            if not is_read_only and token_role not in ('admin', 'share') and not is_oauth:
+                return (
+                    f'The tool "{tool_name}" is not available for your role ({token_role or "unknown"}). '
+                    'Only project admins (role "admin" or "share") can modify merge requests.'
+                )
+            if is_main_branch and tool_name in MERGE_REQUEST_BRANCH_ONLY_TOOLS:
+                return MERGE_REQUEST_BRANCH_ONLY_MESSAGE
+
         return None
 
     async def on_call_tool(
@@ -1112,6 +1143,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             return await call_next(context)
 
         token_info = await self.get_token_info(context.fastmcp_context)
+        context.fastmcp_context.session.state[TOKEN_INFO_STATE_KEY] = token_info
 
         has_semantic_models = False
         if is_semantic_tool(tool):
