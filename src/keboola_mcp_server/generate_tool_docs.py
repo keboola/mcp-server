@@ -14,7 +14,7 @@ from mcp.types import ToolAnnotations
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
-from keboola_mcp_server.tools.constants import FLOW_TOOLS_TAG
+from keboola_mcp_server.tools.constants import FLOW_TOOLS_TAG, MERGE_REQUEST_TOOLS_TAG
 from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
 from keboola_mcp_server.tools.jobs import JOB_TOOLS_TAG
 from keboola_mcp_server.tools.oauth import OAUTH_TOOLS_TAG
@@ -187,6 +187,7 @@ async def generate_docs() -> None:
             ToolCategory('Component Tools', COMPONENT_TOOLS_TAG),
             ToolCategory('Flow Tools', FLOW_TOOLS_TAG),
             ToolCategory('Jobs Tools', JOB_TOOLS_TAG),
+            ToolCategory('Merge Request Tools', MERGE_REQUEST_TOOLS_TAG),
             ToolCategory('Documentation Tools', DOC_TOOLS_TAG),
             ToolCategory('Search Tools', SEARCH_TOOLS_TAG),
             ToolCategory('Semantic Tools', SEMANTIC_TOOLS_TAG),
