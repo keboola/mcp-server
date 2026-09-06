@@ -30,7 +30,12 @@ from keboola_mcp_server.mcp import (
 )
 from keboola_mcp_server.server import CustomRoutes, create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
-from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG, MERGE_REQUEST_TOOLS_TAG
+from keboola_mcp_server.tools.constants import (
+    CONFIG_DIFF_PREVIEW_TAG,
+    MERGE_REQUEST_BRANCH_ONLY_TOOLS,
+    MERGE_REQUEST_TOOL_NAMES,
+    MERGE_REQUEST_TOOLS_TAG,
+)
 from keboola_mcp_server.tools.data_apps import DATA_APP_TOOLS_TAG
 from keboola_mcp_server.tools.doc import DOC_TOOLS_TAG
 from keboola_mcp_server.tools.flow.tools import FLOW_TOOLS_TAG
@@ -113,6 +118,19 @@ class TestServer:
             'update_sql_transformation',
             'validate_semantic_query',
         ]
+
+    @pytest.mark.asyncio
+    async def test_merge_request_name_sets_match_the_tagged_tools(self):
+        """The gating in authorize_tool_call keys on name sets; they must equal the tools tagged merge-request."""
+        server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        tools = await server.list_tools(run_middleware=False)
+        tagged = {t.name for t in tools if MERGE_REQUEST_TOOLS_TAG in (t.tags or set())}
+
+        assert tagged == MERGE_REQUEST_TOOL_NAMES
+        assert MERGE_REQUEST_BRANCH_ONLY_TOOLS < MERGE_REQUEST_TOOL_NAMES
+        for tool in tools:
+            if tool.name in MERGE_REQUEST_BRANCH_ONLY_TOOLS:
+                assert 'development-branch session' in (tool.description or ''), tool.name
 
     @pytest.mark.asyncio
     async def test_tools_have_descriptions(self):

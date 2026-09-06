@@ -188,6 +188,7 @@ def build_next_step(
     branch_from_name: str | None,
     remaining_conflicts: Sequence[ConflictRef] | None = None,
     last_refusal: LastRefusal | None = None,
+    refusal_message: str | None = None,
     rejection_reason: str | None = None,
 ) -> str:
     """The 15-row decision table (RFC "next_step — the deterministic guide"); the first matching row wins."""
@@ -208,6 +209,13 @@ def build_next_step(
     if remaining_conflicts:  # 4
         first = remaining_conflicts[0]
         return f'Resolve the next conflict: {first.label} ({len(remaining_conflicts)} left).'
+    if last_refusal == 'conflicts' and 'conflicts' not in merge_blockers:  # 5/6 without a usable conflict list
+        if not session.on_mr_branch:
+            return f'Conflicts must be resolved from a session on {branch}; open one and call get_merge_request_conflicts there.'
+        return (
+            'The merge was refused because of conflicts; call get_merge_request_conflicts to see them and resolve them '
+            'one by one with resolve_merge_request_conflict.'
+        )
     if 'conflicts' in merge_blockers:
         n = len(conflicts) if conflicts is not None else 0
         noun = 'conflict' if n == 1 else 'conflicts'
@@ -226,8 +234,17 @@ def build_next_step(
         if session.can_write:  # 9
             return 'Approve it (approve_merge_request) or request changes (request_merge_request_changes).'
         return "Waiting for a reviewer's approval."  # 10
-    if last_refusal == 'not_ready' and state == 'development':  # 11
-        return 'This project requires approvals before a merge; request a review (request_merge_request_review).'
+    if last_refusal == 'not_ready':  # 11
+        backend = f' Backend: {refusal_message}' if refusal_message else ''
+        if state == 'development':
+            return (
+                'This project requires approvals before a merge; request a review (request_merge_request_review).'
+                + backend
+            )
+        return (
+            'The merge was refused as not ready (a merge lock is held or another merge request is being processed); '
+            'wait for it to clear, then merge again.' + backend
+        )
     if derived_state == 'rejected':  # 12
         reason = f' ({rejection_reason})' if rejection_reason else ''
         return f'Changes were requested{reason}; address them on the branch, then merge again.'
@@ -248,6 +265,7 @@ def build_status(
     branch_from_name: str | None,
     remaining_conflicts: Sequence[ConflictRef] | None = None,
     last_refusal: LastRefusal | None = None,
+    refusal_message: str | None = None,
 ) -> DerivedStatus:
     """Assembles the derived status of a raw MR payload plus the (optionally fetched) live conflicts."""
     state = mr.get('state') or 'development'
@@ -257,7 +275,9 @@ def build_status(
     viewer = derive_viewer(mr, admin_id)
     pending = pending_reviewers(mr)
     mergeable: bool | None
-    if conflicts is None:
+    if last_refusal is not None:
+        mergeable = False  # the backend just refused the merge; that beats any local derivation
+    elif conflicts is None:
         mergeable = None
     else:
         mergeable = not blockers
@@ -283,6 +303,7 @@ def build_status(
             branch_from_name=branch_from_name,
             remaining_conflicts=remaining_conflicts,
             last_refusal=last_refusal,
+            refusal_message=refusal_message,
             rejection_reason=request_changes_reason(mr),
         ),
     )
