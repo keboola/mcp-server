@@ -31,6 +31,7 @@ from keboola_mcp_server.tools.data_apps import add_data_app_tools
 from keboola_mcp_server.tools.doc import add_doc_tools
 from keboola_mcp_server.tools.flow.tools import add_flow_tools
 from keboola_mcp_server.tools.jobs import add_job_tools
+from keboola_mcp_server.tools.merge_requests.tools import add_merge_request_tools
 from keboola_mcp_server.tools.oauth import add_oauth_tools
 from keboola_mcp_server.tools.project import add_project_tools
 from keboola_mcp_server.tools.search import add_search_tools
@@ -307,6 +308,7 @@ def create_server(
     add_doc_tools(mcp)
     add_flow_tools(mcp)
     add_job_tools(mcp)
+    add_merge_request_tools(mcp)
     add_oauth_tools(mcp)
     add_project_tools(mcp)
     add_search_tools(mcp)
