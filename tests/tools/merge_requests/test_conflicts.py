@@ -105,10 +105,10 @@ def _by_path(changes: list[PathChange]) -> dict[str, PathChange]:
                 'theirs': _side(5, rows=[{'id': 'r1', 'configuration': {'x': 1}}, {'id': 'r2', 'configuration': {}}]),
             },
             {
-                '/rows/0/configuration/x': ('ours', None, 1, 2, 1),
-                '/rows/1': ('theirs', None, None, None, {'id': 'r2', 'configuration': {}}),
+                '/rows/r1/configuration/x': ('ours', None, 1, 2, 1),
+                '/rows/r2': ('theirs', None, None, None, {'id': 'r2', 'configuration': {}}),
             },
-            id='rows_by_index',
+            id='rows_with_ids_align_by_id',
         ),
         pytest.param(
             {'base': None, 'ours': _side(1, name='A'), 'theirs': _side(2, name='A')},
@@ -226,6 +226,42 @@ def test_build_config_conflict_full() -> None:
     assert conflict.conflicting_paths == ['/configuration/parameters/query']
     assert conflict.suggested_take is None
     assert [c.changed_by for c in conflict.changes] == ['theirs', 'both']
+
+
+def test_rows_with_ids_align_by_id_not_index() -> None:
+    base = _side(1, rows=[{'id': 'r1', 'configuration': {'x': 1}}, {'id': 'r2', 'configuration': {'x': 2}}])
+    ours = _side(
+        3,
+        rows=[
+            {'id': 'r0', 'configuration': {}},
+            {'id': 'r1', 'configuration': {'x': 1}},
+            {'id': 'r2', 'configuration': {'x': 2}},
+        ],
+    )
+    theirs = _side(5, rows=[{'id': 'r1', 'configuration': {'x': 1}}, {'id': 'r2', 'configuration': {'x': 99}}])
+
+    conflict = build_config_conflict(_ref(), {'base': base, 'ours': ours, 'theirs': theirs})
+
+    changes = _by_path(conflict.changes)
+    assert set(changes) == {'/rows/r0', '/rows/r2/configuration/x'}
+    assert changes['/rows/r0'].changed_by == 'ours'
+    assert changes['/rows/r2/configuration/x'].changed_by == 'theirs'
+    assert conflict.conflicting_paths == []  # an insertion is not a conflict with an edit of another row
+
+
+def test_subtree_vs_leaf_edit_is_a_conflict() -> None:
+    base = _side(1, configuration={'parameters': {'a': 1}})
+    ours = _side(3, configuration={})  # removed the whole subtree
+    theirs = _side(5, configuration={'parameters': {'a': 2}})  # edited inside it
+
+    conflict = build_config_conflict(_ref(), {'base': base, 'ours': ours, 'theirs': theirs})
+
+    assert {c.path: c.changed_by for c in conflict.changes} == {
+        '/configuration/parameters': 'ours',
+        '/configuration/parameters/a': 'theirs',
+    }
+    assert conflict.conflicting_paths == ['/configuration/parameters', '/configuration/parameters/a']
+    assert conflict.suggested_take is None
 
 
 def test_envelope_holes() -> None:
