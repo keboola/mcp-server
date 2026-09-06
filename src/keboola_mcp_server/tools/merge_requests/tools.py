@@ -68,12 +68,14 @@ LOG = logging.getLogger(__name__)
 
 MERGE_CONFLICT_CODE = 'storage.mergeRequests.validation'
 MERGE_NOT_READY_CODE = 'storage.mergeRequests.notReadyToMerge'
-STORAGE_JOB_TERMINAL_STATUSES = frozenset({'success', 'error'})
+# Storage job statuses after which the job never changes again (same set as workspace.py's poller).
+STORAGE_JOB_TERMINAL_STATUSES = frozenset({'success', 'error', 'warning', 'terminated', 'cancelled', 'canceled'})
 MERGE_JOB_TIMEOUT_SEC = 600.0
 MERGE_JOB_POLL_INTERVAL_SEC = 1.0
 
 ROLE_DENIED_MESSAGE = (
-    'Your project role does not permit this merge-request action; a project admin (role "admin" or "share") must do it.'
+    'Your project role may not permit this merge-request action (a project admin with role "admin" or "share" can '
+    'do it), or the merge request is no longer open.'
 )
 BRANCH_ONLY_SENTENCE = (
     "Available only from a development-branch session; on production, tell the user to open a session on the "
@@ -126,6 +128,8 @@ class _MrContext:
     def can_write(self) -> bool:
         admin = self.token_info.get('admin')
         role = str(admin.get('role') or '').lower() if isinstance(admin, Mapping) else ''
+        if role == 'readonly' or getattr(self.client, 'readonly', False) is True:
+            return False
         return role in ('admin', 'share') or bool(self.client.bearer_token)
 
     @property
@@ -199,7 +203,10 @@ def _error_body(exc: httpx.HTTPStatusError) -> dict[str, Any]:
 def _map_write_error(exc: httpx.HTTPStatusError) -> ToolError | None:
     """Every MR write maps the backend's 403 onto one clear message; other statuses are left to the caller."""
     if exc.response.status_code == 403:
-        return ToolError(ROLE_DENIED_MESSAGE)
+        body = _error_body(exc)
+        error = body.get('error') or body.get('message')
+        detail = f'The backend refused it: {error} ' if error else ''
+        return ToolError(f'{detail}{ROLE_DENIED_MESSAGE}')
     return None
 
 
@@ -311,9 +318,11 @@ def _validate_resolved(resolved: Mapping[str, Any]) -> ResolvedConfiguration:
 
 def _job_error_message(job: Mapping[str, Any]) -> str:
     error = job.get('error')
-    if isinstance(error, Mapping):
-        return str(error.get('message') or error)
-    return str(error or 'The merge job failed.')
+    if isinstance(error, Mapping) and error.get('message'):
+        return str(error['message'])
+    if error:
+        return str(error)
+    return f"The merge job ended with status '{job.get('status')}'."
 
 
 # ---- Read / diagnosis — any session, any role ------------------------------------------------------------
@@ -335,6 +344,7 @@ async def get_merge_requests(
             )
         ),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> MergeRequestsListOutput | MergeRequestsDetailOutput:
     """
     Lists the project's merge requests, or returns the full detail of the given ones.
@@ -482,10 +492,8 @@ async def update_merge_request(
     try:
         mr = await c.client.storage_client.merge_request_update(merge_request_id, payload)
     except httpx.HTTPStatusError as exc:
-        if _map_write_error(exc) is not None:
-            raise ToolError(
-                f'{ROLE_DENIED_MESSAGE} (If the merge request is already merged or canceled, it can no longer be updated.)'
-            ) from exc
+        if mapped := _map_write_error(exc):
+            raise mapped from exc
         raise
     return await _detail_with_conflicts(c, mr, with_activity_log=False)
 
@@ -636,6 +644,10 @@ async def merge_merge_request(
             refusal = 'conflicts'
             params = body.get('params')
             conflicts = _parse_conflicts(params.get('errors') if isinstance(params, Mapping) else None)
+            if not conflicts:
+                # A conflict 409 without a usable `params.errors` (older stack, proxy body): fetch the live list so
+                # the status never claims "mergeable" right after the backend refused the merge.
+                conflicts = _parse_conflicts(await c.client.storage_client.merge_request_conflicts(mr_id))
         else:
             raise
         status = build_status(
@@ -645,6 +657,7 @@ async def merge_merge_request(
             session=session,
             branch_from_name=branch_name,
             last_refusal=refusal,
+            refusal_message=message,
         )
         return MergeResult(
             merge_request_id=mr_id,
@@ -738,6 +751,7 @@ async def get_merge_request_conflicts(
         int | None,
         Field(description="The merge request id. Omit to use the current branch's merge request."),
     ] = None,
+    project_id: ProjectIdArg = None,
 ) -> MergeRequestConflictsOutput:
     """
     Shows what blocks the current branch's merge request from merging: each conflicting configuration with its
@@ -855,8 +869,14 @@ async def resolve_merge_request_conflict(
         body, mode = {}, 'delete'
     else:
         side = diff.get('ours') if take == 'ours' else theirs
-        if not isinstance(side, Mapping) or side.get('isDeleted'):
-            body, mode = {}, 'delete'  # taking a deleted (or never-existing) side IS the delete resolution
+        if not isinstance(side, Mapping):
+            # An absent side is not a deletion: never turn it into a tombstone behind the user's back.
+            raise ToolError(
+                f"The diff has no {take} side: the configuration does not exist on that branch. "
+                "Use take='delete' to delete it explicitly, or pass the content as `resolved`."
+            )
+        if side.get('isDeleted'):
+            body, mode = {}, 'delete'  # taking a deleted side IS the delete resolution
         else:
             holes = envelope_holes(side)
             envelope = side.get('diff') or {}

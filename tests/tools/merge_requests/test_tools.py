@@ -244,6 +244,38 @@ async def test_token_info_cached_by_middleware_is_reused(mcp_context_client: Con
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('role', 'bearer_token', 'client_readonly', 'expect_write_recommended'),
+    [
+        pytest.param('admin', None, False, True, id='admin'),
+        pytest.param('readOnly', 'oauth', False, False, id='oauth_readonly_role'),
+        pytest.param('', 'oauth', False, True, id='oauth_regular'),
+        pytest.param('admin', None, True, False, id='readonly_client'),
+        pytest.param('developer', None, False, False, id='developer'),
+    ],
+)
+async def test_next_step_never_recommends_a_write_the_session_cannot_do(
+    mcp_context_client: Context,
+    storage: AsyncMock,
+    keboola_client: KeboolaClient,
+    role: str,
+    bearer_token: str | None,
+    client_readonly: bool,
+    expect_write_recommended: bool,
+) -> None:
+    keboola_client.bearer_token = bearer_token
+    keboola_client.readonly = client_readonly
+    storage.verify_token.return_value = {'owner': {'id': 123}, 'admin': {'id': 10, 'role': role}}
+    storage.merge_request_detail.return_value = _mr_raw('approved')
+
+    result = await get_merge_requests(mcp_context_client, merge_request_ids=[42])
+
+    assert isinstance(result, MergeRequestsDetailOutput)
+    next_step = result.merge_requests[0].status.next_step
+    assert ('merge it with merge_merge_request' in next_step) is expect_write_recommended
+
+
+@pytest.mark.asyncio
 async def test_detail_on_production_session_hands_off_by_branch_name(
     mcp_context_client: Context, storage: AsyncMock, keboola_client: KeboolaClient
 ) -> None:
@@ -379,6 +411,7 @@ async def test_update_merge_request_requires_a_change(mcp_context_client: Contex
             request_merge_request_review, {'merge_request_id': 42}, 'merge_request_request_review', id='request_review'
         ),
         pytest.param(merge_merge_request, {'merge_request_id': 42}, 'merge_request_merge', id='merge'),
+        pytest.param(create_merge_request, {'title': 'T'}, 'merge_request_create', id='create'),
     ],
 )
 async def test_backend_403_maps_to_role_message(
@@ -386,7 +419,7 @@ async def test_backend_403_maps_to_role_message(
 ) -> None:
     getattr(storage, method).side_effect = _http_error(403, {'error': 'Forbidden'})
 
-    with pytest.raises(ToolError, match='project role does not permit'):
+    with pytest.raises(ToolError, match='The backend refused it: Forbidden.*project role'):
         await tool(mcp_context_client, **kwargs)
 
 
@@ -532,6 +565,38 @@ async def test_merge_refusals(
 
 
 @pytest.mark.asyncio
+async def test_merge_conflict_409_without_errors_fetches_the_live_list(
+    mcp_context_client: Context, storage: AsyncMock
+) -> None:
+    """A conflict 409 with no usable params must never yield mergeable=True / "merge it"."""
+    storage.merge_request_merge.side_effect = _http_error(409, {'error': 'Conflicts'})
+    storage.merge_request_conflicts.return_value = []  # even the live list is empty (race / proxy)
+
+    result = await merge_merge_request(mcp_context_client, merge_request_id=42)
+
+    assert result.refusal == 'conflicts'
+    assert result.status is not None and result.status.mergeable is False
+    assert 'refused because of conflicts' in result.next_step and 'merge it' not in result.next_step
+    storage.merge_request_conflicts.assert_awaited_once_with(42)
+
+
+@pytest.mark.asyncio
+async def test_merge_not_ready_on_approved_says_wait(mcp_context_client: Context, storage: AsyncMock) -> None:
+    storage.merge_request_detail.return_value = _mr_raw('approved')
+    storage.merge_request_merge.side_effect = _http_error(
+        409, {'code': 'storage.mergeRequests.notReadyToMerge', 'error': 'Another merge request is being processed.'}
+    )
+
+    result = await merge_merge_request(mcp_context_client, merge_request_id=42)
+
+    assert result.refusal == 'not_ready'
+    assert result.status is not None and result.status.mergeable is False
+    assert 'wait for it to clear' in result.next_step
+    assert 'Another merge request is being processed.' in result.next_step
+    assert 'Ready: merge it' not in result.next_step
+
+
+@pytest.mark.asyncio
 async def test_merge_reraises_unknown_409(mcp_context_client: Context, storage: AsyncMock) -> None:
     storage.merge_request_merge.side_effect = _http_error(409, {'code': 'storage.something.else', 'error': 'nope'})
 
@@ -563,21 +628,30 @@ async def test_merge_success_awaits_job_and_hands_off(
 
 
 @pytest.mark.asyncio
-async def test_merge_job_error_rolls_back_to_approved(
-    mcp_context_client: Context, storage: AsyncMock, monkeypatch
+@pytest.mark.parametrize(
+    ('job', 'expected_message'),
+    [
+        pytest.param({'id': 988, 'status': 'error', 'error': {'message': 'boom'}}, 'boom', id='error_with_message'),
+        pytest.param({'id': 988, 'status': 'cancelled'}, "ended with status 'cancelled'", id='cancelled_is_terminal'),
+        pytest.param({'id': 988, 'status': 'terminated', 'error': 'killed'}, 'killed', id='terminated_string_error'),
+    ],
+)
+async def test_merge_job_failure_rolls_back_to_approved(
+    mcp_context_client: Context, storage: AsyncMock, monkeypatch, job: dict, expected_message: str
 ) -> None:
     monkeypatch.setattr(mr_tools, 'MERGE_JOB_POLL_INTERVAL_SEC', 0)
     storage.merge_request_detail.return_value = _mr_raw('approved')
     storage.merge_request_merge.return_value = {'id': '988'}
-    storage.job_detail.return_value = {'id': 988, 'status': 'error', 'error': {'message': 'boom'}}
+    storage.job_detail.return_value = job
 
     result = await merge_merge_request(mcp_context_client, merge_request_id=42)
 
     assert result.merged is False
     assert result.state == 'approved'
     assert result.refusal is None
-    assert result.refusal_message == 'boom'
-    assert 'boom' in result.next_step
+    assert result.refusal_message is not None and expected_message in result.refusal_message
+    assert expected_message in result.next_step
+    assert storage.job_detail.await_count == 1  # terminal on the first poll, no spinning
 
 
 @pytest.mark.asyncio
@@ -784,6 +858,7 @@ async def test_resolve_last_conflict_recommends_merge(mcp_context_client: Contex
             id='take_holed_side',
         ),
         pytest.param({'take': 'ours'}, _diff(theirs=None), 'no production', True, id='theirs_missing'),
+        pytest.param({'take': 'ours'}, _diff(ours=None), 'no ours side', True, id='absent_side_is_not_a_delete'),
     ],
 )
 async def test_resolve_conflict_refuses_without_rebasing(

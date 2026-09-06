@@ -3922,6 +3922,18 @@ Walk the user through them one by one and resolve each with resolve_merge_reques
       ],
       "default": null,
       "description": "The merge request id. Omit to use the current branch's merge request."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "type": "object"
@@ -3989,6 +4001,18 @@ Usage:
       ],
       "default": null,
       "description": "List mode only: keep merge requests whose state or derived state equals this value (e.g. 'in_development', 'approved', 'rejected', 'merged'). Ignored when ids are given."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "type": "object"

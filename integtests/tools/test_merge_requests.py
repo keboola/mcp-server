@@ -33,7 +33,9 @@ from keboola_mcp_server.tools.merge_requests.tools import (
     get_merge_request_conflicts,
     get_merge_requests,
     merge_merge_request,
+    request_merge_request_review,
     resolve_merge_request_conflict,
+    update_merge_request,
 )
 from keboola_mcp_server.workspace import WorkspaceManager
 
@@ -218,6 +220,16 @@ async def test_happy_path_create_then_merge(
         assert created.status.mergeable is True
         assert 'merge_merge_request' in created.status.next_step
 
+        updated = await update_merge_request(
+            branch_context, merge_request_id=created.id, description='updated by integtest'
+        )
+        assert (updated.id, updated.description, updated.title) == (created.id, 'updated by integtest', created.title)
+
+        # 0 required approvals: request-review lands straight in `approved` and the changeLog gets populated
+        reviewed = await request_merge_request_review(branch_context)
+        assert reviewed.state == 'approved'
+        assert {c.configuration_id for c in reviewed.changed_configurations} == {config_id}
+
         merged = await merge_merge_request(branch_context)
         assert merged.merged is True, merged
         assert merged.state == 'published'
@@ -242,8 +254,9 @@ async def test_conflict_is_reported_and_resolved(mocker, mr_project: MergeReques
     # A conflict needs the configuration on both sides, so it must exist in production BEFORE the branch is
     # created (a development branch is a copy of production at creation time).
     config_id = _create_config(url, token, None, f'integtest-conflict-{uuid.uuid4().hex[:6]}', {'query': 'SELECT 1'})
-    branch_id = _create_branch(url, token, f'integtest-mr-conflict-{uuid.uuid4().hex[:8]}')
+    branch_id: str | None = None
     try:
+        branch_id = _create_branch(url, token, f'integtest-mr-conflict-{uuid.uuid4().hex[:8]}')
         ctx = await _build_context(mocker, mr_project, branch_id=branch_id)
         _update_config(url, token, branch_id, config_id, {'query': 'SELECT 2'}, 'branch change')
         _update_config(url, token, None, config_id, {'query': 'SELECT 3'}, 'production change')
@@ -277,5 +290,6 @@ async def test_conflict_is_reported_and_resolved(mocker, mr_project: MergeReques
         assert production['configuration'] == {'parameters': {'query': 'SELECT 2'}}
         _wait_until_branch_gone(mr_project, branch_id)
     finally:
-        _delete_branch(url, token, branch_id)
+        if branch_id is not None:
+            _delete_branch(url, token, branch_id)
         _delete_config(url, token, config_id)
