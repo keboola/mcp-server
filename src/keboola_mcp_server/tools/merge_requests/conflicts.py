@@ -61,6 +61,14 @@ def _content(side: Mapping[str, Any] | None) -> dict[str, Any]:
     return {key: envelope[key] for key in DIFF_CONTENT_KEYS if key in envelope}
 
 
+def _ids(items: list[Any]) -> dict[str, Any] | None:
+    """`{id: item}` when every item is a dict with a unique `id` (configuration rows), else None."""
+    if not items or not all(isinstance(item, dict) and item.get('id') is not None for item in items):
+        return None
+    by_id = {str(item['id']): item for item in items}
+    return by_id if len(by_id) == len(items) else None
+
+
 def _walk(old: Any, new: Any, path: str, out: dict[str, tuple[Any, Any]]) -> None:
     """Records changed leaf paths (JSON pointers) between two JSON values into `out` as `(old, new)`
     where a missing side is `_ABSENT`. Dicts and lists recurse; anything else compares by value."""
@@ -75,6 +83,19 @@ def _walk(old: Any, new: Any, path: str, out: dict[str, tuple[Any, Any]]) -> Non
                 out[sub] = (_ABSENT, new[key])
         return
     if isinstance(old, list) and isinstance(new, list):
+        if _ids(old) is not None and _ids(new) is not None:
+            # Rows carry ids: align by id so an insertion does not shift every following row into a "change".
+            old_by_id, new_by_id = _ids(old), _ids(new)
+            assert old_by_id is not None and new_by_id is not None
+            for key in sorted(set(old_by_id) | set(new_by_id)):
+                sub = f'{path}/{key}'
+                if key in old_by_id and key in new_by_id:
+                    _walk(old_by_id[key], new_by_id[key], sub, out)
+                elif key in old_by_id:
+                    out[sub] = (old_by_id[key], _ABSENT)
+                else:
+                    out[sub] = (_ABSENT, new_by_id[key])
+            return
         for i in range(max(len(old), len(new))):
             sub = f'{path}/{i}'
             if i < len(old) and i < len(new):
@@ -129,6 +150,21 @@ def classify_three_way(diff: Mapping[str, Any]) -> list[PathChange]:
     return changes
 
 
+def conflicting_paths(changes: list[PathChange]) -> list[str]:
+    """
+    Paths the two sides changed differently: `both` rows that are not agreed, plus one-sided rows where one side
+    changed a subtree and the other side a path inside it (an ancestor/descendant collision is a conflict too).
+    """
+    result = {c.path for c in changes if c.changed_by == 'both' and not c.agreed}
+    ours = [c.path for c in changes if c.changed_by == 'ours']
+    theirs = [c.path for c in changes if c.changed_by == 'theirs']
+    for a in ours:
+        for b in theirs:
+            if a.startswith(b + '/') or b.startswith(a + '/'):
+                result.update((a, b))
+    return sorted(result)
+
+
 def suggest_take(changes: list[PathChange]) -> TakeMode | None:
     """`ours`/`theirs` when only that side changed anything; None when paths collide or `changes` is empty."""
     if not changes:
@@ -156,6 +192,6 @@ def build_config_conflict(ref: ConflictRef, diff: Mapping[str, Any]) -> ConfigCo
         ours_deleted=bool(ours_raw.get('isDeleted', False)) if ours_raw is not None else None,
         theirs_deleted=bool(theirs_raw.get('isDeleted', False)) if theirs_raw is not None else None,
         changes=changes,
-        conflicting_paths=[c.path for c in changes if c.changed_by == 'both' and not c.agreed],
+        conflicting_paths=conflicting_paths(changes),
         suggested_take=suggest_take(changes),
     )
