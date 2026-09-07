@@ -34,6 +34,19 @@ name or description.
 - [get_jobs](#get_jobs): Retrieves job execution information from the Keboola project.
 - [run_job](#run_job): Starts a new job for a given component or transformation.
 
+### Merge Request Tools
+- [approve_merge_request](#approve_merge_request): Approves a merge request as a reviewer.
+- [create_merge_request](#create_merge_request): Creates a merge request for the CURRENT development branch into production.
+- [get_merge_request_conflicts](#get_merge_request_conflicts): Shows what blocks the current branch's merge request from merging: each conflicting configuration with its
+three-way diff and a per-path classification.
+- [get_merge_requests](#get_merge_requests): Lists the project's merge requests, or returns the full detail of the given ones.
+- [merge_merge_request](#merge_merge_request): Merges the current branch's merge request into production and waits for the merge to finish.
+- [request_merge_request_changes](#request_merge_request_changes): Sends a merge request back to its author for changes (a reviewer's "reject").
+- [request_merge_request_review](#request_merge_request_review): Sends the current branch's merge request for review (author action).
+- [resolve_merge_request_conflict](#resolve_merge_request_conflict): Resolves ONE conflicting configuration of the current branch's merge request by re-anchoring the branch
+configuration onto the current production version with the chosen content.
+- [update_merge_request](#update_merge_request): Updates a merge request's title, description, reviewers or auto-merge setting.
+
 ### OAuth Tools
 - [create_oauth_url](#create_oauth_url): Generates an OAuth authorization URL for a Keboola component configuration.
 
@@ -3729,6 +3742,666 @@ Starts a new job for a given component or transformation.
   "required": [
     "component_id",
     "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+
+# Merge Request Tools
+<a name="approve_merge_request"></a>
+## approve_merge_request
+**Annotations**: 
+
+**Tags**: `merge-request`
+
+**Description**:
+
+Approves a merge request as a reviewer.
+
+Valid only while the merge request is `in_review` (the backend rejects it otherwise) and never for its
+creator. Projects with the default of 0 required approvals never enter `in_review`, so this is needed only
+when the project requires approvals. Works from any session. Returns the merge request with its status;
+follow `next_step`.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "merge_request_id": {
+      "description": "The merge request id.",
+      "type": "integer"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "required": [
+    "merge_request_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="create_merge_request"></a>
+## create_merge_request
+**Annotations**: `destructive`
+
+**Tags**: `merge-request`
+
+**Description**:
+
+Creates a merge request for the CURRENT development branch into production.
+
+Available only from a development-branch session; on production, tell the user to open a session on the
+merge request's source branch and ask again there. The source branch is the session branch and the target
+is production — there are no branch parameters. A branch can have only one merge request.
+
+On a project with the default of 0 required approvals the happy path is two calls:
+create_merge_request → merge_merge_request (no review step). Returns the merge request with its status;
+follow `next_step`.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "description": "A short title describing the change.",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "An optional longer description for the reviewers."
+    },
+    "reviewer_ids": {
+      "default": [],
+      "description": "User ids of the reviewers to request. Optional.",
+      "items": {
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "auto_merge": {
+      "default": "none",
+      "description": "'none' (default) = the user merges explicitly. 'immediately' / 'scheduled' ARM auto-merge: the backend merges on its own once approvals suffice (at auto_merge_at for scheduled). Confirm with the user before arming.",
+      "enum": [
+        "none",
+        "immediately",
+        "scheduled"
+      ],
+      "type": "string"
+    },
+    "auto_merge_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "ISO-8601 date-time; required if and only if auto_merge='scheduled'."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "required": [
+    "title"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_merge_request_conflicts"></a>
+## get_merge_request_conflicts
+**Annotations**: `read-only`
+
+**Tags**: `merge-request`
+
+**Description**:
+
+Shows what blocks the current branch's merge request from merging: each conflicting configuration with its
+three-way diff and a per-path classification.
+
+Available only from a development-branch session; on production, tell the user to open a session on the
+merge request's source branch and ask again there. A configuration conflicts when it changed both on the
+branch and in production since the branch was created. For each one you get `base` / `ours` (branch) /
+`theirs` (production), `changes` (each path tagged `changed_by` ours|theirs|both), `conflicting_paths`
+(both sides changed differently — the actual conflict) and `suggested_take` when one side is a safe pick.
+Walk the user through them one by one and resolve each with resolve_merge_request_conflict. Follow `next_step`.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "merge_request_id": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The merge request id. Omit to use the current branch's merge request."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="get_merge_requests"></a>
+## get_merge_requests
+**Annotations**: `read-only`
+
+**Tags**: `merge-request`
+
+**Description**:
+
+Lists the project's merge requests, or returns the full detail of the given ones.
+
+A merge request promotes a development branch's configuration changes into production. Works from any
+session (production or branch).
+
+Without ids: summaries of all merge requests (title, state, who created it, reviewers, source branch).
+With ids: per merge request the status block (`derived_state`, `merge_blockers`, `mergeable`,
+`allowed_actions`, `viewer`, live `conflicts`, and `next_step` — the single recommended next action),
+the changed configurations and the review history. Follow `next_step` verbatim when guiding the user.
+
+Usage:
+- "Is there anything to merge?" → list (optionally with `state`), then get the candidates' detail and read
+  `merge_blockers` / `next_step`.
+- "What is in merge request 42?" → detail of [42]; narrate `changed_configurations` and `activity_log`.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "merge_request_ids": {
+      "default": [],
+      "description": "Merge request ids to get the full detail of. Leave empty to list all merge requests.",
+      "items": {
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "state": {
+      "anyOf": [
+        {
+          "enum": [
+            "development",
+            "in_review",
+            "approved",
+            "in_merge",
+            "published",
+            "canceled",
+            "rejected",
+            "closed",
+            "in_development",
+            "merged"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "List mode only: keep merge requests whose state or derived state equals this value (e.g. 'in_development', 'approved', 'rejected', 'merged'). Ignored when ids are given."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="merge_merge_request"></a>
+## merge_merge_request
+**Annotations**: `destructive`
+
+**Tags**: `merge-request`
+
+**Description**:
+
+Merges the current branch's merge request into production and waits for the merge to finish.
+
+Available only from a development-branch session; on production, tell the user to open a session on the
+merge request's source branch and ask again there. IRREVERSIBLE: on success the changes are in production
+and the source branch (with everything else on it: buckets, tables, workspaces) is deleted by a background
+job — confirm with the user first. Works directly from `development` when the project requires no
+approvals.
+
+When the backend refuses, nothing changes and the result explains why: `refusal='conflicts'` lists the
+conflicting configurations (resolve them with get_merge_request_conflicts / resolve_merge_request_conflict,
+then merge again); `refusal='not_ready'` means missing approvals, a merge lock or a wrong state. After a
+success the session's branch is gone: follow `next_step` and tell the user to open a production session.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "merge_request_id": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The merge request id. Omit to use the current branch's merge request."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="request_merge_request_changes"></a>
+## request_merge_request_changes
+**Annotations**: 
+
+**Tags**: `merge-request`
+
+**Description**:
+
+Sends a merge request back to its author for changes (a reviewer's "reject").
+
+The merge request returns to `development` and loses its approvals; it is NOT closed — the author fixes the
+branch and merges (or requests a review) again. Works from any session. Returns the merge request with its
+status; follow `next_step`.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "merge_request_id": {
+      "description": "The merge request id.",
+      "type": "integer"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Why changes are needed; recorded in the review history for the author."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "required": [
+    "merge_request_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="request_merge_request_review"></a>
+## request_merge_request_review
+**Annotations**: 
+
+**Tags**: `merge-request`
+
+**Description**:
+
+Sends the current branch's merge request for review (author action).
+
+Available only from a development-branch session; on production, tell the user to open a session on the
+merge request's source branch and ask again there. Rarely needed: merge_merge_request already skips the
+review when the project requires no approvals, so call this only when a merge was refused as "not ready"
+or when the project requires approvals. The merge request moves to `in_review` (or straight to `approved`
+when 0 approvals are required). Returns the merge request with its status; follow `next_step`.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "merge_request_id": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The merge request id. Omit to use the current branch's merge request."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "type": "object"
+}
+```
+
+---
+<a name="resolve_merge_request_conflict"></a>
+## resolve_merge_request_conflict
+**Annotations**: 
+
+**Tags**: `merge-request`
+
+**Description**:
+
+Resolves ONE conflicting configuration of the current branch's merge request by re-anchoring the branch
+configuration onto the current production version with the chosen content.
+
+Available only from a development-branch session; on production, tell the user to open a session on the
+merge request's source branch and ask again there. Call get_merge_request_conflicts first, then for each
+conflict have the user choose: `take='ours'` / `'theirs'` / `'delete'`, or pass `resolved` with the
+hand-merged content. Taking one side discards the other side's changes — say so. The configuration must
+be in the merge request's live conflict set. `remaining_conflicts` tells you whether to continue the loop;
+approvals survive the resolution. Follow `next_step`.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "component_id": {
+      "description": "The component id of the conflicting configuration.",
+      "type": "string"
+    },
+    "configuration_id": {
+      "description": "The configuration id.",
+      "type": "string"
+    },
+    "take": {
+      "anyOf": [
+        {
+          "enum": [
+            "ours",
+            "theirs",
+            "delete"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "'ours' keeps the branch version, 'theirs' takes the production version, 'delete' deletes the configuration. Taking one side DISCARDS the other side's changes. Pass exactly one of take / resolved."
+    },
+    "resolved": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The manually merged content when neither side alone is right, as an object with ALL of these keys: \"name\" (non-empty string), \"description\" (string or null), \"is_disabled\" (boolean), \"configuration\" (object) and \"rows\" (array of row objects, complete) \u2014 the rebase replaces the whole version, so nothing may be omitted."
+    },
+    "change_description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The new version's change description (any mode; ignored for 'delete')."
+    },
+    "merge_request_id": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The merge request id. Omit to use the current branch's merge request."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "required": [
+    "component_id",
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="update_merge_request"></a>
+## update_merge_request
+**Annotations**: `destructive`
+
+**Tags**: `merge-request`
+
+**Description**:
+
+Updates a merge request's title, description, reviewers or auto-merge setting. Omitted fields are kept.
+
+Use it to disarm auto-merge (`auto_merge='none'`) or to change reviewers. Arming auto-merge
+(`'immediately'` / `'scheduled'`) makes the backend merge without a further confirmation — confirm with
+the user first. Not allowed once the merge request is merged or canceled. Works from any session.
+Returns the merge request with its status; follow `next_step`.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "merge_request_id": {
+      "description": "The merge request id.",
+      "type": "integer"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "New title. Omit to keep the current one."
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "New description. Omit to keep the current one; an empty string clears it."
+    },
+    "reviewer_ids": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "New complete list of reviewer user ids. Omit to keep the current one."
+    },
+    "auto_merge": {
+      "anyOf": [
+        {
+          "enum": [
+            "none",
+            "immediately",
+            "scheduled"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "'none' turns auto-merge OFF (the only way to disarm it). 'immediately' and 'scheduled' ARM it: the backend merges on its own once the merge request is approved (at auto_merge_at for 'scheduled'). Omit to keep the current setting."
+    },
+    "auto_merge_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "ISO-8601 date-time of a 'scheduled' auto-merge. Required with auto_merge='scheduled'."
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "required": [
+    "merge_request_id"
   ],
   "type": "object"
 }

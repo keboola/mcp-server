@@ -152,9 +152,18 @@ async def test_http_multiple_clients_with_different_headers(
 
 async def _assert_basic_setup(client: Client):
     tools = await client.list_tools()
-    # the create_conditional_flow, create_flow, search, and semantic tools may not be present
+    # the create_conditional_flow, create_flow, search, semantic and merge-request tools may not be present
     # based on the testing project features
     exclude = {
+        'approve_merge_request',
+        'create_merge_request',
+        'get_merge_request_conflicts',
+        'get_merge_requests',
+        'merge_merge_request',
+        'request_merge_request_changes',
+        'request_merge_request_review',
+        'resolve_merge_request_conflict',
+        'update_merge_request',
         'create_conditional_flow',
         'create_flow',
         'search',

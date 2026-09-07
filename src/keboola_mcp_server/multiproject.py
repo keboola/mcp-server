@@ -33,7 +33,9 @@ _NO_FANOUT_TOOLS = {'get_accessible_projects', 'set_project_scope'}
 # project_id argument to say which -- same single-target resolution/swap as a write tool, just
 # without the write semantics. get_project_info resolves through the active project's
 # WorkspaceManager (workspace id / sql dialect), so it can only ever report one project at a time.
-_SINGLE_TARGET_READ_TOOLS = {'get_project_info'}
+# Merge requests are project-specific ids and the conflict tool is bound to the session branch: neither can be
+# fanned out across projects, so both target one project like a write tool does.
+_SINGLE_TARGET_READ_TOOLS = {'get_project_info', 'get_merge_requests', 'get_merge_request_conflicts'}
 
 # Optional per-call argument injected on fan-out-eligible read tools to restrict a single call to a
 # subset of the scoped projects (consumed and stripped by MultiProjectMiddleware.on_call_tool).
