@@ -112,8 +112,9 @@ Step 2: modify_python_js_data_app(
                                   (U = https://kai:<secret>@host/path.git)
                                         │
                                         ▼
-Step 3: YOU: git clone U; git checkout init (create if empty);
-        write app.py; git push origin init
+Step 3: YOU: git clone U; git checkout -b <branch>   (repo of a new app is
+        empty, so there is no main yet); write app.py;
+        git push origin <branch>
                                         │
                                         ▼
 Step 4: deploy_data_app(
@@ -125,8 +126,9 @@ Step 4: deploy_data_app(
                                         │
                                         ▼ (user approves)
                                         │
-Step 5: YOU: git checkout main; git merge init;
-        git push origin main; git push origin --delete init
+Step 5: YOU: git checkout -b main <branch>   (a brand-new app has no main
+        yet; on an existing app: git checkout main && git merge <branch>);
+        git push origin main; git push origin --delete <branch>
                                         │
                                         ▼
 Step 6: deploy_data_app(
@@ -293,7 +295,7 @@ Always call against the **prod** app's configuration ID — the draft has no man
 - **Type**: `Optional[str]`
 - **When valid**: draft create only (must be paired with `parent_configuration_id`). Rejected on prod create and on update.
 - **Semantics**: pins the draft to this branch (`parameters.dataApp.git.branch`). When unset, defaults to a freshly generated `'draft-<6-hex>'` (`_generate_default_draft_branch`), unique per draft. Must not be `main` (reserved for the prod app); must be non-empty and contain no whitespace.
-- **Uniqueness**: the generated default cannot collide. A branch the **agent supplies** still can — a descriptive name like `'add-revenue-filter'` reused across sessions already exists on the repo. That does not fail loudly: a bare `git checkout add-revenue-filter` in a fresh clone resolves to the stale `origin/add-revenue-filter` tip instead of branching off `main`. The tool's `change_summary` therefore instructs the agent to branch explicitly (`git fetch origin && git checkout -B <branch> origin/main`) and, when deliberately resuming a branch, to verify `git rev-list --count <branch>..origin/main` is 0. See **The stale-branch failure mode** below.
+- **Uniqueness**: the generated default cannot collide. A branch the **agent supplies** still can — a descriptive name like `'add-revenue-filter'` reused across sessions already exists on the repo. That does not fail loudly: a bare `git checkout add-revenue-filter` in a fresh clone resolves to the stale `origin/add-revenue-filter` tip instead of branching off `main`. The tool's `change_summary` therefore instructs the agent to branch explicitly (`git fetch origin && git checkout -B <branch> --no-track origin/main` — `--no-track` so `origin/main` does not become the draft branch's upstream, which would make a bare `git push` target `main`) and, when deliberately resuming a branch, to verify `git rev-list --count <branch>..origin/main` is 0. If the push is then rejected as non-fast-forward, the branch holds unmerged commits from an abandoned draft — `git push --force-with-lease` or delete the remote branch first, never a bare `git checkout`. See **The stale-branch failure mode** below.
 
 ### `deploy_data_app(mode=...)`
 
@@ -438,7 +440,7 @@ interrupted session. That matches the "apps that were previously iterated on" in
 - The generated default is unique per draft (`draft-<6-hex>`), so the default path cannot collide.
 - An agent-supplied branch can still collide, and the server must not silently rename what the
   caller asked for. Instead the draft-create response carries an explicit instruction to branch off
-  `origin/main` (`git checkout -B <branch> origin/main`) plus a `rev-list` behind-check for the
+  `origin/main` (`git checkout -B <branch> --no-track origin/main`) plus a `rev-list` behind-check for the
   deliberate-resume case.
 
 **Still missing on the platform side:** the data-science API exposes only

@@ -2237,7 +2237,7 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
     # safe checkout instead — a bare `git checkout iter-feat` would resolve to an existing
     # `origin/iter-feat` and serve its stale tip (AJDA-3161).
     assert result.change_summary is not None
-    assert 'git checkout -B iter-feat origin/main' in result.change_summary
+    assert 'git checkout -B iter-feat --no-track origin/main' in result.change_summary
     assert 'git rev-list --count iter-feat..origin/main' in result.change_summary
 
     # Credential was minted on the parent, not the new dev twin.
@@ -2282,6 +2282,10 @@ async def test_modify_python_js_data_app_create_draft_defaults_branch_to_unique_
     draft's `git checkout init` then resolved to the stale `origin/init` left behind by an earlier
     one instead of branching off `main`, and the draft silently previewed outdated code. Two
     consecutive default creates must therefore yield two different branch names.
+
+    `secrets.token_hex` is stubbed with two fixed values so the assertion is deterministic: what
+    matters is that the name is derived fresh on every create (the old default was a constant),
+    not that two real random draws happen to differ.
     """
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
@@ -2303,6 +2307,12 @@ async def test_modify_python_js_data_app_create_draft_defaults_branch_to_unique_
     keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda v, **_: v)
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    hex_suffixes = iter(('a1b2c3', 'd4e5f6'))
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps.secrets.token_hex',
+        side_effect=lambda _nbytes: next(hex_suffixes),
+    )
 
     branches: list[str] = []
     for _ in range(2):
@@ -2327,11 +2337,11 @@ async def test_modify_python_js_data_app_create_draft_defaults_branch_to_unique_
         # The agent is told to branch off `origin/main` explicitly — a bare `git checkout` is what
         # silently resolves to a stale remote tip.
         assert result.change_summary is not None
-        assert f'git checkout -B {result.branch} origin/main' in result.change_summary
+        assert f'git checkout -B {result.branch} --no-track origin/main' in result.change_summary
         assert f'git rev-list --count {result.branch}..origin/main' in result.change_summary
 
     # The heart of the regression: consecutive default creates must not share a branch name.
-    assert branches[0] != branches[1]
+    assert branches == ['draft-a1b2c3', 'draft-d4e5f6']
 
 
 @pytest.mark.asyncio

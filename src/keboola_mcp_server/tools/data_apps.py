@@ -427,9 +427,12 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
             'Draft branch the new draft is pinned to (set in `parameters.dataApp.git.branch`). Only populated '
             'on the **draft create path** — defaults to a freshly generated `draft-<hex>` when the caller does '
             'not pass `branch`. Create it from the current production code — '
-            '`git fetch origin && git checkout -B <branch> origin/main` — and push code on this branch before '
-            'calling `deploy_data_app(mode="dev")`. A bare `git checkout <branch>` is unsafe: if the branch '
-            'already exists on the remote it resolves to that stale tip. None on prod create and on update.'
+            '`git fetch origin && git checkout -B <branch> --no-track origin/main` (on a brand-new prod app the '
+            'repo is still empty and `origin/main` does not exist yet — use `git checkout -b <branch>` there) — '
+            'and push code on this branch before calling `deploy_data_app(mode="dev")`. `--no-track` keeps '
+            '`origin/main` from becoming this branch\'s upstream, so a bare `git push` can never target `main`. '
+            'A bare `git checkout <branch>` is unsafe: if the branch already exists on the remote it resolves '
+            'to that stale tip. None on prod create and on update.'
         ),
     )
     links: list[Link] = Field(description='Navigation links for the web interface.')
@@ -921,7 +924,8 @@ async def modify_python_js_data_app(
                 'to. Defaults to a generated `draft-<hex>` when unset — unique per draft, so it can never '
                 "collide with a branch an earlier draft left behind. Pass a descriptive name like "
                 "'add-revenue-filter' when it helps the user; a name you supply may already exist on the "
-                'repo, so branch it off `origin/main` explicitly rather than with a bare `git checkout`. '
+                'repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track '
+                'origin/main`) rather than with a bare `git checkout`. '
                 'Must not be `main` (reserved for the prod app). Rejected on prod create.\n'
                 '- **On update** (with `configuration_id`): repoints an existing **external-git** app to '
                 'a different branch (e.g. flip a repo-backed app from `main` to a feature branch for '
@@ -1004,7 +1008,9 @@ async def modify_python_js_data_app(
        so there is no `main` to branch from yet); write source; `git push origin <branch>`.
     4. `deploy_data_app(action='deploy', configuration_id=DRAFT, mode='dev')`
        → preview URL serving the draft's pinned branch as a dev version. Iterate with the user.
-    5. Once approved — YOU: `git checkout main`; `git merge <branch>`; `git push origin main`;
+    5. Once approved — YOU: `git checkout main && git merge <branch>`. On a brand-new app (step 3
+       above) `main` does not exist yet, so create it from the approved draft instead:
+       `git checkout -b main <branch>`. Then `git push origin main`;
        `git push origin --delete <branch>` (branch deletes ARE permitted on managed repos).
     6. `deploy_data_app(action='deploy', configuration_id=PROD)`
        → prod URL now serves the merged `main`.
@@ -1022,11 +1028,16 @@ async def modify_python_js_data_app(
             parent_configuration_id=PROD,
             branch='<describes-the-change>',   # e.g. 'add-revenue-filter'
        )` → `(DRAFT, R, U2, branch)`. Use U2 (it has its own fresh token).
-    3. YOU: `git clone U2`; `git fetch origin && git checkout -B <branch> origin/main` — state the
-       base explicitly. NEVER a bare `git checkout <branch>`: when that branch already exists on
-       the remote (a descriptive name reused from an earlier session), git silently checks out its
-       stale tip instead of branching from `main`, and the preview then serves outdated code with
-       no error. Edit source; `git push origin <branch>`.
+    3. YOU: `git clone U2`; `git fetch origin && git checkout -B <branch> --no-track origin/main` —
+       state the base explicitly, and `--no-track` so `origin/main` does not become the branch's
+       upstream (otherwise a bare `git push` on the draft branch would target `main`). NEVER a bare
+       `git checkout <branch>`: when that branch already exists on the remote (a descriptive name
+       reused from an earlier session), git silently checks out its stale tip instead of branching
+       from `main`, and the preview then serves outdated code with no error. Edit source;
+       `git push origin <branch>`. If that push is rejected as non-fast-forward, the remote branch
+       still holds unmerged commits from an abandoned earlier draft — either
+       `git push --force-with-lease origin <branch>` or `git push origin --delete <branch>` first.
+       Never resolve a rejected push with a bare `git checkout`.
     4–7. Same as Scenario A steps 4–7.
 
     ## Scenario C — Continue an unfinished draft
@@ -2139,22 +2150,31 @@ def _draft_checkout_hint(draft_branch: str) -> str:
     ``git checkout <branch>`` silently resolves to an existing ``origin/<branch>`` when one exists,
     checking out its stale tip instead of branching off ``main`` — the draft then previews (and can
     promote) outdated code with no error anywhere (AJDA-3161). ``checkout -B ... origin/main``
-    states the intended base explicitly; the ``rev-list`` check covers the case where the agent
-    deliberately resumes an existing branch.
+    states the intended base explicitly, and ``--no-track`` keeps ``origin/main`` from becoming the
+    draft branch's upstream (a bare ``git push`` on it would otherwise target ``main``). The
+    ``rev-list`` check covers the case where the agent deliberately resumes an existing branch, and
+    the force-with-lease/delete note covers a branch left behind by an *abandoned* draft, whose
+    unmerged commits make the push non-fast-forward.
 
     :param draft_branch: The branch the draft was pinned to
     :return: A hint string for the tool's `change_summary`
     """
     return (
         f"Draft pinned to branch '{draft_branch}'. Base it on current production explicitly: "
-        f'`git fetch origin && git checkout -B {draft_branch} origin/main` '
+        f'`git fetch origin && git checkout -B {draft_branch} --no-track origin/main` '
         f'(on a brand-new prod app the repo is still empty and `origin/main` does not exist yet — '
-        f'use `git checkout -b {draft_branch}` there). Do NOT use a bare '
-        f'`git checkout {draft_branch}`: if that branch already exists on the remote, git checks '
-        f'out its stale tip instead of branching from `main`, and the preview will serve outdated '
-        f'code without any error. If you intentionally resume an existing branch, verify it is '
-        f'current first — `git rev-list --count {draft_branch}..origin/main` must print 0, '
-        f'otherwise `git merge origin/main` before you push.'
+        f'use `git checkout -b {draft_branch}` there). `--no-track` keeps `origin/main` from '
+        f'becoming this branch\'s upstream, so a bare `git push` can never target `main`. Do NOT '
+        f'use a bare `git checkout {draft_branch}`: if that branch already exists on the remote, '
+        f'git checks out its stale tip instead of branching from `main`, and the preview will '
+        f'serve outdated code without any error. If you intentionally resume an existing branch, '
+        f'verify it is current first — `git rev-list --count {draft_branch}..origin/main` must '
+        f'print 0, otherwise `git merge origin/main` before you push. If '
+        f'`git push origin {draft_branch}` is rejected as non-fast-forward, that branch still '
+        f'holds unmerged commits from an abandoned earlier draft — either '
+        f'`git push --force-with-lease origin {draft_branch}` or '
+        f'`git push origin --delete {draft_branch}` first; never fall back to a bare '
+        f'`git checkout`.'
     )
 
 

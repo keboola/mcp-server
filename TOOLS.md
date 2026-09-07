@@ -2477,7 +2477,9 @@ Three scenarios the agent has to distinguish:
    so there is no `main` to branch from yet); write source; `git push origin <branch>`.
 4. `deploy_data_app(action='deploy', configuration_id=DRAFT, mode='dev')`
    → preview URL serving the draft's pinned branch as a dev version. Iterate with the user.
-5. Once approved — YOU: `git checkout main`; `git merge <branch>`; `git push origin main`;
+5. Once approved — YOU: `git checkout main && git merge <branch>`. On a brand-new app (step 3
+   above) `main` does not exist yet, so create it from the approved draft instead:
+   `git checkout -b main <branch>`. Then `git push origin main`;
    `git push origin --delete <branch>` (branch deletes ARE permitted on managed repos).
 6. `deploy_data_app(action='deploy', configuration_id=PROD)`
    → prod URL now serves the merged `main`.
@@ -2495,11 +2497,16 @@ You already have PROD's `configuration_id` (from `get_data_apps` or earlier conv
         parent_configuration_id=PROD,
         branch='<describes-the-change>',   # e.g. 'add-revenue-filter'
    )` → `(DRAFT, R, U2, branch)`. Use U2 (it has its own fresh token).
-3. YOU: `git clone U2`; `git fetch origin && git checkout -B <branch> origin/main` — state the
-   base explicitly. NEVER a bare `git checkout <branch>`: when that branch already exists on
-   the remote (a descriptive name reused from an earlier session), git silently checks out its
-   stale tip instead of branching from `main`, and the preview then serves outdated code with
-   no error. Edit source; `git push origin <branch>`.
+3. YOU: `git clone U2`; `git fetch origin && git checkout -B <branch> --no-track origin/main` —
+   state the base explicitly, and `--no-track` so `origin/main` does not become the branch's
+   upstream (otherwise a bare `git push` on the draft branch would target `main`). NEVER a bare
+   `git checkout <branch>`: when that branch already exists on the remote (a descriptive name
+   reused from an earlier session), git silently checks out its stale tip instead of branching
+   from `main`, and the preview then serves outdated code with no error. Edit source;
+   `git push origin <branch>`. If that push is rejected as non-fast-forward, the remote branch
+   still holds unmerged commits from an abandoned earlier draft — either
+   `git push --force-with-lease origin <branch>` or `git push origin --delete <branch>` first.
+   Never resolve a rejected push with a bare `git checkout`.
 4–7. Same as Scenario A steps 4–7.
 
 ## Scenario C — Continue an unfinished draft
@@ -2612,7 +2619,7 @@ slug must be at most 63 characters (the DNS-label max), and note the UI's own UR
         }
       ],
       "default": null,
-      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to a generated `draft-<hex>` when unset \u2014 unique per draft, so it can never collide with a branch an earlier draft left behind. Pass a descriptive name like 'add-revenue-filter' when it helps the user; a name you supply may already exist on the repo, so branch it off `origin/main` explicitly rather than with a bare `git checkout`. Must not be `main` (reserved for the prod app). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
+      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to a generated `draft-<hex>` when unset \u2014 unique per draft, so it can never collide with a branch an earlier draft left behind. Pass a descriptive name like 'add-revenue-filter' when it helps the user; a name you supply may already exist on the repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track origin/main`) rather than with a bare `git checkout`. Must not be `main` (reserved for the prod app). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
     },
     "authentication_type": {
       "default": "default",
