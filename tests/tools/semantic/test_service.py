@@ -13,6 +13,7 @@ from keboola_mcp_server.tools.semantic.service import (
     _constraint_is_relevant,
     _extract_join_columns,
     _extract_metric_column,
+    _list_semantic_type_objects,
     _matches_sql,
     _to_semantic_service_data,
     detect_used_objects_from_context,
@@ -28,13 +29,14 @@ def _metastore_object(
     *,
     name: str,
     attributes: Mapping[str, object] | None = None,
+    meta: Mapping[str, object] | None = None,
 ) -> MetastoreObject:
     return MetastoreObject.model_validate(
         {
             'type': object_type.value,
             'id': object_id,
             'attributes': dict(attributes or {}),
-            'meta': {'name': name},
+            'meta': {'name': name, **(meta or {})},
         }
     )
 
@@ -1093,3 +1095,41 @@ async def test_search_semantic_context_validates_inputs(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         await search_semantic_context(keboola_client, patterns, max_results=max_results)
+
+
+@pytest.mark.asyncio
+async def test_list_semantic_type_objects_carries_scope_metadata_through_the_list_path(
+    keboola_client: KeboolaClient,
+) -> None:
+    """Scope/visibility fields must survive `list_objects` -> `_list_semantic_type_objects`,
+    not only the direct-object-construction path the other semantic-service tests use.
+
+    Only "project" scope is exercised here because that's the only scope the listing path
+    (`metastore.list_objects(..., organization_scope=False)`) can return today -- see
+    `get_semantic_context`'s CONSIDERATIONS.
+    """
+    obj = _metastore_object(
+        SemanticObjectType.SEMANTIC_MODEL,
+        'm1',
+        name='Shared Revenue Model',
+        meta={'scope': 'project', 'projectId': 123, 'scopeElevationRequestedAt': '2026-01-03T00:00:00Z'},
+    )
+
+    async def list_objects_side_effect(
+        object_type: SemanticObjectType | str,
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
+        **_: object,
+    ) -> list[MetastoreObject]:
+        return [obj] if (offset or 0) == 0 else []
+
+    keboola_client.metastore_client.list_objects.side_effect = list_objects_side_effect
+
+    objects = await _list_semantic_type_objects(keboola_client, SemanticObjectType.SEMANTIC_MODEL)
+
+    assert len(objects) == 1
+    assert objects[0].data.meta is not None
+    assert objects[0].data.meta.scope == 'project'
+    assert objects[0].data.meta.project_id == 123
+    assert objects[0].data.meta.scope_elevation_requested_at == '2026-01-03T00:00:00Z'

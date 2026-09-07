@@ -15,25 +15,39 @@ def _jsonapi_object(
     revision: int = 1,
     deleted_at: str | None = None,
     relationships: dict[str, Any] | None = None,
+    scope: str | None = None,
+    target_project_ids: list[int] | None = None,
+    source_project_id: int | None = None,
+    scope_elevation_requested_at: str | None = None,
     **extra_attrs: Any,
 ) -> dict:
     """Build a single JSON:API resource object (inside the 'data' envelope)."""
+    meta: dict[str, Any] = {
+        'branch': 'main',
+        'name': name,
+        'revision': revision,
+        'schemaVersion': '1.0.0',
+        'projectId': 123,
+        'organizationId': '456',
+        'createdAt': '2026-01-01T00:00:00Z',
+        'lastUpdated': '2026-01-01T00:00:00Z',
+        'deletedAt': deleted_at,
+        'revisionCreatedAt': '2026-01-01T00:00:00Z',
+    }
+    if scope is not None:
+        meta['scope'] = scope
+    if target_project_ids is not None:
+        meta['targetProjectIds'] = target_project_ids
+    if source_project_id is not None:
+        meta['sourceProjectId'] = source_project_id
+    if scope_elevation_requested_at is not None:
+        meta['scopeElevationRequestedAt'] = scope_elevation_requested_at
+
     return {
         'type': object_type,
         'id': uuid,
         'attributes': {'name': name, **extra_attrs},
-        'meta': {
-            'branch': 'main',
-            'name': name,
-            'revision': revision,
-            'schemaVersion': '1.0.0',
-            'projectId': 123,
-            'organizationId': '456',
-            'createdAt': '2026-01-01T00:00:00Z',
-            'lastUpdated': '2026-01-01T00:00:00Z',
-            'deletedAt': deleted_at,
-            'revisionCreatedAt': '2026-01-01T00:00:00Z',
-        },
+        'meta': meta,
         'relationships': relationships,
     }
 
@@ -296,3 +310,34 @@ def test_model_validate_maps_deleted_at_and_relationships() -> None:
     assert result.relationships == {'dataset': {'data': {'type': 'semantic-dataset', 'id': 'd1'}}}
     assert result.meta is not None
     assert result.meta.deleted_at == '2026-01-02T00:00:00Z'
+
+
+def test_model_validate_maps_scope_and_visibility_fields() -> None:
+    result = MetastoreClient._parse_object(
+        _single_response(
+            _jsonapi_object(
+                'Shared Revenue Model',
+                'u1',
+                scope='targeted',
+                target_project_ids=[999999999],
+                source_project_id=123,
+                scope_elevation_requested_at='2026-01-03T00:00:00Z',
+            )
+        )
+    )
+
+    assert result.meta is not None
+    assert result.meta.scope == 'targeted'
+    assert result.meta.target_project_ids == (999999999,)
+    assert result.meta.source_project_id == 123
+    assert result.meta.scope_elevation_requested_at == '2026-01-03T00:00:00Z'
+
+
+def test_model_validate_leaves_scope_and_visibility_fields_absent_when_not_returned() -> None:
+    result = MetastoreClient._parse_object(_single_response(_jsonapi_object('Plain Model', 'u1')))
+
+    assert result.meta is not None
+    assert result.meta.scope is None
+    assert result.meta.target_project_ids is None
+    assert result.meta.source_project_id is None
+    assert result.meta.scope_elevation_requested_at is None

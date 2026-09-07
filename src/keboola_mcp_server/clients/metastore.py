@@ -1,10 +1,13 @@
 """Keboola Metastore API client."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
 
 from keboola_mcp_server.clients.base import JsonDict, JsonStruct, KeboolaServiceClient, RawKeboolaClient
+
+#: Who can see a metastore object. Closed set defined by the metastore API.
+ObjectScope = Literal['project', 'organization', 'targeted']
 
 
 class MetaObjectMeta(BaseModel):
@@ -47,6 +50,29 @@ class MetaObjectMeta(BaseModel):
         validation_alias=AliasChoices('revisionCreatedAt', 'revision_created_at'),
         serialization_alias='revisionCreatedAt',
         default=None,
+    )
+    scope: ObjectScope | None = Field(default=None, description='"project", "organization", or "targeted".')
+    target_project_ids: tuple[int, ...] | None = Field(
+        validation_alias=AliasChoices('targetProjectIds', 'target_project_ids'),
+        serialization_alias='targetProjectIds',
+        default=None,
+        description='Sibling project ids granted read access. Only present for "targeted" scope.',
+    )
+    source_project_id: int | None = Field(
+        validation_alias=AliasChoices('sourceProjectId', 'source_project_id'),
+        serialization_alias='sourceProjectId',
+        default=None,
+        description=(
+            'The project this object was created in or promoted from. Only ever present for '
+            '"organization" scope, and optional even there (absent on an object that predates '
+            'this field, or whose creator opted out at creation/promotion time).'
+        ),
+    )
+    scope_elevation_requested_at: str | None = Field(
+        validation_alias=AliasChoices('scopeElevationRequestedAt', 'scope_elevation_requested_at'),
+        serialization_alias='scopeElevationRequestedAt',
+        default=None,
+        description='Set while a "project"-scope object has a pending request to promote it to "organization".',
     )
 
 
