@@ -101,10 +101,11 @@ class ProjectLinksManager:
     # --- Project ---
     def get_merge_request_link(self, branch_from_id: str | int, title: str) -> Link:
         """The Keboola UI page of a merge request: its source branch's development overview."""
-        return Link.detail(
-            title=f'Merge request: {title}' if title else 'Merge request',
-            url=self._url(f'branch/{branch_from_id}/development-overview'),
+        # Built without the manager's session-branch prefix: the page lives on the MR's own source branch.
+        url = '/'.join(
+            [self._base_url, 'admin/projects', self._project_id, 'branch', str(branch_from_id), 'development-overview']
         )
+        return Link.detail(title=f'Merge request: {title}' if title else 'Merge request', url=url)
 
     def get_project_detail_link(self) -> Link:
         return Link.detail(title='Project Dashboard', url=self._url(''))
