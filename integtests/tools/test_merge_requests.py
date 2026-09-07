@@ -59,7 +59,7 @@ def _wait_for_storage_job(base_url: str, token: str, job_id: str, timeout: int =
         job = _api_request('GET', f'{base_url}/v2/storage/jobs/{job_id}', token)
         if job.get('status') == 'success':
             return job
-        if job.get('status') in ('error', 'cancelled'):
+        if job.get('status') in ('error', 'warning', 'terminated', 'cancelled', 'canceled'):
             raise RuntimeError(f'Storage job {job_id} failed: {job}')
         time.sleep(2)
     raise TimeoutError(f'Storage job {job_id} did not complete within {timeout}s')
