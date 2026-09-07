@@ -829,8 +829,7 @@ async def resolve_merge_request_conflict(
     """
     if (take is None) == (resolved is None):
         raise ToolError("Pass exactly one of take='ours'|'theirs'|'delete' or a resolved configuration.")
-    if resolved is not None:
-        _validate_resolved(resolved)  # strict, before any network call
+    custom = _validate_resolved(resolved) if resolved is not None else None  # strict, before any network call
 
     c = await _load(ctx)
     mr = await _resolve_branch_mr(c, merge_request_id)
@@ -855,8 +854,7 @@ async def resolve_merge_request_conflict(
     warnings = list(diff_warnings(diff))
     body: dict[str, Any]
     mode: str
-    if resolved is not None:
-        custom = _validate_resolved(resolved)
+    if custom is not None:
         body = {
             'name': custom.name,
             'description': custom.description,
