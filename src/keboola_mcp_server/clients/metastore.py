@@ -1,10 +1,13 @@
 """Keboola Metastore API client."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
 
 from keboola_mcp_server.clients.base import JsonDict, JsonStruct, KeboolaServiceClient, RawKeboolaClient
+
+#: Who can see a metastore object. Closed set defined by the metastore API.
+ObjectScope = Literal['project', 'organization', 'targeted']
 
 
 class MetaObjectMeta(BaseModel):
@@ -48,7 +51,7 @@ class MetaObjectMeta(BaseModel):
         serialization_alias='revisionCreatedAt',
         default=None,
     )
-    scope: str | None = Field(default=None, description='"project", "organization", or "targeted".')
+    scope: ObjectScope | None = Field(default=None, description='"project", "organization", or "targeted".')
     target_project_ids: tuple[int, ...] | None = Field(
         validation_alias=AliasChoices('targetProjectIds', 'target_project_ids'),
         serialization_alias='targetProjectIds',
