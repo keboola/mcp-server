@@ -4229,19 +4229,23 @@ CONSIDERATIONS:
 - If a selection has empty `ids`, the tool returns all objects of that type in compact form.
 - If a selection has non-empty `ids`, the tool returns only those specific objects with full attributes.
 - `semantic_model_ids` optionally narrows the lookup to specific semantic models.
-- Every object carries `scope` ("project", "organization", or "targeted"), `project_id`,
-  `source_project_id` (which project an "organization"-scope object came from, if known), and
-  `target_project_ids` (the sibling projects granted read access, for "targeted" scope).
-  `scope` describes visibility of the metastore object itself, not whether its underlying
-  Keboola Storage table is actually reachable from every project that can see it -- a
-  "targeted"/"organization" object's data may still need its bucket separately shared and
-  linked (`get_shared_buckets`/`link_shared_bucket`) before a query against it will work
-  outside the owning project.
-- A `semantic-model`'s `scope_elevation_requested_at` being set means a project has asked an
+- An object returned here carries `scope` ("project", "organization", or "targeted"), `project_id`
+  (the project it was created in -- present regardless of scope), `source_project_id` (which
+  project an "organization"-scope object came from, if known), and `target_project_ids` (the
+  sibling projects granted read access, for "targeted" scope). This is reported only for an
+  object that appears in the current project's listing or that was loaded by id -- an
+  "organization"-scope object owned by another project is not surfaced by the listing path
+  today, only via a direct id lookup. `scope` describes visibility of the metastore object
+  itself, not whether its underlying Keboola Storage table is actually reachable from every
+  project that can see it -- a "targeted"/"organization" object's data may still need its
+  bucket separately shared and linked (`get_shared_buckets`/`link_shared_bucket`) before a
+  query against it will work outside the owning project.
+- An object's `scope_elevation_requested_at` being set means a project has asked an
   organization admin to promote it from "project" to "organization" scope, and the request is
-  still pending. Treat this as a forward-looking signal: once approved, the model (and its
-  datasets' underlying tables) becomes visible org-wide, which may require separately sharing
-  the physical data too -- promotion alone does not do that automatically.
+  still pending. Treat this as a forward-looking signal: once approved, the object (a
+  semantic-model's promotion also carries its datasets' underlying tables along) becomes
+  visible org-wide, which may require separately sharing the physical data too -- promotion
+  alone does not do that automatically.
 
 WHEN TO USE:
 - When you already know IDs of the semantic objects you want to load and want to inspect them in detail.
