@@ -954,8 +954,9 @@ async def modify_python_js_data_app(
                 'reads succeed but INSERT/UPDATE/DELETE/TRUNCATE fail with '
                 '`Permission bigquery.tables.updateData denied`, and redeploying does not help '
                 '(platform bug DMD-1259). Declaring direct-grant output tables on a BigQuery project '
-                'is still correct and harmless, but do not build an app that depends on writing to '
-                'Storage from the app there — tell the user it is blocked instead. Snowflake is '
+                'is still correct and harmless, but an app that must write to Storage there has to go '
+                'through the Storage API instead (`files/prepare` -> upload -> `import-async`), which '
+                'bypasses the Query Service and needs only the app\'s own KBC_TOKEN. Snowflake is '
                 'unaffected. Leave unset (None) to preserve the existing storage configuration; '
                 'pass an empty dict to explicitly clear it.'
             ),
