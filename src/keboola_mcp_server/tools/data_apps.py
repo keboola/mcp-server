@@ -925,7 +925,8 @@ async def modify_python_js_data_app(
                 "collide with a branch an earlier draft left behind. Pass a descriptive name like "
                 "'add-revenue-filter' when it helps the user; a name you supply may already exist on the "
                 'repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track '
-                'origin/main`) rather than with a bare `git checkout`. '
+                'origin/main`, or `git checkout -b <branch>` on a brand-new prod app whose repo is still '
+                'empty) rather than with a bare `git checkout`. '
                 'Must not be `main` (reserved for the prod app). Rejected on prod create.\n'
                 '- **On update** (with `configuration_id`): repoints an existing **external-git** app to '
                 'a different branch (e.g. flip a repo-backed app from `main` to a feature branch for '
