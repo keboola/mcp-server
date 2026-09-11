@@ -2235,7 +2235,7 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
 
     # An agent-supplied branch cannot be uniquified by the server, so the response spells out the
     # safe checkout instead — a bare `git checkout iter-feat` would resolve to an existing
-    # `origin/iter-feat` and serve its stale tip (AJDA-3161).
+    # `origin/iter-feat` and serve its stale tip.
     assert result.change_summary is not None
     assert 'git checkout -B iter-feat --no-track origin/main' in result.change_summary
     assert 'git rev-list --count iter-feat..origin/main' in result.change_summary
@@ -2277,8 +2277,8 @@ async def test_modify_python_js_data_app_create_draft_defaults_branch_to_unique_
 ) -> None:
     """Omitting `branch` pins the draft to a freshly generated, unique `draft-<hex>` branch.
 
-    Regression test for AJDA-3161 / SUPPORT-17342: the default used to be the fixed literal
-    `init`, so every default-branch draft of the same prod app reused one branch name. A later
+    Regression test: the default used to be the fixed literal `init`, so every default-branch
+    draft of the same prod app reused one branch name. A later
     draft's `git checkout init` then resolved to the stale `origin/init` left behind by an earlier
     one instead of branching off `main`, and the draft silently previewed outdated code. Two
     consecutive default creates must therefore yield two different branch names.

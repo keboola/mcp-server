@@ -57,7 +57,7 @@ The data-science platform does not yet support sharing a managed repo across app
 
 | Tool | Change in v1.64.0 | Purpose |
 |---|---|---|
-| `modify_python_js_data_app` | Default draft branch is a generated, unique `'draft-<6-hex>'` (v1.64 shipped the fixed literal `'init'`; AJDA-3161 replaced it — see below). Drafts persist `parameters.dataApp.parentConfigurationId` so they can be discovered cheaply. Docstring rewritten to drop "dev twin". | Create/update a prod app; create a draft bound to the parent prod app's managed repo. |
+| `modify_python_js_data_app` | Default draft branch is a generated, unique `'draft-<6-hex>'` (v1.64 shipped the fixed literal `'init'`; it was replaced — see below). Drafts persist `parameters.dataApp.parentConfigurationId` so they can be discovered cheaply. Docstring rewritten to drop "dev twin". | Create/update a prod app; create a draft bound to the parent prod app's managed repo. |
 | `deploy_data_app` | No behaviour change. Docstring reframes `mode='dev'` as "deploys the draft as a **dev version of the data app**" (hot reload + auto-auth for iframe preview). | Deploy/redeploy or stop. `mode='dev'` only meaningful on drafts. |
 | `create_python_js_data_app_git_credential` | No behaviour change. Docstring tightens the prod-only contract: drafts have no managed repo, always mint against prod. | Mint a one-time HTTPS token on a python-js prod app's managed repo. |
 | `get_data_apps` | Detail responses for python-js **prod** apps now include a `drafts: [...]` array of `DataAppSummary` entries — every draft (`isDraft=true`, `parentConfigurationId == <prod-cfg>`) parented to that prod, fetched with one extra `configuration_list` round-trip. Empty for drafts themselves and for Streamlit apps. | List or detail-fetch data apps; discover drafts. |
@@ -417,30 +417,24 @@ Against `data-science.canary-orion.keboola.dev`:
 
 ---
 
-## The stale-branch failure mode (AJDA-3161)
+## Why the draft branch is generated, not fixed
 
-**Symptom (SUPPORT-17342):** creating a draft for an *existing* app produced a preview running
-outdated code. Promoting that draft could regress production. Nothing errored anywhere.
+A fixed default branch name is unsafe here, and the failure is silent. With one literal name, every
+default-branch draft of a given prod app asks for the same branch. In a full clone where
+`origin/<branch>` already exists, `git checkout <branch>` creates a local branch **tracking the
+stale remote tip** — it does not branch off `main`, and it does not warn. The draft then previews
+outdated code, and promoting it can regress production, with nothing erroring anywhere. A docstring
+saying "create it from `main`" is advice; the DWIM is behavior.
 
-**Cause — two halves, both required:**
+A stale branch only lingers when the promote-time delete (`git push origin --delete <branch>`,
+step 5) was skipped or failed — an abandoned draft, a manual promote, an interrupted session.
 
-1. v1.64 made the default draft branch the fixed literal `'init'`, so every default-branch draft of
-   a given prod app asked for the same branch name.
-2. Git's checkout DWIM did the rest. In a full clone where `origin/init` exists, `git checkout init`
-   creates a local `init` **tracking the stale remote tip** — it does not branch off `main`, and it
-   does not warn. The v1.64 docstring said `git checkout <branch> (creating it from main)`; the
-   parenthetical is advice, the DWIM is behavior.
-
-The branch is deleted at promote time (`git push origin --delete <branch>`, step 5), so `init`
-lingers only when that step was skipped or failed — an abandoned draft, a manual promote, an
-interrupted session. That matches the "apps that were previously iterated on" in the report.
-
-**Fix:**
+Hence:
 
 - The generated default is unique per draft (`draft-<6-hex>`), so the default path cannot collide.
-- An agent-supplied branch can still collide, and the server must not silently rename what the
-  caller asked for. Instead the draft-create response carries an explicit instruction to branch off
-  `origin/main` (`git checkout -B <branch> --no-track origin/main`) plus a `rev-list` behind-check for the
+- An agent-supplied branch still can, and the server must not silently rename what the caller asked
+  for. Instead the draft-create response carries an explicit instruction to branch off `origin/main`
+  (`git checkout -B <branch> --no-track origin/main`) plus a `rev-list` behind-check for the
   deliberate-resume case.
 
 **Still missing on the platform side:** the data-science API exposes only
@@ -452,12 +446,12 @@ agent-supplied branch. If such an endpoint lands, that check belongs on the draf
 
 ## v1.63 → v1.64 migration
 
-The dev-twin terminology is gone. Internally, "dev twin" → "draft"; in the wire, drafts now persist `parentConfigurationId`. (v1.64 also changed the default branch from `iter-<6-hex>` to the literal `'init'`; AJDA-3161 reverted that half to a random `draft-<6-hex>` — see the section above.) User-facing tool parameters did not change shape — `parent_configuration_id` and `branch` keep their names — but the doc framing, docstrings, and default branch differ. A new tool `delete_python_js_data_app_draft` ships in v1.64.0.
+The dev-twin terminology is gone. Internally, "dev twin" → "draft"; in the wire, drafts now persist `parentConfigurationId`. (v1.64 also changed the default branch from `iter-<6-hex>` to the literal `'init'`; that half was reverted to a random `draft-<6-hex>` — see the section above.) User-facing tool parameters did not change shape — `parent_configuration_id` and `branch` keep their names — but the doc framing, docstrings, and default branch differ. A new tool `delete_python_js_data_app_draft` ships in v1.64.0.
 
 | | v1.63 (MVP) | v1.64 (this doc) |
 |---|---|---|
 | Iteration entity name | "dev twin" | "draft" |
-| Default iteration branch | `iter-<6-hex>` (random) | `'init'` (literal) — superseded by `draft-<6-hex>` (random) in AJDA-3161 |
+| Default iteration branch | `iter-<6-hex>` (random) | `'init'` (literal) — superseded by `draft-<6-hex>` (random) |
 | Draft → prod linkage on the wire | (not stored) | `parameters.dataApp.parentConfigurationId` (Storage config; create-only) |
 | Drafts of a prod, discovery | Scan all configs and filter by repo URL (no MCP surface) | `get_data_apps(configuration_ids=[PROD])` returns `drafts: [...]` |
 | Cleanup affordance | UI "Discard" button only | `delete_python_js_data_app_draft` MCP tool |

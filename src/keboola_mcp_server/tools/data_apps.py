@@ -124,11 +124,11 @@ _MANAGED_GIT_REPO_USERNAME = 'kai'
 # descriptive branch via `branch=`. The generated name carries a random suffix, mirroring the
 # unique `-draft-<hex>` slug suffix produced by `_derive_slug_from_name`.
 #
-# This was the fixed literal `init` until AJDA-3161: every default-branch draft on a given prod
-# app landed on the SAME branch name, and `git checkout init` in a fresh clone where `origin/init`
-# already exists silently checks out that stale remote tip instead of branching off `main`. The
-# draft then previewed — and could promote — outdated code, with no error raised anywhere
-# (SUPPORT-17342). A unique name per draft makes that collision impossible.
+# This used to be a fixed literal, which meant every default-branch draft on a given prod app
+# landed on the SAME branch name. `git checkout <branch>` in a fresh clone where `origin/<branch>`
+# already exists silently checks out that stale remote tip instead of branching off `main`, so the
+# draft previewed — and could promote — outdated code with no error raised anywhere. A unique name
+# per draft makes that collision impossible.
 _DEFAULT_DRAFT_BRANCH_PREFIX = 'draft'
 
 # How much of an AppRun's diagnostics is surfaced in tool output. `failure_message` can embed the
@@ -1317,7 +1317,7 @@ async def modify_python_js_data_app(
         data_app_summary = DataAppSummary.from_api_response(data_app_resp)
         data_app_summary.repo_url = repo_url
         # On the draft create path, spell out the safe checkout. `git checkout <branch>` alone is
-        # the AJDA-3161 trap: when the branch already exists on the remote (an agent-supplied
+        # the trap: when the branch already exists on the remote (an agent-supplied
         # descriptive name reused across sessions — the generated default cannot collide), git
         # resolves it to that stale remote tip instead of branching off `main`, and the draft
         # previews outdated code without erroring anywhere.
@@ -2150,7 +2150,7 @@ def _draft_checkout_hint(draft_branch: str) -> str:
     Surfaced in `modify_python_js_data_app`'s `change_summary` on the draft create path. A bare
     ``git checkout <branch>`` silently resolves to an existing ``origin/<branch>`` when one exists,
     checking out its stale tip instead of branching off ``main`` — the draft then previews (and can
-    promote) outdated code with no error anywhere (AJDA-3161). ``checkout -B ... origin/main``
+    promote) outdated code with no error anywhere. ``checkout -B ... origin/main``
     states the intended base explicitly, and ``--no-track`` keeps ``origin/main`` from becoming the
     draft branch's upstream (a bare ``git push`` on it would otherwise target ``main``). The
     ``rev-list`` check covers the case where the agent deliberately resumes an existing branch, and
@@ -2186,7 +2186,7 @@ def _generate_default_draft_branch() -> str:
     suffix produced by :func:`_derive_slug_from_name`. Uniqueness is the whole point: a fixed
     default (the previous ``init``) collides with the branch left behind by an earlier draft of the
     same prod app, and a plain ``git checkout <branch>`` then resolves to that stale remote tip
-    rather than branching off ``main`` — silently serving outdated code (AJDA-3161).
+    rather than branching off ``main`` — silently serving outdated code.
 
     :return: A fresh, collision-free draft branch name
     """
