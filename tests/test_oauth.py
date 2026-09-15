@@ -576,6 +576,40 @@ class TestSimpleOAuthProvider:
 
         assert result is _ClientRegistration.ERROR
 
+    @pytest.mark.asyncio
+    async def test_check_client_registration_never_follows_a_redirect(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A redirect from Connection's own URL to *anything* that answers 200 (a misconfigured
+        proxy/gateway, a login page, a catch-all landing page) must never be silently followed and
+        read as "client is registered" -- that would turn an infra misconfiguration into a false
+        REGISTERED for a security-critical check. Regression test for a real finding."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            if str(request.url) == 'https://oauth/oauth/clients/validate':
+                return httpx.Response(302, headers={'Location': 'https://oauth/some-landing-page'})
+            # Only reached if the client (incorrectly) chases the redirect.
+            return httpx.Response(200)
+
+        monkeypatch.setattr(
+            oauth_module,
+            '_create_http_client',
+            lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+
+        result = await oauth_provider._client_registry.check_registration(
+            'claude-ai', 'https://claude.ai/api/mcp/auth_callback'
+        )
+
+        assert result is _ClientRegistration.ERROR
+        assert call_count == 1  # never chased the redirect to the second URL
+
     @staticmethod
     def _stub_exchanger(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
         from keboola_mcp_server import oauth as oauth_module
