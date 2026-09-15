@@ -217,8 +217,8 @@ class TestConnectionClientIdentity:
         [
             ('My Custom Tool', 'My Custom Tool'),
             ('a' * 200, 'a' * 128),  # Connection's client_name cap
-            ('Evil​Name', 'EvilName'),  # zero-width space stripped
-            ('Evil‮Name', 'EvilName'),  # bidi override stripped
+            ('Evil\u200bName', 'EvilName'),  # zero-width space stripped
+            ('Evil\u202eName', 'EvilName'),  # bidi override stripped
             ('Evil\x00Name', 'EvilName'),  # control character stripped
         ],
     )
