@@ -1,12 +1,16 @@
+import base64
 import dataclasses
+import hashlib
+import json
 import logging
 import math
 import os
-import re
 import secrets
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from enum import Enum, auto
 from typing import Any, cast
 from urllib.parse import urljoin
 
@@ -49,35 +53,224 @@ _OAUTH_SCOPES = ['claudai', 'projectless']
 
 LOG = logging.getLogger(__name__)
 _OAUTH_LOG_ALL = bool(os.getenv('KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL'))
-_RE_LOCALHOST = re.compile(r'^(localhost|127\.0\.0\.1|\[::1]|::1)$', re.IGNORECASE)
-_ALLOWED_DOMAINS = {
-    'https': [
-        # Any keboola.com/dev subdomain EXCEPT user-deployable data-app subdomains, which live under a
-        # '*.hub.<stack>.keboola.com' host. A free-trial user can deploy a data app whose '/callback' would
-        # otherwise capture the OAuth code, so we reject any host that contains a 'hub' DNS label (RISK-76).
-        re.compile(r'^(?!(?:.*\.)?hub\.).+\.keboola\.(com|dev)$', re.IGNORECASE),
-        re.compile(r'^(.*\.)?chatgpt\.com$', re.IGNORECASE),
-        re.compile(r'^(.*\.)?claude\.ai$', re.IGNORECASE),
-        # Agnes lives on its own TLD, outside the keboola.(com|dev) pattern above. Exact host, no
-        # wildcard: AI-3591 is retiring this whole list in favour of Connection's client registry
-        # and flags its wildcards as a subdomain-takeover risk, so don't add another one (AI-3773).
-        re.compile(r'^agnes\.keboola\.systems$', re.IGNORECASE),  # no subdomains allowed
-        re.compile(r'^librechat\.glami-ml\.com$', re.IGNORECASE),  # no subdomains allowed
-        re.compile(r'^(.*\.)?make\.com$', re.IGNORECASE),
-        re.compile(r'^api\.devin\.ai$', re.IGNORECASE),  # devin.ai API domain
-        re.compile(r'^cloud\.onyx\.app$', re.IGNORECASE),  # onyx.app OAuth callback
-        re.compile(r'^global\.consent\.azure-apim\.net$', re.IGNORECASE),  # Azure APIM consent domain
-        re.compile(r'^n8n\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-business\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-merchant\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-llm-traffic\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-finance\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-playground\.groupondev\.com$', re.IGNORECASE),
-        re.compile(r'^n8n-staging\.groupondev\.com$', re.IGNORECASE),
-    ],
-    'http': [_RE_LOCALHOST],
-    'cursor': [re.compile(r'^(anysphere\.cursor-retrieval|anysphere\.cursor-mcp)$', re.IGNORECASE)],
+
+# The only hosts a plain http:// redirect_uri may target (RFC 8252 §7.3 loopback) -- see
+# _OAuthClientInformationFull.validate_redirect_uri. pydantic's AnyUrl.host keeps the brackets on
+# an IPv6 literal (e.g. '[::1]', not '::1'), verified against the installed pydantic version.
+_LOOPBACK_HOSTS = frozenset({'localhost', '127.0.0.1', '[::1]'})
+
+# redirect_uri -> the literal client_id Keboola pre-registered for it in Connection's oauth2_client
+# table (see connection/src/Core/Migrations/Application/Migrations/PreRegisterClaudeAiOAuthClientMigration*.php).
+# Not a trust decision -- it only picks which Connection row to ask about; /oauth/clients/validate
+# is still the sole authority on whether the pair is actually registered and active.
+_WELL_KNOWN_CONNECTION_CLIENT_IDS: dict[str, str] = {
+    'https://claude.ai/api/mcp/auth_callback': 'claude-ai',
 }
+
+# Cap on the in-process client_id -> client_name cache (see ConnectionClientRegistry.remember_client_name)
+# so an unauthenticated caller spamming /register can't grow it unboundedly.
+_MAX_CACHED_CLIENT_NAMES = 10_000
+
+# ConnectionClientRegistry.check_registration's result cache -- see its __init__ docstring.
+_MAX_CACHED_REGISTRATIONS = 10_000
+_REGISTERED_CACHE_TTL_SECONDS = 300  # 5 min: a registered+active client's status rarely flips.
+_NOT_REGISTERED_CACHE_TTL_SECONDS = 10  # short so a fresh Allow takes effect on the next retry
+
+
+class _ClientRegistration(Enum):
+    """Outcome of asking Connection whether a (client_id, redirect_uri) pair is registered."""
+
+    REGISTERED = auto()
+    NOT_REGISTERED = auto()
+    # Connection could not be reached, or answered with something other than 200/404 -- never
+    # treated as either of the above (fail closed, see AI-3792).
+    ERROR = auto()
+
+
+def _connection_client_id(redirect_uri: str) -> str:
+    """
+    Maps an AI assistant's own redirect_uri to the client_id used when talking to Connection's
+    OAuth client registry.
+
+    Connection's oauth2_client.identifier column (and the pending_mcp_client payload's client_id
+    field) are capped at 32 characters, but the mcp SDK mints a 36-character uuid4() as client_id
+    for every client that dynamically registers via /register -- forwarding that verbatim would
+    never fit. Deriving a short, stable id from redirect_uri instead means the same tool
+    reconnecting (same callback URL) lands on the same Connection identity and reuses an earlier
+    approval, even though the SDK hands it a fresh uuid on every /register call.
+    """
+    if known := _WELL_KNOWN_CONNECTION_CLIENT_IDS.get(redirect_uri):
+        return known
+    digest = hashlib.sha256(redirect_uri.encode()).hexdigest()[:24]
+    return f'mcp-{digest}'
+
+
+def _sanitize_client_name(name: str) -> str:
+    """Strips control/bidi/zero-width characters Connection's pending_mcp_client decoder would
+    otherwise reject outright (which would silently drop the whole approval payload -- see
+    PendingMcpClientApprovalListener's catch-and-ignore on a malformed payload), and truncates to
+    Connection's 128-character cap. `str.isprintable()` already excludes control (Cc), format
+    (Cf -- covers zero-width and bidi-override characters), surrogate, private-use and separator
+    categories, which is exactly what Connection's own DECEPTIVE_CHARS_PATTERN targets."""
+    return ''.join(ch for ch in name if ch.isprintable())[:128]
+
+
+def _create_http_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30.0))
+
+
+class ConnectionClientRegistry:
+    """
+    The MCP-server-side view of Connection's OAuth client registry (`oauth2_client` table):
+    checking whether a dynamically-presented `(client_id, redirect_uri)` pair is registered, and
+    building the pending-approval redirect for one that isn't. Kept separate from
+    `SimpleOAuthProvider` -- an already-large class implementing the session/token-broker side of
+    the OAuth-AS role -- because "is this client trusted" is a distinct concern from "how do we
+    exchange/refresh/revoke a session for one that is". See the AI-2883 RFC
+    (feature_spec/oauth_dynamic_client_registration/RFC.md) for the full design.
+    """
+
+    def __init__(self, server_url: str) -> None:
+        self._validate_url = urljoin(server_url, '/oauth/clients/validate')
+        self._authorize_url = urljoin(server_url, '/oauth/authorize')
+
+        # client_id -> client_name submitted at /register, so a dynamically-registered client's
+        # approval screen can show a real name instead of just the derived Connection client_id
+        # (/authorize never receives client_name itself -- see the RFC's Problem section). In-
+        # process only, bounded -- see RFC Decisions §4 for why this is a deliberate, display-only
+        # tradeoff and not a persistent store.
+        self._client_names: OrderedDict[str, str] = OrderedDict()
+
+        # (connection_client_id, redirect_uri) -> (result, expires_at). /authorize is unauthenticated,
+        # so every hit costs Connection one call to /oauth/clients/validate -- which is itself
+        # IP-rate-limited, and this server's whole egress IP shares that budget across every user of
+        # the stack. A short-TTL positive/negative cache means the common case (the same handful of
+        # registered clients reconnecting) never leaves this process. ERROR is deliberately never
+        # cached -- caching a transient failure would just prolong an outage instead of retrying it
+        # (fail-closed still applies on every uncached call). See AI-2883 RFC security review.
+        self._registration_cache: OrderedDict[tuple[str, str], tuple[_ClientRegistration, float]] = OrderedDict()
+
+    def remember_client_name(self, client_id: str | None, client_name: str | None) -> None:
+        if not client_id or not client_name:
+            return
+        self._client_names[client_id] = client_name
+        self._client_names.move_to_end(client_id)
+        if len(self._client_names) > _MAX_CACHED_CLIENT_NAMES:
+            self._client_names.popitem(last=False)
+
+    def get_client_name(self, client_id: str | None) -> str | None:
+        return self._client_names.get(client_id) if client_id else None
+
+    async def check_registration(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
+        """
+        Checks whether (connection_client_id, redirect_uri) is registered on Connection via
+        `POST /oauth/clients/validate` (docs/features/oauth-dynamic-client-registration.md in the
+        connection repo). Stack-specific by construction -- it asks whichever Connection instance
+        this registry was built for, so a client dynamically approved on one stack has no bearing
+        on any other.
+
+        Fails closed: any error talking to Connection (timeout, network error, unexpected status)
+        returns ERROR, never REGISTERED and never silently NOT_REGISTERED -- see AI-3792.
+        """
+        cache_key = (connection_client_id, redirect_uri)
+        cached = self._registration_cache.get(cache_key)
+        if cached is not None:
+            result, expires_at = cached
+            if time.monotonic() < expires_at:
+                return result
+            del self._registration_cache[cache_key]
+
+        result = await self._check_registration_uncached(connection_client_id, redirect_uri)
+        if result is not _ClientRegistration.ERROR:
+            ttl = (
+                _REGISTERED_CACHE_TTL_SECONDS
+                if result is _ClientRegistration.REGISTERED
+                # Short: an admin approving a pending client expects the *next* attempt to work,
+                # not to wait out a stale negative cache entry.
+                else _NOT_REGISTERED_CACHE_TTL_SECONDS
+            )
+            self._registration_cache[cache_key] = (result, time.monotonic() + ttl)
+            self._registration_cache.move_to_end(cache_key)
+            if len(self._registration_cache) > _MAX_CACHED_REGISTRATIONS:
+                self._registration_cache.popitem(last=False)
+        return result
+
+    async def _check_registration_uncached(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
+        try:
+            async with _create_http_client() as http_client:
+                response = await http_client.post(
+                    self._validate_url,
+                    json={'client_id': connection_client_id, 'redirect_uri': redirect_uri},
+                    timeout=httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0),
+                    # Never follow a redirect on this call: a misconfigured proxy/gateway between
+                    # here and Connection that redirects to something returning 200 (a login page,
+                    # a catch-all landing page, ...) must surface as an unexpected status (-> ERROR
+                    # below), never get silently interpreted as "client is registered".
+                    follow_redirects=False,
+                )
+        except (httpx.HTTPError, httpx.InvalidURL) as e:
+            LOG.warning(f'[check_registration] Could not reach Connection: {e}', exc_info=True)
+            return _ClientRegistration.ERROR
+
+        if response.status_code == 200:
+            return _ClientRegistration.REGISTERED
+        elif response.status_code == 404:
+            return _ClientRegistration.NOT_REGISTERED
+        else:
+            LOG.warning(
+                f'[check_registration] Unexpected response from Connection: '
+                f'status={response.status_code}, text={response.text}'
+            )
+            return _ClientRegistration.ERROR
+
+    def pending_approval_url(self, *, connection_client_id: str, redirect_uri: str, client_name: str | None) -> str:
+        """
+        Builds the URL that sends the browser to Connection's own `/oauth/authorize` carrying a
+        `pending_mcp_client` payload, so an authenticated Keboola user can approve this client
+        (Connection's `PendingMcpClientApprovalListener` only gates that route -- not
+        `/oauth/consent`, which `SimpleOAuthProvider` otherwise talks to directly; see the AI-2883
+        RFC Decisions §3-4).
+
+        The resulting authorization code (if the user allows it) is a REAL, live Connection
+        authorization code, delivered to `redirect_uri` -- which, until the moment of approval, is
+        still just whatever the *caller* of this server's own `/authorize` claimed (RFC Decisions
+        §2-3: the Allow click is a real grant on the approving admin's account, not an inert
+        registration side effect). It is unredeemable ONLY because `code_challenge` below is a
+        high-entropy random value with no known preimage, and Connection's league config requires
+        a code challenge for public clients (`require_code_challenge_for_public_clients: true`,
+        `connection/config/packages/league_oauth2_server.yaml`) -- so redeeming it needs a SHA-256
+        preimage nobody has. This is load-bearing, not a curiosity: it is what stands between "the
+        approval only registers a client" and "the approval hands the caller a live grant".
+        """
+        # Sanitize BEFORE falling back, not after: a client_name that is truthy but sanitizes to
+        # '' (e.g. all control/zero-width characters) must still fall back to connection_client_id
+        # -- Connection's decoder rejects an empty client_name outright, which would silently drop
+        # the whole payload (PendingMcpClientApprovalListener's catch-and-ignore) and leave the
+        # user with an opaque league "invalid_client" error instead of an approval screen.
+        sanitized_name = _sanitize_client_name(client_name or '') or connection_client_id
+        payload = json.dumps(
+            {
+                'client_id': connection_client_id,
+                'client_name': sanitized_name,
+                'redirect_uri': redirect_uri,
+            },
+            separators=(',', ':'),
+        ).encode('utf-8')
+        return construct_redirect_uri(
+            self._authorize_url,
+            client_id=connection_client_id,
+            redirect_uri=redirect_uri,
+            response_type='code',
+            # MANDATORY, not defensive -- see this method's docstring. secrets.token_urlsafe(32) is
+            # a random value presented AS IF it were a SHA-256 digest; no code_verifier can exist
+            # for it, so Connection's PKCE check (AuthCodeGrant::validateCodeChallenge, league/
+            # oauth2-server) can never be satisfied by anyone, including the caller-controlled
+            # redirect_uri that receives the resulting code. Never remove this parameter, and never
+            # replace it with a value derived from anything this server or its caller could recompute.
+            code_challenge=secrets.token_urlsafe(32),
+            code_challenge_method='S256',
+            pending_mcp_client=base64.urlsafe_b64encode(payload).decode('ascii'),
+        )
 
 
 def _log_debug(msg: str) -> None:
@@ -100,32 +293,47 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
             return None
 
     def validate_redirect_uri(self, redirect_uri: AnyUrl | None) -> AnyUrl:
-        # Ideally, this should verify the redirect_uri against the URI registered by the client.
-        # That, however, would require a persistent registry of clients.
-        # So, instead we require the clients to send their redirect URI in the authorization request,
-        # and we discard all URIs that are not on a whitelist.
+        # A synchronous SHAPE check only -- the real trust decision (is this exact client_id +
+        # redirect_uri registered, or pending admin approval) happens against Connection's
+        # oauth2_client table in SimpleOAuthProvider.authorize(), which is async and therefore
+        # cannot run from this SDK hook (called synchronously, before authorize() -- see the
+        # AI-2883 RFC, feature_spec/oauth_dynamic_client_registration/RFC.md, Resolution
+        # Strategy §2).
+        #
+        # This is NOT the old per-domain trust list (_ALLOWED_DOMAINS) -- nothing below grants
+        # trust to any host, Connection's /oauth/clients/validate still does that exclusively. It
+        # mirrors exactly the redirect_uri *shape* Connection will ever register (see
+        # PendingMcpClientDecoder, cited in the RFC's "Redirect-URI shape" section): https with any
+        # host, cursor:// (host checked by Connection), or http:// restricted to loopback (RFC
+        # 8252). A shape outside that can never end up REGISTERED anyway, so rejecting it here
+        # costs no legitimate flow -- but it matters for a reason beyond tidiness: when
+        # authorize()'s Connection check errors, this hook has *already run* and its accepted
+        # redirect_uri is what the mcp SDK's own error-response fallback would use if anything else
+        # in authorize() raised unexpectedly. Bounding the shape here bounds how bad that fallback
+        # can be (no file://, intent://, userinfo or fragment tricks), even though authorize()'s own
+        # ERROR branch avoids that fallback entirely by not raising (see its docstring).
         if not redirect_uri:
             LOG.warning('[validate_redirect_uri] No redirect_uri specified.')
             raise InvalidRedirectUriError('The redirect_uri must be specified.')
 
         stripped_uri = self._strip_redirect_uri(redirect_uri)
-        if not redirect_uri.scheme:
-            LOG.warning(f'[validate_redirect_uri] No scheme in redirect_uri: {stripped_uri}')
+        if redirect_uri.username or redirect_uri.password or redirect_uri.fragment:
+            LOG.warning(f'[validate_redirect_uri] userinfo or fragment in redirect_uri: {stripped_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {stripped_uri}')
+        if len(str(redirect_uri)) > 2048:
+            LOG.warning(f'[validate_redirect_uri] redirect_uri exceeds 2048 characters: {stripped_uri}')
+            raise InvalidRedirectUriError('redirect_uri exceeds maximum length of 2048 characters.')
 
-        # The custom schemes (e.g. cursor://) require a custom handler registered in a browser.
-        # They are used for redirecting a browser to a locally running app.
-
-        if allowed_domains := _ALLOWED_DOMAINS.get(redirect_uri.scheme):
-            if not any(p.fullmatch(redirect_uri.host or '') for p in allowed_domains):
-                LOG.warning(f'[validate_redirect_uri] Unknown domain in redirect_uri: {stripped_uri}')
+        scheme = redirect_uri.scheme
+        if scheme == 'http':
+            if (redirect_uri.host or '').lower() not in _LOOPBACK_HOSTS:
+                LOG.warning(f'[validate_redirect_uri] non-loopback http redirect_uri: {stripped_uri}')
                 raise InvalidRedirectUriError(f'Invalid redirect_uri: {stripped_uri}')
-
-        else:
-            LOG.warning(f'[validate_redirect_uri] Forbidden scheme in redirect_uri: {stripped_uri}')
+        elif scheme not in ('https', 'cursor'):
+            LOG.warning(f'[validate_redirect_uri] Rejected scheme in redirect_uri: {stripped_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {stripped_uri}')
 
-        LOG.info(f'[validate_redirect_uri] Accepted redirect_uri: {stripped_uri}]')
+        LOG.info(f'[validate_redirect_uri] Accepted redirect_uri (pending Connection check): {stripped_uri}]')
         return redirect_uri
 
     @staticmethod
@@ -244,6 +452,7 @@ class SimpleOAuthProvider(OAuthProvider):
         self._oauth_server_token_url = urljoin(server_url, '/oauth/token')
         self._oauth_scope = scope
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
+        self._client_registry = ConnectionClientRegistry(server_url)
 
     def get_middleware(self) -> list[Middleware]:
         """Prepends `DatabaseUnavailableMiddleware` ahead of the base class's
@@ -273,17 +482,30 @@ class SimpleOAuthProvider(OAuthProvider):
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         """
-        Registers an OAuth client. This specific implementation is a no-op to avoid having to persist the registered
-        clients. It simply logs the client registration details for debugging purposes.
+        Registers an OAuth client. This grants the client no trust whatsoever -- that still comes
+        entirely from Connection's oauth2_client registry, checked in authorize() -- it only
+        remembers the client_name submitted here (if any) so Connection's dynamic-approval screen
+        can show it later, since /authorize never receives client_name itself (see the AI-2883 RFC,
+        Problem section, for why this cache exists at all).
 
         :param client_info: The full information of the OAuth client to be registered.
         """
-        # This is a no-op. We don't register clients, otherwise we would need a persistent registry.
-        LOG.debug(f'Client registered: client_id={client_info.client_id}')
+        self._client_registry.remember_client_name(client_info.client_id, client_info.client_name)
+        LOG.debug(f'Client registered: client_id={client_info.client_id}, client_name={client_info.client_name}')
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         """
         Creates a URL that redirects to the OAuth server for authorization.
+
+        First checks the requesting client + redirect_uri against Connection's OAuth client
+        registry (`POST /oauth/clients/validate`, via `self._client_registry`) -- see the AI-2883
+        RFC (feature_spec/oauth_dynamic_client_registration/RFC.md) for the full design and why
+        this replaced a hardcoded domain whitelist. An already-registered pair (pre-registered,
+        e.g. Claude.ai, or previously dynamically approved) proceeds exactly as before, unchanged.
+        An unregistered pair is sent to Connection's own `/oauth/authorize` with a
+        `pending_mcp_client` payload so an authenticated Keboola user can approve it there.
+        Connection being unreachable or erroring never falls through to either outcome (fails
+        closed, see AI-3792).
 
         The authorization URL's state parameter is an encrypted JWT that contains all the authorization parameters.
         The state expires after 5 minutes.
@@ -293,13 +515,51 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :return: The authorization URL that redirects to the OAuth server.
         """
+        redirect_uri_str = str(params.redirect_uri)
+        connection_client_id = _connection_client_id(redirect_uri_str)
+
+        registration = await self._client_registry.check_registration(connection_client_id, redirect_uri_str)
+        if registration is _ClientRegistration.ERROR:
+            LOG.warning(
+                f'[authorize] Could not verify client with Connection: client_id={client.client_id}, '
+                f'connection_client_id={connection_client_id}, redirect_uri={redirect_uri_str}'
+            )
+            # Deliberately NOT `raise AuthorizeError(...)` here: the mcp SDK's own handler catches
+            # that and redirects to the *caller-supplied* redirect_uri with the error params
+            # (AuthorizationHandler.error_response, which reuses the redirect_uri validate_redirect_uri
+            # already accepted). Since that hook now accepts any https host (Connection is the real
+            # authority, not a domain list -- see validate_redirect_uri's docstring), raising here
+            # would make this server 302 to an attacker-chosen host on demand (e.g. by exhausting
+            # Connection's rate limit) -- an open redirect. Redirecting to our own callback endpoint
+            # instead keeps the browser on this server's own origin; the caller gets no callback at
+            # all for this attempt (same shape as Connection's own Deny-gets-no-callback behavior)
+            # and must time out and retry, same as any other undeliverable authorize attempt.
+            return construct_redirect_uri(
+                self._mcp_callback_url,
+                error='temporarily_unavailable',
+                error_description='Could not verify OAuth client with Connection.',
+            )
+
+        if registration is _ClientRegistration.NOT_REGISTERED:
+            LOG.info(
+                f'[authorize] Unregistered client sent to Connection for approval: client_id={client.client_id}, '
+                f'connection_client_id={connection_client_id}, redirect_uri={redirect_uri_str}'
+            )
+            return self._client_registry.pending_approval_url(
+                connection_client_id=connection_client_id,
+                redirect_uri=redirect_uri_str,
+                client_name=self._client_registry.get_client_name(client.client_id),
+            )
+
+        # registration is REGISTERED from here on -- proceed exactly as before this RFC.
+        #
         # Create and encode the authorization state.
         # We don't store the authentication states that we create here to avoid having to persist them.
         # Instead, we encode them to JWT and pass them back to the client.
         # The states expire after 5 minutes.
         scopes = cast(list[str], params.scopes or [])
         state = {
-            'redirect_uri': str(params.redirect_uri),
+            'redirect_uri': redirect_uri_str,
             'redirect_uri_provided_explicitly': str(params.redirect_uri_provided_explicitly),
             # the scopes sent by the MCP server's OAuth client (e.g. claude.ai)
             'scopes': scopes,
@@ -312,15 +572,30 @@ class SimpleOAuthProvider(OAuthProvider):
 
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, state={state}')
 
+        # 'claudai' satisfies the exchange endpoint's MissingClaudaiScopeException guard;
+        # 'projectless' makes the exchanged session whole-stack instead of project-pinned.
+        #
+        # 'projectless' is requested ONLY for a client Keboola itself vetted and pre-registered
+        # (today: claude-ai). Connection's own ClientApprovalProcessor deliberately withholds
+        # 'projectless' from a client approved through the dynamic (Flow B) screen -- that scope
+        # mints an unrestricted, every-project grant, and a self-service approval (any authenticated
+        # user, no elevated role required -- see AI-2883 RFC Decisions §7/§8) is not the same level
+        # of vetting as a reviewed Keboola migration. This server's own broker identity
+        # (self._oauth_client_id) is what actually requests the scope, though, so without this
+        # branch it would silently request 'projectless' regardless of which underlying client
+        # triggered the flow -- laundering the unrestricted grant right back in for a client
+        # Connection specifically tried to keep it from. Falling through to plain project-selection
+        # consent for a dynamically-approved client matches what Connection's own scopes intended.
+        is_pre_registered = connection_client_id in _WELL_KNOWN_CONNECTION_CLIENT_IDS.values()
+        scope = 'claudai projectless' if is_pre_registered else 'claudai'
+
         # create the authorization URL
         url_params = {
             'client_id': self._oauth_client_id,
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
             'state': state_jwt,
-            # 'claudai' satisfies the exchange endpoint's MissingClaudaiScopeException guard;
-            # 'projectless' makes the exchanged session whole-stack instead of project-pinned.
-            'scope': 'claudai projectless',
+            'scope': scope,
         }
 
         auth_url = construct_redirect_uri(self._oauth_server_auth_url, **url_params)
@@ -353,7 +628,7 @@ class SimpleOAuthProvider(OAuthProvider):
             raise HTTPException(400, 'Invalid state parameter')
 
         # Exchange the authorization code for the access token with the OAuth server.
-        async with self._create_http_client() as http_client:
+        async with _create_http_client() as http_client:
             response = await http_client.post(
                 self._oauth_server_token_url,
                 data={
@@ -762,10 +1037,6 @@ class SimpleOAuthProvider(OAuthProvider):
     @staticmethod
     def _ceil_to_hour(seconds: int) -> int:
         return math.ceil(seconds / 3600) * 3600
-
-    @staticmethod
-    def _create_http_client():
-        return httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30.0))
 
     def _encode(self, data: Mapping[str, Any], *, key: str | None = None) -> str:
         return encode_jwt(data, key or self._jwt_secret)
