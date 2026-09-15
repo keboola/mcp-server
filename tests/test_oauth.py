@@ -1,4 +1,6 @@
+import base64
 import dataclasses
+import json
 import logging
 import secrets
 import time
@@ -184,6 +186,48 @@ class TestDatabaseUnavailableMiddleware:
         assert response.status_code == 500
 
 
+class TestConnectionClientIdentity:
+    """`_connection_client_id`/`_sanitize_client_name` -- the mapping between the mcp SDK's own
+    client bookkeeping and the identity Connection's oauth2_client registry actually understands
+    (see AI-2883 RFC, Resolution Strategy §4)."""
+
+    def test_well_known_redirect_uri_maps_to_pre_registered_client_id(self):
+        from keboola_mcp_server.oauth import _connection_client_id
+
+        assert _connection_client_id('https://claude.ai/api/mcp/auth_callback') == 'claude-ai'
+
+    def test_unknown_redirect_uri_derives_a_stable_short_id(self):
+        from keboola_mcp_server.oauth import _connection_client_id
+
+        first = _connection_client_id('https://my.tool/oauth/callback')
+        second = _connection_client_id('https://my.tool/oauth/callback')
+        different = _connection_client_id('https://other.tool/oauth/callback')
+
+        assert first == second  # stable across the SDK minting a fresh uuid on every /register
+        assert first != different
+        assert len(first) <= 32  # Connection's oauth2_client.identifier / pending_mcp_client cap
+
+    def test_derived_id_fits_even_for_a_very_long_redirect_uri(self):
+        from keboola_mcp_server.oauth import _connection_client_id
+
+        assert len(_connection_client_id('https://example.com/' + 'a' * 2000)) <= 32
+
+    @pytest.mark.parametrize(
+        ('name', 'expected'),
+        [
+            ('My Custom Tool', 'My Custom Tool'),
+            ('a' * 200, 'a' * 128),  # Connection's client_name cap
+            ('Evil​Name', 'EvilName'),  # zero-width space stripped
+            ('Evil‮Name', 'EvilName'),  # bidi override stripped
+            ('Evil\x00Name', 'EvilName'),  # control character stripped
+        ],
+    )
+    def test_sanitize_client_name(self, name: str, expected: str):
+        from keboola_mcp_server.oauth import _sanitize_client_name
+
+        assert _sanitize_client_name(name) == expected
+
+
 class TestSimpleOAuthProvider:
     @pytest.fixture
     def oauth_provider(self) -> SimpleOAuthProvider:
@@ -280,111 +324,25 @@ class TestSimpleOAuthProvider:
     @pytest.mark.parametrize(
         ('uri', 'valid'),
         [
-            # === HTTP scheme - localhost only ===
-            (AnyUrl('http://localhost:8080/foo'), True),
-            (AnyUrl('http://localhost:20388/oauth/callback'), True),
-            (AnyUrl('http://localhost/callback'), True),
-            (AnyUrl('http://127.0.0.1:1234/bar'), True),
-            (AnyUrl('http://127.0.0.1:54750/auth/callback'), True),
-            (AnyUrl('http://127.0.0.1/callback'), True),
-            # IPv6 localhost
-            (AnyUrl('http://[::1]:8080/callback'), True),
-            (AnyUrl('http://[::1]/callback'), True),
-            # HTTP to non-localhost should be rejected
-            (AnyUrl('http://example.com/callback'), False),
-            (AnyUrl('http://keboola.com/callback'), False),
-            (AnyUrl('http://192.168.1.1/callback'), False),
-            # === HTTPS scheme - whitelisted domains ===
-            # Keboola domains (requires subdomain)
-            (AnyUrl('https://foo.keboola.com/bar/baz'), True),
-            (AnyUrl('https://bar.keboola.dev/baz'), True),
-            (AnyUrl('https://connection.keboola.com/oauth/callback'), True),
-            (AnyUrl('https://keboola.com/callback'), False),  # requires subdomain
-            (AnyUrl('https://keboola.dev/callback'), False),  # requires subdomain
-            # Data-app 'hub' subdomains are user-deployable and must be rejected (RISK-76)
-            (AnyUrl('https://my-app.hub.keboola.com/callback'), False),
-            (AnyUrl('https://my-app.hub.north-europe.azure.keboola.com/callback'), False),
-            (AnyUrl('https://my-app.hub.keboola.dev/callback'), False),
-            (AnyUrl('https://hub.keboola.com/callback'), False),  # the hub root itself
-            (AnyUrl('https://my-app.hub.us-east4.gcp.keboola.com/callback'), False),
-            # ChatGPT (subdomain optional)
-            (AnyUrl('https://chatgpt.com'), True),
-            (AnyUrl('https://foo.chatgpt.com/bar'), True),
-            (AnyUrl('https://chatgpt.com/connector_platform_oauth_redirect'), True),
-            # Claude (subdomain optional)
-            (AnyUrl('https://claude.ai'), True),
-            (AnyUrl('https://foo.claude.ai/bar'), True),
+            # This hook only rejects what could never legitimately reach Connection's client
+            # registry -- the real trust decision (is client_id + this exact redirect_uri
+            # registered?) now happens against Connection in SimpleOAuthProvider.authorize(), not
+            # here (see AI-2883 RFC). Any scheme+host shape not explicitly dangerous is accepted
+            # by this sync hook and left to that async check.
             (AnyUrl('https://claude.ai/api/mcp/auth_callback'), True),
-            # Agnes (exact host only -- its own TLD, outside the keboola.(com|dev) pattern) [AI-3773]
-            (AnyUrl('https://agnes.keboola.systems'), True),
-            (AnyUrl('https://agnes.keboola.systems/api/mcp/oauth-client/callback'), True),
-            (AnyUrl('https://foo.agnes.keboola.systems/bar'), False),  # no subdomains allowed
-            (AnyUrl('https://keboola.systems/callback'), False),  # must be agnes.keboola.systems
-            (AnyUrl('https://evil.keboola.systems/callback'), False),  # no sibling hosts
-            # LibreChat (no subdomains allowed)
-            (AnyUrl('https://librechat.glami-ml.com'), True),
-            (AnyUrl('https://librechat.glami-ml.com/api/mcp/keboola/oauth/callback'), True),
-            (AnyUrl('https://foo.librechat.glami-ml.com/bar'), False),  # no subdomains allowed
-            # Make.com (subdomain optional)
-            (AnyUrl('https://make.com'), True),
-            (AnyUrl('https://foo.make.com/bar'), True),
-            (AnyUrl('https://www.make.com/oauth/cb/mcp'), True),
-            # Devin (exact domain only)
-            (AnyUrl('https://api.devin.ai/callback'), True),
-            (AnyUrl('https://api.devin.ai'), True),
-            (AnyUrl('https://devin.ai/callback'), False),  # must be api.devin.ai
-            (AnyUrl('https://foo.api.devin.ai/callback'), False),  # no subdomains
-            # Onyx (no subdomains allowed)
-            (AnyUrl('https://cloud.onyx.app'), True),
-            (AnyUrl('https://cloud.onyx.app/mcp/oauth/callback'), True),
-            (AnyUrl('https://foo.cloud.onyx.app/bar'), False),  # no subdomains allowed
-            (AnyUrl('https://onyx.app/callback'), False),  # must be cloud.onyx.app
-            # Azure APIM (no subdomains allowed)
-            (AnyUrl('https://global.consent.azure-apim.net'), True),
-            (AnyUrl('https://global.consent.azure-apim.net/oauth/callback'), True),
-            (AnyUrl('https://foo.global.consent.azure-apim.net/bar'), False),  # no subdomains allowed
-            # n8n at Groupon (no subdomains allowed)
-            (AnyUrl('https://n8n.groupondev.com'), True),
-            (AnyUrl('https://n8n.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-business.groupondev.com'), True),
-            (AnyUrl('https://n8n-business.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-merchant.groupondev.com'), True),
-            (AnyUrl('https://n8n-merchant.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-llm-traffic.groupondev.com'), True),
-            (AnyUrl('https://n8n-llm-traffic.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-finance.groupondev.com'), True),
-            (AnyUrl('https://n8n-finance.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-playground.groupondev.com'), True),
-            (AnyUrl('https://n8n-playground.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://n8n-staging.groupondev.com'), True),
-            (AnyUrl('https://n8n-staging.groupondev.com/rest/oauth2-credential/callback'), True),
-            (AnyUrl('https://foo.n8n-playground.groupondev.com/bar'), False),  # no subdomains allowed
-            (AnyUrl('https://n8n-unknown.groupondev.com'), False),  # not whitelisted
-            # Unknown HTTPS domains should be rejected
-            (AnyUrl('https://foo.bar.com/callback'), False),
-            (AnyUrl('https://evil.com/callback'), False),
-            (AnyUrl('https://fakechatgpt.com/callback'), False),
-            (AnyUrl('https://evilclaude.ai/callback'), False),
-            # === Cursor scheme - specific hosts only ===
-            (AnyUrl('cursor://anysphere.cursor-retrieval/oauth/user-keboola-Data_warehouse/callback'), True),
-            (AnyUrl('cursor://anysphere.cursor-mcp/oauth/callback'), True),
-            (AnyUrl('cursor://anysphere.cursor-mcp/some/path'), True),
-            # Cursor with unknown hosts should be rejected
-            (AnyUrl('cursor://evil.com/callback'), False),
-            (AnyUrl('cursor://localhost/callback'), False),
-            (AnyUrl('cursor://anysphere.cursor-other/callback'), False),
-            # === Unknown/forbidden schemes should be rejected ===
-            (AnyUrl('ftp://foo.bar.com'), False),
-            (AnyUrl('file:///etc/passwd'), False),
+            (AnyUrl('https://anything.example.com/callback'), True),  # unknown host: fine here, Connection decides
+            (AnyUrl('http://localhost:8080/callback'), True),
+            (AnyUrl('http://127.0.0.1:54750/callback'), True),
+            (AnyUrl('cursor://anysphere.cursor-mcp/callback'), True),
+            (AnyUrl('cursor://some-other-host/callback'), True),  # likewise left to Connection
+            (
+                AnyUrl('myapp://localhost/callback'),
+                True,
+            ),  # unrecognized custom scheme: not dangerous, left to Connection
+            # Scripting schemes are rejected outright -- Connection could never register these anyway.
             (AnyUrl('javascript://alert(1)'), False),
             (AnyUrl('data://text/html,<script>alert(1)</script>'), False),
-            # Custom schemes that are NOT whitelisted should be rejected
-            (AnyUrl('vscode://localhost/callback'), False),
-            (AnyUrl('jetbrains://localhost/callback'), False),
-            (AnyUrl('zed://localhost/callback'), False),
-            (AnyUrl('myapp://localhost/callback'), False),
-            (AnyUrl('evil://localhost/callback'), False),
-            # === Edge cases ===
+            (AnyUrl('vbscript://msgbox(1)'), False),
             (None, False),  # no redirect_uri
         ],
     )
@@ -397,10 +355,22 @@ class TestSimpleOAuthProvider:
             with pytest.raises(InvalidRedirectUriError):
                 info.validate_redirect_uri(uri)
 
+    @staticmethod
+    def _stub_client_registration(monkeypatch: pytest.MonkeyPatch, status) -> None:
+        from keboola_mcp_server import oauth as oauth_module
+
+        async def _fake(self, connection_client_id: str, redirect_uri: str):
+            return status
+
+        monkeypatch.setattr(oauth_module.SimpleOAuthProvider, '_check_client_registration', _fake)
+
     @pytest.mark.asyncio
     async def test_authorize_redirects_to_consent_with_claudai_projectless_scope(
-        self, oauth_provider: SimpleOAuthProvider
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         params = AuthorizationParams(
             redirect_uri=AnyUrl('http://foo/callback'),
@@ -415,6 +385,151 @@ class TestSimpleOAuthProvider:
         assert parsed.path == '/oauth/consent'
         query = parse_qs(parsed.query)
         assert query['scope'] == ['claudai projectless']
+
+    @pytest.mark.asyncio
+    async def test_authorize_unregistered_client_redirects_to_connection_approval(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        await oauth_provider.register_client(client.model_copy(update={'client_name': 'My Custom Tool'}))
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://my.tool/oauth/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        auth_url = await oauth_provider.authorize(client, params)
+
+        parsed = urlparse(auth_url)
+        # Must be Connection's own /oauth/authorize -- PendingMcpClientApprovalListener only gates
+        # that route, never /oauth/consent (RFC Decisions §3-4).
+        assert parsed.path == '/oauth/authorize'
+        query = parse_qs(parsed.query)
+        assert query['response_type'] == ['code']
+        assert 'code_challenge' in query
+        assert query['code_challenge_method'] == ['S256']
+
+        # The outer client_id/redirect_uri must match the payload exactly -- Connection's listener
+        # requires the query's client_id to equal the payload's.
+        from keboola_mcp_server.oauth import _connection_client_id
+
+        connection_client_id = query['client_id'][0]
+        assert connection_client_id == _connection_client_id('https://my.tool/oauth/callback')
+        assert query['redirect_uri'] == ['https://my.tool/oauth/callback']
+
+        decoded = json.loads(base64.urlsafe_b64decode(query['pending_mcp_client'][0]))
+        assert decoded == {
+            'client_id': connection_client_id,
+            'client_name': 'My Custom Tool',
+            'redirect_uri': 'https://my.tool/oauth/callback',
+        }
+
+    @pytest.mark.asyncio
+    async def test_authorize_unregistered_client_without_name_falls_back_to_connection_client_id(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server.oauth import _ClientRegistration, _connection_client_id
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='never-registered')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://another.tool/cb'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        auth_url = await oauth_provider.authorize(client, params)
+
+        decoded = json.loads(base64.urlsafe_b64decode(parse_qs(urlparse(auth_url).query)['pending_mcp_client'][0]))
+        assert decoded['client_name'] == _connection_client_id('https://another.tool/cb')
+
+    @pytest.mark.asyncio
+    async def test_authorize_raises_when_connection_check_errors(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from mcp.server.auth.provider import AuthorizeError
+
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.ERROR)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('http://foo/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        with pytest.raises(AuthorizeError) as exc_info:
+            await oauth_provider.authorize(client, params)
+        assert exc_info.value.error == 'temporarily_unavailable'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('status_code', 'body', 'expected'),
+        [
+            (200, '{}', 'REGISTERED'),
+            (404, '', 'NOT_REGISTERED'),
+            (429, '', 'ERROR'),
+            (500, 'boom', 'ERROR'),
+            (400, '{"error": "bad"}', 'ERROR'),
+        ],
+    )
+    async def test_check_client_registration_maps_connection_response(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        status_code: int,
+        body: str,
+        expected: str,
+    ):
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        captured: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured['url'] = str(request.url)
+            captured['json'] = json.loads(request.content)
+            return httpx.Response(status_code, text=body)
+
+        monkeypatch.setattr(
+            oauth_provider,
+            '_create_http_client',
+            lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+
+        result = await oauth_provider._check_client_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+
+        assert result is getattr(_ClientRegistration, expected)
+        assert captured['url'] == 'https://oauth/oauth/clients/validate'
+        assert captured['json'] == {'client_id': 'claude-ai', 'redirect_uri': 'https://claude.ai/api/mcp/auth_callback'}
+
+    @pytest.mark.asyncio
+    async def test_check_client_registration_fails_closed_on_network_error(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError('connection refused', request=request)
+
+        monkeypatch.setattr(
+            oauth_provider,
+            '_create_http_client',
+            lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+
+        result = await oauth_provider._check_client_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+
+        assert result is _ClientRegistration.ERROR
 
     @staticmethod
     def _stub_exchanger(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
