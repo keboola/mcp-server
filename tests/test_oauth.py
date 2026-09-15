@@ -363,25 +363,34 @@ class TestSimpleOAuthProvider:
     @pytest.mark.parametrize(
         ('uri', 'valid'),
         [
-            # This hook only rejects what could never legitimately reach Connection's client
-            # registry -- the real trust decision (is client_id + this exact redirect_uri
-            # registered?) now happens against Connection in SimpleOAuthProvider.authorize(), not
-            # here (see AI-2883 RFC). Any scheme+host shape not explicitly dangerous is accepted
-            # by this sync hook and left to that async check.
+            # This hook only checks *shape* -- the real trust decision (is client_id + this exact
+            # redirect_uri registered?) happens against Connection in SimpleOAuthProvider.authorize(),
+            # not here (see AI-2883 RFC). The shape allowed here is exactly what Connection will
+            # ever register: https (any host -- Connection decides), cursor:// (any host --
+            # Connection checks it), or http:// restricted to loopback (RFC 8252). This is NOT the
+            # old per-domain trust list -- an unknown https host is still accepted here and left to
+            # Connection -- but a shape Connection could never register is rejected outright, so it
+            # can't be used as an open-redirect target if something later in authorize() fails
+            # unexpectedly (see authorize()'s ERROR-branch docstring).
             (AnyUrl('https://claude.ai/api/mcp/auth_callback'), True),
             (AnyUrl('https://anything.example.com/callback'), True),  # unknown host: fine here, Connection decides
             (AnyUrl('http://localhost:8080/callback'), True),
             (AnyUrl('http://127.0.0.1:54750/callback'), True),
+            (AnyUrl('http://[::1]:8080/callback'), True),
             (AnyUrl('cursor://anysphere.cursor-mcp/callback'), True),
-            (AnyUrl('cursor://some-other-host/callback'), True),  # likewise left to Connection
-            (
-                AnyUrl('myapp://localhost/callback'),
-                True,
-            ),  # unrecognized custom scheme: not dangerous, left to Connection
-            # Scripting schemes are rejected outright -- Connection could never register these anyway.
+            (AnyUrl('cursor://some-other-host/callback'), True),  # host left to Connection
+            (AnyUrl('http://evil.example/callback'), False),  # non-loopback http is not a shape Connection allows
+            (AnyUrl('myapp://localhost/callback'), False),  # unrecognized custom scheme
+            (AnyUrl('file:///etc/passwd'), False),
+            (AnyUrl('intent://x/#Intent;scheme=http;end'), False),
+            (AnyUrl('mailto:a@b.com'), False),
             (AnyUrl('javascript://alert(1)'), False),
             (AnyUrl('data://text/html,<script>alert(1)</script>'), False),
             (AnyUrl('vbscript://msgbox(1)'), False),
+            (AnyUrl('https://user:pass@evil.example/cb'), False),  # userinfo
+            (AnyUrl('https://claude.ai@evil.example/cb'), False),  # userinfo dressed up as a trusted host
+            (AnyUrl('https://evil.example/cb#frag'), False),  # fragment
+            (AnyUrl('https://evil.example/' + 'a' * 2048), False),  # over the 2048-char cap
             (None, False),  # no redirect_uri
         ],
     )
@@ -404,15 +413,17 @@ class TestSimpleOAuthProvider:
         monkeypatch.setattr(oauth_module.ConnectionClientRegistry, 'check_registration', _fake)
 
     @pytest.mark.asyncio
-    async def test_authorize_redirects_to_consent_with_claudai_projectless_scope(
+    async def test_authorize_pre_registered_client_gets_projectless_scope(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
+        """Only a client Keboola itself vetted and pre-registered (today: claude-ai) gets the
+        unrestricted whole-stack 'projectless' grant."""
         from keboola_mcp_server.oauth import _ClientRegistration
 
         self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         params = AuthorizationParams(
-            redirect_uri=AnyUrl('http://foo/callback'),
+            redirect_uri=AnyUrl('https://claude.ai/api/mcp/auth_callback'),
             redirect_uri_provided_explicitly=True,
             code_challenge='challenge',
             state='client-state',
@@ -424,6 +435,35 @@ class TestSimpleOAuthProvider:
         assert parsed.path == '/oauth/consent'
         query = parse_qs(parsed.query)
         assert query['scope'] == ['claudai projectless']
+
+    @pytest.mark.asyncio
+    async def test_authorize_dynamically_approved_client_does_not_get_projectless_scope(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A client that became REGISTERED via Connection's dynamic-approval screen (Flow B) must
+        NOT get 'projectless' -- Connection's own ClientApprovalProcessor deliberately withholds it
+        from a self-service approval (any authenticated user, no elevated role required), but this
+        server's broker identity always has 'projectless' on ITS OWN registration. Without this
+        distinction, every dynamically-approved client would silently inherit an unrestricted,
+        every-project grant regardless of Connection's intent -- see AI-2883 RFC security review.
+        """
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://my-self-service-tool.example/cb'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+        auth_url = await oauth_provider.authorize(client, params)
+
+        parsed = urlparse(auth_url)
+        assert parsed.path == '/oauth/consent'
+        query = parse_qs(parsed.query)
+        assert query['scope'] == ['claudai']
 
     @pytest.mark.asyncio
     async def test_authorize_unregistered_client_redirects_to_connection_approval(
@@ -469,13 +509,22 @@ class TestSimpleOAuthProvider:
         }
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'registered_name',
+        [
+            None,  # never called register_client() at all
+            '\n\t\r',  # called it, but with a name that sanitizes to '' -- must still fall back
+        ],
+    )
     async def test_authorize_unregistered_client_without_name_falls_back_to_connection_client_id(
-        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, registered_name: str | None
     ):
         from keboola_mcp_server.oauth import _ClientRegistration, _connection_client_id
 
         self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='never-registered')
+        if registered_name is not None:
+            await oauth_provider.register_client(client.model_copy(update={'client_name': registered_name}))
         params = AuthorizationParams(
             redirect_uri=AnyUrl('https://another.tool/cb'),
             redirect_uri_provided_explicitly=True,
@@ -490,26 +539,31 @@ class TestSimpleOAuthProvider:
         assert decoded['client_name'] == _connection_client_id('https://another.tool/cb')
 
     @pytest.mark.asyncio
-    async def test_authorize_raises_when_connection_check_errors(
+    async def test_authorize_redirects_to_own_callback_when_connection_check_errors(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
-        from mcp.server.auth.provider import AuthorizeError
-
+        """Must NOT raise AuthorizeError: the mcp SDK's own handler would catch that and redirect
+        to the caller-supplied redirect_uri (now host-unrestricted) with the error params -- an
+        open redirect once Connection can be made to error on demand (e.g. by exhausting its rate
+        limit). Redirecting to this server's own /oauth/callback keeps the browser on our origin."""
         from keboola_mcp_server.oauth import _ClientRegistration
 
         self._stub_client_registration(monkeypatch, _ClientRegistration.ERROR)
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         params = AuthorizationParams(
-            redirect_uri=AnyUrl('http://foo/callback'),
+            redirect_uri=AnyUrl('https://attacker.example/steal'),
             redirect_uri_provided_explicitly=True,
             code_challenge='challenge',
             state='client-state',
             scopes=None,
         )
 
-        with pytest.raises(AuthorizeError) as exc_info:
-            await oauth_provider.authorize(client, params)
-        assert exc_info.value.error == 'temporarily_unavailable'
+        auth_url = await oauth_provider.authorize(client, params)
+
+        parsed = urlparse(auth_url)
+        assert f'{parsed.scheme}://{parsed.netloc}{parsed.path}' == 'https://mcp/callback'
+        query = parse_qs(parsed.query)
+        assert query['error'] == ['temporarily_unavailable']
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -609,6 +663,70 @@ class TestSimpleOAuthProvider:
 
         assert result is _ClientRegistration.ERROR
         assert call_count == 1  # never chased the redirect to the second URL
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('status_code', 'expected'),
+        [(200, 'REGISTERED'), (404, 'NOT_REGISTERED')],
+    )
+    async def test_check_client_registration_caches_positive_and_negative_results(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        status_code: int,
+        expected: str,
+    ):
+        """A REGISTERED or NOT_REGISTERED verdict is cached so /authorize spam can't 1:1 amplify
+        into Connection's own (IP-shared) rate limit on /oauth/clients/validate."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(status_code)
+
+        monkeypatch.setattr(
+            oauth_module, '_create_http_client', lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+
+        registry = oauth_provider._client_registry
+        first = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+        second = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+
+        assert first is getattr(_ClientRegistration, expected)
+        assert second is getattr(_ClientRegistration, expected)
+        assert call_count == 1  # second call was served from cache, no second HTTP request
+
+    @pytest.mark.asyncio
+    async def test_check_client_registration_never_caches_error(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Caching a transient failure would prolong an outage instead of retrying it -- fail-closed
+        must keep re-checking Connection on every call, not just the first."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(500)
+
+        monkeypatch.setattr(
+            oauth_module, '_create_http_client', lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+
+        registry = oauth_provider._client_registry
+        first = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+        second = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+
+        assert first is _ClientRegistration.ERROR
+        assert second is _ClientRegistration.ERROR
+        assert call_count == 2  # neither call was served from a cache
 
     @staticmethod
     def _stub_exchanger(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
