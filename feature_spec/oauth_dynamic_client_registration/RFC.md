@@ -275,25 +275,31 @@ approval).
 2. **The code-exchange leg keeps using this server's own fixed `oauth_client_id`/`oauth_client_secret`
    — it does not switch to per-AI-assistant Connection identities for the token exchange.**
    Considered switching entirely to the AI assistant's own Connection client_id end-to-end (so
-   Connection would redirect directly to the AI assistant, bypassing this server's callback). Rejected:
-   `claude-ai` is registered in Connection as a public PKCE client with no secret and a redirect_uri
-   Anthropic itself owns (`https://claude.ai/api/mcp/auth_callback`) — if Connection redirected there
-   directly with a real authorization code, that code would be useless to Claude.ai (it only knows
-   *this server's* token endpoint from MCP OAuth discovery metadata, not Connection's, and has no
-   way to complete a PKCE exchange against Connection's `/oauth/token` for a flow it never initiated
-   in Connection's terms). The `/oauth/clients/validate` check and the `pending_mcp_client`
-   redirect are therefore used purely as an **admission check** — "is this client allowed to keep
-   using this server as its proxy" — layered in front of the existing, unchanged broker flow, not
-   as a replacement for it.
+   Connection would redirect directly to the AI assistant, bypassing this server's callback). Rejected
+   as a needless redesign: this server never needed to make that switch, since the `/oauth/clients/validate`
+   check and the `pending_mcp_client` redirect work perfectly well as an **admission check** — "is
+   this client allowed to keep using this server as its proxy" — layered in front of the existing,
+   unchanged broker flow. **Correction (post-review):** an earlier draft of this decision justified
+   the split by claiming a code issued directly to the AI assistant "would be useless to it" since
+   it doesn't know Connection's token endpoint. Adversarial review (see the security-review addendum
+   below) proved that claim false — Connection's endpoints are public/discoverable, and a well-
+   resourced attacker controlling `redirect_uri` could trivially find and call them. The actual,
+   verified reason this doesn't matter is Decision §6 below (the code is unredeemable regardless of
+   who receives it, because of PKCE, not because of endpoint obscurity) — not this paragraph's
+   original (wrong) reasoning. Left uncorrected in the surrounding prose as a record of what was
+   originally believed; do not cite this paragraph's "useless to Claude.ai" claim as a security
+   argument anywhere else.
 
 3. **On a 404, the pending-approval round trip through `/oauth/authorize` is expected to end with a
-   real, but deliberately unused, Connection-issued authorization code landing at the AI assistant's
-   own redirect_uri.** Per Decision §2, that code cannot be redeemed by the AI assistant (it doesn't
-   know Connection's endpoints). This is treated as an acceptable, inert side effect, not a bug to
-   route around: the approval's only externally-relevant outcome is the row it leaves in Connection's
-   `oauth2_client` table. The practical UX is "approve once, then retry the connection in the AI
-   tool" — consistent with Connection's own "Deployment Order" guidance to monitor `/oauth/clients/validate`
-   404s post-cutover as the expected signal for clients needing this one-time step.
+   real, live Connection authorization code landing at whatever `redirect_uri` the caller supplied.**
+   This is **not** an inert side effect — adversarial review confirmed the Allow click is a genuine
+   OAuth grant on the approving admin's account, delivered to a destination the admin has no
+   independent way to verify beyond what this server put on the approval screen (see the
+   security-review addendum). It is unredeemable **only** because of Decision §6 (PKCE), which is
+   why that decision is marked mandatory, not defensive. The practical UX is still "approve once,
+   then retry the connection in the AI tool" — consistent with Connection's own "Deployment Order"
+   guidance to monitor `/oauth/clients/validate` 404s post-cutover — but the security reasoning
+   this paragraph originally gave (the code being merely "unused") was incomplete; see Decision §6.
 
 4. **Client-metadata cache is in-process, not Postgres-backed, and that's an accepted tradeoff, not
    an oversight.** `client_name` is a purely cosmetic field on the approval screen — Connection's
@@ -315,11 +321,19 @@ approval).
    silently. This is flagged for whoever reviews/deploys this RFC to decide whether any of those need
    proactive Connection-side pre-registration before cutover instead of relying on first-use approval.
 
-6. **The pending-approval redirect always sends a fresh, throwaway PKCE `code_challenge`, whether or
-   not Connection's league OAuth2 config actually requires one for a public client.** Cheaper than
-   verifying League's PKCE-enforcement config precisely, and correct either way: extraneous if not
-   required, necessary if it is. The corresponding `code_verifier` is never generated or stored —
-   the resulting code is never exchanged (Decision §3), so nothing needs to verify it.
+6. **The pending-approval redirect always sends a fresh, random `code_challenge` (`secrets.token_urlsafe(32)`)
+   — this is mandatory, not defensive, and is the entire reason Decision §3's live authorization
+   code is unredeemable.** Verified against Connection's actual config and source
+   (`connection/config/packages/league_oauth2_server.yaml`: `require_code_challenge_for_public_clients: true`;
+   `league/oauth2-server`'s `AuthCodeGrant::validateCodeChallenge()` rejects a token request with a
+   missing or wrong verifier) — a dynamically-approved client is always public (no secret), so this
+   is always enforced for it. The random value is presented *as if* it were `SHA-256(code_verifier)`;
+   since it is not actually derived from anything, no verifier can exist for it, and redeeming the
+   code would require a SHA-256 preimage. **Do not remove this parameter, and do not ever replace it
+   with a value derived from anything this server or a caller could recompute** (e.g. a hash of
+   `redirect_uri` or `connection_client_id`) — that would make the code redeemable by the exact
+   party this control needs to keep it from. No `code_verifier` is ever generated or stored, by
+   design: nothing in this server's own flow ever needs to redeem this code (Decision §3).
 
 7. **`register_client()` stays a no-op with respect to trust (it only writes to the cosmetic name
    cache from Decision §4) — this is not the gap AI-3792's suggested remediation #1 (require an
@@ -330,3 +344,87 @@ approval).
    derivation) or a real, authenticated Keboola user explicitly approves its specific redirect_uri.
    Gating `/register` itself with an Initial Access Token remains available as independent future
    hardening but isn't required to close AI-3792/AI-3591.
+
+8. **`validate_redirect_uri` (the sync SDK hook) enforces a redirect_uri *shape* allowlist
+   (https any host / cursor any host / http loopback-only, no userinfo, no fragment, ≤2048 chars)
+   instead of accepting anything but three dangerous schemes.** Added after adversarial review found
+   a real open redirect this RFC's first draft introduced (see the security-review addendum below):
+   this hook's output is what the mcp SDK's own error-response fallback would redirect to if
+   `authorize()` ever raised. The shape allowlist is not a reintroduction of the old per-domain
+   trust list — an unknown `https://` host still passes and is still decided by Connection — it only
+   bounds what a redirect_uri can *look like*, closing off `file://`, `intent://`, `mailto:`,
+   unrecognized custom schemes, and userinfo/fragment tricks that Connection could never register
+   anyway and that have no legitimate use here.
+
+9. **`authorize()`'s `ERROR` branch returns a same-origin redirect to this server's own
+   `/oauth/callback` (now handling an `error=` query param) instead of raising `AuthorizeError`.**
+   Raising it would let the mcp SDK's own `error_response()` 302 to the *caller-supplied*
+   `redirect_uri` with the error params — and since Decision §8 still accepts any `https://` host
+   there (correctly — Connection is the real authority on hosts, not this server), that redirect
+   target is attacker-controlled. An attacker who can force a `check_registration()` ERROR (trivially,
+   via Decision §11's DoS, or any real Connection outage) could turn this server's own `/authorize`
+   into an on-demand open redirect (CWE-601) to any host. Redirecting to this server's own callback
+   endpoint instead keeps the browser on this server's origin; the caller that started this attempt
+   gets no callback at all and must time out and retry — the same shape as Connection's own
+   "Deny gets no callback" behavior, not a new UX pattern.
+
+10. **A dynamically-approved (Flow B) client's authorize request omits the `projectless` scope —
+    only a client in `_WELL_KNOWN_CONNECTION_CLIENT_IDS` (today: `claude-ai`) gets it.** Adversarial
+    review found that Connection's `AuthorizationRequestResolveListener` decides whether to grant the
+    unrestricted, every-project ("projectless") session by checking whether **this server's own
+    fixed Connection identity** (`self._oauth_client_id`, which the broker leg always authenticates
+    as — see Decision §2) has `projectless` in its own scopes — not whether the *underlying,
+    dynamically-approved* client does. Connection's `ClientApprovalProcessor` deliberately withholds
+    `projectless` from a self-service-approved client (any authenticated user, no elevated role
+    required — see Decision §12) specifically because such approval isn't vetted the way a reviewed
+    Keboola migration is. Without this fix, every dynamically-approved client would silently inherit
+    the same unrestricted grant as Claude.ai regardless of Connection's intent — verified by tracing
+    `AuthorizationRequestResolveListener::scopeRequested()`/`clientAllowsProjectlessScope()`
+    (`connection/src/Core/OAuth/EventListener/AuthorizationRequestResolveListener.php`) against a
+    real checkout of `origin/master`, not assumed. Omitting `projectless` routes the user through
+    normal per-project consent (`ProjectSelectionAction`) instead, matching what Connection's own
+    scopes intended for a self-service client.
+
+11. **`ConnectionClientRegistry.check_registration()` caches REGISTERED for 5 minutes and
+    NOT_REGISTERED for 10 seconds; ERROR is never cached.** `/authorize` is unauthenticated, and every
+    hit previously cost one call to Connection's `/oauth/clients/validate`, which is itself
+    IP-rate-limited — and this server's entire egress IP shares that budget across every user of the
+    stack. An anonymous flood of `/authorize` could exhaust it, turning fail-closed (correct) into a
+    stack-wide OAuth login outage triggered by anyone (and, before Decision §9, arming the open
+    redirect too). The short negative TTL keeps a just-approved client's next retry fast; ERROR is
+    never cached so a real outage is always re-checked, not artificially prolonged.
+
+12. **Flagged, not fixed in this repo: any authenticated Keboola user — no elevated role required —
+    can permanently register a stack-global trusted MCP client via Connection's dynamic-approval
+    screen.** Adversarial review traced `ClientApprovalProcessor::process()`
+    (`connection/src/Core/OAuth/ClientApprovalProcessor.php`) and found it checks only that
+    `$context->admin` exists and a per-admin rate limit — no organization, project, or role
+    membership check. Once approved, `check_registration()` returns REGISTERED for **every** user on
+    that stack (Decision §11's point about "the same handful of registered clients" cuts both ways —
+    the approval is not scoped to the approver). This is a genuine widening versus the old model
+    (adding a trusted redirect target used to require a reviewed Keboola-engineering PR, globally;
+    now it requires one click by any of potentially thousands of tenants on a shared stack, with no
+    review). This is **not fixable from this repo** — the missing check is in Connection's PHP, not
+    here — and is called out explicitly rather than left as a silent gap for whoever reviews this RFC
+    to decide whether it needs to go back to the Connection team before this ships. Decision §10
+    limits the *blast radius* of an unvetted approval (no `projectless`) but does not close this gap.
+
+## Security Review Addendum
+
+Post-implementation, this RFC was reviewed by two independent adversarial passes (one general OWASP-
+style audit, one threat-model specifically targeting the dynamic-registration/domain-takeover
+questions raised during design) plus a correctness/fail-open review, all cross-checked against a real
+checkout of `keboola/connection` at `origin/master` rather than assumed. Confirmed findings and their
+resolutions:
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| `authorize()`'s `ERROR` branch raised `AuthorizeError`, which the mcp SDK redirects to the caller-supplied (now host-unrestricted) `redirect_uri` — an open redirect reachable on demand via the rate-limit DoS below | High | Fixed — Decisions §8, §9 |
+| Unauthenticated `/authorize` amplifies 1:1 into Connection's IP-shared `/oauth/clients/validate` rate limit — a stack-wide OAuth login DoS, and the enabler for the open redirect above | High | Fixed — Decision §11 |
+| `check_registration()` used `follow_redirects=True`; any 200 at the end of a redirect chain (misconfigured proxy, login page, ...) would read as REGISTERED | Medium | Fixed (`follow_redirects=False` on this call) |
+| A dynamically-approved client silently inherited the same unrestricted `projectless` grant Connection deliberately withholds from self-service approvals | Medium-High | Fixed — Decision §10 |
+| Any authenticated user (no elevated role) can register a stack-global trusted client via Connection's approval screen | High | **Not fixable here** — flagged, Decision §12 |
+| `client_name` sanitizing to `''` (all control/zero-width chars) silently dropped the whole approval payload instead of falling back to the derived id | Low | Fixed (sanitize before, not after, the fallback) |
+| RFC Decisions §2/§3/§6 justified the throwaway-PKCE code's safety with an incorrect claim ("the AI assistant doesn't know Connection's endpoints") | Low (documentation) | Corrected — Decisions §2, §3, §6 |
+| `except httpx.HTTPError` didn't cover `httpx.InvalidURL`; a misconfigured `server_url` degraded to the mcp SDK's generic error instead of this code's own specific warning (fail-closed either way, via the SDK's own catch-all) | Low (debuggability only) | Fixed (broadened the except) |
+| `_connection_client_id`'s 96-bit truncated hash, `claude-ai` impersonation via the literal redirect_uri string, and approval-reuse by an unrelated party presenting the same redirect_uri | — | Reviewed, confirmed **not exploitable** — Connection matches the exact pair, and whoever "reuses" an approval must still control the redirect_uri to receive anything from it |
