@@ -132,7 +132,22 @@ class CustomRoutes:
         return JSONResponse(resp.model_dump(by_alias=True))
 
     async def oauth_callback_handler(self, request: Request) -> Response:
-        """Handle GitHub OAuth callback."""
+        """Handle the OAuth callback from Connection -- and this server's own same-origin error
+        redirects from `SimpleOAuthProvider.authorize()`'s fail-closed branch (see its docstring):
+        redirecting an error to the *caller-supplied* redirect_uri would be an open redirect now
+        that it's no longer host-restricted, so that branch redirects here (this server's own
+        origin) with `error`/`error_description` instead of `code`/`state`. The AI assistant that
+        started this attempt gets no callback at all in that case and must time out and retry --
+        same shape as Connection's own "Deny gets no callback" behavior.
+        """
+        error = request.query_params.get('error')
+        if error:
+            LOG.warning(f'OAuth authorize failed before reaching Connection: {error}')
+            return JSONResponse(
+                status_code=400,
+                content={'error': error, 'error_description': request.query_params.get('error_description')},
+            )
+
         code = request.query_params.get('code')
         state = request.query_params.get('state')
 
