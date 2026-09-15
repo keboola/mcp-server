@@ -228,6 +228,45 @@ class TestConnectionClientIdentity:
         assert _sanitize_client_name(name) == expected
 
 
+class TestConnectionClientRegistry:
+    """The in-process client-name cache (`ConnectionClientRegistry`) -- display-only, bounded
+    (AI-2883 RFC Decisions §4)."""
+
+    def test_remembers_and_returns_client_name(self):
+        from keboola_mcp_server.oauth import ConnectionClientRegistry
+
+        registry = ConnectionClientRegistry('https://oauth')
+        registry.remember_client_name('client-a', 'My Tool')
+
+        assert registry.get_client_name('client-a') == 'My Tool'
+        assert registry.get_client_name('unknown-client') is None
+        assert registry.get_client_name(None) is None
+
+    def test_ignores_missing_client_id_or_name(self):
+        from keboola_mcp_server.oauth import ConnectionClientRegistry
+
+        registry = ConnectionClientRegistry('https://oauth')
+        registry.remember_client_name(None, 'My Tool')
+        registry.remember_client_name('client-a', '')
+
+        assert registry.get_client_name('client-a') is None
+
+    def test_evicts_oldest_entry_once_over_capacity(self, monkeypatch: pytest.MonkeyPatch):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import ConnectionClientRegistry
+
+        monkeypatch.setattr(oauth_module, '_MAX_CACHED_CLIENT_NAMES', 2)
+        registry = ConnectionClientRegistry('https://oauth')
+
+        registry.remember_client_name('client-1', 'Tool 1')
+        registry.remember_client_name('client-2', 'Tool 2')
+        registry.remember_client_name('client-3', 'Tool 3')  # evicts client-1 (oldest)
+
+        assert registry.get_client_name('client-1') is None
+        assert registry.get_client_name('client-2') == 'Tool 2'
+        assert registry.get_client_name('client-3') == 'Tool 3'
+
+
 class TestSimpleOAuthProvider:
     @pytest.fixture
     def oauth_provider(self) -> SimpleOAuthProvider:
@@ -362,7 +401,7 @@ class TestSimpleOAuthProvider:
         async def _fake(self, connection_client_id: str, redirect_uri: str):
             return status
 
-        monkeypatch.setattr(oauth_module.SimpleOAuthProvider, '_check_client_registration', _fake)
+        monkeypatch.setattr(oauth_module.ConnectionClientRegistry, 'check_registration', _fake)
 
     @pytest.mark.asyncio
     async def test_authorize_redirects_to_consent_with_claudai_projectless_scope(
@@ -491,6 +530,7 @@ class TestSimpleOAuthProvider:
         body: str,
         expected: str,
     ):
+        from keboola_mcp_server import oauth as oauth_module
         from keboola_mcp_server.oauth import _ClientRegistration
 
         captured: dict[str, Any] = {}
@@ -501,12 +541,14 @@ class TestSimpleOAuthProvider:
             return httpx.Response(status_code, text=body)
 
         monkeypatch.setattr(
-            oauth_provider,
+            oauth_module,
             '_create_http_client',
             lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
 
-        result = await oauth_provider._check_client_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+        result = await oauth_provider._client_registry.check_registration(
+            'claude-ai', 'https://claude.ai/api/mcp/auth_callback'
+        )
 
         assert result is getattr(_ClientRegistration, expected)
         assert captured['url'] == 'https://oauth/oauth/clients/validate'
@@ -516,18 +558,21 @@ class TestSimpleOAuthProvider:
     async def test_check_client_registration_fails_closed_on_network_error(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
+        from keboola_mcp_server import oauth as oauth_module
         from keboola_mcp_server.oauth import _ClientRegistration
 
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError('connection refused', request=request)
 
         monkeypatch.setattr(
-            oauth_provider,
+            oauth_module,
             '_create_http_client',
             lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
 
-        result = await oauth_provider._check_client_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+        result = await oauth_provider._client_registry.check_registration(
+            'claude-ai', 'https://claude.ai/api/mcp/auth_callback'
+        )
 
         assert result is _ClientRegistration.ERROR
 
@@ -761,8 +806,12 @@ class TestSimpleOAuthProvider:
         monkeypatch.setattr(oauth_module, 'refresh_tokens', _fake_refresh_tokens)
         # If exchange_refresh_token ever called Connection's league OAuth server, this transport
         # would raise, proving the refresh is fully decoupled from it (RFC Decision §4).
-        oauth_provider._create_http_client = lambda: (_ for _ in ()).throw(  # type: ignore[method-assign]
-            AssertionError('exchange_refresh_token must not call the league OAuth server')
+        monkeypatch.setattr(
+            oauth_module,
+            '_create_http_client',
+            lambda: (_ for _ in ()).throw(
+                AssertionError('exchange_refresh_token must not call the league OAuth server')
+            ),
         )
 
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
