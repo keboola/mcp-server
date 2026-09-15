@@ -167,8 +167,13 @@ class ConnectionClientRegistry:
                     self._validate_url,
                     json={'client_id': connection_client_id, 'redirect_uri': redirect_uri},
                     timeout=httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0),
+                    # Never follow a redirect on this call: a misconfigured proxy/gateway between
+                    # here and Connection that redirects to something returning 200 (a login page,
+                    # a catch-all landing page, ...) must surface as an unexpected status (-> ERROR
+                    # below), never get silently interpreted as "client is registered".
+                    follow_redirects=False,
                 )
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, httpx.InvalidURL) as e:
             LOG.warning(f'[check_registration] Could not reach Connection: {e}', exc_info=True)
             return _ClientRegistration.ERROR
 
@@ -442,13 +447,19 @@ class SimpleOAuthProvider(OAuthProvider):
 
         registration = await self._client_registry.check_registration(connection_client_id, redirect_uri_str)
         if registration is _ClientRegistration.ERROR:
-            LOG.warning(f'[authorize] Could not verify client with Connection: client_id={client.client_id}')
+            LOG.warning(
+                f'[authorize] Could not verify client with Connection: client_id={client.client_id}, '
+                f'connection_client_id={connection_client_id}, redirect_uri={redirect_uri_str}'
+            )
             raise AuthorizeError(
                 error='temporarily_unavailable', error_description='Could not verify OAuth client with Connection.'
             )
 
         if registration is _ClientRegistration.NOT_REGISTERED:
-            LOG.info(f'[authorize] Unregistered client sent to Connection for approval: client_id={client.client_id}')
+            LOG.info(
+                f'[authorize] Unregistered client sent to Connection for approval: client_id={client.client_id}, '
+                f'connection_client_id={connection_client_id}, redirect_uri={redirect_uri_str}'
+            )
             return self._client_registry.pending_approval_url(
                 connection_client_id=connection_client_id,
                 redirect_uri=redirect_uri_str,
