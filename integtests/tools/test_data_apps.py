@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import subprocess
 import uuid
 from collections.abc import AsyncGenerator, Mapping
@@ -324,7 +325,7 @@ async def test_python_js_data_app_prod_and_draft_lifecycle(
         assert prod_output.git_clone_url is None
         assert prod_output.branch is None
 
-        # Step 2: create draft pointing at prod's repo. Branch defaults to 'init'.
+        # Step 2: create draft pointing at prod's repo. Branch defaults to a unique 'draft-<hex>'.
         draft_result = await mcp_client.call_tool(
             name='modify_python_js_data_app',
             arguments={
@@ -341,7 +342,8 @@ async def test_python_js_data_app_prod_and_draft_lifecycle(
         assert draft_output.repo_url == prod_output.repo_url
         assert draft_output.git_clone_url is not None
         assert draft_output.git_clone_url.startswith('https://kai:')
-        assert draft_output.branch == 'init'
+        assert draft_output.branch is not None
+        assert re.fullmatch(r'draft-[0-9a-f]{6}', draft_output.branch), draft_output.branch
 
         # Step 3: clone via the embedded credential. Initialize main if the freshly provisioned
         # repo is empty, then branch off and push the draft branch.

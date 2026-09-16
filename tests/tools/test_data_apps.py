@@ -2233,6 +2233,13 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
     assert result.git_clone_url is not None
     assert result.git_clone_url.startswith('https://kai:token-xyz@managed.repo/')
 
+    # An agent-supplied branch cannot be uniquified by the server, so the response spells out the
+    # safe checkout instead — a bare `git checkout iter-feat` would resolve to an existing
+    # `origin/iter-feat` and serve its stale tip.
+    assert result.change_summary is not None
+    assert 'git checkout -B iter-feat --no-track origin/main' in result.change_summary
+    assert 'git rev-list --count iter-feat..origin/main' in result.change_summary
+
     # Credential was minted on the parent, not the new dev twin.
     keboola_client.data_science_client.create_app_git_credential.assert_awaited_once_with(parent_data_app_id)
 
@@ -2263,13 +2270,89 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
 
 
 @pytest.mark.asyncio
-async def test_modify_python_js_data_app_create_draft_defaults_branch_to_init(
+async def test_modify_python_js_data_app_create_draft_rejects_main_branch(
+    mcp_context_client: Context,
+    mocker,
+) -> None:
+    """A draft create on `main` is rejected by default — `main` is the prod app's branch."""
+    parent = _make_python_js_parent_data_app()
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
+
+    with pytest.raises(ValueError, match='reserved for the prod app'):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='View',
+            description='view draft',
+            slug='demo-view',
+            parent_configuration_id='cfg-prod-1',
+            branch='main',
+        )
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_draft_allows_main_branch_with_flag(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
 ) -> None:
-    """Omitting `branch` pins the draft to the literal `init` branch (sensible default for the very
-    first draft of a brand-new prod app — descriptive branches are agent-supplied on edits)."""
+    """`allow_main_branch=True` lets the platform create a read-only view draft pinned to `main`
+    (the AI workspace preview needs a deployable draft that tracks the published app)."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    parent = _make_python_js_parent_data_app()
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=parent))
+    keboola_client.data_science_client.create_app_git_credential = mocker.AsyncMock(
+        return_value=CreatedGitCredentialResponse(
+            id='cred-1', type='http_token', permissions='readWrite', secret='token-xyz'
+        )
+    )
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
+        return_value=_make_python_js_data_app_response()
+    )
+    keboola_client.storage_client.project_id = mocker.AsyncMock(return_value='proj-1')
+    keboola_client.encryption_client = mocker.AsyncMock()
+    keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda v, **_: v)
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='View',
+        description='view draft',
+        slug='demo-view',
+        parent_configuration_id='cfg-prod-1',
+        branch='main',
+        allow_main_branch=True,
+    )
+
+    assert result.branch == 'main'
+    create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
+    serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
+    assert serialized['parameters']['dataApp']['git']['branch'] == 'main'
+    assert serialized['parameters']['dataApp']['parentConfigurationId'] == 'cfg-prod-1'
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_draft_defaults_branch_to_unique_name(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """Omitting `branch` pins the draft to a freshly generated, unique `draft-<hex>` branch.
+
+    Regression test: the default used to be the fixed literal `init`, so every default-branch
+    draft of the same prod app reused one branch name. A later
+    draft's `git checkout init` then resolved to the stale `origin/init` left behind by an earlier
+    one instead of branching off `main`, and the draft silently previewed outdated code. Two
+    consecutive default creates must therefore yield two different branch names.
+
+    `secrets.token_hex` is stubbed with two fixed values so the assertion is deterministic: what
+    matters is that the name is derived fresh on every create (the old default was a constant),
+    not that two real random draws happen to differ.
+    """
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -2291,20 +2374,40 @@ async def test_modify_python_js_data_app_create_draft_defaults_branch_to_init(
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
 
-    result = await modify_python_js_data_app(
-        ctx=mcp_context_client,
-        name='Draft',
-        description='draft iteration',
-        slug='demo-draft',
-        parent_configuration_id='cfg-prod-1',
+    hex_suffixes = iter(('a1b2c3', 'd4e5f6'))
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps.secrets.token_hex',
+        side_effect=lambda _nbytes: next(hex_suffixes),
     )
 
-    assert result.branch == 'init'
-    # And the stored config carries the same branch as the pin and the parent linkage.
-    create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
-    serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
-    assert serialized['parameters']['dataApp']['git']['branch'] == 'init'
-    assert serialized['parameters']['dataApp']['parentConfigurationId'] == 'cfg-prod-1'
+    branches: list[str] = []
+    for _ in range(2):
+        result = await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='Draft',
+            description='draft iteration',
+            slug='demo-draft',
+            parent_configuration_id='cfg-prod-1',
+        )
+
+        assert result.branch is not None
+        assert re.fullmatch(r'draft-[0-9a-f]{6}', result.branch), result.branch
+        branches.append(result.branch)
+
+        # The stored config carries the same branch as the pin, plus the parent linkage.
+        create_kwargs = keboola_client.data_science_client.create_data_app.await_args.kwargs
+        serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
+        assert serialized['parameters']['dataApp']['git']['branch'] == result.branch
+        assert serialized['parameters']['dataApp']['parentConfigurationId'] == 'cfg-prod-1'
+
+        # The agent is told to branch off `origin/main` explicitly — a bare `git checkout` is what
+        # silently resolves to a stale remote tip.
+        assert result.change_summary is not None
+        assert f'git checkout -B {result.branch} --no-track origin/main' in result.change_summary
+        assert f'git rev-list --count {result.branch}..origin/main' in result.change_summary
+
+    # The heart of the regression: consecutive default creates must not share a branch name.
+    assert branches == ['draft-a1b2c3', 'draft-d4e5f6']
 
 
 @pytest.mark.asyncio
