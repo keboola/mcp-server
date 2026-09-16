@@ -481,6 +481,40 @@ class TestSimpleOAuthProvider:
         assert loaded.scope_confirmed is True
         assert loaded.scope_project_ids == [1, 2]
         assert loaded.scope_scoped_token is None
+        # Not asserted by this mock's Introspection(user_email=None) -- see
+        # test_exchange_authorization_code_persists_user_email_from_introspection for a real value.
+        assert loaded.user_email is None
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_persists_user_email_from_introspection(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """RLS (see rls.py) resolves "who is this" from this field -- populated from the same
+        introspection call `_auto_confirm_project_scope` already needed for scope, not a second
+        network round-trip."""
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        monkeypatch.setattr(
+            oauth_module,
+            'introspect_token',
+            mock.AsyncMock(
+                return_value=Introspection(
+                    user_id=1, user_email='petr@example.com', user_name='Petr', projects=[_project(1)]
+                )
+            ),
+        )
+        monkeypatch.setattr(oauth_module, 'exchange_scoped_token', mock.AsyncMock(side_effect=httpx.ConnectError))
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code())
+        oauth_token = await oauth_provider.exchange_authorization_code(client, auth_code)
+
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.user_email == 'petr@example.com'
 
     @pytest.mark.asyncio
     async def test_exchange_authorization_code_auto_confirms_single_project(

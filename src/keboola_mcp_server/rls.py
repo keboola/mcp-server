@@ -362,8 +362,7 @@ class RlsRules:
                     users[user_key] = predicate
 
         LOG.info(
-            f'Loaded RLS rules for {len(tables)} table(s) from the metastore '
-            f'(dialect {dialect}, project {project_id})'
+            f'Loaded RLS rules for {len(tables)} table(s) from the metastore (dialect {dialect}, project {project_id})'
         )
         return cls(tables=tables, dialect=dialect)
 
