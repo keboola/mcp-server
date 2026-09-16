@@ -927,7 +927,8 @@ async def modify_python_js_data_app(
                 'repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track '
                 'origin/main`, or `git checkout -b <branch>` on a brand-new prod app whose repo is still '
                 'empty) rather than with a bare `git checkout`. '
-                'Must not be `main` (reserved for the prod app). Rejected on prod create.\n'
+                'Must not be `main` (reserved for the prod app) unless `allow_main_branch=True` '
+                '(platform view-draft only). Rejected on prod create.\n'
                 '- **On update** (with `configuration_id`): repoints an existing **external-git** app to '
                 'a different branch (e.g. flip a repo-backed app from `main` to a feature branch for '
                 'testing, then back). Only valid for external-git apps — a draft, or an app bound to an '
@@ -937,6 +938,18 @@ async def modify_python_js_data_app(
             ),
         ),
     ] = None,
+    allow_main_branch: Annotated[
+        bool,
+        Field(
+            description=(
+                'Internal escape hatch for the platform to create a read-only **view draft** pinned '
+                "directly to the prod app's `main` branch (used by the AI workspace in-platform preview, "
+                'which needs a deployable draft that tracks the published app). Only affects the draft '
+                'create path. Agents building or iterating on data apps must **not** set this — iteration '
+                'drafts always live on their own feature branch, never `main`.'
+            ),
+        ),
+    ] = False,
     authentication_type: Annotated[
         AuthenticationType,
         Field(
@@ -1226,7 +1239,7 @@ async def modify_python_js_data_app(
             draft_branch = (branch or _generate_default_draft_branch()).strip()
             if not draft_branch or any(c.isspace() for c in draft_branch):
                 raise ValueError(f'branch "{branch}" is not a valid git branch name.')
-            if draft_branch == 'main':
+            if draft_branch == 'main' and not allow_main_branch:
                 raise ValueError('branch "main" is reserved for the prod app — pick a different draft branch.')
             cred = await client.data_science_client.create_app_git_credential(parent.data_app_id)
             if not cred.secret:
