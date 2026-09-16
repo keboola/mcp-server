@@ -432,6 +432,9 @@ class TestSimpleOAuthProvider:
             (AnyUrl('https://user:pass@evil.example/cb'), False),  # userinfo
             (AnyUrl('https://claude.ai@evil.example/cb'), False),  # userinfo dressed up as a trusted host
             (AnyUrl('https://evil.example/cb#frag'), False),  # fragment
+            # An empty-but-present fragment parses to '' (falsy), not None -- a truthiness check
+            # would silently accept this (Copilot review finding); it must still be rejected.
+            (AnyUrl('https://evil.example/cb#'), False),  # empty fragment
             (AnyUrl('https://evil.example/' + 'a' * 2048), False),  # over the 2048-char cap
             (None, False),  # no redirect_uri
         ],
@@ -612,6 +615,12 @@ class TestSimpleOAuthProvider:
         ('status_code', 'body', 'expected'),
         [
             (200, '{}', 'REGISTERED'),
+            # A 200 with an unexpected body (a misconfigured proxy, an SSO/captive-portal page, a
+            # WAF challenge answering at this exact URL without ever reaching Connection) must not
+            # be trusted as REGISTERED just because the status code matches (Copilot review
+            # finding) -- Connection's real 200 is always the empty JSON object '{}'.
+            (200, '<html>not connection</html>', 'ERROR'),
+            (200, '{"unexpected": true}', 'ERROR'),
             (404, '', 'NOT_REGISTERED'),
             (429, '', 'ERROR'),
             (500, 'boom', 'ERROR'),
@@ -691,7 +700,7 @@ class TestSimpleOAuthProvider:
             if str(request.url) == 'https://oauth/oauth/clients/validate':
                 return httpx.Response(302, headers={'Location': 'https://oauth/some-landing-page'})
             # Only reached if the client (incorrectly) chases the redirect.
-            return httpx.Response(200)
+            return httpx.Response(200, json={})
 
         monkeypatch.setattr(
             oauth_module,
@@ -720,7 +729,7 @@ class TestSimpleOAuthProvider:
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal call_count
             call_count += 1
-            return httpx.Response(200)
+            return httpx.Response(200, json={})
 
         monkeypatch.setattr(
             oauth_module,
@@ -780,7 +789,7 @@ class TestSimpleOAuthProvider:
         monkeypatch.setattr(oauth_module, '_MAX_CACHED_REGISTRATIONS', 2)
 
         def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200)
+            return httpx.Response(200, json={})
 
         monkeypatch.setattr(
             oauth_module,
