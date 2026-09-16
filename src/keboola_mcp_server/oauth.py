@@ -312,7 +312,22 @@ class ConnectionClientRegistry:
             return _ClientRegistration.ERROR
 
         if response.status_code == 200:
-            return _ClientRegistration.REGISTERED
+            # Connection's real 200 is always an empty JSON object (`EmptyJsonResponse`,
+            # connection/src/Core/Symfony/Response/EmptyJsonResponse.php) -- checking the body
+            # shape, not just the status code, catches a misconfigured intermediary (a health
+            # check, an SSO/captive-portal page, a WAF challenge) answering 200 at this exact URL
+            # without ever reaching Connection's real endpoint (Copilot review finding).
+            try:
+                body_is_empty_object = response.json() == {}
+            except ValueError:
+                body_is_empty_object = False
+            if body_is_empty_object:
+                return _ClientRegistration.REGISTERED
+            LOG.warning(
+                f'[check_registration] Unexpected 200 body from Connection (expected {{}}): '
+                f'connection_client_id={connection_client_id}, text={response.text[:200]!r}'
+            )
+            return _ClientRegistration.ERROR
         elif response.status_code == 404:
             return _ClientRegistration.NOT_REGISTERED
         else:
@@ -418,7 +433,10 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
             raise InvalidRedirectUriError('The redirect_uri must be specified.')
 
         stripped_uri = self._strip_redirect_uri(redirect_uri)
-        if redirect_uri.username or redirect_uri.password or redirect_uri.fragment:
+        # `is not None`, not truthiness: an empty-but-present component (e.g. the trailing '#' in
+        # 'https://evil.example/cb#' parses to fragment='', not None) must still be rejected -- a
+        # bare truthy check would silently let it through (Copilot review finding).
+        if redirect_uri.username is not None or redirect_uri.password is not None or redirect_uri.fragment is not None:
             LOG.warning(f'[validate_redirect_uri] userinfo or fragment in redirect_uri: {stripped_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {stripped_uri}')
         if len(str(redirect_uri)) > 2048:
@@ -596,7 +614,12 @@ class SimpleOAuthProvider(OAuthProvider):
         :param client_info: The full information of the OAuth client to be registered.
         """
         self._client_registry.remember_client_name(client_info.client_id, client_info.client_name)
-        LOG.debug(f'Client registered: client_id={client_info.client_id}, client_name={client_info.client_name}')
+        # Log the sanitized/capped name just stored, not the raw submission -- /register is
+        # unauthenticated, so the raw client_name can carry control characters or be arbitrarily
+        # long, and interpolating it directly would defeat the point of sanitizing it on the way
+        # into the cache (Copilot review finding: log-injection / unbounded log message).
+        sanitized_name = self._client_registry.get_client_name(client_info.client_id)
+        LOG.debug(f'Client registered: client_id={client_info.client_id}, client_name={sanitized_name}')
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         """
