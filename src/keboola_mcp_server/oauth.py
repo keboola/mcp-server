@@ -30,6 +30,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import (
+    Introspection,
     TokenSet,
     exchange_scoped_token,
     introspect_token,
@@ -147,6 +148,11 @@ class ProxyAccessToken(AccessToken):
     # so duplicating the longer-lived refresh token onto them would needlessly widen its exposure.
     kbc_access_token: str
     session_id: str | None = None
+
+    # The identity resolved from OAuth login (see `exchange_authorization_code`), carried here for
+    # the same reason as the scope fields below: RLS (see `rls.py`/`tools/sql.py`) needs "who is
+    # this" on every `query_data` call and must not pay a second DB round-trip for it.
+    user_email: str | None = None
 
     # The multi-project scope persisted on the oauth_sessions row (see SessionStore.update_scope),
     # carried here so mcp.py can rebuild a SessionScope without a second DB round-trip -- the row is
@@ -474,17 +480,31 @@ class SimpleOAuthProvider(OAuthProvider):
         # Exchange the league OAuth access token for a whole-stack Keboola programmatic session.
         # The league token is used exactly once, here, and then never referenced again.
         token_set = await self._exchange_oauth_for_session(authorization_code.oauth_access_token.token)
+        # One introspection call serves two purposes: the project list drives the scope
+        # auto-confirm below, and `user_email` -- already a confirmed field here, unlike anything
+        # `tokens/verify` would have offered -- is what RLS (see rls.py) resolves "who is this"
+        # from. Best-effort: a session whose identity can't be resolved just can't use RLS-gated
+        # tables; login itself must not fail because of it (same posture as scope auto-confirm).
+        introspection: Introspection | None
+        try:
+            introspection = await introspect_token(self._storage_api_url, subject_token=token_set.access_token)
+        except Exception as e:
+            LOG.warning(f'Could not introspect new OAuth session for user_email/scope auto-confirm: {e}', exc_info=True)
+            introspection = None
         access_token, refresh_token, session = await self._session_store.create(
             client_id=client.client_id,
-            user_email=None,
+            user_email=introspection.user_email if introspection else None,
             kbc_access_token=token_set.access_token,
             kbc_refresh_token=token_set.refresh_token,
             kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
         )
-        await self._auto_confirm_project_scope(session.id, token_set.access_token)
+        if introspection is not None:
+            await self._auto_confirm_project_scope(session.id, token_set.access_token, introspection)
         return self._oauth_token(access_token, refresh_token, authorization_code.scopes)
 
-    async def _auto_confirm_project_scope(self, session_id: str, subject_token: str) -> None:
+    async def _auto_confirm_project_scope(
+        self, session_id: str, subject_token: str, introspection: Introspection
+    ) -> None:
         """The league consent screen (`/oauth/consent`) already makes the user pick "all projects"
         or a specific subset before this code path ever runs -- there is no separate scoping
         decision left for the MCP session to defer to via ``set_project_scope``. Confirm the scope
@@ -499,14 +519,11 @@ class SimpleOAuthProvider(OAuthProvider):
         freeze access to a specific subset -- see the "increment 8" extension in the RFC and its
         follow-up note.
 
-        Best-effort: introspection/exchange failures here just leave the session unconfirmed, same
-        as before this method existed -- an explicit ``set_project_scope`` call still works.
+        Best-effort: an exchange failure here just leaves the session unconfirmed, same as before
+        this method existed -- an explicit ``set_project_scope`` call still works. `introspection`
+        is supplied by the caller (`exchange_authorization_code`) rather than fetched again here,
+        since it already had to run introspection once for `user_email`.
         """
-        try:
-            introspection = await introspect_token(self._storage_api_url, subject_token=subject_token)
-        except Exception as e:
-            LOG.warning(f'Could not introspect new OAuth session for scope auto-confirm: {e}', exc_info=True)
-            return
         if not introspection.projects:
             return
         project_ids = [p.id for p in introspection.projects]
@@ -575,6 +592,7 @@ class SimpleOAuthProvider(OAuthProvider):
             expires_at=None,  # no client-visible expiry -- see load_access_token docstring
             kbc_access_token=session.kbc_access_token,
             session_id=session.id,
+            user_email=session.user_email,
             scope_project_ids=session.scope_project_ids,
             scope_read_only=session.scope_read_only,
             scope_confirmed=session.scope_confirmed,
