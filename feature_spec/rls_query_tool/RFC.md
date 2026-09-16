@@ -203,10 +203,15 @@ the principal for that call. No tool argument, no header, no deployment-level mo
 `query_data_rls` is retired; `query_data` absorbs RLS entirely, gated as above. This is possible
 specifically because protection is now a property of *(project feature) × (applicable table
 policy)*, not a caller-chosen mode — there is nothing left for a second tool or an optional
-argument to express. `ToolAuthorizationMiddleware`'s RLS-forces-read-only behavior is kept in
-spirit but re-triggered: a session in a feature-enabled project with at least one applicable policy
-is restricted to read-only tools, so no write tool can become a side channel around a read-only
-filter.
+argument to express.
+
+`ToolAuthorizationMiddleware`'s pilot-era RLS-forces-read-only behavior (a write tool must never
+become a side channel around a read-only filter) is **deferred, not carried over as-is** — see
+`PLAN.md` Task 5. It never existed on current `main` (the pilot that had it was never merged), and
+re-adding it means an async feature-flag check on every tool call in every project, not just
+RLS-enabled ones. `query_data` itself already enforces the real security property (a governed
+table's rows are always filtered or refused) independent of this; the read-only trigger was always
+secondary defense-in-depth, not the enforcement itself.
 
 ### No frozen state — resolve live, every call
 

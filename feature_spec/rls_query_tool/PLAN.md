@@ -89,26 +89,34 @@ proceed independently.
   filtered + `applied_rules` populated; a query joining a protected and unprotected table filters
   only the protected one.
 
-### Task 5 — `authorization.py`: re-trigger read-only mode
+### Task 5 — `authorization.py`: re-trigger read-only mode (DEFERRED, not in this PR)
 
-- Replace `ToolAuthorizationMiddleware.is_rls_mode()`'s check (currently
-  `server_state.rls_rules is not None`, a deployment-wide flag) with a per-session check: the
-  project has the feature flag on *and* at least one applicable `rls-policy` object is resolvable.
-  This likely needs to become async (a Storage/metastore call) where it's currently synchronous —
-  check call sites before assuming this is a drop-in change.
-- Tests: extend `tests/test_authorization.py` for the new trigger condition.
+Current main's `authorization.py` never had the pilot's RLS-forces-read-only concept at all (it
+was never merged) — `_get_authorization_config()` is purely header-based today, with no per-call
+client/network calls. Adding "force read-only when the project has RLS active" means calling it
+from `on_call_tool`/`on_list_tools`, which fire on **every single tool call in every project** —
+unlike `query_data`'s own RLS check (paid once per `query_data` call, and only actually reaches the
+metastore when the query touches a governed table), this would add a `client.has_feature(...)`
+network round-trip to every tool call everywhere, including projects that never use RLS. That's a
+real, broad latency cost this task's own description didn't originally account for.
 
-### Task 6 — Docs, version, PR
+Deferred rather than shipped as an unconditional per-call cost. `query_data` itself already
+enforces the actual security property (a governed table's rows are always filtered or refused,
+regardless of what other tools are authorized) independent of this — the read-only trigger is
+secondary defense-in-depth (stopping some *other* write tool from being used as a bypass), not the
+enforcement itself. Revisit with a caching strategy (e.g. resolved once per session/request context
+and cached, not re-checked on every tool call) before adding this back.
 
-- `TOOLS.md` regeneration (`tox -e check-tools-docs`) — `query_data`'s docstring absorbs the RLS
-  guidance the pilot wrote for `query_data_rls`; `query_data_rls` disappears from the docs.
-- README: replace the pilot's "Row-Level Security (pilot)" section describing the YAML file with
-  one describing the feature flag + org-authored metastore policy model (no local file, no env
-  var, no project-level authoring).
-- `examples/rls-demo/`: decide whether to update (point it at a real/mocked metastore policy
-  instead of `rls.yaml`) or remove — it was built around the file-based model and its "wrapper
-  app asserts `X-RLS-Principal`" premise no longer matches the login-derived-principal design.
-- Version bump (minor — new capability, backward compatible) + `uv lock`.
+### Task 6 — Docs, version, PR (DONE — this session)
+
+- `TOOLS.md` regenerated (`tox -e check-tools-docs`) — `query_data`'s docstring gained the
+  ROW-LEVEL SECURITY paragraph.
+- README gained a new "Row-Level Security" section next to "Tool Authorization and Access
+  Control", describing the feature flag + org-authored metastore policy model.
+- `examples/rls-demo/` was never part of this repo to begin with (this PR was built fresh on top
+  of current `main`, not on the pilot branch, precisely because `main` already had unrelated
+  changes the pilot predates — see RFC "Relationship to the pilot") — nothing to update or remove.
+- Version bumped 1.82.0 → 1.83.0 (minor — new capability, backward compatible) + `uv lock`.
 
 ---
 
