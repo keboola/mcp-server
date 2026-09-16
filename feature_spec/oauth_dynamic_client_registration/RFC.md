@@ -264,6 +264,20 @@ functions, per project convention):
 - `oauth_callback_handler` (`server.py`): a route-level test asserting `GET /oauth/callback?error=...`
   returns 400 JSON without invoking `handle_oauth_callback()` at all — this is the regression test
   for the open-redirect fix itself, not just a unit test of `authorize()`'s return value.
+- `_SlidingWindowRateLimiter` (`TestSlidingWindowRateLimiter`): allows exactly `max_calls` within
+  the window then refuses the next one; recovers once the oldest call falls outside the window.
+  `check_registration()`: a caller varying `(client_id, redirect_uri)` on every request (so every
+  check misses the cache) still gets refused, locally, without an HTTP call, once the budget is
+  spent — the scenario the registration cache alone cannot stop.
+
+**Integration** (`integtests/`, against a real Connection instance, no project lock needed — this
+call is unauthenticated and doesn't touch a project): `ConnectionClientRegistry.check_registration()`
+against the real, live `/oauth/clients/validate` — the pre-registered `claude-ai` pair maps to
+`REGISTERED`, an arbitrary never-registered pair maps to `NOT_REGISTERED`. This is deliberately
+narrower than a full Allow/Deny click-through — Connection's own live-stack E2E suite
+(`connection/tests/E2E/Auth/McpClientValidationTest.php`) already covers that interactive path from
+Connection's side; what was missing, and what Copilot's review flagged, is proof that *this
+server's own code* interprets Connection's real response codes correctly, not just a mocked one.
 
 **Manual** — one full run against a real dev stack per client type: (1) `claude-ai` (Flow A,
 zero-friction), (2) a fresh synthetic MCP client hitting `/register` then `/authorize` (Flow B,
@@ -396,14 +410,30 @@ approval).
     normal per-project consent (`ProjectSelectionAction`) instead, matching what Connection's own
     scopes intended for a self-service client.
 
-11. **`ConnectionClientRegistry.check_registration()` caches REGISTERED for 5 minutes and
-    NOT_REGISTERED for 10 seconds; ERROR is never cached.** `/authorize` is unauthenticated, and every
-    hit previously cost one call to Connection's `/oauth/clients/validate`, which is itself
-    IP-rate-limited — and this server's entire egress IP shares that budget across every user of the
-    stack. An anonymous flood of `/authorize` could exhaust it, turning fail-closed (correct) into a
-    stack-wide OAuth login outage triggered by anyone (and, before Decision §9, arming the open
-    redirect too). The short negative TTL keeps a just-approved client's next retry fast; ERROR is
-    never cached so a real outage is always re-checked, not artificially prolonged.
+11. **`ConnectionClientRegistry.check_registration()` caches REGISTERED for 5 minutes; NOT_REGISTERED
+    and ERROR are never cached** (an earlier draft also cached NOT_REGISTERED briefly, but that
+    contradicts the "retry immediately after Allow" UX and buys no real protection — see below — so
+    it was dropped; a cached ERROR would prolong a real outage instead of retrying it, so that's
+    never cached either). `/authorize` is unauthenticated, and every registration check not served
+    from cache costs one call to Connection's `/oauth/clients/validate`, which is itself
+    IP-rate-limited (600 calls/60s, `connection/config/packages/oauth_client_rate_limit.yaml`) — and
+    this server's entire egress IP shares that budget across every user of the stack.
+
+    **The cache alone does not stop this** (Copilot review finding): a caller that varies
+    `redirect_uri` on every request produces a fresh, never-cached key each time, so an anonymous
+    flood of `/authorize` with a different redirect_uri per request bypasses the cache entirely and
+    could still exhaust Connection's shared budget — turning fail-closed (correct) into a stack-wide
+    OAuth login outage triggered by anyone (and, before Decision §9, arming the open redirect too).
+    Closing this needed a control that doesn't depend on the request being one the cache has seen
+    before: `ConnectionClientRegistry` now also holds a `_SlidingWindowRateLimiter` (plain
+    `collections.deque` of call timestamps, no new dependency) capping outbound calls to
+    `/oauth/clients/validate` at 300/60s **per process** -- half of Connection's per-IP ceiling, so
+    even the worst case (every check missing the cache) leaves headroom for other replicas sharing
+    the same egress IP. `_check_registration_uncached` checks this budget *before* making the HTTP
+    call at all, returning `ERROR` locally (no network call, still fail-closed) once it's spent. This
+    is deliberately a single-process, best-effort bound, not a perfectly fair cross-replica one — a
+    distributed limiter (e.g. Redis-backed) would be needed to cap the whole fleet's *combined* call
+    rate precisely; tracked as a follow-up, not blocking this PR.
 
 12. **Flagged, not fixed in this repo: any authenticated Keboola user — no elevated role required —
     can permanently register a stack-global trusted MCP client via Connection's dynamic-approval
@@ -420,6 +450,13 @@ approval).
     to decide whether it needs to go back to the Connection team before this ships. Decision §10
     limits the *blast radius* of an unvetted approval (no `projectless`) but does not close this gap.
 
+    **Status (2026-09-16): still open.** A project-admin gate for `ClientApprovalProcessor::process()`
+    was drafted (AI-3936, `keboola/connection#8497`), but that PR is closed, unmerged, with no
+    successor — so the gate is not deployed anywhere. Flagged on the Linear issue for a Connection-
+    side owner to pick up; nothing in `keboola/mcp-server` can close it, and this PR does not make
+    the underlying gap worse or better (Connection's dynamic-approval screen is reachable today
+    independent of whether this PR merges).
+
 ## Security Review Addendum
 
 Post-implementation, this RFC was reviewed by two independent adversarial passes (one general OWASP-
@@ -431,11 +468,12 @@ resolutions:
 | Finding | Severity | Resolution |
 |---|---|---|
 | `authorize()`'s `ERROR` branch raised `AuthorizeError`, which the mcp SDK redirects to the caller-supplied (now host-unrestricted) `redirect_uri` — an open redirect reachable on demand via the rate-limit DoS below | High | Fixed — Decisions §8, §9 |
-| Unauthenticated `/authorize` amplifies 1:1 into Connection's IP-shared `/oauth/clients/validate` rate limit — a stack-wide OAuth login DoS, and the enabler for the open redirect above | High | Fixed — Decision §11 |
+| Unauthenticated `/authorize` amplifies 1:1 into Connection's IP-shared `/oauth/clients/validate` rate limit — a stack-wide OAuth login DoS, and the enabler for the open redirect above | High | Fixed — Decision §11 (registration cache + a local per-process rate limiter; a caller varying `redirect_uri` per request defeats the cache alone, so the limiter is what actually bounds it) |
 | `check_registration()` used `follow_redirects=True`; any 200 at the end of a redirect chain (misconfigured proxy, login page, ...) would read as REGISTERED | Medium | Fixed (`follow_redirects=False` on this call) |
 | A dynamically-approved client silently inherited the same unrestricted `projectless` grant Connection deliberately withholds from self-service approvals | Medium-High | Fixed — Decision §10 |
-| Any authenticated user (no elevated role) can register a stack-global trusted client via Connection's approval screen | High | **Not fixable here** — flagged, Decision §12 |
 | `client_name` sanitizing to `''` (all control/zero-width chars) silently dropped the whole approval payload instead of falling back to the derived id | Low | Fixed (sanitize before, not after, the fallback) |
 | RFC Decisions §2/§3/§6 justified the throwaway-PKCE code's safety with an incorrect claim ("the AI assistant doesn't know Connection's endpoints") | Low (documentation) | Corrected — Decisions §2, §3, §6 |
 | `except httpx.HTTPError` didn't cover `httpx.InvalidURL`; a misconfigured `server_url` degraded to the mcp SDK's generic error instead of this code's own specific warning (fail-closed either way, via the SDK's own catch-all) | Low (debuggability only) | Fixed (broadened the except) |
 | `_connection_client_id`'s 96-bit truncated hash, `claude-ai` impersonation via the literal redirect_uri string, and approval-reuse by an unrelated party presenting the same redirect_uri | — | Reviewed, confirmed **not exploitable** — Connection matches the exact pair, and whoever "reuses" an approval must still control the redirect_uri to receive anything from it |
+| Only a mocked `check_registration()` was tested; the real Connection response contract (200/404 mapping) was unverified | Medium | Fixed — a live-Connection integration test (`integtests/`, see Testing/Verification) now exercises the real endpoint; the interactive Allow/Deny click-through remains covered by Connection's own E2E suite, not duplicated here |
+| Any authenticated user (no elevated role) can register a stack-global trusted client via Connection's approval screen | High | **Not fixable here** — flagged, Decision §12. The drafted Connection-side fix (AI-3936 / `keboola/connection#8497`) is currently closed, unmerged — still open in production, tracked on the Linear issue for a Connection-side owner |
