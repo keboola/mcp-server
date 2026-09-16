@@ -119,6 +119,28 @@ X-Read-Only-Mode: true
 
 For detailed documentation, see [developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control](https://developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control).
 
+### Row-Level Security
+
+`query_data` can filter a table's rows per the current user, for projects that opt in. It is off by
+default and requires two things before it does anything:
+
+1. **A project-level feature.** An org admin enables it for a specific project; without it,
+   `query_data` never even looks up a policy — behavior is unchanged.
+2. **A policy for the specific table**, authored by an org admin (never a project admin, even for
+   that project's own tables) as a Keboola Metastore `rls-policy` object — a declarative
+   `column`/`operator`/`value` condition per user, not hand-written SQL. A table with no policy is
+   always unfiltered; a table with one is fail-closed (no rule for the current user ⇒ the query is
+   refused, naming the table).
+
+The identity `query_data` filters by is the caller's own OAuth login — there is no header or tool
+argument to set it. `query_data`'s output always includes `applied_rules`, the `<bucket>.<table>`
+keys of every table the result was filtered by; when non-empty, the result is a slice of the data,
+not the whole table.
+
+See [`feature_spec/rls_query_tool/RFC.md`](feature_spec/rls_query_tool/RFC.md) for the full design,
+including why policies are org-authored rather than project-scoped, and known limitations (this is
+a proxy-level control scoped to `query_data`, not a substitute for native warehouse row security).
+
 ---
 
 ## Local MCP Server Setup (Custom or Dev Way)
