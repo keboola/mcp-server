@@ -9,11 +9,12 @@ mechanisms. This module joins them.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.semantic.service import SemanticDatasetData
 from keboola_mcp_server.tools.storage.shared_buckets import SharedBucketDetail
@@ -37,8 +38,9 @@ class DatasetLocation(BaseModel):
             '"local": bucket already owned by this project. "linked": bucket already linked into this '
             'project from another one. "shared_not_linked": bucket exists and is shared with this project '
             'but not linked in yet -- use link_shared_bucket with source_project_id/source_bucket_id to fix '
-            'it. "unreachable": the dataset\'s scope says it should be visible, but its bucket is neither '
-            'owned, linked, nor shared here -- the metastore object and the underlying data disagree.'
+            'it (unless `ambiguous` is set -- see that field). "unreachable": the dataset\'s scope says it '
+            'should be visible, but its bucket is neither owned, linked, nor shared here -- the metastore '
+            'object and the underlying data disagree.'
         )
     )
     bucket_id: str | None = Field(default=None, description='Bucket id derived from the dataset\'s tableId.')
@@ -49,6 +51,15 @@ class DatasetLocation(BaseModel):
         default=None,
         description='The shared bucket\'s own id in its source project -- pass as source_bucket_id to link_shared_bucket.',
     )
+    ambiguous: bool = Field(
+        default=False,
+        description=(
+            'True when more than one project shares a bucket with this id and the dataset\'s parent semantic '
+            'model carries no sourceProjectId to disambiguate between them (only ever set for "organization" '
+            'scope). source_project_id/source_bucket_id are left unset rather than guessing -- resolve the '
+            'ambiguity with the user before calling link_shared_bucket.'
+        ),
+    )
 
 
 def _bucket_id_from_table_id(table_id: str | None) -> str | None:
@@ -57,13 +68,27 @@ def _bucket_id_from_table_id(table_id: str | None) -> str | None:
     return table_id.rsplit('.', 1)[0]
 
 
-async def resolve_dataset_location(client: KeboolaClient, dataset: SemanticDatasetData) -> DatasetLocation:
-    """Resolves where a semantic-dataset's tableId physically lives, relative to the calling project."""
+async def resolve_dataset_location(
+    dataset: SemanticDatasetData,
+    *,
+    local_buckets: Sequence[JsonDict],
+    shared_buckets: Sequence[JsonDict],
+    model_source_project_id: int | str | None,
+) -> DatasetLocation:
+    """Resolves where a semantic-dataset's tableId physically lives, relative to the calling project.
+
+    `local_buckets` and `shared_buckets` are the caller's own project's full bucket/shared-bucket
+    listings (fetched once per outer call, not once per dataset -- both endpoints return the same
+    payload regardless of which dataset is being resolved). `model_source_project_id` is the
+    dataset's *parent semantic-model's* `sourceProjectId` (per the RFC, this is model-level
+    provenance, not dataset-level -- a dataset only ever carries its own when it was itself
+    directly created/promoted at "organization" scope, which targeted-scope sharing never does).
+    """
     bucket_id = _bucket_id_from_table_id(dataset.table_id)
     if bucket_id is None:
         return DatasetLocation(status=DatasetLocationStatus.UNREACHABLE)
 
-    for raw_bucket in await client.storage_client.bucket_list():
+    for raw_bucket in local_buckets:
         if raw_bucket.get('id') != bucket_id:
             continue
         source_project = get_nested(raw_bucket, 'sourceBucket.project')
@@ -73,33 +98,35 @@ async def resolve_dataset_location(client: KeboolaClient, dataset: SemanticDatas
             )
         return DatasetLocation(status=DatasetLocationStatus.LOCAL, bucket_id=bucket_id)
 
-    # The dataset's own recorded source project, when the metastore tracked one (organization
-    # scope only -- absent for project/targeted scope, or when the creator opted out via
-    # dropSourceProject). Used to disambiguate a bucket_id that could plausibly exist in more
-    # than one project; when absent, fall back to a bucket_id-only match rather than refusing to
-    # resolve anything, matching this tool's existing "best-effort" framing elsewhere.
-    expected_source_project_id = dataset.data.meta.source_project_id if dataset.data.meta else None
+    # Only entries whose raw id matches are validated -- an unrelated shared bucket elsewhere in
+    # the catalog (a different share type, a shape variation on another stack) must never abort
+    # resolving *this* dataset just because it happens to fail SharedBucketDetail's schema.
+    matches = [
+        SharedBucketDetail.model_validate(raw_shared)
+        for raw_shared in shared_buckets
+        if raw_shared.get('id') == bucket_id
+    ]
 
-    fallback_match: SharedBucketDetail | None = None
-    for raw_shared in await client.storage_client.shared_bucket_list():
-        shared = SharedBucketDetail.model_validate(raw_shared)
-        if shared.id != bucket_id:
-            continue
-        if expected_source_project_id is not None and str(shared.project_id) == str(expected_source_project_id):
+    if model_source_project_id is not None:
+        match = next((m for m in matches if str(m.project_id) == str(model_source_project_id)), None)
+        if match is not None:
             return DatasetLocation(
                 status=DatasetLocationStatus.SHARED_NOT_LINKED,
                 bucket_id=bucket_id,
-                source_project_id=shared.project_id,
-                source_bucket_id=shared.id,
+                source_project_id=match.project_id,
+                source_bucket_id=match.id,
             )
-        fallback_match = fallback_match or shared
-
-    if fallback_match is not None and expected_source_project_id is None:
+        # The parent model names a specific source project and no candidate matches it -- the
+        # bucket is shared from somewhere else entirely, not just unresolvably ambiguous.
+    elif len(matches) == 1:
+        match = matches[0]
         return DatasetLocation(
             status=DatasetLocationStatus.SHARED_NOT_LINKED,
             bucket_id=bucket_id,
-            source_project_id=fallback_match.project_id,
-            source_bucket_id=fallback_match.id,
+            source_project_id=match.project_id,
+            source_bucket_id=match.id,
         )
+    elif len(matches) > 1:
+        return DatasetLocation(status=DatasetLocationStatus.SHARED_NOT_LINKED, bucket_id=bucket_id, ambiguous=True)
 
     return DatasetLocation(status=DatasetLocationStatus.UNREACHABLE, bucket_id=bucket_id)

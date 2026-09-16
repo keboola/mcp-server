@@ -1,5 +1,6 @@
 """Semantic read tools backed by the semantic service layer."""
 
+import asyncio
 from collections.abc import Sequence
 from typing import Annotated, Any
 
@@ -25,6 +26,7 @@ from keboola_mcp_server.tools.semantic.model import (
     SemanticObjectTypeSelection,
     SemanticSchemaDefinition,
 )
+from keboola_mcp_server.tools.storage_helpers import merged_bucket_list
 
 
 class ConstraintValidationFinding(BaseModel):
@@ -392,6 +394,23 @@ def _compact_semantic_object(obj: semantic_service.SemanticServiceData) -> Compa
     raise ValueError(f'Unsupported semantic object type "{obj.semantic_type.value}"')
 
 
+async def _model_source_project_ids(client: KeboolaClient, model_uuids: Sequence[str]) -> dict[str, int | str | None]:
+    """Fetches each named semantic-model's sourceProjectId once, keyed by model UUID."""
+    unique_ids = sorted({uuid for uuid in model_uuids if uuid})
+    if not unique_ids:
+        return {}
+    results = await process_concurrently(
+        unique_ids,
+        lambda model_uuid: client.metastore_client.get_object(SemanticObjectType.SEMANTIC_MODEL.value, model_uuid),
+        max_concurrency=min(len(unique_ids), 10),
+    )
+    models = unwrap_results(results, 'Failed to fetch one or more parent semantic models.')
+    return {
+        model_uuid: (model.meta.source_project_id if model.meta else None)
+        for model_uuid, model in zip(unique_ids, models, strict=True)
+    }
+
+
 async def _resolve_dataset_locations(
     client: KeboolaClient, groups: Sequence[semantic_service.SemanticServiceDataTypeGroup]
 ) -> dict[str, DatasetLocation]:
@@ -401,9 +420,22 @@ async def _resolve_dataset_locations(
     ]
     if not dataset_objects:
         return {}
+
+    model_source_project_ids, (local_buckets, shared_buckets) = await asyncio.gather(
+        _model_source_project_ids(client, [obj.model_uuid for obj in dataset_objects if obj.model_uuid]),
+        asyncio.gather(
+            merged_bucket_list(client, include=['metadata', 'linkedBuckets']),
+            client.storage_client.shared_bucket_list(),
+        ),
+    )
     results = await process_concurrently(
         dataset_objects,
-        lambda obj: resolve_dataset_location(client, obj),
+        lambda obj: resolve_dataset_location(
+            obj,
+            local_buckets=local_buckets,
+            shared_buckets=shared_buckets,
+            model_source_project_id=model_source_project_ids.get(obj.model_uuid or ''),
+        ),
         max_concurrency=min(len(dataset_objects), 10),
     )
     resolved = unwrap_results(results, 'Failed to resolve one or more dataset locations.')
@@ -412,6 +444,7 @@ async def _resolve_dataset_locations(
 
 async def _dataset_location_findings_for_results(
     client: KeboolaClient,
+    models: Sequence[semantic_service.SemanticModelData],
     *results: semantic_service.SemanticValidationServiceOutput | None,
 ) -> dict[str, semantic_service.ConstraintValidationFinding]:
     """Resolves data_location for every dataset used across the given validation results, and returns a
@@ -428,10 +461,24 @@ async def _dataset_location_findings_for_results(
     if not used_datasets:
         return {}
 
+    # `models` were already fetched by the caller (validate_semantic_query loads them for
+    # `semantic_model_ids` regardless) -- reuse that instead of a redundant per-dataset lookup.
+    model_source_project_ids = {
+        model.id: (model.data.meta.source_project_id if model.data.meta else None) for model in models
+    }
     datasets = list(used_datasets.values())
+    local_buckets, shared_buckets = await asyncio.gather(
+        merged_bucket_list(client, include=['metadata', 'linkedBuckets']),
+        client.storage_client.shared_bucket_list(),
+    )
     location_results = await process_concurrently(
         datasets,
-        lambda dataset: resolve_dataset_location(client, dataset),
+        lambda dataset: resolve_dataset_location(
+            dataset,
+            local_buckets=local_buckets,
+            shared_buckets=shared_buckets,
+            model_source_project_id=model_source_project_ids.get(dataset.model_uuid or ''),
+        ),
         max_concurrency=min(len(datasets), 10),
     )
     locations = unwrap_results(location_results, 'Failed to resolve one or more dataset locations.')
@@ -1092,7 +1139,7 @@ async def validate_semantic_query(
     location_findings_by_dataset: dict[str, semantic_service.ConstraintValidationFinding] = {}
     if resolve_data_location:
         location_findings_by_dataset = await _dataset_location_findings_for_results(
-            client, raw_auto_detected, raw_from_expected
+            client, models, raw_auto_detected, raw_from_expected
         )
 
     return ValidateSemanticQueryOutput(
