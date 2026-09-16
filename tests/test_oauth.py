@@ -251,6 +251,20 @@ class TestConnectionClientRegistry:
 
         assert registry.get_client_name('client-a') is None
 
+    def test_sanitizes_and_caps_name_length_at_insertion_not_just_at_display(self):
+        """/register is unauthenticated -- an arbitrarily long raw name stored per entry would let
+        a caller inflate memory well past what the entry-count cap alone bounds (Copilot review
+        finding). The cap must apply when the name is stored, not only when later read for the
+        approval-screen payload."""
+        from keboola_mcp_server.oauth import ConnectionClientRegistry
+
+        registry = ConnectionClientRegistry('https://oauth')
+        registry.remember_client_name('client-a', 'a' * 1_000_000)
+        registry.remember_client_name('client-b', '\n\t\r')  # sanitizes to '' -- must not be stored
+
+        assert registry.get_client_name('client-a') == 'a' * 128
+        assert registry.get_client_name('client-b') is None
+
     def test_evicts_oldest_entry_once_over_capacity(self, monkeypatch: pytest.MonkeyPatch):
         from keboola_mcp_server import oauth as oauth_module
         from keboola_mcp_server.oauth import ConnectionClientRegistry
@@ -366,19 +380,20 @@ class TestSimpleOAuthProvider:
             # This hook only checks *shape* -- the real trust decision (is client_id + this exact
             # redirect_uri registered?) happens against Connection in SimpleOAuthProvider.authorize(),
             # not here (see AI-2883 RFC). The shape allowed here is exactly what Connection will
-            # ever register: https (any host -- Connection decides), cursor:// (any host --
-            # Connection checks it), or http:// restricted to loopback (RFC 8252). This is NOT the
-            # old per-domain trust list -- an unknown https host is still accepted here and left to
-            # Connection -- but a shape Connection could never register is rejected outright, so it
-            # can't be used as an open-redirect target if something later in authorize() fails
-            # unexpectedly (see authorize()'s ERROR-branch docstring).
+            # ever register: https (any host -- Connection decides), cursor:// restricted to
+            # Connection's own fixed host allowlist, or http:// restricted to loopback (RFC 8252).
+            # This is NOT the old per-domain trust list -- an unknown https host is still accepted
+            # here and left to Connection -- but a shape Connection could never register is rejected
+            # outright, so it can't be used as an open-redirect target if something later in
+            # authorize() fails unexpectedly (see authorize()'s ERROR-branch docstring).
             (AnyUrl('https://claude.ai/api/mcp/auth_callback'), True),
             (AnyUrl('https://anything.example.com/callback'), True),  # unknown host: fine here, Connection decides
             (AnyUrl('http://localhost:8080/callback'), True),
             (AnyUrl('http://127.0.0.1:54750/callback'), True),
             (AnyUrl('http://[::1]:8080/callback'), True),
             (AnyUrl('cursor://anysphere.cursor-mcp/callback'), True),
-            (AnyUrl('cursor://some-other-host/callback'), True),  # host left to Connection
+            (AnyUrl('cursor://anysphere.cursor-retrieval/callback'), True),
+            (AnyUrl('cursor://some-other-host/callback'), False),  # not in the fixed cursor host allowlist
             (AnyUrl('http://evil.example/callback'), False),  # non-loopback http is not a shape Connection allows
             (AnyUrl('myapp://localhost/callback'), False),  # unrecognized custom scheme
             (AnyUrl('file:///etc/passwd'), False),
@@ -665,19 +680,11 @@ class TestSimpleOAuthProvider:
         assert call_count == 1  # never chased the redirect to the second URL
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ('status_code', 'expected'),
-        [(200, 'REGISTERED'), (404, 'NOT_REGISTERED')],
-    )
-    async def test_check_client_registration_caches_positive_and_negative_results(
-        self,
-        oauth_provider: SimpleOAuthProvider,
-        monkeypatch: pytest.MonkeyPatch,
-        status_code: int,
-        expected: str,
+    async def test_check_client_registration_caches_positive_results(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
-        """A REGISTERED or NOT_REGISTERED verdict is cached so /authorize spam can't 1:1 amplify
-        into Connection's own (IP-shared) rate limit on /oauth/clients/validate."""
+        """A REGISTERED verdict is cached so /authorize spam for an already-registered client
+        can't 1:1 amplify into Connection's own (IP-shared) rate limit on /oauth/clients/validate."""
         from keboola_mcp_server import oauth as oauth_module
         from keboola_mcp_server.oauth import _ClientRegistration
 
@@ -686,7 +693,7 @@ class TestSimpleOAuthProvider:
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal call_count
             call_count += 1
-            return httpx.Response(status_code)
+            return httpx.Response(200)
 
         monkeypatch.setattr(
             oauth_module, '_create_http_client', lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -696,9 +703,70 @@ class TestSimpleOAuthProvider:
         first = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
         second = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
 
-        assert first is getattr(_ClientRegistration, expected)
-        assert second is getattr(_ClientRegistration, expected)
+        assert first is _ClientRegistration.REGISTERED
+        assert second is _ClientRegistration.REGISTERED
         assert call_count == 1  # second call was served from cache, no second HTTP request
+
+    @pytest.mark.asyncio
+    async def test_check_client_registration_never_caches_not_registered(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """NOT_REGISTERED must never be cached: an admin clicking Allow expects the *next* retry
+        to work immediately, not wait out a stale negative cache entry (Copilot review finding)."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(404)
+
+        monkeypatch.setattr(
+            oauth_module, '_create_http_client', lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+
+        registry = oauth_provider._client_registry
+        first = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+        second = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+
+        assert first is _ClientRegistration.NOT_REGISTERED
+        assert second is _ClientRegistration.NOT_REGISTERED
+        assert call_count == 2  # neither call was served from a cache
+
+    @pytest.mark.asyncio
+    async def test_check_client_registration_touches_cache_entry_on_hit(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A cache hit must refresh the entry's LRU position, not just a write -- otherwise a
+        frequently-reused entry (e.g. Claude.ai's own pair) stays the oldest-inserted entry and is
+        the first evicted once enough unrelated keys flood in, despite being the most valuable
+        entry to keep (Copilot review finding)."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import ConnectionClientRegistry
+
+        monkeypatch.setattr(oauth_module, '_MAX_CACHED_REGISTRATIONS', 2)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200)
+
+        monkeypatch.setattr(
+            oauth_module, '_create_http_client', lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+
+        registry = ConnectionClientRegistry('https://oauth')
+        await registry.check_registration('client-1', 'https://a.example/cb')
+        await registry.check_registration('client-2', 'https://b.example/cb')
+        # Touch client-1 again -- without touch-on-read this does nothing to its LRU position.
+        await registry.check_registration('client-1', 'https://a.example/cb')
+        # A third, unrelated key pushes the cache over capacity (2): the oldest-inserted entry
+        # gets evicted. With touch-on-read, that's client-2 (never re-touched); without it, the
+        # eviction order is purely insertion order and client-1 would be evicted instead.
+        await registry.check_registration('client-3', 'https://c.example/cb')
+
+        assert 'client-1' in [k[0] for k in registry._registration_cache]
+        assert 'client-2' not in [k[0] for k in registry._registration_cache]
 
     @pytest.mark.asyncio
     async def test_check_client_registration_never_caches_error(
