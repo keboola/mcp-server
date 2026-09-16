@@ -1981,6 +1981,14 @@ class TestScopeToken:
         assert SessionStateMiddleware._read_oauth_session_id(None) is None
         assert SessionStateMiddleware._read_oauth_session_id(SimpleNamespace(scope={})) is None
 
+    def test_read_oauth_user_email_returns_email_for_oauth_request(self) -> None:
+        http_rq = self._http_rq_with_oauth_user(user_email='petr@example.com')
+        assert SessionStateMiddleware._read_oauth_user_email(http_rq) == 'petr@example.com'
+
+    def test_read_oauth_user_email_returns_none_for_non_oauth_request(self) -> None:
+        assert SessionStateMiddleware._read_oauth_user_email(None) is None
+        assert SessionStateMiddleware._read_oauth_user_email(SimpleNamespace(scope={})) is None
+
     def test_read_persisted_local_scope_returns_confirmed_scope_from_session_state(self) -> None:
         scope = SessionScope(project_ids=[18, 83], confirmed=True)
         ctx = SimpleNamespace(session=SimpleNamespace(state={SCOPE_KEY: scope}))

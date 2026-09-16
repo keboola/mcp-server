@@ -31,6 +31,10 @@ def keboola_client(mocker) -> KeboolaClient:
     # always exercises the (patched) fetch_component in tests instead of returning a MagicMock.
     client.get_cached_flow_schema = mocker.Mock(return_value=None)
     client.cache_flow_schema = mocker.Mock()
+    # Default every project feature off so tests exercise the (patched) code they're actually
+    # about, not an auto-specced AsyncMock's truthy-by-default return value -- a test that needs a
+    # feature on (e.g. RLS) sets client.has_feature.return_value / side_effect explicitly.
+    client.has_feature = mocker.AsyncMock(return_value=False)
 
     # Mock API clients
     client.storage_client = mocker.AsyncMock(AsyncStorageClient)

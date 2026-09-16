@@ -4725,6 +4725,12 @@ DATA VALIDATION:
 * When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
 * Ensure valid filtering by checking actual data values first
 
+ROW-LEVEL SECURITY: some tables in some projects have a row-level-security policy attached.
+Such a table is never refused outright -- if you (the current login) have no rule on it, the
+query is refused with an error naming the table; if you do, the result is a filtered SLICE of
+that table, and `applied_rules` in the output names every table this happened for. Always tell
+the user when `applied_rules` is non-empty: the result is not the whole table.
+
 
 **Input JSON Schema**:
 ```json

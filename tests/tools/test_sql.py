@@ -10,7 +10,9 @@ from mcp.server.fastmcp import Context
 from mcp.types import ProgressNotification
 
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.metastore import MetaObjectMeta, MetastoreObject
 from keboola_mcp_server.clients.query import QueryServiceClient
+from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY
 from keboola_mcp_server.tools.sql import QueryDataOutput, _watch_for_http_disconnect, query_data
 from keboola_mcp_server.workspace import (
     JobSubmittedInfo,
@@ -1373,3 +1375,135 @@ class TestQueryCancellation:
 
         # Verify cancellation was NOT called
         qsclient.cancel_job.assert_not_called()
+
+
+class TestQueryDataRowLevelSecurity:
+    """`query_data`'s RLS integration (see `_apply_rls`, `feature_spec/rls_query_tool/RFC.md`):
+    off unless the project has the feature flag on AND the query touches a table a policy names.
+    """
+
+    @staticmethod
+    def _policy(*, table: str, rules_list: list, source_project_id: int = 69420) -> MetastoreObject:
+        return MetastoreObject(
+            type='rls-policy',
+            id='policy-1',
+            attributes={'table': table, 'dialect': 'snowflake', 'rules': rules_list},
+            meta=MetaObjectMeta(source_project_id=source_project_id),
+        )
+
+    @staticmethod
+    def _ok_result(rows: list[dict]) -> QueryResult:
+        return QueryResult(status='ok', data=SqlSelectData(columns=list(rows[0]), rows=rows), message=None)
+
+    @pytest.mark.asyncio
+    async def test_flag_off_query_data_is_unfiltered(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = False
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+
+        result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+
+        assert result.applied_rules == []
+        keboola_client.metastore_client.list_objects.assert_not_called()
+        workspace_manager.execute_query.assert_awaited_once_with(
+            'SELECT * FROM "in.c-crm"."invoices"',
+            max_rows=10_000,
+            max_chars=50_000,
+            on_job_submitted=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_flag_on_no_applicable_policy_is_unfiltered(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        keboola_client.metastore_client.list_objects.return_value = []
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+
+        result = await query_data('SELECT * FROM "in.c-crm"."unrelated"', 'q', mcp_context_client)
+
+        assert result.applied_rules == []
+        workspace_manager.execute_query.assert_awaited_once_with(
+            'SELECT * FROM "in.c-crm"."unrelated"',
+            max_rows=10_000,
+            max_chars=50_000,
+            on_job_submitted=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_flag_on_governed_table_no_identity_is_refused(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        keboola_client.metastore_client.list_objects.return_value = [
+            self._policy(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
+        ]
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        # mcp_context_client carries no OAUTH_USER_EMAIL_KEY -- a non-OAuth (PAT/header) session.
+
+        with pytest.raises(ValueError, match='no resolvable login identity'):
+            await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+        workspace_manager.execute_query.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_flag_on_governed_table_no_rule_for_principal_is_refused(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        keboola_client.metastore_client.list_objects.return_value = [
+            self._policy(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
+        ]
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'monika'
+
+        with pytest.raises(ValueError, match="no rule for user 'monika'"):
+            await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+        workspace_manager.execute_query.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_flag_on_governed_table_matching_rule_filters_and_discloses(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        keboola_client.metastore_client.list_objects.return_value = [
+            self._policy(
+                table='in.c-crm.invoices',
+                rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+            )
+        ]
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+
+        result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+
+        assert result.applied_rules == ['in.c-crm.invoices']
+        rewritten_sql = workspace_manager.execute_query.await_args.args[0]
+        assert 'WHERE country = \'CZ\'' in rewritten_sql
+
+    @pytest.mark.asyncio
+    async def test_flag_on_join_filters_only_the_governed_table(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        keboola_client.metastore_client.list_objects.return_value = [
+            self._policy(
+                table='in.c-crm.invoices',
+                rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+            )
+        ]
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+
+        await query_data(
+            'SELECT i.id FROM "in.c-crm"."invoices" i JOIN "in.c-crm"."unrelated" u ON u.id = i.id',
+            'q',
+            mcp_context_client,
+        )
+
+        rewritten_sql = workspace_manager.execute_query.await_args.args[0]
+        assert 'WHERE country = \'CZ\'' in rewritten_sql
+        assert '"in.c-crm"."unrelated"' in rewritten_sql  # left untouched, not wrapped
