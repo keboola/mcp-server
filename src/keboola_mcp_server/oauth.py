@@ -607,6 +607,18 @@ class SimpleOAuthProvider(OAuthProvider):
         # triggered the flow -- laundering the unrestricted grant right back in for a client
         # Connection specifically tried to keep it from. Falling through to plain project-selection
         # consent for a dynamically-approved client matches what Connection's own scopes intended.
+        #
+        # Known residual gap (Copilot review finding, accepted -- no cheap fix without a Connection-
+        # side change): this checks the *redirect_uri*, not the row's actual provenance on
+        # Connection. `/oauth/clients/validate` returns a bare 200/404, so this server has no way
+        # to distinguish "claude-ai registered by Keboola's migration" from "claude-ai registered
+        # via a Flow B approval that happened to name the real claude.ai callback". In practice this
+        # requires the *exact* claude.ai redirect_uri to already be in Flow B, which itself requires
+        # the pre-registration migration to be absent (it runs on RUN_ON_MIGRATE | RUN_ON_INIT, so
+        # every stack gets it) -- narrow, self-inflicted, and still bounded by the same redirect_uri
+        # (the code can only ever reach claude.ai's own endpoint either way), not attacker-triggerable.
+        # Closing it for real needs Connection to expose registration provenance/scopes on the
+        # validate response; tracked as a follow-up, not fixed here.
         is_pre_registered = connection_client_id in _WELL_KNOWN_CONNECTION_CLIENT_IDS.values()
         scope = 'claudai projectless' if is_pre_registered else 'claudai'
 
