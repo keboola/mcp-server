@@ -42,6 +42,11 @@ class OAuthSession:
     scope_confirmed: bool
     scope_scoped_token: str | None
     scope_scoped_expires_at: datetime | None
+    # Whether the Connection OAuth scope requested for this session (see oauth._scope_for)
+    # included 'projectless' -- False for a Flow B (dynamically-approved) client, which
+    # Connection never grants it to. Recorded at creation so load_access_token/load_refresh_token
+    # advertise the scope this session actually has, not a fixed value for every session.
+    oauth_projectless: bool
 
 
 class SessionStore(Protocol):
@@ -53,6 +58,7 @@ class SessionStore(Protocol):
         kbc_access_token: str,
         kbc_refresh_token: str,
         kbc_access_expires_at: datetime,
+        oauth_projectless: bool = True,
     ) -> tuple[str, str, OAuthSession]:
         """Creates a session row. Returns (opaque_access_token, opaque_refresh_token, session)."""
         ...
@@ -136,6 +142,7 @@ class PostgresSessionStore:
                 else None
             ),
             scope_scoped_expires_at=row['scope_scoped_expires_at'],
+            oauth_projectless=row['oauth_projectless'],
         )
 
     @guard_db_errors
@@ -147,6 +154,7 @@ class PostgresSessionStore:
         kbc_access_token: str,
         kbc_refresh_token: str,
         kbc_access_expires_at: datetime,
+        oauth_projectless: bool = True,
     ) -> tuple[str, str, OAuthSession]:
         access_token = generate_opaque_token()
         refresh_token = generate_opaque_token()
@@ -155,8 +163,8 @@ class PostgresSessionStore:
             """
             INSERT INTO oauth_sessions (
                 access_token_hash, refresh_token_hash, client_id, user_email,
-                kbc_access_token_enc, kbc_refresh_token_enc, kbc_access_expires_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                kbc_access_token_enc, kbc_refresh_token_enc, kbc_access_expires_at, oauth_projectless
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING *
             """,
             _hash_token(access_token),
@@ -166,6 +174,7 @@ class PostgresSessionStore:
             crypto.encrypt(kbc_access_token.encode('utf-8'), self._key),
             crypto.encrypt(kbc_refresh_token.encode('utf-8'), self._key),
             kbc_access_expires_at,
+            oauth_projectless,
         )
         assert row is not None
         return access_token, refresh_token, self._to_session(row)
