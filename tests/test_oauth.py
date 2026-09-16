@@ -281,6 +281,33 @@ class TestConnectionClientRegistry:
         assert registry.get_client_name('client-3') == 'Tool 3'
 
 
+class TestSlidingWindowRateLimiter:
+    def test_allows_up_to_max_calls_then_blocks(self):
+        from keboola_mcp_server.oauth import _SlidingWindowRateLimiter
+
+        limiter = _SlidingWindowRateLimiter(max_calls=3, window_seconds=60.0)
+
+        assert limiter.try_acquire() is True
+        assert limiter.try_acquire() is True
+        assert limiter.try_acquire() is True
+        assert limiter.try_acquire() is False  # 4th call within the window is refused
+
+    def test_recovers_once_the_window_elapses(self, monkeypatch: pytest.MonkeyPatch):
+        import time
+
+        from keboola_mcp_server.oauth import _SlidingWindowRateLimiter
+
+        limiter = _SlidingWindowRateLimiter(max_calls=1, window_seconds=60.0)
+        now = 1_000.0
+        monkeypatch.setattr(time, 'monotonic', lambda: now)
+
+        assert limiter.try_acquire() is True
+        assert limiter.try_acquire() is False
+
+        now += 60.01  # past the window: the earlier call falls out of the sliding window
+        assert limiter.try_acquire() is True
+
+
 class TestSimpleOAuthProvider:
     @pytest.fixture
     def oauth_provider(self) -> SimpleOAuthProvider:
@@ -612,7 +639,7 @@ class TestSimpleOAuthProvider:
         monkeypatch.setattr(
             oauth_module,
             '_create_http_client',
-            lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
 
         result = await oauth_provider._client_registry.check_registration(
@@ -636,7 +663,7 @@ class TestSimpleOAuthProvider:
         monkeypatch.setattr(
             oauth_module,
             '_create_http_client',
-            lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
 
         result = await oauth_provider._client_registry.check_registration(
@@ -669,7 +696,7 @@ class TestSimpleOAuthProvider:
         monkeypatch.setattr(
             oauth_module,
             '_create_http_client',
-            lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
 
         result = await oauth_provider._client_registry.check_registration(
@@ -696,7 +723,9 @@ class TestSimpleOAuthProvider:
             return httpx.Response(200)
 
         monkeypatch.setattr(
-            oauth_module, '_create_http_client', lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            oauth_module,
+            '_create_http_client',
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
 
         registry = oauth_provider._client_registry
@@ -724,7 +753,9 @@ class TestSimpleOAuthProvider:
             return httpx.Response(404)
 
         monkeypatch.setattr(
-            oauth_module, '_create_http_client', lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            oauth_module,
+            '_create_http_client',
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
 
         registry = oauth_provider._client_registry
@@ -752,7 +783,9 @@ class TestSimpleOAuthProvider:
             return httpx.Response(200)
 
         monkeypatch.setattr(
-            oauth_module, '_create_http_client', lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            oauth_module,
+            '_create_http_client',
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
 
         registry = ConnectionClientRegistry('https://oauth')
@@ -785,7 +818,9 @@ class TestSimpleOAuthProvider:
             return httpx.Response(500)
 
         monkeypatch.setattr(
-            oauth_module, '_create_http_client', lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            oauth_module,
+            '_create_http_client',
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
 
         registry = oauth_provider._client_registry
@@ -795,6 +830,47 @@ class TestSimpleOAuthProvider:
         assert first is _ClientRegistration.ERROR
         assert second is _ClientRegistration.ERROR
         assert call_count == 2  # neither call was served from a cache
+
+    @pytest.mark.asyncio
+    async def test_check_client_registration_local_rate_limit_blocks_without_calling_connection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A caller that varies redirect_uri on every request always misses the registration
+        cache (a fresh key each time), so the cache alone is not a defense against flooding
+        Connection's shared, IP-keyed rate limit on /oauth/clients/validate (Copilot review
+        finding). The local rate limiter must catch what the cache cannot: once its budget is
+        spent, no further HTTP calls reach Connection at all, regardless of how the key varies."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import ConnectionClientRegistry, _ClientRegistration
+
+        # Patched before construction: the limiter's budget is captured in __init__, not read
+        # live from the module constant on every call.
+        monkeypatch.setattr(oauth_module, '_VALIDATE_RATE_LIMIT_MAX_CALLS', 2)
+
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(404)
+
+        monkeypatch.setattr(
+            oauth_module,
+            '_create_http_client',
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+
+        registry = ConnectionClientRegistry('https://oauth')
+        # Three distinct, never-cached (client_id, redirect_uri) pairs -- simulating an attacker
+        # who varies the pair every time specifically to defeat the registration cache.
+        first = await registry.check_registration('client-1', 'https://a.example/cb')
+        second = await registry.check_registration('client-2', 'https://b.example/cb')
+        third = await registry.check_registration('client-3', 'https://c.example/cb')
+
+        assert first is _ClientRegistration.NOT_REGISTERED
+        assert second is _ClientRegistration.NOT_REGISTERED
+        assert third is _ClientRegistration.ERROR  # refused locally, not by Connection
+        assert call_count == 2  # the 3rd check never reached the network
 
     @staticmethod
     def _stub_exchanger(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
