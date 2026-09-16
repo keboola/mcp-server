@@ -4347,7 +4347,7 @@ EXAMPLES:
     },
     "resolve_data_location": {
       "default": false,
-      "description": "For semantic-dataset objects, resolve whether their underlying Storage table is actually reachable from this project and attach it as `data_location`. Off by default: it costs extra Storage API calls per dataset (bucket_list/shared_bucket_list), so only turn it on when you specifically need to know if a dataset is queryable here, not on every routine load.",
+      "description": "For semantic-dataset objects, resolve whether their underlying Storage table is actually reachable from this project and attach it as `data_location`. Off by default: it costs two extra Storage API calls per call (bucket_list/shared_bucket_list, fetched once regardless of dataset count), so only turn it on when you specifically need to know if a dataset is queryable here, not on every routine load.",
       "type": "boolean"
     }
   },
@@ -4643,7 +4643,7 @@ EXAMPLES:
     },
     "resolve_data_location": {
       "default": false,
-      "description": "For each dataset the SQL is detected to use, resolve whether its underlying Storage table is actually reachable from this project and, if not, add a warning-severity violation explaining why. Off by default: it costs extra Storage API calls per used dataset.",
+      "description": "For each dataset the SQL is detected to use, resolve whether its underlying Storage table is actually reachable from this project and, if not, add a warning-severity violation explaining why. Off by default: it costs two extra Storage API calls per call (bucket_list/shared_bucket_list, fetched once regardless of dataset count).",
       "type": "boolean"
     }
   },

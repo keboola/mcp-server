@@ -238,6 +238,47 @@ async def test_validate_semantic_query_surfaces_unreachable_dataset_location(
 
 
 @pytest.mark.asyncio
+async def test_validate_semantic_query_surfaces_ambiguous_dataset_location(
+    keboola_client: KeboolaClient,
+    mcp_context_client: Context,
+    mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
+) -> None:
+    """When two projects share the same bucket id and the parent model carries no
+    sourceProjectId, the finding must tell the caller the source is ambiguous and needs
+    resolving -- not hand it `source_project_id=None`/`source_bucket_id=None` as though those
+    were usable link_shared_bucket arguments."""
+    keboola_client.metastore_client.get_object = AsyncMock(
+        return_value=mock_semantic_api[SemanticObjectType.SEMANTIC_MODEL][0]
+    )
+    keboola_client.storage_client.bucket_list = AsyncMock(return_value=[])
+    keboola_client.storage_client.shared_bucket_list = AsyncMock(
+        return_value=[
+            {'id': 'in.c-main', 'displayName': 'main', 'stage': 'in', 'project': {'id': 555}},
+            {'id': 'in.c-main', 'displayName': 'main (unrelated)', 'stage': 'in', 'project': {'id': 999}},
+        ]
+    )
+
+    result = await validate_semantic_query(
+        mcp_context_client,
+        (
+            'SELECT SUM(order_amount) AS revenue '
+            'FROM analytics.orders orders '
+            'JOIN analytics.customers customers ON orders.customer_id = customers.id'
+        ),
+        ['model-1'],
+        resolve_data_location=True,
+    )
+
+    findings = {f.constraint_id: f for f in result.validation_auto_detected.violations}
+    finding = findings['data-location:dataset-orders']
+    assert finding.status == DatasetLocationStatus.SHARED_NOT_LINKED.value
+    assert finding.severity == 'warning'
+    assert 'None' not in finding.message
+    assert 'ambiguous' in finding.message.lower()
+    assert 'link_shared_bucket' in finding.message
+
+
+@pytest.mark.asyncio
 async def test_validate_semantic_query_skips_data_location_by_default(
     keboola_client: KeboolaClient,
     mcp_context_client: Context,

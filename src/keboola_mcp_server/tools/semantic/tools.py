@@ -565,7 +565,13 @@ def _dataset_location_finding(
 ) -> semantic_service.ConstraintValidationFinding | None:
     """Builds a pre-execution finding for a used dataset whose data isn't actually reachable here."""
     label = dataset.display_name or dataset.id
-    if location.status == DatasetLocationStatus.SHARED_NOT_LINKED:
+    if location.status == DatasetLocationStatus.SHARED_NOT_LINKED and location.ambiguous:
+        message = (
+            f'Dataset "{label}" (tableId {dataset.table_id}) is shared with this project from more than one '
+            'possible source project, and which one is ambiguous. Resolve the ambiguity with the user, then '
+            'call link_shared_bucket with the correct source_project_id/source_bucket_id before querying it.'
+        )
+    elif location.status == DatasetLocationStatus.SHARED_NOT_LINKED:
         message = (
             f'Dataset "{label}" (tableId {dataset.table_id}) is shared with this project but not linked in '
             f'yet. Use link_shared_bucket with source_project_id={location.source_project_id!r}, '
@@ -840,9 +846,10 @@ async def get_semantic_context(
         Field(
             description=(
                 'For semantic-dataset objects, resolve whether their underlying Storage table is actually '
-                'reachable from this project and attach it as `data_location`. Off by default: it costs extra '
-                'Storage API calls per dataset (bucket_list/shared_bucket_list), so only turn it on when you '
-                'specifically need to know if a dataset is queryable here, not on every routine load.'
+                'reachable from this project and attach it as `data_location`. Off by default: it costs two extra '
+                'Storage API calls per call (bucket_list/shared_bucket_list, fetched once regardless of dataset '
+                'count), so only turn it on when you specifically need to know if a dataset is queryable here, '
+                'not on every routine load.'
             )
         ),
     ] = False,
@@ -1029,7 +1036,8 @@ async def validate_semantic_query(
             description=(
                 'For each dataset the SQL is detected to use, resolve whether its underlying Storage table is '
                 'actually reachable from this project and, if not, add a warning-severity violation explaining '
-                'why. Off by default: it costs extra Storage API calls per used dataset.'
+                'why. Off by default: it costs two extra Storage API calls per call (bucket_list/shared_bucket_list, '
+                'fetched once regardless of dataset count).'
             )
         ),
     ] = False,
