@@ -1,5 +1,6 @@
 """Semantic read tools backed by the semantic service layer."""
 
+import asyncio
 from collections.abc import Sequence
 from typing import Annotated, Any
 
@@ -14,12 +15,18 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact, unwrap_results
 from keboola_mcp_server.tools.constants import SEMANTIC_TOOLS_TAG
 from keboola_mcp_server.tools.semantic import service as semantic_service
+from keboola_mcp_server.tools.semantic.data_location import (
+    DatasetLocation,
+    DatasetLocationStatus,
+    resolve_dataset_location,
+)
 from keboola_mcp_server.tools.semantic.model import (
     SemanticObjectRef,
     SemanticObjectType,
     SemanticObjectTypeSelection,
     SemanticSchemaDefinition,
 )
+from keboola_mcp_server.tools.storage_helpers import merged_bucket_list
 
 
 class ConstraintValidationFinding(BaseModel):
@@ -103,6 +110,13 @@ class SemanticDatasetCompact(CompactSemanticObject):
     description: str | None = None
     model_uuid: str | None = None
     fqn: str | None = None
+    data_location: DatasetLocation | None = Field(
+        default=None,
+        description=(
+            'Where this dataset\'s underlying Storage table actually lives, relative to this project. '
+            'Only present when get_semantic_context was called with resolve_data_location=True.'
+        ),
+    )
 
     @classmethod
     def from_semantic_service_data(cls, obj: semantic_service.SemanticServiceData) -> 'SemanticDatasetCompact':
@@ -200,6 +214,13 @@ class SemanticConstraintCompact(CompactSemanticObject):
 
 class SemanticObject(CompactSemanticObject):
     attributes: dict[str, Any] = Field(default_factory=dict)
+    data_location: DatasetLocation | None = Field(
+        default=None,
+        description=(
+            'For a semantic-dataset: where its underlying Storage table actually lives, relative to this '
+            'project. Only present when get_semantic_context was called with resolve_data_location=True.'
+        ),
+    )
 
     @classmethod
     def from_semantic_service_data(cls, obj: semantic_service.SemanticServiceData) -> 'SemanticObject':
@@ -373,6 +394,111 @@ def _compact_semantic_object(obj: semantic_service.SemanticServiceData) -> Compa
     raise ValueError(f'Unsupported semantic object type "{obj.semantic_type.value}"')
 
 
+async def _model_source_project_ids(client: KeboolaClient, model_uuids: Sequence[str]) -> dict[str, int | str | None]:
+    """Fetches each named semantic-model's sourceProjectId once, keyed by model UUID."""
+    unique_ids = sorted({uuid for uuid in model_uuids if uuid})
+    if not unique_ids:
+        return {}
+    results = await process_concurrently(
+        unique_ids,
+        lambda model_uuid: client.metastore_client.get_object(SemanticObjectType.SEMANTIC_MODEL.value, model_uuid),
+        max_concurrency=min(len(unique_ids), 10),
+    )
+    models = unwrap_results(results, 'Failed to fetch one or more parent semantic models.')
+    return {
+        model_uuid: (model.meta.source_project_id if model.meta else None)
+        for model_uuid, model in zip(unique_ids, models, strict=True)
+    }
+
+
+async def _resolve_dataset_locations(
+    client: KeboolaClient, groups: Sequence[semantic_service.SemanticServiceDataTypeGroup]
+) -> dict[str, DatasetLocation]:
+    """Resolves data_location for every semantic-dataset object across the given groups, keyed by object id."""
+    dataset_objects = [
+        obj for group in groups if group.object_type == SemanticObjectType.SEMANTIC_DATASET for obj in group.objects
+    ]
+    if not dataset_objects:
+        return {}
+
+    model_source_project_ids, (local_buckets, shared_buckets) = await asyncio.gather(
+        _model_source_project_ids(client, [obj.model_uuid for obj in dataset_objects if obj.model_uuid]),
+        asyncio.gather(
+            merged_bucket_list(client, include=['metadata', 'linkedBuckets']),
+            client.storage_client.shared_bucket_list(),
+        ),
+    )
+    results = await process_concurrently(
+        dataset_objects,
+        lambda obj: resolve_dataset_location(
+            obj,
+            local_buckets=local_buckets,
+            shared_buckets=shared_buckets,
+            model_source_project_id=model_source_project_ids.get(obj.model_uuid or ''),
+        ),
+        max_concurrency=min(len(dataset_objects), 10),
+    )
+    resolved = unwrap_results(results, 'Failed to resolve one or more dataset locations.')
+    return {obj.id: location for obj, location in zip(dataset_objects, resolved, strict=True)}
+
+
+async def _dataset_location_findings_for_results(
+    client: KeboolaClient,
+    models: Sequence[semantic_service.SemanticModelData],
+    *results: semantic_service.SemanticValidationServiceOutput | None,
+) -> dict[str, semantic_service.ConstraintValidationFinding]:
+    """Resolves data_location for every dataset used across the given validation results, and returns a
+    finding for each one whose data isn't actually reachable here, keyed by dataset object id."""
+    used_datasets: dict[str, semantic_service.SemanticDatasetData] = {}
+    for result in results:
+        if result is None:
+            continue
+        for group in result.used_object_groups:
+            if group.object_type == SemanticObjectType.SEMANTIC_DATASET:
+                for obj in group.objects:
+                    assert isinstance(obj, semantic_service.SemanticDatasetData)
+                    used_datasets[obj.id] = obj
+    if not used_datasets:
+        return {}
+
+    # `models` were already fetched by the caller (validate_semantic_query loads them for
+    # `semantic_model_ids` regardless) -- reuse that instead of a redundant per-dataset lookup.
+    model_source_project_ids = {
+        model.id: (model.data.meta.source_project_id if model.data.meta else None) for model in models
+    }
+    datasets = list(used_datasets.values())
+    local_buckets, shared_buckets = await asyncio.gather(
+        merged_bucket_list(client, include=['metadata', 'linkedBuckets']),
+        client.storage_client.shared_bucket_list(),
+    )
+    location_results = await process_concurrently(
+        datasets,
+        lambda dataset: resolve_dataset_location(
+            dataset,
+            local_buckets=local_buckets,
+            shared_buckets=shared_buckets,
+            model_source_project_id=model_source_project_ids.get(dataset.model_uuid or ''),
+        ),
+        max_concurrency=min(len(datasets), 10),
+    )
+    locations = unwrap_results(location_results, 'Failed to resolve one or more dataset locations.')
+    findings = {}
+    for dataset, location in zip(datasets, locations, strict=True):
+        if finding := _dataset_location_finding(dataset, location):
+            findings[dataset.id] = finding
+    return findings
+
+
+def _with_data_location(
+    output: SemanticContextObject,
+    obj: semantic_service.SemanticServiceData,
+    dataset_locations: dict[str, DatasetLocation],
+) -> SemanticContextObject:
+    if isinstance(output, (SemanticDatasetCompact, SemanticObject)) and (location := dataset_locations.get(obj.id)):
+        output.data_location = location
+    return output
+
+
 def _compare_expected_and_detected_objects(
     expected_semantic_objects: Sequence[SemanticObjectTypeSelection],
     used_object_groups: Sequence[semantic_service.SemanticServiceDataTypeGroup],
@@ -434,11 +560,47 @@ def _to_tool_finding(finding: semantic_service.ConstraintValidationFinding) -> C
     )
 
 
+def _dataset_location_finding(
+    dataset: semantic_service.SemanticDatasetData, location: DatasetLocation
+) -> semantic_service.ConstraintValidationFinding | None:
+    """Builds a pre-execution finding for a used dataset whose data isn't actually reachable here."""
+    label = dataset.display_name or dataset.id
+    if location.status == DatasetLocationStatus.SHARED_NOT_LINKED and location.ambiguous:
+        message = (
+            f'Dataset "{label}" (tableId {dataset.table_id}) is shared with this project from more than one '
+            'possible source project, and which one is ambiguous. Resolve the ambiguity with the user, then '
+            'call link_shared_bucket with the correct source_project_id/source_bucket_id before querying it.'
+        )
+    elif location.status == DatasetLocationStatus.SHARED_NOT_LINKED:
+        message = (
+            f'Dataset "{label}" (tableId {dataset.table_id}) is shared with this project but not linked in '
+            f'yet. Use link_shared_bucket with source_project_id={location.source_project_id!r}, '
+            f'source_bucket_id={location.source_bucket_id!r} before querying it.'
+        )
+    elif location.status == DatasetLocationStatus.UNREACHABLE:
+        message = (
+            f'Dataset "{label}" (tableId {dataset.table_id}) is not reachable from this project: its scope '
+            'says it should be visible, but the underlying bucket is neither owned, linked, nor shared here. '
+            'The query will likely fail.'
+        )
+    else:
+        return None
+    return semantic_service.ConstraintValidationFinding(
+        constraint_id=f'data-location:{dataset.id}',
+        constraint_name='dataset_data_location',
+        severity='warning',
+        status=location.status.value,
+        message=message,
+        validation_query=None,
+    )
+
+
 def _format_validation_result(
     raw_result: semantic_service.SemanticValidationServiceOutput,
     *,
     models: Sequence[semantic_service.SemanticModelData] = (),
     summary_notes: Sequence[str] = (),
+    location_findings_by_dataset: dict[str, semantic_service.ConstraintValidationFinding] | None = None,
 ) -> SemanticQueryValidationResult:
     used_dataset_objects = []
     used_metric_objects = []
@@ -451,6 +613,12 @@ def _format_validation_result(
     used_datasets = [SemanticUsedDataset.from_semantic_service_data(item) for item in used_dataset_objects]
     used_metrics = [SemanticUsedMetric.from_semantic_service_data(item) for item in used_metric_objects]
 
+    location_findings = [
+        finding
+        for item in used_dataset_objects
+        if location_findings_by_dataset and (finding := location_findings_by_dataset.get(item.id))
+    ]
+
     semantic_model_outputs = [SemanticModelCompact.from_semantic_service_data(m) for m in models]
     sql_dialects = sorted({m.sql_dialect for m in models if m.sql_dialect})
 
@@ -460,7 +628,7 @@ def _format_validation_result(
             f'Warning: semantic models use different SQL dialects ({", ".join(sql_dialects)}). '
             'The query may not be portable across all models.'
         )
-    if raw_result.violations:
+    if raw_result.violations or location_findings:
         summary_parts.append('Semantic validation found pre-execution issues that should be fixed before running.')
     if raw_result.post_execution_checks:
         summary_parts.append('Some checks should be verified after execution.')
@@ -475,7 +643,7 @@ def _format_validation_result(
         used_datasets=used_datasets,
         used_metrics=used_metrics,
         matched_relationships=raw_result.matched_relationships,
-        violations=[_to_tool_finding(finding) for finding in raw_result.violations],
+        violations=[_to_tool_finding(finding) for finding in (*raw_result.violations, *location_findings)],
         post_execution_checks=[_to_tool_finding(finding) for finding in raw_result.post_execution_checks],
         summary=summary,
     )
@@ -673,6 +841,18 @@ async def get_semantic_context(
             )
         ),
     ] = (),
+    resolve_data_location: Annotated[
+        bool,
+        Field(
+            description=(
+                'For semantic-dataset objects, resolve whether their underlying Storage table is actually '
+                'reachable from this project and attach it as `data_location`. Off by default: it costs two extra '
+                'Storage API calls per call (bucket_list/shared_bucket_list, fetched once regardless of dataset '
+                'count), so only turn it on when you specifically need to know if a dataset is queryable here, '
+                'not on every routine load.'
+            )
+        ),
+    ] = False,
 ) -> list[SemanticObjectTypeContext]:
     """
     Loads semantic objects grouped by semantic object type.
@@ -691,7 +871,8 @@ async def get_semantic_context(
       itself, not whether its underlying Keboola Storage table is actually reachable from every
       project that can see it -- a "targeted"/"organization" object's data may still need its
       bucket separately shared and linked (`get_shared_buckets`/`link_shared_bucket`) before a
-      query against it will work outside the owning project.
+      query against it will work outside the owning project. Pass `resolve_data_location=True` to
+      check this directly instead of inferring it from scope alone.
     - An object's `scope_elevation_requested_at` being set means a project has asked an
       organization admin to promote it from "project" to "organization" scope, and the request is
       still pending. Treat this as a forward-looking signal: once approved, the object (a
@@ -733,6 +914,8 @@ async def get_semantic_context(
     )
     groups = unwrap_results(results, 'Failed to fetch semantic context.')
 
+    dataset_locations = await _resolve_dataset_locations(client, groups) if resolve_data_location else {}
+
     # Normalize the contexts to the SemanticObjectTypeContext format
     normalized_contexts: list[SemanticObjectTypeContext] = []
     for selection, context in zip(semantic_objects, groups, strict=True):
@@ -747,14 +930,20 @@ async def get_semantic_context(
             normalized_contexts.append(
                 SemanticObjectTypeContext(
                     object_type=context.object_type,
-                    objects=[SemanticObject.from_semantic_service_data(obj) for obj in context.objects],
+                    objects=[
+                        _with_data_location(SemanticObject.from_semantic_service_data(obj), obj, dataset_locations)
+                        for obj in context.objects
+                    ],
                 )
             )
         else:
             normalized_contexts.append(
                 SemanticObjectTypeContext(
                     object_type=context.object_type,
-                    objects=[_compact_semantic_object(obj) for obj in context.objects],
+                    objects=[
+                        _with_data_location(_compact_semantic_object(obj), obj, dataset_locations)
+                        for obj in context.objects
+                    ],
                 )
             )
 
@@ -841,6 +1030,17 @@ async def validate_semantic_query(
             )
         ),
     ] = None,
+    resolve_data_location: Annotated[
+        bool,
+        Field(
+            description=(
+                'For each dataset the SQL is detected to use, resolve whether its underlying Storage table is '
+                'actually reachable from this project and, if not, add a warning-severity violation explaining '
+                'why. Off by default: it costs two extra Storage API calls per call (bucket_list/shared_bucket_list, '
+                'fetched once regardless of dataset count).'
+            )
+        ),
+    ] = False,
 ) -> ValidateSemanticQueryOutput:
     """
     Performs best-effort semantic validation of an SQL query against one or more semantic models and compares it with
@@ -867,7 +1067,8 @@ async def validate_semantic_query(
     `target_project_ids` -- see `get_semantic_context`'s CONSIDERATIONS for what they mean. A
     "targeted"/"organization"-scope model does not guarantee the query is actually runnable from
     every project that can see it; this tool validates against the semantic layer, not against
-    whether the underlying Storage tables are reachable here.
+    whether the underlying Storage tables are reachable here. Pass `resolve_data_location=True` to
+    check that directly for every used dataset instead of inferring it from scope alone.
 
     WHEN TO USE:
     - Before generating or approving a query that should follow a semantic model.
@@ -943,14 +1144,25 @@ async def validate_semantic_query(
     if unexpected_detected_objects:
         auto_detected_summary_notes.append('Some detected semantic objects fall outside the expected semantic scope.')
 
+    location_findings_by_dataset: dict[str, semantic_service.ConstraintValidationFinding] = {}
+    if resolve_data_location:
+        location_findings_by_dataset = await _dataset_location_findings_for_results(
+            client, models, raw_auto_detected, raw_from_expected
+        )
+
     return ValidateSemanticQueryOutput(
         validation_auto_detected=_format_validation_result(
             raw_auto_detected,
             models=models,
             summary_notes=auto_detected_summary_notes,
+            location_findings_by_dataset=location_findings_by_dataset,
         ),
         validation_detected_from_expected=(
-            _format_validation_result(raw_from_expected, models=models) if raw_from_expected is not None else None
+            _format_validation_result(
+                raw_from_expected, models=models, location_findings_by_dataset=location_findings_by_dataset
+            )
+            if raw_from_expected is not None
+            else None
         ),
         matched_expected_objects=matched_expected_objects,
         missing_expected_objects=missing_expected_objects,
