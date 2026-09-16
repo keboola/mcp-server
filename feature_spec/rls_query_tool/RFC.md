@@ -174,18 +174,26 @@ a same-named policy" — a stray policy authored for a different project has no 
 ### Identity: the caller's own verified login, not a header or an argument
 
 The pilot's `header`/`argument` trust modes existed because it had no other way to know who was
-asking. This repo already does, unused until now:
+asking. This repo already does, unused until now — and better grounded than this RFC first
+assumed: an earlier draft proposed reading identity from `tokens/verify`'s `admin` object, but
+that field was never confirmed to carry an email, and this repo already has a *confirmed* source
+for exactly this purpose:
 
-- `verify_token()` (`src/keboola_mcp_server/clients/storage.py`, `GET tokens/verify`) already
-  exists and already runs elsewhere (`is_enabled()`). For a user-scoped Storage API token, its
-  response identifies the admin who owns the token — the exact response shape needs confirming
-  against Storage API docs before implementation, this RFC does not assume a specific field name.
-- `OAuthSession` (`src/keboola_mcp_server/session_store/repository.py`) is a Postgres-backed
-  session row with a `user_email: str | None` column that today is hardcoded to `None` at creation
-  (`oauth.py`, `exchange_authorization_code()`). Populating it from `verify_token()` right after
-  the code-exchange closes the gap.
-- One mechanism covers both cases the pilot split into two: whether the session came from the
-  OAuth flow or a directly-supplied token, `verify_token()` on that token is "who is this."
+- `introspect_token()` (`src/keboola_mcp_server/auth_login.py`) hits `/v1/auth/token/introspect`
+  and returns an `Introspection` dataclass whose `user_email: str | None` is populated from the
+  response's `user.email` — a field this codebase already reads and already tests
+  (`tests/test_oauth.py`), not a guess.
+- `SimpleOAuthProvider.exchange_authorization_code()` (`oauth.py`) already calls
+  `introspect_token()` once per new session, today only to auto-confirm project scope
+  (`_auto_confirm_project_scope`). The same call's `user_email` is now also persisted onto the
+  `OAuthSession` row (`user_email: str | None`, previously hardcoded to `None`) and carried onto
+  `ProxyAccessToken` for `mcp.py` to read without a second DB round-trip — mirroring exactly how
+  `scope_project_ids` etc. are already carried there.
+- **This only resolves identity for OAuth-authenticated sessions.** A directly-supplied Storage
+  API token (`KBC_STORAGE_TOKEN`, a project or programmatic token) has no equivalent "who logged
+  in" concept — it may not represent one human at all. Such a session simply has no principal to
+  resolve, which (per the two-level opt-in above) means it cannot use any RLS-gated table; it is
+  not a special case to handle, just the normal "no identity ⇒ no rule can match" outcome.
 
 `query_data` (the only data-query tool now — see below) resolves this identity on every call as
 the principal for that call. No tool argument, no header, no deployment-level mode.
