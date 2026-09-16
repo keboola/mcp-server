@@ -242,17 +242,28 @@ functions, per project convention):
   arbitrary redirect_uri → identical derived id; two different redirect_uris → different ids;
   derived id always ≤32 chars.
 - `authorize()`: 200 from validate → today's exact `/oauth/consent` URL (regression check — Flow A
-  must be byte-for-byte unchanged for an already-registered client); 404 → redirect targets
+  must be byte-for-byte unchanged for an already-registered client), `projectless` in scope only
+  for a well-known (Keboola-vetted) `connection_client_id`; 404 → redirect targets
   `/oauth/authorize` (not `/oauth/consent`) with `pending_mcp_client` decodable back to
-  `{client_id, client_name, redirect_uri}` matching what was sent, plus a `code_challenge`; network
-  error / non-200/404 status from validate → `AuthorizeError('temporarily_unavailable', ...)`,
-  never a silent redirect.
+  `{client_id, client_name, redirect_uri}` matching what was sent, plus a `code_challenge`;
+  network error / non-200/404 status from validate → a same-origin redirect to this server's own
+  `/oauth/callback?error=temporarily_unavailable&...` (**not** a raised `AuthorizeError` — see
+  Decision §9 for why raising it would itself be an open redirect), which `server.py`'s
+  `oauth_callback_handler` renders as a 400 JSON response without ever calling
+  `handle_oauth_callback()`. Never a redirect to the caller-supplied `redirect_uri` for this case.
 - `register_client()` → `authorize()`: `client_name` submitted at `/register` shows up in the
-  `pending_mcp_client` payload; a client that skipped `/register` (or whose name aged out of the
-  cache) falls back to the derived Connection client_id as its name rather than crashing or sending
-  an empty string (which Connection's decoder would reject outright).
-- `validate_redirect_uri`: still rejects `None` and dangerous schemes; no longer rejects an
+  `pending_mcp_client` payload, sanitized and length-capped at storage time (not just at read
+  time — an unauthenticated `/register` caller must not be able to inflate this cache's memory via
+  an arbitrarily long name); a client that skipped `/register` (or whose name aged out of the
+  cache, or sanitized down to empty) falls back to the derived Connection client_id as its name
+  rather than crashing or sending an empty string (which Connection's decoder would reject
+  outright).
+- `validate_redirect_uri`: still rejects `None`, dangerous schemes, userinfo/fragment, an
+  oversized URI, a non-loopback `http://`, and an unlisted `cursor://` host; no longer rejects an
   arbitrary `https://` host (that's Connection's job now).
+- `oauth_callback_handler` (`server.py`): a route-level test asserting `GET /oauth/callback?error=...`
+  returns 400 JSON without invoking `handle_oauth_callback()` at all — this is the regression test
+  for the open-redirect fix itself, not just a unit test of `authorize()`'s return value.
 
 **Manual** — one full run against a real dev stack per client type: (1) `claude-ai` (Flow A,
 zero-friction), (2) a fresh synthetic MCP client hitting `/register` then `/authorize` (Flow B,
