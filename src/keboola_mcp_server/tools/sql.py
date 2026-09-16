@@ -18,8 +18,11 @@ from mcp.types import (
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import get_http_request_or_none
+from keboola_mcp_server.rls import RlsRules, references_governed_table, rewrite_query
+from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY
 from keboola_mcp_server.workspace import JobSubmittedInfo, QueryResult, SqlSelectData, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -27,6 +30,17 @@ LOG = logging.getLogger(__name__)
 SQL_TOOLS_TAG = 'sql'
 MAX_ROWS = 10_000
 MAX_CHARS = 50_000
+
+# Project feature flag gating row-level security entirely -- see feature_spec/rls_query_tool/RFC.md
+# "Project-level opt-in". Off by default: `query_data` doesn't even look up `rls-policy` objects
+# unless this is enabled, so a stray policy in an opted-out project has no effect. Same mechanism
+# as GLOBAL_SEARCH_FEATURE/STORAGE_BRANCHES_FEATURE (tools/search_models.py, tools/storage_helpers.py).
+RLS_FEATURE = 'row-level-security'
+# Bounds the cost of the sqlglot parse `references_governed_table`/`rewrite_query` do once RLS is
+# enabled for the project -- applies to every query then, not just ones touching a governed table,
+# since the parse itself is what needs bounding.
+RLS_MAX_QUERY_CHARS = 20_000
+
 # How often to check whether the HTTP client has disconnected during a long query.
 # Mirrors the 1 s job-poll cadence in `_Workspace.execute_query`.
 _DISCONNECT_POLL_INTERVAL = 1.0
@@ -219,6 +233,14 @@ class QueryDataOutput(BaseModel):
     csv_data: str = Field(description='The retrieved data in CSV format')
     message: str | None = Field(default=None, description='A message from the query execution')
     query_ref: str | None = Field(default=None, description='Correlation token echoed from the request.')
+    applied_rules: list[str] = Field(
+        default_factory=list,
+        description=(
+            'Row-level-security disclosure: "<bucket>.<table>" keys of the tables this query result '
+            'was filtered by, if any -- always tell the user when this is non-empty, the result is a '
+            'slice of the table, not the whole thing. Empty when no table in the query has RLS applied.'
+        ),
+    )
 
 
 def add_sql_tools(mcp: FastMCP) -> None:
@@ -231,6 +253,73 @@ def add_sql_tools(mcp: FastMCP) -> None:
         )
     )
     LOG.info('SQL tools added to the MCP server.')
+
+
+def _log_rls_outcome(
+    outcome: str, *, query_name: str, principal: str | None, tables: list[str] | None = None, reason: str | None = None
+) -> None:
+    """One audit line per RLS-gated `query_data` call. `outcome='ok'` at INFO, else WARNING."""
+    fields = [f'principal={principal!r}', f'query_name={query_name!r}']
+    if tables is not None:
+        fields.append(f'tables={tables}')
+    if reason is not None:
+        fields.append(f'reason={reason!r}')
+    line = f'RLS query outcome={outcome} ' + ' '.join(fields)
+    LOG.info(line) if outcome == 'ok' else LOG.warning(line)
+
+
+async def _apply_rls(
+    sql_query: str, *, query_name: str, ctx: Context, workspace_manager: WorkspaceManager
+) -> tuple[str, list[str]]:
+    """Rewrite `sql_query` for row-level security when the project has it enabled AND the query
+    touches a table a policy governs; otherwise return it unchanged. See
+    `feature_spec/rls_query_tool/RFC.md` "Two-level opt-in" -- this is deliberately NOT a
+    deployment-wide mode: a project without `RLS_FEATURE`, or a query that touches no governed
+    table, costs nothing beyond the one `has_feature` check and (once enabled) the cheap parse in
+    `references_governed_table`.
+
+    :raises ValueError: (a `RlsError`, or a plain refusal below) when a governed table has no rule
+        for the resolved principal, or this session has no resolvable principal at all. Never
+        silently drops a request to an unfiltered query -- every refusal here means "no data".
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    if not await client.has_feature(RLS_FEATURE):
+        return sql_query, []
+    # Bounds the parse below, which now runs for every query once the project has the feature on,
+    # not only ones that turn out to touch a governed table.
+    if len(sql_query) > RLS_MAX_QUERY_CHARS:
+        raise ValueError(f'RLS: query too long ({len(sql_query)} chars, limit {RLS_MAX_QUERY_CHARS})')
+
+    dialect = (await workspace_manager.get_sql_dialect()).lower()
+    project_id = int(await client.storage_client.project_id())
+    objects = await client.metastore_client.list_objects('rls-policy')
+    rules = RlsRules.from_metastore(objects, dialect=dialect, project_id=project_id)
+    if not rules.tables or not references_governed_table(sql_query, dialect=dialect, rules=rules):
+        # No policy applies to this project at all, or none of them name a table this query
+        # touches -- behave exactly like today's unfiltered query_data, no rewrite attempted.
+        return sql_query, []
+
+    principal = ctx.session.state.get(OAUTH_USER_EMAIL_KEY)
+    if not principal:
+        reason = 'this session has no resolvable login identity'
+        _log_rls_outcome('refused', query_name=query_name, principal=None, reason=reason)
+        raise ValueError(f'RLS: {reason}, so it cannot query a row-level-security-governed table.')
+    try:
+        try:
+            # sqlglot parsing/transformation is CPU-bound and holds the GIL only in short bursts,
+            # so the rewrite runs in a worker thread: a pathological (but under-cap) query then
+            # slows down this one session instead of stalling the event loop for every other
+            # in-flight request.
+            rewritten = await asyncio.to_thread(rewrite_query, sql_query, user=principal, dialect=dialect, rules=rules)
+        except RecursionError as e:
+            # sqlglot's parser recurses per nesting level, so deeply nested input hits Python's
+            # recursion limit -- turn it into an ordinary refusal, not a stack overflow.
+            raise ValueError('RLS: query too deeply nested') from e
+    except ValueError as e:
+        _log_rls_outcome('refused', query_name=query_name, principal=principal, reason=str(e))
+        raise
+    _log_rls_outcome('ok', query_name=query_name, principal=principal, tables=rewritten.applied_rules)
+    return rewritten.sql, rewritten.applied_rules
 
 
 @tool_errors()
@@ -317,8 +406,17 @@ async def query_data(
     DATA VALIDATION:
     * When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
     * Ensure valid filtering by checking actual data values first
+
+    ROW-LEVEL SECURITY: some tables in some projects have a row-level-security policy attached.
+    Such a table is never refused outright -- if you (the current login) have no rule on it, the
+    query is refused with an error naming the table; if you do, the result is a filtered SLICE of
+    that table, and `applied_rules` in the output names every table this happened for. Always tell
+    the user when `applied_rules` is non-empty: the result is not the whole table.
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+    sql_query, applied_rules = await _apply_rls(
+        sql_query, query_name=query_name, ctx=ctx, workspace_manager=workspace_manager
+    )
 
     progress_token = _client_progress_token(ctx)
 
@@ -354,7 +452,11 @@ async def query_data(
         writer.writerows(data.rows)
 
         return QueryDataOutput(
-            query_name=query_name, csv_data=output.getvalue(), message=result.message, query_ref=query_ref
+            query_name=query_name,
+            csv_data=output.getvalue(),
+            message=result.message,
+            query_ref=query_ref,
+            applied_rules=applied_rules,
         )
 
     else:

@@ -42,6 +42,7 @@ from keboola_mcp_server.config import (
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.scope import (
     OAUTH_SESSION_ID_KEY,
+    OAUTH_USER_EMAIL_KEY,
     SCOPE_KEY,
     SCOPE_TOKEN_ARG,
     SessionScope,
@@ -385,6 +386,8 @@ class SessionStateMiddleware(fmw.Middleware):
                 state[SCOPE_KEY] = scope
             if oauth_session_id := self._read_oauth_session_id(http_rq):
                 state[OAUTH_SESSION_ID_KEY] = oauth_session_id
+            if oauth_user_email := self._read_oauth_user_email(http_rq):
+                state[OAUTH_USER_EMAIL_KEY] = oauth_user_email
             ctx.session.state = state
 
         try:
@@ -603,6 +606,11 @@ class SessionStateMiddleware(fmw.Middleware):
     def _read_oauth_session_id(cls, http_rq: Request | None) -> str | None:
         access_token = cls._oauth_access_token(http_rq)
         return access_token.session_id if access_token is not None else None
+
+    @classmethod
+    def _read_oauth_user_email(cls, http_rq: Request | None) -> str | None:
+        access_token = cls._oauth_access_token(http_rq)
+        return access_token.user_email if access_token is not None else None
 
     @staticmethod
     def _read_persisted_local_scope(ctx: Context) -> 'SessionScope | None':
