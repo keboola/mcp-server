@@ -1,0 +1,830 @@
+"""Row-level security (RLS) for `query_data`.
+
+Rules are data, not code: an org admin authors an `rls-policy` metastore object per protected
+table (`RlsRules.from_metastore()`), mapping `principal -> declarative condition primitive`.
+`rewrite_query()` replaces every table referenced by a SELECT that has a policy applicable to the
+current project with `(SELECT * FROM <table> WHERE <predicate>)`, so the caller can only ever see
+the slice the admin wrote down for them. Everything here is fail-closed *for a table a policy
+names*: a missing rule for the resolved principal, an unsupported statement, or an unparseable
+query raises `RlsError` and no SQL is executed. A table with no applicable policy at all is left
+untouched -- RLS is opt-in per table, not a deployment-wide switch. See
+`feature_spec/rls_query_tool/RFC.md`.
+
+Predicates are compiled from primitives (see `_compile_primitive`), never hand-written SQL text --
+closing the injection surface for a rule author who isn't an engineer. They are still tied to one
+SQL dialect: a policy authored against a Snowflake-workspace's column names is not portable to a
+BigQuery workspace. `RlsRules.dialect` pins the workspace backend the compiled predicates are for,
+and `rewrite_query()` refuses outright when the workspace it is asked to rewrite for is not that
+dialect.
+"""
+
+import dataclasses
+import itertools
+import logging
+import re
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
+
+import sqlglot
+from sqlglot import exp
+
+LOG = logging.getLogger(__name__)
+
+# FROM/JOIN sources the rewriter knows how to secure. This is an allowlist on purpose: sqlglot has
+# many node types that read like a table but carry no `exp.Table` to wrap -- `FROM TABLE(x)` parses
+# as `exp.TableFromRows`, table functions as `exp.Anonymous` -- and those would otherwise reach the
+# workspace unfiltered. `exp.Lateral` is allowed only as a container; its own source is checked too.
+_ALLOWED_FROM_SOURCES = (exp.Table, exp.Subquery, exp.Unnest, exp.Values, exp.Lateral)
+
+# `exp.Table` args the rewrite can faithfully reproduce. Anything else -- PIVOT/UNPIVOT, SAMPLE,
+# Snowflake AT()/BEFORE()/CHANGES(), BigQuery FOR SYSTEM_TIME AS OF, an alias column list -- would be
+# silently dropped when the table is rebuilt inside the wrapper, changing what the query means.
+_ALLOWED_TABLE_ARGS = frozenset({'this', 'db', 'catalog', 'alias'})
+
+# The workspace backends the RLS pilot supports. A rules file must pin exactly one of them.
+_SUPPORTED_DIALECTS = ('bigquery', 'snowflake')
+
+# Table and user keys in the rules file. Deliberately narrow: it is the set of characters a Keboola
+# bucket/table name or a user name actually uses, and it rejects the shapes that would make a key
+# mean something other than it looks like -- an empty string, embedded quotes, whitespace, a `*`
+# that reads like a wildcard but is not one, and (via the `str` check) YAML 1.1 scalars such as
+# `yes:`/`on:`/`42:` that never were strings.
+_RULE_KEY_RE = re.compile(r'^[A-Za-z0-9_.\-]+$')
+_RULE_KEY_HINT = 'keys must be non-empty strings of letters, digits, underscore, dot or hyphen'
+
+# What a query with no real table may still call. Everything here either reads the clock or is a
+# pure scalar expression over its own arguments -- nothing that reaches the catalog, the query
+# history or a model. `exp.Localtime`/`exp.Localtimestamp` are what Snowflake's `CURRENT_TIME` and
+# BigQuery's `CURRENT_DATETIME` parse into; `exp.If` is a `CASE` branch.
+_FROMLESS_ALLOWED_FUNC_TYPES = (
+    exp.CurrentDate,
+    exp.CurrentTime,
+    exp.CurrentTimestamp,
+    exp.Localtime,
+    exp.Localtimestamp,
+    exp.Cast,
+    exp.TryCast,
+    exp.Concat,
+    exp.Coalesce,
+    exp.Case,
+    exp.If,
+)
+# `NOW()` has no dedicated node -- it parses as an `exp.Anonymous`, so it is allowed by name.
+_FROMLESS_ALLOWED_FUNC_NAMES = frozenset({'NOW', 'CURRENT_DATE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP'})
+
+# sqlglot underlines the offending token in a parse error with ANSI escapes.
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+# An unquoted Keboola bucket path (`in.c-crm.orders`), i.e. the single most common reason a query
+# fails to parse here. Matched on the SQL, not on the error text, because the parser gives up at a
+# different token -- and with a different message -- depending on where the dots and hyphens fall.
+_BUCKET_PATH_RE = re.compile(r'(?<![\w."`])(?:in|out)\.[A-Za-z0-9_-]+\.', re.IGNORECASE)
+
+
+# What the caller is told when a rule exists but could not be applied. Deliberately says nothing
+# about the predicate: the caller is a model relaying to a user, and the predicate is the policy.
+_RULE_NOT_APPLIED = 'RLS: rule for table {key} could not be applied'
+
+
+class RlsError(ValueError):
+    """Any RLS failure: bad rules file, unsupported SQL, missing rule. Always means "no data"."""
+
+
+def _clean_error(error: Exception) -> str:
+    """A sqlglot error message fit to put in front of a user (or a model).
+
+    sqlglot underlines the offending token with ANSI escapes. They render as mojibake in a JSON tool
+    result, an MCP client transcript or a log file, so they come out here.
+    """
+    return _ANSI_RE.sub('', str(error))
+
+
+def _parse_error_hint(sql: str) -> str:
+    """An extra sentence for a parse failure, when the SQL shows a known, fixable mistake.
+
+    Keboola bucket names contain dots, so `in.c-crm.orders` written bare is four name parts to the
+    parser and it gives up somewhere in the middle. The fix is quoting, and saying so turns an
+    opaque token error into something actionable.
+    """
+    if _BUCKET_PATH_RE.search(sql):
+        return ' -- quote the bucket, e.g. "in.c-crm"."orders"'
+    return ''
+
+
+def _unwrap_parenthesised(tree: exp.Expression) -> exp.Expression:
+    """Strip parentheses that merely wrap a whole statement, so `(SELECT ...)` is checked as SELECT.
+
+    A top-level `(SELECT ...)` is legal SQL and means exactly the SELECT inside it, but it parses as
+    an `exp.Subquery` and would be refused as "not a SELECT" -- a false refusal, and one that invites
+    the caller to go looking for a formulation that slips through. Only a bare wrapper is unwrapped:
+    anything hanging off it (an alias, an ORDER BY, a LIMIT) means the node is more than parentheses
+    and is left alone for the gate below to judge.
+    """
+    while isinstance(tree, (exp.Paren, exp.Subquery)):
+        if any(key != 'this' and value is not None and value != [] for key, value in tree.args.items()):
+            break
+        inner = tree.this
+        if not isinstance(inner, (exp.Select, exp.SetOperation, exp.Paren, exp.Subquery)):
+            break
+        tree = inner
+    # The scope-chain walks below climb `parent` pointers; the discarded wrapper must not be on them.
+    tree.parent = None
+    return tree
+
+
+def _normalize_schema(schema: str, dialect: str) -> str:
+    """The bucket part of a rules key, as the workspace actually spells it.
+
+    Snowflake keeps a Keboola bucket name verbatim as the schema (`"in.c-crm"`). BigQuery cannot:
+    dataset names allow neither dots nor hyphens, so the server maps bucket `in.c-crm` to dataset
+    `in_c_crm`. Normalising the key at load time means the rules file is written the same way for
+    both backends -- in Keboola's own bucket names -- and still matches what the query says.
+    """
+    return schema.replace('.', '_').replace('-', '_') if dialect == 'bigquery' else schema
+
+
+def _rule_key(schema: str, table: str, dialect: str) -> str:
+    """The rules-file key a `<schema>.<table>` reference is looked up under.
+
+    Case handling follows the backend's own object-name resolution, so a rule matches exactly the
+    table the engine would read:
+
+    * Snowflake folds unquoted names and the workspace hands out fully-qualified names quoted in the
+      storage case, so keys are compared case-insensitively -- `"IN.C-CRM"."INVOICES"` and
+      `"in.c-crm"."invoices"` name the same table there.
+    * BigQuery dataset and table names are case-SENSITIVE: `in_c_crm.Invoices` is a different table
+      from `in_c_crm.invoices`, so a rule for one must not cover the other. Keys keep their case and
+      a mismatch simply finds no rule -- which is a refusal.
+    """
+    key = f'{schema}.{table}'
+    return key if dialect == 'bigquery' else key.lower()
+
+
+# Comparison ops a `condition` primitive's `column`/`op`/`value` shape may use -- each maps to the
+# `exp.Condition` builder (a method for `eq`/`ne`; sqlglot has no `.gt()`/`.gte()`/`.lt()`/`.lte()`
+# methods, only the operator overloads, hence the two shapes) that produces the equivalent SQL,
+# never a formatted string. Deliberately closed: an op not in this set is refused, not passed
+# through as a no-op.
+_COMPARISON_OPS: Mapping[str, Callable[[exp.Column, exp.Expression], exp.Condition]] = {
+    'eq': lambda col, val: col.eq(val),
+    'ne': lambda col, val: col.neq(val),
+    'gt': lambda col, val: col > val,
+    'gte': lambda col, val: col >= val,
+    'lt': lambda col, val: col < val,
+    'lte': lambda col, val: col <= val,
+}
+
+
+def _compile_primitive(condition: Any, *, dialect: str) -> exp.Condition:
+    """Compile one declarative `condition` primitive (the shape in the RFC's JSON schema for the
+    `rls-policy` metastore object type) into a `sqlglot.exp.Condition` tree.
+
+    Never parses or formats a SQL string: every branch below builds the expression tree directly
+    from sqlglot's own builder methods (`exp.column(...).eq(...)`, `.isin(...)`, `exp.And`/`Or`,
+    `exp.true()`), so a primitive can only ever produce a well-formed boolean condition over one
+    named column and literal value(s) -- there is no string-formatting step for an admin's (or a
+    guided CLI's) input to inject through. Raises `RlsError` for any shape this function doesn't
+    recognise; an unrecognised primitive is refused, never silently treated as `TRUE`.
+    """
+    if not isinstance(condition, Mapping):
+        raise RlsError(f'RLS: condition must be an object, got {type(condition).__name__}')
+
+    if 'true' in condition:
+        if condition.get('true') is not True or len(condition) != 1:
+            raise RlsError(f"RLS: a 'true' condition must be exactly {{'true': true}}, got {condition!r}")
+        return exp.true()
+
+    for combinator in ('and', 'or'):
+        if combinator not in condition:
+            continue
+        if len(condition) != 1:
+            raise RlsError(f"RLS: a {combinator!r} condition must not have other keys, got {condition!r}")
+        branches = condition[combinator]
+        if not isinstance(branches, Sequence) or isinstance(branches, (str, bytes)) or len(branches) < 2:
+            raise RlsError(f"RLS: {combinator!r} must be a list of at least 2 conditions, got {branches!r}")
+        compiled = [_compile_primitive(branch, dialect=dialect) for branch in branches]
+        result = compiled[0]
+        for branch_expr in compiled[1:]:
+            result = result.and_(branch_expr) if combinator == 'and' else result.or_(branch_expr)
+        return result
+
+    column_name = condition.get('column')
+    op = condition.get('op')
+    if not isinstance(column_name, str) or not column_name:
+        raise RlsError(f"RLS: condition is missing a valid 'column': {condition!r}")
+    if not isinstance(op, str):
+        raise RlsError(f"RLS: condition is missing a valid 'op': {condition!r}")
+    column = exp.column(column_name)
+
+    if op in _COMPARISON_OPS:
+        if 'value' not in condition:
+            raise RlsError(f"RLS: op {op!r} requires a 'value': {condition!r}")
+        value = exp.convert(condition['value'])
+        return _COMPARISON_OPS[op](column, value)
+
+    if op in ('in', 'not_in'):
+        values = condition.get('values')
+        if not isinstance(values, Sequence) or isinstance(values, (str, bytes)) or not values:
+            raise RlsError(f"RLS: op {op!r} requires a non-empty 'values' list: {condition!r}")
+        membership = column.isin(*(exp.convert(v) for v in values))
+        return membership.not_() if op == 'not_in' else membership
+
+    if op in ('is_null', 'is_not_null'):
+        is_null = column.is_(exp.Null())
+        return is_null.not_() if op == 'is_not_null' else is_null
+
+    raise RlsError(f'RLS: unknown condition op {op!r}: {condition!r}')
+
+
+@dataclasses.dataclass(frozen=True)
+class RewrittenQuery:
+    sql: str
+    applied_rules: list[str]
+    """Disclosure for the caller: the rules key of every table that was filtered, de-duplicated.
+
+    Keys only, never the predicate. The point of the disclosure is "this result is a slice, and here
+    is which tables were sliced" -- the predicate text is the admin's policy, and handing it to a
+    model (which relays it to the user, and which may be trying to work out what it is not allowed
+    to see) discloses the shape of the data that was withheld. The server log has the detail.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class RlsRules:
+    """RLS rules keyed by table key, then lower-cased principal name.
+
+    A table key is always `<bucket>.<table>` (`in.c-crm.invoices`) -- the table part is the text
+    after the LAST dot, because a Keboola bucket name contains dots of its own. There is no bare-name
+    form: a policy must say which bucket it protects, and a query must say which bucket it reads, or
+    neither side can be sure they mean the same table.
+
+    Only the bucket and table parts are matched. A reference may also carry a database/project name
+    (`OTHER_DB."in.c-crm"."orders"`, `` `proj`.`in_c_crm`.`invoices` ``) and that part is ignored: the
+    workspace credentials reach exactly one project database, so a policy keyed by bucket and table
+    cannot be side-stepped by naming a different database in front of it.
+
+    `dialect` is the workspace backend the predicates were compiled for; it is not a default but a
+    pin, and `rewrite_query()` refuses to run these rules against any other backend. It also decides
+    two things about the keys, each following that backend's own name resolution: how the bucket part
+    is spelled (BigQuery datasets take neither dots nor hyphens, so bucket `in.c-crm` is dataset
+    `in_c_crm` -- normalised at load, see `_normalize_schema`) and whether case matters (it does on
+    BigQuery, where table and dataset names are case-sensitive; it does not on Snowflake -- see
+    `_rule_key`).
+    """
+
+    tables: Mapping[str, Mapping[str, str]]
+    dialect: str
+
+    @classmethod
+    def from_metastore(cls, objects: Sequence[Any], *, dialect: str, project_id: int) -> 'RlsRules':
+        """Build `RlsRules` from `rls-policy` metastore objects (`clients.metastore.MetastoreObject`)
+        applicable to `project_id`. Raises `RlsError` on any problem with an *applicable* object's
+        own shape.
+
+        An object applies when its `meta.source_project_id` equals `project_id`, or `project_id` is
+        listed in its `meta.target_project_ids` (a `targeted`-scope policy explicitly shared with
+        this project) -- matching purely on the object's `table` key text is never enough on its
+        own, because an `organization`-scope object is visible to every project in the org and a
+        `<bucket>.<table>` key is not guaranteed unique across them (see the RFC's "Rule storage"
+        section). An object that doesn't apply is skipped silently, not refused: a policy authored
+        for a different project is simply not this project's business.
+
+        Every rule's `condition` is compiled via `_compile_primitive` -- never parsed from a
+        hand-written predicate string, unlike the file-based pilot this superseded.
+        """
+        if dialect not in _SUPPORTED_DIALECTS:
+            raise RlsError(f'RLS: unsupported workspace dialect {dialect!r}')
+        tables: dict[str, dict[str, str]] = {}
+        for obj in objects:
+            meta = getattr(obj, 'meta', None)
+            applies = meta is not None and (
+                getattr(meta, 'source_project_id', None) == project_id
+                or project_id in (getattr(meta, 'target_project_ids', None) or ())
+            )
+            if not applies:
+                continue
+            obj_id = getattr(obj, 'id', None) or '<unknown>'
+            data = getattr(obj, 'attributes', None)
+            if not isinstance(data, Mapping):
+                raise RlsError(f"RLS: metastore object '{obj_id}' has no attributes")
+            obj_dialect = data.get('dialect')
+            if obj_dialect != dialect:
+                # Applicable to this project but authored for the other workspace backend: this is
+                # an authoring inconsistency, not a normal "not my table" skip -- predicates are
+                # never transpiled, so silently ignoring it here would silently leave a table this
+                # project meant to protect unfiltered. Fail closed and say why.
+                raise RlsError(
+                    f"RLS: metastore object '{obj_id}' is for dialect {obj_dialect!r} but project "
+                    f'{project_id} is {dialect!r}'
+                )
+            table_key_raw = data.get('table')
+            if not isinstance(table_key_raw, str) or not _RULE_KEY_RE.match(table_key_raw):
+                raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid 'table': {table_key_raw!r}")
+            bucket, _, table = table_key_raw.rpartition('.')
+            if not bucket or not table:
+                raise RlsError(
+                    f"RLS: metastore object '{obj_id}' has an unqualified table '{table_key_raw}': "
+                    f'must be <bucket>.<table>'
+                )
+            key = _rule_key(_normalize_schema(bucket, dialect), table, dialect)
+            rules_raw = data.get('rules')
+            if not isinstance(rules_raw, Sequence) or isinstance(rules_raw, (str, bytes)) or not rules_raw:
+                raise RlsError(f"RLS: metastore object '{obj_id}' has no rules")
+
+            users = tables.setdefault(key, {})
+            for rule in rules_raw:
+                if not isinstance(rule, Mapping):
+                    raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid rule entry: {rule!r}")
+                principals_raw = rule.get('principals')
+                principal_raw = rule.get('principal')
+                if principals_raw is not None:
+                    if (
+                        not isinstance(principals_raw, Sequence)
+                        or isinstance(principals_raw, (str, bytes))
+                        or not principals_raw
+                    ):
+                        raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid 'principals': {rule!r}")
+                    names: Sequence[Any] = principals_raw
+                elif isinstance(principal_raw, str) and principal_raw:
+                    names = [principal_raw]
+                else:
+                    raise RlsError(f"RLS: metastore object '{obj_id}' has a rule with no principal(s): {rule!r}")
+                predicate = _compile_primitive(rule.get('condition'), dialect=dialect).sql(dialect=dialect)
+                for name in names:
+                    if not isinstance(name, str) or not _RULE_KEY_RE.match(name):
+                        raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid principal {name!r}")
+                    user_key = name.lower()
+                    if user_key in users:
+                        raise RlsError(
+                            f"RLS: multiple applicable policies define a rule for principal '{user_key}' "
+                            f"on table '{key}'"
+                        )
+                    users[user_key] = predicate
+
+        LOG.info(
+            f'Loaded RLS rules for {len(tables)} table(s) from the metastore '
+            f'(dialect {dialect}, project {project_id})'
+        )
+        return cls(tables=tables, dialect=dialect)
+
+    def is_governed(self, *, table_name: str, schema: str | None) -> bool:
+        """Whether any policy at all applies to this table (regardless of user).
+
+        `rewrite_query()` calls this before `predicate_for()` for every table it sees: a table
+        this returns `False` for has *no* applicable `rls-policy` object and is left completely
+        untouched (RLS is opt-in per table, not a blanket switch -- see the RFC). A missing
+        `schema` also means "not governed": there is no key to look up, and a bare table name is
+        ordinary `query_data` territory, not an RLS concern.
+        """
+        return bool(schema) and _rule_key(schema, table_name, self.dialect) in self.tables
+
+    def predicate_for(self, *, table_name: str, schema: str | None, user: str) -> tuple[str, str]:
+        """Return `(matched_key, predicate)` for the table/user, or raise `RlsError`.
+
+        Only call this once `is_governed()` is true for the same table -- a table with no policy
+        at all is not this method's job to reject or admit, see `is_governed()`. `schema` is the
+        bucket/dataset the reference names; without it there is no key to look up and the
+        reference is refused. There is deliberately no fall-back to a bare table name: a rule that
+        matched `invoices` in every bucket would silently cover tables its author never saw.
+        """
+        if not schema:
+            raise RlsError(f"RLS: table reference must be qualified as <bucket>.<table>: '{table_name}'")
+        key = _rule_key(schema, table_name, self.dialect)
+        users = self.tables.get(key)
+        if users is None:
+            raise RlsError(f"RLS: no rule for table '{key}'")
+        predicate = users.get(user.lower())
+        if predicate is None:
+            raise RlsError(f"RLS: no rule for user '{user.lower()}' on table '{key}'")
+        return key, predicate
+
+
+def _check_from_sources(tree: exp.Expression) -> None:
+    """Refuse any FROM/JOIN/LATERAL source that is not on `_ALLOWED_FROM_SOURCES`.
+
+    Allowlist, not denylist: the rewrite can only protect what it recognises, so an unknown source
+    type means "no data", never "pass it through".
+    """
+    for clause in itertools.chain(tree.find_all(exp.From), tree.find_all(exp.Join), tree.find_all(exp.Lateral)):
+        source = clause.this
+        if not isinstance(source, _ALLOWED_FROM_SOURCES):
+            raise RlsError(f'RLS: unsupported FROM source: {type(source).__name__}')
+        if isinstance(source, exp.Table) and not isinstance(source.this, exp.Identifier):
+            # A table function (`FROM my_udtf(1)`) parses as an `exp.Table` wrapping an
+            # `exp.Anonymous`. It has no table name to look a rule up by, so it must be refused
+            # here rather than reach the workspace as an unrewritten source.
+            raise RlsError(f'RLS: unsupported table reference: {source.sql()}')
+
+
+def _cte_names(tree: exp.Expression) -> set[str]:
+    """Every CTE alias in `tree`, as raw identifier text lower-cased (quoting ignored).
+
+    Case and quoting are deliberately ignored here because this set only ever *widens* a check: it
+    is the cheap "could this name mean a CTE at all?" pre-filter for `_is_cte_reference` (which then
+    resolves the name precisely) and the collision guard against rule keys, which must fire on the
+    merest resemblance to a protected table's name.
+    """
+    return {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
+
+
+def _identifier_key(text: str, quoted: bool, *, dialect: str) -> tuple[str, bool]:
+    """Reduce a CTE name to a comparison key that matches how the engine resolves it.
+
+    The two backends do not agree, and the difference decides whether a reference binds to the CTE
+    or falls through to the base table -- so it is keyed on the dialect rather than guessed:
+
+    * Snowflake folds unquoted identifiers to a canonical case but treats quoted ones literally, so
+      `"secret"` and `"SECRET"` are two different names while `secret` and `SECRET` are one.
+      Comparing everything lower-cased would bind a quoted reference to a differently-cased quoted
+      CTE that the engine resolves to the *base table* -- and pass that table through unfiltered.
+      Quoted and unquoted forms of the same text stay distinct too (Ruling 14); the caller decides
+      whether that mismatch is a refusal or merely a non-match.
+    * BigQuery resolves CTE names case-insensitively and backticks around one carry no meaning at
+      all (verified against a live workspace): `WITH secret AS (...) SELECT * FROM \\`SECRET\\`` reads the
+      CTE. Keeping Snowflake's rule there would refuse ordinary queries as "ambiguous" while
+      protecting nothing. (BigQuery *table* and *dataset* names are case-sensitive -- that is a
+      separate question, settled by the rules-key lookup, not here.)
+    """
+    if dialect == 'bigquery':
+        return text.lower(), False
+    return text if quoted else text.lower(), quoted
+
+
+def _cte_key(cte: exp.CTE, *, dialect: str) -> tuple[str, bool]:
+    """A CTE declaration as an `_identifier_key` -- the same shape a table reference is reduced to
+    in `_is_cte_reference`."""
+    alias = cte.args.get('alias')
+    identifier = alias.this if isinstance(alias, exp.TableAlias) else None
+    quoted = isinstance(identifier, exp.Identifier) and identifier.quoted
+    return _identifier_key(cte.alias_or_name, quoted, dialect=dialect)
+
+
+def _with_clause(node: exp.Expression) -> exp.With | None:
+    """The WITH clause `node` carries, if any.
+
+    Found by scanning the node's args rather than by key: sqlglot has renamed the argument
+    (`with` -> `with_`) between versions, and a silently missed WITH clause here would mean a
+    missed shadowing check.
+    """
+    for value in node.args.values():
+        if isinstance(value, exp.With):
+            return value
+    return None
+
+
+def _cte_names_in_scope(node: exp.Expression, *, dialect: str) -> set[tuple[str, bool]]:
+    """CTE aliases visible from `node`, as `_identifier_key` pairs.
+
+    Walks `node`'s own ancestor chain outwards: a statement's WITH clause is visible to that
+    statement's body, and inside a CTE body only that CTE's earlier siblings are visible -- plus the
+    CTE itself, but *only* under `WITH RECURSIVE`, which is what makes a recursive CTE work. Without
+    `RECURSIVE` the engine resolves a CTE's own name inside its body to the base table, so counting
+    it as visible here would wave a real, unfiltered table through. A CTE declared in a nested or
+    sibling scope is not reachable either -- which is the whole point, see `_is_cte_reference`.
+
+    This is a scope *chain* walk, not full SQL name resolution; it never has to be more precise
+    than that because every name it fails to resolve is refused, not passed through.
+    """
+    names: set[tuple[str, bool]] = set()
+    child, parent = node, node.parent
+    while parent is not None:
+        if isinstance(parent, exp.With):
+            # `child` is the CTE whose body we are in: stop at it, later siblings are not visible.
+            for cte in parent.expressions:
+                if cte is child and not parent.args.get('recursive'):
+                    break
+                names.add(_cte_key(cte, dialect=dialect))
+                if cte is child:
+                    break
+        elif (with_clause := _with_clause(parent)) is not None and with_clause is not child:
+            names.update(_cte_key(cte, dialect=dialect) for cte in with_clause.expressions)
+        child, parent = parent, parent.parent
+    return names
+
+
+def _is_non_recursive_self_reference(node: exp.Table, key: tuple[str, bool], *, dialect: str) -> bool:
+    """Whether `node` sits inside the body of a CTE named `key` whose WITH lacks `RECURSIVE`.
+
+    Only used to explain a refusal: `_cte_names_in_scope` has already decided such a name is not a
+    CTE reference. It exists so the caller gets "this needs RECURSIVE" rather than the misleading
+    "declared in another scope" -- the declaration is right here, it is just not in scope yet.
+    """
+    child, parent = node, node.parent
+    while parent is not None:
+        if (
+            isinstance(parent, exp.With)
+            and not parent.args.get('recursive')
+            and any(cte is child and _cte_key(cte, dialect=dialect) == key for cte in parent.expressions)
+        ):
+            return True
+        child, parent = parent, parent.parent
+    return False
+
+
+def _is_cte_reference(node: exp.Table, cte_names: set[str], *, dialect: str) -> bool:
+    """Whether `node` names a CTE declared in its own enclosing scope chain (and so is not a table).
+
+    `cte_names` is `_cte_names()` for the whole statement. Matching the whole-tree set is not
+    enough on its own: a CTE declared in a nested subquery or in the other branch of a UNION used
+    to make a top-level *real* table look like a CTE reference and sail through unfiltered.
+
+    Fail-closed: when the name matches a CTE that is out of scope, or matches one in scope but with
+    different quoting (so the engine and this rewriter could disagree about what it resolves to),
+    raise rather than guess.
+    """
+    if node.db or node.catalog or not isinstance(node.this, exp.Identifier):
+        return False  # a qualified or non-identifier source is never a CTE reference
+    if node.name.lower() not in cte_names:
+        return False
+    key = _identifier_key(node.name, node.this.quoted, dialect=dialect)
+    in_scope = _cte_names_in_scope(node, dialect=dialect)
+    if key in in_scope:
+        return True
+    if any(scoped_name == key[0] for scoped_name, _ in in_scope):
+        raise RlsError(f'RLS: ambiguous CTE reference, quoting differs from the declaration: {node.name}')
+    if _is_non_recursive_self_reference(node, key, dialect=dialect):
+        raise RlsError(f'RLS: a CTE cannot reference itself without RECURSIVE: {node.name}')
+    raise RlsError(f'RLS: table reference shadowed by a CTE declared in another scope: {node.name}')
+
+
+def _function_name(node: exp.Expression) -> str:
+    """The name a function call goes by, including any `db.schema.` prefix it was written with.
+
+    sqlglot parses `SNOWFLAKE.CORTEX.COMPLETE(...)` as a `Dot` chain whose rightmost element is an
+    `exp.Anonymous` named only `COMPLETE`, so the qualification -- the part that says which function
+    family this is -- lives in the ancestors and has to be walked back in.
+    """
+    if isinstance(node, exp.Anonymous):
+        name = node.name
+        current: exp.Expression = node
+        parent = current.parent
+        while isinstance(parent, exp.Dot) and parent.expression is current:
+            # The left side of such a `Dot` is identifiers only, so rendering it is safe.
+            name = f'{parent.this.sql()}.{name}'
+            current, parent = parent, parent.parent
+        return name
+    return node.sql_name() if isinstance(node, exp.Func) else type(node).__name__
+
+
+def _check_functions(tree: exp.Expression, cte_names: set[str], *, dialect: str) -> None:
+    """Refuse function calls that RLS cannot reason about; raise `RlsError` if any is present.
+
+    Two bans, both allowlist-shaped where it matters:
+
+    * `SYSTEM$...` and anything under `CORTEX` are refused wherever they appear. They read metadata,
+      cancel queries or hand text to an LLM -- none of which the row filter constrains, however
+      thoroughly the FROM clause is rewritten.
+    * A query with no real table to filter (`SELECT GET_DDL(...)`, or the same thing dressed up with
+      a dummy CTE) is not a data query at all: whatever it returns, no predicate shaped it. Only a
+      small set of clock functions and pure scalar expressions is allowed there.
+    """
+    for node in tree.find_all(exp.Anonymous):
+        name = _function_name(node)
+        if any(part.upper().startswith('SYSTEM$') for part in name.split('.')) or 'CORTEX' in name.upper():
+            raise RlsError(f'RLS: function call is not allowed: {name}')
+
+    # An `exp.Table` naming a CTE in scope is not a real table. Resolution goes through
+    # `_is_cte_reference` rather than the cheap name set so that a name which only *looks* like a
+    # CTE is refused with the reason it deserves ("declared in another scope") instead of being
+    # counted as a non-table here and reported as a stray function call.
+    for table in tree.find_all(exp.Table):
+        if not isinstance(table.this, exp.Identifier) or not _is_cte_reference(table, cte_names, dialect=dialect):
+            return  # there is a real table here; the rewrite will filter it
+
+    for node in tree.find_all(exp.Func):
+        if isinstance(node, _FROMLESS_ALLOWED_FUNC_TYPES):
+            continue
+        name = _function_name(node)
+        if name.upper() in _FROMLESS_ALLOWED_FUNC_NAMES:
+            continue
+        raise RlsError(f'RLS: function calls are not allowed in a query without FROM: {name}')
+
+
+def _matching_key(table: exp.Table, keys: Mapping[str, str], *, dialect: str) -> str | None:
+    """The rules key `table` was wrapped under -- built exactly as `predicate_for` builds it."""
+    if not table.db:
+        return None
+    key = _rule_key(table.db, table.name, dialect)
+    return key if key in keys else None
+
+
+def _check_output(sql: str, *, dialect: str, predicates: Mapping[str, str]) -> None:
+    """Assert the generated SQL is still a plain SELECT over wrapped tables; raise `RlsError` if not.
+
+    This is the safety net: it re-parses the rewriter's own output and checks it from scratch, so a
+    bug or an unforeseen node type upstream cannot smuggle DDL, a second statement or an unfiltered
+    *governed* table past it. The only shape the rewrite ever produces for a table a policy names
+    is `(SELECT * FROM <table> WHERE <predicate>) AS <alias>`; anything else there is a defect, not
+    data. An ungoverned table (no policy names it at all) is untouched by design and may appear in
+    any shape -- this check only ever looks at tables matching a key in `predicates`.
+
+    `predicates` maps each rules key the rewrite matched to the predicate text it inserted for it.
+    A wrapper is only accepted when its WHERE is present AND generates back to exactly that
+    predicate: "wrapped in something" is not the invariant, "wrapped in the filter the admin wrote"
+    is. Without the comparison a wrapper carrying a weakened or empty condition would pass.
+
+    Consequence worth knowing when authoring rules: a predicate that itself references another table
+    (`id IN (SELECT id FROM other)`) leaves a table outside a wrapper and is refused. Predicates must
+    be plain conditions over the protected table's own columns.
+    """
+    try:
+        statements = sqlglot.parse(sql, dialect=dialect)
+    except sqlglot.errors.SqlglotError as e:
+        raise RlsError(f'RLS: rewrite produced SQL that cannot be re-parsed: {_clean_error(e)}') from e
+    if len(statements) != 1 or not isinstance(statements[0], (exp.Select, exp.SetOperation)):
+        raise RlsError('RLS: rewrite produced a non-SELECT statement')
+    tree = statements[0]
+
+    cte_names = _cte_names(tree)
+    for table in tree.find_all(exp.Table):
+        if not isinstance(table.this, exp.Identifier):
+            # A table function (`FROM my_udtf(1)`) parses as an `exp.Table` with no identifier to
+            # name it. The same guard `_check_from_sources` and `_transform` apply on the way in --
+            # here it also stops such a node reaching the "is it wrapped?" test, which would report
+            # it under an empty name.
+            raise RlsError('RLS: rewrite left an unsupported table reference')
+        if _is_cte_reference(table, cte_names, dialect=dialect):
+            continue  # reference to a CTE in scope here, not a real table
+        key = _matching_key(table, predicates, dialect=dialect)
+        if key is None:
+            # No policy governs this table -- it was deliberately left untouched by `_transform`
+            # (RLS is opt-in per table, see `RlsRules.is_governed`), so there is nothing here to
+            # verify: an ungoverned table may appear in any shape, wrapped or not.
+            continue
+        select = table.parent.parent if isinstance(table.parent, exp.From) else None
+        wrapped = (
+            isinstance(select, exp.Select)
+            and [type(e) for e in select.expressions] == [exp.Star]
+            and isinstance(select.parent, exp.Subquery)
+        )
+        if not wrapped:
+            LOG.warning(f'RLS: rewrite left an unwrapped table reference for governed key {key!r}')
+            raise RlsError('RLS: rewrite left an unwrapped table reference')
+        assert isinstance(select, exp.Select)  # narrowed by `wrapped`
+        where = select.args.get('where')
+        if where is None:
+            LOG.warning(f'RLS: rewrite left the wrapper around {key!r} without a WHERE clause')
+            raise RlsError(_RULE_NOT_APPLIED.format(key=key))
+        # A governed table's WHERE must be a plain condition over its own columns -- never a table
+        # reference of its own. Checked explicitly here (not left to the generic per-table walk
+        # above), because a table embedded in a predicate can itself be bare/unqualified and would
+        # otherwise be skipped as "ungoverned" by the `key is None` branch above, the same way any
+        # ordinary ungoverned table elsewhere in the query legitimately is.
+        if next(where.this.find_all(exp.Table, exp.Subquery, exp.Select), None) is not None:
+            LOG.warning(f'RLS: predicate for table {key!r} references another table or subquery')
+            raise RlsError(_RULE_NOT_APPLIED.format(key=key))
+        try:
+            expected = sqlglot.parse_one(predicates[key], dialect=dialect, into=exp.Condition)
+        except sqlglot.errors.SqlglotError as e:
+            LOG.warning(f'RLS: predicate for table {key!r} is not valid SQL for dialect {dialect!r}: {_clean_error(e)}')
+            raise RlsError(_RULE_NOT_APPLIED.format(key=key)) from e
+        # Compared as generated text in the same dialect, so the two sides are normalised the same
+        # way and only a real difference in the condition can fail this. Neither side is quoted back
+        # to the caller: the difference between them IS the predicate.
+        if where.this.sql(dialect=dialect) != expected.sql(dialect=dialect):
+            LOG.warning(
+                f'RLS: rewrite produced a WHERE that is not the rule for table {key!r}: '
+                f'{where.this.sql(dialect=dialect)!r} != {expected.sql(dialect=dialect)!r}'
+            )
+            raise RlsError(_RULE_NOT_APPLIED.format(key=key))
+
+
+def references_governed_table(sql: str, *, dialect: str, rules: RlsRules) -> bool:
+    """Cheap, lenient pre-check: does `sql` reference any table `rules` governs at all?
+
+    Callers (see `tools/sql.py`) use this to decide whether a query needs `rewrite_query()`'s full,
+    deliberately paranoid pipeline (single-statement, SELECT-only, allowlisted FROM sources, ...) at
+    all: a query that touches zero governed tables is not RLS's concern and must behave exactly
+    like plain, unfiltered `query_data` -- RLS is opt-in per table, not a blanket restriction on
+    every query the moment a project has any policy configured.
+
+    Deliberately lenient about *shape*: unlike `rewrite_query`, this does not require a single
+    `SELECT` statement, and does not reject multi-statement input or exotic FROM sources -- it only
+    asks "is a governed table's name present in this parse tree at all," so it never falsely says
+    "no" for a query `rewrite_query` would in fact need to touch. A query that fails to parse
+    entirely returns `False`: RLS cannot reason about it either way, and a query this malformed
+    would fail at the backend regardless -- exactly the same outcome plain `query_data` already has
+    for it today, not a new gap.
+    """
+    try:
+        statements = sqlglot.parse(sql, dialect=dialect)
+    except sqlglot.errors.SqlglotError:
+        return False
+    for statement in statements:
+        if statement is None:
+            continue
+        for table in statement.find_all(exp.Table):
+            if table.db and rules.is_governed(table_name=table.name, schema=table.db):
+                return True
+    return False
+
+
+def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> RewrittenQuery:
+    """Rewrite a single SELECT so every table a policy governs becomes a filtered subquery; a
+    table no policy names at all is left completely untouched (see `RlsRules.is_governed`).
+
+    Call this only once `references_governed_table()` has confirmed the query is worth the full,
+    paranoid pipeline below -- a query touching zero governed tables should skip this function
+    entirely rather than be needlessly restricted to a single SELECT / allowlisted FROM sources.
+
+    :param sql: the caller's SQL, in the workspace dialect
+    :param user: identity used to select rules; case-insensitive
+    :param dialect: sqlglot dialect name (`'snowflake'` / `'bigquery'`)
+    :param rules: loaded rules
+    :raises RlsError: on anything other than one SELECT statement whose every governed table has a
+        rule for `user`
+    """
+    try:
+        sqlglot.Dialect.get_or_raise(dialect)
+    except Exception as e:
+        raise RlsError(f'RLS: unsupported SQL dialect {dialect!r}') from e
+    # Predicates are never transpiled, so rules written for one backend must not be applied to
+    # another: the same text can mean different things (or silently nothing) under a different
+    # dialect. Fail closed rather than rewrite with a filter whose meaning we cannot vouch for.
+    if rules.dialect != dialect.lower():
+        raise RlsError(f'RLS: rules are for dialect {rules.dialect} but the workspace is {dialect.lower()}')
+    try:
+        statements = sqlglot.parse(sql, dialect=dialect)
+    except sqlglot.errors.SqlglotError as e:
+        raise RlsError(f'RLS: cannot parse SQL: {_clean_error(e)}{_parse_error_hint(sql)}') from e
+    if len(statements) != 1 or statements[0] is None:
+        raise RlsError('RLS: exactly one statement is allowed')
+    tree = _unwrap_parenthesised(statements[0])
+    # `exp.SetOperation` covers UNION, EXCEPT and INTERSECT alike.
+    if not isinstance(tree, (exp.Select, exp.SetOperation)):
+        raise RlsError(f'RLS: only SELECT statements are allowed, got {type(tree).__name__}')
+    # `SELECT ... INTO t` is generated back as `CREATE TABLE t AS ...` -- DDL from a read-only tool.
+    # Every SELECT is checked, not just the outermost one: set operations nest them.
+    if any(select.args.get('into') is not None for select in tree.find_all(exp.Select)):
+        raise RlsError('RLS: SELECT INTO is not allowed')
+
+    # A CTE may be named after a protected table -- `WITH orders AS (SELECT * FROM "in.c-crm"."orders"
+    # WHERE amount > 0)` is the natural way to write such a query, and refusing it taught callers to
+    # go looking for a formulation that slips through instead. It is safe because a rules key names a
+    # bucket (see `RlsRules`) and a CTE alias never can: a protected table is always referenced with
+    # its bucket, and `_is_cte_reference` never treats a qualified reference as a CTE. What remains
+    # is the shadowing that is real -- a bare name resolved against the wrong scope, a quoting
+    # mismatch between declaration and reference, a CTE reading its own name without RECURSIVE -- and
+    # every one of those is still refused, where it happens, by `_is_cte_reference`.
+    cte_names = _cte_names(tree)
+
+    _check_from_sources(tree)
+    _check_functions(tree, cte_names, dialect=dialect)
+
+    applied: list[str] = []
+    # The predicate the rewrite actually inserted for each matched key, handed to `_check_output` so
+    # the safety net can verify the WHERE it finds is the rule, not merely some WHERE.
+    inserted: dict[str, str] = {}
+
+    def _transform(node: exp.Expression) -> exp.Expression:
+        if not isinstance(node, exp.Table):
+            return node
+        if not isinstance(node.this, exp.Identifier):
+            # A table function has no name to look a rule up by -- `_check_from_sources` already
+            # refuses these; this is the same guard on the rewrite path itself.
+            raise RlsError(f'RLS: unsupported table reference: {node.sql()}')
+        if _is_cte_reference(node, cte_names, dialect=dialect):
+            return node  # reference to a CTE in scope here, not a real table
+        if not rules.is_governed(table_name=node.name, schema=node.db or None):
+            return node  # no policy names this table at all -- not RLS's concern, leave it as-is
+        # The wrapper below rebuilds the table from name/db/catalog only, so any other modifier the
+        # node carries would vanish and change the query's meaning. Refuse rather than drop it.
+        extra_args = [
+            key
+            for key, value in node.args.items()
+            if key not in _ALLOWED_TABLE_ARGS and value is not None and value != []
+        ]
+        if (alias := node.args.get('alias')) is not None and alias.args.get('columns'):
+            extra_args.append('alias columns')
+        if extra_args:
+            raise RlsError(f'RLS: table modifiers are not supported on {node.name!r}: {sorted(extra_args)}')
+        key, predicate = rules.predicate_for(table_name=node.name, schema=node.db or None, user=user)
+        applied.append(key)
+        inserted[key] = predicate
+        # Reuse the original alias identifier as-is (preserving its own quoting) so references to
+        # it elsewhere in the query (e.g. an unquoted `o.id` in an ON clause) still resolve. Only
+        # fall back to the table's own name/quoting when the table was not aliased at all -- using
+        # the table identifier's quoting for an *existing* alias would silently change whether the
+        # alias is case-sensitive, breaking those other references.
+        alias_node = node.args.get('alias')
+        alias_identifier = (
+            alias_node.this.copy() if alias_node is not None else exp.to_identifier(node.name, quoted=node.this.quoted)
+        )
+        inner = exp.Table(this=node.this, db=node.args.get('db'), catalog=node.args.get('catalog'))
+        try:
+            predicate_expr = sqlglot.parse_one(predicate, dialect=dialect, into=exp.Condition)
+        except sqlglot.errors.SqlglotError as e:
+            # The caller is told only that the rule could not be applied. Which predicate, and why it
+            # failed, is the admin's business and goes to the log -- the message reaches a model.
+            LOG.warning(f'RLS: predicate for table {key!r} is not valid SQL for dialect {dialect!r}: {_clean_error(e)}')
+            raise RlsError(_RULE_NOT_APPLIED.format(key=key)) from e
+        filtered = exp.select('*').from_(inner).where(predicate_expr)
+        # Returning a new node stops `transform` from descending into it, so the inner table is
+        # not wrapped a second time.
+        return exp.Subquery(this=filtered, alias=exp.TableAlias(this=alias_identifier))
+
+    rewritten_sql = tree.transform(_transform, copy=True).sql(dialect=dialect)
+    _check_output(rewritten_sql, dialect=dialect, predicates=inserted)
+    # `dict.fromkeys` deduplicates while preserving first-seen order: a table joined or unioned with
+    # itself is disclosed once.
+    return RewrittenQuery(sql=rewritten_sql, applied_rules=list(dict.fromkeys(applied)))

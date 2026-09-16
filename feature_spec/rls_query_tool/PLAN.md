@@ -44,15 +44,19 @@ proceed independently.
   `TestRewriteQuery`/`TestOutputInvariant`/`TestDisclosure` need no changes (confirmed: they
   already construct `RlsRules(tables={...}, dialect=...)` directly).
 
-### Task 2 — `oauth.py`: populate `user_email`
+### Task 2 — `oauth.py`: populate `user_email` (DONE — implemented this session)
 
-- In `exchange_authorization_code()`, after `_exchange_oauth_for_session(...)` returns `token_set`,
-  call `verify_token()` (already exists, `clients/storage.py`) and pass the resolved identity into
-  `SessionStore.create(..., user_email=...)` instead of the current hardcoded `None`.
-- **Before writing this**: confirm the exact field carrying the token-owner's identity in a real
-  `tokens/verify` response (Storage API docs or a live call) — do not guess the JSON path.
+- `exchange_authorization_code()` already calls `introspect_token()` once (for scope
+  auto-confirm); it now reuses that same call's `Introspection.user_email` — a confirmed field
+  (`user.email` in the introspection response, already read/tested elsewhere in this repo) —
+  instead of the originally-planned, unverified `tokens/verify`-based approach. No second network
+  call added. `_auto_confirm_project_scope` takes the already-fetched `Introspection` as a
+  parameter rather than re-fetching it.
+- `ProxyAccessToken` gained a `user_email: str | None` field, populated in `load_access_token()`
+  from the session row — mirrors exactly how `scope_project_ids` etc. are already carried there so
+  `mcp.py` doesn't pay a second DB round-trip.
 - Tests: `exchange_authorization_code()` persists a non-`None` `user_email` given a mocked
-  `verify_token()` response; a missing/ambiguous identity in the response is handled explicitly
+  `introspect_token()` response; a missing/ambiguous identity in the response is handled explicitly
   (decide: `None` + RLS-disabled-for-this-session, vs. a hard failure — recommend the former,
   since a token that can't be identified simply can't use RLS-gated tables, it shouldn't break
   everything else the session does).
