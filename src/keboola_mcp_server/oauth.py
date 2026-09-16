@@ -7,7 +7,7 @@ import math
 import os
 import secrets
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from enum import Enum, auto
@@ -80,6 +80,40 @@ _MAX_CACHED_CLIENT_NAMES = 10_000
 _MAX_CACHED_REGISTRATIONS = 10_000
 _REGISTERED_CACHE_TTL_SECONDS = 300  # 5 min: a registered+active client's status rarely flips.
 
+# Local cap on calls to Connection's POST /oauth/clients/validate, enforced in
+# _check_registration_uncached before any network call. Connection's own per-IP ceiling for this
+# route is 600 calls/60s (connection/config/packages/oauth_client_rate_limit.yaml) -- deliberately
+# high because its whole legitimate caller base is "the MCP server", seen as a handful of shared
+# egress IPs across every user of the stack. The registration cache above already absorbs the
+# common case (repeat callers hit the cache, not Connection), so the only way to burn through that
+# budget is an attacker sending a distinct, never-cached (client_id, redirect_uri) pair on every
+# request (Copilot review finding) -- this bounds that to a fraction of Connection's ceiling per
+# MCP server process, so one flooding caller can no longer exhaust the budget shared by every
+# other stack user. Deliberately conservative (half of Connection's limit): several replicas can
+# share one egress IP, and this only bounds one process, not the fleet -- a real fix needs a
+# limiter shared across replicas (e.g. Redis-backed), tracked as a follow-up, not this PR.
+_VALIDATE_RATE_LIMIT_MAX_CALLS = 300
+_VALIDATE_RATE_LIMIT_WINDOW_SECONDS = 60.0
+
+
+class _SlidingWindowRateLimiter:
+    """Caps calls to `max_calls` per `window_seconds`, process-local. Single-threaded asyncio means
+    no lock is needed: `try_acquire` never awaits, so it always runs to completion uninterrupted."""
+
+    def __init__(self, max_calls: int, window_seconds: float) -> None:
+        self._max_calls = max_calls
+        self._window_seconds = window_seconds
+        self._call_times: deque[float] = deque()
+
+    def try_acquire(self) -> bool:
+        now = time.monotonic()
+        while self._call_times and now - self._call_times[0] > self._window_seconds:
+            self._call_times.popleft()
+        if len(self._call_times) >= self._max_calls:
+            return False
+        self._call_times.append(now)
+        return True
+
 
 class _ClientRegistration(Enum):
     """Outcome of asking Connection whether a (client_id, redirect_uri) pair is registered."""
@@ -119,8 +153,44 @@ def _sanitize_client_name(name: str) -> str:
     return ''.join(ch for ch in name if ch.isprintable())[:128]
 
 
-def _create_http_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30.0))
+def _create_http_client(*, follow_redirects: bool = True, timeout: httpx.Timeout | None = None) -> httpx.AsyncClient:
+    return httpx.AsyncClient(follow_redirects=follow_redirects, timeout=timeout or httpx.Timeout(30.0))
+
+
+def _scope_for(connection_client_id: str) -> str:
+    """
+    The OAuth scope `SimpleOAuthProvider.authorize()` requests from Connection for a given
+    (already-REGISTERED) client.
+
+    'claudai' satisfies the exchange endpoint's MissingClaudaiScopeException guard; 'projectless'
+    makes the exchanged session whole-stack instead of project-pinned.
+
+    'projectless' is requested ONLY for a client Keboola itself vetted and pre-registered (today:
+    claude-ai). Connection's own ClientApprovalProcessor deliberately withholds 'projectless' from
+    a client approved through the dynamic (Flow B) screen -- that scope mints an unrestricted,
+    every-project grant, and a self-service approval (any authenticated user, no elevated role
+    required -- see AI-2883 RFC Decisions §7/§8) is not the same level of vetting as a reviewed
+    Keboola migration. This server's own broker identity (`SimpleOAuthProvider._oauth_client_id`)
+    is what actually requests the scope, though, so without this function it would silently
+    request 'projectless' regardless of which underlying client triggered the flow -- laundering
+    the unrestricted grant right back in for a client Connection specifically tried to keep it
+    from. Falling through to plain project-selection consent for a dynamically-approved client
+    matches what Connection's own scopes intended.
+
+    Known residual gap (Copilot review finding, accepted -- no cheap fix without a Connection-side
+    change): this checks the *redirect_uri*, not the row's actual provenance on Connection.
+    `/oauth/clients/validate` returns a bare 200/404, so this server has no way to distinguish
+    "claude-ai registered by Keboola's migration" from "claude-ai registered via a Flow B approval
+    that happened to name the real claude.ai callback". In practice this requires the *exact*
+    claude.ai redirect_uri to already be in Flow B, which itself requires the pre-registration
+    migration to be absent (it runs on RUN_ON_MIGRATE | RUN_ON_INIT, so every stack gets it) --
+    narrow, self-inflicted, and still bounded by the same redirect_uri (the code can only ever
+    reach claude.ai's own endpoint either way), not attacker-triggerable. Closing it for real needs
+    Connection to expose registration provenance/scopes on the validate response; tracked as a
+    follow-up, not fixed here.
+    """
+    is_pre_registered = connection_client_id in _WELL_KNOWN_CONNECTION_CLIENT_IDS.values()
+    return 'claudai projectless' if is_pre_registered else 'claudai'
 
 
 class ConnectionClientRegistry:
@@ -164,6 +234,10 @@ class ConnectionClientRegistry:
         # - Caching ERROR would prolong an outage instead of retrying it -- fail-closed still
         #   applies on every uncached call (see AI-3792).
         self._registration_cache: OrderedDict[tuple[str, str], float] = OrderedDict()
+
+        self._validate_rate_limiter = _SlidingWindowRateLimiter(
+            _VALIDATE_RATE_LIMIT_MAX_CALLS, _VALIDATE_RATE_LIMIT_WINDOW_SECONDS
+        )
 
     def remember_client_name(self, client_id: str | None, client_name: str | None) -> None:
         if not client_id:
@@ -211,17 +285,27 @@ class ConnectionClientRegistry:
         return result
 
     async def _check_registration_uncached(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
+        if not self._validate_rate_limiter.try_acquire():
+            LOG.warning(
+                f'[check_registration] Local rate limit exceeded, not calling Connection: '
+                f'connection_client_id={connection_client_id}, redirect_uri={redirect_uri}'
+            )
+            return _ClientRegistration.ERROR
+
         try:
-            async with _create_http_client() as http_client:
+            # Explicit, tighter settings for this call, passed to the factory itself rather than
+            # overridden per-request on top of its defaults (which would just make the factory's
+            # own follow_redirects=True/30s-timeout defaults dead code for this call site). Never
+            # follow a redirect here: a misconfigured proxy/gateway between here and Connection
+            # that redirects to something returning 200 (a login page, a catch-all landing page,
+            # ...) must surface as an unexpected status (-> ERROR below), never get silently
+            # interpreted as "client is registered".
+            async with _create_http_client(
+                follow_redirects=False, timeout=httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)
+            ) as http_client:
                 response = await http_client.post(
                     self._validate_url,
                     json={'client_id': connection_client_id, 'redirect_uri': redirect_uri},
-                    timeout=httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0),
-                    # Never follow a redirect on this call: a misconfigured proxy/gateway between
-                    # here and Connection that redirects to something returning 200 (a login page,
-                    # a catch-all landing page, ...) must surface as an unexpected status (-> ERROR
-                    # below), never get silently interpreted as "client is registered".
-                    follow_redirects=False,
                 )
         except (httpx.HTTPError, httpx.InvalidURL) as e:
             LOG.warning(f'[check_registration] Could not reach Connection: {e}', exc_info=True)
@@ -593,34 +677,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, state={state}')
 
-        # 'claudai' satisfies the exchange endpoint's MissingClaudaiScopeException guard;
-        # 'projectless' makes the exchanged session whole-stack instead of project-pinned.
-        #
-        # 'projectless' is requested ONLY for a client Keboola itself vetted and pre-registered
-        # (today: claude-ai). Connection's own ClientApprovalProcessor deliberately withholds
-        # 'projectless' from a client approved through the dynamic (Flow B) screen -- that scope
-        # mints an unrestricted, every-project grant, and a self-service approval (any authenticated
-        # user, no elevated role required -- see AI-2883 RFC Decisions §7/§8) is not the same level
-        # of vetting as a reviewed Keboola migration. This server's own broker identity
-        # (self._oauth_client_id) is what actually requests the scope, though, so without this
-        # branch it would silently request 'projectless' regardless of which underlying client
-        # triggered the flow -- laundering the unrestricted grant right back in for a client
-        # Connection specifically tried to keep it from. Falling through to plain project-selection
-        # consent for a dynamically-approved client matches what Connection's own scopes intended.
-        #
-        # Known residual gap (Copilot review finding, accepted -- no cheap fix without a Connection-
-        # side change): this checks the *redirect_uri*, not the row's actual provenance on
-        # Connection. `/oauth/clients/validate` returns a bare 200/404, so this server has no way
-        # to distinguish "claude-ai registered by Keboola's migration" from "claude-ai registered
-        # via a Flow B approval that happened to name the real claude.ai callback". In practice this
-        # requires the *exact* claude.ai redirect_uri to already be in Flow B, which itself requires
-        # the pre-registration migration to be absent (it runs on RUN_ON_MIGRATE | RUN_ON_INIT, so
-        # every stack gets it) -- narrow, self-inflicted, and still bounded by the same redirect_uri
-        # (the code can only ever reach claude.ai's own endpoint either way), not attacker-triggerable.
-        # Closing it for real needs Connection to expose registration provenance/scopes on the
-        # validate response; tracked as a follow-up, not fixed here.
-        is_pre_registered = connection_client_id in _WELL_KNOWN_CONNECTION_CLIENT_IDS.values()
-        scope = 'claudai projectless' if is_pre_registered else 'claudai'
+        scope = _scope_for(connection_client_id)
 
         # create the authorization URL
         url_params = {
