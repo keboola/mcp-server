@@ -45,6 +45,13 @@ ProjectIdArg = Annotated[
 # have no session row to persist against -- those keep relying on scope_token.
 OAUTH_SESSION_ID_KEY = 'oauth_session_id'
 
+# The identity resolved at OAuth login (see oauth.py's exchange_authorization_code ->
+# Introspection.user_email), stashed on ctx.session.state the same way OAUTH_SESSION_ID_KEY is, so
+# RLS (rls.py / tools/sql.py) can read "who is this" without a second DB lookup. Absent for a
+# non-OAuth (PAT/header-token) session, which has no verified per-login identity at all -- RLS
+# simply has no principal to resolve there, the same "no identity, no RLS-gated access" outcome.
+OAUTH_USER_EMAIL_KEY = 'oauth_user_email'
+
 # Per-call argument that carries the confirmed multi-project scope forward (consumed and stripped
 # by SessionStateMiddleware.on_request). See SessionScope.to_token/from_token: under the server's
 # default stateless-HTTP transport a fresh, empty session is built for every request (the mcp
