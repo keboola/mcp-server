@@ -59,6 +59,11 @@ _OAUTH_LOG_ALL = bool(os.getenv('KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL'))
 # an IPv6 literal (e.g. '[::1]', not '::1'), verified against the installed pydantic version.
 _LOOPBACK_HOSTS = frozenset({'localhost', '127.0.0.1', '[::1]'})
 
+# The only hosts a cursor:// redirect_uri may target -- mirrors Connection's own
+# PendingMcpClientDecoder::ALLOWED_CURSOR_HOSTS exactly (a custom scheme has no certificate
+# authority backing it, so unlike https, "any host" is never a shape Connection will register).
+_ALLOWED_CURSOR_HOSTS = frozenset({'anysphere.cursor-retrieval', 'anysphere.cursor-mcp'})
+
 # redirect_uri -> the literal client_id Keboola pre-registered for it in Connection's oauth2_client
 # table (see connection/src/Core/Migrations/Application/Migrations/PreRegisterClaudeAiOAuthClientMigration*.php).
 # Not a trust decision -- it only picks which Connection row to ask about; /oauth/clients/validate
@@ -74,7 +79,6 @@ _MAX_CACHED_CLIENT_NAMES = 10_000
 # ConnectionClientRegistry.check_registration's result cache -- see its __init__ docstring.
 _MAX_CACHED_REGISTRATIONS = 10_000
 _REGISTERED_CACHE_TTL_SECONDS = 300  # 5 min: a registered+active client's status rarely flips.
-_NOT_REGISTERED_CACHE_TTL_SECONDS = 10  # short so a fresh Allow takes effect on the next retry
 
 
 class _ClientRegistration(Enum):
@@ -138,22 +142,36 @@ class ConnectionClientRegistry:
         # approval screen can show a real name instead of just the derived Connection client_id
         # (/authorize never receives client_name itself -- see the RFC's Problem section). In-
         # process only, bounded -- see RFC Decisions §4 for why this is a deliberate, display-only
-        # tradeoff and not a persistent store.
+        # tradeoff and not a persistent store. The stored value is sanitized+capped at insertion,
+        # not just when later read for display -- /register is unauthenticated, so an arbitrarily
+        # long raw name per entry would let a caller inflate memory well past what the entry-count
+        # cap alone bounds (Copilot review finding).
         self._client_names: OrderedDict[str, str] = OrderedDict()
 
-        # (connection_client_id, redirect_uri) -> (result, expires_at). /authorize is unauthenticated,
-        # so every hit costs Connection one call to /oauth/clients/validate -- which is itself
-        # IP-rate-limited, and this server's whole egress IP shares that budget across every user of
-        # the stack. A short-TTL positive/negative cache means the common case (the same handful of
-        # registered clients reconnecting) never leaves this process. ERROR is deliberately never
-        # cached -- caching a transient failure would just prolong an outage instead of retrying it
-        # (fail-closed still applies on every uncached call). See AI-2883 RFC security review.
-        self._registration_cache: OrderedDict[tuple[str, str], tuple[_ClientRegistration, float]] = OrderedDict()
+        # (connection_client_id, redirect_uri) -> (result, expires_at), REGISTERED only. /authorize
+        # is unauthenticated, so every hit costs Connection one call to /oauth/clients/validate --
+        # which is itself IP-rate-limited, and this server's whole egress IP shares that budget
+        # across every user of the stack. Caching REGISTERED results means the common case (the
+        # same handful of already-registered clients reconnecting with the same redirect_uri) never
+        # leaves this process.
+        #
+        # NOT_REGISTERED and ERROR are deliberately never cached:
+        # - A cached NOT_REGISTERED would still show stale on the very next retry right after an
+        #   admin clicks Allow, contradicting the "approve once, then retry" UX this flow depends
+        #   on (Copilot review finding) -- and it buys little anyway: an attacker varying
+        #   redirect_uri on every call misses this cache regardless (a fresh key each time), so it
+        #   was never a real defense against that flood; local throttling below is what handles it.
+        # - Caching ERROR would prolong an outage instead of retrying it -- fail-closed still
+        #   applies on every uncached call (see AI-3792).
+        self._registration_cache: OrderedDict[tuple[str, str], float] = OrderedDict()
 
     def remember_client_name(self, client_id: str | None, client_name: str | None) -> None:
-        if not client_id or not client_name:
+        if not client_id:
             return
-        self._client_names[client_id] = client_name
+        sanitized = _sanitize_client_name(client_name or '')
+        if not sanitized:
+            return
+        self._client_names[client_id] = sanitized
         self._client_names.move_to_end(client_id)
         if len(self._client_names) > _MAX_CACHED_CLIENT_NAMES:
             self._client_names.popitem(last=False)
@@ -173,23 +191,20 @@ class ConnectionClientRegistry:
         returns ERROR, never REGISTERED and never silently NOT_REGISTERED -- see AI-3792.
         """
         cache_key = (connection_client_id, redirect_uri)
-        cached = self._registration_cache.get(cache_key)
-        if cached is not None:
-            result, expires_at = cached
+        expires_at = self._registration_cache.get(cache_key)
+        if expires_at is not None:
             if time.monotonic() < expires_at:
-                return result
+                # Touch on read, not just on write -- otherwise a frequently-reused entry (e.g.
+                # Claude.ai's own pair) never gets bumped and can still be the oldest-inserted
+                # entry once enough unique, unrelated keys flood in, making it the first evicted
+                # despite being the most valuable entry to keep (Copilot review finding).
+                self._registration_cache.move_to_end(cache_key)
+                return _ClientRegistration.REGISTERED
             del self._registration_cache[cache_key]
 
         result = await self._check_registration_uncached(connection_client_id, redirect_uri)
-        if result is not _ClientRegistration.ERROR:
-            ttl = (
-                _REGISTERED_CACHE_TTL_SECONDS
-                if result is _ClientRegistration.REGISTERED
-                # Short: an admin approving a pending client expects the *next* attempt to work,
-                # not to wait out a stale negative cache entry.
-                else _NOT_REGISTERED_CACHE_TTL_SECONDS
-            )
-            self._registration_cache[cache_key] = (result, time.monotonic() + ttl)
+        if result is _ClientRegistration.REGISTERED:
+            self._registration_cache[cache_key] = time.monotonic() + _REGISTERED_CACHE_TTL_SECONDS
             self._registration_cache.move_to_end(cache_key)
             if len(self._registration_cache) > _MAX_CACHED_REGISTRATIONS:
                 self._registration_cache.popitem(last=False)
@@ -301,17 +316,19 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
         # Strategy §2).
         #
         # This is NOT the old per-domain trust list (_ALLOWED_DOMAINS) -- nothing below grants
-        # trust to any host, Connection's /oauth/clients/validate still does that exclusively. It
-        # mirrors exactly the redirect_uri *shape* Connection will ever register (see
+        # trust to any host, Connection's /oauth/clients/validate still does that exclusively for
+        # https. It mirrors exactly the redirect_uri *shape* Connection will ever register (see
         # PendingMcpClientDecoder, cited in the RFC's "Redirect-URI shape" section): https with any
-        # host, cursor:// (host checked by Connection), or http:// restricted to loopback (RFC
-        # 8252). A shape outside that can never end up REGISTERED anyway, so rejecting it here
-        # costs no legitimate flow -- but it matters for a reason beyond tidiness: when
-        # authorize()'s Connection check errors, this hook has *already run* and its accepted
-        # redirect_uri is what the mcp SDK's own error-response fallback would use if anything else
-        # in authorize() raised unexpectedly. Bounding the shape here bounds how bad that fallback
-        # can be (no file://, intent://, userinfo or fragment tricks), even though authorize()'s own
-        # ERROR branch avoids that fallback entirely by not raising (see its docstring).
+        # host, cursor:// restricted to Connection's own fixed host allowlist (a custom scheme has
+        # no certificate authority backing it, so Connection never accepts "any" cursor host
+        # either), or http:// restricted to loopback (RFC 8252). A shape outside that can never end
+        # up REGISTERED anyway, so rejecting it here costs no legitimate flow -- but it matters for
+        # a reason beyond tidiness: when authorize()'s Connection check errors, this hook has
+        # *already run* and its accepted redirect_uri is what the mcp SDK's own error-response
+        # fallback would use if anything else in authorize() raised unexpectedly. Bounding the
+        # shape here bounds how bad that fallback can be (no file://, intent://, userinfo or
+        # fragment tricks, no unlisted cursor host), even though authorize()'s own ERROR branch
+        # avoids that fallback entirely by not raising (see its docstring).
         if not redirect_uri:
             LOG.warning('[validate_redirect_uri] No redirect_uri specified.')
             raise InvalidRedirectUriError('The redirect_uri must be specified.')
@@ -329,7 +346,11 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
             if (redirect_uri.host or '').lower() not in _LOOPBACK_HOSTS:
                 LOG.warning(f'[validate_redirect_uri] non-loopback http redirect_uri: {stripped_uri}')
                 raise InvalidRedirectUriError(f'Invalid redirect_uri: {stripped_uri}')
-        elif scheme not in ('https', 'cursor'):
+        elif scheme == 'cursor':
+            if (redirect_uri.host or '').lower() not in _ALLOWED_CURSOR_HOSTS:
+                LOG.warning(f'[validate_redirect_uri] unlisted cursor host in redirect_uri: {stripped_uri}')
+                raise InvalidRedirectUriError(f'Invalid redirect_uri: {stripped_uri}')
+        elif scheme != 'https':
             LOG.warning(f'[validate_redirect_uri] Rejected scheme in redirect_uri: {stripped_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {stripped_uri}')
 
