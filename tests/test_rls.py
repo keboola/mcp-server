@@ -981,11 +981,13 @@ class TestOutputInvariant:
             # A bare, unqualified table name matches no governed key at all (see `RlsRules.
             # is_governed`) and is therefore *not* an error here -- it's ordinary, ungoverned
             # `query_data` territory, untouched by design. What IS still an error: a table that
-            # DOES match a governed key (`in.c-sales.orders`, in `OUTPUT_PREDICATES`) left unwrapped
-            # alongside a correctly-wrapped one.
+            # DOES match a governed key (`in.c-sales.orders`, governed by the `rules` fixture) left
+            # unwrapped alongside a correctly-wrapped one.
             (
-                "SELECT * FROM (SELECT * FROM \"in.c-crm\".\"invoices\" WHERE country = 'CZ') AS i "
-                'JOIN "in.c-sales"."orders" o ON TRUE',
+                (
+                    'SELECT * FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS i '
+                    'JOIN "in.c-sales"."orders" o ON TRUE'
+                ),
                 'unwrapped',
             ),
             # A wrapper that is not `SELECT *` would silently drop the RLS predicate's columns.
