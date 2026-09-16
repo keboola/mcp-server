@@ -142,7 +142,9 @@ class CustomRoutes:
         """
         error = request.query_params.get('error')
         if error:
-            LOG.warning(f'OAuth authorize failed before reaching Connection: {error}')
+            # strip control/bidi chars so a crafted query param can't forge log lines
+            safe_error = ''.join(ch for ch in error if ch.isprintable())[:200]
+            LOG.warning(f'OAuth authorize failed before reaching Connection: {safe_error}')
             return JSONResponse(
                 status_code=400,
                 content={'error': error, 'error_description': request.query_params.get('error_description')},
