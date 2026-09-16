@@ -435,6 +435,22 @@ approval).
     distributed limiter (e.g. Redis-backed) would be needed to cap the whole fleet's *combined* call
     rate precisely; tracked as a follow-up, not blocking this PR.
 
+    **Known trade-off (security-scanner finding, accepted):** the limiter's budget is global per
+    process, not partitioned by caller. `/authorize` is unauthenticated, so one caller sending ~5
+    req/s with a fresh `(client_id, redirect_uri)` pair each time (cheap, no coordination with
+    Connection needed) can keep the local deque permanently at capacity, making every *other*
+    concurrent caller on that same replica see `temporarily_unavailable` too, for as long as the
+    flood continues. This is still a strict improvement over having no local limiter at all: the
+    blast radius shrinks from stack-wide (exhausting Connection's real, shared 600/60s-per-IP
+    ceiling, which every other replica and every other user depends on) to single-replica, and it
+    remains fail-closed the entire time (no bypass, no false REGISTERED). Properly fixing the
+    unpartitioned-budget gap needs the same missing ingredient Decision §11's parent paragraph
+    already deferred for a different reason -- `authorize()` has no access to the caller's IP (the
+    mcp SDK's `authorize(client, params)` interface doesn't pass the request through), so a per-IP
+    sub-limit needs a new ASGI middleware ahead of the route (like the existing
+    `DatabaseUnavailableMiddleware`), not a change inside `check_registration()`. Tracked as a
+    follow-up alongside the cross-replica-fairness gap above, not blocking this PR.
+
 12. **Flagged, not fixed in this repo: any authenticated Keboola user — no elevated role required —
     can permanently register a stack-global trusted MCP client via Connection's dynamic-approval
     screen.** Adversarial review traced `ClientApprovalProcessor::process()`
