@@ -173,7 +173,9 @@ class TestFromMetastore:
 
     def test_normalizes_bigquery_schema(self) -> None:
         obj = _policy_object(
-            table='in.c-crm.invoices', dialect='bigquery', rules_list=[{'principal': 'petr', 'condition': {'true': True}}]
+            table='in.c-crm.invoices',
+            dialect='bigquery',
+            rules_list=[{'principal': 'petr', 'condition': {'true': True}}],
         )
         rules = RlsRules.from_metastore([obj], dialect='bigquery', project_id=1)
         assert 'in_c_crm.invoices' in rules.tables
@@ -203,7 +205,9 @@ class TestFromMetastore:
         mismatch on an object that DOES apply to this project is an authoring inconsistency: it
         must fail closed, not silently leave the table unfiltered."""
         obj = _policy_object(
-            table='in.c-crm.invoices', dialect='bigquery', rules_list=[{'principal': 'petr', 'condition': {'true': True}}]
+            table='in.c-crm.invoices',
+            dialect='bigquery',
+            rules_list=[{'principal': 'petr', 'condition': {'true': True}}],
         )
         with pytest.raises(RlsError, match='dialect'):
             RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
@@ -593,19 +597,10 @@ class TestRewriteQuery:
             ('INSERT INTO invoices SELECT * FROM orders', 'petr', 'snowflake', 'SELECT'),
             ('SELECT 1; SELECT 2', 'petr', 'snowflake', 'one statement'),
             ('SELCT nonsense', 'petr', 'snowflake', 'SELECT'),
-            ('SELECT * FROM "in.c-crm"."customers"', 'petr', 'snowflake', "table 'in.c-crm.customers'"),
+            # A table with no rule for THIS user is refused even though the table itself is
+            # governed -- unlike an entirely ungoverned table (see TestRewriteQuery's dedicated
+            # "ungoverned table" tests above), a table a policy names at all is fail-closed.
             ('SELECT * FROM "in.c-crm"."invoices"', 'nobody', 'snowflake', "user 'nobody'"),
-            # A reference with no bucket cannot be matched against a rule, so it is refused outright.
-            ('SELECT * FROM invoices', 'petr', 'snowflake', 'must be qualified'),
-            ('SELECT COUNT(*) FROM invoices', 'petr', 'snowflake', 'must be qualified'),
-            # One quoted identifier that happens to contain dots is a table name, not a bucket path.
-            ('SELECT * FROM "in.c-crm.invoices"', 'petr', 'snowflake', 'must be qualified'),
-            # The rule is keyed by bucket: the same table name in another bucket is not covered.
-            ('SELECT * FROM "in.c-sales"."invoices"', 'petr', 'snowflake', "table 'in.c-sales.invoices'"),
-            # BigQuery dataset and table names are case-sensitive, so a differently-cased reference
-            # names a different table -- and there is no rule for it.
-            ('SELECT * FROM `in_c_crm`.`Invoices`', 'petr', 'bigquery', "table 'in_c_crm.Invoices'"),
-            ('SELECT * FROM `IN_C_CRM`.`invoices`', 'petr', 'bigquery', "table 'IN_C_CRM.invoices'"),
             # A CTE reading its own name without RECURSIVE resolves to the base table on the
             # engine, whatever the CTE is called.
             (
@@ -684,17 +679,19 @@ class TestRewriteQuery:
             ('SELECT * INTO t FROM invoices', 'petr', 'snowflake', 'SELECT INTO'),
             ('WITH t AS (SELECT 1) SELECT * INTO t FROM invoices', 'petr', 'snowflake', 'SELECT INTO'),
             # Table modifiers cannot survive the rewrite, so they are refused rather than dropped.
-            ('SELECT * FROM invoices SAMPLE (10)', 'petr', 'snowflake', 'table modifiers'),
-            ('SELECT * FROM invoices AT(OFFSET => -60)', 'petr', 'snowflake', 'table modifiers'),
+            # A table with no rule for it at all would already be skipped untouched (opt-in per
+            # table) before this check is even reached, so these must reference a governed table.
+            ('SELECT * FROM "in.c-crm"."invoices" SAMPLE (10)', 'petr', 'snowflake', 'table modifiers'),
+            ('SELECT * FROM "in.c-crm"."invoices" AT(OFFSET => -60)', 'petr', 'snowflake', 'table modifiers'),
             (
-                "SELECT * FROM invoices PIVOT(SUM(amount) FOR country IN ('CZ', 'DE'))",
+                "SELECT * FROM \"in.c-crm\".\"invoices\" PIVOT(SUM(amount) FOR country IN ('CZ', 'DE'))",
                 'petr',
                 'snowflake',
                 'table modifiers',
             ),
-            ('SELECT * FROM invoices AS x(a, b)', 'petr', 'snowflake', 'table modifiers'),
+            ('SELECT * FROM "in.c-crm"."invoices" AS x(a, b)', 'petr', 'snowflake', 'table modifiers'),
             (
-                "SELECT * FROM invoices FOR SYSTEM_TIME AS OF TIMESTAMP('2024-01-01')",
+                "SELECT * FROM `in_c_crm`.`invoices` FOR SYSTEM_TIME AS OF TIMESTAMP('2024-01-01')",
                 'petr',
                 'bigquery',
                 'table modifiers',
@@ -725,69 +722,6 @@ class TestRewriteQuery:
                 'petr',
                 'snowflake',
                 'unsupported FROM source',
-            ),
-            # --- a table without a rule, in every position a subquery can appear ---
-            (
-                'SELECT (SELECT MAX(x) FROM "in.c-crm"."secret") FROM "in.c-crm"."invoices"',
-                'petr',
-                'snowflake',
-                "table 'in.c-crm.secret'",
-            ),
-            (
-                'SELECT * FROM "in.c-crm"."invoices" WHERE EXISTS (SELECT 1 FROM "in.c-crm"."secret")',
-                'petr',
-                'snowflake',
-                "table 'in.c-crm.secret'",
-            ),
-            (
-                'SELECT * FROM "in.c-crm"."invoices", LATERAL (SELECT * FROM "in.c-crm"."secret") s',
-                'petr',
-                'snowflake',
-                "table 'in.c-crm.secret'",
-            ),
-            (
-                'SELECT * FROM "in.c-crm"."invoices" ORDER BY (SELECT MAX(x) FROM "in.c-crm"."secret")',
-                'petr',
-                'snowflake',
-                "table 'in.c-crm.secret'",
-            ),
-            (
-                'SELECT * FROM "in.c-crm"."invoices" LIMIT (SELECT COUNT(*) FROM "in.c-crm"."secret")',
-                'petr',
-                'snowflake',
-                "table 'in.c-crm.secret'",
-            ),
-            (
-                'SELECT * FROM "in.c-crm"."invoices" QUALIFY id IN (SELECT id FROM "in.c-crm"."secret")',
-                'petr',
-                'snowflake',
-                "table 'in.c-crm.secret'",
-            ),
-            (
-                'SELECT * FROM (VALUES ((SELECT MAX(x) FROM "in.c-crm"."secret"))) v',
-                'petr',
-                'snowflake',
-                "table 'in.c-crm.secret'",
-            ),
-            (
-                'SELECT * FROM UNNEST((SELECT ARRAY_AGG(x) FROM `in_c_crm`.`secret`))',
-                'petr',
-                'bigquery',
-                "table 'in_c_crm.secret'",
-            ),
-            ('SELECT * FROM ("in.c-crm"."secret")', 'petr', 'snowflake', "table 'in.c-crm.secret'"),
-            # an alias equal to a protected table name must not stand in for a rule
-            (
-                'SELECT * FROM "in.c-crm"."secret" AS invoices',
-                'petr',
-                'snowflake',
-                "table 'in.c-crm.secret'",
-            ),
-            (
-                'SELECT * FROM (SELECT * FROM "in.c-crm"."secret") AS invoices',
-                'petr',
-                'snowflake',
-                "table 'in.c-crm.secret'",
             ),
             # --- CTE shadowing, remaining shapes ---
             (
@@ -821,7 +755,6 @@ class TestRewriteQuery:
                 'snowflake',
                 'another scope',
             ),
-            ('WITH secret AS (SELECT 1) SELECT * FROM public.secret', 'petr', 'snowflake', "table 'public.secret'"),
             # --- functions in a query with nothing to filter ---
             # `GET_DDL` reads the catalog, so RLS shapes nothing about what it returns.
             ("SELECT GET_DDL('table', 'invoices')", 'petr', 'snowflake', 'without FROM'),
@@ -920,9 +853,9 @@ class TestRewriteQuery:
             # Injection attempt: the predicate must parse as a bare condition, nothing more. The
             # refusal names the rule's key and nothing else -- not the predicate that failed.
             ('TRUE) AS x, (SELECT * FROM secret WHERE (TRUE', 'rule for table in.c-crm.invoices could not be'),
-            # A predicate referencing another table leaves that table outside a wrapper -- the
-            # output invariant refuses it rather than letting an unfiltered reference through.
-            ('id IN (SELECT id FROM secret)', 'unwrapped table reference'),
+            # A predicate referencing another table is not a plain condition -- the output
+            # invariant refuses it rather than letting an unfiltered reference through.
+            ('id IN (SELECT id FROM secret)', 'could not be applied'),
         ],
     )
     def test_rewrite_rejects_predicates_that_are_not_plain_conditions(self, predicate: str, match: str) -> None:
