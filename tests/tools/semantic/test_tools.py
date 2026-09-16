@@ -137,10 +137,52 @@ async def test_get_semantic_context_resolves_data_location_when_requested(
         resolve_data_location=True,
     )
 
-    keboola_client.storage_client.bucket_list.assert_awaited()
     datasets = contexts[0].objects
     assert len(datasets) == 2
     assert all(d.data_location is not None and d.data_location.status == DatasetLocationStatus.LOCAL for d in datasets)
+    # Both datasets share the same bucket ("in.c-main") -- fetched once for the pair, not once per
+    # dataset (2 datasets calling the same two endpoints twice each would be pure waste).
+    keboola_client.storage_client.bucket_list.assert_awaited_once()
+    keboola_client.storage_client.shared_bucket_list.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_semantic_context_disambiguates_by_the_parent_models_source_project(
+    keboola_client: KeboolaClient,
+    mcp_context_client: Context,
+    mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
+) -> None:
+    """Both fixture datasets share modelUUID "model-1" -- the parent model's sourceProjectId (not
+    either dataset's own, which they don't carry) must be what picks the right shared bucket."""
+    keboola_client.storage_client.bucket_list = AsyncMock(return_value=[])
+    keboola_client.storage_client.shared_bucket_list = AsyncMock(
+        return_value=[
+            {'id': 'in.c-main', 'displayName': 'main', 'stage': 'in', 'project': {'id': 555}},
+            {'id': 'in.c-main', 'displayName': 'main (unrelated)', 'stage': 'in', 'project': {'id': 999}},
+        ]
+    )
+    keboola_client.metastore_client.get_object = AsyncMock(
+        return_value=_metastore_object(
+            SemanticObjectType.SEMANTIC_MODEL, 'model-1', name='Revenue Semantic Model', meta={'sourceProjectId': 555}
+        )
+    )
+
+    contexts = await get_semantic_context(
+        mcp_context_client,
+        [SemanticObjectTypeSelection(object_type=SemanticObjectType.SEMANTIC_DATASET)],
+        resolve_data_location=True,
+    )
+
+    keboola_client.metastore_client.get_object.assert_awaited_once_with(
+        SemanticObjectType.SEMANTIC_MODEL.value, 'model-1'
+    )
+    datasets = contexts[0].objects
+    assert len(datasets) == 2
+    for dataset in datasets:
+        assert dataset.data_location is not None
+        assert dataset.data_location.status == DatasetLocationStatus.SHARED_NOT_LINKED
+        assert dataset.data_location.source_project_id == 555
+        assert dataset.data_location.ambiguous is False
 
 
 @pytest.mark.asyncio
@@ -187,6 +229,12 @@ async def test_validate_semantic_query_surfaces_unreachable_dataset_location(
     assert findings['data-location:dataset-orders'].status == DatasetLocationStatus.UNREACHABLE.value
     assert findings['data-location:dataset-orders'].severity == 'warning'
     assert findings['data-location:dataset-customers'].status == DatasetLocationStatus.UNREACHABLE.value
+    # Both used datasets resolve against the same two Storage lists -- fetched once, not once per
+    # dataset, and reusing the semantic-model already fetched for semantic_model_ids rather than
+    # a redundant per-dataset model lookup.
+    keboola_client.storage_client.bucket_list.assert_awaited_once()
+    keboola_client.storage_client.shared_bucket_list.assert_awaited_once()
+    keboola_client.metastore_client.get_object.assert_awaited_once()
 
 
 @pytest.mark.asyncio
