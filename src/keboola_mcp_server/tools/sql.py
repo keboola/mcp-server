@@ -251,9 +251,9 @@ async def query_data(
         str | None,
         Field(
             description=(
-                'Opaque correlation token chosen by the agent. Pass the SAME value to validate_semantic_query and '
-                'cite it as [[q:<query_ref>]] so the UI can link this result to its semantic validation. Purely a '
-                'passthrough; does not affect execution.'
+                'Opaque correlation token chosen by the agent. Pass the SAME value to validate_semantic_query so '
+                'the client can pair this result with its semantic validation. Purely a passthrough; it does not '
+                'affect execution and is echoed back unchanged.'
             )
         ),
     ] = None,
