@@ -52,7 +52,14 @@ class FakeSessionStore:
         return access_token, refresh_token
 
     async def create(
-        self, *, client_id, user_email, kbc_access_token, kbc_refresh_token, kbc_access_expires_at
+        self,
+        *,
+        client_id,
+        user_email,
+        kbc_access_token,
+        kbc_refresh_token,
+        kbc_access_expires_at,
+        oauth_projectless: bool = True,
     ) -> tuple[str, str, OAuthSession]:
         self._next_id += 1
         session_id = str(self._next_id)
@@ -68,6 +75,7 @@ class FakeSessionStore:
             scope_confirmed=False,
             scope_scoped_token=None,
             scope_scoped_expires_at=None,
+            oauth_projectless=oauth_projectless,
         )
         self._sessions[session_id] = session
         access_token, refresh_token = self._new_token_pair(session_id)
@@ -324,7 +332,9 @@ class TestSimpleOAuthProvider:
         )
 
     @staticmethod
-    def authorization_code(*, scopes: list[str] | None = None, expires_at: float | None = None) -> Mapping[str, Any]:
+    def authorization_code(
+        *, scopes: list[str] | None = None, expires_at: float | None = None, oauth_projectless: bool = True
+    ) -> Mapping[str, Any]:
         auth_code = _ExtendedAuthorizationCode(
             code='foo',
             scopes=scopes or [],
@@ -335,6 +345,7 @@ class TestSimpleOAuthProvider:
             redirect_uri_provided_explicitly=True,
             oauth_access_token=AccessToken(token='oauth-access-token', client_id='mcp-server', scopes=['foo']),
             oauth_refresh_token=RefreshToken(token='oauth-refresh-token', client_id='mcp-server', scopes=['foo']),
+            oauth_projectless=oauth_projectless,
         )
         auth_code_raw = auth_code.model_dump()
         auth_code_raw['redirect_uri'] = str(auth_code_raw['redirect_uri'])  # AnyUrl is not JSON serializable
@@ -594,6 +605,37 @@ class TestSimpleOAuthProvider:
         from keboola_mcp_server.oauth import _ClientRegistration
 
         self._stub_client_registration(monkeypatch, _ClientRegistration.ERROR)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://attacker.example/steal'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        auth_url = await oauth_provider.authorize(client, params)
+
+        parsed = urlparse(auth_url)
+        assert f'{parsed.scheme}://{parsed.netloc}{parsed.path}' == 'https://mcp/callback'
+        query = parse_qs(parsed.query)
+        assert query['error'] == ['temporarily_unavailable']
+
+    @pytest.mark.asyncio
+    async def test_authorize_redirects_to_own_callback_on_unexpected_exception(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Anything unexpected raised past the registration check must ALSO redirect to this
+        server's own /oauth/callback, not escape authorize() -- if it did, the mcp SDK's generic
+        `except Exception` handler in AuthorizationHandler.handle would redirect to the
+        caller-supplied redirect_uri instead (already validated non-fatally by
+        validate_redirect_uri, which now accepts any https host): an open redirect triggerable by
+        anything that makes _authorize() raise after registration succeeds (Copilot review
+        finding)."""
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        monkeypatch.setattr(oauth_provider, '_encode', mock.Mock(side_effect=RuntimeError('encoding blew up')))
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         params = AuthorizationParams(
             redirect_uri=AnyUrl('https://attacker.example/steal'),
@@ -946,6 +988,48 @@ class TestSimpleOAuthProvider:
         assert loaded.scope_confirmed is True
         assert loaded.scope_project_ids == [1, 2]
         assert loaded.scope_scoped_token is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('oauth_projectless', 'expected_scopes'),
+        [
+            (True, ['claudai', 'projectless']),
+            (False, ['claudai']),
+        ],
+    )
+    async def test_exchange_authorization_code_persists_the_actual_granted_scope(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        oauth_projectless: bool,
+        expected_scopes: list[str],
+    ):
+        """load_access_token/load_refresh_token must advertise the scope THIS session's Connection
+        grant actually had (carried via _ExtendedAuthorizationCode.oauth_projectless from
+        authorize()'s state), not a fixed 'claudai projectless' for every session regardless --
+        otherwise a Flow B (dynamically-approved) session could claim the unrestricted whole-stack
+        grant that Connection specifically withheld from it (Copilot review finding)."""
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        monkeypatch.setattr(
+            oauth_module, 'introspect_token', mock.AsyncMock(side_effect=httpx.ConnectError('unreachable'))
+        )
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(
+            self.authorization_code(oauth_projectless=oauth_projectless)
+        )
+        oauth_token = await oauth_provider.exchange_authorization_code(client, auth_code)
+
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.scopes == expected_scopes
+        loaded_refresh = await oauth_provider.load_refresh_token(client, oauth_token.refresh_token)
+        assert loaded_refresh is not None
+        assert loaded_refresh.scopes == expected_scopes
 
     @pytest.mark.asyncio
     async def test_exchange_authorization_code_auto_confirms_single_project(
