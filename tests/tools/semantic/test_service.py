@@ -13,6 +13,7 @@ from keboola_mcp_server.tools.semantic.service import (
     _constraint_is_relevant,
     _extract_join_columns,
     _extract_metric_column,
+    _list_semantic_type_objects,
     _matches_sql,
     _to_semantic_service_data,
     detect_used_objects_from_context,
@@ -20,23 +21,7 @@ from keboola_mcp_server.tools.semantic.service import (
     search_semantic_context,
     validate_semantic_query_with_used_objects,
 )
-
-
-def _metastore_object(
-    object_type: SemanticObjectType,
-    object_id: str,
-    *,
-    name: str,
-    attributes: Mapping[str, object] | None = None,
-) -> MetastoreObject:
-    return MetastoreObject.model_validate(
-        {
-            'type': object_type.value,
-            'id': object_id,
-            'attributes': dict(attributes or {}),
-            'meta': {'name': name},
-        }
-    )
+from tests.tools.semantic.conftest import _metastore_object
 
 
 def _group_objects(
@@ -137,185 +122,6 @@ def _used_object_groups(
             _build_metastore_objects(SemanticObjectType.SEMANTIC_RELATIONSHIP, relationship_specs),
         )
     return used_groups
-
-
-@pytest.fixture
-def semantic_api_objects() -> dict[SemanticObjectType, list[MetastoreObject]]:
-    model_id = 'model-1'
-    orders_table_id = 'in.c-main.orders'
-    customers_table_id = 'in.c-main.customers'
-
-    return {
-        SemanticObjectType.SEMANTIC_MODEL: [
-            _metastore_object(
-                SemanticObjectType.SEMANTIC_MODEL,
-                model_id,
-                name='Revenue Semantic Model',
-                attributes={
-                    'name': 'Revenue Semantic Model',
-                    'description': 'Semantic model for revenue analytics',
-                    'sql_dialect': 'snowflake',
-                },
-            )
-        ],
-        SemanticObjectType.SEMANTIC_DATASET: [
-            _metastore_object(
-                SemanticObjectType.SEMANTIC_DATASET,
-                'dataset-orders',
-                name='Orders',
-                attributes={
-                    'name': 'Orders',
-                    'tableId': orders_table_id,
-                    'fqn': 'analytics.orders',
-                    'description': 'Fact table with order level data',
-                    'modelUUID': model_id,
-                },
-            ),
-            _metastore_object(
-                SemanticObjectType.SEMANTIC_DATASET,
-                'dataset-customers',
-                name='Customers',
-                attributes={
-                    'name': 'Customers',
-                    'tableId': customers_table_id,
-                    'fqn': 'analytics.customers',
-                    'description': 'Customer dimension',
-                    'modelUUID': model_id,
-                },
-            ),
-        ],
-        SemanticObjectType.SEMANTIC_METRIC: [
-            _metastore_object(
-                SemanticObjectType.SEMANTIC_METRIC,
-                'metric-revenue',
-                name='Revenue',
-                attributes={
-                    'name': 'Revenue',
-                    'sql': 'SUM(order_amount)',
-                    'dataset': orders_table_id,
-                    'description': 'Total revenue',
-                    'modelUUID': model_id,
-                },
-            ),
-            _metastore_object(
-                SemanticObjectType.SEMANTIC_METRIC,
-                'metric-order-count',
-                name='Order Count',
-                attributes={
-                    'name': 'Order Count',
-                    'sql': 'COUNT(*)',
-                    'dataset': orders_table_id,
-                    'description': 'Count of orders',
-                    'modelUUID': model_id,
-                },
-            ),
-        ],
-        SemanticObjectType.SEMANTIC_RELATIONSHIP: [
-            _metastore_object(
-                SemanticObjectType.SEMANTIC_RELATIONSHIP,
-                'relationship-orders-customers',
-                name='Orders to Customers',
-                attributes={
-                    'name': 'Orders to Customers',
-                    'from': orders_table_id,
-                    'to': customers_table_id,
-                    'type': 'many_to_one',
-                    'on': 'orders.customer_id = customers.id',
-                    'modelUUID': model_id,
-                },
-            )
-        ],
-        SemanticObjectType.SEMANTIC_CONSTRAINT: [
-            _metastore_object(
-                SemanticObjectType.SEMANTIC_CONSTRAINT,
-                'constraint-composition',
-                name='Revenue requires order count',
-                attributes={
-                    'name': 'Revenue requires order count',
-                    'constraintType': 'composition',
-                    'severity': 'warning',
-                    'metrics': ['Revenue', 'Order Count'],
-                    'modelUUID': model_id,
-                },
-            ),
-            _metastore_object(
-                SemanticObjectType.SEMANTIC_CONSTRAINT,
-                'constraint-exclusion',
-                name='Orders and Customers combination',
-                attributes={
-                    'name': 'Orders and Customers combination',
-                    'constraintType': 'exclusion',
-                    'severity': 'error',
-                    'datasets': [orders_table_id, customers_table_id],
-                    'modelUUID': model_id,
-                },
-            ),
-            _metastore_object(
-                SemanticObjectType.SEMANTIC_CONSTRAINT,
-                'constraint-pre-query',
-                name='Revenue freshness',
-                attributes={
-                    'name': 'Revenue freshness',
-                    'constraintType': 'conditional',
-                    'severity': 'warning',
-                    'datasets': [orders_table_id],
-                    'modelUUID': model_id,
-                    'errorMessage': 'Revenue must be checked against fresh source data.',
-                    'remediation': 'Compare the report with the operational source before sharing it.',
-                    'ai': {'preQueryCheck': True},
-                    'validationQuery': {'default': 'SELECT 1'},
-                },
-            ),
-            _metastore_object(
-                SemanticObjectType.SEMANTIC_CONSTRAINT,
-                'constraint-post-query',
-                name='Revenue threshold',
-                attributes={
-                    'name': 'Revenue threshold',
-                    'constraintType': 'inequality',
-                    'severity': 'warning',
-                    'metrics': ['Revenue'],
-                    'modelUUID': model_id,
-                    'validationQuery': {'snowflake': 'SELECT * FROM revenue_threshold_check'},
-                },
-            ),
-        ],
-        SemanticObjectType.SEMANTIC_GLOSSARY: [
-            _metastore_object(
-                SemanticObjectType.SEMANTIC_GLOSSARY,
-                'glossary-revenue',
-                name='Revenue glossary',
-                attributes={
-                    'term': 'Revenue',
-                    'definition': 'Revenue recognized from completed orders',
-                    'modelUUID': model_id,
-                },
-            )
-        ],
-    }
-
-
-@pytest.fixture
-def mock_semantic_api(
-    keboola_client: KeboolaClient,
-    semantic_api_objects: dict[SemanticObjectType, list[MetastoreObject]],
-) -> dict[SemanticObjectType, list[MetastoreObject]]:
-    async def list_objects_side_effect(
-        object_type: SemanticObjectType | str,
-        *,
-        limit: int | None = None,
-        offset: int | None = None,
-        **_: object,
-    ) -> list[MetastoreObject]:
-        semantic_type = object_type if isinstance(object_type, SemanticObjectType) else SemanticObjectType(object_type)
-        items = semantic_api_objects.get(semantic_type, [])
-        start = offset or 0
-        if limit is None:
-            return items[start:]
-        return items[start : start + limit]
-
-    keboola_client.metastore_client.list_objects.side_effect = list_objects_side_effect
-    return semantic_api_objects
 
 
 @pytest.mark.asyncio
@@ -1093,3 +899,41 @@ async def test_search_semantic_context_validates_inputs(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         await search_semantic_context(keboola_client, patterns, max_results=max_results)
+
+
+@pytest.mark.asyncio
+async def test_list_semantic_type_objects_carries_scope_metadata_through_the_list_path(
+    keboola_client: KeboolaClient,
+) -> None:
+    """Scope/visibility fields must survive `list_objects` -> `_list_semantic_type_objects`,
+    not only the direct-object-construction path the other semantic-service tests use.
+
+    Only "project" scope is exercised here because that's the only scope the listing path
+    (`metastore.list_objects(..., organization_scope=False)`) can return today -- see
+    `get_semantic_context`'s CONSIDERATIONS.
+    """
+    obj = _metastore_object(
+        SemanticObjectType.SEMANTIC_MODEL,
+        'm1',
+        name='Shared Revenue Model',
+        meta={'scope': 'project', 'projectId': 123, 'scopeElevationRequestedAt': '2026-01-03T00:00:00Z'},
+    )
+
+    async def list_objects_side_effect(
+        object_type: SemanticObjectType | str,
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
+        **_: object,
+    ) -> list[MetastoreObject]:
+        return [obj] if (offset or 0) == 0 else []
+
+    keboola_client.metastore_client.list_objects.side_effect = list_objects_side_effect
+
+    objects = await _list_semantic_type_objects(keboola_client, SemanticObjectType.SEMANTIC_MODEL)
+
+    assert len(objects) == 1
+    assert objects[0].data.meta is not None
+    assert objects[0].data.meta.scope == 'project'
+    assert objects[0].data.meta.project_id == 123
+    assert objects[0].data.meta.scope_elevation_requested_at == '2026-01-03T00:00:00Z'
