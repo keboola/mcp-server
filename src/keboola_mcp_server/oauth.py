@@ -46,10 +46,15 @@ from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
 from keboola_mcp_server.session_store import DatabaseUnavailableError
 from keboola_mcp_server.session_store.repository import SessionStore
 
-# The OAuth scope this server always requests at /oauth/consent (see authorize()) -- fixed for
-# this flow, so the opaque access/refresh tokens don't need their own scopes column; carried here
-# only to satisfy the mcp SDK's AccessToken/RefreshToken (scopes: list[str], required).
-_OAUTH_SCOPES = ['claudai', 'projectless']
+
+# The two possible OAuth scopes this server requests at /oauth/consent for a session (see
+# _scope_for/authorize()) -- 'claudai' always, 'projectless' only for a pre-registered client.
+# Which one applies is per-session (OAuthSession.oauth_projectless), not fixed for the whole
+# flow: a Flow B (dynamically-approved) session's ProxyAccessToken/ProxyRefreshToken must not
+# claim 'projectless' when Connection only ever granted 'claudai' for it (Copilot review finding).
+def _scopes_for_session(oauth_projectless: bool) -> list[str]:
+    return ['claudai', 'projectless'] if oauth_projectless else ['claudai']
+
 
 LOG = logging.getLogger(__name__)
 _OAUTH_LOG_ALL = bool(os.getenv('KEBOOLA_MCP_SERVER_OAUTH_LOG_ALL'))
@@ -467,6 +472,13 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
 class _ExtendedAuthorizationCode(AuthorizationCode):
     oauth_access_token: AccessToken
     oauth_refresh_token: RefreshToken
+    # Whether the Connection OAuth scope requested in authorize() (see _scope_for) included
+    # 'projectless' for THIS session, carried from the state JWT so exchange_authorization_code
+    # can persist it on the session row instead of load_access_token/load_refresh_token later
+    # advertising 'projectless' unconditionally for every session (Copilot review finding).
+    # Defaults to True (the pre-AI-2883 behaviour) so an in-flight code encoded just before a
+    # deploy, whose state JWT predates this field, still decodes.
+    oauth_projectless: bool = True
 
 
 class ProxyAccessToken(AccessToken):
@@ -643,6 +655,24 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :return: The authorization URL that redirects to the OAuth server.
         """
+        try:
+            return await self._authorize(client, params)
+        except Exception:
+            # Anything unexpected escaping this method reaches the mcp SDK's own generic handler
+            # (AuthorizationHandler.handle's outer `except Exception`), which redirects to the
+            # *caller-supplied* redirect_uri with error params -- an open redirect now that
+            # validate_redirect_uri accepts any https host (Connection is the real authority, not
+            # a domain list -- see its docstring). Route every unexpected failure through the same
+            # own-origin fallback as the ERROR branch below, instead of relying on nothing else in
+            # this method ever raising (Copilot review finding).
+            LOG.exception(f'[authorize] Unexpected error building authorization URL: client_id={client.client_id}')
+            return construct_redirect_uri(
+                self._mcp_callback_url,
+                error='temporarily_unavailable',
+                error_description='Could not complete the authorization request.',
+            )
+
+    async def _authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         redirect_uri_str = str(params.redirect_uri)
         connection_client_id = _connection_client_id(redirect_uri_str)
 
@@ -686,6 +716,7 @@ class SimpleOAuthProvider(OAuthProvider):
         # Instead, we encode them to JWT and pass them back to the client.
         # The states expire after 5 minutes.
         scopes = cast(list[str], params.scopes or [])
+        scope = _scope_for(connection_client_id)
         state = {
             'redirect_uri': redirect_uri_str,
             'redirect_uri_provided_explicitly': str(params.redirect_uri_provided_explicitly),
@@ -695,12 +726,15 @@ class SimpleOAuthProvider(OAuthProvider):
             'state': params.state,
             'client_id': client.client_id,
             'expires_at': time.time() + 5 * 60,  # 5 minutes from now
+            # Carried through to exchange_authorization_code so the session it persists records
+            # what Connection actually granted for THIS pair, instead of load_access_token /
+            # load_refresh_token later advertising 'projectless' for every session regardless
+            # (Copilot review finding).
+            'projectless': 'projectless' in scope.split(),
         }
         state_jwt = self._encode(state)
 
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, state={state}')
-
-        scope = _scope_for(connection_client_id)
 
         # create the authorization URL
         url_params = {
@@ -788,6 +822,9 @@ class SimpleOAuthProvider(OAuthProvider):
             'code_challenge': state_data['code_challenge'],
             'oauth_access_token': access_token.model_dump(),
             'oauth_refresh_token': refresh_token.model_dump(),
+            # Defaults to True (matching _ExtendedAuthorizationCode's own default) for a state JWT
+            # encoded just before a deploy that predates this field.
+            'oauth_projectless': bool(state_data.get('projectless', True)),
         }
         auth_code_jwt = self._encode(auth_code)
 
@@ -868,6 +905,7 @@ class SimpleOAuthProvider(OAuthProvider):
             kbc_access_token=token_set.access_token,
             kbc_refresh_token=token_set.refresh_token,
             kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
+            oauth_projectless=authorization_code.oauth_projectless,
         )
         await self._auto_confirm_project_scope(session.id, token_set.access_token)
         return self._oauth_token(access_token, refresh_token, authorization_code.scopes)
@@ -959,7 +997,7 @@ class SimpleOAuthProvider(OAuthProvider):
         proxy_token = ProxyAccessToken(
             token=token,
             client_id=session.client_id,
-            scopes=_OAUTH_SCOPES,
+            scopes=_scopes_for_session(session.oauth_projectless),
             expires_at=None,  # no client-visible expiry -- see load_access_token docstring
             kbc_access_token=session.kbc_access_token,
             session_id=session.id,
@@ -988,7 +1026,7 @@ class SimpleOAuthProvider(OAuthProvider):
         proxy_token = ProxyRefreshToken(
             token=refresh_token,
             client_id=session.client_id,
-            scopes=_OAUTH_SCOPES,
+            scopes=_scopes_for_session(session.oauth_projectless),
             expires_at=None,
             kbc_refresh_token=session.kbc_refresh_token,
             session_id=session.id,
