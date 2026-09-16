@@ -36,6 +36,35 @@ async def test_get_by_access_token_unknown_returns_none(store) -> None:
     assert await store.get_by_access_token('does-not-exist') is None
 
 
+async def test_create_defaults_oauth_projectless_to_true(store) -> None:
+    """Pre-AI-2883 callers (and every row created before this column existed) get the historical
+    whole-stack grant -- see the 0005 migration's backfill default."""
+    _, _, session = await store.create(
+        client_id='claude.ai',
+        user_email=None,
+        kbc_access_token='kbc_at_x',
+        kbc_refresh_token='kbc_rt_x',
+        kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    assert session.oauth_projectless is True
+
+
+async def test_create_persists_oauth_projectless_false_for_flow_b(store) -> None:
+    access_token, _, session = await store.create(
+        client_id='some-dynamic-tool',
+        user_email=None,
+        kbc_access_token='kbc_at_y',
+        kbc_refresh_token='kbc_rt_y',
+        kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        oauth_projectless=False,
+    )
+    assert session.oauth_projectless is False
+
+    fetched = await store.get_by_access_token(access_token)
+    assert fetched is not None
+    assert fetched.oauth_projectless is False
+
+
 async def test_get_by_refresh_token(store) -> None:
     _, refresh_token, session = await store.create(
         client_id='claude.ai',
