@@ -118,10 +118,14 @@ Remove `_RE_LOCALHOST`, `_ALLOWED_DOMAINS`, and the now-unused `import re`.
 
 This SDK hook runs **synchronously**, before `authorize()` (`AuthorizationHandler.handle`,
 `authorize.py:179` calls it directly, not awaited) — so it cannot itself call Connection. Keep it
-to what a sync check can responsibly do: reject a missing `redirect_uri` and reject a handful of
-scripting schemes (`javascript`, `data`, `vbscript`) that could never legitimately reach Connection's
-registry anyway. Move the real trust decision to `authorize()` (Decisions §2 explains why this is
-the right split rather than trying to force the network call into this hook).
+to what a sync check can responsibly do: reject a missing `redirect_uri`, reject userinfo/fragment
+and an oversized URI, and bound the *shape* to what Connection could ever register -- loopback-only
+`http://` (RFC 8252), a fixed `cursor://` host allowlist, or `https://` with any host (Connection
+decides that part) -- which also rejects a handful of scripting schemes (`javascript`, `data`,
+`vbscript`) as a side effect of not matching any allowed scheme. Move the real trust decision (is
+this *specific* client_id + redirect_uri actually registered) to `authorize()` (Decision §8 covers
+why the full shape check landed here rather than staying minimal, and Decision §2 explains the
+sync/async split itself).
 
 ### 3. Persist just enough client metadata to survive `/register` → `/authorize`
 
@@ -174,7 +178,16 @@ async def authorize(self, client, params) -> str:
 
     status = await self._check_client_registration(connection_client_id, redirect_uri_str)
     if status is _ClientRegistration.ERROR:
-        raise AuthorizeError('temporarily_unavailable', 'Could not verify OAuth client with Connection.')
+        # NOT `raise AuthorizeError(...)` -- the mcp SDK's own error_response() would redirect
+        # that to the *caller-supplied* redirect_uri, which validate_redirect_uri above now
+        # accepts for any https host. Returning a same-origin redirect to this server's own
+        # /oauth/callback instead is what actually ships (Decision §9); the caller gets no
+        # callback for this attempt and must retry.
+        return construct_redirect_uri(
+            self._mcp_callback_url,
+            error='temporarily_unavailable',
+            error_description='Could not verify OAuth client with Connection.',
+        )
 
     ... existing state/JWT construction, unchanged ...
 
@@ -473,6 +486,17 @@ approval).
     the underlying gap worse or better (Connection's dynamic-approval screen is reachable today
     independent of whether this PR merges).
 
+13. **The REGISTERED cache's 5-minute TTL is also a revocation-latency window (Copilot review
+    finding, accepted).** Connection's contract deliberately maps a deactivated client to the same
+    404 as "never registered" (see the Contract table above) -- but for up to 5 minutes after
+    deactivation, a cached REGISTERED result still lets `authorize()` admit new logins for that
+    client. This is a real, previously-undiscussed latency, not a hypothetical one; it's accepted
+    rather than fixed here because there is currently no way to *trigger* a deactivation at all --
+    the "revoke this MCP client" UI is explicitly out of scope for this RFC (see Scope, above) and
+    doesn't exist on Connection yet. When that UI ships, this tradeoff needs revisiting (either an
+    invalidation hook the revoke action can call, or shortening the TTL) -- building that now, for a
+    revocation path that cannot yet be exercised, would be speculative. Tracked as a follow-up.
+
 ## Security Review Addendum
 
 Post-implementation, this RFC was reviewed by two independent adversarial passes (one general OWASP-
@@ -493,3 +517,8 @@ resolutions:
 | `_connection_client_id`'s 96-bit truncated hash, `claude-ai` impersonation via the literal redirect_uri string, and approval-reuse by an unrelated party presenting the same redirect_uri | — | Reviewed, confirmed **not exploitable** — Connection matches the exact pair, and whoever "reuses" an approval must still control the redirect_uri to receive anything from it |
 | Only a mocked `check_registration()` was tested; the real Connection response contract (200/404 mapping) was unverified | Medium | Fixed — a live-Connection integration test (`integtests/`, see Testing/Verification) now exercises the real endpoint; the interactive Allow/Deny click-through remains covered by Connection's own E2E suite, not duplicated here |
 | Any authenticated user (no elevated role) can register a stack-global trusted client via Connection's approval screen | High | **Not fixable here** — flagged, Decision §12. The drafted Connection-side fix (AI-3936 / `keboola/connection#8497`) is currently closed, unmerged — still open in production, tracked on the Linear issue for a Connection-side owner |
+| A 200 from Connection was trusted purely on status code; a misconfigured intermediary answering 200 at the same URL (health check, SSO page, WAF challenge) without ever reaching Connection would read as REGISTERED | Medium | Fixed — the body must also equal Connection's real, documented `{}` empty-JSON contract, or it's treated as `ERROR` |
+| `validate_redirect_uri`'s userinfo/fragment checks used truthiness; an empty-but-present component (`https://evil.example/cb#` → `fragment=''`) parses as falsy and slipped through | Low-Medium | Fixed (`is not None`, not truthiness) |
+| `register_client()`'s debug log interpolated the raw, unauthenticated `client_name` directly — unbounded length and control characters bypassed the sanitize-at-insertion protection for this one log line | Low | Fixed (logs the already-sanitized stored value instead) |
+| The REGISTERED cache's 5-minute TTL is also a revocation-latency window — a deactivated client stays admitted for up to 5 minutes | Low (no live trigger yet — Connection has no revoke UI) | Accepted, documented — Decision §13; revisit when Connection ships a revoke path |
+| Two RFC "Resolution Strategy" sections (§2's sync-hook description, §5's `authorize()` code sketch) described an earlier, narrower design (minimal scheme rejection only; `raise AuthorizeError`) that the final Decisions (§8, §9) superseded, making the RFC internally contradictory | Low (documentation) | Fixed — both sections rewritten to match the shipped behavior |
