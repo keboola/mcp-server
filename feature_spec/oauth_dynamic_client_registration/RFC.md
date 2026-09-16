@@ -71,9 +71,10 @@ because they're specific to how *this* server's OAuth-AS role works (see Decisio
 
 `https://<any host>`, `cursor://<anysphere.cursor-retrieval\|anysphere.cursor-mcp>`, or
 `http://<localhost\|127.0.0.1>` (RFC 8252 loopback) — no userinfo, no fragment, no control/bidi/
-zero-width characters, ≤2048 chars (`PendingMcpClientDecoder`). The MCP server does not need to
-re-implement this — an invalid shape just never becomes registered, and 404s like any other
-unknown pair.
+zero-width characters, ≤2048 chars (`PendingMcpClientDecoder`). Connection alone decides what gets
+registered; the MCP server locally mirrors this shape in `validate_redirect_uri()` (see Decisions
+§8) only to bound its own synchronous SDK hook, not to duplicate Connection's authority — an
+invalid shape just never becomes registered there either, and 404s like any other unknown pair.
 
 ### Pre-registered clients (Flow A)
 
