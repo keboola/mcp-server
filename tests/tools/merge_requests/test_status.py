@@ -80,7 +80,19 @@ def test_derive_state(mr: dict[str, Any], expected: str) -> None:
         pytest.param(_mr('published'), None, ['state'], id='published'),
         pytest.param(_mr('canceled'), None, ['state'], id='canceled'),
         pytest.param(_mr('approved'), [], [], id='approved_mergeable'),
-        pytest.param(_mr('in_review', mergeBlockers=['state']), [_conflict()], ['state'], id='server_first_override'),
+        pytest.param(
+            _mr('in_review', mergeBlockers=['state']),
+            [_conflict()],
+            ['state', 'conflicts'],
+            id='server_first_unions_live_conflicts',
+        ),
+        pytest.param(_mr('approved', mergeBlockers=[]), [], [], id='server_first_empty'),
+        pytest.param(
+            _mr('approved', mergeBlockers=['some_new_kind']),
+            [],
+            ['some_new_kind'],
+            id='server_first_keeps_unknown_kind',
+        ),
     ],
 )
 def test_derive_merge_blockers(mr: dict[str, Any], conflicts: list[ConflictRef] | None, expected: list[str]) -> None:
@@ -174,6 +186,12 @@ def test_derive_viewer(mr: dict[str, Any], admin_id: Any, expected: Viewer) -> N
             {'merge_blockers': ['conflicts'], 'conflicts': [_conflict('a'), _conflict('b')]},
             '2 conflicts block the merge',
             id='6_conflicts_on_branch',
+        ),
+        pytest.param(
+            6,
+            {'merge_blockers': ['conflicts'], 'conflicts': None},
+            'Conflicts block the merge; call get_merge_request_conflicts',
+            id='6c_conflicts_blocker_without_a_fetched_list',
         ),
         pytest.param(
             7,
