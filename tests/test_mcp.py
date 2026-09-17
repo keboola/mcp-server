@@ -2115,27 +2115,33 @@ class TestBootstrapSessionState:
 class TestUnauthorizedDropsARevokedSession:
     """A confirmed agent project revokes the session that created it, so its access token 401s
     while it still looks fresh -- the expiry-driven refresh never runs (agent_provisioning RFC).
+
+    Deleting a credential is destructive, so these cover both directions: the revoked session is
+    dropped, and everything that only *looks* like it (a per-request token, a transient failure,
+    a scope-related 401) is not.
     """
 
     CONFIG = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_revoked')
 
     @staticmethod
-    def _tokens() -> TokenSet:
-        return TokenSet(access_token='kbc_at_revoked', refresh_token='kbc_rt_x', expires_at=time.time() + 3600)
+    def _tokens(access_token: str = 'kbc_at_revoked') -> TokenSet:
+        return TokenSet(access_token=access_token, refresh_token='kbc_rt_x', expires_at=time.time() + 3600)
+
+    @staticmethod
+    def _http_error(status: int) -> httpx.HTTPStatusError:
+        return httpx.HTTPStatusError(str(status), request=MagicMock(), response=MagicMock(status_code=status))
 
     @pytest.mark.asyncio
-    async def test_a_dead_credential_is_dropped(self) -> None:
+    @pytest.mark.parametrize('status', [401, 403])
+    async def test_a_dead_credential_is_dropped(self, status: int) -> None:
         with (
             patch('keboola_mcp_server.mcp.load_tokens', return_value=self._tokens()),
-            patch(
-                'keboola_mcp_server.mcp.introspect_token',
-                AsyncMock(side_effect=httpx.HTTPStatusError('401', request=MagicMock(), response=MagicMock())),
-            ),
-            patch('keboola_mcp_server.mcp.forget_tokens') as forget,
+            patch('keboola_mcp_server.mcp.introspect_token', AsyncMock(side_effect=self._http_error(status))),
+            patch('keboola_mcp_server.mcp.forget_rejected_access_token', AsyncMock(return_value=True)) as forget,
         ):
             await SessionStateMiddleware._handle_unauthorized(self.CONFIG)
 
-        forget.assert_called_once_with('https://connection.keboola.com')
+        forget.assert_awaited_once_with('https://connection.keboola.com', 'kbc_at_revoked')
 
     @pytest.mark.asyncio
     async def test_a_scope_related_401_keeps_the_credential(self) -> None:
@@ -2144,23 +2150,58 @@ class TestUnauthorizedDropsARevokedSession:
         with (
             patch('keboola_mcp_server.mcp.load_tokens', return_value=self._tokens()),
             patch('keboola_mcp_server.mcp.introspect_token', AsyncMock(return_value=MagicMock())),
-            patch('keboola_mcp_server.mcp.forget_tokens') as forget,
+            patch('keboola_mcp_server.mcp.forget_rejected_access_token', AsyncMock()) as forget,
         ):
             await SessionStateMiddleware._handle_unauthorized(self.CONFIG)
 
-        forget.assert_not_called()
+        forget.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'failure',
+        [
+            httpx.ConnectTimeout('connection timed out'),
+            httpx.HTTPStatusError('503', request=MagicMock(), response=MagicMock(status_code=503)),
+        ],
+        ids=['transport_error', 'server_error'],
+    )
+    async def test_an_unverifiable_credential_is_kept(self, failure: Exception) -> None:
+        # Connection could not answer "is this token still valid?" -- that is not evidence the
+        # credential is dead, and deleting it over a blip would force a needless re-login.
+        with (
+            patch('keboola_mcp_server.mcp.load_tokens', return_value=self._tokens()),
+            patch('keboola_mcp_server.mcp.introspect_token', AsyncMock(side_effect=failure)),
+            patch('keboola_mcp_server.mcp.forget_rejected_access_token', AsyncMock()) as forget,
+        ):
+            await SessionStateMiddleware._handle_unauthorized(self.CONFIG)
+
+        forget.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_per_request_token_never_touches_the_stored_session(self) -> None:
+        # A token supplied by a header is not this session's stored credential; its 401 says
+        # nothing about the stored one.
+        with (
+            patch('keboola_mcp_server.mcp.load_tokens', return_value=self._tokens('kbc_at_someone_elses')),
+            patch('keboola_mcp_server.mcp.introspect_token', AsyncMock()) as introspect,
+            patch('keboola_mcp_server.mcp.forget_rejected_access_token', AsyncMock()) as forget,
+        ):
+            await SessionStateMiddleware._handle_unauthorized(self.CONFIG)
+
+        introspect.assert_not_awaited()
+        forget.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_nothing_is_dropped_without_a_stored_session(self) -> None:
         with (
             patch('keboola_mcp_server.mcp.load_tokens', return_value=None),
             patch('keboola_mcp_server.mcp.introspect_token', AsyncMock()) as introspect,
-            patch('keboola_mcp_server.mcp.forget_tokens') as forget,
+            patch('keboola_mcp_server.mcp.forget_rejected_access_token', AsyncMock()) as forget,
         ):
             await SessionStateMiddleware._handle_unauthorized(self.CONFIG)
 
         introspect.assert_not_awaited()
-        forget.assert_not_called()
+        forget.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

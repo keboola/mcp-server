@@ -32,7 +32,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import (
     exchange_scoped_token,
-    forget_tokens,
+    forget_rejected_access_token,
     get_access_token,
     introspect_token,
     load_tokens,
@@ -438,23 +438,41 @@ class SessionStateMiddleware(fmw.Middleware):
         still looks fresh and no refresh is ever attempted. Without this, every remaining call in
         that hour 401s with no way out.
 
-        A 401 alone is not proof the credential is dead, though: an unconfirmed or stale project
-        scope produces one too (see `RawKeboolaClient._raise_for_status`), and dropping a valid
-        credential over that would force a needless re-login. So the credential is re-checked with
-        `introspect_token` and only dropped when that fails as well. Best-effort throughout -- the
-        original error is re-raised by the caller either way.
+        Deleting a credential is destructive (the next session has to log in again), so all three
+        of these must hold before anything is removed:
+
+        * The request used the **stored** token. A token supplied per request (a header on a
+          streamable-http call) is not this session's stored credential, and its 401 says nothing
+          about the stored one.
+        * Re-checking the token with `introspect_token` fails **with an authentication error**.
+          A 401 alone is not proof the credential is dead: an unconfirmed or stale project scope
+          produces one too (see `RawKeboolaClient._raise_for_status`). A timeout, a connection
+          error or a 5xx proves even less -- the credential is kept and the caller still sees the
+          original error.
+        * The stored entry is *still* that same token when the delete happens -- see
+          `forget_rejected_access_token`, which compares under the credential-store locks, so a
+          concurrent refresh or a fresh `login` is never thrown away.
         """
         if not cls._is_local_programmatic(config):
             return
         storage_api_url = cast(str, config.storage_api_url)
-        if load_tokens(storage_api_url) is None:
+        access_token = strip_bearer(cast(str, config.storage_token))
+        tokens = load_tokens(storage_api_url)
+        if tokens is None or tokens.access_token != access_token:
             return
         try:
-            await introspect_token(storage_api_url, subject_token=strip_bearer(cast(str, config.storage_token)))
+            await introspect_token(storage_api_url, subject_token=access_token)
             return  # the credential itself is fine; the 401 was about something else
-        except Exception:
-            LOG.info(f'The stored session for {storage_api_url} is no longer valid; dropping it.')
-        forget_tokens(storage_api_url)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code not in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+                LOG.warning(f'Could not verify the stored session for {storage_api_url}; keeping it: {e}')
+                return
+        except Exception as e:
+            # Transport error, timeout, DNS -- says nothing about the credential.
+            LOG.warning(f'Could not verify the stored session for {storage_api_url}; keeping it: {e}')
+            return
+        if await forget_rejected_access_token(storage_api_url, access_token):
+            LOG.info(f'The stored session for {storage_api_url} was rejected by Connection; dropped it.')
 
     async def on_list_tools(
         self,

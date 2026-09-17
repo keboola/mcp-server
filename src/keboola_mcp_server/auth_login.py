@@ -32,6 +32,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from keboola_mcp_server.clients.auth_bridge import strip_bearer
 from keboola_mcp_server.clients.base import normalize_storage_api_url
 
 try:
@@ -662,6 +663,27 @@ def forget_tokens(storage_api_url: str | None = None, *, profile: str | None = N
         _write_store(store)
         return True
     return False
+
+
+async def forget_rejected_access_token(storage_api_url: str, access_token: str, *, profile: str | None = None) -> bool:
+    """Deletes the stored session, but only while it is still the one whose access token was
+    rejected. Returns True if it was removed.
+
+    Compare-and-delete under the same locks `get_access_token` refreshes with: between the rejected
+    call and this one, another caller (or another process sharing the credential file) may have
+    refreshed the session or logged in again, and dropping *that* entry would force a needless
+    re-login. A token that isn't the stored one at all -- one supplied per request via a header --
+    never removes anything.
+    """
+    stripped = strip_bearer(access_token)
+    key = _store_key(storage_api_url, profile)
+    lock = _refresh_locks.setdefault(key, asyncio.Lock())
+    async with lock, _credentials_lock():
+        tokens = load_tokens(storage_api_url, profile=profile)
+        if tokens is None or tokens.access_token != stripped:
+            return False
+        _forget(storage_api_url, profile=profile)
+        return True
 
 
 # --- interactive browser login (not unit-tested; exercises a real browser + loopback) ---
