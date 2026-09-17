@@ -249,6 +249,38 @@ def test_rows_with_ids_align_by_id_not_index() -> None:
     assert conflict.conflicting_paths == []  # an insertion is not a conflict with an edit of another row
 
 
+@pytest.mark.parametrize(
+    ('base_rows', 'ours_rows', 'theirs_rows', 'expected_paths', 'expected_conflicting'),
+    [
+        pytest.param(
+            [{'id': 'r1', 'configuration': {'x': 1}}],
+            [{'id': 'r1', 'configuration': {'x': 2}}],
+            [],
+            {'/rows/r1/configuration/x': 'ours', '/rows/r1': 'theirs'},
+            ['/rows/r1', '/rows/r1/configuration/x'],
+            id='modify_vs_delete_all_is_a_conflict',
+        ),
+        pytest.param(
+            [],
+            [{'id': 'r1', 'configuration': {}}],
+            [{'id': 'r2', 'configuration': {}}],
+            {'/rows/r1': 'ours', '/rows/r2': 'theirs'},
+            [],
+            id='two_different_insertions_on_empty_base_are_not_a_conflict',
+        ),
+    ],
+)
+def test_empty_rows_side_is_still_aligned_by_id(
+    base_rows: list, ours_rows: list, theirs_rows: list, expected_paths: dict[str, str], expected_conflicting: list[str]
+) -> None:
+    diff = {'base': _side(1, rows=base_rows), 'ours': _side(3, rows=ours_rows), 'theirs': _side(5, rows=theirs_rows)}
+
+    conflict = build_config_conflict(_ref(), diff)
+
+    assert {c.path: c.changed_by for c in conflict.changes} == expected_paths
+    assert conflict.conflicting_paths == expected_conflicting
+
+
 def test_subtree_vs_leaf_edit_is_a_conflict() -> None:
     base = _side(1, configuration={'parameters': {'a': 1}})
     ours = _side(3, configuration={})  # removed the whole subtree
