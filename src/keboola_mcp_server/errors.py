@@ -86,7 +86,7 @@ async def _trigger_event(
 
     user_agent: str | None = None
     if client_params := ctx.session.client_params:
-        user_agent = f'{client_params.clientInfo.name}/{client_params.clientInfo.version}'
+        user_agent = f'{client_params.client_info.name}/{client_params.client_info.version}'
     if not user_agent:
         user_agent = ctx.client_id
     if not user_agent and (http_rq := get_http_request_or_none()):

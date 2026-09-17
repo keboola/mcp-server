@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-from fastmcp.exceptions import ToolError
 from fastmcp import Context
+from fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 from pytest_mock import MockerFixture
 

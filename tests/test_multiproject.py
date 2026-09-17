@@ -24,7 +24,7 @@ def _tool(name: str, read_only: bool = False, tags: set[str] | None = None) -> M
     tool.name = name
     tool.tags = tags or set()
     if read_only:
-        tool.annotations.readOnlyHint = True
+        tool.annotations.read_only_hint = True
     else:
         tool.annotations = None
     return tool
@@ -47,7 +47,7 @@ class TestMultiProjectMiddleware:
         tool = MagicMock()
         tool.name = tool_name
         if read_only:
-            tool.annotations.readOnlyHint = True
+            tool.annotations.read_only_hint = True
         else:
             tool.annotations = None
         ctx.fastmcp.get_tool = AsyncMock(return_value=tool)
@@ -732,7 +732,7 @@ class TestActiveProjectReadOnlyGuard:
         )
         tool = MagicMock()
         tool.name = tool_name
-        tool.annotations.readOnlyHint = read_only_tool if read_only_tool else None
+        tool.annotations.read_only_hint = read_only_tool if read_only_tool else None
         ctx.fastmcp.get_tool = AsyncMock(return_value=tool)
         message = SimpleNamespace(name=tool_name, arguments={})
         context = SimpleNamespace(message=message, fastmcp_context=ctx)

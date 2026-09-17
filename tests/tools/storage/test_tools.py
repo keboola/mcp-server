@@ -5,8 +5,7 @@ from unittest.mock import AsyncMock, call
 
 import httpx
 import pytest
-from fastmcp import Client, FastMCP
-from fastmcp import Context
+from fastmcp import Client, Context, FastMCP
 from mcp.types import TextContent
 from pytest_mock import MockerFixture
 
