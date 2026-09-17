@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field, StrictBool, field_validator
 
 from keboola_mcp_server.links import Link
 
-MergeRequestState = Literal['development', 'in_review', 'approved', 'in_merge', 'published', 'canceled']
 DerivedState = Literal['rejected', 'closed', 'in_development', 'in_review', 'approved', 'in_merge', 'merged']
 MergeRequestStateFilter = Literal[
     'development',
@@ -28,10 +27,13 @@ MergeRequestStateFilter = Literal[
     'in_development',
     'merged',
 ]
-MergeBlocker = Literal['conflicts', 'approvals', 'state']
+# Raw API vocabularies are typed `str` on purpose: an unknown value from the backend must never fail a whole
+# list response (see status.py, which tolerates unknown states the same way). The known values are documented.
+MergeRequestState = str  # 'development' | 'in_review' | 'approved' | 'in_merge' | 'published' | 'canceled'
+MergeBlocker = str  # 'conflicts' | 'approvals' | 'state' (+ whatever the backend serializes, DMD-1988)
 AllowedAction = Literal['request_review', 'approve', 'request_changes', 'merge', 'update', 'resolve_conflicts']
-AutoMergeStrategy = Literal['none', 'immediately', 'scheduled']
-ReviewerStatus = Literal['approved', 'rejected', 'pending']
+AutoMergeStrategy = Literal['none', 'immediately', 'scheduled']  # input vocabulary (create / update)
+ReviewerStatus = str  # 'approved' | 'rejected' | 'pending'
 TakeMode = Literal['ours', 'theirs', 'delete']
 ChangedBy = Literal['ours', 'theirs', 'both']
 MergeRefusal = Literal['conflicts', 'not_ready']
@@ -55,7 +57,7 @@ class Reviewer(BaseModel):
 
     @classmethod
     def from_api(cls, raw: Mapping[str, Any]) -> 'Reviewer':
-        return cls(id=int(raw['id']), name=str(raw.get('name') or ''), status=raw.get('status') or 'pending')
+        return cls(id=int(raw['id']), name=str(raw.get('name') or ''), status=str(raw.get('status') or 'pending'))
 
 
 class Viewer(BaseModel):
@@ -177,7 +179,7 @@ class MergeRequest(BaseModel):
     branch_into_name: str = Field(description='The target branch name (the production/default branch).')
     creator_name: str = Field(description='Who created the merge request.')
     reviewers: list[Reviewer] = Field(description='The requested reviewers and their decisions.')
-    auto_merge: AutoMergeStrategy = Field(
+    auto_merge: str = Field(
         description="Auto-merge strategy: 'none' (off), 'immediately' (merge once approved), 'scheduled' (at auto_merge_at)."
     )
     auto_merge_at: str | None = Field(description="When a 'scheduled' auto-merge runs.")
@@ -199,7 +201,7 @@ class MergeRequest(BaseModel):
             id=int(raw['id']),
             title=str(raw.get('title') or ''),
             description=_opt_str(raw.get('description')),
-            state=raw.get('state'),
+            state=str(raw.get('state') or ''),
             derived_state=derive_state(raw),
             branch_from_id=int(branch_from_id) if branch_from_id is not None else None,
             branch_from_name=branch_names.get(str(branch_from_id)) if branch_from_id is not None else None,
@@ -208,7 +210,7 @@ class MergeRequest(BaseModel):
             else 'production',
             creator_name=str(creator.get('name') or ''),
             reviewers=[Reviewer.from_api(r) for r in raw.get('reviewers') or []],
-            auto_merge=raw.get('autoMergeStrategy') or 'none',
+            auto_merge=str(raw.get('autoMergeStrategy') or 'none'),
             auto_merge_at=_opt_str(raw.get('autoMergeAt')),
             created_at=str(raw.get('createdAt') or ''),
             merged_at=_opt_str(merge.get('mergedAt')),
@@ -302,8 +304,7 @@ class ConfigConflict(ConflictRef):
 class MergeRequestConflictsOutput(BaseModel):
     merge_request_id: int = Field(description='The merge request id.')
     conflicts: list[ConfigConflict] = Field(description='The conflicting configurations; empty when nothing blocks.')
-    status: DerivedStatus = Field(description='The merge request status.')
-    next_step: str = Field(description='The single recommended next action.')
+    status: DerivedStatus = Field(description='The merge request status; follow `status.next_step`.')
 
 
 class MergeResult(BaseModel):
@@ -352,4 +353,3 @@ class ResolveConflictResult(BaseModel):
     remaining_conflicts: list[ConflictRef] = Field(description='Conflicts still blocking the merge; empty = mergeable.')
     status: DerivedStatus = Field(description='The merge request status.')
     warnings: list[str] = Field(description='Soft issues, e.g. an ignored change description on delete.')
-    next_step: str = Field(description='The single recommended next action.')
