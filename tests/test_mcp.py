@@ -6,23 +6,29 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
+from fastmcp.tools import Tool
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 
+from keboola_mcp_server.auth_login import TokenSet
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
+    CONVERSATION_ID,
+    STORAGE_API_URL,
     AggregateError,
     ServerState,
     SessionStateMiddleware,
     ToolsFilteringMiddleware,
     _exclude_none_serializer,
     _filter_toon_nulls,
+    _is_unauthorized,
     process_concurrently,
     toon_serializer,
     unwrap_results,
@@ -2062,3 +2068,120 @@ class TestScopeToken:
         tools = await SessionStateMiddleware().on_list_tools(context, call_next)
 
         assert 'scope_token' in tools[0].parameters['properties']
+
+
+class TestBootstrapSessionState:
+    """A session with only a stack URL -- no token anywhere (agent_provisioning RFC). It must be
+    creatable and listable so that `create_project` can be called to obtain the first credential.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_token_creates_a_state_without_a_client(self) -> None:
+        config = Config(storage_api_url='https://connection.keboola.com', conversation_id='convo-1')
+
+        state = await SessionStateMiddleware.create_session_state(
+            config, ServerRuntimeInfo(transport='stdio'), own_stack_storage_api_url=None
+        )
+
+        assert KeboolaClient.STATE_KEY not in state
+        assert WorkspaceManager.STATE_KEY not in state
+        assert state[STORAGE_API_URL] == 'https://connection.keboola.com'
+        assert state[CONVERSATION_ID] == 'convo-1'
+
+    def test_from_state_explains_how_to_get_credentials(self) -> None:
+        with pytest.raises(ValueError, match='create_project'):
+            KeboolaClient.from_state({})
+
+    @pytest.mark.asyncio
+    async def test_a_token_without_a_stack_url_is_still_an_error(self) -> None:
+        with pytest.raises(ValueError, match='Storage API URL is not provided'):
+            await SessionStateMiddleware.create_session_state(
+                Config(storage_token='kbc_at_abc'),
+                ServerRuntimeInfo(transport='stdio'),
+                own_stack_storage_api_url=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_list_tools_is_unfiltered_without_a_client(self) -> None:
+        context = MagicMock()
+        context.fastmcp_context.session.state = {}
+        tools = [MagicMock(spec=Tool)]
+
+        result = await ToolsFilteringMiddleware().on_list_tools(context, AsyncMock(return_value=tools))
+
+        assert result == tools
+
+
+class TestUnauthorizedDropsARevokedSession:
+    """A confirmed agent project revokes the session that created it, so its access token 401s
+    while it still looks fresh -- the expiry-driven refresh never runs (agent_provisioning RFC).
+    """
+
+    CONFIG = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_revoked')
+
+    @staticmethod
+    def _tokens() -> TokenSet:
+        return TokenSet(access_token='kbc_at_revoked', refresh_token='kbc_rt_x', expires_at=time.time() + 3600)
+
+    @pytest.mark.asyncio
+    async def test_a_dead_credential_is_dropped(self) -> None:
+        with (
+            patch('keboola_mcp_server.mcp.load_tokens', return_value=self._tokens()),
+            patch(
+                'keboola_mcp_server.mcp.introspect_token',
+                AsyncMock(side_effect=httpx.HTTPStatusError('401', request=MagicMock(), response=MagicMock())),
+            ),
+            patch('keboola_mcp_server.mcp.forget_tokens') as forget,
+        ):
+            await SessionStateMiddleware._handle_unauthorized(self.CONFIG)
+
+        forget.assert_called_once_with('https://connection.keboola.com')
+
+    @pytest.mark.asyncio
+    async def test_a_scope_related_401_keeps_the_credential(self) -> None:
+        # Introspection still works -> the credential is valid and the 401 was about something
+        # else (an unconfirmed/stale project scope). Dropping it would force a needless re-login.
+        with (
+            patch('keboola_mcp_server.mcp.load_tokens', return_value=self._tokens()),
+            patch('keboola_mcp_server.mcp.introspect_token', AsyncMock(return_value=MagicMock())),
+            patch('keboola_mcp_server.mcp.forget_tokens') as forget,
+        ):
+            await SessionStateMiddleware._handle_unauthorized(self.CONFIG)
+
+        forget.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_nothing_is_dropped_without_a_stored_session(self) -> None:
+        with (
+            patch('keboola_mcp_server.mcp.load_tokens', return_value=None),
+            patch('keboola_mcp_server.mcp.introspect_token', AsyncMock()) as introspect,
+            patch('keboola_mcp_server.mcp.forget_tokens') as forget,
+        ):
+            await SessionStateMiddleware._handle_unauthorized(self.CONFIG)
+
+        introspect.assert_not_awaited()
+        forget.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (httpx.HTTPStatusError('401', request=MagicMock(), response=MagicMock(status_code=401)), True),
+        (httpx.HTTPStatusError('403', request=MagicMock(), response=MagicMock(status_code=403)), False),
+        (ValueError('nothing to do with HTTP'), False),
+    ],
+)
+def test_is_unauthorized_direct(error: Exception, expected: bool) -> None:
+    assert _is_unauthorized(error) is expected
+
+
+def test_is_unauthorized_through_the_cause_chain() -> None:
+    # `tool_errors()` re-raises most failures as a ToolError wrapping the original.
+    original = httpx.HTTPStatusError('401', request=MagicMock(), response=MagicMock(status_code=401))
+    try:
+        try:
+            raise original
+        except httpx.HTTPStatusError as e:
+            raise ToolError('call failed') from e
+    except ToolError as wrapped:
+        assert _is_unauthorized(wrapped) is True

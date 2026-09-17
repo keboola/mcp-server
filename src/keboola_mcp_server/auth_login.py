@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import sys
 import time
@@ -45,6 +46,7 @@ _AUTHORIZE_PATH = 'admin/auth/pkce/authorize'
 _TOKEN_PATH = 'v1/auth/pkce/token'
 _REFRESH_PATH = 'v1/auth/token/refresh'
 _INTROSPECT_PATH = 'v1/auth/token/introspect'
+_PROVISION_PATH = 'manage/programmatic-projects'
 _EXCHANGE_PATH = 'v1/auth/pat/exchange'
 _SUDO_PATH = 'v1/auth/sudo'
 _PAT_PATH = 'v1/auth/pat'
@@ -117,10 +119,15 @@ class TokenSet:
 
 def parse_token_response(body: dict, *, now: float | None = None) -> TokenSet:
     now = time.time() if now is None else now
+    # The agent-provisioning endpoint spells the lifetime `accessTokenExpiresIn`; the PKCE token
+    # and refresh endpoints spell it `expiresIn`. Same value, same session -- accept either.
+    expires_in = body.get('expiresIn')
+    if expires_in is None:
+        expires_in = body.get('accessTokenExpiresIn')
     return TokenSet(
         access_token=cast(str, body['accessToken']),
         refresh_token=cast(str, body['refreshToken']),
-        expires_at=now + float(body.get('expiresIn') or 0),
+        expires_at=now + float(expires_in or 0),
         session_id=cast('str | None', body.get('sessionId')),
     )
 
@@ -375,6 +382,88 @@ async def refresh_tokens(
         )
         response.raise_for_status()
         return parse_token_response(cast(dict, response.json()))
+
+
+# --- agent provisioning (DMD-1939): a project, and a session for it, with no Keboola identity ---
+
+
+class AgentProvisioningUnavailableError(RuntimeError):
+    """The stack does not offer agent provisioning (the `agent-provisioning` feature is off, so the
+    endpoint answers 404). A configuration fact about the stack, not a failure of the call."""
+
+
+@dataclass(frozen=True)
+class ProvisionedProject:
+    """A project created by `POST /manage/programmatic-projects`, plus the session that can use it.
+
+    ``tokens`` is an ordinary `TokenSet` -- the endpoint issues the same AT/RT programmatic session
+    the PKCE login does, so it is stored, read and refreshed by the same code.
+    """
+
+    project_id: int
+    project_name: str
+    backend: str
+    confirm_url: str
+    tokens: TokenSet
+    backend_init_dispatched_async: bool
+
+
+async def provision_agent_project(
+    storage_api_url: str,
+    *,
+    client_id: str,
+    project_name: str | None = None,
+    backend: str | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> ProvisionedProject:
+    """Creates a project under the stack's agent maintainer and returns it with a project-pinned
+    session for it.
+
+    Unauthenticated on purpose: the caller has no Keboola identity yet. The project is not owned by
+    anyone until a human opens ``confirm_url``, which also revokes the session issued here.
+
+    :param client_id: Label identifying the calling agent. Recorded on the provisioning audit event
+        and used as the rate-limit bucket, so it must be a short label
+        (``[A-Za-z0-9._-]{1,64}``) -- see `sanitize_client_id`.
+    :param backend: ``snowflake`` / ``bigquery``, or None to keep the agent maintainer's default.
+    :raises AgentProvisioningUnavailableError: when the stack has no agent provisioning (404).
+    """
+    payload: dict[str, str] = {'clientId': client_id}
+    if project_name:
+        payload['projectName'] = project_name
+    if backend:
+        payload['backend'] = backend
+
+    async with httpx.AsyncClient(timeout=_AUTH_TIMEOUT, transport=transport) as client:
+        response = await client.post(f'{_base_url(storage_api_url)}/{_PROVISION_PATH}', json=payload)
+        if response.status_code == 404:
+            raise AgentProvisioningUnavailableError(f'Agent provisioning is not available on {storage_api_url}.')
+        if response.status_code == 429:
+            retry_after = response.headers.get('Retry-After')
+            raise RuntimeError(
+                'Agent provisioning is rate limited on this stack; '
+                + (f'retry in {retry_after} second(s).' if retry_after else 'retry later.')
+            )
+        response.raise_for_status()
+        body = cast(dict, response.json())
+
+    project = cast(dict, body.get('project') or {})
+    return ProvisionedProject(
+        project_id=cast(int, project['id']),
+        project_name=cast(str, project.get('name') or ''),
+        backend=cast(str, project.get('backend') or ''),
+        confirm_url=cast(str, body['confirmUrl']),
+        tokens=parse_token_response(body),
+        backend_init_dispatched_async=bool(body.get('backendInitDispatchedAsync')),
+    )
+
+
+def sanitize_client_id(raw: str | None) -> str:
+    """Turns an MCP client name ("Claude Code", "cursor-ide/1.2") into a label the provisioning
+    endpoint accepts: ASCII letters, digits, dots, underscores and hyphens, at most 64 characters.
+    Falls back to the server's own name when nothing usable is left."""
+    cleaned = re.sub(r'[^A-Za-z0-9._-]+', '-', (raw or '').strip()).strip('-')[:64]
+    return cleaned or 'keboola-mcp-server'
 
 
 # --- credential storage (mode-600 file, keyed by stack host + interface profile) ---

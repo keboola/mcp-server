@@ -88,7 +88,16 @@ class KeboolaClient:
 
     @classmethod
     def from_state(cls, state: Mapping[str, Any]) -> 'KeboolaClient':
-        instance = state[cls.STATE_KEY]
+        instance = state.get(cls.STATE_KEY)
+        if instance is None:
+            # Bootstrap session: no credential was available when the session state was built (see
+            # `SessionStateMiddleware.create_session_state`). Every tool that needs Keboola access
+            # arrives here, so this is the one place that says how to get one.
+            raise ValueError(
+                'This session has no Keboola credentials. Call the "create_project" tool to create a '
+                'new Keboola project and a session for it, or run "keboola-mcp-server login --api-url '
+                '<stack-url>" to sign in to an existing one.'
+            )
         assert isinstance(instance, KeboolaClient), f'Expected KeboolaClient, got: {instance}'
         return instance
 

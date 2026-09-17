@@ -287,7 +287,7 @@ def _prompt_mfa_code() -> tuple[str | None, str | None]:
     return None, recovery
 
 
-async def _local_login_fallback(config: Config, *, allow_interactive: bool, required: bool) -> Config:
+async def _local_login_fallback(config: Config, *, allow_interactive: bool) -> Config:
     """Fills in ``config.storage_token`` from the local PKCE `login` credential store when nothing
     else has configured a token or an OAuth client -- so a locally-run server (stdio or
     streamable-http alike) doesn't need `--storage-token`/`KBC_STORAGE_TOKEN` passed explicitly
@@ -295,11 +295,10 @@ async def _local_login_fallback(config: Config, *, allow_interactive: bool, requ
     there's no Storage API URL to log in against, or OAuth is configured (the deployed server
     case, which authenticates per-session instead).
 
-    :param required: stdio has no other way to get a token (no per-request headers), so a missing
-        credential there must fail server startup with the "run login" guidance -- ``True``
-        propagates that. streamable-http/http-compat can still get a token per request via a
-        header, so a missing local credential there is a legitimate, unconfigured-on-purpose state,
-        not an error -- ``False`` logs and leaves ``config`` unchanged instead of crashing startup.
+    A missing credential is never fatal, on any transport: the server starts in bootstrap mode
+    (agent_provisioning RFC), where `create_project` can create a project and a session for it, and
+    every other tool explains how to get a credential. streamable-http can also still be handed one
+    per request via a header.
     """
     if config.storage_token or not config.storage_api_url or config.oauth_client_id or config.oauth_client_secret:
         return config
@@ -308,11 +307,9 @@ async def _local_login_fallback(config: Config, *, allow_interactive: bool, requ
     try:
         access_token = await ensure_access_token(config.storage_api_url, allow_interactive=allow_interactive)
     except RuntimeError:
-        if required:
-            raise
         LOG.info(
-            f'No local login session for {config.storage_api_url} and none required for this transport -- '
-            'starting without a default token; callers must supply one per request.'
+            f'No local login session for {config.storage_api_url} -- starting without a default token. '
+            'Run "keboola-mcp-server login" or call the "create_project" tool to get one.'
         )
         return config
     return dataclasses.replace(config, storage_token=access_token)
@@ -573,12 +570,11 @@ async def run_server(args: list[str] | None = None) -> None:
         # client launches this process with stdin/stdout as pipes (no TTY) and stdout as the JSON-RPC
         # channel -- an interactive login there would corrupt the protocol and block the initialize
         # handshake. In that case (and for any non-interactive streamable-http launch, e.g. a
-        # container) require a prior `login` (or a configured token) and fail fast with guidance
-        # instead.
+        # container) the server starts without a default token: a header can still carry one per
+        # request, and a session with none at all starts in bootstrap mode, where `create_project`
+        # creates a project and a session for it and every other tool says how to get a credential.
         allow_interactive = sys.stdin.isatty() and sys.stderr.isatty()
-        config = await _local_login_fallback(
-            config, allow_interactive=allow_interactive, required=parsed_args.transport == 'stdio'
-        )
+        config = await _local_login_fallback(config, allow_interactive=allow_interactive)
 
         # Create and run the server
         if parsed_args.transport == 'stdio':

@@ -6,10 +6,18 @@ import pytest
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
+from keboola_mcp_server import auth_login
+from keboola_mcp_server.auth_login import (
+    AgentProvisioningUnavailableError,
+    ProvisionedProject,
+    TokenSet,
+    load_tokens,
+    save_tokens,
+)
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.mcp import ServerState, SessionStateMiddleware
+from keboola_mcp_server.mcp import STORAGE_API_URL, ServerState, SessionStateMiddleware
 from keboola_mcp_server.scope import (
     OAUTH_SESSION_ID_KEY,
     SCOPE_KEY,
@@ -23,6 +31,7 @@ from keboola_mcp_server.tools.project import (
     _get_toolset_restrictions,
     _parent_subject_token,
     _resolve_branch_context,
+    create_project,
     get_accessible_projects,
     get_project_info,
     set_project_scope,
@@ -739,3 +748,119 @@ async def test_set_project_scope_rejects_explicit_empty_list(
     _prep_client(mcp_context_client, mocker)
     with pytest.raises(ValueError, match='non-empty'):
         await set_project_scope(mcp_context_client, project_ids=[])
+
+
+# --- create_project (agent provisioning, DMD-1939) ---
+
+
+@pytest.fixture
+def bootstrap_context(empty_context: Context, tmp_path, monkeypatch) -> Context:
+    """A session with a stack URL but no credentials at all -- what the server now starts with."""
+    monkeypatch.setattr(auth_login, '_CREDENTIALS_PATH', tmp_path / 'credentials.json')
+    empty_context.session.state[STORAGE_API_URL] = STACK
+    empty_context.session.client_params = SimpleNamespace(clientInfo=SimpleNamespace(name='Claude Code', version='1.0'))
+    return empty_context
+
+
+def _provisioned(**overrides) -> ProvisionedProject:
+    defaults = {
+        'project_id': 4321,
+        'project_name': 'Agent project',
+        'backend': 'snowflake',
+        'confirm_url': f'{STACK}/agent-project/confirm?token=kbc_apc_claim',
+        'tokens': TokenSet(
+            access_token='kbc_at_sess-9_secret',
+            refresh_token='kbc_rt_sess-9_secret',
+            expires_at=time.time() + 3600,
+            session_id='sess-9',
+        ),
+        'backend_init_dispatched_async': False,
+    }
+    return ProvisionedProject(**{**defaults, **overrides})
+
+
+@pytest.mark.asyncio
+async def test_create_project_provisions_stores_session_and_hides_tokens(
+    bootstrap_context: Context, mocker: MockerFixture
+) -> None:
+    provision = mocker.patch(
+        'keboola_mcp_server.tools.project.provision_agent_project',
+        mocker.AsyncMock(return_value=_provisioned(backend_init_dispatched_async=True)),
+    )
+
+    result = await create_project(bootstrap_context, name='My project', backend='bigquery')
+
+    provision.assert_awaited_once_with(STACK, client_id='Claude-Code', project_name='My project', backend='bigquery')
+    assert result.project_id == 4321
+    assert result.confirm_url == f'{STACK}/agent-project/confirm?token=kbc_apc_claim'
+    assert result.backend_init_pending is True
+    # No token material may reach the model context / transcript.
+    serialized = result.model_dump_json()
+    assert 'kbc_at_' not in serialized
+    assert 'kbc_rt_' not in serialized
+
+    # The session is stored so the next request picks it up, scoped to the new project so data
+    # tools are usable without the ask-first gate.
+    stored = load_tokens(STACK)
+    assert stored is not None
+    assert stored.access_token == 'kbc_at_sess-9_secret'
+    assert stored.refresh_token == 'kbc_rt_sess-9_secret'
+    assert stored.project_ids == [4321]
+    assert stored.read_only is False
+
+
+@pytest.mark.asyncio
+async def test_create_project_refuses_when_a_session_is_already_stored(
+    bootstrap_context: Context, mocker: MockerFixture
+) -> None:
+    save_tokens(STACK, TokenSet(access_token='kbc_at_mine', refresh_token='kbc_rt_mine', expires_at=time.time() + 60))
+    provision = mocker.patch('keboola_mcp_server.tools.project.provision_agent_project', mocker.AsyncMock())
+
+    with pytest.raises(Exception, match='already has Keboola credentials'):
+        await create_project(bootstrap_context)
+
+    provision.assert_not_awaited()
+    assert load_tokens(STACK).access_token == 'kbc_at_mine'
+
+
+@pytest.mark.asyncio
+async def test_create_project_refuses_when_the_session_already_has_a_client(
+    bootstrap_context: Context, keboola_client: KeboolaClient, mocker: MockerFixture
+) -> None:
+    bootstrap_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
+    provision = mocker.patch('keboola_mcp_server.tools.project.provision_agent_project', mocker.AsyncMock())
+
+    with pytest.raises(Exception, match='already has Keboola credentials'):
+        await create_project(bootstrap_context)
+
+    provision.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_project_is_refused_on_the_deployed_server(
+    bootstrap_context: Context, mocker: MockerFixture, monkeypatch
+) -> None:
+    monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+    provision = mocker.patch('keboola_mcp_server.tools.project.provision_agent_project', mocker.AsyncMock())
+
+    with pytest.raises(Exception, match='locally run MCP server'):
+        await create_project(bootstrap_context)
+
+    provision.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_project_reports_a_stack_without_agent_provisioning(
+    bootstrap_context: Context, mocker: MockerFixture
+) -> None:
+    mocker.patch(
+        'keboola_mcp_server.tools.project.provision_agent_project',
+        mocker.AsyncMock(
+            side_effect=AgentProvisioningUnavailableError(f'Agent provisioning is not available on {STACK}.')
+        ),
+    )
+
+    with pytest.raises(Exception, match='not available'):
+        await create_project(bootstrap_context)
+
+    assert load_tokens(STACK) is None

@@ -50,6 +50,8 @@ providing their configuration IDs.
 - [modify_streamlit_data_app](#modify_streamlit_data_app): Creates or updates a Streamlit data app.
 
 ### Project Tools
+- [create_project](#create_project): Creates a brand-new Keboola project for a session that has no Keboola credentials yet, and
+signs this session in to it.
 - [get_accessible_projects](#get_accessible_projects): Lists the Keboola projects the current login can access across the stack, each with its SQL
 dialect and organization.
 - [get_project_info](#get_project_info): Retrieves structured information about the current project,
@@ -3813,6 +3815,67 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 ---
 
 # Project Tools
+<a name="create_project"></a>
+## create_project
+**Annotations**: 
+
+**Tags**: `project`
+
+**Description**:
+
+Creates a brand-new Keboola project for a session that has no Keboola credentials yet, and
+signs this session in to it.
+
+Use this ONLY when a tool call has reported that the session has no Keboola credentials and the
+user has no project/token to give you -- it is how a first-time user gets started without
+leaving the conversation. Never call it to add a project to a session that already works: it
+refuses, because it would replace the credentials that session is using.
+
+The project starts out owned by nobody. Show the user the returned `confirm_url` and tell them
+to open it: signing in there makes the project permanently theirs. Until they do, the project is
+temporary and Keboola may reclaim it, and once they do, the session created here is revoked and
+they continue with their own login. Data tools work against the new project in the meantime.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Name for the new project and its organization. Defaults to \"Agent project\"."
+    },
+    "backend": {
+      "anyOf": [
+        {
+          "enum": [
+            "snowflake",
+            "bigquery"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Storage backend for the new project. Omit to use whichever backend the stack's agent maintainer defaults to (Snowflake when it has both)."
+    }
+  },
+  "type": "object"
+}
+```
+
+---
 <a name="get_accessible_projects"></a>
 ## get_accessible_projects
 **Annotations**: `read-only`
