@@ -476,14 +476,14 @@ async def test_tool_annotations_and_tags():
         ('run_job', None, True, None, {JOB_TOOLS_TAG}),
         # merge requests
         ('get_merge_requests', True, None, None, {MERGE_REQUEST_TOOLS_TAG}),
-        ('create_merge_request', None, True, None, {MERGE_REQUEST_TOOLS_TAG}),
+        ('create_merge_request', None, False, None, {MERGE_REQUEST_TOOLS_TAG}),
         ('update_merge_request', None, True, None, {MERGE_REQUEST_TOOLS_TAG}),
         ('request_merge_request_review', None, False, None, {MERGE_REQUEST_TOOLS_TAG}),
         ('approve_merge_request', None, False, None, {MERGE_REQUEST_TOOLS_TAG}),
         ('request_merge_request_changes', None, False, None, {MERGE_REQUEST_TOOLS_TAG}),
         ('merge_merge_request', None, True, None, {MERGE_REQUEST_TOOLS_TAG}),
         ('get_merge_request_conflicts', True, None, None, {MERGE_REQUEST_TOOLS_TAG}),
-        ('resolve_merge_request_conflict', None, False, None, {MERGE_REQUEST_TOOLS_TAG}),
+        ('resolve_merge_request_conflict', None, True, None, {MERGE_REQUEST_TOOLS_TAG}),
         # project/doc/search
         ('get_project_info', True, None, None, {PROJECT_TOOLS_TAG}),
         ('update_project_description', None, True, None, {PROJECT_TOOLS_TAG}),

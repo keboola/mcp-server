@@ -10,6 +10,7 @@ import dataclasses
 import logging
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from http import HTTPStatus
 from typing import Any, TypeVar, cast
 from unittest.mock import MagicMock
@@ -77,9 +78,11 @@ CONVERSATION_ID = 'conversation_id'
 # bootstrap session (no credential yet, see `create_session_state`) has no KeboolaClient to read it
 # from, and `ServerState.config` holds only the server-level value, not the request's.
 STORAGE_API_URL = 'storage_api_url'
-# Session-state key under which ToolsFilteringMiddleware.on_call_tool stores the `verify_token` result of the
-# current call, so tool bodies (merge requests: role, admin id, project id) can read it without a second call.
-TOKEN_INFO_STATE_KEY = 'token_info'
+# ToolsFilteringMiddleware.on_call_tool publishes the `verify_token` result of the current call here, so tool
+# bodies (merge requests: role, admin id, project id) can read it without a second call. A contextvar, not
+# session state: it is scoped to this call's task, so concurrent calls (multi-project fan-out) cannot see each
+# other's token info.
+TOKEN_INFO_VAR: ContextVar[JsonDict | None] = ContextVar('token_info', default=None)
 
 R = TypeVar('R')
 T = TypeVar('T')
@@ -1234,7 +1237,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             return await call_next(context)
 
         token_info = await self.get_token_info(context.fastmcp_context)
-        context.fastmcp_context.session.state[TOKEN_INFO_STATE_KEY] = token_info
 
         has_semantic_models = False
         if is_semantic_tool(tool):
@@ -1254,7 +1256,11 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         if denial:
             raise ToolError(denial)
 
-        return await call_next(context)
+        token = TOKEN_INFO_VAR.set(token_info)
+        try:
+            return await call_next(context)
+        finally:
+            TOKEN_INFO_VAR.reset(token)
 
 
 def _to_python(data: Any, exclude_none: bool = True) -> Any | None:

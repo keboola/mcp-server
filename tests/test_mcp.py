@@ -23,7 +23,7 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     CONVERSATION_ID,
     STORAGE_API_URL,
-    TOKEN_INFO_STATE_KEY,
+    TOKEN_INFO_VAR,
     AggregateError,
     ServerState,
     SessionStateMiddleware,
@@ -929,20 +929,25 @@ class TestToolsFilteringMiddleware:
         assert visible_tools <= result_names
 
     @pytest.mark.asyncio
-    async def test_call_tool_caches_token_info_in_session_state(self, mcp_context_client, keboola_client) -> None:
-        """The tool body reads the verification the middleware already paid for (no second verify_token)."""
+    async def test_call_tool_publishes_token_info_for_the_call(self, mcp_context_client, keboola_client) -> None:
+        """The tool body reads the verification the middleware already paid for (no second verify_token); the
+        contextvar is scoped to the call and reset afterwards."""
         token_info = {'owner': {'id': 1, 'features': ['branches-merge-requests']}, 'admin': {'id': 10, 'role': 'admin'}}
         keboola_client.storage_client.verify_token = AsyncMock(return_value=token_info)
         tool = _tool('get_merge_requests', read_only=True)
         mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=tool))
         context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool.name))
 
+        seen: list = []
+
         async def call_next(_):
+            seen.append(TOKEN_INFO_VAR.get(None))
             return MagicMock()
 
         await ToolsFilteringMiddleware().on_call_tool(context, call_next)
 
-        assert mcp_context_client.session.state[TOKEN_INFO_STATE_KEY] is token_info
+        assert seen == [token_info]
+        assert TOKEN_INFO_VAR.get(None) is None
 
 
 class TestServerStateStorageTokenResolver:
