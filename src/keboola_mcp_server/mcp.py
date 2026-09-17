@@ -118,10 +118,10 @@ def _is_unauthorized(error: BaseException) -> bool:
 
 
 def is_read_only_tool(tool: Tool) -> bool:
-    """Check if a tool has readOnlyHint=True annotation."""
+    """Check if a tool has read_only_hint=True annotation."""
     if tool.annotations is None:
         return False
-    return tool.annotations.readOnlyHint is True
+    return tool.annotations.read_only_hint is True
 
 
 def is_semantic_tool(tool: Tool) -> bool:

@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 import pytest
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID, KeboolaClient

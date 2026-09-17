@@ -14,9 +14,9 @@ import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
 from fastmcp import Client, Context, FastMCP
+from fastmcp.server.context import FastMCPRequestContext
 from kbcstorage.client import Client as SyncStorageClient
 from mcp.server.session import ServerSession
-from mcp.shared.context import RequestContext
 from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
 import keboola_mcp_server.mcp
@@ -665,10 +665,10 @@ def mcp_context(
     )
     client_context.client_id = INTEGTEST_USER_AGENT
     client_context.session_id = None
-    client_context.request_context = mocker.MagicMock(RequestContext)
+    client_context.request_context = mocker.MagicMock(FastMCPRequestContext)
     client_context.request_context.lifespan_context = ServerState(mcp_config, ServerRuntimeInfo(transport='stdio'))
-    # `meta` is an instance attribute of RequestContext (set in __init__), not a class attribute,
-    # so MagicMock(spec=RequestContext) doesn't expose it. Default it to None so tools that read
+    # `meta` is an instance attribute of FastMCPRequestContext (set in __init__), not a class attribute,
+    # so MagicMock(spec=FastMCPRequestContext) doesn't expose it. Default it to None so tools that read
     # the progressToken (e.g. query_data) don't trip AttributeError; individual tests can override.
     client_context.request_context.meta = None
 

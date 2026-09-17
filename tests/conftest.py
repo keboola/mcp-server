@@ -1,7 +1,7 @@
 import pytest
 from fastmcp import Context
+from fastmcp.server.context import FastMCPRequestContext
 from mcp.server.session import ServerSession
-from mcp.shared.context import RequestContext
 
 from keboola_mcp_server.clients.ai_service import AIServiceClient
 from keboola_mcp_server.clients.base import RawKeboolaClient
@@ -64,10 +64,10 @@ def empty_context(mocker) -> Context:
     ctx.session.client_params = None
     ctx.session_id = None
     ctx.client_id = None
-    ctx.request_context = mocker.MagicMock(RequestContext)
+    ctx.request_context = mocker.MagicMock(FastMCPRequestContext)
     ctx.request_context.lifespan_context = ServerState(Config(), ServerRuntimeInfo(transport='stdio'))
-    # `meta` is an instance attribute of RequestContext (set in __init__), not a class attribute,
-    # so MagicMock(spec=RequestContext) doesn't expose it. Default it to None so tools that read
+    # `meta` is an instance attribute of FastMCPRequestContext (set in __init__), not a class attribute,
+    # so MagicMock(spec=FastMCPRequestContext) doesn't expose it. Default it to None so tools that read
     # the progressToken don't trip AttributeError; individual tests can override.
     ctx.request_context.meta = None
     return ctx

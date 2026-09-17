@@ -785,7 +785,7 @@ async def create_project(
             '"get_accessible_projects"), or create the new project from the Keboola UI.'
         )
 
-    client_id = sanitize_client_id(ctx.session.client_params.clientInfo.name if ctx.session.client_params else None)
+    client_id = sanitize_client_id(ctx.session.client_params.client_info.name if ctx.session.client_params else None)
     provisioned = await provision_agent_project(
         storage_api_url, client_id=client_id, project_name=name, backend=backend
     )

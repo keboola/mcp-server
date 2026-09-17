@@ -11,8 +11,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.server import middleware as fmw
 from fastmcp.server.middleware import CallNext, MiddlewareContext
-from fastmcp.tools import Tool
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import Tool, ToolResult
 from mcp import types as mt
 from pydantic import ValidationError as PydanticValidationError
 

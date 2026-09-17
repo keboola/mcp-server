@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastmcp import Context
 from fastmcp.exceptions import ToolError
-from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server import auth_login
@@ -759,7 +759,9 @@ def bootstrap_context(empty_context: Context, tmp_path, monkeypatch) -> Context:
     """A session with a stack URL but no credentials at all -- what the server now starts with."""
     monkeypatch.setattr(auth_login, '_CREDENTIALS_PATH', tmp_path / 'credentials.json')
     empty_context.session.state[STORAGE_API_URL] = STACK
-    empty_context.session.client_params = SimpleNamespace(clientInfo=SimpleNamespace(name='Claude Code', version='1.0'))
+    empty_context.session.client_params = SimpleNamespace(
+        client_info=SimpleNamespace(name='Claude Code', version='1.0')
+    )
     return empty_context
 
 
