@@ -1,6 +1,7 @@
 import asyncio
+import dataclasses
 import logging
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -8,14 +9,22 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token
+from keboola_mcp_server.auth_login import (
+    exchange_scoped_token,
+    get_access_token,
+    introspect_token,
+    load_tokens,
+    provision_agent_project,
+    sanitize_client_id,
+    save_tokens,
+)
 from keboola_mcp_server.clients.auth_bridge import is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, process_concurrently
+from keboola_mcp_server.mcp import CONVERSATION_ID, STORAGE_API_URL, ServerState, process_concurrently
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.scope import (
@@ -69,6 +78,15 @@ def add_project_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             set_project_scope,
             annotations=ToolAnnotations(readOnlyHint=True),
+            tags={PROJECT_TOOLS_TAG},
+        )
+    )
+
+    LOG.info(f'Adding tool {create_project.__name__} to the MCP server.')
+    mcp.add_tool(
+        FunctionTool.from_function(
+            create_project,
+            annotations=ToolAnnotations(destructiveHint=False),
             tags={PROJECT_TOOLS_TAG},
         )
     )
@@ -662,5 +680,123 @@ async def set_project_scope(
             )
             if multi
             else f'Session scoped to project {ids[0]}. {resend_instruction}{read_only_note}'
+        ),
+    )
+
+
+class CreatedProject(BaseModel):
+    """A project provisioned by `create_project`, and what the human has to do about it.
+
+    Deliberately carries no token material: the access and refresh tokens the provisioning endpoint
+    returns are stored in the local credential store and never enter the tool result, which would
+    put them in the model's context and the conversation transcript.
+    """
+
+    project_id: int = Field(description='The id of the newly created project.')
+    project_name: str = Field(description='The name of the newly created project.')
+    backend: str = Field(description='The storage backend the project was created with.')
+    confirm_url: str = Field(
+        description=(
+            'The URL the human must open to claim the project. Until they do, the project is not '
+            'owned by anyone and can be reclaimed by Keboola.'
+        )
+    )
+    backend_init_pending: bool = Field(
+        description=(
+            'True when the storage backend is still being initialised in the background, so the '
+            'first data operations may fail for a short while.'
+        )
+    )
+    llm_instruction: str = Field(description='What to tell the user next.')
+
+
+@tool_errors()
+async def create_project(
+    ctx: Context,
+    name: Annotated[
+        str | None,
+        Field(description='Name for the new project and its organization. Defaults to "Agent project".'),
+    ] = None,
+    backend: Annotated[
+        Literal['snowflake', 'bigquery'] | None,
+        Field(
+            description=(
+                'Storage backend for the new project. Omit to use whichever backend the stack\'s agent '
+                'maintainer defaults to (Snowflake when it has both).'
+            )
+        ),
+    ] = None,
+) -> CreatedProject:
+    """
+    Creates a brand-new Keboola project for a session that has no Keboola credentials yet, and
+    signs this session in to it.
+
+    Use this ONLY when a tool call has reported that the session has no Keboola credentials and the
+    user has no project/token to give you -- it is how a first-time user gets started without
+    leaving the conversation. Never call it to add a project to a session that already works: it
+    refuses, because it would replace the credentials that session is using.
+
+    The project starts out owned by nobody. Show the user the returned `confirm_url` and tell them
+    to open it: signing in there makes the project permanently theirs. Until they do, the project is
+    temporary and Keboola may reclaim it, and once they do, the session created here is revoked and
+    they continue with their own login. Data tools work against the new project in the meantime.
+    """
+    storage_api_url = ctx.session.state.get(STORAGE_API_URL) or ServerState.from_context(ctx).config.storage_api_url
+    if not storage_api_url:
+        raise ValueError(
+            'No Keboola stack URL is configured. Start the server with --api-url (or KBC_STORAGE_API_URL) '
+            'pointing at the stack to create the project on.'
+        )
+
+    if deployed_sa_token_path():
+        # The deployed server authenticates its sessions with OAuth and has no local credential
+        # store to keep the provisioned session in -- provisioning here would create a project the
+        # caller then has no way to use.
+        raise ValueError(
+            'Creating a Keboola project is only supported by a locally run MCP server. '
+            'Sign in through this server\'s OAuth flow instead.'
+        )
+
+    if KeboolaClient.STATE_KEY in ctx.session.state or load_tokens(storage_api_url) is not None:
+        raise ValueError(
+            f'This session already has Keboola credentials for {storage_api_url}, and creating a project '
+            'would replace them. Use the projects this session can already reach (see '
+            '"get_accessible_projects"), or create the new project from the Keboola UI.'
+        )
+
+    client_id = sanitize_client_id(ctx.session.client_params.clientInfo.name if ctx.session.client_params else None)
+    provisioned = await provision_agent_project(
+        storage_api_url, client_id=client_id, project_name=name, backend=backend
+    )
+
+    # Storing the session under the stack's credential entry is what makes the next tool call work:
+    # `SessionStateMiddleware._maybe_use_stored_session` reads it, `get_access_token` refreshes it
+    # from the refresh token before the 1h access token expires, and `project_ids` makes
+    # `_read_persisted_login_scope` hand back a confirmed single-project scope so data tools are
+    # usable immediately rather than held at the ask-first gate.
+    save_tokens(
+        storage_api_url,
+        dataclasses.replace(provisioned.tokens, project_ids=[provisioned.project_id], read_only=False),
+    )
+    LOG.info(f'Provisioned agent project {provisioned.project_id} on {storage_api_url}.')
+
+    return CreatedProject(
+        project_id=provisioned.project_id,
+        project_name=provisioned.project_name,
+        backend=provisioned.backend,
+        confirm_url=provisioned.confirm_url,
+        backend_init_pending=provisioned.backend_init_dispatched_async,
+        llm_instruction=(
+            f'Project {provisioned.project_id} ("{provisioned.project_name}", {provisioned.backend}) was '
+            'created and this session is now signed in to it, so the other tools work. The project is '
+            'NOT owned by anyone yet: show the user the confirm_url and ask them to open it and sign in, '
+            'which makes the project theirs permanently -- otherwise Keboola may reclaim it. After they '
+            'confirm, this session ends and they continue with their own login.'
+            + (
+                ' The storage backend is still being set up, so the first data operations may fail for a '
+                'moment; retry them.'
+                if provisioned.backend_init_dispatched_async
+                else ''
+            )
         ),
     )

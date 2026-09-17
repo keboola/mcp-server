@@ -10,9 +10,11 @@ import dataclasses
 import logging
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
-from typing import Any, TypeVar
+from http import HTTPStatus
+from typing import Any, TypeVar, cast
 from unittest.mock import MagicMock
 
+import httpx
 import toon_format
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
@@ -28,7 +30,13 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from keboola_mcp_server.auth_login import exchange_scoped_token, get_access_token, introspect_token, load_tokens
+from keboola_mcp_server.auth_login import (
+    exchange_scoped_token,
+    forget_tokens,
+    get_access_token,
+    introspect_token,
+    load_tokens,
+)
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token, strip_bearer
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
@@ -61,6 +69,10 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 CONVERSATION_ID = 'conversation_id'
+# The stack URL this session resolved to (header, env or CLI). Kept in the session state because a
+# bootstrap session (no credential yet, see `create_session_state`) has no KeboolaClient to read it
+# from, and `ServerState.config` holds only the server-level value, not the request's.
+STORAGE_API_URL = 'storage_api_url'
 
 R = TypeVar('R')
 T = TypeVar('T')
@@ -86,6 +98,23 @@ DATA_APP_BRANCH_GATED_TOOLS = {
     'deploy_data_app',
     'delete_python_js_data_app_draft',
 }
+
+
+def _is_unauthorized(error: BaseException) -> bool:
+    """True when `error` is, or was caused by, a 401 from a Keboola API.
+
+    The chain matters: `tool_errors()` re-raises most failures as a `ToolError` carrying the
+    original as its `__cause__`, so checking only the outermost exception would miss exactly the
+    tool calls this is meant to notice.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, httpx.HTTPStatusError) and current.response.status_code == HTTPStatus.UNAUTHORIZED:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def is_read_only_tool(tool: Tool) -> bool:
@@ -266,9 +295,10 @@ class SessionStateMiddleware(fmw.Middleware):
         ctx = context.fastmcp_context
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
 
+        config: Config | None = None
         if not isinstance(ctx.session, MagicMock):
             server_state = ServerState.from_context(ctx)
-            config: Config = server_state.config
+            config = server_state.config
             runtime_info: ServerRuntimeInfo = server_state.runtime_info
 
             # IMPORTANT: Since mcp 1.12.4 and fastmcp 2.11 the fastmcp.server.dependencies.get_http_request()
@@ -389,10 +419,42 @@ class SessionStateMiddleware(fmw.Middleware):
 
         try:
             return await call_next(context)
+        except Exception as e:
+            if config is not None and _is_unauthorized(e):
+                await self._handle_unauthorized(config)
+            raise
         finally:
             # NOTE: This line is commented following a bug related to session state clearance in Claude client
             # ctx.session.state = {}
             pass
+
+    @classmethod
+    async def _handle_unauthorized(cls, config: Config) -> None:
+        """Drops a locally stored session whose credential Connection no longer accepts.
+
+        An expired session already self-heals: the refresh fails and `get_access_token` forgets it.
+        A *revoked* one does not -- an agent-provisioned session is revoked the moment the human
+        confirms the project (agent_provisioning RFC), so its access token starts 401ing while it
+        still looks fresh and no refresh is ever attempted. Without this, every remaining call in
+        that hour 401s with no way out.
+
+        A 401 alone is not proof the credential is dead, though: an unconfirmed or stale project
+        scope produces one too (see `RawKeboolaClient._raise_for_status`), and dropping a valid
+        credential over that would force a needless re-login. So the credential is re-checked with
+        `introspect_token` and only dropped when that fails as well. Best-effort throughout -- the
+        original error is re-raised by the caller either way.
+        """
+        if not cls._is_local_programmatic(config):
+            return
+        storage_api_url = cast(str, config.storage_api_url)
+        if load_tokens(storage_api_url) is None:
+            return
+        try:
+            await introspect_token(storage_api_url, subject_token=strip_bearer(cast(str, config.storage_token)))
+            return  # the credential itself is fine; the 401 was about something else
+        except Exception:
+            LOG.info(f'The stored session for {storage_api_url} is no longer valid; dropping it.')
+        forget_tokens(storage_api_url)
 
     async def on_list_tools(
         self,
@@ -856,10 +918,20 @@ class SessionStateMiddleware(fmw.Middleware):
         """
         LOG.info(f'Creating SessionState from config: {config}.')
 
-        state: dict[str, Any] = {}
+        state: dict[str, Any] = {STORAGE_API_URL: config.storage_api_url}
+
+        if not config.storage_token:
+            # Bootstrap session (agent_provisioning RFC): no credential anywhere -- no header, no
+            # env, no stored login. The session carries no KeboolaClient and no WorkspaceManager;
+            # `KeboolaClient.from_state` tells any tool that needs one how to get a credential, and
+            # `create_project` runs without one to obtain the first. Keeping the old hard failure
+            # here would mean a stack URL alone could not even start a session, which is exactly
+            # what the provisioning flow needs it to do.
+            LOG.info('No Storage API token; creating a bootstrap session state without a client.')
+            state[CONVERSATION_ID] = config.conversation_id
+            return state
+
         try:
-            if not config.storage_token:
-                raise ValueError('Storage API token is not provided.')
             if not config.storage_api_url:
                 raise ValueError('Storage API URL is not provided.')
 
@@ -982,6 +1054,13 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
     ) -> list[Tool]:
         tools = await call_next(context)
+
+        # A bootstrap session (no credential yet -- see `create_session_state`) has no client to
+        # verify a token with, so there is nothing to filter on. Advertise the superset; the
+        # on_call_tool guards still apply, and every tool but `create_project` fails with the "no
+        # credentials" message from `KeboolaClient.from_state` if actually called.
+        if KeboolaClient.STATE_KEY not in context.fastmcp_context.session.state:
+            return tools
 
         # Feature/role filtering needs verify_token (a Connection round-trip with a single project
         # context). For a programmatic (kbc_*) session this doesn't work at list time: pre-scope there

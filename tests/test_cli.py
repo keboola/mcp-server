@@ -86,7 +86,7 @@ class TestLocalLoginFallback:
         monkeypatch.setattr(auth_login, 'ensure_access_token', AsyncMock(return_value='kbc_at_x'))
         config = Config(storage_api_url=STACK)
 
-        result = await _local_login_fallback(config, allow_interactive=False, required=True)
+        result = await _local_login_fallback(config, allow_interactive=False)
 
         assert result.storage_token == 'kbc_at_x'
         auth_login.ensure_access_token.assert_awaited_once_with(STACK, allow_interactive=False)
@@ -97,7 +97,7 @@ class TestLocalLoginFallback:
         monkeypatch.setattr(auth_login, 'ensure_access_token', ensure)
         config = Config(storage_api_url=STACK, storage_token='kbc_at_already_set')
 
-        result = await _local_login_fallback(config, allow_interactive=False, required=True)
+        result = await _local_login_fallback(config, allow_interactive=False)
 
         assert result is config
         ensure.assert_not_awaited()
@@ -108,7 +108,7 @@ class TestLocalLoginFallback:
         monkeypatch.setattr(auth_login, 'ensure_access_token', ensure)
         config = Config()
 
-        result = await _local_login_fallback(config, allow_interactive=False, required=True)
+        result = await _local_login_fallback(config, allow_interactive=False)
 
         assert result is config
         ensure.assert_not_awaited()
@@ -120,35 +120,23 @@ class TestLocalLoginFallback:
         monkeypatch.setattr(auth_login, 'ensure_access_token', ensure)
         config = Config(storage_api_url=STACK, oauth_client_id='id', oauth_client_secret='secret')
 
-        result = await _local_login_fallback(config, allow_interactive=False, required=True)
+        result = await _local_login_fallback(config, allow_interactive=False)
 
         assert result is config
         ensure.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_required_raises_when_no_stored_session(self, monkeypatch) -> None:
-        # stdio has no other way to get a token (no per-request headers) -- a missing local
-        # credential there must fail server startup with the "run login" guidance.
+    async def test_starts_without_a_token_when_no_stored_session(self, monkeypatch) -> None:
+        # No credential is never a startup error, on any transport: streamable-http can still be
+        # handed one per request via a header (regression: this used to crash the server subprocess
+        # before it could even start listening), and both transports start in bootstrap mode, where
+        # `create_project` can create a project and a session for it (agent_provisioning RFC).
         monkeypatch.setattr(
             auth_login, 'ensure_access_token', AsyncMock(side_effect=RuntimeError('no stored credentials'))
         )
         config = Config(storage_api_url=STACK)
 
-        with pytest.raises(RuntimeError, match='no stored credentials'):
-            await _local_login_fallback(config, allow_interactive=False, required=True)
-
-    @pytest.mark.asyncio
-    async def test_not_required_starts_without_a_token_when_no_stored_session(self, monkeypatch) -> None:
-        # streamable-http/http-compat can still get a token per request via a header -- a missing
-        # local credential there is a legitimate, unconfigured-on-purpose state, not a startup error
-        # (regression: this used to crash the server subprocess before it could even start
-        # listening, e.g. in integtests that deliberately run streamable-http with no token at all).
-        monkeypatch.setattr(
-            auth_login, 'ensure_access_token', AsyncMock(side_effect=RuntimeError('no stored credentials'))
-        )
-        config = Config(storage_api_url=STACK)
-
-        result = await _local_login_fallback(config, allow_interactive=False, required=False)
+        result = await _local_login_fallback(config, allow_interactive=False)
 
         assert result is config
         assert result.storage_token is None

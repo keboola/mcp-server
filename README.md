@@ -156,6 +156,12 @@ This opens your browser to sign in to Keboola, then saves the stack-wide session
 
 When you start the server over **stdio in an interactive terminal** with no stored session, it runs this browser login automatically on first start. MCP clients (Claude, Cursor, …) launch the server in the background where a browser can't open, so run `login` once yourself first.
 
+#### Starting without a Keboola account
+
+You can also start the server with only `KBC_STORAGE_API_URL` and no credentials at all. It comes up in *bootstrap mode*: tools that need Keboola access explain how to get a credential, and one tool works without one — `create_project`. It creates a new Keboola project, signs the session in to it, and returns a confirmation URL. Opening that URL in a browser and signing in makes the project permanently yours; until then it is temporary and Keboola may reclaim it, and once you confirm, the session the tool created is revoked and you continue with your own `login`.
+
+This needs a stack with agent provisioning enabled; elsewhere the tool reports that it is not available.
+
 #### Authenticating without a browser
 
 For containers or CI where a browser login isn't possible, provide a Keboola [access or personal access token](https://help.keboola.com/management/project/tokens/) directly — set `KBC_STORAGE_TOKEN` (env var) or send the `X-StorageAPI-Token` header — together with `KBC_PROJECT_ID` (or the `X-KBC-ProjectId` header) to select the project. On HTTP transports these can be supplied per request as headers, so each request carries its own credentials.

@@ -490,3 +490,96 @@ async def test_get_access_token_dead_refresh_does_not_clobber_newer_entry(creds_
 
     # The newer entry (written by the "other caller") must survive, not be forgotten.
     assert load_tokens(STACK).access_token == 'kbc_at_newer'
+
+
+# --- agent provisioning (DMD-1939) ---
+
+_PROVISION_BODY = {
+    'project': {'id': 4321, 'name': 'Agent project', 'backend': 'snowflake'},
+    'accessToken': 'kbc_at_sess-9_secret',
+    'refreshToken': 'kbc_rt_sess-9_secret',
+    'tokenType': 'Bearer',
+    'accessTokenExpiresIn': 3600,
+    'sessionId': 'sess-9',
+    'backendInitDispatchedAsync': True,
+    'claimToken': 'kbc_apc_claim_secret',
+    'claimId': 'claim',
+    'confirmUrl': 'https://connection.keboola.com/agent-project/confirm?token=kbc_apc_claim_secret',
+}
+
+
+@pytest.mark.asyncio
+async def test_provision_agent_project_sends_request_and_parses_session() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured['url'] = str(request.url)
+        captured['body'] = json.loads(request.content)
+        return httpx.Response(200, json=_PROVISION_BODY)
+
+    provisioned = await auth_login.provision_agent_project(
+        STACK,
+        client_id='claude-code',
+        project_name='My project',
+        backend='bigquery',
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert captured['url'] == f'{STACK}/manage/programmatic-projects'
+    assert captured['body'] == {'clientId': 'claude-code', 'projectName': 'My project', 'backend': 'bigquery'}
+    assert provisioned.project_id == 4321
+    assert provisioned.project_name == 'Agent project'
+    assert provisioned.backend == 'snowflake'
+    assert provisioned.confirm_url == _PROVISION_BODY['confirmUrl']
+    assert provisioned.backend_init_dispatched_async is True
+    assert provisioned.tokens.access_token == 'kbc_at_sess-9_secret'
+    assert provisioned.tokens.refresh_token == 'kbc_rt_sess-9_secret'
+    assert provisioned.tokens.session_id == 'sess-9'
+    # `accessTokenExpiresIn` is the endpoint's spelling of `expiresIn`.
+    assert not provisioned.tokens.is_near_expiry
+
+
+@pytest.mark.asyncio
+async def test_provision_agent_project_omits_optional_fields() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured['body'] = json.loads(request.content)
+        return httpx.Response(200, json=_PROVISION_BODY)
+
+    await auth_login.provision_agent_project(STACK, client_id='claude-code', transport=httpx.MockTransport(handler))
+
+    assert captured['body'] == {'clientId': 'claude-code'}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('status', 'headers', 'expected_type', 'expected_message'),
+    [
+        (404, {}, auth_login.AgentProvisioningUnavailableError, 'not available'),
+        (429, {'Retry-After': '60'}, RuntimeError, 'retry in 60 second'),
+        (429, {}, RuntimeError, 'retry later'),
+    ],
+)
+async def test_provision_agent_project_maps_errors(
+    status: int, headers: dict, expected_type: type, expected_message: str
+) -> None:
+    transport = httpx.MockTransport(lambda _rq: httpx.Response(status, json={}, headers=headers))
+
+    with pytest.raises(expected_type, match=expected_message):
+        await auth_login.provision_agent_project(STACK, client_id='claude-code', transport=transport)
+
+
+@pytest.mark.parametrize(
+    ('raw', 'expected'),
+    [
+        ('claude-code', 'claude-code'),
+        ('Claude Code', 'Claude-Code'),
+        ('cursor-ide/1.2', 'cursor-ide-1.2'),
+        ('!!!', 'keboola-mcp-server'),
+        (None, 'keboola-mcp-server'),
+        ('x' * 100, 'x' * 64),
+    ],
+)
+def test_sanitize_client_id(raw: str | None, expected: str) -> None:
+    assert auth_login.sanitize_client_id(raw) == expected

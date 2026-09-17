@@ -65,6 +65,7 @@ class TestServer:
             'create_config',
             'create_flow',
             'create_oauth_url',
+            'create_project',
             'create_python_js_data_app_git_credential',
             'create_sql_transformation',
             'delete_python_js_data_app_draft',
