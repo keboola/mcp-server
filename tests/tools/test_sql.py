@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, call
 
 import httpx
 import pytest
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 from mcp.types import ProgressNotification
 
 from keboola_mcp_server.clients.client import KeboolaClient
