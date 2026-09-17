@@ -7,7 +7,7 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.mcp import TOKEN_INFO_STATE_KEY
+from keboola_mcp_server.mcp import TOKEN_INFO_VAR
 from keboola_mcp_server.tools.merge_requests import tools as mr_tools
 from keboola_mcp_server.tools.merge_requests.models import (
     MergeRequestsDetailOutput,
@@ -21,7 +21,6 @@ from keboola_mcp_server.tools.merge_requests.tools import (
     merge_merge_request,
     request_merge_request_changes,
     request_merge_request_review,
-    resolve_branch_pair,
     resolve_merge_request_conflict,
     update_merge_request,
 )
@@ -236,35 +235,43 @@ async def test_get_merge_requests_detail(mcp_context_client: Context, storage: A
 
 @pytest.mark.asyncio
 async def test_token_info_cached_by_middleware_is_reused(mcp_context_client: Context, storage: AsyncMock) -> None:
-    mcp_context_client.session.state[TOKEN_INFO_STATE_KEY] = TOKEN_INFO
-
-    await get_merge_requests(mcp_context_client)
+    token = TOKEN_INFO_VAR.set(TOKEN_INFO)
+    try:
+        await get_merge_requests(mcp_context_client)
+    finally:
+        TOKEN_INFO_VAR.reset(token)
 
     storage.verify_token.assert_not_called()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('role', 'bearer_token', 'client_readonly', 'expect_write_recommended'),
+    ('role', 'bearer_token', 'client_readonly', 'header_read_only', 'expect_write_recommended'),
     [
-        pytest.param('admin', None, False, True, id='admin'),
-        pytest.param('readOnly', 'oauth', False, False, id='oauth_readonly_role'),
-        pytest.param('', 'oauth', False, True, id='oauth_regular'),
-        pytest.param('admin', None, True, False, id='readonly_client'),
-        pytest.param('developer', None, False, False, id='developer'),
+        pytest.param('admin', None, False, False, True, id='admin'),
+        pytest.param('readOnly', 'oauth', False, False, False, id='oauth_readonly_role'),
+        pytest.param('', 'oauth', False, False, True, id='oauth_regular'),
+        pytest.param('admin', None, True, False, False, id='readonly_client'),
+        pytest.param('developer', None, False, False, False, id='developer'),
+        pytest.param('admin', None, False, True, False, id='x_read_only_mode_header'),
     ],
 )
 async def test_next_step_never_recommends_a_write_the_session_cannot_do(
     mcp_context_client: Context,
     storage: AsyncMock,
     keboola_client: KeboolaClient,
+    mocker,
     role: str,
     bearer_token: str | None,
     client_readonly: bool,
+    header_read_only: bool,
     expect_write_recommended: bool,
 ) -> None:
     keboola_client.bearer_token = bearer_token
     keboola_client.readonly = client_readonly
+    mocker.patch.object(
+        mr_tools.ToolAuthorizationMiddleware, '_get_authorization_config', return_value=(None, None, header_read_only)
+    )
     storage.verify_token.return_value = {'owner': {'id': 123}, 'admin': {'id': 10, 'role': role}}
     storage.merge_request_detail.return_value = _mr_raw('approved')
 
@@ -288,24 +295,7 @@ async def test_detail_on_production_session_hands_off_by_branch_name(
     assert "open a session on branch 'reporting'" in result.merge_requests[0].status.next_step
 
 
-# ---- resolve_branch_pair / create --------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ('branch_id', 'expected_session_id'),
-    [pytest.param(str(DEV_BRANCH_ID), DEV_BRANCH_ID, id='dev_branch'), pytest.param(None, None, id='production')],
-)
-async def test_resolve_branch_pair(
-    keboola_client: KeboolaClient, storage: AsyncMock, branch_id: str | None, expected_session_id: int | None
-) -> None:
-    keboola_client.branch_id = branch_id
-
-    session_branch, default_branch = await resolve_branch_pair(keboola_client)
-
-    assert (session_branch or {}).get('id') == expected_session_id
-    assert default_branch['id'] == DEFAULT_BRANCH_ID
-    storage.branches_list.assert_awaited_once()
+# ---- create -----------------------------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -335,7 +325,6 @@ async def test_create_merge_request_from_session_branch(mcp_context_client: Cont
     ('branch_id', 'kwargs', 'expected_fragment'),
     [
         pytest.param(None, {}, 'development-branch session', id='production_session'),
-        pytest.param(str(DEFAULT_BRANCH_ID), {}, 'development-branch session', id='session_on_default_branch'),
         pytest.param(
             str(DEV_BRANCH_ID), {'auto_merge': 'scheduled'}, 'requires auto_merge_at', id='scheduled_without_time'
         ),
@@ -365,11 +354,26 @@ async def test_create_merge_request_refuses_without_calling(
 
 @pytest.mark.asyncio
 async def test_create_merge_request_names_the_existing_one(mcp_context_client: Context, storage: AsyncMock) -> None:
-    storage.merge_request_create.side_effect = _http_error(400, {'error': 'Merge request already exists', 'code': 'x'})
-    storage.merge_requests_list.return_value = [_mr_raw('approved')]
+    storage.merge_request_create.side_effect = _http_error(
+        400, {'error': 'There is already a merge request (42) created from branch "55"'}
+    )
+    storage.merge_request_detail.return_value = _mr_raw('approved')
 
     with pytest.raises(ToolError, match="already has merge request 42 .*Next step: .*merge it"):
         await create_merge_request(mcp_context_client, title='T')
+
+    storage.merge_request_detail.assert_awaited_once_with(42)
+    storage.merge_requests_list.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_merge_request_passes_other_400s_through(mcp_context_client: Context, storage: AsyncMock) -> None:
+    storage.merge_request_create.side_effect = _http_error(400, {'error': 'Invalid autoMergeAt'})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await create_merge_request(mcp_context_client, title='T')
+
+    storage.merge_request_detail.assert_not_called()
 
 
 # ---- review-state actions ---------------------------------------------------------------------------------
@@ -455,9 +459,33 @@ async def test_approve_and_request_changes_pass_through(mcp_context_client: Cont
             None,
             [_mr_raw(mr_id=9, branch_from=77)],
             None,
-            'has no merge request yet',
+            'has no open merge request',
             None,
             id='omitted_none_on_branch',
+        ),
+        pytest.param(
+            None,
+            [_mr_raw('canceled', mr_id=41), _mr_raw('development', mr_id=42)],
+            None,
+            None,
+            42,
+            id='omitted_skips_canceled_mr_on_the_branch',
+        ),
+        pytest.param(
+            None,
+            [_mr_raw('canceled', mr_id=41)],
+            None,
+            'has no open merge request',
+            None,
+            id='omitted_only_canceled_is_none',
+        ),
+        pytest.param(
+            43,
+            None,
+            _mr_raw('published', mr_id=43, branch_from=None),
+            'already merged .*nothing to do',
+            None,
+            id='given_published_says_merged_not_branch_none',
         ),
     ],
 )
@@ -488,6 +516,20 @@ async def test_mr_id_convention(
             storage.merge_requests_list.assert_awaited_once()  # the +1 of the omitted id
         else:
             storage.merge_requests_list.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_omitted_id_after_merge_hands_off_to_production(
+    mcp_context_client: Context, storage: AsyncMock, keboola_client: KeboolaClient
+) -> None:
+    """The dev-branch session that merged is dead: the branch is gone from branches_list and the MR is published."""
+    keboola_client.branch_id = '999'
+    storage.merge_requests_list.return_value = [_mr_raw('published', branch_from=None)]
+
+    with pytest.raises(ToolError, match='no longer exists.*production branch'):
+        await merge_merge_request(mcp_context_client)
+
+    storage.merge_request_merge.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -565,19 +607,32 @@ async def test_merge_refusals(
 
 
 @pytest.mark.asyncio
-async def test_merge_conflict_409_without_errors_fetches_the_live_list(
+async def test_merge_code_less_409_without_live_conflicts_is_not_ready(
     mcp_context_client: Context, storage: AsyncMock
 ) -> None:
-    """A conflict 409 with no usable params must never yield mergeable=True / "merge it"."""
+    """A 409 without code and without any live conflict is an unknown refusal, never mergeable=True / "merge it"."""
     storage.merge_request_merge.side_effect = _http_error(409, {'error': 'Conflicts'})
     storage.merge_request_conflicts.return_value = []  # even the live list is empty (race / proxy)
 
     result = await merge_merge_request(mcp_context_client, merge_request_id=42)
 
-    assert result.refusal == 'conflicts'
+    assert result.refusal == 'not_ready'  # the 409 was not a conflict after all
+    assert result.conflicts is None
     assert result.status is not None and result.status.mergeable is False
-    assert 'refused because of conflicts' in result.next_step and 'merge it' not in result.next_step
+    assert 'Ready: merge it' not in result.next_step
     storage.merge_request_conflicts.assert_awaited_once_with(42)
+
+
+@pytest.mark.asyncio
+async def test_merge_code_less_409_with_live_conflicts(mcp_context_client: Context, storage: AsyncMock) -> None:
+    storage.merge_request_merge.side_effect = _http_error(409, {'error': 'Conflicts'})
+    storage.merge_request_conflicts.return_value = [_conflict_raw('cfg-1')]
+
+    result = await merge_merge_request(mcp_context_client, merge_request_id=42)
+
+    assert result.refusal == 'conflicts'
+    assert result.conflicts is not None and [c.configuration_id for c in result.conflicts] == ['cfg-1']
+    assert '1 conflict block' in result.next_step
 
 
 @pytest.mark.asyncio
@@ -608,7 +663,7 @@ async def test_merge_reraises_unknown_409(mcp_context_client: Context, storage: 
 async def test_merge_success_awaits_job_and_hands_off(
     mcp_context_client: Context, storage: AsyncMock, monkeypatch
 ) -> None:
-    monkeypatch.setattr(mr_tools, 'MERGE_JOB_POLL_INTERVAL_SEC', 0)
+    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
     storage.merge_request_merge.return_value = {'id': 987, 'status': 'waiting'}  # int on the wire
     storage.job_detail.side_effect = [{'id': 987, 'status': 'processing'}, {'id': 987, 'status': 'success'}]
 
@@ -623,7 +678,7 @@ async def test_merge_success_awaits_job_and_hands_off(
     assert storage.job_detail.await_count == 2
     # branchFromId is read from the MR BEFORE the merge is issued
     assert storage.method_calls.index(
-        call.merge_request_detail(42, include_activity_log=False)
+        call.merge_request_detail(42)
     ) < storage.method_calls.index(call.merge_request_merge(42))
 
 
@@ -639,7 +694,7 @@ async def test_merge_success_awaits_job_and_hands_off(
 async def test_merge_job_failure_rolls_back_to_approved(
     mcp_context_client: Context, storage: AsyncMock, monkeypatch, job: dict, expected_message: str
 ) -> None:
-    monkeypatch.setattr(mr_tools, 'MERGE_JOB_POLL_INTERVAL_SEC', 0)
+    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
     storage.merge_request_detail.return_value = _mr_raw('approved')
     storage.merge_request_merge.return_value = {'id': '988'}
     storage.job_detail.return_value = job
@@ -659,7 +714,7 @@ async def test_merge_poll_failure_is_not_a_merge_failure(
     mcp_context_client: Context, storage: AsyncMock, monkeypatch
 ) -> None:
     """The merge is irreversible once the job started: a transient error while polling must not read as failed."""
-    monkeypatch.setattr(mr_tools, 'MERGE_JOB_POLL_INTERVAL_SEC', 0)
+    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
     storage.merge_request_merge.return_value = {'id': 990}
     storage.job_detail.side_effect = [
         {'id': 990, 'status': 'processing'},
@@ -677,7 +732,7 @@ async def test_merge_poll_failure_is_not_a_merge_failure(
 
 @pytest.mark.asyncio
 async def test_merge_timeout_is_not_a_failure(mcp_context_client: Context, storage: AsyncMock, monkeypatch) -> None:
-    monkeypatch.setattr(mr_tools, 'MERGE_JOB_POLL_INTERVAL_SEC', 0)
+    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
     monkeypatch.setattr(mr_tools, 'MERGE_JOB_TIMEOUT_SEC', 0)
     storage.merge_request_merge.return_value = {'id': 989}
     storage.job_detail.return_value = {'id': 989, 'status': 'processing'}
@@ -711,7 +766,7 @@ async def test_get_merge_request_conflicts_fans_out(mcp_context_client: Context,
     assert first.theirs is not None and first.theirs.version == 9
     assert second.changes[0].path == '/name' and second.suggested_take == 'ours'
     assert result.status.merge_blockers == ['conflicts']
-    assert '2 conflicts block the merge' in result.next_step
+    assert '2 conflicts block the merge' in result.status.next_step
     storage.configuration_diff.assert_has_awaits(
         [call('keboola.ex-db', 'cfg-1'), call('keboola.ex-db', 'cfg-2')], any_order=True
     )
@@ -816,7 +871,7 @@ async def test_resolve_conflict_modes(
     assert result.mode == expected_mode
     assert result.rebased_onto_version == 9
     assert [c.configuration_id for c in result.remaining_conflicts] == ['cfg-2']
-    assert 'Resolve the next conflict: keboola.ex-db/cfg-2 (1 left)' in result.next_step
+    assert 'Resolve the next conflict: keboola.ex-db/cfg-2 (1 left)' in result.status.next_step
     assert (expected_warning is None) == (not result.warnings)
     if expected_warning:
         assert expected_warning in result.warnings[0]
@@ -834,7 +889,7 @@ async def test_resolve_last_conflict_recommends_merge(mcp_context_client: Contex
 
     assert result.remaining_conflicts == []
     assert result.status.mergeable is True
-    assert 'merge it' in result.next_step
+    assert 'merge it' in result.status.next_step
 
 
 @pytest.mark.asyncio

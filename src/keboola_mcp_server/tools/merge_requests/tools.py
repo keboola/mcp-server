@@ -8,9 +8,12 @@ say so up front so the model can hand the user off.
 
 import asyncio
 import logging
+import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Annotated, Any
 
 import httpx
@@ -20,12 +23,13 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 
+from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import (
-    TOKEN_INFO_STATE_KEY,
+    TOKEN_INFO_VAR,
     KeboolaMcpServer,
     process_concurrently,
     toon_serializer_compact,
@@ -57,10 +61,12 @@ from keboola_mcp_server.tools.merge_requests.models import (
     TakeMode,
 )
 from keboola_mcp_server.tools.merge_requests.status import (
+    TERMINAL_STATES,
     LastRefusal,
     SessionContext,
     build_next_step,
     build_status,
+    derive_state,
     same_id,
 )
 
@@ -68,36 +74,36 @@ LOG = logging.getLogger(__name__)
 
 MERGE_CONFLICT_CODE = 'storage.mergeRequests.validation'
 MERGE_NOT_READY_CODE = 'storage.mergeRequests.notReadyToMerge'
+# The backend's duplicate-MR message: 'There is already a merge request (123) created from branch "456"'
+# (`InvalidBranchException::createMergeRequestExists`); it carries no dedicated `code`.
+_DUPLICATE_MR_RE = re.compile(r'already a merge request \((\d+)\)')
 # Storage job statuses after which the job never changes again (same set as workspace.py's poller).
 STORAGE_JOB_TERMINAL_STATUSES = frozenset({'success', 'error', 'warning', 'terminated', 'cancelled', 'canceled'})
 MERGE_JOB_TIMEOUT_SEC = 600.0
-MERGE_JOB_POLL_INTERVAL_SEC = 1.0
 
 ROLE_DENIED_MESSAGE = (
     'Your project role may not permit this merge-request action (a project admin with role "admin" or "share" can '
     'do it), or the merge request is no longer open.'
-)
-BRANCH_ONLY_SENTENCE = (
-    "Available only from a development-branch session; on production, tell the user to open a session on the "
-    "merge request's source branch and ask again there."
 )
 
 
 def add_merge_request_tools(mcp: KeboolaMcpServer) -> None:
     """Add merge-request tools to the MCP server."""
     read_only = ToolAnnotations(readOnlyHint=True)
+    # Repo convention: creating a new object is not destructive; replacing or deleting existing content is.
+    # `resolve_merge_request_conflict` rebases (replaces) a configuration version and can delete it.
     destructive = ToolAnnotations(destructiveHint=True)
     write = ToolAnnotations(destructiveHint=False)
     for fn, annotations in (
         (get_merge_requests, read_only),
-        (create_merge_request, destructive),
+        (create_merge_request, write),
         (update_merge_request, destructive),
         (request_merge_request_review, write),
         (approve_merge_request, write),
         (request_merge_request_changes, write),
         (merge_merge_request, destructive),
         (get_merge_request_conflicts, read_only),
-        (resolve_merge_request_conflict, write),
+        (resolve_merge_request_conflict, destructive),
     ):
         mcp.add_tool(
             FunctionTool.from_function(
@@ -118,6 +124,7 @@ class _MrContext:
     token_info: Mapping[str, Any]
     branches: list[JsonDict]
     links: ProjectLinksManager
+    header_read_only: bool = False  # the `X-Read-Only-Mode` header gate (ToolAuthorizationMiddleware)
 
     @property
     def admin_id(self) -> Any:
@@ -126,13 +133,20 @@ class _MrContext:
 
     @property
     def can_write(self) -> bool:
+        """
+        Whether a write recommended by `next_step` could actually be performed by this session. Mirrors the
+        `ToolsFilteringMiddleware` role rules plus the read-only gates (`X-Read-Only-Mode`, read-only client).
+        `X-Allowed-Tools` / `X-Disallowed-Tools` are not modelled here.
+        """
+        if self.header_read_only or getattr(self.client, 'readonly', False) is True:
+            return False
         admin = self.token_info.get('admin')
         role = str(admin.get('role') or '').lower() if isinstance(admin, Mapping) else ''
-        if role == 'readonly' or getattr(self.client, 'readonly', False) is True:
+        if role == 'readonly':
             return False
         return role in ('admin', 'share') or bool(self.client.bearer_token)
 
-    @property
+    @cached_property
     def branch_names(self) -> dict[str, str]:
         return {str(b['id']): str(b.get('name') or b['id']) for b in self.branches if 'id' in b}
 
@@ -151,7 +165,10 @@ class _MrContext:
         for branch in self.branches:
             if same_id(branch.get('id'), self.client.branch_id):
                 return branch
-        raise ToolError(f'Branch "{self.client.branch_id}" not found in the project; it may have been deleted.')
+        raise ToolError(
+            f'The session branch (id {self.client.branch_id}) no longer exists; it was probably merged and is being '
+            'deleted. Tell the user to open a session on the production branch to continue.'
+        )
 
     def session(self, mr: Mapping[str, Any]) -> SessionContext:
         branch_from_id = (mr.get('branches') or {}).get('branchFromId')
@@ -169,27 +186,21 @@ class _MrContext:
         return [self.links.get_merge_request_link(branch_from_id, str(mr.get('title') or ''))]
 
 
-async def resolve_branch_pair(client: KeboolaClient) -> tuple[JsonDict | None, JsonDict]:
-    """
-    One `branches_list` call resolving both the session branch (None on production) and the default branch.
-    Unlike `tools.project._resolve_branch_context`, it returns the default branch even while on a dev branch.
-    """
-    ctx = _MrContext(client=client, token_info={}, branches=await client.storage_client.branches_list(), links=None)  # type: ignore[arg-type]
-    return ctx.session_branch, ctx.default_branch
-
-
 async def _load(ctx: Context) -> _MrContext:
     client = KeboolaClient.from_state(ctx.session.state)
-    token_info = ctx.session.state.get(TOKEN_INFO_STATE_KEY) if hasattr(ctx.session.state, 'get') else None
+    token_info = TOKEN_INFO_VAR.get(None)
     if not isinstance(token_info, Mapping):
-        # Not called through ToolsFilteringMiddleware (which caches the verification for this call).
+        # Not called through ToolsFilteringMiddleware (which verifies the token for this call).
         token_info = await client.storage_client.verify_token()
     branches = await client.storage_client.branches_list()
     owner = token_info.get('owner')
     project_id = str(owner.get('id')) if isinstance(owner, Mapping) else await client.storage_client.project_id()
     # Project-level links (no session-branch prefix): a merge request lives on its own source branch.
     links = ProjectLinksManager(base_url=client.storage_api_url, project_id=project_id, branch_id=None)
-    return _MrContext(client=client, token_info=token_info, branches=branches, links=links)
+    _, _, header_read_only = ToolAuthorizationMiddleware._get_authorization_config()
+    return _MrContext(
+        client=client, token_info=token_info, branches=branches, links=links, header_read_only=header_read_only
+    )
 
 
 def _error_body(exc: httpx.HTTPStatusError) -> dict[str, Any]:
@@ -200,14 +211,23 @@ def _error_body(exc: httpx.HTTPStatusError) -> dict[str, Any]:
     return body if isinstance(body, dict) else {}
 
 
-def _map_write_error(exc: httpx.HTTPStatusError) -> ToolError | None:
-    """Every MR write maps the backend's 403 onto one clear message; other statuses are left to the caller."""
-    if exc.response.status_code == 403:
-        body = _error_body(exc)
-        error = body.get('error') or body.get('message')
-        detail = f'The backend refused it: {error} ' if error else ''
-        return ToolError(f'{detail}{ROLE_DENIED_MESSAGE}')
-    return None
+def _error_message(exc: httpx.HTTPStatusError) -> str:
+    body = _error_body(exc)
+    return str(body.get('error') or body.get('message') or exc)
+
+
+@asynccontextmanager
+async def _mapped_write_errors() -> AsyncIterator[None]:
+    """Every MR write maps the backend's 403 onto one clear message (with the backend's text); other statuses pass."""
+    try:
+        yield
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 403:
+            body = _error_body(exc)
+            error = body.get('error') or body.get('message')
+            detail = f'The backend refused it: {error} ' if error else ''
+            raise ToolError(f'{detail}{ROLE_DENIED_MESSAGE}') from exc
+        raise
 
 
 def _parse_conflicts(raw: Any) -> list[ConflictRef]:
@@ -222,7 +242,6 @@ def _build_detail(
     *,
     conflicts: Sequence[ConflictRef] | None,
     with_activity_log: bool,
-    last_refusal: LastRefusal | None = None,
 ) -> MergeRequestDetail:
     summary = MergeRequest.from_api(mr, branch_names=c.branch_names, links=c.mr_links(mr))
     activity_log = mr.get('activityLog')
@@ -234,7 +253,6 @@ def _build_detail(
             admin_id=c.admin_id,
             session=c.session(mr),
             branch_from_name=c.branch_from_name(mr),
-            last_refusal=last_refusal,
         ),
         changed_configurations=ChangedConfig.list_from_change_log(mr.get('changeLog')),
         activity_log=(
@@ -245,36 +263,45 @@ def _build_detail(
     )
 
 
-async def _detail_with_conflicts(
-    c: _MrContext, mr: Mapping[str, Any], *, with_activity_log: bool
-) -> MergeRequestDetail:
+async def _detail_with_conflicts(c: _MrContext, mr: Mapping[str, Any]) -> MergeRequestDetail:
     conflicts = _parse_conflicts(await c.client.storage_client.merge_request_conflicts(mr['id']))
-    return _build_detail(c, mr, conflicts=conflicts, with_activity_log=with_activity_log)
+    return _build_detail(c, mr, conflicts=conflicts, with_activity_log=False)
 
 
-async def _resolve_branch_mr(
-    c: _MrContext, merge_request_id: int | None, *, include_activity_log: bool = False
-) -> JsonDict:
+def _open_branch_mrs(rows: Sequence[Mapping[str, Any]], branch_id: Any) -> list[JsonDict]:
+    """The non-terminal MRs of a branch, newest first (a canceled MR keeps its `branchFromId` while the branch lives)."""
+    matches = [
+        r
+        for r in rows
+        if same_id((r.get('branches') or {}).get('branchFromId'), branch_id) and r.get('state') not in TERMINAL_STATES
+    ]
+    return sorted(matches, key=lambda r: int(r.get('id') or 0), reverse=True)  # type: ignore[return-value]
+
+
+async def _resolve_branch_mr(c: _MrContext, merge_request_id: int | None) -> JsonDict:
     """
-    The MR-id convention for branch-only tools: with the id omitted, the session branch's single MR; with the
-    id given, the MR is validated to belong to the session branch — never act on another branch's MR.
+    The MR-id convention for branch-only tools: with the id omitted, the session branch's open MR; with the id
+    given, the MR is validated to belong to the session branch — never act on another branch's MR.
     """
     if c.client.branch_id is None:
         raise ToolError(MERGE_REQUEST_BRANCH_ONLY_MESSAGE)
     if merge_request_id is None:
         rows = await c.client.storage_client.merge_requests_list()
-        matches = [r for r in rows if same_id((r.get('branches') or {}).get('branchFromId'), c.client.branch_id)]
+        matches = _open_branch_mrs(rows, c.client.branch_id)
         if not matches:
+            c.session_branch  # noqa: B018 -- raises the production handoff when the branch is gone (merged)
             raise ToolError(
-                'The current development branch has no merge request yet. Create one with create_merge_request, '
+                'The current development branch has no open merge request. Create one with create_merge_request, '
                 'or pass merge_request_id if you meant another branch (open a session on that branch first).'
             )
-        mr = matches[0]
-        if include_activity_log:
-            mr = await c.client.storage_client.merge_request_detail(mr['id'], include_activity_log=True)
-        return mr
-    mr = await c.client.storage_client.merge_request_detail(merge_request_id, include_activity_log=include_activity_log)
+        return matches[0]
+    mr = await c.client.storage_client.merge_request_detail(merge_request_id)
     branch_from_id = (mr.get('branches') or {}).get('branchFromId')
+    if branch_from_id is None:
+        raise ToolError(
+            f'Merge request {merge_request_id} is already {derive_state(mr)} (state {mr.get("state")}) and its source '
+            'branch is gone; there is nothing to do on it.'
+        )
     if not same_id(branch_from_id, c.client.branch_id):
         name = c.branch_from_name(mr)
         where = f"branch '{name}' (id {branch_from_id})" if name else f'branch id {branch_from_id}'
@@ -292,13 +319,24 @@ def _validate_auto_merge(strategy: str | None, at: str | None, *, require_pairin
         raise ToolError("auto_merge_at is only meaningful with auto_merge='scheduled'.")
 
 
+def _next_poll_interval(elapsed_seconds: float) -> float:
+    """Merge-job polling interval: fast at first, capped at 20 s (the schedule `workspace.py` uses)."""
+    if elapsed_seconds < 10:
+        return 1.0
+    if elapsed_seconds < 30:
+        return 2.0
+    if elapsed_seconds < 120:
+        return 5.0
+    return 20.0
+
+
 async def _await_storage_job(client: KeboolaClient, job_id: str) -> tuple[JsonDict | None, str | None]:
     """
     Polls a Storage job until a terminal status. Returns `(job, None)` when it finished, `(None, None)` on
     timeout and `(None, reason)` when polling itself failed (network / 5xx). In the last two cases the job
     keeps running: the merge is irreversible once started, so the caller must never report it as failed.
     """
-    deadline = time.monotonic() + MERGE_JOB_TIMEOUT_SEC
+    started = time.monotonic()
     while True:
         try:
             job = await client.storage_client.job_detail(job_id)
@@ -307,9 +345,10 @@ async def _await_storage_job(client: KeboolaClient, job_id: str) -> tuple[JsonDi
             return None, f'{type(exc).__name__}: {exc}'
         if str(job.get('status') or '') in STORAGE_JOB_TERMINAL_STATUSES:
             return job, None
-        if time.monotonic() >= deadline:
+        elapsed = time.monotonic() - started
+        if elapsed >= MERGE_JOB_TIMEOUT_SEC:
             return None, None
-        await asyncio.sleep(MERGE_JOB_POLL_INTERVAL_SEC)
+        await asyncio.sleep(min(_next_poll_interval(elapsed), MERGE_JOB_TIMEOUT_SEC - elapsed))
 
 
 def _validate_resolved(resolved: Mapping[str, Any]) -> ResolvedConfiguration:
@@ -409,13 +448,9 @@ async def approve_merge_request(
     follow `next_step`.
     """
     c = await _load(ctx)
-    try:
+    async with _mapped_write_errors():
         mr = await c.client.storage_client.merge_request_approve(merge_request_id)
-    except httpx.HTTPStatusError as exc:
-        if mapped := _map_write_error(exc):
-            raise mapped from exc
-        raise
-    return await _detail_with_conflicts(c, mr, with_activity_log=False)
+    return await _detail_with_conflicts(c, mr)
 
 
 @tool_errors()
@@ -435,13 +470,9 @@ async def request_merge_request_changes(
     status; follow `next_step`.
     """
     c = await _load(ctx)
-    try:
+    async with _mapped_write_errors():
         mr = await c.client.storage_client.merge_request_request_changes(merge_request_id, reason=reason)
-    except httpx.HTTPStatusError as exc:
-        if mapped := _map_write_error(exc):
-            raise mapped from exc
-        raise
-    return await _detail_with_conflicts(c, mr, with_activity_log=False)
+    return await _detail_with_conflicts(c, mr)
 
 
 @tool_errors()
@@ -453,7 +484,8 @@ async def update_merge_request(
         str | None, Field(description='New description. Omit to keep the current one; an empty string clears it.')
     ] = None,
     reviewer_ids: Annotated[
-        Sequence[int] | None, Field(description='New complete list of reviewer user ids. Omit to keep the current one.')
+        Sequence[int] | None,
+        Field(description='New complete list of reviewer user ids. Omit to keep the current one.'),
     ] = None,
     auto_merge: Annotated[
         AutoMergeStrategy | None,
@@ -497,13 +529,9 @@ async def update_merge_request(
         )
 
     c = await _load(ctx)
-    try:
+    async with _mapped_write_errors():
         mr = await c.client.storage_client.merge_request_update(merge_request_id, payload)
-    except httpx.HTTPStatusError as exc:
-        if mapped := _map_write_error(exc):
-            raise mapped from exc
-        raise
-    return await _detail_with_conflicts(c, mr, with_activity_log=False)
+    return await _detail_with_conflicts(c, mr)
 
 
 # ---- Author / promotion — development-branch session only ------------------------------------------------
@@ -528,14 +556,13 @@ async def create_merge_request(
     auto_merge_at: Annotated[
         str | None, Field(description="ISO-8601 date-time; required if and only if auto_merge='scheduled'.")
     ] = None,
-    project_id: ProjectIdArg = None,
 ) -> MergeRequestDetail:
     """
     Creates a merge request for the CURRENT development branch into production.
 
     Available only from a development-branch session; on production, tell the user to open a session on the
     merge request's source branch and ask again there. The source branch is the session branch and the target
-    is production — there are no branch parameters. A branch can have only one merge request.
+    is production — there are no branch parameters. A branch can have only one open merge request.
 
     On a project with the default of 0 required approvals the happy path is two calls:
     create_merge_request → merge_merge_request (no review step). Returns the merge request with its status;
@@ -546,34 +573,37 @@ async def create_merge_request(
     session_branch = c.session_branch
     if session_branch is None:
         raise ToolError(MERGE_REQUEST_BRANCH_ONLY_MESSAGE)
-    default_branch = c.default_branch
-    if same_id(session_branch.get('id'), default_branch.get('id')):
-        raise ToolError(MERGE_REQUEST_BRANCH_ONLY_MESSAGE)
-    try:
-        mr = await c.client.storage_client.merge_request_create(
-            branch_from_id=session_branch['id'],
-            branch_into_id=default_branch['id'],
-            title=title,
-            description=description,
-            reviewer_ids=reviewer_ids,
-            auto_merge_strategy=auto_merge,
-            auto_merge_at=auto_merge_at,
-        )
-    except httpx.HTTPStatusError as exc:
-        if mapped := _map_write_error(exc):
-            raise mapped from exc
-        if 400 <= exc.response.status_code < 500:
-            rows = await c.client.storage_client.merge_requests_list()
-            existing = [r for r in rows if same_id((r.get('branches') or {}).get('branchFromId'), session_branch['id'])]
-            if existing:
-                detail = await _detail_with_conflicts(c, existing[0], with_activity_log=False)
-                raise ToolError(
-                    f"Branch '{session_branch.get('name')}' already has merge request {detail.id} "
-                    f"('{detail.title}', state {detail.derived_state}); a branch can have only one. "
-                    f'Next step: {detail.status.next_step}'
-                ) from exc
-        raise
-    return await _detail_with_conflicts(c, mr, with_activity_log=False)
+    duplicate_of: int | None = None
+    duplicate_exc: httpx.HTTPStatusError | None = None
+    async with _mapped_write_errors():
+        try:
+            mr = await c.client.storage_client.merge_request_create(
+                branch_from_id=session_branch['id'],
+                branch_into_id=c.default_branch['id'],
+                title=title,
+                description=description,
+                reviewer_ids=reviewer_ids,
+                auto_merge_strategy=auto_merge,
+                auto_merge_at=auto_merge_at,
+            )
+        except httpx.HTTPStatusError as exc:
+            match = _DUPLICATE_MR_RE.search(_error_message(exc)) if exc.response.status_code < 500 else None
+            if match is None:
+                raise
+            duplicate_of, duplicate_exc = int(match.group(1)), exc
+    if duplicate_of is not None:
+        # Outside the except block so a failure of this lookup does not hide the backend's original error.
+        assert duplicate_exc is not None
+        try:
+            detail = await _detail_with_conflicts(c, await c.client.storage_client.merge_request_detail(duplicate_of))
+        except Exception:
+            raise ToolError(_error_message(duplicate_exc)) from duplicate_exc
+        raise ToolError(
+            f"Branch '{session_branch.get('name')}' already has merge request {detail.id} "
+            f"('{detail.title}', state {detail.derived_state}); a branch can have only one. "
+            f'Next step: {detail.status.next_step}'
+        ) from duplicate_exc
+    return await _detail_with_conflicts(c, mr)
 
 
 @tool_errors()
@@ -583,7 +613,6 @@ async def request_merge_request_review(
         int | None,
         Field(description="The merge request id. Omit to use the current branch's merge request."),
     ] = None,
-    project_id: ProjectIdArg = None,
 ) -> MergeRequestDetail:
     """
     Sends the current branch's merge request for review (author action).
@@ -596,13 +625,41 @@ async def request_merge_request_review(
     """
     c = await _load(ctx)
     mr = await _resolve_branch_mr(c, merge_request_id)
-    try:
+    async with _mapped_write_errors():
         updated = await c.client.storage_client.merge_request_request_review(mr['id'])
-    except httpx.HTTPStatusError as exc:
-        if mapped := _map_write_error(exc):
-            raise mapped from exc
-        raise
-    return await _detail_with_conflicts(c, updated, with_activity_log=False)
+    return await _detail_with_conflicts(c, updated)
+
+
+def _refused_merge(
+    c: _MrContext,
+    mr: Mapping[str, Any],
+    *,
+    refusal: LastRefusal,
+    message: str,
+    conflicts: list[ConflictRef] | None,
+) -> MergeResult:
+    status = build_status(
+        mr,
+        conflicts=conflicts,
+        admin_id=c.admin_id,
+        session=c.session(mr),
+        branch_from_name=c.branch_from_name(mr),
+        last_refusal=refusal,
+        refusal_message=message,
+    )
+    return MergeResult(
+        merge_request_id=int(mr['id']),
+        merged=False,
+        state=status.state,
+        job_id=None,
+        refusal=refusal,
+        refusal_message=message,
+        conflicts=conflicts,
+        status=status,
+        source_branch_deleting=False,
+        warnings=[],
+        next_step=status.next_step,
+    )
 
 
 @tool_errors()
@@ -612,7 +669,6 @@ async def merge_merge_request(
         int | None,
         Field(description="The merge request id. Omit to use the current branch's merge request."),
     ] = None,
-    project_id: ProjectIdArg = None,
 ) -> MergeResult:
     """
     Merges the current branch's merge request into production and waits for the merge to finish.
@@ -621,7 +677,8 @@ async def merge_merge_request(
     merge request's source branch and ask again there. IRREVERSIBLE: on success the changes are in production
     and the source branch (with everything else on it: buckets, tables, workspaces) is deleted by a background
     job — confirm with the user first. Works directly from `development` when the project requires no
-    approvals.
+    approvals. The call waits for the merge job and can block for up to 10 minutes; if it returns
+    `state='in_merge'` the merge is still running — check again with get_merge_requests, never merge again.
 
     When the backend refuses, nothing changes and the result explains why: `refusal='conflicts'` lists the
     conflicting configurations (resolve them with get_merge_request_conflicts / resolve_merge_request_conflict,
@@ -634,52 +691,36 @@ async def merge_merge_request(
     session = c.session(mr)
     branch_name = c.branch_from_name(mr)
 
-    try:
-        job = await c.client.storage_client.merge_request_merge(mr_id)
-    except httpx.HTTPStatusError as exc:
-        if mapped := _map_write_error(exc):
-            raise mapped from exc
-        if exc.response.status_code != 409:
-            raise
-        body = _error_body(exc)
-        code = body.get('code')
-        message = str(body.get('error') or body.get('message') or exc)
-        conflicts: list[ConflictRef] | None
-        refusal: LastRefusal
-        if code == MERGE_NOT_READY_CODE:
+    # The 409 is diagnosed inside the except block; any follow-up request runs after it so its failure cannot
+    # replace the backend's refusal as the reported error.
+    refusal: LastRefusal | None = None
+    message = ''
+    conflicts: list[ConflictRef] | None = None
+    async with _mapped_write_errors():
+        try:
+            job = await c.client.storage_client.merge_request_merge(mr_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 409:
+                raise
+            body = _error_body(exc)
+            code = body.get('code')
+            message = str(body.get('error') or body.get('message') or exc)
+            if code == MERGE_NOT_READY_CODE:
+                refusal = 'not_ready'
+            elif code == MERGE_CONFLICT_CODE or code is None:
+                refusal = 'conflicts'
+                params = body.get('params')
+                conflicts = _parse_conflicts(params.get('errors') if isinstance(params, Mapping) else None)
+            else:
+                raise
+    if refusal == 'conflicts' and not conflicts:
+        # No usable `params.errors` (older stack, proxy body): consult the live list. Empty → the 409 was not a
+        # conflict after all; report it as "not ready" rather than sending the agent to an empty conflict list.
+        conflicts = _parse_conflicts(await c.client.storage_client.merge_request_conflicts(mr_id))
+        if not conflicts:
             refusal, conflicts = 'not_ready', None
-        elif code == MERGE_CONFLICT_CODE or code is None:
-            refusal = 'conflicts'
-            params = body.get('params')
-            conflicts = _parse_conflicts(params.get('errors') if isinstance(params, Mapping) else None)
-            if not conflicts:
-                # A conflict 409 without a usable `params.errors` (older stack, proxy body): fetch the live list so
-                # the status never claims "mergeable" right after the backend refused the merge.
-                conflicts = _parse_conflicts(await c.client.storage_client.merge_request_conflicts(mr_id))
-        else:
-            raise
-        status = build_status(
-            mr,
-            conflicts=conflicts,
-            admin_id=c.admin_id,
-            session=session,
-            branch_from_name=branch_name,
-            last_refusal=refusal,
-            refusal_message=message,
-        )
-        return MergeResult(
-            merge_request_id=mr_id,
-            merged=False,
-            state=status.state,
-            job_id=None,
-            refusal=refusal,
-            refusal_message=message,
-            conflicts=conflicts,
-            status=status,
-            source_branch_deleting=False,
-            warnings=[],
-            next_step=status.next_step,
-        )
+    if refusal is not None:
+        return _refused_merge(c, mr, refusal=refusal, message=message, conflicts=conflicts)
 
     job_id = str(job['id'])
     final, poll_error = await _await_storage_job(c.client, job_id)
@@ -704,11 +745,14 @@ async def merge_merge_request(
                 else f'The merge job {job_id} is still running after {int(MERGE_JOB_TIMEOUT_SEC)} s.'
             ],
             next_step=(
-                f'The merge is probably still running (Storage job {job_id}); check its state with get_merge_requests in a '
-                'moment, do not merge again and do not edit the branch meanwhile.'
+                f'The merge is probably still running (Storage job {job_id}); check its state with get_merge_requests '
+                'in a moment, do not merge again and do not edit the branch meanwhile.'
             ),
         )
     if str(final.get('status')) == 'success':
+        viewer = build_status(
+            mr, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name
+        ).viewer
         return MergeResult(
             merge_request_id=mr_id,
             merged=True,
@@ -726,9 +770,7 @@ async def merge_merge_request(
                 merge_blockers=['state'],
                 conflicts=None,
                 allowed_actions=[],
-                viewer=build_status(
-                    mr, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name
-                ).viewer,
+                viewer=viewer,
                 pending=[],
                 session=session,
                 branch_from_name=branch_name,
@@ -738,18 +780,19 @@ async def merge_merge_request(
     status = build_status(
         rolled_back, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name
     )
+    error = _job_error_message(final)
     return MergeResult(
         merge_request_id=mr_id,
         merged=False,
         state='approved',
         job_id=job_id,
         refusal=None,
-        refusal_message=_job_error_message(final),
+        refusal_message=error,
         conflicts=None,
         status=status,
         source_branch_deleting=False,
         warnings=[],
-        next_step=f'The merge job failed ({_job_error_message(final)}); the merge request is back in `approved`. {status.next_step}',
+        next_step=f'The merge job failed ({error}); the merge request is back in `approved`. {status.next_step}',
     )
 
 
@@ -763,7 +806,6 @@ async def get_merge_request_conflicts(
         int | None,
         Field(description="The merge request id. Omit to use the current branch's merge request."),
     ] = None,
-    project_id: ProjectIdArg = None,
 ) -> MergeRequestConflictsOutput:
     """
     Shows what blocks the current branch's merge request from merging: each conflicting configuration with its
@@ -774,7 +816,8 @@ async def get_merge_request_conflicts(
     branch and in production since the branch was created. For each one you get `base` / `ours` (branch) /
     `theirs` (production), `changes` (each path tagged `changed_by` ours|theirs|both), `conflicting_paths`
     (both sides changed differently — the actual conflict) and `suggested_take` when one side is a safe pick.
-    Walk the user through them one by one and resolve each with resolve_merge_request_conflict. Follow `next_step`.
+    Walk the user through them one by one and resolve each with resolve_merge_request_conflict. Follow
+    `status.next_step`.
     """
     c = await _load(ctx)
     mr = await _resolve_branch_mr(c, merge_request_id)
@@ -789,9 +832,7 @@ async def get_merge_request_conflicts(
     status = build_status(
         mr, conflicts=refs, admin_id=c.admin_id, session=c.session(mr), branch_from_name=c.branch_from_name(mr)
     )
-    return MergeRequestConflictsOutput(
-        merge_request_id=mr_id, conflicts=conflicts, status=status, next_step=status.next_step
-    )
+    return MergeRequestConflictsOutput(merge_request_id=mr_id, conflicts=conflicts, status=status)
 
 
 @tool_errors()
@@ -826,7 +867,6 @@ async def resolve_merge_request_conflict(
         int | None,
         Field(description="The merge request id. Omit to use the current branch's merge request."),
     ] = None,
-    project_id: ProjectIdArg = None,
 ) -> ResolveConflictResult:
     """
     Resolves ONE conflicting configuration of the current branch's merge request by re-anchoring the branch
@@ -835,9 +875,10 @@ async def resolve_merge_request_conflict(
     Available only from a development-branch session; on production, tell the user to open a session on the
     merge request's source branch and ask again there. Call get_merge_request_conflicts first, then for each
     conflict have the user choose: `take='ours'` / `'theirs'` / `'delete'`, or pass `resolved` with the
-    hand-merged content. Taking one side discards the other side's changes — say so. The configuration must
-    be in the merge request's live conflict set. `remaining_conflicts` tells you whether to continue the loop;
-    approvals survive the resolution. Follow `next_step`.
+    hand-merged content. Taking one side discards the other side's changes and the rebase REPLACES the branch
+    version (with 'delete' it deletes the configuration) — say so. The configuration must be in the merge
+    request's live conflict set. `remaining_conflicts` tells you whether to continue the loop; approvals survive
+    the resolution. Follow `status.next_step`.
     """
     if (take is None) == (resolved is None):
         raise ToolError("Pass exactly one of take='ours'|'theirs'|'delete' or a resolved configuration.")
@@ -850,7 +891,7 @@ async def resolve_merge_request_conflict(
     live = _parse_conflicts(await c.client.storage_client.merge_request_conflicts(mr_id))
     if not any(r.component_id == component_id and r.configuration_id == str(configuration_id) for r in live):
         raise ToolError(
-            f'{component_id}/{configuration_id} is not in merge request {mr_id}\'s conflict set; nothing to resolve. '
+            f"{component_id}/{configuration_id} is not in merge request {mr_id}'s conflict set; nothing to resolve. "
             'Call get_merge_request_conflicts for the current set.'
         )
 
@@ -882,7 +923,7 @@ async def resolve_merge_request_conflict(
         if not isinstance(side, Mapping):
             # An absent side is not a deletion: never turn it into a tombstone behind the user's back.
             raise ToolError(
-                f"The diff has no {take} side: the configuration does not exist on that branch. "
+                f'The diff has no {take} side: the configuration does not exist on that branch. '
                 "Use take='delete' to delete it explicitly, or pass the content as `resolved`."
             )
         if side.get('isDeleted'):
@@ -892,8 +933,8 @@ async def resolve_merge_request_conflict(
             envelope = side.get('diff') or {}
             if holes or not str(envelope.get('name') or '').strip():
                 raise ToolError(
-                    f"The diff's {take} side carries no {', '.join(holes) or 'name'}; cannot compose the content from it "
-                    '(backend envelope hole). Pass the resolution as `resolved` instead.'
+                    f"The diff's {take} side carries no {', '.join(holes) or 'name'}; cannot compose the content from "
+                    'it (backend envelope hole). Pass the resolution as `resolved` instead.'
                 )
             if not isinstance(envelope.get('isDisabled'), bool):
                 raise ToolError(
@@ -908,17 +949,14 @@ async def resolve_merge_request_conflict(
             body['changeDescription'] = change_description
     elif change_description is not None:
         warnings.append(
-            'change_description ignored: the delete resolution cannot carry one; the backend records its default message.'
+            'change_description ignored: the delete resolution cannot carry one; the backend records its default '
+            'message.'
         )
 
-    try:
+    async with _mapped_write_errors():
         await c.client.storage_client.configuration_rebase(
             component_id, configuration_id, version=int(onto_version), diff=body
         )
-    except httpx.HTTPStatusError as exc:
-        if mapped := _map_write_error(exc):
-            raise mapped from exc
-        raise
 
     remaining = _parse_conflicts(await c.client.storage_client.merge_request_conflicts(mr_id))
     status = build_status(
@@ -938,5 +976,4 @@ async def resolve_merge_request_conflict(
         remaining_conflicts=remaining,
         status=status,
         warnings=warnings,
-        next_step=status.next_step,
     )

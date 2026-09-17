@@ -41,7 +41,7 @@ _ALLOWED_ACTIONS_BY_STATE: dict[str, tuple[AllowedAction, ...]] = {
 _ALLOWED_ACTIONS: frozenset[str] = frozenset(
     {'request_review', 'approve', 'request_changes', 'merge', 'update', 'resolve_conflicts'}
 )
-_BLOCKERS: frozenset[str] = frozenset({'conflicts', 'approvals', 'state'})
+TERMINAL_STATES: frozenset[str] = frozenset({'published', 'canceled'})
 _DERIVED_STATES: frozenset[str] = frozenset(_DERIVED_STATE_BY_RAW.values()) | {'rejected'}
 
 
@@ -96,13 +96,19 @@ def derive_merge_blockers(mr: Mapping[str, Any], conflicts: Sequence[Any] | None
     - `conflicts`: the live conflicts list is non-empty; `conflicts=None` (not fetched) skips only this check
     - `approvals`: `state == in_review` (the state collapses the requirement; no count until DMD-1969)
     - `state`: `in_merge` / `published` / `canceled`
+
+    Server-first (`mergeBlockers`, DMD-1988): the backend's list is kept verbatim (unknown kinds included, so an
+    unknown blocker never reads as "mergeable"), and the live conflicts the caller just fetched are unioned in.
     """
     server = mr.get('mergeBlockers')
     if isinstance(server, list):
-        return [b for b in server if b in _BLOCKERS]  # type: ignore[misc]
+        blockers = [str(b) for b in server if isinstance(b, str) and b]
+        if conflicts and 'conflicts' not in blockers:
+            blockers.append('conflicts')
+        return blockers
 
     state = mr.get('state') or ''
-    blockers: list[MergeBlocker] = []
+    blockers = []
     if conflicts:
         blockers.append('conflicts')
     if state == 'in_review':
@@ -217,10 +223,15 @@ def build_next_step(
             'one by one with resolve_merge_request_conflict.'
         )
     if 'conflicts' in merge_blockers:
-        n = len(conflicts) if conflicts is not None else 0
-        noun = 'conflict' if n == 1 else 'conflicts'
         if not session.on_mr_branch:  # 5
             return f'Conflicts must be resolved from a session on {branch}; open one and call get_merge_request_conflicts there.'
+        if conflicts is None:  # 6, count unknown (the blocker came from the backend, the list was not fetched)
+            return (
+                'Conflicts block the merge; call get_merge_request_conflicts and resolve them one by one '
+                'with resolve_merge_request_conflict.'
+            )
+        n = len(conflicts)
+        noun = 'conflict' if n == 1 else 'conflicts'
         return (  # 6
             f'{n} {noun} block the merge; call get_merge_request_conflicts and resolve them one by one '
             'with resolve_merge_request_conflict.'
