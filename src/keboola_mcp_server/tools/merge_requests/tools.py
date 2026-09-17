@@ -290,6 +290,16 @@ async def _resolve_branch_mr(c: _MrContext, merge_request_id: int | None) -> Jso
         matches = _open_branch_mrs(rows, c.client.branch_id)
         if not matches:
             c.session_branch  # noqa: B018 -- raises the production handoff when the branch is gone (merged)
+            if any(
+                same_id((r.get('branches') or {}).get('branchFromId'), c.client.branch_id)
+                and r.get('state') == 'published'
+                for r in rows
+            ):
+                # The deletion window: the branch is still listed but its MR is already published.
+                raise ToolError(
+                    "The current development branch's merge request is already merged and the branch is being "
+                    'deleted. Tell the user to open a session on the production branch to continue.'
+                )
             raise ToolError(
                 'The current development branch has no open merge request. Create one with create_merge_request, '
                 'or pass merge_request_id if you meant another branch (open a session on that branch first).'
