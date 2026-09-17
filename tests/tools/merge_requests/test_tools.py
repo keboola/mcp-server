@@ -677,9 +677,9 @@ async def test_merge_success_awaits_job_and_hands_off(
     assert 'source branch is being deleted' in result.next_step and 'production' in result.next_step
     assert storage.job_detail.await_count == 2
     # branchFromId is read from the MR BEFORE the merge is issued
-    assert storage.method_calls.index(
-        call.merge_request_detail(42)
-    ) < storage.method_calls.index(call.merge_request_merge(42))
+    assert storage.method_calls.index(call.merge_request_detail(42)) < storage.method_calls.index(
+        call.merge_request_merge(42)
+    )
 
 
 @pytest.mark.asyncio
