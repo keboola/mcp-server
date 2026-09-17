@@ -15,7 +15,8 @@ from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 
-from keboola_mcp_server.auth_login import TokenSet
+from keboola_mcp_server import auth_login
+from keboola_mcp_server.auth_login import TokenSet, save_tokens
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -2226,3 +2227,63 @@ def test_is_unauthorized_through_the_cause_chain() -> None:
             raise ToolError('call failed') from e
     except ToolError as wrapped:
         assert _is_unauthorized(wrapped) is True
+
+
+class TestProvisionedSessionIsPickedUpByTheNextRequest:
+    """The request right after `create_project` must already work against the new project, with no
+    restart and no further user action (agent_provisioning RFC, requirement 4).
+
+    Drives the real `on_request` against a real credential file -- the one thing the tool-level
+    tests cannot show, since they stop at `save_tokens`.
+    """
+
+    STACK = 'https://connection.test.keboola.com'
+
+    @pytest.fixture
+    def provisioned_store(self, tmp_path, monkeypatch) -> None:
+        """The credential file exactly as `create_project` leaves it."""
+        monkeypatch.setattr(auth_login, '_CREDENTIALS_PATH', tmp_path / 'credentials.json')
+        save_tokens(
+            self.STACK,
+            TokenSet(
+                access_token='kbc_at_sess-9_secret',
+                refresh_token='kbc_rt_sess-9_secret',
+                expires_at=time.time() + 3600,
+                session_id='sess-9',
+                project_ids=[4321],
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_next_tool_call_is_signed_in_and_pinned_to_the_new_project(self, provisioned_store: None) -> None:
+        server_state = ServerState(
+            # No token: the server is still running in bootstrap mode, exactly as it started.
+            config=Config(storage_api_url=self.STACK),
+            runtime_info=ServerRuntimeInfo(transport='stdio'),
+        )
+        ctx = MagicMock(spec=Context)
+        ctx.session = SimpleNamespace(state={})
+        ctx.request_context.lifespan_context = server_state
+        context = SimpleNamespace(message=SimpleNamespace(), method='tools/call', fastmcp_context=ctx)
+
+        captured: list[Config] = []
+
+        async def fake_create_session_state(cfg, _runtime_info, readonly=None, **_kwargs):
+            captured.append(cfg)
+            return {}
+
+        middleware = SessionStateMiddleware()
+        with (
+            patch.object(middleware, 'create_session_state', side_effect=fake_create_session_state),
+            patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=None),
+        ):
+            await middleware.on_request(context, AsyncMock(return_value=object()))
+
+        # Signed in: the stored session's access token, with no header and no env to supply one.
+        assert captured[0].storage_token == 'kbc_at_sess-9_secret'
+        # Pinned to the provisioned project, and confirmed -- so the ask-first scope gate in
+        # MultiProjectMiddleware lets data tools straight through.
+        assert captured[0].project_id == '4321'
+        scope = ctx.session.state[SCOPE_KEY]
+        assert scope.project_ids == [4321]
+        assert scope.confirmed is True

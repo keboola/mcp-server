@@ -109,9 +109,15 @@ Out of scope:
 * `syncBackendInit`. The endpoint defaults to async init and the MCP client is a chat session that
   should not block for minutes on backend provisioning; the tool says the project may take a moment
   to become usable instead.
-* Provisioning from an already-authenticated session (see above), and provisioning on the deployed
-  server, which authenticates with OAuth and has no local credential store — there `create_project`
-  reports that it is a local-session tool.
+* Provisioning from an already-authenticated session (see above).
+* Provisioning on the **deployed (remote) server**, where `create_project` reports that it is a
+  local-session tool. Two reasons, in this order: a remote session cannot be credential-less in the
+  first place (the deployed server runs behind OAuth, so an unauthenticated caller is rejected
+  before any tool runs, and a Kai session carries a programmatic token in a header); and the
+  credential store is a process-wide file, so writing a provisioned session there on a shared pod
+  would hand it to every other session on that replica. Supporting it means persisting the
+  provisioned AT/RT per MCP session in the Postgres session store the OAuth flow already uses —
+  a separate increment, not a flag flip.
 * Any change to `POST /token/refresh` — it already exists and is already used.
 
 ## Testing / Verification
@@ -126,6 +132,17 @@ mocked `httpx` transport:
   `clientId`, and refuses when a session is already stored.
 * `create_session_state` with no token returns a state without `KeboolaClient`; `from_state` on it
   raises the actionable message; `on_list_tools` returns the full list in that state.
+
+Cross-request, over the real middleware chain (no network):
+
+* `tests/test_server.py::TestBootstrapServerEndToEnd` — a server built from a stack URL alone, driven
+  by a real MCP client: `tools/list` works with no credential, `create_project` provisions over the
+  full middleware chain (and sends the client's own name as `clientId`), and the advertised tool list
+  is **identical** before and after, so a client that never re-fetches it mid-session needs no
+  refresh.
+* `tests/test_mcp.py::TestProvisionedSessionIsPickedUpByTheNextRequest` — the real `on_request` over
+  a real credential file: the next tool call is already signed in with the provisioned token and
+  pinned to the new project, with a confirmed scope. No restart, no re-login.
 
 E2E (manual, canary-orion — the stack with `agent-provisioning` enabled): start the server with only
 `KBC_STORAGE_API_URL`, call `create_project`, confirm the returned URL in a browser, verify a data

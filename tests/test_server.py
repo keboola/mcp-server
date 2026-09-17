@@ -18,7 +18,7 @@ from pydantic import Field
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 
-from keboola_mcp_server import cli
+from keboola_mcp_server import auth_login, cli
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
@@ -687,3 +687,82 @@ class TestCreateServerOAuthSessionStore:
         server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
         assert server.auth is None
+
+
+class TestBootstrapServerEndToEnd:
+    """The whole bootstrap flow over a real MCP client and the real middleware chain: a server
+    started with nothing but a stack URL lists its tools, provisions a project, and keeps working
+    -- the cross-request part the tool-level tests cannot show (agent_provisioning RFC).
+    """
+
+    STACK = 'https://connection.test.keboola.com'
+    CONFIRM_URL = f'{STACK}/agent-project/confirm?token=kbc_apc_claim_secret'
+
+    @classmethod
+    def _provision_response(cls) -> dict:
+        return {
+            'project': {'id': 4321, 'name': 'Agent project', 'backend': 'snowflake'},
+            'accessToken': 'kbc_at_sess-9_secret',
+            'refreshToken': 'kbc_rt_sess-9_secret',
+            'tokenType': 'Bearer',
+            'accessTokenExpiresIn': 3600,
+            'sessionId': 'sess-9',
+            'backendInitDispatchedAsync': False,
+            'claimToken': 'kbc_apc_claim_secret',
+            'claimId': 'claim',
+            'confirmUrl': cls.CONFIRM_URL,
+        }
+
+    @pytest.fixture
+    def empty_store(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setattr(auth_login, '_CREDENTIALS_PATH', tmp_path / 'credentials.json')
+
+    @pytest.fixture
+    def provisioning_stack(self, monkeypatch) -> list[dict]:
+        """Answers the provisioning POST; every other outbound POST fails the test."""
+        requests: list[dict] = []
+
+        async def fake_post(_self, url, **kwargs):
+            assert str(url).endswith('/manage/programmatic-projects'), f'Unexpected POST to {url}'
+            requests.append(kwargs.get('json') or {})
+            return httpx.Response(
+                200, json=TestBootstrapServerEndToEnd._provision_response(), request=httpx.Request('POST', url)
+            )
+
+        monkeypatch.setattr(httpx.AsyncClient, 'post', fake_post)
+        return requests
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_lists_tools_provisions_and_keeps_the_same_tools(
+        self, empty_store: None, provisioning_stack: list[dict]
+    ) -> None:
+        # Only a stack URL -- no token, no stored login, no OAuth.
+        mcp = create_server(Config(storage_api_url=self.STACK), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        assert isinstance(mcp, FastMCP)
+
+        async with Client(mcp) as client:
+            before = sorted(t.name for t in await client.list_tools())
+            assert 'create_project' in before
+
+            result = await client.call_tool('create_project', {'name': 'My project'})
+            created = result.structured_content
+            assert created['project_id'] == 4321
+            assert created['confirm_url'] == self.CONFIRM_URL
+            # The credentials must not reach the model context; only the confirm link does.
+            assert 'kbc_at_' not in str(result.content)
+            assert 'kbc_rt_' not in str(result.content)
+
+            after = sorted(t.name for t in await client.list_tools())
+
+        # `clientId` comes from the MCP client's own clientInfo.name (here the in-process test
+        # client, which calls itself "mcp"), so the provisioning audit event has real attribution.
+        assert provisioning_stack == [{'clientId': 'mcp', 'projectName': 'My project'}]
+
+        # The session is signed in from here on: the credential is stored, scoped to the new
+        # project. Nothing about the advertised tools changed, so a client that never re-fetches
+        # the list mid-session (Claude Code, Cursor) needs no refresh to use them.
+        stored = auth_login.load_tokens(self.STACK)
+        assert stored is not None
+        assert stored.access_token == 'kbc_at_sess-9_secret'
+        assert stored.project_ids == [4321]
+        assert after == before
