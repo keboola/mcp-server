@@ -1229,15 +1229,22 @@ class _SerializingFunctionTool(FunctionTool):
     fastmcp 4 dropped `Tool.serializer`; overriding `convert_result` is its documented
     replacement (https://gofastmcp.com/servers/tools#custom-serialization). Subclasses just
     plug in the desired encoder via `_serialize()`.
+
+    Delegates to the base implementation first and only swaps in the custom-encoded text content:
+    the base class is what derives `structured_content` from `output_schema` (the MCP client
+    rejects a response with a schema but no `structured_content`), and that derivation is left
+    untouched. A tool function that already returns a `ToolResult`/`CallToolResult`, or raw bytes,
+    is passed through as-is -- those shapes carry meaning our text encoders aren't meant to touch.
     """
 
     def _serialize(self, data: Any) -> str:
         raise NotImplementedError
 
     def convert_result(self, raw_value: Any) -> ToolResult:
-        if isinstance(raw_value, ToolResult):
-            return raw_value
-        return ToolResult(content=[mt.TextContent(type='text', text=self._serialize(raw_value))])
+        result = super().convert_result(raw_value)
+        if isinstance(raw_value, ToolResult | mt.CallToolResult | bytes):
+            return result
+        return result.model_copy(update={'content': [mt.TextContent(type='text', text=self._serialize(raw_value))]})
 
 
 class PlainFunctionTool(_SerializingFunctionTool):
