@@ -655,6 +655,27 @@ async def test_merge_job_failure_rolls_back_to_approved(
 
 
 @pytest.mark.asyncio
+async def test_merge_poll_failure_is_not_a_merge_failure(
+    mcp_context_client: Context, storage: AsyncMock, monkeypatch
+) -> None:
+    """The merge is irreversible once the job started: a transient error while polling must not read as failed."""
+    monkeypatch.setattr(mr_tools, 'MERGE_JOB_POLL_INTERVAL_SEC', 0)
+    storage.merge_request_merge.return_value = {'id': 990}
+    storage.job_detail.side_effect = [
+        {'id': 990, 'status': 'processing'},
+        httpx.ReadTimeout('timed out'),
+    ]
+
+    result = await merge_merge_request(mcp_context_client, merge_request_id=42)
+
+    assert result.merged is False
+    assert result.state == 'in_merge'
+    assert result.job_id == '990'
+    assert 'Lost contact with the merge job 990' in result.warnings[0]
+    assert 'do not merge again' in result.next_step and 'do not edit the branch' in result.next_step
+
+
+@pytest.mark.asyncio
 async def test_merge_timeout_is_not_a_failure(mcp_context_client: Context, storage: AsyncMock, monkeypatch) -> None:
     monkeypatch.setattr(mr_tools, 'MERGE_JOB_POLL_INTERVAL_SEC', 0)
     monkeypatch.setattr(mr_tools, 'MERGE_JOB_TIMEOUT_SEC', 0)
