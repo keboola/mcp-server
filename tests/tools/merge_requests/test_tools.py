@@ -533,6 +533,19 @@ async def test_omitted_id_after_merge_hands_off_to_production(
 
 
 @pytest.mark.asyncio
+async def test_omitted_id_in_the_deletion_window_hands_off_to_production(
+    mcp_context_client: Context, storage: AsyncMock
+) -> None:
+    """Right after a merge the branch is still listed while its MR is already published: no 'create one' advice."""
+    storage.merge_requests_list.return_value = [_mr_raw('published')]
+
+    with pytest.raises(ToolError, match='already merged.*production branch'):
+        await request_merge_request_review(mcp_context_client)
+
+    storage.merge_request_request_review.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_branch_only_tool_on_production_is_refused(
     mcp_context_client: Context, storage: AsyncMock, keboola_client: KeboolaClient
 ) -> None:
