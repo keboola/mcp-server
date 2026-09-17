@@ -107,9 +107,11 @@ LISTED_BRANCH_ID = 'listed_branch_id'
 # bootstrap session (no credential yet, see `create_session_state`) has no KeboolaClient to read it
 # from, and `ServerState.config` holds only the server-level value, not the request's.
 STORAGE_API_URL = 'storage_api_url'
-# Session-state key under which ToolsFilteringMiddleware.on_call_tool stores the `verify_token` result of the
-# current call, so tool bodies (merge requests: role, admin id, project id) can read it without a second call.
-TOKEN_INFO_STATE_KEY = 'token_info'
+# ToolsFilteringMiddleware.on_call_tool publishes the `verify_token` result of the current call here, so tool
+# bodies (merge requests: role, admin id, project id) can read it without a second call. A contextvar, not
+# session state: it is scoped to this call's task, so concurrent calls (multi-project fan-out) cannot see each
+# other's token info.
+TOKEN_INFO_VAR: ContextVar[JsonDict | None] = ContextVar('token_info', default=None)
 
 # The project the current request runs against, stamped on every log record (see
 # `install_project_id_log_field`) so logs can be filtered per project/organization in Datadog.
@@ -1678,7 +1680,6 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             # a tool result, so an HTTP client is handed "Internal server error" instead of the
             # explanation -- which is exactly backwards for the one audience that needs it most.
             raise ToolError(str(e)) from e
-        context.fastmcp_context.session.state[TOKEN_INFO_STATE_KEY] = token_info
 
         has_semantic_models = False
         if is_semantic_tool(tool):
@@ -1698,7 +1699,11 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         if denial:
             raise ToolError(denial)
 
-        return await call_next(context)
+        token = TOKEN_INFO_VAR.set(token_info)
+        try:
+            return await call_next(context)
+        finally:
+            TOKEN_INFO_VAR.reset(token)
 
 
 def _to_python(data: Any, exclude_none: bool = True) -> Any | None:
