@@ -292,15 +292,23 @@ def _validate_auto_merge(strategy: str | None, at: str | None, *, require_pairin
         raise ToolError("auto_merge_at is only meaningful with auto_merge='scheduled'.")
 
 
-async def _await_storage_job(client: KeboolaClient, job_id: str) -> JsonDict | None:
-    """Polls a Storage job until `success`/`error`; returns None on timeout (the job keeps running)."""
+async def _await_storage_job(client: KeboolaClient, job_id: str) -> tuple[JsonDict | None, str | None]:
+    """
+    Polls a Storage job until a terminal status. Returns `(job, None)` when it finished, `(None, None)` on
+    timeout and `(None, reason)` when polling itself failed (network / 5xx). In the last two cases the job
+    keeps running: the merge is irreversible once started, so the caller must never report it as failed.
+    """
     deadline = time.monotonic() + MERGE_JOB_TIMEOUT_SEC
     while True:
-        job = await client.storage_client.job_detail(job_id)
+        try:
+            job = await client.storage_client.job_detail(job_id)
+        except httpx.HTTPError as exc:
+            LOG.warning(f'Lost contact with Storage job {job_id} while awaiting the merge: {exc!r}')
+            return None, f'{type(exc).__name__}: {exc}'
         if str(job.get('status') or '') in STORAGE_JOB_TERMINAL_STATUSES:
-            return job
+            return job, None
         if time.monotonic() >= deadline:
-            return None
+            return None, None
         await asyncio.sleep(MERGE_JOB_POLL_INTERVAL_SEC)
 
 
@@ -674,7 +682,7 @@ async def merge_merge_request(
         )
 
     job_id = str(job['id'])
-    final = await _await_storage_job(c.client, job_id)
+    final, poll_error = await _await_storage_job(c.client, job_id)
     if final is None:
         in_merge = {**mr, 'state': 'in_merge'}
         status = build_status(
@@ -690,10 +698,14 @@ async def merge_merge_request(
             conflicts=None,
             status=status,
             source_branch_deleting=False,
-            warnings=[f'The merge job {job_id} is still running after {int(MERGE_JOB_TIMEOUT_SEC)} s.'],
+            warnings=[
+                f'Lost contact with the merge job {job_id}: {poll_error}. The merge itself was not interrupted.'
+                if poll_error
+                else f'The merge job {job_id} is still running after {int(MERGE_JOB_TIMEOUT_SEC)} s.'
+            ],
             next_step=(
-                f'The merge is still running (Storage job {job_id}); check again with get_merge_requests in a moment '
-                'and do not edit the branch meanwhile.'
+                f'The merge is probably still running (Storage job {job_id}); check its state with get_merge_requests in a '
+                'moment, do not merge again and do not edit the branch meanwhile.'
             ),
         )
     if str(final.get('status')) == 'success':
