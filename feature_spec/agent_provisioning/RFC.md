@@ -49,6 +49,9 @@ Everything that reads the client off the session state has to tolerate its absen
 * `create_project` joins `BOOTSTRAP_TOOLS` (`tools/constants.py`), which already exempts a tool from
   `ToolsFilteringMiddleware.on_call_tool`'s `verify_token()` round-trip and from
   `MultiProjectMiddleware`'s ask-first scope gate.
+* `tool_errors()`'s `_trigger_event` skips the Storage event when there is no client: a bootstrap
+  session has no project to write one to. The provisioning is still attributed, by the `clientId`
+  the tool sends to Connection.
 
 ### Provisioning call (`auth_login.py`)
 
@@ -82,11 +85,18 @@ organization) and is out of scope here.
 
 Confirmation revokes the agent session, so the access token 401s while still unexpired — the refresh
 path that self-heals an *expired* session never runs. `SessionStateMiddleware.on_request` therefore
-catches a 401 raised under a locally-stored programmatic session and re-checks the credential with
-`introspect_token`: only if that also fails is the credential dead, and only then is it dropped
-(`forget_tokens`) and reported as an ended session. A 401 that introspection survives is left
-untouched — those are the scope-related 401s `RawKeboolaClient._raise_for_status` already explains,
-and dropping a valid credential over one would be a regression.
+catches a 401 raised under a locally-stored programmatic session and drops the credential, so the
+next request starts clean instead of 401ing for the rest of the hour.
+
+Deleting a credential is destructive, so all three of these must hold before anything is removed:
+
+| Guard | Why |
+| --- | --- |
+| The request used the *stored* token | A token supplied per request (an HTTP header) is not this session's stored credential, and its 401 says nothing about the stored one. |
+| `introspect_token` re-check fails with 401/403 | A 401 alone is not proof the credential is dead — an unconfirmed or stale project scope produces one too (`RawKeboolaClient._raise_for_status` already explains those). A timeout, connection error or 5xx proves even less: the credential is kept. |
+| The stored entry is *still* that token | `forget_rejected_access_token` compares under the same credential-store locks `get_access_token` refreshes with, so a concurrent refresh or a fresh `login` is never thrown away. |
+
+The original error is re-raised either way.
 
 ## Scope
 

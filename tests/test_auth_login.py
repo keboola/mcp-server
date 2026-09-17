@@ -583,3 +583,36 @@ async def test_provision_agent_project_maps_errors(
 )
 def test_sanitize_client_id(raw: str | None, expected: str) -> None:
     assert auth_login.sanitize_client_id(raw) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('stored', 'rejected', 'expected_removed'),
+    [
+        ('kbc_at_dead', 'kbc_at_dead', True),
+        ('kbc_at_dead', 'Bearer kbc_at_dead', True),
+        # Rotated by a concurrent refresh, or replaced by a fresh `login`, since the rejected call.
+        ('kbc_at_rotated', 'kbc_at_dead', False),
+        # A token supplied per request (an HTTP header) was never the stored session.
+        ('kbc_at_mine', 'kbc_at_from_a_header', False),
+    ],
+    ids=['same_token', 'same_token_with_scheme', 'rotated_meanwhile', 'per_request_token'],
+)
+async def test_forget_rejected_access_token_compares_before_deleting(
+    creds_file: Path, stored: str, rejected: str, expected_removed: bool
+) -> None:
+    save_tokens(STACK, TokenSet(access_token=stored, refresh_token='kbc_rt_x', expires_at=time.time() + 3600))
+
+    removed = await auth_login.forget_rejected_access_token(STACK, rejected)
+
+    assert removed is expected_removed
+    remaining = load_tokens(STACK)
+    if expected_removed:
+        assert remaining is None
+    else:
+        assert remaining is not None and remaining.access_token == stored
+
+
+@pytest.mark.asyncio
+async def test_forget_rejected_access_token_without_a_stored_session(creds_file: Path) -> None:
+    assert await auth_login.forget_rejected_access_token(STACK, 'kbc_at_dead') is False

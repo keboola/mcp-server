@@ -447,6 +447,22 @@ async def test_event_logging_failure_does_not_fail_tool(caplog, event_error, mcp
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_session_skips_the_event_without_warning(caplog, empty_context: Context):
+    """A bootstrap session (agent_provisioning RFC) has no credential and no project, so there is
+    nowhere to write a Storage event to. The tool must still run, and the missing client must not
+    surface as a warning on every `create_project` call."""
+
+    @tool_errors()
+    async def bootstrap_tool(_ctx: Context) -> str:
+        return 'ok'
+
+    with caplog.at_level(logging.DEBUG):
+        assert await bootstrap_tool(empty_context) == 'ok'
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
 async def test_large_argument_value_is_truncated_in_event(mcp_context_client: Context):
     """Argument values exceeding MAX_ARG_VALUE_LEN must be replaced with a truncation notice."""
 

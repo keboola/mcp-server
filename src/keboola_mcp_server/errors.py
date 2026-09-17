@@ -122,6 +122,15 @@ async def _trigger_event(
         message = f'MCP tool "{tool_name}" call succeeded.'
         event_type: StorageEventType = 'success'
 
+    if KeboolaClient.STATE_KEY not in ctx.session.state:
+        # A bootstrap session (agent_provisioning RFC) has no credential and no project, so there
+        # is nowhere to write a Storage event to -- `create_project` is the only tool that runs in
+        # one. Skipping quietly beats the caller-visible warning a raised `from_state` would log on
+        # every such call; the provisioning itself is still attributed, by the `clientId` the tool
+        # sends to Connection (auditLog.agentProvisioning.projectProvisioned).
+        LOG.debug(f'No Keboola client in the session state; skipping the event for the "{tool_name}" tool.')
+        return
+
     client = KeboolaClient.from_state(ctx.session.state)
     # Emitting a storage event is a write; a read-only user's own token is denied (403).
     # On the Keboola-deployed server (KBC_KUBERNETES_TOKEN_PATH set) send the SA JWT as the
