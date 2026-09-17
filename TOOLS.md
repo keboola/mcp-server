@@ -3820,7 +3820,7 @@ follow `next_step`.
 ---
 <a name="create_merge_request"></a>
 ## create_merge_request
-**Annotations**: `destructive`
+**Annotations**: 
 
 **Tags**: `merge-request`
 
@@ -3830,7 +3830,7 @@ Creates a merge request for the CURRENT development branch into production.
 
 Available only from a development-branch session; on production, tell the user to open a session on the
 merge request's source branch and ask again there. The source branch is the session branch and the target
-is production — there are no branch parameters. A branch can have only one merge request.
+is production — there are no branch parameters. A branch can have only one open merge request.
 
 On a project with the default of 0 required approvals the happy path is two calls:
 create_merge_request → merge_merge_request (no review step). Returns the merge request with its status;
@@ -3887,18 +3887,6 @@ follow `next_step`.
       ],
       "default": null,
       "description": "ISO-8601 date-time; required if and only if auto_merge='scheduled'."
-    },
-    "project_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
@@ -3925,7 +3913,8 @@ merge request's source branch and ask again there. A configuration conflicts whe
 branch and in production since the branch was created. For each one you get `base` / `ours` (branch) /
 `theirs` (production), `changes` (each path tagged `changed_by` ours|theirs|both), `conflicting_paths`
 (both sides changed differently — the actual conflict) and `suggested_take` when one side is a safe pick.
-Walk the user through them one by one and resolve each with resolve_merge_request_conflict. Follow `next_step`.
+Walk the user through them one by one and resolve each with resolve_merge_request_conflict. Follow
+`status.next_step`.
 
 
 **Input JSON Schema**:
@@ -3944,18 +3933,6 @@ Walk the user through them one by one and resolve each with resolve_merge_reques
       ],
       "default": null,
       "description": "The merge request id. Omit to use the current branch's merge request."
-    },
-    "project_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "type": "object"
@@ -4056,7 +4033,8 @@ Available only from a development-branch session; on production, tell the user t
 merge request's source branch and ask again there. IRREVERSIBLE: on success the changes are in production
 and the source branch (with everything else on it: buckets, tables, workspaces) is deleted by a background
 job — confirm with the user first. Works directly from `development` when the project requires no
-approvals.
+approvals. The call waits for the merge job and can block for up to 10 minutes; if it returns
+`state='in_merge'` the merge is still running — check again with get_merge_requests, never merge again.
 
 When the backend refuses, nothing changes and the result explains why: `refusal='conflicts'` lists the
 conflicting configurations (resolve them with get_merge_request_conflicts / resolve_merge_request_conflict,
@@ -4080,18 +4058,6 @@ success the session's branch is gone: follow `next_step` and tell the user to op
       ],
       "default": null,
       "description": "The merge request id. Omit to use the current branch's merge request."
-    },
-    "project_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "type": "object"
@@ -4189,18 +4155,6 @@ when 0 approvals are required). Returns the merge request with its status; follo
       ],
       "default": null,
       "description": "The merge request id. Omit to use the current branch's merge request."
-    },
-    "project_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "type": "object"
@@ -4210,7 +4164,7 @@ when 0 approvals are required). Returns the merge request with its status; follo
 ---
 <a name="resolve_merge_request_conflict"></a>
 ## resolve_merge_request_conflict
-**Annotations**: 
+**Annotations**: `destructive`
 
 **Tags**: `merge-request`
 
@@ -4222,9 +4176,10 @@ configuration onto the current production version with the chosen content.
 Available only from a development-branch session; on production, tell the user to open a session on the
 merge request's source branch and ask again there. Call get_merge_request_conflicts first, then for each
 conflict have the user choose: `take='ours'` / `'theirs'` / `'delete'`, or pass `resolved` with the
-hand-merged content. Taking one side discards the other side's changes — say so. The configuration must
-be in the merge request's live conflict set. `remaining_conflicts` tells you whether to continue the loop;
-approvals survive the resolution. Follow `next_step`.
+hand-merged content. Taking one side discards the other side's changes and the rebase REPLACES the branch
+version (with 'delete' it deletes the configuration) — say so. The configuration must be in the merge
+request's live conflict set. `remaining_conflicts` tells you whether to continue the loop; approvals survive
+the resolution. Follow `status.next_step`.
 
 
 **Input JSON Schema**:
@@ -4293,18 +4248,6 @@ approvals survive the resolution. Follow `next_step`.
       ],
       "default": null,
       "description": "The merge request id. Omit to use the current branch's merge request."
-    },
-    "project_id": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
     }
   },
   "required": [
