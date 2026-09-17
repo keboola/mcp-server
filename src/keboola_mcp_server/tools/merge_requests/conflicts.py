@@ -62,8 +62,14 @@ def _content(side: Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def _ids(items: list[Any]) -> dict[str, Any] | None:
-    """`{id: item}` when every item is a dict with a unique `id` (configuration rows), else None."""
-    if not items or not all(isinstance(item, dict) and item.get('id') is not None for item in items):
+    """`{id: item}` when every item is a dict with a unique `id` (configuration rows), else None.
+
+    An empty list is trivially id-keyed (`{}`): otherwise a pair with one empty side would be walked
+    positionally while the other pair is walked by id, and the two path sets would never meet.
+    """
+    if not items:
+        return {}
+    if not all(isinstance(item, dict) and item.get('id') is not None for item in items):
         return None
     by_id = {str(item['id']): item for item in items}
     return by_id if len(by_id) == len(items) else None
