@@ -9,7 +9,6 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 from fastmcp import Context, FastMCP
-from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
@@ -25,7 +24,8 @@ from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact
+from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
+from keboola_mcp_server.mcp import ToonCompactFunctionTool, process_concurrently
 from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.utils import (
     apply_folder_metadata,
@@ -67,11 +67,10 @@ def add_data_app_tools(mcp: FastMCP) -> None:
         )
     )
     mcp.add_tool(
-        FunctionTool.from_function(
+        ToonCompactFunctionTool.from_function(
             get_data_apps,
             tags={DATA_APP_TOOLS_TAG},
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer_compact,
         )
     )
     mcp.add_tool(

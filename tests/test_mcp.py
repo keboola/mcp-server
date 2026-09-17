@@ -53,7 +53,7 @@ def _tool(name: str, read_only: bool = False, tags: set[str] | None = None) -> M
     tool.name = name
     tool.tags = tags or set()
     if read_only:
-        tool.annotations.readOnlyHint = True
+        tool.annotations.read_only_hint = True
     else:
         tool.annotations = None
     return tool

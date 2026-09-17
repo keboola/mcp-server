@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, cast
 
 from fastmcp import Context, FastMCP
-from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
@@ -25,7 +24,8 @@ from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
-from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact, unwrap_results
+from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
+from keboola_mcp_server.mcp import ToonCompactFunctionTool, process_concurrently, unwrap_results
 from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.utils import (
     build_folder_hint,
@@ -84,10 +84,9 @@ def add_flow_tools(mcp: FastMCP) -> None:
         )
     )
     mcp.add_tool(
-        FunctionTool.from_function(
+        ToonCompactFunctionTool.from_function(
             get_flows,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer_compact,
             tags={FLOW_TOOLS_TAG},
         )
     )

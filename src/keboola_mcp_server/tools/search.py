@@ -6,7 +6,6 @@ from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
-from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
@@ -21,7 +20,7 @@ from keboola_mcp_server.clients.client import (
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import toon_serializer_compact
+from keboola_mcp_server.mcp import ToonCompactFunctionTool
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.search_global import _global_textual_search
 from keboola_mcp_server.tools.search_models import (
@@ -69,21 +68,19 @@ def add_search_tools(mcp: FastMCP) -> None:
     """Add tools to the MCP server."""
     LOG.info(f'Adding tool {find_component_id.__name__} to the MCP server.')
     mcp.add_tool(
-        FunctionTool.from_function(
+        ToonCompactFunctionTool.from_function(
             find_component_id,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer_compact,
             tags={SEARCH_TOOLS_TAG},
         )
     )
 
     LOG.info(f'Adding tool {search.__name__} to the MCP server.')
     mcp.add_tool(
-        FunctionTool.from_function(
+        ToonCompactFunctionTool.from_function(
             search,
             name=SEARCH_TOOL_NAME,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer_compact,
             tags={SEARCH_TOOLS_TAG},
         )
     )
