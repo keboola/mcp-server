@@ -131,6 +131,8 @@ class TestServer:
         for tool in tools:
             if tool.name in MERGE_REQUEST_BRANCH_ONLY_TOOLS:
                 assert 'development-branch session' in (tool.description or ''), tool.name
+                # Bound to the session branch: a cross-project target can never carry a branch, so no project_id.
+                assert 'project_id' not in (tool.parameters.get('properties') or {}), tool.name
 
     @pytest.mark.asyncio
     async def test_tools_have_descriptions(self):
