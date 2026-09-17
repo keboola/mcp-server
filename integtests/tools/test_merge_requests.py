@@ -282,7 +282,7 @@ async def test_conflict_is_reported_and_resolved(mocker, mr_project: MergeReques
         )
         assert resolved.resolved is True and resolved.mode == 'ours'
         assert resolved.remaining_conflicts == []
-        assert 'merge_merge_request' in resolved.next_step
+        assert 'merge_merge_request' in resolved.status.next_step
 
         merged = await merge_merge_request(ctx)
         assert merged.merged is True, merged
