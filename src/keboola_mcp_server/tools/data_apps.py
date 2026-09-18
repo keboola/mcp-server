@@ -143,8 +143,23 @@ INJECTED_BLOCK_RE = re.compile(
     re.DOTALL,
 )
 
-# Type of the authentication used in the data app
-AuthenticationType = Literal['no-auth', 'basic-auth', 'default']
+# Type of the authentication used in the data app. Disabling authentication ('no-auth') is
+# deliberately not offered: an unauthenticated data app is publicly reachable, including any
+# endpoints that read or write Storage.
+AuthenticationType = Literal['basic-auth', 'default']
+
+
+def _check_authentication_type(authentication_type: str) -> None:
+    if authentication_type not in ('basic-auth', 'default'):
+        raise ValueError(
+            f'Unsupported authentication_type {authentication_type!r}. Disabling authentication is not '
+            'available through the MCP tools: a data app without authentication is publicly reachable, '
+            'including any endpoints that read or write Storage. Use "basic-auth" or "default". Do not '
+            'disable authentication to make a preview work -- the in-platform preview authenticates on top '
+            'of the configured auth. If the user explicitly needs a public app, they must configure that '
+            'themselves in the Keboola UI.'
+        )
+
 
 SECRET_WORKSPACE_ID = 'WORKSPACE_ID'
 SECRET_BRANCH_ID = 'BRANCH_ID'
@@ -513,9 +528,12 @@ async def modify_streamlit_data_app(
         AuthenticationType,
         Field(
             description=(
-                'Authentication type, "no-auth" removes authentication completely, "basic-auth" sets the data '
-                'app to be secured using the HTTP basic authentication, and "default" keeps the existing '
-                'authentication type when updating.'
+                'Authentication type. "basic-auth" secures the data app via HTTP basic authentication, '
+                'and "default" means: on create, apply basic auth; on update, keep the existing '
+                'authorization (including OIDC setups configured outside the MCP). Authentication '
+                'cannot be disabled via the MCP tools -- a public app can only be configured by the '
+                'user in the Keboola UI. Never disable authentication to make a preview work; the '
+                'in-platform preview authenticates on top of the configured auth.'
             )
         ),
     ],
@@ -548,9 +566,12 @@ async def modify_streamlit_data_app(
     `deploy_data_app(action="deploy", configuration_id=...)` to start a new app or restart an existing app so
     changes take effect. Without this step, a newly created app will not start, and an existing app will keep
     running the previous deployment without the latest changes.
-    - New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
-    updating, set `authentication_type` to `default` to keep the existing authentication type configuration
-    (including OIDC setups) unless explicitly specified otherwise.
+    - New apps use the HTTP basic authentication by default for security; when updating, set
+    `authentication_type` to `default` to keep the existing authorization (including OIDC setups
+    configured outside the MCP), or `basic-auth` to overwrite it with HTTP basic authentication.
+    Authentication cannot be disabled via the MCP tools -- never disable it to make a preview work
+    (the in-platform preview authenticates on top of the configured auth); a public app can only be
+    configured by the user in the Keboola UI.
 
     SQL & DATA TYPE RULES:
     - Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
@@ -559,6 +580,7 @@ async def modify_streamlit_data_app(
     `df["col"] = pd.to_numeric(df["col"], errors="coerce").fillna(0)` and
     `df["date"] = pd.to_datetime(df["date"], errors="coerce")`.
     """
+    _check_authentication_type(authentication_type)
     client = KeboolaClient.from_state(ctx.session.state)
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -954,10 +976,12 @@ async def modify_python_js_data_app(
         AuthenticationType,
         Field(
             description=(
-                'Authentication type. "no-auth" removes authentication completely, "basic-auth" secures the '
-                'data app via HTTP basic authentication, and "default" means: on create, apply basic auth '
-                '(safe default for new apps); on update, keep the existing authentication configuration '
-                '(including OIDC setups configured outside the MCP).'
+                'Authentication type. "basic-auth" secures the data app via HTTP basic authentication, '
+                'and "default" means: on create, apply basic auth (safe default for new apps); on update, '
+                'keep the existing authorization (including OIDC setups configured outside the MCP). '
+                'Authentication cannot be disabled via the MCP tools -- a public app can only be '
+                'configured by the user in the Keboola UI. Never disable authentication to make a '
+                'preview work; the in-platform preview authenticates on top of the configured auth.'
             ),
         ),
     ] = 'default',
@@ -1092,10 +1116,12 @@ async def modify_python_js_data_app(
 
     ## Authentication
 
-    New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
-    to expose publicly. On update, `authentication_type='default'` preserves the existing
-    `authorization` block (including OIDC setups configured outside the MCP); `'basic-auth'` /
-    `'no-auth'` overwrite it.
+    New apps default to HTTP basic authentication for safety. On update,
+    `authentication_type='default'` preserves the existing `authorization` block (including
+    OIDC setups configured outside the MCP); `'basic-auth'` overwrites it. Authentication
+    cannot be disabled via the MCP tools -- never disable it to make a preview work (the
+    in-platform preview authenticates on top of the configured auth); a public app can only be
+    configured by the user in the Keboola UI.
 
     ## Slug constraint
 
@@ -1106,6 +1132,7 @@ async def modify_python_js_data_app(
     slug must be at most 63 characters (the DNS-label max), and note the UI's own URL-prefix limit is
     50, so an explicit slug of 51-63 characters may still be rejected at deploy time.
     """
+    _check_authentication_type(authentication_type)
     if configuration_id:
         if slug:
             raise ValueError('slug cannot be changed after the data app is created.')
@@ -1554,7 +1581,7 @@ def _update_existing_code_data_app_config(
     not touched either — the platform now picks a default for python-js apps, and any legacy
     `image.version` pin already in the stored config is preserved verbatim via deepcopy.
     `authentication_type='default'` preserves the existing `authorization` block (including OIDC
-    setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it.
+    setups configured outside the MCP); 'basic-auth' overwrites it.
     `secrets` are merged into the existing `parameters.dataApp.secrets` map without overwriting
     keys already present. Used on projects without the `data-apps-storage-workspace` feature to
     inject WORKSPACE_ID; on projects with the feature, pass None.

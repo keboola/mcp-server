@@ -2549,10 +2549,12 @@ draft handle.
 
 ## Authentication
 
-New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
-to expose publicly. On update, `authentication_type='default'` preserves the existing
-`authorization` block (including OIDC setups configured outside the MCP); `'basic-auth'` /
-`'no-auth'` overwrite it.
+New apps default to HTTP basic authentication for safety. On update,
+`authentication_type='default'` preserves the existing `authorization` block (including
+OIDC setups configured outside the MCP); `'basic-auth'` overwrites it. Authentication
+cannot be disabled via the MCP tools -- never disable it to make a preview work (the
+in-platform preview authenticates on top of the configured auth); a public app can only be
+configured by the user in the Keboola UI.
 
 ## Slug constraint
 
@@ -2630,9 +2632,8 @@ slug must be at most 63 characters (the DNS-label max), and note the UI's own UR
     },
     "authentication_type": {
       "default": "default",
-      "description": "Authentication type. \"no-auth\" removes authentication completely, \"basic-auth\" secures the data app via HTTP basic authentication, and \"default\" means: on create, apply basic auth (safe default for new apps); on update, keep the existing authentication configuration (including OIDC setups configured outside the MCP).",
+      "description": "Authentication type. \"basic-auth\" secures the data app via HTTP basic authentication, and \"default\" means: on create, apply basic auth (safe default for new apps); on update, keep the existing authorization (including OIDC setups configured outside the MCP). Authentication cannot be disabled via the MCP tools -- a public app can only be configured by the user in the Keboola UI. Never disable authentication to make a preview work; the in-platform preview authenticates on top of the configured auth.",
       "enum": [
-        "no-auth",
         "basic-auth",
         "default"
       ],
@@ -2714,9 +2715,12 @@ appropriately based on the parameter type.
 `deploy_data_app(action="deploy", configuration_id=...)` to start a new app or restart an existing app so
 changes take effect. Without this step, a newly created app will not start, and an existing app will keep
 running the previous deployment without the latest changes.
-- New apps use the HTTP basic authentication by default for security unless explicitly specified otherwise; when
-updating, set `authentication_type` to `default` to keep the existing authentication type configuration
-(including OIDC setups) unless explicitly specified otherwise.
+- New apps use the HTTP basic authentication by default for security; when updating, set
+`authentication_type` to `default` to keep the existing authorization (including OIDC setups
+configured outside the MCP), or `basic-auth` to overwrite it with HTTP basic authentication.
+Authentication cannot be disabled via the MCP tools -- never disable it to make a preview work
+(the in-platform preview authenticates on top of the configured auth); a public app can only be
+configured by the user in the Keboola UI.
 
 SQL & DATA TYPE RULES:
 - Use delimited identifiers for the current SQL dialect for all column names and aliases in SQL.
@@ -2751,9 +2755,8 @@ SQL & DATA TYPE RULES:
       "type": "array"
     },
     "authentication_type": {
-      "description": "Authentication type, \"no-auth\" removes authentication completely, \"basic-auth\" sets the data app to be secured using the HTTP basic authentication, and \"default\" keeps the existing authentication type when updating.",
+      "description": "Authentication type. \"basic-auth\" secures the data app via HTTP basic authentication, and \"default\" means: on create, apply basic auth; on update, keep the existing authorization (including OIDC setups configured outside the MCP). Authentication cannot be disabled via the MCP tools -- a public app can only be configured by the user in the Keboola UI. Never disable authentication to make a preview work; the in-platform preview authenticates on top of the configured auth.",
       "enum": [
-        "no-auth",
         "basic-auth",
         "default"
       ],
