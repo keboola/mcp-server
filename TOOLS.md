@@ -3831,6 +3831,10 @@ user has no project/token to give you -- it is how a first-time user gets starte
 leaving the conversation. Never call it to add a project to a session that already works: it
 refuses, because it would replace the credentials that session is using.
 
+Not every Keboola stack offers this -- it is gated by a stack feature. On a stack without it the
+tool says so and the user has to bring their own project instead; that is a fact about the
+stack, so do not retry.
+
 The project starts out owned by nobody. Show the user the returned `confirm_url` and tell them
 to open it: signing in there makes the project permanently theirs. Until they do, the project is
 temporary and Keboola may reclaim it, and once they do, the session created here is revoked and

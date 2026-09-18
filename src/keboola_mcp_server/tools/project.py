@@ -10,6 +10,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.auth_login import (
+    AgentProvisioningUnavailableError,
     exchange_scoped_token,
     get_access_token,
     introspect_token,
@@ -710,7 +711,23 @@ class CreatedProject(BaseModel):
     llm_instruction: str = Field(description='What to tell the user next.')
 
 
-@tool_errors()
+@tool_errors(
+    recovery_instructions={
+        # The tool stays listed on every stack -- whether a stack has agent provisioning is not
+        # known at tools/list time (it would cost a Connection round-trip on every listing, and a
+        # bootstrap session has no credential to make one with), and hiding it would only turn a
+        # clear answer into a missing tool. So the stack's answer is delivered here instead: this
+        # is not retryable, and the user has other ways to get a project.
+        AgentProvisioningUnavailableError: (
+            'Do not retry this tool on this stack -- the feature is switched off there, not '
+            'temporarily unavailable. Tell the user that this Keboola stack cannot create a project '
+            'for them, and that they can instead use a project they already have (run '
+            '"keboola-mcp-server login --api-url <stack-url>", or supply a Storage API token), '
+            'create one in the Keboola UI, or ask their Keboola administrator to enable the '
+            '"agent-provisioning" feature on the stack.'
+        )
+    }
+)
 async def create_project(
     ctx: Context,
     name: Annotated[
@@ -735,6 +752,10 @@ async def create_project(
     user has no project/token to give you -- it is how a first-time user gets started without
     leaving the conversation. Never call it to add a project to a session that already works: it
     refuses, because it would replace the credentials that session is using.
+
+    Not every Keboola stack offers this -- it is gated by a stack feature. On a stack without it the
+    tool says so and the user has to bring their own project instead; that is a fact about the
+    stack, so do not retry.
 
     The project starts out owned by nobody. Show the user the returned `confirm_url` and tell them
     to open it: signing in there makes the project permanently theirs. Until they do, the project is

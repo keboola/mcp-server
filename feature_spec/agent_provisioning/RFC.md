@@ -27,7 +27,7 @@ state from which the tool could even be called.
 | 5 | The 1 h access token is refreshed from the 30 d refresh token before it expires, at the existing `POST /v1/auth/token/refresh`. |
 | 6 | `backend` (`snowflake` / `bigquery`) is an optional argument; omitted keeps the agent maintainer's default. |
 | 7 | The request carries a `clientId` identifying the calling MCP client, so `auditLog.agentProvisioning.projectProvisioned` has real attribution. |
-| 8 | A stack without the `agent-provisioning` feature (endpoint 404) is reported as "not available on this stack" — a sentence, not a stack trace. |
+| 8 | The tool is listed on **every** stack, but on a stack whose `agent-provisioning` feature is off (endpoint 404) calling it answers with a sentence a user can act on — naming the feature and the ways to get a project without it — not a stack trace and not a suggestion to retry. |
 | 9 | After the human confirms the claim, the agent session is revoked. The next tool call reports that the session ended and how to re-authenticate, instead of a bare 401. |
 
 ## Resolution Strategy
@@ -64,6 +64,18 @@ stored, read and refreshed by the code that already does all three for a `login`
 either.
 
 A 404 becomes `AgentProvisioningUnavailableError`; a 429 keeps its `Retry-After` in the message.
+
+The 404 case is the stack feature being off (`STACK_FEATURES__AGENT_PROVISIONING`), which is a
+permanent fact for that stack rather than a transient failure, so the two halves of the answer are
+split the way the codebase already splits them: the exception says what is true
+(`this stack does not have the "agent-provisioning" feature enabled`), and a
+`tool_errors(recovery_instructions=...)` entry on `create_project` says what to do about it — do not
+retry, and the user's actual alternatives (`login` with an existing project, a Storage API token, the
+Keboola UI, or asking an administrator to enable the feature).
+
+The tool is **not** hidden on such a stack. Whether a stack has the feature is not knowable at
+`tools/list` time — it would cost a Connection round-trip on every listing, and a bootstrap session
+has no credential to make one with — and a missing tool is a worse answer than a clear sentence.
 
 ### Storing the session
 
