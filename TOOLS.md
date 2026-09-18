@@ -2550,9 +2550,13 @@ draft handle.
 ## Authentication
 
 New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
-to expose publicly. On update, `authentication_type='default'` preserves the existing
-`authorization` block (including OIDC setups configured outside the MCP); `'basic-auth'` /
-`'no-auth'` overwrite it.
+to expose publicly -- only when the user explicitly asks for a public app. `'no-auth'` is
+rejected on drafts: a draft inherits the prod app's data access, so disabling its
+authentication would expose Storage-reading and Storage-writing endpoints publicly. Never
+disable authentication to make the preview work -- the in-platform preview
+(`deploy_data_app(mode='dev')`) authenticates on top of the configured auth. On update,
+`authentication_type='default'` preserves the existing `authorization` block (including OIDC
+setups configured outside the MCP); `'basic-auth'` / `'no-auth'` overwrite it.
 
 ## Slug constraint
 
@@ -2630,7 +2634,7 @@ slug must be at most 63 characters (the DNS-label max), and note the UI's own UR
     },
     "authentication_type": {
       "default": "default",
-      "description": "Authentication type. \"no-auth\" removes authentication completely, \"basic-auth\" secures the data app via HTTP basic authentication, and \"default\" means: on create, apply basic auth (safe default for new apps); on update, keep the existing authentication configuration (including OIDC setups configured outside the MCP).",
+      "description": "Authentication type. \"no-auth\" removes authentication completely (the app becomes public -- only use it when the user explicitly asks for a public app; it is rejected on drafts, which inherit the prod app's data access), \"basic-auth\" secures the data app via HTTP basic authentication, and \"default\" means: on create, apply basic auth (safe default for new apps); on update, keep the existing authentication configuration (including OIDC setups configured outside the MCP). Never disable authentication to make a preview work -- the in-platform preview authenticates on top of the configured auth.",
       "enum": [
         "no-auth",
         "basic-auth",

@@ -146,6 +146,21 @@ INJECTED_BLOCK_RE = re.compile(
 # Type of the authentication used in the data app
 AuthenticationType = Literal['no-auth', 'basic-auth', 'default']
 
+_NO_AUTH_ON_DRAFT_MESSAGE = (
+    "authentication_type='no-auth' is not allowed on draft data apps. A draft inherits the prod "
+    'app\'s data access, so disabling its authentication exposes Storage-reading and Storage-writing '
+    'endpoints publicly. Never disable authentication to make the preview work -- the in-platform '
+    "preview (deploy_data_app mode='dev') authenticates on top of the configured auth. Keep "
+    "'basic-auth' or 'default'; if the user explicitly wants the published app to be public, set "
+    "'no-auth' on the prod app."
+)
+
+
+def _reject_no_auth_on_draft(authentication_type: str) -> None:
+    if authentication_type == 'no-auth':
+        raise ValueError(_NO_AUTH_ON_DRAFT_MESSAGE)
+
+
 SECRET_WORKSPACE_ID = 'WORKSPACE_ID'
 SECRET_BRANCH_ID = 'BRANCH_ID'
 
@@ -954,10 +969,14 @@ async def modify_python_js_data_app(
         AuthenticationType,
         Field(
             description=(
-                'Authentication type. "no-auth" removes authentication completely, "basic-auth" secures the '
-                'data app via HTTP basic authentication, and "default" means: on create, apply basic auth '
+                'Authentication type. "no-auth" removes authentication completely (the app becomes '
+                'public -- only use it when the user explicitly asks for a public app; it is rejected '
+                'on drafts, which inherit the prod app\'s data access), "basic-auth" secures the data '
+                'app via HTTP basic authentication, and "default" means: on create, apply basic auth '
                 '(safe default for new apps); on update, keep the existing authentication configuration '
-                '(including OIDC setups configured outside the MCP).'
+                '(including OIDC setups configured outside the MCP). Never disable authentication to '
+                'make a preview work -- the in-platform preview authenticates on top of the configured '
+                'auth.'
             ),
         ),
     ] = 'default',
@@ -1093,9 +1112,13 @@ async def modify_python_js_data_app(
     ## Authentication
 
     New apps default to HTTP basic authentication for safety. Pass `authentication_type='no-auth'`
-    to expose publicly. On update, `authentication_type='default'` preserves the existing
-    `authorization` block (including OIDC setups configured outside the MCP); `'basic-auth'` /
-    `'no-auth'` overwrite it.
+    to expose publicly -- only when the user explicitly asks for a public app. `'no-auth'` is
+    rejected on drafts: a draft inherits the prod app's data access, so disabling its
+    authentication would expose Storage-reading and Storage-writing endpoints publicly. Never
+    disable authentication to make the preview work -- the in-platform preview
+    (`deploy_data_app(mode='dev')`) authenticates on top of the configured auth. On update,
+    `authentication_type='default'` preserves the existing `authorization` block (including OIDC
+    setups configured outside the MCP); `'basic-auth'` / `'no-auth'` overwrite it.
 
     ## Slug constraint
 
@@ -1130,6 +1153,8 @@ async def modify_python_js_data_app(
             )
         if branch is not None and not parent_configuration_id:
             raise ValueError('branch is only valid on the draft create path (pair it with parent_configuration_id).')
+        if parent_configuration_id:
+            _reject_no_auth_on_draft(authentication_type)
 
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -1147,6 +1172,8 @@ async def modify_python_js_data_app(
     if configuration_id:
         # Update existing python-js data app
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+        if _is_draft_config(data_app.configuration):
+            _reject_no_auth_on_draft(authentication_type)
         normalized_branch = _validate_branch_update(branch, data_app, configuration_id) if branch else None
         updated_config = _update_existing_code_data_app_config(
             existing_config=data_app.configuration,

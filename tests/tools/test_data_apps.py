@@ -1381,6 +1381,89 @@ async def test_modify_python_js_data_app_create_authentication_type(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('configuration_id', 'parent_configuration_id', 'target_is_draft', 'expect_rejected'),
+    [
+        # Create path: parent_configuration_id set → the new app is a draft; 'no-auth' is
+        # rejected by the top validation block before any client call.
+        ('', 'cfg-prod-1', False, True),
+        # Update path: the target config is a draft → rejected after _fetch_data_app, before
+        # configuration_update.
+        ('cfg-draft-1', None, True, True),
+        # Update path on a prod app: 'no-auth' stays allowed — public prod apps are legitimate.
+        ('cfg-prod-1', None, False, False),
+    ],
+    ids=['create_draft_rejected', 'update_draft_rejected', 'update_prod_allowed'],
+)
+async def test_modify_python_js_data_app_no_auth_rejected_only_on_drafts(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+    configuration_id: str,
+    parent_configuration_id: str | None,
+    target_is_draft: bool,
+    expect_rejected: bool,
+) -> None:
+    """'no-auth' is only forbidden on drafts: a draft inherits the prod app's data access, so a
+    public draft would expose Storage-reading/writing endpoints. Prod apps may still be public."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
+
+    data_app_block: dict = {'slug': 'old-slug'}
+    if target_is_draft:
+        data_app_block['isDraft'] = True
+        data_app_block['parentConfigurationId'] = 'cfg-prod-1'
+    existing_data_app = DataApp(
+        name='Old',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id=configuration_id or 'cfg-draft-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='2',
+        type='python-js',
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block}},
+        state='stopped',
+    )
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(return_value=existing_data_app),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    if expect_rejected:
+        with pytest.raises(ValueError, match='not allowed on draft data apps'):
+            await modify_python_js_data_app(
+                ctx=mcp_context_client,
+                name='My App',
+                description='desc',
+                configuration_id=configuration_id,
+                parent_configuration_id=parent_configuration_id,
+                authentication_type='no-auth',
+            )
+        keboola_client.data_science_client.create_data_app.assert_not_called()
+        keboola_client.storage_client.configuration_update.assert_not_called()
+    else:
+        result = await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='My App',
+            description='desc',
+            configuration_id=configuration_id,
+            authentication_type='no-auth',
+        )
+        assert result.response == 'updated'
+        keboola_client.storage_client.configuration_update.assert_awaited_once()
+        new_cfg = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
+        assert new_cfg['authorization']['app_proxy']['auth_rules'] == [
+            {'type': 'pathPrefix', 'value': '/', 'auth_required': False}
+        ]
+
+
+@pytest.mark.asyncio
 async def test_modify_python_js_data_app_update_patches_storage_config(
     mocker,
     mcp_context_client: Context,
