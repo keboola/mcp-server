@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 import pytest
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 
 from integtests.conftest import ConfigDef, ProjectDef
 from keboola_mcp_server.clients.client import KeboolaClient

@@ -2,23 +2,22 @@ import asyncio
 import contextlib
 import csv
 import logging
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Mapping
 from io import StringIO
 from typing import Annotated
 
 from fastmcp import Context, FastMCP
-from fastmcp.tools import FunctionTool
 from mcp.types import (
     ProgressNotification,
     ProgressNotificationParams,
     ProgressToken,
-    ServerNotification,
     ToolAnnotations,
 )
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 
 from keboola_mcp_server.errors import tool_errors
+from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.mcp import get_http_request_or_none
 from keboola_mcp_server.workspace import JobSubmittedInfo, QueryResult, SqlSelectData, WorkspaceManager
 
@@ -154,9 +153,11 @@ def _client_progress_token(ctx: Context) -> ProgressToken | None:
     rc = ctx.request_context
     if rc is None or rc.meta is None:
         return None
-    # The MCP spec allows `_meta` to omit `progressToken`. The typed `RequestParams.Meta`
-    # always carries the attribute (default None), but transports that surface `_meta` as a
-    # plain mapping would not — so look it up defensively rather than assume the attribute.
+    # fastmcp 4's `FastMCPRequestContext.meta` is the raw `_meta` block lifted verbatim off the
+    # wire (a plain mapping keyed by the JSON field name `progressToken`, not a typed object) --
+    # look it up defensively rather than assume an attribute for whichever shape shows up.
+    if isinstance(rc.meta, Mapping):
+        return rc.meta.get('progressToken')
     return getattr(rc.meta, 'progressToken', None)
 
 
@@ -205,7 +206,7 @@ async def _emit_job_submitted_progress(ctx: Context, progress_token: ProgressTok
             f'cannot route to originating SSE stream. Out-of-band cancellation will be unavailable.'
         )
         return
-    await ctx.session.send_notification(ServerNotification(notification), related_request_id=request_id)
+    await ctx.session.send_notification(notification, related_request_id=request_id)
     LOG.info(
         f'Emitted notifications/progress for job_id={info.job_id} '
         f'related_request_id={request_id!r} backend={info.backend}'

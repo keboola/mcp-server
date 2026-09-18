@@ -5,14 +5,14 @@ from collections.abc import Sequence
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
-from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.metastore import ObjectScope
 from keboola_mcp_server.errors import tool_errors
-from keboola_mcp_server.mcp import process_concurrently, toon_serializer_compact, unwrap_results
+from keboola_mcp_server.mcp import ToonCompactFunctionTool as FunctionTool
+from keboola_mcp_server.mcp import process_concurrently, unwrap_results
 from keboola_mcp_server.tools.constants import SEMANTIC_TOOLS_TAG
 from keboola_mcp_server.tools.semantic import service as semantic_service
 from keboola_mcp_server.tools.semantic.data_location import (
@@ -655,7 +655,6 @@ def add_semantic_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             search_semantic_context,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer_compact,
             tags={SEMANTIC_TOOLS_TAG},
         )
     )
@@ -663,7 +662,6 @@ def add_semantic_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             get_semantic_context,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer_compact,
             tags={SEMANTIC_TOOLS_TAG},
         )
     )
@@ -671,7 +669,6 @@ def add_semantic_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             get_semantic_schema,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer_compact,
             tags={SEMANTIC_TOOLS_TAG},
         )
     )
@@ -679,7 +676,6 @@ def add_semantic_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             validate_semantic_query,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer_compact,
             tags={SEMANTIC_TOOLS_TAG},
         )
     )

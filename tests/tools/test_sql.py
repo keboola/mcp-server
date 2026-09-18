@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, call
 
 import httpx
 import pytest
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 from mcp.types import ProgressNotification
 
 from keboola_mcp_server.clients.client import KeboolaClient
@@ -128,11 +128,9 @@ async def test_query_data_emits_progress_notification_with_job_id(mcp_context_cl
     assert call_args.kwargs.get('related_request_id') == 'req-99', (
         f'related_request_id missing or wrong: {call_args.kwargs!r}'
     )
-    # The wrapper is ServerNotification(root=ProgressNotification(...)); both .root and
-    # the wrapper's model_dump should expose the progress notification shape.
     progress = sent.root if hasattr(sent, 'root') else sent
     assert isinstance(progress, ProgressNotification)
-    assert progress.params.progressToken == 'tkn-1'
+    assert progress.params.progress_token == 'tkn-1'
     on_wire = json.loads(progress.model_dump_json(by_alias=True, exclude_none=True))
     assert on_wire['method'] == 'notifications/progress'
     assert on_wire['params']['_meta'] == {

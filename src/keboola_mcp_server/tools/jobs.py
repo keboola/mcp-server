@@ -4,14 +4,14 @@ from collections.abc import Sequence
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
-from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, process_concurrently, toon_serializer_compact, unwrap_results
+from keboola_mcp_server.mcp import KeboolaMcpServer, ToonCompactFunctionTool, process_concurrently, unwrap_results
+from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.scope import ProjectIdArg
 
 LOG = logging.getLogger(__name__)
@@ -25,10 +25,9 @@ JOB_TOOLS_TAG = 'jobs'
 def add_job_tools(mcp: KeboolaMcpServer) -> None:
     """Add job tools to the MCP server."""
     mcp.add_tool(
-        FunctionTool.from_function(
+        ToonCompactFunctionTool.from_function(
             get_jobs,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer_compact,
             tags={JOB_TOOLS_TAG},
         )
     )

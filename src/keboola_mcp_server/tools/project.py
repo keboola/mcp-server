@@ -4,7 +4,6 @@ from typing import Annotated, cast
 
 import httpx
 from fastmcp import Context, FastMCP
-from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
@@ -16,6 +15,7 @@ from keboola_mcp_server.config import MetadataField, deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, process_concurrently
+from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.resources.prompts import get_project_system_prompt
 from keboola_mcp_server.scope import (

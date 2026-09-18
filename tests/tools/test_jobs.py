@@ -2,8 +2,8 @@ from datetime import datetime
 from typing import Any
 
 import pytest
+from fastmcp import Context
 from httpx import HTTPError
-from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.client import KeboolaClient

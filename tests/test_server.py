@@ -24,9 +24,7 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     ServerState,
     SessionStateMiddleware,
-    _exclude_none_serializer,
-    toon_serializer,
-    toon_serializer_compact,
+    _SerializingFunctionTool,
 )
 from keboola_mcp_server.server import CustomRoutes, create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
@@ -125,14 +123,7 @@ class TestServer:
         assert isinstance(server, FastMCP)
         tools = await server.list_tools(run_middleware=False)
 
-        missing_serializer: list[str] = []
-        for tool in tools:
-            if not tool.serializer:
-                missing_serializer.append(tool.name)
-            if tool.serializer not in (_exclude_none_serializer, toon_serializer, toon_serializer_compact):
-                missing_serializer.append(tool.name)
-
-        missing_serializer.sort()
+        missing_serializer = sorted(tool.name for tool in tools if not isinstance(tool, _SerializingFunctionTool))
         assert not missing_serializer, f'These tools have no serializer: {missing_serializer}'
 
     @pytest.mark.asyncio
@@ -294,8 +285,8 @@ async def test_with_session_state(config: Config, envs: dict[str, Any], mocker):
         assert len(tools) == tools_count + 1 - 2 - 4
         assert tools[-1].name == 'assessed-function'
         assert tools[-1].description == 'custom text'
-        # check if the inputSchema contains the expected param description
-        assert expected_param_description in str(tools[-1].inputSchema)
+        # check if the input_schema contains the expected param description
+        assert expected_param_description in str(tools[-1].input_schema)
         result = await client.call_tool('assessed-function', {'param': 'value'})
         assert isinstance(result.content[0], TextContent)
         assert result.content[0].text == 'value'
@@ -410,15 +401,15 @@ async def test_tool_annotations_and_tags():
     for tool in tools:
         assert tool.tags is not None, f'{tool.name} has no tags'
         if tool.annotations is not None:
-            if tool.annotations.readOnlyHint:
-                assert tool.annotations.destructiveHint is None, f'{tool.name} has destructiveHint'
-                assert tool.annotations.idempotentHint is None, f'{tool.name} has idempotentHint'
-            elif tool.annotations.destructiveHint:
-                assert tool.annotations.readOnlyHint is None, f'{tool.name} has readOnlyHint'
-            elif tool.annotations.destructiveHint is False:
-                assert tool.annotations.idempotentHint is None, f'{tool.name} has idempotentHint'
-            if tool.annotations.idempotentHint:
-                assert tool.annotations.readOnlyHint is None, f'{tool.name} has readOnlyHint'
+            if tool.annotations.read_only_hint:
+                assert tool.annotations.destructive_hint is None, f'{tool.name} has destructiveHint'
+                assert tool.annotations.idempotent_hint is None, f'{tool.name} has idempotentHint'
+            elif tool.annotations.destructive_hint:
+                assert tool.annotations.read_only_hint is None, f'{tool.name} has readOnlyHint'
+            elif tool.annotations.destructive_hint is False:
+                assert tool.annotations.idempotent_hint is None, f'{tool.name} has idempotentHint'
+            if tool.annotations.idempotent_hint:
+                assert tool.annotations.read_only_hint is None, f'{tool.name} has readOnlyHint'
 
 
 @pytest.mark.asyncio
@@ -496,9 +487,9 @@ async def test_tool_annotations_tags_values(
         assert tool.annotations is None, f'{tool_name} has annotations'
     else:
         assert tool.annotations is not None, f'{tool_name} has no annotations'
-        assert tool.annotations.readOnlyHint is expected_readonly, f'{tool_name}.readOnlyHint mismatch'
-        assert tool.annotations.destructiveHint is expected_destructive, f'{tool_name}.destructiveHint mismatch'
-        assert tool.annotations.idempotentHint is expected_idempotent, f'{tool_name}.idempotentHint mismatch'
+        assert tool.annotations.read_only_hint is expected_readonly, f'{tool_name}.read_only_hint mismatch'
+        assert tool.annotations.destructive_hint is expected_destructive, f'{tool_name}.destructive_hint mismatch'
+        assert tool.annotations.idempotent_hint is expected_idempotent, f'{tool_name}.idempotent_hint mismatch'
 
     # check tags
     assert tool.tags == tags, f'{tool_name} tags mismatch'

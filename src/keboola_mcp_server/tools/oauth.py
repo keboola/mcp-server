@@ -5,13 +5,13 @@ from typing import Annotated
 from urllib.parse import urlencode, urlunsplit
 
 from fastmcp import Context
-from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import KeboolaMcpServer
+from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.scope import ProjectIdArg
 
 LOG = logging.getLogger(__name__)

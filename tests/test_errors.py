@@ -12,8 +12,8 @@ import pytest
 import yaml
 from fastmcp import Client, Context, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.server.context import FastMCPRequestContext
 from fastmcp.tools import FunctionTool
-from mcp.shared.context import RequestContext
 from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
 from keboola_mcp_server.clients.client import KeboolaClient
@@ -196,7 +196,7 @@ async def test_get_session_id(
     session_id = uuid.uuid4().hex
     if transport == 'stdio':
         mcp_context_client.session_id = None
-        mcp_context_client.request_context = mocker.MagicMock(RequestContext)
+        mcp_context_client.request_context = mocker.MagicMock(FastMCPRequestContext)
         mcp_context_client.request_context.lifespan_context = ServerState(
             config=Config(), runtime_info=ServerRuntimeInfo(transport='stdio', server_id=session_id)
         )
