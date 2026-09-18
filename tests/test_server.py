@@ -12,6 +12,7 @@ import httpx
 import pytest
 from fastmcp import Client, Context, FastMCP
 from fastmcp.client import StreamableHttpTransport
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
@@ -766,3 +767,32 @@ class TestBootstrapServerEndToEnd:
         assert stored.access_token == 'kbc_at_sess-9_secret'
         assert stored.project_ids == [4321]
         assert after == before
+
+    @pytest.mark.asyncio
+    async def test_the_tool_is_listed_but_reports_a_stack_without_the_feature(
+        self, empty_store: None, monkeypatch
+    ) -> None:
+        """A stack with `agent-provisioning` switched off 404s the endpoint. The tool is still
+        advertised -- whether a stack has the feature is not knowable at `tools/list` time -- so the
+        stack's answer has to arrive as a usable message when it is called."""
+
+        async def fake_post(_self, url, **_kwargs):
+            return httpx.Response(404, json={}, request=httpx.Request('POST', url))
+
+        monkeypatch.setattr(httpx.AsyncClient, 'post', fake_post)
+
+        mcp = create_server(Config(storage_api_url=self.STACK), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        assert isinstance(mcp, FastMCP)
+
+        async with Client(mcp) as client:
+            assert 'create_project' in {t.name for t in await client.list_tools()}
+
+            with pytest.raises(ToolError) as excinfo:
+                await client.call_tool('create_project')
+
+        message = str(excinfo.value)
+        assert '"agent-provisioning" feature' in message
+        assert 'Do not retry' in message
+        assert 'keboola-mcp-server login' in message
+        # Nothing half-provisioned was left behind.
+        assert auth_login.load_tokens(self.STACK) is None

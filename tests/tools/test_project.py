@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastmcp.exceptions import ToolError
 from mcp.server.fastmcp import Context
 from pytest_mock import MockerFixture
 
@@ -853,14 +854,28 @@ async def test_create_project_is_refused_on_the_deployed_server(
 async def test_create_project_reports_a_stack_without_agent_provisioning(
     bootstrap_context: Context, mocker: MockerFixture
 ) -> None:
+    # The stack gates the endpoint behind the `agent-provisioning` feature and 404s when it is off.
+    # The user must learn what is wrong and what to do instead -- not a stack trace, and not a
+    # suggestion to try again.
     mocker.patch(
         'keboola_mcp_server.tools.project.provision_agent_project',
         mocker.AsyncMock(
-            side_effect=AgentProvisioningUnavailableError(f'Agent provisioning is not available on {STACK}.')
+            side_effect=AgentProvisioningUnavailableError(
+                f'Creating a Keboola project is not available on {STACK}: this stack does not have the '
+                '"agent-provisioning" feature enabled.'
+            )
         ),
     )
 
-    with pytest.raises(Exception, match='not available'):
+    with pytest.raises(ToolError) as excinfo:
         await create_project(bootstrap_context)
 
+    message = str(excinfo.value)
+    assert 'not available' in message
+    assert '"agent-provisioning" feature' in message
+    assert 'Do not retry' in message
+    # The alternatives the user actually has.
+    assert 'keboola-mcp-server login' in message
+    assert 'Keboola UI' in message
+    assert 'administrator' in message
     assert load_tokens(STACK) is None

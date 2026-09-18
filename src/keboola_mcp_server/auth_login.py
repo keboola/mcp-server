@@ -389,8 +389,12 @@ async def refresh_tokens(
 
 
 class AgentProvisioningUnavailableError(RuntimeError):
-    """The stack does not offer agent provisioning (the `agent-provisioning` feature is off, so the
-    endpoint answers 404). A configuration fact about the stack, not a failure of the call."""
+    """The stack does not offer agent provisioning, so the endpoint answers 404.
+
+    A configuration fact about the stack -- the `agent-provisioning` stack feature
+    (`STACK_FEATURES__AGENT_PROVISIONING`) is off, or the stack predates the endpoint -- not a
+    failure of the call and not something the caller can retry into working.
+    """
 
 
 @dataclass(frozen=True)
@@ -438,7 +442,13 @@ async def provision_agent_project(
     async with httpx.AsyncClient(timeout=_AUTH_TIMEOUT, transport=transport) as client:
         response = await client.post(f'{_base_url(storage_api_url)}/{_PROVISION_PATH}', json=payload)
         if response.status_code == 404:
-            raise AgentProvisioningUnavailableError(f'Agent provisioning is not available on {storage_api_url}.')
+            # The endpoint is gated by the `agent-provisioning` stack feature and 404s when it is
+            # off, which is indistinguishable from a stack too old to have it -- and the caller
+            # does the same thing either way, so one message covers both.
+            raise AgentProvisioningUnavailableError(
+                f'Creating a Keboola project is not available on {storage_api_url}: this stack does not '
+                'have the "agent-provisioning" feature enabled.'
+            )
         if response.status_code == 429:
             retry_after = response.headers.get('Retry-After')
             raise RuntimeError(
