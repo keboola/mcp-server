@@ -23,6 +23,7 @@ from keboola_mcp_server.oauth import (
     DatabaseUnavailableMiddleware,
     ProxyRefreshToken,
     SimpleOAuthProvider,
+    UntrustedAuthorizeRedirectMiddleware,
     _ExtendedAuthorizationCode,
     _OAuthClientInformationFull,
 )
@@ -147,10 +148,13 @@ class TestDatabaseUnavailableMiddleware:
 
     def test_get_middleware_prepends_database_unavailable_middleware(self, oauth_provider: SimpleOAuthProvider) -> None:
         middleware = oauth_provider.get_middleware()
-        assert middleware[0].cls is DatabaseUnavailableMiddleware
+        # UntrustedAuthorizeRedirectMiddleware must be outermost (see its docstring), so
+        # DatabaseUnavailableMiddleware -- previously outermost -- now follows it.
+        assert middleware[0].cls is UntrustedAuthorizeRedirectMiddleware
+        assert middleware[1].cls is DatabaseUnavailableMiddleware
         # The base class's AuthenticationMiddleware/AuthContextMiddleware must still follow --
         # confirms this wraps, rather than replaces, the inherited middleware.
-        assert any(m.cls.__name__ == 'AuthenticationMiddleware' for m in middleware[1:])
+        assert any(m.cls.__name__ == 'AuthenticationMiddleware' for m in middleware[2:])
 
     @pytest.mark.asyncio
     async def test_translates_database_unavailable_error_to_503(self) -> None:
@@ -192,6 +196,91 @@ class TestDatabaseUnavailableMiddleware:
 
         # Not our concern to handle -- falls through to Starlette's own error handling, unchanged.
         assert response.status_code == 500
+
+
+class TestUntrustedAuthorizeRedirectMiddleware:
+    """Vojtěch Biberle's blocking review finding on AI-2883 (independently confirmed against a
+    Claude review of the same PR): the pinned mcp SDK's `AuthorizationHandler` validates the raw
+    request against its `AuthorizationRequest` model *before* `provider.authorize()` ever runs, and
+    its `error_response()` fallback can redirect straight to an attacker-supplied `redirect_uri`
+    for a request that fails that validation (e.g. missing the required `code_challenge`) -- an
+    open redirect (CWE-601) that never reaches `_authorize()`'s Connection registry check at all.
+    """
+
+    _TRUSTED_HOSTS = frozenset({'mcp.example', 'oauth.example'})
+
+    @pytest.fixture
+    def app(self):
+        from mcp.server.auth.routes import create_auth_routes
+        from starlette.applications import Starlette
+        from starlette.middleware import Middleware
+
+        provider = SimpleOAuthProvider(
+            storage_api_url='https://sapi',
+            mcp_server_url='https://mcp.example',
+            callback_endpoint='/callback',
+            client_id='mcp-server-id',
+            client_secret='mcp-server-secret',
+            server_url='https://oauth.example',
+            scope='scope',
+            jwt_secret=JWT_KEY,
+            session_store=FakeSessionStore(),
+        )
+        routes = create_auth_routes(provider, issuer_url=AnyHttpUrl('https://mcp.example'))
+        return Starlette(
+            routes=routes,
+            middleware=[Middleware(UntrustedAuthorizeRedirectMiddleware, trusted_hosts=self._TRUSTED_HOSTS)],
+        )
+
+    def test_blocks_open_redirect_from_a_request_that_fails_sdk_validation(self, app) -> None:
+        from starlette.testclient import TestClient
+
+        client = TestClient(app, raise_server_exceptions=False)
+
+        # Missing the required `code_challenge` field fails AuthorizationRequest.model_validate()
+        # before provider.authorize() ever runs -- exactly the path the SDK's error_response()
+        # fallback uses to redirect to a caller-supplied redirect_uri for an invalid request.
+        response = client.get(
+            '/authorize',
+            params={
+                'client_id': 'attacker-client',
+                'redirect_uri': 'https://attacker.example/cb',
+                'response_type': 'code',
+            },
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 400
+        assert 'attacker.example' not in response.headers.get('location', '')
+
+    def test_lets_a_trusted_host_error_redirect_through(self, app) -> None:
+        from starlette.testclient import TestClient
+
+        client = TestClient(app, raise_server_exceptions=False)
+
+        # Same malformed request, but redirect_uri already points at this server's own callback
+        # host -- still a legitimate target the SDK's fallback may redirect to, so it must pass.
+        response = client.get(
+            '/authorize',
+            params={
+                'client_id': 'some-client',
+                'redirect_uri': 'https://mcp.example/callback',
+                'response_type': 'code',
+            },
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 302
+        assert response.headers['location'].startswith('https://mcp.example/callback')
+
+    def test_lets_non_redirect_and_non_authorize_traffic_through_unchanged(self, app) -> None:
+        from starlette.testclient import TestClient
+
+        client = TestClient(app, raise_server_exceptions=False)
+
+        response = client.get('/.well-known/oauth-authorization-server')
+
+        assert response.status_code == 200
 
 
 class TestConnectionClientIdentity:
