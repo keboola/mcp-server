@@ -907,6 +907,74 @@ class TestKeboolaClientCreate:
             await KeboolaClient.create(storage_api_url='https://connection.keboola.com', storage_token='')
 
 
+class TestQueueFamilyTokenLocalBearerFallback:
+    """A local (non-deployed) server has no auth-bridge exchange available at all (DMD-1939), so a
+    programmatic token given to jobs-queue/AI-service/sync-actions there is always the raw,
+    un-exchanged kbc_at_/kbc_pat_ value -- sending that as the legacy X-StorageApi-Token 401s
+    (INC-02580/SUPPORT-17416). Verified against canary-orion: with X-KBC-ProjectId also present,
+    those services accept the same Bearer credential Storage already uses, so a local server sends
+    that instead. A deployed server (able to run the exchange) is untouched either way."""
+
+    @pytest.mark.asyncio
+    async def test_local_programmatic_token_uses_bearer_for_queue_family(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com', storage_token='kbc_at_abc', project_id='42'
+        )
+
+        for service_client in (client.jobs_queue_client, client.ai_service_client, client.sync_actions_client):
+            headers = service_client.raw_client.headers
+            assert headers.get('Authorization') == 'Bearer kbc_at_abc'
+            assert 'X-StorageAPI-Token' not in headers
+
+    @pytest.mark.asyncio
+    async def test_local_legacy_token_keeps_legacy_header(self, monkeypatch) -> None:
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com', storage_token='sapi_token_456'
+        )
+
+        headers = client.jobs_queue_client.raw_client.headers
+        assert headers.get('X-StorageAPI-Token') == 'sapi_token_456'
+        assert 'Authorization' not in headers
+
+    @pytest.mark.asyncio
+    async def test_deployed_resolved_token_keeps_legacy_header(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        resolver = AsyncMock(spec=StorageTokenResolver)
+        resolver.resolve = AsyncMock(return_value='legacy-project-42-token')
+
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com',
+            storage_token='kbc_at_abc',
+            project_id='42',
+            token_resolver=resolver,
+        )
+
+        headers = client.jobs_queue_client.raw_client.headers
+        assert headers.get('X-StorageAPI-Token') == 'legacy-project-42-token'
+        assert 'Authorization' not in headers
+
+    @pytest.mark.asyncio
+    async def test_deployed_resolve_failure_keeps_legacy_header_not_bearer(self, monkeypatch) -> None:
+        # Infra keeps the pre-existing (documented) 401-on-failure degradation rather than silently
+        # switching to Bearer -- only a local server (no exchange to even attempt) falls back to it.
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        resolver = AsyncMock(spec=StorageTokenResolver)
+        resolver.resolve = AsyncMock(side_effect=StorageTokenExchangeError('resolver rejected', status_code=403))
+
+        client = await KeboolaClient.create(
+            storage_api_url='https://connection.keboola.com',
+            storage_token='kbc_at_abc',
+            project_id='42',
+            token_resolver=resolver,
+        )
+
+        headers = client.jobs_queue_client.raw_client.headers
+        assert headers.get('X-StorageAPI-Token') == 'kbc_at_abc'
+        assert 'Authorization' not in headers
+
+
 class TestStepUpStorageClient:
     """
     KeboolaClient.step_up_storage_client builds the Kubernetes step-up Storage client.
