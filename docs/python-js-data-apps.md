@@ -326,9 +326,10 @@ Always call against the **prod** app's configuration ID — the draft has no man
 
 ### `modify_python_js_data_app(authentication_type=...)`
 
-- **Type**: `'basic-auth' | 'default'` (default: `'default'`). Disabling authentication (`'no-auth'`) is not available through the MCP tools — an unauthenticated data app is publicly reachable, including endpoints that read or write Storage. A public app can only be configured by the user in the Keboola UI; authentication must never be disabled to make a preview work (the in-platform preview authenticates on top of the configured auth).
-- **Semantics on create**: `'default'` and `'basic-auth'` both apply HTTP basic authentication (safe-by-default for new apps).
-- **Semantics on update**: `'default'` leaves the existing `authorization` block untouched (so OIDC and other advanced setups configured outside the MCP survive); `'basic-auth'` overwrites it.
+- **Type**: `'no-auth' | 'basic-auth' | 'default'` (default: `'default'`).
+- **Semantics on create**: `'default'` and `'basic-auth'` both apply HTTP basic authentication (safe-by-default for new apps); `'no-auth'` exposes the app publicly.
+- **Draft restriction**: `'no-auth'` is rejected on drafts — a draft inherits the prod app's data access, so disabling its authentication would expose Storage-reading and Storage-writing endpoints publicly. Use it only on the prod app, and only when the user explicitly asks for a public app. Never disable authentication to make a preview work — the in-platform preview (`deploy_data_app(mode='dev')`) authenticates on top of the configured auth.
+- **Semantics on update**: `'default'` leaves the existing `authorization` block untouched (so OIDC and other advanced setups configured outside the MCP survive); `'basic-auth'` and `'no-auth'` overwrite it.
 - **Wire shape**: identical to Streamlit — `authorization.app_proxy.{auth_providers, auth_rules}`. The DSAPI's python-js endpoint accepts this block alongside `useManagedGitRepo: true`.
 
 ---

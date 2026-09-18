@@ -354,7 +354,7 @@ def test_prune_empty_storage_objects(block, expected) -> None:
 
 def test_build_data_app_config_create_omits_empty_storage() -> None:
     """Streamlit create must not persist an empty `storage` object (it becomes `[]` server-side, AI-3135)."""
-    config = _build_data_app_config('My App', "print('hi')", [], 'basic-auth', {}, 'snowflake')
+    config = _build_data_app_config('My App', "print('hi')", [], 'no-auth', {}, 'snowflake')
     serialized = DataAppConfig.model_validate(config).model_dump(by_alias=True, exclude_none=True)
     assert 'storage' not in serialized
 
@@ -876,7 +876,7 @@ async def test_modify_streamlit_data_app_folder(
         description='desc',
         source_code='import streamlit as st\n{QUERY_DATA_FUNCTION}\nst.write("hello")',
         packages=[],
-        authentication_type='basic-auth',
+        authentication_type='no-auth',
         configuration_id=configuration_id,
         change_description='test',
         folder=folder,
@@ -994,7 +994,7 @@ async def test_modify_streamlit_data_app_partial_success_when_response_building_
         description='desc',
         source_code='import streamlit as st\n{QUERY_DATA_FUNCTION}\nst.write("hello")',
         packages=['pandas'],
-        authentication_type='basic-auth',
+        authentication_type='no-auth',
         configuration_id=configuration_id,
         change_description='test',
     )
@@ -1122,7 +1122,7 @@ async def test_modify_streamlit_data_app_update_skips_metadata_when_version_miss
         description='desc',
         source_code='import streamlit as st\n{QUERY_DATA_FUNCTION}\nst.write("hello")',
         packages=['pandas'],
-        authentication_type='basic-auth',
+        authentication_type='no-auth',
         configuration_id='cfg-1',
         change_description='test',
     )
@@ -1331,6 +1331,7 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     [
         ('default', True),
         ('basic-auth', True),
+        ('no-auth', False),
     ],
 )
 async def test_modify_python_js_data_app_create_authentication_type(
@@ -1341,7 +1342,7 @@ async def test_modify_python_js_data_app_create_authentication_type(
     expect_basic_auth: bool,
 ) -> None:
     """Create path translates authentication_type to the right authorization block:
-    'default' and 'basic-auth' both produce a password-protected app."""
+    'default' and 'basic-auth' → password-protected; 'no-auth' → public."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
@@ -1365,7 +1366,7 @@ async def test_modify_python_js_data_app_create_authentication_type(
         name='My App',
         description='desc',
         slug='my-app',
-        authentication_type=cast(Literal['basic-auth', 'default'], authentication_type),
+        authentication_type=cast(Literal['no-auth', 'basic-auth', 'default'], authentication_type),
     )
 
     serialized = keboola_client.data_science_client.create_data_app.await_args.kwargs['configuration'].model_dump(
@@ -1381,37 +1382,85 @@ async def test_modify_python_js_data_app_create_authentication_type(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('tool', 'extra_kwargs'),
+    ('configuration_id', 'parent_configuration_id', 'target_is_draft', 'expect_rejected'),
     [
-        (modify_streamlit_data_app, {'source_code': 'import streamlit as st', 'packages': []}),
-        (modify_python_js_data_app, {}),
+        # Create path: parent_configuration_id set → the new app is a draft; 'no-auth' is
+        # rejected by the top validation block before any client call.
+        ('', 'cfg-prod-1', False, True),
+        # Update path: the target config is a draft → rejected after _fetch_data_app, before
+        # configuration_update.
+        ('cfg-draft-1', None, True, True),
+        # Update path on a prod app: 'no-auth' stays allowed — public prod apps are legitimate.
+        ('cfg-prod-1', None, False, False),
     ],
-    ids=['streamlit', 'python-js'],
+    ids=['create_draft_rejected', 'update_draft_rejected', 'update_prod_allowed'],
 )
-async def test_modify_data_app_rejects_no_auth(
+async def test_modify_python_js_data_app_no_auth_rejected_only_on_drafts(
     mocker,
     mcp_context_client: Context,
-    tool,
-    extra_kwargs: dict,
+    workspace_manager,
+    configuration_id: str,
+    parent_configuration_id: str | None,
+    target_is_draft: bool,
+    expect_rejected: bool,
 ) -> None:
-    """'no-auth' must never reach the backend: disabling authentication makes a Storage-writing
-    data app publicly reachable. The runtime guard fires before any client call, so the rejection
-    holds even when the tool function is invoked directly, bypassing schema validation."""
+    """'no-auth' is only forbidden on drafts: a draft inherits the prod app's data access, so a
+    public draft would expose Storage-reading/writing endpoints. Prod apps may still be public."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.storage_client.configuration_update = mocker.AsyncMock()
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
 
-    with pytest.raises(ValueError, match='Disabling authentication is not available'):
-        await tool(
+    data_app_block: dict = {'slug': 'old-slug'}
+    if target_is_draft:
+        data_app_block['isDraft'] = True
+        data_app_block['parentConfigurationId'] = 'cfg-prod-1'
+    existing_data_app = DataApp(
+        name='Old',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id=configuration_id or 'cfg-draft-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='2',
+        type='python-js',
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block}},
+        state='stopped',
+    )
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(return_value=existing_data_app),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    if expect_rejected:
+        with pytest.raises(ValueError, match='not allowed on draft data apps'):
+            await modify_python_js_data_app(
+                ctx=mcp_context_client,
+                name='My App',
+                description='desc',
+                configuration_id=configuration_id,
+                parent_configuration_id=parent_configuration_id,
+                authentication_type='no-auth',
+            )
+        keboola_client.data_science_client.create_data_app.assert_not_called()
+        keboola_client.storage_client.configuration_update.assert_not_called()
+    else:
+        result = await modify_python_js_data_app(
             ctx=mcp_context_client,
             name='My App',
             description='desc',
-            authentication_type=cast(Literal['basic-auth', 'default'], 'no-auth'),
-            **extra_kwargs,
+            configuration_id=configuration_id,
+            authentication_type='no-auth',
         )
-
-    keboola_client.data_science_client.create_data_app.assert_not_called()
-    keboola_client.storage_client.configuration_update.assert_not_called()
+        assert result.response == 'updated'
+        keboola_client.storage_client.configuration_update.assert_awaited_once()
+        new_cfg = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
+        assert new_cfg['authorization']['app_proxy']['auth_rules'] == [
+            {'type': 'pathPrefix', 'value': '/', 'auth_required': False}
+        ]
 
 
 @pytest.mark.asyncio
@@ -1949,6 +1998,22 @@ def test_update_existing_code_data_app_config_preserves_legacy_secrets() -> None
         auto_suspend_after_seconds=900,
     )
     assert new['parameters']['dataApp']['secrets'] == {'WORKSPACE_ID': 'wid-legacy', 'KEEP': 'x'}
+
+
+def test_update_existing_code_data_app_config_no_auth_overwrites() -> None:
+    existing = {
+        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
+        'authorization': {
+            'app_proxy': {
+                'auth_providers': [{'id': 'simpleAuth', 'type': 'password'}],
+                'auth_rules': [{'type': 'pathPrefix', 'value': '/', 'auth_required': True, 'auth': ['simpleAuth']}],
+            }
+        },
+    }
+    new = _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=900, authentication_type='no-auth')
+    assert new['authorization']['app_proxy']['auth_rules'] == [
+        {'type': 'pathPrefix', 'value': '/', 'auth_required': False}
+    ]
 
 
 @pytest.mark.parametrize(
