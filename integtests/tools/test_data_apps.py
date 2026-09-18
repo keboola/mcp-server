@@ -333,7 +333,7 @@ async def test_python_js_data_app_prod_and_draft_lifecycle(
                 'description': 'AI-3286 draft integration test',
                 'slug': draft_slug,
                 'parent_configuration_id': prod_output.data_app.configuration_id,
-                'authentication_type': 'no-auth',
+                'authentication_type': 'basic-auth',
             },
         )
         assert draft_result.structured_content is not None
