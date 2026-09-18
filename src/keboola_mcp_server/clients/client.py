@@ -22,7 +22,7 @@ from keboola_mcp_server.clients.metastore import MetastoreClient
 from keboola_mcp_server.clients.scheduler import SchedulerClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient, JsonDict
 from keboola_mcp_server.clients.sync_actions import SyncActionsClient
-from keboola_mcp_server.config import is_same_stack
+from keboola_mcp_server.config import deployed_sa_token_path, is_same_stack
 
 LOG = logging.getLogger(__name__)
 
@@ -229,8 +229,11 @@ class KeboolaClient:
         exchange when applicable.
 
         :param legacy_storage_token: A legacy project-scoped Storage API token. Sent as-is to
-            jobs-queue/AI-service/sync-actions; also used for every other service when no
-            `bearer_token` is given.
+            jobs-queue/AI-service/sync-actions on a deployed server (or when it's a genuine legacy
+            token, not exchanged from a programmatic one); also used for every other service when
+            no `bearer_token` is given. On a local server, an un-exchanged programmatic token is
+            sent to jobs-queue/AI-service/sync-actions as a Bearer instead -- see the
+            `queue_family_token` computation below.
         :param storage_api_url: Keboola Storage API URL
         :param bearer_token: The access token issued by Keboola OAuth server
         :param branch_id: Keboola branch ID
@@ -279,23 +282,36 @@ class KeboolaClient:
             readonly=readonly,
             encryption_client=self._encryption_client,
         )
-        # Jobs-queue / AI-service / sync-actions keep the legacy Storage token and must NOT be given
-        # the OAuth bearer: the queue's NewJobFactory re-sends whatever it receives to Storage as a
-        # legacy X-StorageApi-Token (hardcoded AuthType::STORAGE_TOKEN), so a bearer-shaped credential
-        # arrives there as an invalid Storage token and every run_job 401s (INC-02580 / SUPPORT-17416).
-        # Reverts the client.py part of AI-3755. For a programmatic token (kbc_at_/kbc_pat_), it is
-        # `create()`'s job to already have exchanged it for the legacy per-project Storage token via
-        # the auth-bridge (StorageTokenResolver) before this constructor runs; a raw, unresolved
-        # kbc_at_/kbc_pat_ string 401s here exactly like an OAuth bearer would.
+        # Jobs-queue / AI-service / sync-actions want the legacy Storage token, not the OAuth
+        # bearer: the queue's NewJobFactory re-sends whatever it receives to Storage as a legacy
+        # X-StorageApi-Token (hardcoded AuthType::STORAGE_TOKEN), so a bearer-shaped credential
+        # arrives there as an invalid Storage token and every run_job 401s (INC-02580 /
+        # SUPPORT-17416). On a deployed server, `create()` already exchanged a programmatic token
+        # for the real per-project legacy token via the auth-bridge (StorageTokenResolver) before
+        # this constructor runs, so `self._legacy_storage_token` is that real token there.
+        #
+        # A local (non-deployed) server has no Kubernetes ServiceAccount to run that exchange at
+        # all (`storage_token_resolver()` is always None locally), so a programmatic token here is
+        # always still the raw, un-exchanged kbc_at_/kbc_pat_ value -- sending that as
+        # X-StorageApi-Token 401s exactly as the OAuth bearer would. Verified against
+        # canary-orion (DMD-1939 local testing): with `X-KBC-ProjectId` also present, these
+        # services accept the same Bearer credential Storage/data-science/scheduler/metastore
+        # already use, so use that here instead of hard-failing every local job/AI-service/
+        # sync-action call.
+        queue_family_token = (
+            bearer_or_sapi_token
+            if not deployed_sa_token_path() and is_programmatic_token(self._legacy_storage_token)
+            else self._legacy_storage_token
+        )
         self._jobs_queue_client = JobsQueueClient.create(
             root_url=queue_api_url,
-            token=self._legacy_storage_token,
+            token=queue_family_token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
         )
         self._ai_service_client = AIServiceClient.create(
-            root_url=ai_service_api_url, token=self._legacy_storage_token, headers=self._headers, readonly=readonly
+            root_url=ai_service_api_url, token=queue_family_token, headers=self._headers, readonly=readonly
         )
         # Data-science (sandboxes-service) git-repo credential endpoints require an admin-context
         # token (CanManageAppRepoCredentials -> StorageApiToken::isAdminToken()). The OAuth bearer
@@ -314,7 +330,7 @@ class KeboolaClient:
         )
         self._sync_actions_client = SyncActionsClient.create(
             root_url=sync_actions_api_url,
-            token=self._legacy_storage_token,
+            token=queue_family_token,
             branch_id=branch_id,
             headers=self._headers,
             readonly=readonly,
