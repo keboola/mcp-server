@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Any, cast
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import jwt
@@ -28,6 +28,7 @@ from mcp.server.auth.provider import (
 from mcp.server.auth.settings import ClientRegistrationOptions
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl, AnyUrl
+from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
@@ -543,6 +544,69 @@ class DatabaseUnavailableMiddleware:
             await response(scope, receive, send)
 
 
+class UntrustedAuthorizeRedirectMiddleware:
+    """Blocks `/authorize` from ever redirecting to a host this server didn't intend.
+
+    The mcp SDK's `AuthorizationHandler.handle` (pinned mcp==1.28.1,
+    `mcp/server/auth/handlers/authorize.py`) validates the raw request against its
+    `AuthorizationRequest` pydantic model *before* `provider.authorize()` ever runs. On failure
+    (e.g. a request missing the required `code_challenge` field), its `error_response()` fallback
+    loads a client via `get_client()` -- this provider's implementation is a no-op that returns a
+    valid synthetic client for ANY `client_id`, no registry check -- and re-validates the raw
+    `redirect_uri` via that client's `validate_redirect_uri()`, which accepts any HTTPS host by
+    design (Connection is the real trust authority, not this hook -- see its docstring). If both
+    succeed, the SDK redirects straight to that `redirect_uri` with the error params attached: an
+    unauthenticated open redirect (CWE-601) that never reaches `_authorize()`'s Connection registry
+    check at all. Human review finding (Vojtěch Biberle) on AI-2883, confirming an independent
+    Claude review of the same PR.
+
+    Every *legitimate* redirect this server's `/authorize` route issues targets only one of two
+    known hosts: Connection's own `server_url` (`_oauth_server_auth_url` /
+    `ConnectionClientRegistry`'s `/oauth/authorize`) or this server's own `mcp_server_url`
+    (`_mcp_callback_url`) -- it never redirects straight to the caller-supplied `redirect_uri` (that
+    only happens later, from `/oauth/callback`, after the real grant). So allowlisting the
+    `/authorize` route's outgoing redirect host to exactly those two closes the gap without
+    touching the intentional "any https host" shape check.
+
+    Must be the outermost middleware (listed first in `get_middleware()`) so it inspects the final
+    response after every inner layer -- including the SDK's own route handler -- has run.
+    """
+
+    def __init__(self, app: ASGIApp, trusted_hosts: frozenset[str]) -> None:
+        self._app = app
+        self._trusted_hosts = trusted_hosts
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope['type'] != 'http' or scope.get('path') != '/authorize':
+            await self._app(scope, receive, send)
+            return
+
+        blocked = False
+
+        async def guarded_send(message: dict) -> None:
+            nonlocal blocked
+            if blocked:
+                # The original response was already replaced below; swallow its remaining
+                # messages (e.g. the body chunk that would follow its start) instead of
+                # forwarding them after our own complete response was sent.
+                return
+            if message['type'] == 'http.response.start' and 300 <= message['status'] < 400:
+                location = Headers(raw=message['headers']).get('location')
+                host = urlparse(location).hostname if location else None
+                if host is None or host.lower() not in self._trusted_hosts:
+                    blocked = True
+                    LOG.warning(f'[authorize] Blocked redirect to untrusted host: {location}')
+                    response = JSONResponse(
+                        {'error': 'invalid_request', 'error_description': 'Invalid authorization request.'},
+                        status_code=400,
+                    )
+                    await response(scope, receive, send)
+                    return
+            await send(message)
+
+        await self._app(scope, receive, guarded_send)
+
+
 class SimpleOAuthProvider(OAuthProvider):
     def __init__(
         self,
@@ -588,13 +652,27 @@ class SimpleOAuthProvider(OAuthProvider):
         self._oauth_scope = scope
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
         self._client_registry = ConnectionClientRegistry(server_url)
+        # The only two hosts `/authorize` may ever legitimately redirect to -- see
+        # UntrustedAuthorizeRedirectMiddleware's docstring.
+        self._trusted_redirect_hosts = frozenset(
+            h.lower() for h in (urlparse(mcp_server_url).hostname, urlparse(server_url).hostname) if h
+        )
 
     def get_middleware(self) -> list[Middleware]:
-        """Prepends `DatabaseUnavailableMiddleware` ahead of the base class's
-        `AuthenticationMiddleware`/`AuthContextMiddleware` -- see that middleware's docstring for
-        why it must sit outside (wrap) `AuthenticationMiddleware` rather than rely on any
-        `exception_handlers` dict."""
-        return [Middleware(DatabaseUnavailableMiddleware), *super().get_middleware()]
+        """Prepends `UntrustedAuthorizeRedirectMiddleware` and `DatabaseUnavailableMiddleware`
+        ahead of the base class's `AuthenticationMiddleware`/`AuthContextMiddleware`.
+
+        `UntrustedAuthorizeRedirectMiddleware` must be outermost (listed first) so it sees the
+        final response after every inner layer, including `DatabaseUnavailableMiddleware` and the
+        SDK's own route handler, has run -- see its docstring for why. `DatabaseUnavailableMiddleware`
+        must sit outside `AuthenticationMiddleware` rather than rely on any `exception_handlers`
+        dict -- see that middleware's own docstring.
+        """
+        return [
+            Middleware(UntrustedAuthorizeRedirectMiddleware, trusted_hosts=self._trusted_redirect_hosts),
+            Middleware(DatabaseUnavailableMiddleware),
+            *super().get_middleware(),
+        ]
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         """
