@@ -117,9 +117,17 @@ class BaseExtraModel(BaseModel):
     model yet — pass through the model round-trip (``get_flow_configuration`` on the write path,
     ``Flow.from_api_response`` on the read path) instead of being silently dropped. Validation
     against the live schema remains the authoritative gate; this only prevents lossy serialization.
+
+    Uses ``populate_by_name=True`` because several subclasses declare a bare camelCase ``alias=``
+    (e.g. ``JobTaskConfiguration.component_id``) with no snake_case fallback. MCP clients now
+    reconstruct tool results by dumping the return value with ``by_alias=False`` (the Python field
+    names) and re-validating it against the same model -- without this, that round-trip fails
+    validation for any aliased field, which previously went unnoticed because nothing exercised it
+    end to end. A stricter sibling model further up the union (e.g. the legacy `FlowConfiguration`)
+    then silently absorbs the mismatch instead of raising, discarding fields it doesn't know about.
     """
 
-    model_config = ConfigDict(extra='allow')
+    model_config = ConfigDict(extra='allow', populate_by_name=True)
 
 
 class RetryStrategyParams(BaseExtraModel):
