@@ -1476,6 +1476,7 @@ class TestQueryDataRowLevelSecurity:
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+        keboola_client.storage_client.table_detail.return_value = {'columns': ['id', 'country']}
 
         result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
 
@@ -1497,6 +1498,7 @@ class TestQueryDataRowLevelSecurity:
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+        keboola_client.storage_client.table_detail.return_value = {'columns': ['id', 'country']}
 
         await query_data(
             'SELECT i.id FROM "in.c-crm"."invoices" i JOIN "in.c-crm"."unrelated" u ON u.id = i.id',
@@ -1507,3 +1509,91 @@ class TestQueryDataRowLevelSecurity:
         rewritten_sql = workspace_manager.execute_query.await_args.args[0]
         assert 'WHERE country = \'CZ\'' in rewritten_sql
         assert '"in.c-crm"."unrelated"' in rewritten_sql  # left untouched, not wrapped
+
+
+class TestQueryDataSchemaDrift:
+    """`_log_schema_drift`'s integration into `query_data` (Phase 1.5, see
+    `feature_spec/rls_query_tool/RFC.md` "Data-contract maturity"): a diagnostic-only warning when
+    an RLS-matched table's policy references a column the table no longer has. Never changes what
+    gets returned or raises -- only what gets logged.
+    """
+
+    @staticmethod
+    def _policy(*, table: str, rules_list: list, source_project_id: int = 69420) -> MetastoreObject:
+        return MetastoreObject(
+            type='rls-policy',
+            id='policy-1',
+            attributes={'table': table, 'dialect': 'snowflake', 'rules': rules_list},
+            meta=MetaObjectMeta(source_project_id=source_project_id),
+        )
+
+    @staticmethod
+    def _ok_result(rows: list[dict]) -> QueryResult:
+        return QueryResult(status='ok', data=SqlSelectData(columns=list(rows[0]), rows=rows), message=None)
+
+    @pytest.mark.asyncio
+    async def test_missing_column_logs_warning(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, caplog
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        keboola_client.metastore_client.list_objects.return_value = [
+            self._policy(
+                table='in.c-crm.invoices',
+                rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+            )
+        ]
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+        # The table no longer has 'country' -- e.g. renamed to 'country_code' upstream.
+        keboola_client.storage_client.table_detail.return_value = {'columns': ['id', 'country_code']}
+
+        with caplog.at_level('WARNING'):
+            result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+
+        assert result.applied_rules == ['in.c-crm.invoices']  # enforcement itself is unaffected
+        keboola_client.storage_client.table_detail.assert_awaited_once_with('in.c-crm.invoices')
+        assert any("references column(s) not on the table: ['country']" in r.message for r in caplog.records), (
+            f'expected a drift warning; got: {[r.message for r in caplog.records]}'
+        )
+
+    @pytest.mark.asyncio
+    async def test_column_present_logs_nothing(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, caplog
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        keboola_client.metastore_client.list_objects.return_value = [
+            self._policy(
+                table='in.c-crm.invoices',
+                rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+            )
+        ]
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+        keboola_client.storage_client.table_detail.return_value = {'columns': ['id', 'country']}
+
+        with caplog.at_level('WARNING'):
+            await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+
+        assert not any('references column(s) not on the table' in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_table_detail_failure_does_not_break_the_query(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        keboola_client.metastore_client.list_objects.return_value = [
+            self._policy(
+                table='in.c-crm.invoices',
+                rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+            )
+        ]
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+        keboola_client.storage_client.table_detail.side_effect = RuntimeError('Storage API unavailable')
+
+        result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+
+        assert result.applied_rules == ['in.c-crm.invoices']  # the real query still succeeds

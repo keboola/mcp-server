@@ -268,6 +268,39 @@ def _log_rls_outcome(
     LOG.info(line) if outcome == 'ok' else LOG.warning(line)
 
 
+async def _log_schema_drift(client: KeboolaClient, *, rules: RlsRules, applied_rules: list[str]) -> None:
+    """Best-effort, diagnostic-only: warn when a table this call actually filtered has a policy
+    referencing a column the table no longer has -- e.g. a producer renamed/dropped it after the
+    policy was written. Never raises and never affects the query, which has already run its real,
+    fail-closed enforcement in `rewrite_query()` by the time this is called; this only tells an
+    admin their policy silently stopped matching reality. See `feature_spec/rls_query_tool/RFC.md`
+    "Data-contract maturity" -- this is the whole of that gap it closes, nothing more: it does not
+    validate a table's schema against any contract (there isn't one), only that the policy and the
+    table still agree.
+
+    Scoped to `applied_rules` (the tables this specific call actually matched) rather than every
+    governed table in the project, so the added `table_detail()` cost stays bounded by what one
+    query touches, not by how many policies the project has.
+    """
+    referenced = rules.referenced_columns()
+    for key in applied_rules:
+        columns = referenced.get(key)
+        table_id = rules.table_ids.get(key)
+        if not columns or not table_id:
+            continue
+        try:
+            detail = await client.storage_client.table_detail(table_id)
+        except Exception as e:
+            LOG.warning(f'RLS: could not check schema drift for table {table_id!r}: {e}')
+            continue
+        live_columns = detail.get('columns')
+        if not isinstance(live_columns, list):
+            continue
+        missing = columns - {c for c in live_columns if isinstance(c, str)}
+        if missing:
+            LOG.warning(f'RLS: policy for table {table_id!r} references column(s) not on the table: {sorted(missing)}')
+
+
 async def _apply_rls(
     sql_query: str, *, query_name: str, ctx: Context, workspace_manager: WorkspaceManager
 ) -> tuple[str, list[str]]:
@@ -319,6 +352,10 @@ async def _apply_rls(
         _log_rls_outcome('refused', query_name=query_name, principal=principal, reason=str(e))
         raise
     _log_rls_outcome('ok', query_name=query_name, principal=principal, tables=rewritten.applied_rules)
+    with contextlib.suppress(Exception):
+        # Diagnostic only -- see `_log_schema_drift`'s docstring. Any failure here must never turn
+        # a successful, correctly-filtered query into an error.
+        await _log_schema_drift(client, rules=rules, applied_rules=rewritten.applied_rules)
     return rewritten.sql, rewritten.applied_rules
 
 
