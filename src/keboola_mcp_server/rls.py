@@ -274,6 +274,16 @@ class RlsRules:
 
     tables: Mapping[str, Mapping[str, str]]
     dialect: str
+    table_ids: Mapping[str, str] = dataclasses.field(default_factory=dict)
+    """Rules key -> the table's original Keboola id (`<bucket>.<table>`, as authored -- e.g. still
+    `in.c-crm.invoices` even on BigQuery, where the rules key itself is normalised to
+    `in_c_crm.invoices`, see `_normalize_schema`). `rewrite_query()` never reads this: it exists
+    only so a caller doing a schema-drift check (`referenced_columns()`, `tools/sql.py`) can turn a
+    matched rules key back into an id `StorageClient.table_detail()` accepts. Defaulted so every
+    existing direct `RlsRules(tables=..., dialect=...)` construction (tests, mainly) keeps working
+    unchanged -- an empty mapping here just means "no drift check possible for this instance",
+    never a functional difference to `rewrite_query()` itself.
+    """
 
     @classmethod
     def from_metastore(cls, objects: Sequence[Any], *, dialect: str, project_id: int) -> 'RlsRules':
@@ -295,6 +305,7 @@ class RlsRules:
         if dialect not in _SUPPORTED_DIALECTS:
             raise RlsError(f'RLS: unsupported workspace dialect {dialect!r}')
         tables: dict[str, dict[str, str]] = {}
+        table_ids: dict[str, str] = {}
         for obj in objects:
             meta = getattr(obj, 'meta', None)
             applies = meta is not None and (
@@ -327,6 +338,7 @@ class RlsRules:
                     f'must be <bucket>.<table>'
                 )
             key = _rule_key(_normalize_schema(bucket, dialect), table, dialect)
+            table_ids[key] = table_key_raw
             rules_raw = data.get('rules')
             if not isinstance(rules_raw, Sequence) or isinstance(rules_raw, (str, bytes)) or not rules_raw:
                 raise RlsError(f"RLS: metastore object '{obj_id}' has no rules")
@@ -364,7 +376,30 @@ class RlsRules:
         LOG.info(
             f'Loaded RLS rules for {len(tables)} table(s) from the metastore (dialect {dialect}, project {project_id})'
         )
-        return cls(tables=tables, dialect=dialect)
+        return cls(tables=tables, dialect=dialect, table_ids=table_ids)
+
+    def referenced_columns(self) -> dict[str, set[str]]:
+        """Every column name a rule's compiled predicate mentions, per rules key.
+
+        Diagnostic input only, for the schema-drift check in `tools/sql.py` (see
+        `feature_spec/rls_query_tool/RFC.md` "Data-contract maturity") -- this says what a policy
+        *claims* to reference, nothing about whether that column still exists; this module has no
+        network access and stays that way. Re-parses each already-compiled predicate string (cheap:
+        these are short, and always valid SQL for `self.dialect` -- they came from
+        `_compile_primitive`, never hand-written) rather than keeping the `exp.Condition` tree
+        around, so `tables`' stored shape (plain predicate strings) doesn't have to change.
+        """
+        result: dict[str, set[str]] = {}
+        for key, principals in self.tables.items():
+            columns: set[str] = set()
+            for predicate in principals.values():
+                try:
+                    tree = sqlglot.parse_one(predicate, dialect=self.dialect, into=exp.Condition)
+                except sqlglot.errors.SqlglotError:
+                    continue  # unreachable in practice (see docstring); never fatal for a diagnostic
+                columns.update(col.name for col in tree.find_all(exp.Column))
+            result[key] = columns
+        return result
 
     def is_governed(self, *, table_name: str, schema: str | None) -> bool:
         """Whether any policy at all applies to this table (regardless of user).
