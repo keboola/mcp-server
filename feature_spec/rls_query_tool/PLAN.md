@@ -194,22 +194,55 @@ DONE and unaffected; these are additive. Phase numbers below match the RFC's "Ro
 
 ## This repo (`keboola-mcp-server`) — Phase 1
 
-### Task 9 — `rls.py`: `ClsRules` + composed wrapper
+### Task 9 — `rls.py`: `ClsRules` + composed wrapper (DONE — implemented this session)
 
 - `ClsRules.from_metastore(objects, *, dialect, project_id) -> ClsRules`: same shape/applicability
   logic as `RlsRules.from_metastore` (Task 1), reading `cls-policy` objects instead —
   `tables: Mapping[str, Mapping[str, tuple[str, ...]]]` (rules key -> principal -> allowed columns).
-  Deliberately a sibling dataclass, not a field bolted onto `RlsRules` — see RFC "Schema stability"
-  on why `rls-policy`/`cls-policy` stay separate object types.
-- Extend `_transform` so a table governed by either `RlsRules`, `ClsRules`, or both gets one
-  wrapper: `SELECT <cols> FROM <table> WHERE <predicate>`, `<cols>` = `*` (untouched) when no CLS
-  rule applies, else the allowlist; `<predicate>` = the RLS predicate when one applies, else `TRUE`.
-  An explicit column reference outside the allowlist ⇒ `RlsError` (reuse the message shape, not the
-  RLS-specific wording).
-- Extend `_check_output` symmetrically: re-parse the wrapper's SELECT list and compare against the
-  expected `visible_columns` for the matched principal, same "compared as generated text" discipline
-  the WHERE-clause check already uses.
-- Tests: extend `tests/test_rls.py` per the RFC's "v3 Testing" list.
+  A sibling dataclass, not a field bolted onto `RlsRules`, and its own self-contained
+  `from_metastore` (deliberate duplication, not shared with `RlsRules.from_metastore` — touching
+  the already-shipped, heavily-tested original for a DRY saving was judged not worth the risk; see
+  RFC "Schema stability" and the class docstring).
+  Also gained `table_ids`/`referenced_columns()`, mirroring `RlsRules`'s Phase-1.5 additions, so the
+  schema-drift check covers CLS-referenced columns too (see Task 10.5).
+- `rewrite_query()` gained an optional `cls_rules: ClsRules | None = None` parameter (every existing
+  RLS-only call site needs no change). `_transform` now computes `rls_governed`/`cls_governed`
+  independently per table and, when either is true, builds one wrapper:
+  `SELECT <cols> FROM <table> WHERE <predicate>` — `<cols>` is `*` when no CLS rule applies, else
+  the allowlist (in the order `visible_columns` declared it); `<predicate>` is the RLS predicate
+  when one applies, else `TRUE` (`exp.true()`, not a parsed string). A CLS-governed table with no
+  rule for the resolved principal fails closed exactly like RLS's own "no rule for user" case
+  (`ClsRules.columns_for`, symmetric with `RlsRules.predicate_for`).
+  An explicit column reference outside the allowlist is **not** separately detected in this
+  rewrite — it doesn't need to be: the wrapper subquery only ever exposes the allowlisted columns,
+  so an outer reference to a hidden one is an ordinary "invalid identifier" error from the
+  warehouse itself once the query runs, the same way any other nonexistent-column reference would
+  be. No extra validation code was needed for that RFC line item.
+- `_check_output` extended with a `columns: Mapping[str, tuple[str, ...] | None] | None = None`
+  parameter (default `None` keeps every existing direct test call unchanged): re-parses the
+  wrapper's SELECT list and compares it (as generated text per column, same discipline the
+  WHERE-clause check already uses) against the expected `visible_columns` for the matched
+  principal, or expects a plain `SELECT *` when no CLS rule matched that key.
+- `references_governed_table()` gained the same optional `cls_rules` parameter, so the cheap
+  pre-check in `tools/sql.py` also short-circuits correctly when only CLS (not RLS) governs a
+  touched table.
+- Tests: `tests/test_rls.py` gained `TestClsFromMetastore`, `TestColumnsFor`, and
+  `TestComposedRewrite` (RLS-only unaffected, CLS-only wraps with `WHERE TRUE`, both compose in one
+  wrapper, CLS-governed-no-rule-for-principal refuses, a join filters/restricts only the governed
+  table, CLS/RLS dialect-mismatch refuses) — 215 tests total in that file, all passing, zero
+  changes needed to the ~700 lines of pre-existing RLS-only tests.
+- `tools/sql.py`'s `_apply_rls` wired in too (no separate task number in the original plan; folded
+  in here since shipping CLS meant nothing without it): fetches `rls-policy` and `cls-policy`
+  concurrently (`asyncio.gather`, not two sequential `list_objects` calls), builds both `RlsRules`
+  and `ClsRules`, and passes `cls_rules=` through to `references_governed_table()`/`rewrite_query()`.
+  Reuses the existing `RLS_FEATURE` flag for CLS too — no second feature flag, per the RFC's
+  "two-level opt-in stays table-level" reasoning. `_log_schema_drift` extended to merge
+  `rules.referenced_columns()` and `cls_rules.referenced_columns()` per matched key.
+  `tests/tools/test_sql.py` gained `TestQueryDataColumnLevelSecurity` (CLS-only restricts columns,
+  no-rule-for-principal refuses, RLS+CLS compose for the same table) and a `_stub_metastore_objects`
+  test helper — needed because a single `list_objects.return_value` would otherwise hand the same
+  (RLS-shaped) objects back for the new `cls-policy` call too; existing RLS-only tests updated to
+  use it.
 
 ### Task 10 — `tools/sql.py`: principal-resolution chain step 2 (`verify_token()`, not introspection)
 
