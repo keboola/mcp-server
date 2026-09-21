@@ -2,6 +2,7 @@ import pytest
 
 from keboola_mcp_server.clients.metastore import MetaObjectMeta, MetastoreObject
 from keboola_mcp_server.rls import (
+    ClsRules,
     RewrittenQuery,
     RlsError,
     RlsRules,
@@ -66,6 +67,45 @@ def _policy_object(
         attributes={'table': table, 'dialect': dialect, 'rules': rules_list},
         meta=MetaObjectMeta(source_project_id=source_project_id, target_project_ids=target_project_ids),
     )
+
+
+def _cls_policy_object(
+    *,
+    obj_id: str = 'cls-obj-1',
+    table: str,
+    dialect: str = 'snowflake',
+    rules_list: list,
+    source_project_id: int | None = 1,
+    target_project_ids: tuple | None = None,
+) -> MetastoreObject:
+    return MetastoreObject(
+        type='cls-policy',
+        id=obj_id,
+        attributes={'table': table, 'dialect': dialect, 'rules': rules_list},
+        meta=MetaObjectMeta(source_project_id=source_project_id, target_project_ids=target_project_ids),
+    )
+
+
+# (bucket, table) -> {principal: visible_columns}, mirrors `_RAW_TABLES` for CLS. `invoices` is the
+# same table `_RAW_TABLES` governs with RLS, so composed-rewrite tests can exercise both at once.
+_RAW_CLS_TABLES = {
+    ('in.c-crm', 'invoices'): {'petr': ('id', 'amount', 'country'), 'monika': ('id', 'amount')},
+}
+
+
+def _cls_rules_for(dialect: str) -> ClsRules:
+    return ClsRules(
+        tables={
+            _rule_key(_normalize_schema(bucket, dialect), table, dialect): users
+            for (bucket, table), users in _RAW_CLS_TABLES.items()
+        },
+        dialect=dialect,
+    )
+
+
+@pytest.fixture
+def cls_rules() -> ClsRules:
+    return _cls_rules_for('snowflake')
 
 
 class TestCompilePrimitive:
@@ -1060,3 +1100,165 @@ class TestOutputInvariant:
     )
     def test_accepts(self, sql: str) -> None:
         _check_output(sql, dialect='snowflake', predicates=OUTPUT_PREDICATES)
+
+
+class TestClsFromMetastore:
+    """Mirrors `TestFromMetastore` -- see there for what the shared envelope/applicability/key
+    logic means; only the per-rule shape (`visible_columns` instead of `condition`) differs."""
+
+    def test_builds_tables_from_rules(self) -> None:
+        obj = _cls_policy_object(
+            table='in.c-crm.invoices',
+            rules_list=[
+                {'principal': 'petr', 'visible_columns': ['id', 'amount', 'country']},
+                {'principal': 'Monika', 'visible_columns': ['id', 'amount']},
+            ],
+        )
+        rules = ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+        assert rules.tables['in.c-crm.invoices']['petr'] == ('id', 'amount', 'country')
+        assert rules.tables['in.c-crm.invoices']['monika'] == ('id', 'amount')
+
+    def test_principals_list_expands_to_individual_entries(self) -> None:
+        obj = _cls_policy_object(
+            table='in.c-crm.invoices',
+            rules_list=[{'principals': ['petr', 'Monika'], 'visible_columns': ['id']}],
+        )
+        rules = ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+        assert rules.tables['in.c-crm.invoices']['petr'] == ('id',)
+        assert rules.tables['in.c-crm.invoices']['monika'] == ('id',)
+
+    def test_skips_objects_authored_for_a_different_project(self) -> None:
+        obj = _cls_policy_object(
+            table='in.c-crm.invoices',
+            rules_list=[{'principal': 'petr', 'visible_columns': ['id']}],
+            source_project_id=1,
+        )
+        rules = ClsRules.from_metastore([obj], dialect='snowflake', project_id=2)
+        assert rules.tables == {}
+
+    def test_normalizes_bigquery_schema(self) -> None:
+        obj = _cls_policy_object(
+            table='in.c-crm.invoices', dialect='bigquery', rules_list=[{'principal': 'petr', 'visible_columns': ['id']}]
+        )
+        rules = ClsRules.from_metastore([obj], dialect='bigquery', project_id=1)
+        assert 'in_c_crm.invoices' in rules.tables
+
+    @pytest.mark.parametrize(
+        ('rules_list', 'match'),
+        [
+            ([{'visible_columns': ['id']}], 'no principal'),
+            ([{'principal': '', 'visible_columns': ['id']}], 'no principal'),
+            ([{'principal': 'petr'}], 'invalid'),
+            ([{'principal': 'petr', 'visible_columns': []}], 'invalid'),
+            ([{'principal': 'petr', 'visible_columns': ['not a valid col!']}], 'invalid column name'),
+            ([{'principal': 'pe tr', 'visible_columns': ['id']}], 'invalid principal'),
+        ],
+    )
+    def test_rejects_invalid_rule(self, rules_list, match) -> None:
+        obj = _cls_policy_object(table='in.c-crm.invoices', rules_list=rules_list)
+        with pytest.raises(RlsError, match=match):
+            ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
+    def test_rejects_duplicate_principal_across_objects(self) -> None:
+        obj_a = _cls_policy_object(
+            obj_id='a', table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'visible_columns': ['id']}]
+        )
+        obj_b = _cls_policy_object(
+            obj_id='b', table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'visible_columns': ['id']}]
+        )
+        with pytest.raises(RlsError, match='multiple applicable policies'):
+            ClsRules.from_metastore([obj_a, obj_b], dialect='snowflake', project_id=1)
+
+
+class TestColumnsFor:
+    @pytest.mark.parametrize(
+        ('table_name', 'schema', 'user', 'expected'),
+        [
+            ('invoices', 'in.c-crm', 'petr', ('in.c-crm.invoices', ('id', 'amount', 'country'))),
+            ('INVOICES', 'IN.C-CRM', 'PETR', ('in.c-crm.invoices', ('id', 'amount', 'country'))),
+            ('invoices', 'in.c-crm', 'monika', ('in.c-crm.invoices', ('id', 'amount'))),
+        ],
+    )
+    def test_lookup(self, cls_rules: ClsRules, table_name, schema, user, expected) -> None:
+        assert cls_rules.columns_for(table_name=table_name, schema=schema, user=user) == expected
+
+    @pytest.mark.parametrize(
+        ('table_name', 'schema', 'user', 'match'),
+        [
+            ('customers', 'in.c-crm', 'petr', "table 'in.c-crm.customers'"),
+            ('invoices', 'in.c-crm', 'nobody', "user 'nobody'"),
+            ('invoices', None, 'petr', 'must be qualified'),
+        ],
+    )
+    def test_lookup_denied(self, cls_rules: ClsRules, table_name, schema, user, match) -> None:
+        with pytest.raises(RlsError, match=match):
+            cls_rules.columns_for(table_name=table_name, schema=schema, user=user)
+
+
+class TestComposedRewrite:
+    """`rewrite_query(..., cls_rules=...)`: RLS and CLS compose into the same wrapper subquery per
+    table -- see `feature_spec/rls_query_tool/RFC.md` "Column-Level Security". `rules` here is the
+    same RLS fixture `TestRewriteQuery` uses (`in.c-crm.invoices` has an RLS rule for petr/monika);
+    `cls_rules` is the CLS fixture above, governing the *same* table.
+    """
+
+    def test_rls_only_table_unaffected_by_absent_cls_rules(self, rules: RlsRules) -> None:
+        """No `cls_rules` argument at all -- every pre-existing RLS-only call site -- behaves
+        byte-for-byte as before this parameter existed."""
+        out = rewrite_query('SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect='snowflake', rules=rules)
+        assert out.sql == 'SELECT * FROM (SELECT * FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices"'
+        assert out.applied_rules == ['in.c-crm.invoices']
+
+    def test_cls_only_table_wraps_with_true_and_column_allowlist(self, cls_rules: ClsRules) -> None:
+        """A table with a CLS rule but no RLS rule at all (`rules=RlsRules(tables={}, dialect=...)`)
+        still gets wrapped -- with `WHERE TRUE` -- not left untouched."""
+        empty_rls = RlsRules(tables={}, dialect='snowflake')
+        out = rewrite_query(
+            'SELECT * FROM "in.c-crm"."invoices"',
+            user='monika',
+            dialect='snowflake',
+            rules=empty_rls,
+            cls_rules=cls_rules,
+        )
+        assert out.sql == 'SELECT * FROM (SELECT id, amount FROM "in.c-crm"."invoices" WHERE TRUE) AS "invoices"'
+        assert out.applied_rules == ['in.c-crm.invoices']
+
+    def test_both_rls_and_cls_compose_in_one_wrapper(self, rules: RlsRules, cls_rules: ClsRules) -> None:
+        out = rewrite_query(
+            'SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect='snowflake', rules=rules, cls_rules=cls_rules
+        )
+        assert out.sql == (
+            'SELECT * FROM (SELECT id, amount, country FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices"'
+        )
+        assert out.applied_rules == ['in.c-crm.invoices']
+
+    def test_cls_governed_no_rule_for_principal_is_refused(self, rules: RlsRules, cls_rules: ClsRules) -> None:
+        """Fail-closed, symmetric with RLS: a CLS-governed table with no rule for this principal
+        refuses, even though the same principal has an RLS rule on the same table."""
+        with pytest.raises(RlsError, match="no rule for user 'nobody'"):
+            rewrite_query(
+                'SELECT * FROM "in.c-crm"."invoices"',
+                user='nobody',
+                dialect='snowflake',
+                rules=RlsRules(tables={}, dialect='snowflake'),
+                cls_rules=cls_rules,
+            )
+
+    def test_join_composes_cls_only_on_the_cls_governed_table(self, rules: RlsRules, cls_rules: ClsRules) -> None:
+        out = rewrite_query(
+            'SELECT i.id FROM "in.c-crm"."invoices" i JOIN "in.c-crm"."unrelated" u ON u.id = i.id',
+            user='petr',
+            dialect='snowflake',
+            rules=rules,
+            cls_rules=cls_rules,
+        )
+        assert '(SELECT id, amount, country FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS i' in out.sql
+        assert '"in.c-crm"."unrelated"' in out.sql  # left untouched, not wrapped
+        assert out.applied_rules == ['in.c-crm.invoices']
+
+    def test_cls_dialect_mismatch_is_refused(self, rules: RlsRules, cls_rules: ClsRules) -> None:
+        bq_cls = _cls_rules_for('bigquery')
+        with pytest.raises(RlsError, match='CLS: rules are for dialect bigquery'):
+            rewrite_query(
+                'SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect='snowflake', rules=rules, cls_rules=bq_cls
+            )

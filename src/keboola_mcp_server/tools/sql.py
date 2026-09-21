@@ -21,7 +21,7 @@ from starlette.requests import Request
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import get_http_request_or_none
-from keboola_mcp_server.rls import RlsRules, references_governed_table, rewrite_query
+from keboola_mcp_server.rls import ClsRules, RlsRules, references_governed_table, rewrite_query
 from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY
 from keboola_mcp_server.workspace import JobSubmittedInfo, QueryResult, SqlSelectData, WorkspaceManager
 
@@ -268,24 +268,27 @@ def _log_rls_outcome(
     LOG.info(line) if outcome == 'ok' else LOG.warning(line)
 
 
-async def _log_schema_drift(client: KeboolaClient, *, rules: RlsRules, applied_rules: list[str]) -> None:
-    """Best-effort, diagnostic-only: warn when a table this call actually filtered has a policy
-    referencing a column the table no longer has -- e.g. a producer renamed/dropped it after the
-    policy was written. Never raises and never affects the query, which has already run its real,
-    fail-closed enforcement in `rewrite_query()` by the time this is called; this only tells an
-    admin their policy silently stopped matching reality. See `feature_spec/rls_query_tool/RFC.md`
-    "Data-contract maturity" -- this is the whole of that gap it closes, nothing more: it does not
-    validate a table's schema against any contract (there isn't one), only that the policy and the
-    table still agree.
+async def _log_schema_drift(
+    client: KeboolaClient, *, rules: RlsRules, cls_rules: ClsRules, applied_rules: list[str]
+) -> None:
+    """Best-effort, diagnostic-only: warn when a table this call actually filtered has an RLS
+    and/or CLS policy referencing a column the table no longer has -- e.g. a producer
+    renamed/dropped it after the policy was written. Never raises and never affects the query,
+    which has already run its real, fail-closed enforcement in `rewrite_query()` by the time this
+    is called; this only tells an admin their policy silently stopped matching reality. See
+    `feature_spec/rls_query_tool/RFC.md` "Data-contract maturity" -- this is the whole of that gap
+    it closes, nothing more: it does not validate a table's schema against any contract (there
+    isn't one), only that the policy and the table still agree.
 
     Scoped to `applied_rules` (the tables this specific call actually matched) rather than every
     governed table in the project, so the added `table_detail()` cost stays bounded by what one
     query touches, not by how many policies the project has.
     """
-    referenced = rules.referenced_columns()
+    rls_referenced = rules.referenced_columns()
+    cls_referenced = cls_rules.referenced_columns()
     for key in applied_rules:
-        columns = referenced.get(key)
-        table_id = rules.table_ids.get(key)
+        columns = rls_referenced.get(key, set()) | cls_referenced.get(key, set())
+        table_id = rules.table_ids.get(key) or cls_rules.table_ids.get(key)
         if not columns or not table_id:
             continue
         try:
@@ -304,16 +307,20 @@ async def _log_schema_drift(client: KeboolaClient, *, rules: RlsRules, applied_r
 async def _apply_rls(
     sql_query: str, *, query_name: str, ctx: Context, workspace_manager: WorkspaceManager
 ) -> tuple[str, list[str]]:
-    """Rewrite `sql_query` for row-level security when the project has it enabled AND the query
-    touches a table a policy governs; otherwise return it unchanged. See
-    `feature_spec/rls_query_tool/RFC.md` "Two-level opt-in" -- this is deliberately NOT a
+    """Rewrite `sql_query` for row- and/or column-level security when the project has RLS enabled
+    AND the query touches a table an RLS and/or CLS policy governs; otherwise return it unchanged.
+    See `feature_spec/rls_query_tool/RFC.md` "Two-level opt-in" -- this is deliberately NOT a
     deployment-wide mode: a project without `RLS_FEATURE`, or a query that touches no governed
     table, costs nothing beyond the one `has_feature` check and (once enabled) the cheap parse in
-    `references_governed_table`.
+    `references_governed_table`. CLS reuses the same `RLS_FEATURE` flag rather than a second one --
+    see the RFC's "Column-Level Security" section: table-level policy existence is the real
+    granularity, the flag is only ever the one-time "does this project use this mechanism at all"
+    gate, shared by both.
 
-    :raises ValueError: (a `RlsError`, or a plain refusal below) when a governed table has no rule
-        for the resolved principal, or this session has no resolvable principal at all. Never
-        silently drops a request to an unfiltered query -- every refusal here means "no data".
+    :raises ValueError: (a `RlsError`, or a plain refusal below) when a governed table has no
+        matching RLS and/or CLS rule for the resolved principal, or this session has no resolvable
+        principal at all. Never silently drops a request to an unfiltered query -- every refusal
+        here means "no data".
     """
     client = KeboolaClient.from_state(ctx.session.state)
     if not await client.has_feature(RLS_FEATURE):
@@ -325,11 +332,16 @@ async def _apply_rls(
 
     dialect = (await workspace_manager.get_sql_dialect()).lower()
     project_id = int(await client.storage_client.project_id())
-    objects = await client.metastore_client.list_objects('rls-policy')
-    rules = RlsRules.from_metastore(objects, dialect=dialect, project_id=project_id)
-    if not rules.tables or not references_governed_table(sql_query, dialect=dialect, rules=rules):
-        # No policy applies to this project at all, or none of them name a table this query
-        # touches -- behave exactly like today's unfiltered query_data, no rewrite attempted.
+    rls_objects, cls_objects = await asyncio.gather(
+        client.metastore_client.list_objects('rls-policy'), client.metastore_client.list_objects('cls-policy')
+    )
+    rules = RlsRules.from_metastore(rls_objects, dialect=dialect, project_id=project_id)
+    cls_rules = ClsRules.from_metastore(cls_objects, dialect=dialect, project_id=project_id)
+    if (not rules.tables and not cls_rules.tables) or not references_governed_table(
+        sql_query, dialect=dialect, rules=rules, cls_rules=cls_rules
+    ):
+        # No RLS or CLS policy applies to this project at all, or none of them name a table this
+        # query touches -- behave exactly like today's unfiltered query_data, no rewrite attempted.
         return sql_query, []
 
     principal = ctx.session.state.get(OAUTH_USER_EMAIL_KEY)
@@ -343,7 +355,9 @@ async def _apply_rls(
             # so the rewrite runs in a worker thread: a pathological (but under-cap) query then
             # slows down this one session instead of stalling the event loop for every other
             # in-flight request.
-            rewritten = await asyncio.to_thread(rewrite_query, sql_query, user=principal, dialect=dialect, rules=rules)
+            rewritten = await asyncio.to_thread(
+                rewrite_query, sql_query, user=principal, dialect=dialect, rules=rules, cls_rules=cls_rules
+            )
         except RecursionError as e:
             # sqlglot's parser recurses per nesting level, so deeply nested input hits Python's
             # recursion limit -- turn it into an ordinary refusal, not a stack overflow.
@@ -355,7 +369,7 @@ async def _apply_rls(
     with contextlib.suppress(Exception):
         # Diagnostic only -- see `_log_schema_drift`'s docstring. Any failure here must never turn
         # a successful, correctly-filtered query into an error.
-        await _log_schema_drift(client, rules=rules, applied_rules=rewritten.applied_rules)
+        await _log_schema_drift(client, rules=rules, cls_rules=cls_rules, applied_rules=rewritten.applied_rules)
     return rewritten.sql, rewritten.applied_rules
 
 

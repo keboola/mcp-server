@@ -1377,6 +1377,27 @@ class TestQueryCancellation:
         qsclient.cancel_job.assert_not_called()
 
 
+def _stub_metastore_objects(
+    keboola_client: KeboolaClient,
+    *,
+    rls_policies: list[MetastoreObject] | None = None,
+    cls_policies: list[MetastoreObject] | None = None,
+) -> None:
+    """`_apply_rls` now fetches `rls-policy` and `cls-policy` objects separately
+    (`asyncio.gather(list_objects('rls-policy'), list_objects('cls-policy'))`) -- a single
+    `list_objects.return_value` would hand the same (RLS-shaped) objects back for the `cls-policy`
+    call too, and `ClsRules.from_metastore` would then choke on them. `side_effect` dispatches on
+    the `object_type` positional argument instead, mirroring what the real per-type endpoint does.
+    """
+    rls_policies = rls_policies or []
+    cls_policies = cls_policies or []
+
+    async def _list_objects(object_type: str, **_kwargs) -> list[MetastoreObject]:
+        return rls_policies if object_type == 'rls-policy' else cls_policies if object_type == 'cls-policy' else []
+
+    keboola_client.metastore_client.list_objects.side_effect = _list_objects
+
+
 class TestQueryDataRowLevelSecurity:
     """`query_data`'s RLS integration (see `_apply_rls`, `feature_spec/rls_query_tool/RFC.md`):
     off unless the project has the feature flag on AND the query touches a table a policy names.
@@ -1437,9 +1458,12 @@ class TestQueryDataRowLevelSecurity:
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
     ) -> None:
         keboola_client.has_feature.return_value = True
-        keboola_client.metastore_client.list_objects.return_value = [
-            self._policy(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
-        ]
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                self._policy(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
+            ],
+        )
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         # mcp_context_client carries no OAUTH_USER_EMAIL_KEY -- a non-OAuth (PAT/header) session.
 
@@ -1452,9 +1476,12 @@ class TestQueryDataRowLevelSecurity:
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
     ) -> None:
         keboola_client.has_feature.return_value = True
-        keboola_client.metastore_client.list_objects.return_value = [
-            self._policy(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
-        ]
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                self._policy(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
+            ],
+        )
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'monika'
 
@@ -1467,12 +1494,15 @@ class TestQueryDataRowLevelSecurity:
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
     ) -> None:
         keboola_client.has_feature.return_value = True
-        keboola_client.metastore_client.list_objects.return_value = [
-            self._policy(
-                table='in.c-crm.invoices',
-                rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
-            )
-        ]
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                self._policy(
+                    table='in.c-crm.invoices',
+                    rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+                )
+            ],
+        )
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
@@ -1489,12 +1519,15 @@ class TestQueryDataRowLevelSecurity:
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
     ) -> None:
         keboola_client.has_feature.return_value = True
-        keboola_client.metastore_client.list_objects.return_value = [
-            self._policy(
-                table='in.c-crm.invoices',
-                rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
-            )
-        ]
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                self._policy(
+                    table='in.c-crm.invoices',
+                    rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+                )
+            ],
+        )
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
@@ -1536,12 +1569,15 @@ class TestQueryDataSchemaDrift:
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, caplog
     ) -> None:
         keboola_client.has_feature.return_value = True
-        keboola_client.metastore_client.list_objects.return_value = [
-            self._policy(
-                table='in.c-crm.invoices',
-                rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
-            )
-        ]
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                self._policy(
+                    table='in.c-crm.invoices',
+                    rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+                )
+            ],
+        )
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
@@ -1562,12 +1598,15 @@ class TestQueryDataSchemaDrift:
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, caplog
     ) -> None:
         keboola_client.has_feature.return_value = True
-        keboola_client.metastore_client.list_objects.return_value = [
-            self._policy(
-                table='in.c-crm.invoices',
-                rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
-            )
-        ]
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                self._policy(
+                    table='in.c-crm.invoices',
+                    rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+                )
+            ],
+        )
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
@@ -1583,12 +1622,15 @@ class TestQueryDataSchemaDrift:
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
     ) -> None:
         keboola_client.has_feature.return_value = True
-        keboola_client.metastore_client.list_objects.return_value = [
-            self._policy(
-                table='in.c-crm.invoices',
-                rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
-            )
-        ]
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                self._policy(
+                    table='in.c-crm.invoices',
+                    rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+                )
+            ],
+        )
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
@@ -1597,3 +1639,105 @@ class TestQueryDataSchemaDrift:
         result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
 
         assert result.applied_rules == ['in.c-crm.invoices']  # the real query still succeeds
+
+
+class TestQueryDataColumnLevelSecurity:
+    """`query_data`'s CLS integration (`_apply_rls` fetching `cls-policy` alongside `rls-policy`,
+    see `feature_spec/rls_query_tool/RFC.md` "Column-Level Security"): same two-level opt-in as
+    RLS, same `RLS_FEATURE` flag, composed into the same wrapper when both apply to a table.
+    """
+
+    @staticmethod
+    def _cls_policy(*, table: str, rules_list: list, source_project_id: int = 69420) -> MetastoreObject:
+        return MetastoreObject(
+            type='cls-policy',
+            id='cls-policy-1',
+            attributes={'table': table, 'dialect': 'snowflake', 'rules': rules_list},
+            meta=MetaObjectMeta(source_project_id=source_project_id),
+        )
+
+    @staticmethod
+    def _ok_result(rows: list[dict]) -> QueryResult:
+        return QueryResult(status='ok', data=SqlSelectData(columns=list(rows[0]), rows=rows), message=None)
+
+    @pytest.mark.asyncio
+    async def test_cls_only_table_restricts_columns(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        _stub_metastore_objects(
+            keboola_client,
+            cls_policies=[
+                self._cls_policy(
+                    table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'visible_columns': ['id', 'amount']}]
+                )
+            ],
+        )
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+        keboola_client.storage_client.table_detail.return_value = {'columns': ['id', 'amount', 'ssn']}
+
+        result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+
+        assert result.applied_rules == ['in.c-crm.invoices']
+        rewritten_sql = workspace_manager.execute_query.await_args.args[0]
+        assert 'SELECT id, amount FROM' in rewritten_sql
+        assert 'ssn' not in rewritten_sql
+
+    @pytest.mark.asyncio
+    async def test_cls_no_rule_for_principal_is_refused(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        _stub_metastore_objects(
+            keboola_client,
+            cls_policies=[
+                self._cls_policy(
+                    table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'visible_columns': ['id', 'amount']}]
+                )
+            ],
+        )
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'monika'
+
+        with pytest.raises(ValueError, match="no rule for user 'monika'"):
+            await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+        workspace_manager.execute_query.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rls_and_cls_compose_for_the_same_table(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                MetastoreObject(
+                    type='rls-policy',
+                    id='rls-policy-1',
+                    attributes={
+                        'table': 'in.c-crm.invoices',
+                        'dialect': 'snowflake',
+                        'rules': [{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+                    },
+                    meta=MetaObjectMeta(source_project_id=69420),
+                )
+            ],
+            cls_policies=[
+                self._cls_policy(
+                    table='in.c-crm.invoices',
+                    rules_list=[{'principal': 'petr', 'visible_columns': ['id', 'amount', 'country']}],
+                )
+            ],
+        )
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+        keboola_client.storage_client.table_detail.return_value = {'columns': ['id', 'amount', 'country']}
+
+        result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+
+        assert result.applied_rules == ['in.c-crm.invoices']
+        rewritten_sql = workspace_manager.execute_query.await_args.args[0]
+        assert 'SELECT id, amount, country FROM "in.c-crm"."invoices" WHERE country = \'CZ\'' in rewritten_sql
