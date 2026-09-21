@@ -107,11 +107,11 @@ class ToolDocumentationGenerator:
         if annotations is None:
             return ''
         str_annotations = []
-        if annotations.readOnlyHint:
+        if annotations.read_only_hint:
             str_annotations.append('read-only')
-        if annotations.destructiveHint:
+        if annotations.destructive_hint:
             str_annotations.append('destructive')
-        if annotations.idempotentHint:
+        if annotations.idempotent_hint:
             str_annotations.append('idempotent')
         return f'`{", ".join(sorted(str_annotations))}`' if str_annotations else ''
 

@@ -3,7 +3,7 @@ import logging
 from io import StringIO
 
 import pytest
-from mcp.server.fastmcp import Context
+from fastmcp import Context
 
 from keboola_mcp_server.tools.sql import QueryDataOutput, query_data
 from keboola_mcp_server.tools.storage.tools import get_buckets, get_tables

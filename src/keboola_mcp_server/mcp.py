@@ -21,7 +21,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server import middleware as fmw
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import CallNext, MiddlewareContext
-from fastmcp.tools import Tool
+from fastmcp.tools import FunctionTool, Tool, ToolResult
 from mcp import types as mt
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from pydantic import BaseModel
@@ -118,10 +118,10 @@ def _is_unauthorized(error: BaseException) -> bool:
 
 
 def is_read_only_tool(tool: Tool) -> bool:
-    """Check if a tool has readOnlyHint=True annotation."""
+    """Check if a tool has read_only_hint=True annotation."""
     if tool.annotations is None:
         return False
-    return tool.annotations.readOnlyHint is True
+    return tool.annotations.read_only_hint is True
 
 
 def is_semantic_tool(tool: Tool) -> bool:
@@ -235,16 +235,10 @@ class ForwardSlashMiddleware:
 class KeboolaMcpServer(FastMCP):
     def add_tool(self, tool: Tool) -> None:
         """Applies `textwrap.dedent()` function to the tool's docstring, if no explicit description is provided."""
-        update = {}
         if tool.description:
             description = textwrap.dedent(tool.description).strip()
             if description != tool.description:
-                update['description'] = description
-        if not tool.serializer:
-            update['serializer'] = _exclude_none_serializer
-
-        if update:
-            tool = tool.model_copy(update=update)
+                tool = tool.model_copy(update={'description': description})
 
         super().add_tool(tool)
 
@@ -1324,6 +1318,51 @@ def toon_serializer(data: Any) -> str:
 
 def toon_serializer_compact(data: Any) -> str:
     return toon_format.encode(_filter_toon_nulls(_to_python(data, exclude_none=False)))
+
+
+class _SerializingFunctionTool(FunctionTool):
+    """FunctionTool that renders its result with a fixed text encoder.
+
+    fastmcp 4 dropped `Tool.serializer`; overriding `convert_result` is its documented
+    replacement (https://gofastmcp.com/servers/tools#custom-serialization). Subclasses just
+    plug in the desired encoder via `_serialize()`.
+
+    Delegates to the base implementation first and only swaps in the custom-encoded text content:
+    the base class is what derives `structured_content` from `output_schema` (the MCP client
+    rejects a response with a schema but no `structured_content`), and that derivation is left
+    untouched. A tool function that already returns a `ToolResult`/`CallToolResult`, or raw bytes,
+    is passed through as-is -- those shapes carry meaning our text encoders aren't meant to touch.
+    """
+
+    def _serialize(self, data: Any) -> str:
+        raise NotImplementedError
+
+    def convert_result(self, raw_value: Any) -> ToolResult:
+        result = super().convert_result(raw_value)
+        if isinstance(raw_value, ToolResult | mt.CallToolResult | bytes):
+            return result
+        return result.model_copy(update={'content': [mt.TextContent(type='text', text=self._serialize(raw_value))]})
+
+
+class PlainFunctionTool(_SerializingFunctionTool):
+    """Default tool result encoding: null-stripped JSON text."""
+
+    def _serialize(self, data: Any) -> str:
+        return _exclude_none_serializer(data)
+
+
+class ToonFunctionTool(_SerializingFunctionTool):
+    """Tool result encoded as TOON, keeping null fields."""
+
+    def _serialize(self, data: Any) -> str:
+        return toon_serializer(data)
+
+
+class ToonCompactFunctionTool(_SerializingFunctionTool):
+    """Tool result encoded as TOON, with null fields dropped."""
+
+    def _serialize(self, data: Any) -> str:
+        return toon_serializer_compact(data)
 
 
 async def process_concurrently(

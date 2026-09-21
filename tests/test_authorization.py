@@ -24,7 +24,7 @@ def create_mock_tool(name: str, read_only: bool = False) -> MagicMock:
     tool = MagicMock(spec=Tool)
     tool.name = name
     tool.annotations = MagicMock(spec=ToolAnnotations)
-    tool.annotations.readOnlyHint = read_only
+    tool.annotations.read_only_hint = read_only
     return tool
 
 

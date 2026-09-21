@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 
 from fastmcp import Context
-from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import AliasChoices, BaseModel, Field, SerializeAsAny, field_serializer, model_validator
 
@@ -18,9 +17,9 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
+    ToonCompactFunctionTool,
+    ToonFunctionTool,
     process_concurrently,
-    toon_serializer,
-    toon_serializer_compact,
     unwrap_results,
 )
 from keboola_mcp_server.scope import ProjectIdArg
@@ -52,26 +51,23 @@ COLUMN_ID_PARTS = 4
 def add_storage_tools(mcp: KeboolaMcpServer) -> None:
     """Adds tools to the MCP server."""
     mcp.add_tool(
-        FunctionTool.from_function(
+        ToonCompactFunctionTool.from_function(
             get_buckets,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer_compact,
             tags={STORAGE_TOOLS_TAG},
         )
     )
     mcp.add_tool(
-        FunctionTool.from_function(
+        ToonCompactFunctionTool.from_function(
             get_tables,
             annotations=ToolAnnotations(readOnlyHint=True),
-            serializer=toon_serializer_compact,
             tags={STORAGE_TOOLS_TAG},
         )
     )
     mcp.add_tool(
-        FunctionTool.from_function(
+        ToonFunctionTool.from_function(
             update_descriptions,
             annotations=ToolAnnotations(destructiveHint=True),
-            serializer=toon_serializer,
             tags={STORAGE_TOOLS_TAG},
         )
     )
