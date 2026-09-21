@@ -184,3 +184,94 @@ Estimated effort: small, ~1-2 days including fixtures — no Go production code,
 Estimated effort: medium (large only if RLS policy compilation grows cascade/cross-reference
 semantics). Rough shape: ~300-600 lines service, ~400-700 lines commands, ~150 lines router,
 ~600-900 lines tests, plus the doc surfaces above.
+
+---
+
+# v3 — CLS, broader identity, schema-stability policy
+
+Companion to `RFC.md`'s "v3 Amendment" section — read it first. Tasks 1-4 above (v2, RLS) are
+DONE and unaffected; these are additive. Phase numbers below match the RFC's "Roadmap" phases.
+
+## This repo (`keboola-mcp-server`) — Phase 1
+
+### Task 9 — `rls.py`: `ClsRules` + composed wrapper
+
+- `ClsRules.from_metastore(objects, *, dialect, project_id) -> ClsRules`: same shape/applicability
+  logic as `RlsRules.from_metastore` (Task 1), reading `cls-policy` objects instead —
+  `tables: Mapping[str, Mapping[str, tuple[str, ...]]]` (rules key -> principal -> allowed columns).
+  Deliberately a sibling dataclass, not a field bolted onto `RlsRules` — see RFC "Schema stability"
+  on why `rls-policy`/`cls-policy` stay separate object types.
+- Extend `_transform` so a table governed by either `RlsRules`, `ClsRules`, or both gets one
+  wrapper: `SELECT <cols> FROM <table> WHERE <predicate>`, `<cols>` = `*` (untouched) when no CLS
+  rule applies, else the allowlist; `<predicate>` = the RLS predicate when one applies, else `TRUE`.
+  An explicit column reference outside the allowlist ⇒ `RlsError` (reuse the message shape, not the
+  RLS-specific wording).
+- Extend `_check_output` symmetrically: re-parse the wrapper's SELECT list and compare against the
+  expected `visible_columns` for the matched principal, same "compared as generated text" discipline
+  the WHERE-clause check already uses.
+- Tests: extend `tests/test_rls.py` per the RFC's "v3 Testing" list.
+
+### Task 10 — `tools/sql.py`: principal-resolution chain step 2 (`verify_token()`, not introspection)
+
+- `_apply_rls` (or a renamed/extracted `_resolve_principal` helper) gains: when no OAuth session
+  identity is found, call `client.storage_client.verify_token()` on the already project-scoped
+  client `_apply_rls` already holds (it already calls `client.storage_client.project_id()` and
+  `client.has_feature()` on this same client — no new client, no new header wiring, no
+  `introspect_token()` call). Extract whichever field the real response uses for the token owner's
+  identity, once confirmed (RFC "Open question") — do not guess a field name into the implementation
+  before that's confirmed.
+- **Efficiency note, resolve before merging**: `get_token_info()`/`get_project_features()`/
+  `get_token_role()` (`mcp.py:957`-`973`) already call `verify_token()` once per tool call for
+  feature/role gating in `on_call_tool`. Check whether that result is reachable from `_apply_rls`
+  (e.g. threaded through `ctx.session.state` for the duration of one tool call) before adding a
+  second `verify_token()` call in the same request — a double call per `query_data` invocation is a
+  real, avoidable cost once RLS is on for a project.
+- Tests: session with a programmatic token and no OAuth state resolves via `verify_token()`; a
+  response with no identity field present falls through to "no principal" unchanged (this is the
+  expected, common case for a Data App's service token — step 3, not step 2, is how those resolve).
+
+### Task 10.5 — `rls.py`: policy-vs-schema drift check (Phase 1.5) (DONE — implemented this session)
+
+- Implemented narrower than first scoped, and against `RlsRules` only (`ClsRules`/Task 9 isn't
+  built yet): `RlsRules` gained a `table_ids` field (rules key -> original `<bucket>.<table>` id,
+  needed because the rules key itself is dialect-normalised and not always a valid
+  `table_detail()` argument on BigQuery) and a pure `referenced_columns()` method (re-parses each
+  already-compiled predicate string, no network access). `tools/sql.py` gained
+  `_log_schema_drift()`: called once per `query_data` call, after a successful rewrite, scoped to
+  only the tables `rewrite_query()` actually matched (`rewritten.applied_rules`) rather than every
+  governed table in the project — bounds the added `table_detail()` cost by what one query touches.
+  Wrapped in `contextlib.suppress(Exception)` at the call site (on top of its own internal
+  per-table try/except) so a Storage failure here can never turn a successful, correctly-filtered
+  query into an error.
+- Tests (`tests/tools/test_sql.py::TestQueryDataSchemaDrift`): a policy naming a column absent from
+  `table_detail()`'s response logs a warning and still enforces exactly as before; a policy naming
+  a present column logs nothing; a `table_detail()` failure doesn't break the query. Existing
+  `TestQueryDataRowLevelSecurity` positive-match tests updated to give `table_detail` a realistic
+  mocked return value (previously unconfigured, which leaked an unawaited-coroutine warning once
+  this code path started calling it).
+
+## Metastore backend (`go-monorepo`) — Phase 1 + Phase 2
+
+1. **Phase 1**: `cls-policy` schema + migration, identical shape/ACL/scope treatment to
+   `rls-policy` (PLAN.md Task 7 above) — `organization`/`targeted` scope only, `organization-admin`
+   ACL, versioned filename per the RFC's "Schema stability" policy.
+2. **Phase 2**: `rls-token-principal` schema + migration, same ACL/scope treatment. Blocked on
+   confirming a stable per-token identifier field (RFC "Open question") — do not schema this until
+   that's confirmed against the real API response, not assumed.
+
+## `kbagent` — Phase 1 + Phase 2
+
+1. **Phase 1**: extend the `rls` command group (PLAN.md's kbagent section above) with a `cls`
+   sibling — same guided-flow shape (table picker, principal picker, but a column *multi-select*
+   from the table's known schema instead of a condition builder), same dry-run-preview-before-write
+   discipline.
+2. **Phase 2**: not this repo's work — the Data-App token-provisioning UI (owned by the Data Apps
+   team) writes `rls-token-principal` objects directly via the metastore API, the same way `kbagent`
+   writes `rls-policy`/`cls-policy`. `kbagent` may still want a read-only `rls token-principal list`
+   command for admins auditing bindings, but issuing the binding is the provisioning UI's job, not
+   a CLI flow.
+
+## Phase 3-6
+
+No task breakdown yet — each is a separate RFC amendment (or its own RFC, for Phase 6) once its
+turn comes, per the roadmap ordering in `RFC.md`.
