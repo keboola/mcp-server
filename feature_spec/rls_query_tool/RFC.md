@@ -13,11 +13,19 @@ implemented — `rls.py`'s primitive compiler/metastore loader and `tools/sql.py
 are on `main` of this branch, PLAN.md Tasks 1-4 DONE. v3 does not change any of it; it adds
 Column-Level Security as a sibling mechanism in the same code paths, widens identity resolution
 past OAuth-login-only, and states explicitly, as policy rather than precedent, the schema-stability
-discipline the metastore object types here must keep. Most of "v3 Amendment" is still **Draft** — the one exception is the policy-vs-schema drift check
-(the "Data-contract maturity" section's proposal, Roadmap Phase 1.5), which is now implemented —
-see `rls.py`'s `RlsRules.referenced_columns()`/`table_ids` and `tools/sql.py`'s
-`_log_schema_drift()`, PLAN.md Task 10.5 (DONE). Everything else under "v3 Amendment" — CLS itself,
-the principal-resolution chain, `rls-token-principal` — remains undesigned-in-code, Draft only.
+discipline the metastore object types here must keep. Two pieces of "v3 Amendment" are now implemented: the policy-vs-schema drift check (Roadmap
+Phase 1.5 — see `rls.py`'s `RlsRules.referenced_columns()`/`table_ids` and `tools/sql.py`'s
+`_log_schema_drift()`, PLAN.md Task 10.5, DONE) and Column-Level Security itself (Phase 1 — see
+`rls.py`'s `ClsRules` and `rewrite_query()`'s `cls_rules` parameter, `tools/sql.py`'s `_apply_rls`
+fetching `cls-policy` alongside `rls-policy`, PLAN.md Task 9, DONE). Both are consumer-side only:
+the MCP server can compile and enforce `cls-policy` objects the moment they exist, but the
+`cls-policy` schema itself isn't registered in the metastore backend yet (go-monorepo dependency,
+unchanged from `rls-policy`'s existing one) — see "Dependencies" and PLAN.md's go-monorepo section.
+
+Still Draft, not implemented: the principal-resolution chain (chain step 2's `verify_token()` call,
+chain step 3's `rls-token-principal` binding) and value-masking CLS (Phase 3). Both remain blocked
+on confirming real API field names, per the "Open question" below — nothing here was guessed into
+code.
 
 ## Problem
 
@@ -592,12 +600,17 @@ against, without either side coordinating a deploy. Stated as explicit policy, n
 Ordered by what unblocks what, not by size:
 
 1. **Phase 1 (this amendment, ship together with v2's remaining Tasks 5/6 status quo):** CLS v1
-   (allowlist projection, no masking) + principal-resolution chain steps 1-2 (OAuth session, token
-   introspection for a directly-supplied programmatic token). No new backend dependency beyond what
-   v2 already needs for `rls-policy`, since `cls-policy` is the same object-type mechanism and
-   introspection is an existing call.
+   (allowlist projection, no masking) — **DONE, consumer-side** (`ClsRules`, `rewrite_query()`'s
+   `cls_rules` param, `tools/sql.py`'s `_apply_rls` fetching `cls-policy`; PLAN.md Task 9). No new
+   backend dependency beyond what v2 already needs for `rls-policy`, since `cls-policy` is the same
+   object-type mechanism — but the `cls-policy` schema itself still needs registering in the
+   metastore backend before this is reachable end-to-end (same go-monorepo dependency `rls-policy`
+   already has). Principal-resolution chain steps 1-2 (OAuth session, `verify_token()` for a
+   directly-supplied programmatic token) remain **Draft**, not implemented — step 2 is blocked on
+   confirming which field actually carries identity in `verify_token()`'s response (see "Open
+   question" above); nothing was guessed into code for it.
 1.5. **Phase 1.5:** the policy-vs-schema drift check above — logs only, no behavior change, shares
-   Phase 1's `from_metastore` code path.
+   Phase 1's `from_metastore` code path. **DONE** (PLAN.md Task 10.5).
 2. **Phase 2:** the `rls-token-principal` binding (chain step 3) — blocked on resolving the "Open
    question" above (a stable per-token identifier) and on the Data-App token-provisioning UI
    actually writing it; that UI is owned outside this repo.
