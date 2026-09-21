@@ -31,6 +31,30 @@ MAX_CHARS = 50_000
 # Mirrors the 1 s job-poll cadence in `_Workspace.execute_query`.
 _DISCONNECT_POLL_INTERVAL = 1.0
 
+# Substrings that, together with a literal '' in the message, identify a cast of an empty-string
+# cell to a typed column (Keboola Storage stores blanks as '' rather than NULL). Snowflake's
+# TRY_CAST/TRY_TO_* and BigQuery's SAFE_CAST return NULL instead of raising for exactly this case,
+# so a same-turn retry with the hint below reliably fixes it.
+_EMPTY_STRING_CAST_ERROR_MARKERS = (
+    'is not recognized',  # Snowflake: Date/Numeric/Time/Timestamp '' is not recognized
+    'Bad double value',  # BigQuery: Bad double value: ''
+    'Invalid date',  # BigQuery: Invalid date: ''
+    'Invalid timestamp',  # BigQuery: Invalid timestamp: ''
+)
+_EMPTY_STRING_CAST_HINT = (
+    "Hint: Keboola Storage stores empty cells as '' (empty string), not NULL, even in non-nullable "
+    'VARCHAR/STRING columns. Guard the cast instead of retrying it as-is: on Snowflake use '
+    "TRY_CAST(x AS ...) or TRY_TO_DATE/TRY_TO_NUMBER; on BigQuery use SAFE_CAST(x AS ...). "
+    "Or wrap the column with NULLIF(col, '') before casting."
+)
+
+
+def _with_empty_string_cast_hint(message: str) -> str:
+    """Append a corrective hint when `message` is a dialect cast error on an empty-string cell."""
+    if "''" in message and any(marker in message for marker in _EMPTY_STRING_CAST_ERROR_MARKERS):
+        return f'{message} {_EMPTY_STRING_CAST_HINT}'
+    return message
+
 
 async def _watch_for_http_disconnect(request: Request, poll_interval: float | None = None) -> None:
     """Return when the underlying HTTP `request` is torn down.
@@ -366,4 +390,4 @@ async def query_data(
             LOG.info(f'Query "{query_name}" was cancelled.')
             raise ValueError('Query was cancelled')
         LOG.warning(' '.join(filter(None, [f'Query "{query_name}" failed.', result.message])))
-        raise ValueError(f'Failed to run SQL query, error: {result.message}')
+        raise ValueError(f'Failed to run SQL query, error: {_with_empty_string_cast_hint(result.message)}')

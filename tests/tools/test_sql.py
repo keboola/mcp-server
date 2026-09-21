@@ -88,6 +88,36 @@ async def test_query_data(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('db_message', 'expect_hint'),
+    [
+        ("Date '' is not recognized", True),  # Snowflake
+        ("Numeric value '' is not recognized", True),  # Snowflake
+        ("Time '' is not recognized", True),  # Snowflake
+        ("Bad double value: ''", True),  # BigQuery
+        ("Invalid date: ''", True),  # BigQuery
+        ("Invalid timestamp: ''", True),  # BigQuery
+        ('Invalid SQL syntax near SELECT', False),  # unrelated error, no hint
+        ('invalid identifier \'"date"\'', False),  # unrelated error, no hint
+        ("Date '2024-13-40' is not recognized", False),  # non-empty value, not the empty-string case
+    ],
+)
+async def test_query_data_appends_empty_string_cast_hint_on_matching_errors(
+    db_message: str, expect_hint: bool, mcp_context_client: Context, mocker
+):
+    manager = mocker.AsyncMock(WorkspaceManager)
+    manager.execute_query.return_value = QueryResult(status='error', data=None, message=db_message)
+    mcp_context_client.session.state[WorkspaceManager.STATE_KEY] = manager
+
+    with pytest.raises(ValueError) as exc_info:
+        await query_data('select 1;', 'Some Query', mcp_context_client)
+
+    error_message = str(exc_info.value)
+    assert db_message in error_message
+    assert ("Keboola Storage stores empty cells as ''" in error_message) is expect_hint
+
+
+@pytest.mark.asyncio
 async def test_query_data_emits_progress_notification_with_job_id(mcp_context_client: Context, mocker):
     """When the client supplied a progressToken in the original tools/call, query_data must surface
     the backend job id to the client by sending a `notifications/progress` whose `params._meta`
