@@ -16,6 +16,12 @@ SQL dialect: a policy authored against a Snowflake-workspace's column names is n
 BigQuery workspace. `RlsRules.dialect` pins the workspace backend the compiled predicates are for,
 and `rewrite_query()` refuses outright when the workspace it is asked to rewrite for is not that
 dialect.
+
+Column-level security (CLS) is a sibling mechanism, `ClsRules`, backed by `cls-policy` metastore
+objects: an allowlist of visible columns per principal instead of a row predicate. `rewrite_query()`
+optionally takes both an `RlsRules` and a `ClsRules` and composes them into the *same* wrapper
+subquery per table -- never two separate rewrite passes. See
+`feature_spec/rls_query_tool/RFC.md`'s "v3 Amendment" for the design.
 """
 
 import dataclasses
@@ -433,6 +439,152 @@ class RlsRules:
         return key, predicate
 
 
+@dataclasses.dataclass(frozen=True)
+class ClsRules:
+    """Column-level security rules keyed by table key, then lower-cased principal name.
+
+    Same key derivation, dialect-pinning, and org-authored/metastore-backed model as `RlsRules` --
+    see its docstring for the shared parts (table-key shape, BigQuery schema normalisation, case
+    handling). The one structural difference: a rule here is an allowlist of column names
+    (`visible_columns`), not a compiled predicate -- there is no boolean logic to combine, only "is
+    this column in the list." Deliberately an allowlist, not a denylist of hidden columns: a column
+    added to a protected table later defaults to hidden until a rule names it, never silently
+    exposed -- the same posture `_ALLOWED_FROM_SOURCES`/`_COMPARISON_OPS` already take elsewhere in
+    this module. `rewrite_query()` composes an `RlsRules` and a `ClsRules` into the *same* wrapper
+    subquery per table, never two separate rewrite passes -- see
+    `feature_spec/rls_query_tool/RFC.md` "Column-Level Security".
+
+    A sibling dataclass to `RlsRules`, not a field on it, and `from_metastore` below duplicates
+    rather than shares `RlsRules.from_metastore`'s envelope/applicability/key-parsing logic --
+    deliberate, not an oversight: the two object types have different authorship triggers and
+    lifecycles (see the RFC's "Schema stability" section), and touching the already-shipped,
+    heavily-tested `RlsRules.from_metastore` to extract a shared helper is a real risk for a
+    saving that's purely cosmetic.
+    """
+
+    tables: Mapping[str, Mapping[str, tuple[str, ...]]]
+    dialect: str
+    table_ids: Mapping[str, str] = dataclasses.field(default_factory=dict)
+    """Same purpose as `RlsRules.table_ids` -- see there."""
+
+    @classmethod
+    def from_metastore(cls, objects: Sequence[Any], *, dialect: str, project_id: int) -> 'ClsRules':
+        """Build `ClsRules` from `cls-policy` metastore objects applicable to `project_id`.
+
+        Mirrors `RlsRules.from_metastore` (same applicability check, same `<bucket>.<table>` key
+        derivation, same `principal`/`principals` handling) -- the only difference is validating
+        `visible_columns` (a non-empty list of column-name strings) instead of compiling a
+        `condition`. See that method's docstring for what the shared parts mean.
+        """
+        if dialect not in _SUPPORTED_DIALECTS:
+            raise RlsError(f'CLS: unsupported workspace dialect {dialect!r}')
+        tables: dict[str, dict[str, tuple[str, ...]]] = {}
+        table_ids: dict[str, str] = {}
+        for obj in objects:
+            meta = getattr(obj, 'meta', None)
+            applies = meta is not None and (
+                getattr(meta, 'source_project_id', None) == project_id
+                or project_id in (getattr(meta, 'target_project_ids', None) or ())
+            )
+            if not applies:
+                continue
+            obj_id = getattr(obj, 'id', None) or '<unknown>'
+            data = getattr(obj, 'attributes', None)
+            if not isinstance(data, Mapping):
+                raise RlsError(f"CLS: metastore object '{obj_id}' has no attributes")
+            obj_dialect = data.get('dialect')
+            if obj_dialect != dialect:
+                raise RlsError(
+                    f"CLS: metastore object '{obj_id}' is for dialect {obj_dialect!r} but project "
+                    f'{project_id} is {dialect!r}'
+                )
+            table_key_raw = data.get('table')
+            if not isinstance(table_key_raw, str) or not _RULE_KEY_RE.match(table_key_raw):
+                raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid 'table': {table_key_raw!r}")
+            bucket, _, table = table_key_raw.rpartition('.')
+            if not bucket or not table:
+                raise RlsError(
+                    f"CLS: metastore object '{obj_id}' has an unqualified table '{table_key_raw}': "
+                    f'must be <bucket>.<table>'
+                )
+            key = _rule_key(_normalize_schema(bucket, dialect), table, dialect)
+            table_ids[key] = table_key_raw
+            rules_raw = data.get('rules')
+            if not isinstance(rules_raw, Sequence) or isinstance(rules_raw, (str, bytes)) or not rules_raw:
+                raise RlsError(f"CLS: metastore object '{obj_id}' has no rules")
+
+            users = tables.setdefault(key, {})
+            for rule in rules_raw:
+                if not isinstance(rule, Mapping):
+                    raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid rule entry: {rule!r}")
+                principals_raw = rule.get('principals')
+                principal_raw = rule.get('principal')
+                if principals_raw is not None:
+                    if (
+                        not isinstance(principals_raw, Sequence)
+                        or isinstance(principals_raw, (str, bytes))
+                        or not principals_raw
+                    ):
+                        raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid 'principals': {rule!r}")
+                    names: Sequence[Any] = principals_raw
+                elif isinstance(principal_raw, str) and principal_raw:
+                    names = [principal_raw]
+                else:
+                    raise RlsError(f"CLS: metastore object '{obj_id}' has a rule with no principal(s): {rule!r}")
+                columns_raw = rule.get('visible_columns')
+                if not isinstance(columns_raw, Sequence) or isinstance(columns_raw, (str, bytes)) or not columns_raw:
+                    raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid 'visible_columns': {rule!r}")
+                columns: list[str] = []
+                for col in columns_raw:
+                    if not isinstance(col, str) or not _RULE_KEY_RE.match(col):
+                        raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid column name {col!r}")
+                    columns.append(col)
+                for name in names:
+                    if not isinstance(name, str) or not _RULE_KEY_RE.match(name):
+                        raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid principal {name!r}")
+                    user_key = name.lower()
+                    if user_key in users:
+                        raise RlsError(
+                            f"CLS: multiple applicable policies define a rule for principal '{user_key}' "
+                            f"on table '{key}'"
+                        )
+                    users[user_key] = tuple(columns)
+
+        LOG.info(
+            f'Loaded CLS rules for {len(tables)} table(s) from the metastore (dialect {dialect}, project {project_id})'
+        )
+        return cls(tables=tables, dialect=dialect, table_ids=table_ids)
+
+    def referenced_columns(self) -> dict[str, set[str]]:
+        """Every column name any rule allowlists, per rules key -- the CLS analogue of
+        `RlsRules.referenced_columns()`, for the same schema-drift check in `tools/sql.py`. No
+        parsing needed here (unlike RLS's predicate text): the allowlist already is the column list.
+        """
+        return {
+            key: {col for columns in principals.values() for col in columns} for key, principals in self.tables.items()
+        }
+
+    def is_governed(self, *, table_name: str, schema: str | None) -> bool:
+        """Whether any policy at all applies to this table (regardless of user) -- see
+        `RlsRules.is_governed`, identical semantics."""
+        return bool(schema) and _rule_key(schema, table_name, self.dialect) in self.tables
+
+    def columns_for(self, *, table_name: str, schema: str | None, user: str) -> tuple[str, tuple[str, ...]]:
+        """Return `(matched_key, visible_columns)` for the table/user, or raise `RlsError` -- see
+        `RlsRules.predicate_for`, identical fail-closed semantics (governed table, no rule for this
+        principal -> refuse, never fall back to every column)."""
+        if not schema:
+            raise RlsError(f"CLS: table reference must be qualified as <bucket>.<table>: '{table_name}'")
+        key = _rule_key(schema, table_name, self.dialect)
+        users = self.tables.get(key)
+        if users is None:
+            raise RlsError(f"CLS: no rule for table '{key}'")
+        columns = users.get(user.lower())
+        if columns is None:
+            raise RlsError(f"CLS: no rule for user '{user.lower()}' on table '{key}'")
+        return key, columns
+
+
 def _check_from_sources(tree: exp.Expression) -> None:
     """Refuse any FROM/JOIN/LATERAL source that is not on `_ALLOWED_FROM_SOURCES`.
 
@@ -642,25 +794,39 @@ def _matching_key(table: exp.Table, keys: Mapping[str, str], *, dialect: str) ->
     return key if key in keys else None
 
 
-def _check_output(sql: str, *, dialect: str, predicates: Mapping[str, str]) -> None:
+def _check_output(
+    sql: str,
+    *,
+    dialect: str,
+    predicates: Mapping[str, str],
+    columns: Mapping[str, tuple[str, ...] | None] | None = None,
+) -> None:
     """Assert the generated SQL is still a plain SELECT over wrapped tables; raise `RlsError` if not.
 
     This is the safety net: it re-parses the rewriter's own output and checks it from scratch, so a
     bug or an unforeseen node type upstream cannot smuggle DDL, a second statement or an unfiltered
     *governed* table past it. The only shape the rewrite ever produces for a table a policy names
-    is `(SELECT * FROM <table> WHERE <predicate>) AS <alias>`; anything else there is a defect, not
-    data. An ungoverned table (no policy names it at all) is untouched by design and may appear in
-    any shape -- this check only ever looks at tables matching a key in `predicates`.
+    is `(SELECT <cols> FROM <table> WHERE <predicate>) AS <alias>`; anything else there is a defect,
+    not data. An ungoverned table (no policy names it at all) is untouched by design and may appear
+    in any shape -- this check only ever looks at tables matching a key in `predicates`.
 
-    `predicates` maps each rules key the rewrite matched to the predicate text it inserted for it.
-    A wrapper is only accepted when its WHERE is present AND generates back to exactly that
-    predicate: "wrapped in something" is not the invariant, "wrapped in the filter the admin wrote"
-    is. Without the comparison a wrapper carrying a weakened or empty condition would pass.
+    `predicates` maps each rules key the rewrite matched to the predicate text it inserted for it --
+    `'TRUE'` for a key only CLS governs, see `rewrite_query`. A wrapper is only accepted when its
+    WHERE is present AND generates back to exactly that predicate: "wrapped in something" is not the
+    invariant, "wrapped in the filter the admin wrote" is. Without the comparison a wrapper carrying
+    a weakened or empty condition would pass.
+
+    `columns` maps each matched key to the exact `visible_columns` a CLS rule allowlisted for it, or
+    `None` (the default, via `.get()`, when a key isn't present at all -- true for every call site
+    that never dealt with CLS) meaning "expect a plain `SELECT *`". Same all-or-nothing comparison
+    as the predicate: the wrapper's SELECT list must generate back to exactly the expected columns,
+    in the same order, never a superset/subset fuzz match.
 
     Consequence worth knowing when authoring rules: a predicate that itself references another table
     (`id IN (SELECT id FROM other)`) leaves a table outside a wrapper and is refused. Predicates must
     be plain conditions over the protected table's own columns.
     """
+    columns = columns or {}
     try:
         statements = sqlglot.parse(sql, dialect=dialect)
     except sqlglot.errors.SqlglotError as e:
@@ -686,13 +852,19 @@ def _check_output(sql: str, *, dialect: str, predicates: Mapping[str, str]) -> N
             # verify: an ungoverned table may appear in any shape, wrapped or not.
             continue
         select = table.parent.parent if isinstance(table.parent, exp.From) else None
-        wrapped = (
-            isinstance(select, exp.Select)
-            and [type(e) for e in select.expressions] == [exp.Star]
-            and isinstance(select.parent, exp.Subquery)
-        )
+        expected_cols = columns.get(key)
+        if expected_cols is None:
+            # No CLS rule matched this key -- the wrapper must carry a plain, untouched `SELECT *`.
+            projection_ok = isinstance(select, exp.Select) and [type(e) for e in select.expressions] == [exp.Star]
+        else:
+            expected_col_sql = [exp.column(c).sql(dialect=dialect) for c in expected_cols]
+            projection_ok = (
+                isinstance(select, exp.Select)
+                and [e.sql(dialect=dialect) for e in select.expressions] == expected_col_sql
+            )
+        wrapped = projection_ok and isinstance(select, exp.Select) and isinstance(select.parent, exp.Subquery)
         if not wrapped:
-            LOG.warning(f'RLS: rewrite left an unwrapped table reference for governed key {key!r}')
+            LOG.warning(f'RLS: rewrite left an unwrapped or wrong-projection table reference for governed key {key!r}')
             raise RlsError('RLS: rewrite left an unwrapped table reference')
         assert isinstance(select, exp.Select)  # narrowed by `wrapped`
         where = select.args.get('where')
@@ -723,14 +895,15 @@ def _check_output(sql: str, *, dialect: str, predicates: Mapping[str, str]) -> N
             raise RlsError(_RULE_NOT_APPLIED.format(key=key))
 
 
-def references_governed_table(sql: str, *, dialect: str, rules: RlsRules) -> bool:
-    """Cheap, lenient pre-check: does `sql` reference any table `rules` governs at all?
+def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_rules: 'ClsRules | None' = None) -> bool:
+    """Cheap, lenient pre-check: does `sql` reference any table `rules`/`cls_rules` governs at all?
 
     Callers (see `tools/sql.py`) use this to decide whether a query needs `rewrite_query()`'s full,
     deliberately paranoid pipeline (single-statement, SELECT-only, allowlisted FROM sources, ...) at
-    all: a query that touches zero governed tables is not RLS's concern and must behave exactly
-    like plain, unfiltered `query_data` -- RLS is opt-in per table, not a blanket restriction on
-    every query the moment a project has any policy configured.
+    all: a query that touches zero governed tables is not RLS/CLS's concern and must behave exactly
+    like plain, unfiltered `query_data` -- both are opt-in per table, not a blanket restriction on
+    every query the moment a project has any policy configured. `cls_rules` is optional so every
+    existing RLS-only call site needs no change.
 
     Deliberately lenient about *shape*: unlike `rewrite_query`, this does not require a single
     `SELECT` statement, and does not reject multi-statement input or exotic FROM sources -- it only
@@ -748,14 +921,26 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules) -> boo
         if statement is None:
             continue
         for table in statement.find_all(exp.Table):
-            if table.db and rules.is_governed(table_name=table.name, schema=table.db):
+            if table.db and (
+                rules.is_governed(table_name=table.name, schema=table.db)
+                or (cls_rules is not None and cls_rules.is_governed(table_name=table.name, schema=table.db))
+            ):
                 return True
     return False
 
 
-def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> RewrittenQuery:
-    """Rewrite a single SELECT so every table a policy governs becomes a filtered subquery; a
-    table no policy names at all is left completely untouched (see `RlsRules.is_governed`).
+def rewrite_query(
+    sql: str, *, user: str, dialect: str, rules: RlsRules, cls_rules: 'ClsRules | None' = None
+) -> RewrittenQuery:
+    """Rewrite a single SELECT so every table an RLS and/or CLS policy governs becomes a filtered,
+    column-restricted subquery; a table no policy of either kind names at all is left completely
+    untouched (see `RlsRules.is_governed`/`ClsRules.is_governed`).
+
+    `cls_rules` is optional -- every existing RLS-only caller needs no change. When a table is
+    governed by both, RLS's predicate and CLS's column allowlist compose into the *same* wrapper
+    (`(SELECT <cols> FROM <table> WHERE <predicate>) AS <alias>`), never two separate rewrite
+    passes. A table only CLS governs still gets wrapped, with `WHERE TRUE`; a table only RLS governs
+    keeps its `SELECT *`, exactly as before this parameter existed.
 
     Call this only once `references_governed_table()` has confirmed the query is worth the full,
     paranoid pipeline below -- a query touching zero governed tables should skip this function
@@ -764,19 +949,23 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
     :param sql: the caller's SQL, in the workspace dialect
     :param user: identity used to select rules; case-insensitive
     :param dialect: sqlglot dialect name (`'snowflake'` / `'bigquery'`)
-    :param rules: loaded rules
+    :param rules: loaded RLS rules
+    :param cls_rules: loaded CLS rules, if any
     :raises RlsError: on anything other than one SELECT statement whose every governed table has a
-        rule for `user`
+        matching RLS and/or CLS rule for `user`
     """
     try:
         sqlglot.Dialect.get_or_raise(dialect)
     except Exception as e:
         raise RlsError(f'RLS: unsupported SQL dialect {dialect!r}') from e
-    # Predicates are never transpiled, so rules written for one backend must not be applied to
-    # another: the same text can mean different things (or silently nothing) under a different
-    # dialect. Fail closed rather than rewrite with a filter whose meaning we cannot vouch for.
+    # Predicates/column lists are never transpiled, so rules written for one backend must not be
+    # applied to another: the same text can mean different things (or silently nothing) under a
+    # different dialect. Fail closed rather than rewrite with a filter whose meaning we cannot
+    # vouch for.
     if rules.dialect != dialect.lower():
         raise RlsError(f'RLS: rules are for dialect {rules.dialect} but the workspace is {dialect.lower()}')
+    if cls_rules is not None and cls_rules.dialect != dialect.lower():
+        raise RlsError(f'CLS: rules are for dialect {cls_rules.dialect} but the workspace is {dialect.lower()}')
     try:
         statements = sqlglot.parse(sql, dialect=dialect)
     except sqlglot.errors.SqlglotError as e:
@@ -807,8 +996,13 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
 
     applied: list[str] = []
     # The predicate the rewrite actually inserted for each matched key, handed to `_check_output` so
-    # the safety net can verify the WHERE it finds is the rule, not merely some WHERE.
+    # the safety net can verify the WHERE it finds is the rule, not merely some WHERE. `'TRUE'` for
+    # a key only `cls_rules` governs -- see the docstring above.
     inserted: dict[str, str] = {}
+    # The CLS column allowlist actually inserted for each matched key, or `None` when no CLS rule
+    # applied to it (meaning "expect a plain SELECT *") -- handed to `_check_output` alongside
+    # `inserted` so the safety net can verify the SELECT list too, not only the WHERE.
+    inserted_columns: dict[str, tuple[str, ...] | None] = {}
 
     def _transform(node: exp.Expression) -> exp.Expression:
         if not isinstance(node, exp.Table):
@@ -819,8 +1013,11 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
             raise RlsError(f'RLS: unsupported table reference: {node.sql()}')
         if _is_cte_reference(node, cte_names, dialect=dialect):
             return node  # reference to a CTE in scope here, not a real table
-        if not rules.is_governed(table_name=node.name, schema=node.db or None):
-            return node  # no policy names this table at all -- not RLS's concern, leave it as-is
+        schema = node.db or None
+        rls_governed = rules.is_governed(table_name=node.name, schema=schema)
+        cls_governed = cls_rules is not None and cls_rules.is_governed(table_name=node.name, schema=schema)
+        if not rls_governed and not cls_governed:
+            return node  # no policy of either kind names this table -- not this rewrite's concern
         # The wrapper below rebuilds the table from name/db/catalog only, so any other modifier the
         # node carries would vanish and change the query's meaning. Refuse rather than drop it.
         extra_args = [
@@ -832,9 +1029,21 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
             extra_args.append('alias columns')
         if extra_args:
             raise RlsError(f'RLS: table modifiers are not supported on {node.name!r}: {sorted(extra_args)}')
-        key, predicate = rules.predicate_for(table_name=node.name, schema=node.db or None, user=user)
+        # `schema` is guaranteed non-empty here: `is_governed()` requires it, and at least one of
+        # the two checks above was true. Both lookups below derive the identical key independently
+        # (same `_rule_key(schema, node.name, dialect)` either way) -- computed once here rather
+        # than trusting two separate returned keys to agree.
+        key = _rule_key(schema, node.name, dialect)
+        predicate: str | None = None
+        columns: tuple[str, ...] | None = None
+        if rls_governed:
+            _, predicate = rules.predicate_for(table_name=node.name, schema=schema, user=user)
+        if cls_governed:
+            assert cls_rules is not None  # narrowed by `cls_governed`
+            _, columns = cls_rules.columns_for(table_name=node.name, schema=schema, user=user)
         applied.append(key)
-        inserted[key] = predicate
+        inserted[key] = predicate if predicate is not None else exp.true().sql(dialect=dialect)
+        inserted_columns[key] = columns
         # Reuse the original alias identifier as-is (preserving its own quoting) so references to
         # it elsewhere in the query (e.g. an unquoted `o.id` in an ON clause) still resolve. Only
         # fall back to the table's own name/quoting when the table was not aliased at all -- using
@@ -845,20 +1054,26 @@ def rewrite_query(sql: str, *, user: str, dialect: str, rules: RlsRules) -> Rewr
             alias_node.this.copy() if alias_node is not None else exp.to_identifier(node.name, quoted=node.this.quoted)
         )
         inner = exp.Table(this=node.this, db=node.args.get('db'), catalog=node.args.get('catalog'))
-        try:
-            predicate_expr = sqlglot.parse_one(predicate, dialect=dialect, into=exp.Condition)
-        except sqlglot.errors.SqlglotError as e:
-            # The caller is told only that the rule could not be applied. Which predicate, and why it
-            # failed, is the admin's business and goes to the log -- the message reaches a model.
-            LOG.warning(f'RLS: predicate for table {key!r} is not valid SQL for dialect {dialect!r}: {_clean_error(e)}')
-            raise RlsError(_RULE_NOT_APPLIED.format(key=key)) from e
-        filtered = exp.select('*').from_(inner).where(predicate_expr)
+        predicate_expr: exp.Condition = exp.true()
+        if predicate is not None:
+            try:
+                predicate_expr = sqlglot.parse_one(predicate, dialect=dialect, into=exp.Condition)
+            except sqlglot.errors.SqlglotError as e:
+                # The caller is told only that the rule could not be applied. Which predicate, and
+                # why it failed, is the admin's business and goes to the log -- the message reaches
+                # a model.
+                LOG.warning(
+                    f'RLS: predicate for table {key!r} is not valid SQL for dialect {dialect!r}: {_clean_error(e)}'
+                )
+                raise RlsError(_RULE_NOT_APPLIED.format(key=key)) from e
+        select_columns: list[str] = list(columns) if columns is not None else ['*']
+        filtered = exp.select(*select_columns).from_(inner).where(predicate_expr)
         # Returning a new node stops `transform` from descending into it, so the inner table is
         # not wrapped a second time.
         return exp.Subquery(this=filtered, alias=exp.TableAlias(this=alias_identifier))
 
     rewritten_sql = tree.transform(_transform, copy=True).sql(dialect=dialect)
-    _check_output(rewritten_sql, dialect=dialect, predicates=inserted)
+    _check_output(rewritten_sql, dialect=dialect, predicates=inserted, columns=inserted_columns)
     # `dict.fromkeys` deduplicates while preserving first-seen order: a table joined or unioned with
     # itself is disclosed once.
     return RewrittenQuery(sql=rewritten_sql, applied_rules=list(dict.fromkeys(applied)))
