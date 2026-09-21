@@ -34,3 +34,4 @@ test-results.xml
 .tox/
 local_testing
 .mcp.json
+projects.json
