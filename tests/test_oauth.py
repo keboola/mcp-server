@@ -591,6 +591,12 @@ class TestSimpleOAuthProvider:
         server's broker identity always has 'projectless' on ITS OWN registration. Without this
         distinction, every dynamically-approved client would silently inherit an unrestricted,
         every-project grant regardless of Connection's intent -- see AI-2883 RFC security review.
+
+        A non-'projectless' request must target Connection's real `/oauth/authorize`, not
+        `/oauth/consent` -- the latter only ever resolves a 'projectless' request (Connection's own
+        documented contract, mcp-projectless-oauth RFC); sending a non-'projectless' request there
+        loops forever between it and Connection's plain project-selector, since /oauth/consent's own
+        Approve action never sets the session key that selector branch needs (DMD-2180).
         """
         from keboola_mcp_server.oauth import _ClientRegistration
 
@@ -606,7 +612,7 @@ class TestSimpleOAuthProvider:
         auth_url = await oauth_provider.authorize(client, params)
 
         parsed = urlparse(auth_url)
-        assert parsed.path == '/oauth/consent'
+        assert parsed.path == '/oauth/authorize'
         query = parse_qs(parsed.query)
         assert query['scope'] == ['claudai']
 
