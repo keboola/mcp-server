@@ -26,6 +26,7 @@ async def test_applies_migrations_once() -> None:
             '0002_partition_oauth_sessions.sql',
             '0003_default_partition_unique_indexes.sql',
             '0004_kai_sessions.sql',
+            '0005_oauth_session_projectless_scope.sql',
         ]
 
         # Re-running is a no-op -- the table already exists, so re-applying the DDL would fail

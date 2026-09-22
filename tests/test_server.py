@@ -628,6 +628,60 @@ async def test_oauth_callback_handler_propagates_http_exception(mocker) -> None:
     assert exc.value.detail == 'Invalid state parameter'
 
 
+@pytest.mark.asyncio
+async def test_oauth_callback_handler_renders_error_param_without_invoking_callback(mocker) -> None:
+    """Regression test for the AI-2883 open-redirect fix: SimpleOAuthProvider.authorize() redirects
+    a Connection-check failure to this server's own /oauth/callback with an `error=` param (never to
+    the caller-supplied redirect_uri -- see that method's docstring). This route must render that as
+    a human-readable 400 HTML page (a person's browser lands here, not the MCP client -- Devin review
+    finding, AI-2883) and must NEVER call handle_oauth_callback() for it -- that method expects a
+    real `code`/`state` pair and calling it here would be meaningless at best."""
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    oauth_provider = mocker.Mock()
+    oauth_provider.handle_oauth_callback = mocker.AsyncMock()
+    routes = CustomRoutes(server_state=server_state, oauth_provider=oauth_provider)
+
+    request = Request(
+        {
+            'type': 'http',
+            'headers': [],
+            'query_string': b'error=temporarily_unavailable&error_description=Could+not+verify+OAuth+client',
+        }
+    )
+    response = await routes.oauth_callback_handler(request)
+
+    assert response.status_code == 400
+    assert response.headers['content-type'].startswith('text/html')
+    body = response.body.decode()
+    assert 'Could not verify OAuth client' in body
+    assert 'temporarily unavailable' in body.lower()
+    oauth_provider.handle_oauth_callback.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_handler_escapes_error_description_for_html(mocker) -> None:
+    """error_description is a caller-controlled query param now rendered into an HTML page
+    (see the previous test) rather than a JSON body -- it must be HTML-escaped, or a crafted
+    `error_description` becomes a reflected-XSS payload on this server's own origin."""
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    oauth_provider = mocker.Mock()
+    oauth_provider.handle_oauth_callback = mocker.AsyncMock()
+    routes = CustomRoutes(server_state=server_state, oauth_provider=oauth_provider)
+
+    request = Request(
+        {
+            'type': 'http',
+            'headers': [],
+            'query_string': b'error=temporarily_unavailable&error_description=%3Cscript%3Ealert(1)%3C%2Fscript%3E',
+        }
+    )
+    response = await routes.oauth_callback_handler(request)
+
+    body = response.body.decode()
+    assert '<script>' not in body
+    assert '&lt;script&gt;' in body
+
+
 class TestCreateServerOAuthSessionStore:
     """OAuth sessions live in Postgres (oauth_session_persistence RFC) -- create_server() must
     refuse to enable OAuth without a DSN rather than silently falling back to something unrevoked."""
