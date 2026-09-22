@@ -91,7 +91,7 @@ The MCP server never writes `BRANCH_ID`, `KBC_TOKEN` or `KBC_URL` into a python-
 | create | `False` | Storage access off: no `runtime` block, no `WORKSPACE_ID` secret |
 | update | omitted | **No-op.** Whatever the app has, it keeps |
 | update | `True` | Turns it on — writes `runtime.workspace.enabled = true`, or merges the `WORKSPACE_ID` secret without overwriting an ID already there |
-| update | `False` | Turns it off — writes `runtime.workspace.enabled = false`, or removes the `WORKSPACE_ID` secret |
+| update | `False` | Turns it off — writes `runtime.workspace.enabled = false` **and** removes any `WORKSPACE_ID` secret |
 
 A change on the update path only reaches the running app after a redeploy (`deploy_data_app`).
 
@@ -101,7 +101,12 @@ A change on the update path only reaches the running app after a redeploy (`depl
 
 This is a change in behaviour on **projects without the feature**: before AJDA-3374 the update path merged a `WORKSPACE_ID` secret into every app that lacked one, as a side effect of any update. Apps created through the MCP already carry the secret from create time, so the change is a no-op for them; an app created in the UI (or predating that code) now needs the explicit call. The trade-off was taken deliberately — a silent grant is worse than an explicit one, and consistency between the two mechanisms is worth more than the incidental repair.
 
-Turning Storage access **off** does not deprovision an already-provisioned workspace; it only stops `WORKSPACE_ID` reaching the next deploy. Cleanup of the orphan is the platform's.
+Two details of the disable path are worth spelling out, because the two mechanisms are not as mutually exclusive as the table suggests:
+
+- **Disabling removes the `WORKSPACE_ID` secret whatever the project's feature state.** `parameters.dataApp.secrets` reach the app as environment variables regardless of `runtime.workspace`, so an app that was created before the feature was enabled — and therefore carries the legacy secret — would keep receiving `WORKSPACE_ID` if the disable only wrote `runtime.workspace.enabled = false`.
+- **`storage_access_enabled` reports the union of both markers**, not just the one matching the project's feature. Reporting the union is the safe direction to err: telling a caller Storage access is off while the app can still read Storage is the dangerous answer.
+
+Turning Storage access off does not deprovision an already-provisioned workspace; it only stops `WORKSPACE_ID` reaching the next deploy. Cleanup of the orphan is the platform's.
 
 #### The `WORKSPACE_ID` secret fallback is deprecated
 
@@ -112,6 +117,7 @@ It keeps working — apps that depend on it are not broken, and an app that alre
 - Every write through the fallback returns a note in `change_summary` naming the feature to enable. Agents are told to pass it on to the user.
 - Every write logs a `WARNING` carrying `project_id`, `configuration_id` and `workspace_id`, so the remaining exposure is measurable and the fallback can eventually be retired on evidence rather than guesswork.
 - `storage_access` is the only supported way to set it. Writing `parameters.dataApp.secrets.WORKSPACE_ID` by hand — through the UI or a generic config write — is not supported; `update_config` refuses `keboola.data-apps` outright.
+- The fallback ID is resolved **only when it is about to be written**, never speculatively. Resolving it provisions the shared workspace if the project has none, and raises outright in a workspace-pinned session (the Data App flow, `X-Workspace-Id`), so enabling Storage access on an app that already carries an ID must not — and does not — touch the workspace manager at all.
 
 Note that the `WORKSPACE_ID` secret is **not** deprecated for Streamlit apps: they have no `runtime` block and no auto-workspace feature, so the full secret set from the MCP server remains their only mechanism (see AJDA-3185).
 
