@@ -69,13 +69,39 @@ The flow is taught to the LLM exclusively through tool docstrings; there is no M
 
 The data-science platform now picks a default runtime image for python-js apps, so the MCP server **does not write `runtime.image.version`** into newly created python-js configs. Legacy configs written by earlier MCP versions may still carry a pinned image — those values are preserved verbatim on update via deepcopy, but the MCP never sets or overwrites the pin. To change the image used by a specific app, edit the config directly in the Keboola UI.
 
-### Per-app workspace
+### Per-app workspace (Storage access)
 
-Newly created python-js apps carry `runtime.workspace.enabled = true` in their Storage configuration. The platform reads this flag and **auto-provisions a workspace per data app**, then injects its ID into the app's runtime as the `WORKSPACE_ID` environment variable. As a consequence:
+A python-js app can read Storage only if a workspace ID reaches it as the `WORKSPACE_ID` environment variable. Two mechanisms deliver it, and which one applies is a **property of the project**, not a choice:
 
-- The MCP server does **not** write `WORKSPACE_ID` (or `BRANCH_ID`, `KBC_TOKEN`, `KBC_URL`) into the stored python-js configuration. The platform side is responsible for surfacing those at runtime. The one exception is **legacy projects without the `data-apps-storage-workspace` feature**: there the MCP server falls back to writing `WORKSPACE_ID` into `parameters.dataApp.secrets` so the app still has a workspace ID to read. Streamlit apps still receive the full secret set (`WORKSPACE_ID`, `BRANCH_ID`, `KBC_TOKEN`, `KBC_URL`) from the MCP server because they have no auto-workspace feature.
-- The flag is hardcoded `true` on create; there is no tool argument to opt out.
-- This is a **create-only** behaviour. The update path does not backfill `runtime.workspace` on existing apps — apps created before this change continue to operate against whichever workspace was injected at their original create time.
+| Project | Mechanism | Where it lives in the config |
+|---|---|---|
+| Has the `data-apps-storage-workspace` feature | The platform auto-provisions a workspace **per data app** and injects its ID | `runtime.workspace.enabled = true` |
+| Lacks the feature (some single-tenant stacks) | The MCP server writes the ID of the **shared MCP-managed** read-only workspace itself | `parameters.dataApp.secrets.WORKSPACE_ID` |
+
+The MCP server never writes `BRANCH_ID`, `KBC_TOKEN` or `KBC_URL` into a python-js configuration — the platform surfaces those at runtime regardless. (Streamlit apps still receive the full secret set from the MCP server, because they have no auto-workspace feature and no `runtime` block at all.)
+
+#### The `storage_access` argument
+
+`modify_python_js_data_app(storage_access=...)` drives whichever of the two mechanisms the project uses, so an agent never has to know which one is in play. `data_app.storage_access_enabled` in the response reports the resulting state.
+
+| Call | `storage_access` | Effect |
+|---|---|---|
+| create | omitted | Storage access **on** — the historical default, unchanged |
+| create | `True` | Storage access on, explicitly |
+| create | `False` | Storage access off: no `runtime` block, no `WORKSPACE_ID` secret |
+| update | omitted | **No-op.** Whatever the app has, it keeps |
+| update | `True` | Turns it on — writes `runtime.workspace.enabled = true`, or merges the `WORKSPACE_ID` secret without overwriting an ID already there |
+| update | `False` | Turns it off — writes `runtime.workspace.enabled = false`, or removes the `WORKSPACE_ID` secret |
+
+A change on the update path only reaches the running app after a redeploy (`deploy_data_app`).
+
+#### Backfill: explicit only
+
+**An update never backfills Storage access.** Omitting `storage_access` leaves the stored config untouched on both mechanisms, so renaming an app or changing its auto-suspend can neither grant nor revoke its Storage access. Repairing an app that fails with `missing required env vars: WORKSPACE_ID` is a deliberate `storage_access=True` call.
+
+This is a change in behaviour on **projects without the feature**: before AJDA-3374 the update path merged a `WORKSPACE_ID` secret into every app that lacked one, as a side effect of any update. Apps created through the MCP already carry the secret from create time, so the change is a no-op for them; an app created in the UI (or predating that code) now needs the explicit call. The trade-off was taken deliberately — a silent grant is worse than an explicit one, and consistency between the two mechanisms is worth more than the incidental repair.
+
+Turning Storage access **off** does not deprovision an already-provisioned workspace; it only stops `WORKSPACE_ID` reaching the next deploy. Cleanup of the orphan is the platform's.
 
 ### Authentication: HTTPS tokens
 
@@ -356,7 +382,7 @@ The tool surface maps to the underlying APIs as follows. Confirm field names wit
 | `deploy_data_app(mode='dev')` | `PATCH /apps/{id}` | `mode: 'dev'` (alongside `desiredState: 'running'`). The deployed branch is whatever the draft's config pins — there is no deploy-time branch field. |
 | `create_python_js_data_app_git_credential` | `POST /apps/{id}/git-repo/credentials` | Request: `{type: 'http_token', permissions: 'readWrite'}`. Response: `{id, type, permissions, secret, ...}`. The one-time `secret` is what we embed (with `kai` as username) into `git_clone_url`. |
 | (clone URL lookup) | `GET /apps/{id}/git-repo` | Response: `{sshUrl, httpsUrl, isManagedGitRepo}`. The MCP server uses `httpsUrl` only. |
-| auto-workspace flag (hardcoded `true` on create) | `POST /apps` | `configuration.runtime.workspace.enabled` |
+| `storage_access` (create default on; update explicit only) | `POST /apps` / Storage config update | `configuration.runtime.workspace.enabled`, or `configuration.parameters.dataApp.secrets.WORKSPACE_ID` on projects without the `data-apps-storage-workspace` feature |
 | `delete_python_js_data_app_draft` | `DELETE /apps/{id}` + `DELETE /branch/{branch}/components/keboola.data-apps/configs/{cfg}` | Two-call sequence: DSAPI delete first, then Storage delete (without `skip_trash`). |
 | `get_data_apps` drafts lookup | `GET /branch/{branch}/components/keboola.data-apps/configs` | One Storage list call per prod detail fetch; results filtered by `configuration.parameters.dataApp.parentConfigurationId`. |
 | `parentConfigurationId` (in draft config) | (none — Storage-only field) | Lives at `configuration.parameters.dataApp.parentConfigurationId`. Create-only, immutable. |
