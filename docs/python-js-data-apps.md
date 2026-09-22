@@ -76,7 +76,7 @@ A python-js app can read Storage only if a workspace ID reaches it as the `WORKS
 | Project | Mechanism | Where it lives in the config |
 |---|---|---|
 | Has the `data-apps-storage-workspace` feature | The platform auto-provisions a workspace **per data app** and injects its ID | `runtime.workspace.enabled = true` |
-| Lacks the feature (some single-tenant stacks) | The MCP server writes the ID of the **shared MCP-managed** read-only workspace itself | `parameters.dataApp.secrets.WORKSPACE_ID` |
+| Lacks the feature (some single-tenant stacks) | The MCP server writes the ID of the **shared MCP-managed** read-only workspace itself | `parameters.dataApp.secrets.WORKSPACE_ID` — **deprecated**, see below |
 
 The MCP server never writes `BRANCH_ID`, `KBC_TOKEN` or `KBC_URL` into a python-js configuration — the platform surfaces those at runtime regardless. (Streamlit apps still receive the full secret set from the MCP server, because they have no auto-workspace feature and no `runtime` block at all.)
 
@@ -102,6 +102,18 @@ A change on the update path only reaches the running app after a redeploy (`depl
 This is a change in behaviour on **projects without the feature**: before AJDA-3374 the update path merged a `WORKSPACE_ID` secret into every app that lacked one, as a side effect of any update. Apps created through the MCP already carry the secret from create time, so the change is a no-op for them; an app created in the UI (or predating that code) now needs the explicit call. The trade-off was taken deliberately — a silent grant is worse than an explicit one, and consistency between the two mechanisms is worth more than the incidental repair.
 
 Turning Storage access **off** does not deprovision an already-provisioned workspace; it only stops `WORKSPACE_ID` reaching the next deploy. Cleanup of the orphan is the platform's.
+
+#### The `WORKSPACE_ID` secret fallback is deprecated
+
+The secret fallback is a stopgap for projects that cannot yet get a per-app workspace. It is worse than the platform mechanism in two ways: every app on the project shares **one** MCP-managed workspace rather than getting its own, and the ID is frozen into the stored configuration, so it goes stale if that workspace is ever replaced. The real fix is enabling `data-apps-storage-workspace` on the project.
+
+It keeps working — apps that depend on it are not broken, and an app that already carries a hand-wired `WORKSPACE_ID` keeps it (the update path uses `setdefault`, never overwriting an ID someone set deliberately). What changed is that it is now **loud** rather than silent:
+
+- Every write through the fallback returns a note in `change_summary` naming the feature to enable. Agents are told to pass it on to the user.
+- Every write logs a `WARNING` carrying `project_id`, `configuration_id` and `workspace_id`, so the remaining exposure is measurable and the fallback can eventually be retired on evidence rather than guesswork.
+- `storage_access` is the only supported way to set it. Writing `parameters.dataApp.secrets.WORKSPACE_ID` by hand — through the UI or a generic config write — is not supported; `update_config` refuses `keboola.data-apps` outright.
+
+Note that the `WORKSPACE_ID` secret is **not** deprecated for Streamlit apps: they have no `runtime` block and no auto-workspace feature, so the full secret set from the MCP server remains their only mechanism (see AJDA-3185).
 
 ### Authentication: HTTPS tokens
 

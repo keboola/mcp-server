@@ -1659,6 +1659,13 @@ async def test_modify_python_js_data_app_update_branch_rejected_on_managed_repo_
     keboola_client.storage_client.configuration_update.assert_not_called()
 
 
+def _assert_legacy_fallback_hint(change_summary: str | None, *, expected: bool) -> None:
+    """The legacy WORKSPACE_ID fallback is deprecated, so every write through it must tell the
+    agent so -- and nothing else may claim it did."""
+    hint = 'deprecated' in (change_summary or '') and 'data-apps-storage-workspace' in (change_summary or '')
+    assert hint is expected, change_summary
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('has_feature', 'storage_access', 'expected_workspace', 'expected_secrets'),
@@ -1727,6 +1734,7 @@ async def test_modify_python_js_data_app_create_storage_access(
     assert serialized['parameters']['dataApp'].get('secrets') == expected_secrets
     # The agent must be able to verify Storage access rather than assume it (AJDA-3374).
     assert result.data_app.storage_access_enabled is (storage_access is not False)
+    _assert_legacy_fallback_hint(result.change_summary, expected=expected_secrets is not None)
 
 
 @pytest.mark.asyncio
@@ -1836,6 +1844,9 @@ async def test_modify_python_js_data_app_update_storage_access(
     assert new_cfg['runtime']['image']['version'] == 'old-version'
     expected_enabled = expected_workspace == {'enabled': True} or 'WORKSPACE_ID' in expected_secrets
     assert result.data_app.storage_access_enabled is expected_enabled
+    # The deprecation hint fires only when the MCP itself writes the legacy secret -- never when it
+    # merely preserves one that is already there.
+    _assert_legacy_fallback_hint(result.change_summary, expected=not has_feature and storage_access is True)
 
 
 @pytest.mark.asyncio

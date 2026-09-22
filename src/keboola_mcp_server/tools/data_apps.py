@@ -1024,7 +1024,11 @@ async def modify_python_js_data_app(
                 'edit never grants or revokes Storage access. Pass `True` to turn it on (this is how '
                 'you fix an existing app failing with `missing required env vars: WORKSPACE_ID`, with '
                 'no UI step), or `False` to turn it off. Redeploy the app afterwards to apply it.\n'
-                'Check `data_app.storage_access_enabled` in the response to confirm the result.'
+                'Check `data_app.storage_access_enabled` in the response to confirm the result.\n'
+                'On projects without the `data-apps-storage-workspace` feature this falls back to '
+                'writing `parameters.dataApp.secrets.WORKSPACE_ID`, which is **deprecated** -- it pins '
+                'the app to the shared MCP-managed workspace instead of a per-app one. Never write that '
+                'secret by hand; use this argument, and pass the hint in `change_summary` on to the user.'
             ),
         ),
     ] = None,
@@ -1197,11 +1201,30 @@ async def modify_python_js_data_app(
     # grant nor revoke Storage access -- on either mechanism (AJDA-3374).
     wants_storage_access = storage_access is True if configuration_id else storage_access is not False
     legacy_workspace_id: str | None = None
+    legacy_fallback_hint: str | None = None
     if not has_storage_workspace and wants_storage_access:
         # Resolving this provisions the shared MCP-managed workspace when the project has none yet,
         # so only do it once we know we are going to write the id somewhere.
         workspace_manager = WorkspaceManager.from_state(ctx.session.state)
         legacy_workspace_id = str(await workspace_manager.get_data_app_workspace_id())
+        legacy_fallback_hint = (
+            'Storage access is wired through the deprecated '
+            '`parameters.dataApp.secrets.WORKSPACE_ID` fallback, because this project does not have '
+            f'the `{DATA_APPS_STORAGE_WORKSPACE_FEATURE}` feature. The fallback pins the app to the '
+            'shared MCP-managed workspace rather than one provisioned per app. Ask Keboola support '
+            f'to enable `{DATA_APPS_STORAGE_WORKSPACE_FEATURE}` on this project to move to '
+            'platform-managed per-app workspaces.'
+        )
+        # Logged so the remaining exposure is measurable per project -- the fallback can only be
+        # retired once we know who still depends on it. Worth one extra `tokens/verify` on a
+        # deprecated path that is already doing a workspace lookup.
+        legacy_project_id = await client.storage_client.project_id()
+        LOG.warning(
+            f'Data app Storage access is using the deprecated {SECRET_WORKSPACE_ID} secret fallback: '
+            f'project_id={legacy_project_id}, configuration_id={configuration_id or "<new>"}, '
+            f'workspace_id={legacy_workspace_id}. The {DATA_APPS_STORAGE_WORKSPACE_FEATURE} feature '
+            f'is not enabled on this project.'
+        )
 
     if configuration_id:
         # Update existing python-js data app
@@ -1249,7 +1272,10 @@ async def modify_python_js_data_app(
             if storage_access is not None
             else None
         )
-        change_summary = '\n'.join(note for note in (folder_hint, branch_hint, storage_access_hint) if note) or None
+        change_summary = (
+            '\n'.join(note for note in (folder_hint, branch_hint, storage_access_hint, legacy_fallback_hint) if note)
+            or None
+        )
         repo_url = data_app.repo_url
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
@@ -1408,7 +1434,7 @@ async def modify_python_js_data_app(
         # resolves it to that stale remote tip instead of branching off `main`, and the draft
         # previews outdated code without erroring anywhere.
         checkout_hint = _draft_checkout_hint(draft_branch) if draft_branch else None
-        change_summary = '\n'.join(note for note in (folder_hint, checkout_hint) if note) or None
+        change_summary = '\n'.join(note for note in (folder_hint, checkout_hint, legacy_fallback_hint) if note) or None
         return ModifiedPythonJsDataAppOutput(
             response='created',
             change_summary=change_summary,
