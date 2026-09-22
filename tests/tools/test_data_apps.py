@@ -1527,7 +1527,8 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     assert new_cfg['runtime']['image']['version'] == 'old-version'
     # slug must remain untouched (immutable)
     assert new_cfg['parameters']['dataApp']['slug'] == 'old-slug'
-    # Update does NOT backfill `runtime.workspace` — only the create path sets it.
+    # An update that does not pass `storage_access` leaves `runtime.workspace` alone — see
+    # `test_modify_python_js_data_app_update_storage_access` for the full matrix.
     assert 'workspace' not in new_cfg['runtime']
     # KBC_TOKEN / KBC_URL / BRANCH_ID are injected by the platform at runtime — the MCP must
     # not write them back into the stored config on update either.
@@ -1658,17 +1659,49 @@ async def test_modify_python_js_data_app_update_branch_rejected_on_managed_repo_
     keboola_client.storage_client.configuration_update.assert_not_called()
 
 
+def _assert_legacy_fallback_hint(change_summary: str | None, *, expected: bool) -> None:
+    """The legacy WORKSPACE_ID fallback is deprecated, so every write through it must tell the
+    agent so -- and nothing else may claim it did."""
+    hint = 'deprecated' in (change_summary or '') and 'data-apps-storage-workspace' in (change_summary or '')
+    assert hint is expected, change_summary
+
+
 @pytest.mark.asyncio
-async def test_modify_python_js_data_app_create_without_workspace_feature(
+@pytest.mark.parametrize(
+    ('has_feature', 'storage_access', 'expected_workspace', 'expected_secrets'),
+    [
+        (True, None, {'enabled': True}, None),
+        (True, True, {'enabled': True}, None),
+        (True, False, None, None),
+        (False, None, None, {'WORKSPACE_ID': 'wid-legacy'}),
+        (False, True, None, {'WORKSPACE_ID': 'wid-legacy'}),
+        (False, False, None, None),
+    ],
+    ids=[
+        'feature_omitted_defaults_on',
+        'feature_explicit_on',
+        'feature_opted_out',
+        'legacy_omitted_defaults_on',
+        'legacy_explicit_on',
+        'legacy_opted_out',
+    ],
+)
+async def test_modify_python_js_data_app_create_storage_access(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
+    has_feature: bool,
+    storage_access: bool | None,
+    expected_workspace: JsonDict | None,
+    expected_secrets: JsonDict | None,
 ) -> None:
-    """When the project lacks `data-apps-storage-workspace`, the create path omits
-    `runtime.workspace` and falls back to injecting WORKSPACE_ID via `parameters.dataApp.secrets`."""
+    """`storage_access` drives Storage access on create through whichever mechanism the project
+    supports: `runtime.workspace.enabled` when `data-apps-storage-workspace` is on, and the legacy
+    `parameters.dataApp.secrets.WORKSPACE_ID` fallback when it is off. Omitting it keeps the
+    historical create default (Storage access on); `False` opts out on both mechanisms."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=has_feature)
 
     workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value='wid-legacy')
 
@@ -1684,35 +1717,109 @@ async def test_modify_python_js_data_app_create_without_workspace_feature(
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
 
-    _ = await modify_python_js_data_app(
+    result = await modify_python_js_data_app(
         ctx=mcp_context_client,
         name='My App',
         description='desc',
         slug='my-app',
+        storage_access=storage_access,
     )
 
     serialized = keboola_client.data_science_client.create_data_app.await_args.kwargs['configuration'].model_dump(
         by_alias=True, exclude_none=True
     )
-    # Without the workspace feature, the `runtime` block carries no fields the MCP wants to
-    # set (image is platform-default, workspace is off), so it's omitted entirely.
-    assert 'runtime' not in serialized
-    assert serialized['parameters']['dataApp']['secrets'] == {'WORKSPACE_ID': 'wid-legacy'}
+    # `exclude_none=True` prunes the whole `runtime` block when the MCP sets no fields in it
+    # (image is platform-default, workspace off), hence the `.get` chain rather than indexing.
+    assert serialized.get('runtime', {}).get('workspace') == expected_workspace
+    assert serialized['parameters']['dataApp'].get('secrets') == expected_secrets
+    # The agent must be able to verify Storage access rather than assume it (AJDA-3374).
+    assert result.data_app.storage_access_enabled is (storage_access is not False)
+    _assert_legacy_fallback_hint(result.change_summary, expected=expected_secrets is not None)
 
 
 @pytest.mark.asyncio
-async def test_modify_python_js_data_app_update_injects_workspace_id_without_feature(
+@pytest.mark.parametrize(
+    (
+        'has_feature',
+        'storage_access',
+        'existing_workspace',
+        'existing_secrets',
+        'expected_workspace',
+        'expected_secrets',
+        'expect_legacy_fallback',
+    ),
+    [
+        # Omitting `storage_access` never changes Storage access, on either mechanism — an
+        # unrelated edit (rename, auto-suspend) must not grant or revoke it.
+        (True, None, None, {'KEEP': 'x'}, None, {'KEEP': 'x'}, False),
+        (True, None, {'enabled': True}, {'KEEP': 'x'}, {'enabled': True}, {'KEEP': 'x'}, False),
+        (False, None, None, {'KEEP': 'x'}, None, {'KEEP': 'x'}, False),
+        # Explicit enable — the gap AJDA-3374 closes: an existing flagless app becomes
+        # Storage-enabled through MCP alone, with no UI step.
+        (True, True, None, {'KEEP': 'x'}, {'enabled': True}, {'KEEP': 'x'}, False),
+        (False, True, None, {'KEEP': 'x'}, None, {'KEEP': 'x', 'WORKSPACE_ID': 'wid-legacy'}, True),
+        # An app that already carries a WORKSPACE_ID keeps it, and the fallback is never resolved:
+        # resolving provisions a workspace the app will not use, and raises outright in a
+        # workspace-pinned session.
+        (
+            False,
+            True,
+            None,
+            {'KEEP': 'x', 'WORKSPACE_ID': 'wid-user'},
+            None,
+            {'KEEP': 'x', 'WORKSPACE_ID': 'wid-user'},
+            False,
+        ),
+        # Explicit disable.
+        (True, False, {'enabled': True}, {'KEEP': 'x'}, {'enabled': False}, {'KEEP': 'x'}, False),
+        (False, False, None, {'KEEP': 'x', 'WORKSPACE_ID': 'wid-old'}, None, {'KEEP': 'x'}, False),
+        # Disabling must strip a stale legacy secret even on a feature-enabled project: secrets
+        # reach the app as env vars regardless of the feature, so leaving it behind would keep
+        # WORKSPACE_ID flowing into an app we just reported as having no Storage access.
+        (
+            True,
+            False,
+            {'enabled': True},
+            {'KEEP': 'x', 'WORKSPACE_ID': 'wid-stale'},
+            {'enabled': False},
+            {'KEEP': 'x'},
+            False,
+        ),
+    ],
+    ids=[
+        'feature_omitted_stays_off',
+        'feature_omitted_stays_on',
+        'legacy_omitted_no_backfill',
+        'feature_explicit_enable',
+        'legacy_explicit_enable',
+        'legacy_explicit_enable_preserves_existing_id',
+        'feature_explicit_disable',
+        'legacy_explicit_disable',
+        'feature_explicit_disable_strips_stale_secret',
+    ],
+)
+async def test_modify_python_js_data_app_update_storage_access(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
+    has_feature: bool,
+    storage_access: bool | None,
+    existing_workspace: JsonDict | None,
+    existing_secrets: JsonDict,
+    expected_workspace: JsonDict | None,
+    expected_secrets: JsonDict,
+    expect_legacy_fallback: bool,
 ) -> None:
-    """When the project lacks `data-apps-storage-workspace`, the update path merges WORKSPACE_ID
-    into the existing secrets map without overwriting any keys already present."""
+    """On update, `storage_access` is the only thing that moves Storage access. Omitting it leaves
+    the stored config alone — no silent backfill on either mechanism (AJDA-3374)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=has_feature)
 
     workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value='wid-legacy')
 
+    existing_runtime: JsonDict = {'image': {'version': 'old-version'}}
+    if existing_workspace is not None:
+        existing_runtime['workspace'] = existing_workspace
     existing_data_app = DataApp(
         name='Old',
         component_id=DATA_APP_COMPONENT_ID,
@@ -1725,9 +1832,9 @@ async def test_modify_python_js_data_app_update_injects_workspace_id_without_fea
         configuration={
             'parameters': {
                 'autoSuspendAfterSeconds': 900,
-                'dataApp': {'slug': 'old-slug', 'secrets': {'KEEP': 'x'}},
+                'dataApp': {'slug': 'old-slug', 'secrets': dict(existing_secrets)},
             },
-            'runtime': {'image': {'version': 'old-version'}},
+            'runtime': existing_runtime,
         },
         state='stopped',
     )
@@ -1749,17 +1856,93 @@ async def test_modify_python_js_data_app_update_injects_workspace_id_without_fea
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
 
-    await modify_python_js_data_app(
+    result = await modify_python_js_data_app(
         ctx=mcp_context_client,
         name='Old',
         description='desc',
         configuration_id='cfg-1',
         auto_suspend_after_seconds=600,
+        storage_access=storage_access,
     )
 
-    patch_kwargs = keboola_client.storage_client.configuration_update.await_args.kwargs
-    new_cfg = patch_kwargs['configuration']
-    assert new_cfg['parameters']['dataApp']['secrets'] == {'KEEP': 'x', 'WORKSPACE_ID': 'wid-legacy'}
+    new_cfg = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
+    assert new_cfg['runtime'].get('workspace') == expected_workspace
+    assert new_cfg['parameters']['dataApp']['secrets'] == expected_secrets
+    # A legacy `runtime.image.version` pin stays untouched whatever happens to the workspace flag.
+    assert new_cfg['runtime']['image']['version'] == 'old-version'
+    expected_enabled = expected_workspace == {'enabled': True} or 'WORKSPACE_ID' in expected_secrets
+    assert result.data_app.storage_access_enabled is expected_enabled
+    # The deprecation hint fires only when the MCP itself writes the legacy secret -- never when it
+    # merely preserves one that is already there.
+    _assert_legacy_fallback_hint(result.change_summary, expected=expect_legacy_fallback)
+    # Resolving the fallback id has side effects (it provisions the shared workspace when the
+    # project has none, and raises in a workspace-pinned session), so it must happen only when the
+    # id is actually going to be written.
+    assert workspace_manager.get_data_app_workspace_id.await_count == (1 if expect_legacy_fallback else 0)
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_update_storage_access_survives_unavailable_workspace(
+    mocker,
+    mcp_context_client: Context,
+    workspace_manager,
+) -> None:
+    """A workspace-pinned session (the Data App flow, `X-Workspace-Id`) has no MCP-managed workspace
+    to fall back on -- `get_data_app_workspace_id()` raises rather than provisioning one. Enabling
+    Storage access on an app that already carries a WORKSPACE_ID must still succeed, because nothing
+    needs resolving in the first place."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=False)
+
+    workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(
+        side_effect=ValueError('No MCP-managed workspace exists for this project/branch')
+    )
+
+    existing_data_app = DataApp(
+        name='Old',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='2',
+        type='python-js',
+        configuration={
+            'parameters': {
+                'autoSuspendAfterSeconds': 900,
+                'dataApp': {'slug': 'old-slug', 'secrets': {'WORKSPACE_ID': 'wid-pinned'}},
+            },
+        },
+        state='stopped',
+    )
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(side_effect=[existing_data_app, existing_data_app.model_copy(update={'config_version': '3'})]),
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(
+            ssh_url='git@managed.repo:org/app.git',
+            https_url='https://managed.repo/org/app.git',
+            is_managed_git_repo=True,
+        )
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client,
+        name='Old',
+        description='desc',
+        configuration_id='cfg-1',
+        storage_access=True,
+    )
+
+    new_cfg = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
+    assert new_cfg['parameters']['dataApp']['secrets'] == {'WORKSPACE_ID': 'wid-pinned'}
+    assert result.data_app.storage_access_enabled is True
+    workspace_manager.get_data_app_workspace_id.assert_not_awaited()
 
 
 @pytest.mark.asyncio

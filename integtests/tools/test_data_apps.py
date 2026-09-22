@@ -546,3 +546,85 @@ async def test_python_js_data_app_prod_and_draft_lifecycle(
                 await keboola_client.data_science_client.delete_data_app(app.data_app.data_app_id)
             except Exception as exc:
                 LOG.error(f'delete failed for {role} {app.data_app.data_app_id}: {exc}')
+
+
+@pytest.mark.asyncio
+async def test_python_js_data_app_storage_access_can_be_enabled_after_create(
+    mcp_client: Client,
+    keboola_client: KeboolaClient,
+) -> None:
+    """AJDA-3374: an agent can turn read-only Storage access on for an existing python-js app
+    using MCP tools alone, with no UI step.
+
+    Creates an app that explicitly opts out of Storage access, verifies the stored configuration
+    carries neither marker, then enables it through `modify_python_js_data_app(storage_access=True)`
+    and verifies the marker is there. Which marker is used depends on whether the project has the
+    `data-apps-storage-workspace` feature (`runtime.workspace.enabled` if so, the legacy
+    `parameters.dataApp.secrets.WORKSPACE_ID` if not), so the assertions accept either -- what
+    matters is that the app ends up with a workspace id reaching it as WORKSPACE_ID.
+
+    Whether that environment variable actually lands in the running container is a platform
+    concern this test cannot observe; verify it manually on a deployed app.
+    """
+
+    def has_storage_access(configuration: Mapping[str, Any]) -> bool:
+        workspace = (configuration.get('runtime') or {}).get('workspace') or {}
+        secrets = ((configuration.get('parameters') or {}).get('dataApp') or {}).get('secrets') or {}
+        return bool(workspace.get('enabled')) or bool(secrets.get('WORKSPACE_ID'))
+
+    async def fetch_configuration(configuration_id: str) -> Mapping[str, Any]:
+        detail = await mcp_client.call_tool(name='get_data_apps', arguments={'configuration_ids': [configuration_id]})
+        assert detail.structured_content is not None
+        app = GetDataAppsOutput.model_validate(detail.structured_content).data_apps[0]
+        assert isinstance(app, DataApp)
+        return app.configuration
+
+    unique = uuid.uuid4().hex[:8]
+    created: ModifiedPythonJsDataAppOutput | None = None
+    try:
+        # Step 1: create with Storage access explicitly declined.
+        create_result = await mcp_client.call_tool(
+            name='modify_python_js_data_app',
+            arguments={
+                'name': f'Integration storage-access {unique}',
+                'description': 'AJDA-3374 storage access integration test',
+                'slug': f'int-sa-{unique}',
+                'authentication_type': 'basic-auth',
+                'storage_access': False,
+            },
+        )
+        assert create_result.structured_content is not None
+        created = ModifiedPythonJsDataAppOutput.model_validate(create_result.structured_content)
+        assert created.response == 'created'
+        assert created.data_app.storage_access_enabled is False
+        assert has_storage_access(await fetch_configuration(created.data_app.configuration_id)) is False
+
+        # Step 2: enable it through MCP alone -- the gap AJDA-3374 closes.
+        enable_result = await mcp_client.call_tool(
+            name='modify_python_js_data_app',
+            arguments={
+                'name': '',
+                'description': '',
+                'configuration_id': created.data_app.configuration_id,
+                'storage_access': True,
+                'change_description': 'AJDA-3374 enable storage access',
+            },
+        )
+        assert enable_result.structured_content is not None
+        enabled = ModifiedPythonJsDataAppOutput.model_validate(enable_result.structured_content)
+        assert enabled.response.startswith('updated')
+        assert enabled.data_app.storage_access_enabled is True
+        assert enabled.change_summary is not None
+        assert 'Storage access enabled' in enabled.change_summary
+        assert has_storage_access(await fetch_configuration(created.data_app.configuration_id)) is True
+
+    finally:
+        if created is not None:
+            try:
+                await keboola_client.data_science_client.suspend_data_app(created.data_app.data_app_id)
+            except Exception as exc:
+                LOG.info(f'suspend failed for {created.data_app.data_app_id}: {exc}')
+            try:
+                await keboola_client.data_science_client.delete_data_app(created.data_app.data_app_id)
+            except Exception as exc:
+                LOG.error(f'delete failed for {created.data_app.data_app_id}: {exc}')

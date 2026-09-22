@@ -2660,6 +2660,18 @@ slug must be at most 63 characters (the DNS-label max), and note the UI's own UR
       "default": null,
       "description": "Complete storage configuration for the data app (input/output table mappings). Validated against the storage JSON schema. Replaces the ENTIRE storage block when updating an existing app. For data apps with Storage Access, declare output tables with `unload_strategy: \"direct-grant\"` (in that case `source` is not required and the workspace is granted direct SELECT/INSERT/UPDATE/DELETE/TRUNCATE on the destination Storage table). Leave unset (None) to preserve the existing storage configuration; pass an empty dict to explicitly clear it."
     },
+    "storage_access": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Whether the app gets read-only Storage access -- a workspace whose ID the platform injects as the WORKSPACE_ID environment variable, which the generated `query_data` helper needs. Distinct from `storage`, which declares table input/output mappings: this switch decides whether the app can reach Storage at all.\n- **On create**: leave unset (None) for the default, which is Storage access ON. Pass `False` only for an app that must not read Storage.\n- **On update**: leave unset (None) to keep whatever the app has -- an unrelated edit never grants or revokes Storage access. Pass `True` to turn it on (this is how you fix an existing app failing with `missing required env vars: WORKSPACE_ID`, with no UI step), or `False` to turn it off. Redeploy the app afterwards to apply it.\nCheck `data_app.storage_access_enabled` in the response to confirm the result.\nOn projects without the `data-apps-storage-workspace` feature this falls back to writing `parameters.dataApp.secrets.WORKSPACE_ID`, which is **deprecated** -- it pins the app to the shared MCP-managed workspace instead of a per-app one. Never write that secret by hand; use this argument, and pass the hint in `change_summary` on to the user."
+    },
     "folder": {
       "anyOf": [
         {
