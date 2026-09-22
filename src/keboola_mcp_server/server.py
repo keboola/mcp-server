@@ -1,6 +1,7 @@
 """MCP server implementation for Keboola Connection."""
 
 import dataclasses
+import html
 import logging
 import os
 from collections.abc import AsyncIterator, Callable
@@ -13,7 +14,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport, get_env_storage_api_url
@@ -145,9 +146,25 @@ class CustomRoutes:
             # strip control/bidi chars so a crafted query param can't forge log lines
             safe_error = ''.join(ch for ch in error if ch.isprintable())[:200]
             LOG.warning(f'OAuth authorize failed before reaching Connection: {safe_error}')
-            return JSONResponse(
+            # A human, not the MCP client, is looking at this response: the browser lands here
+            # because SimpleOAuthProvider.authorize()'s fail-closed branch redirects its own
+            # errors to this server's own origin instead of the caller's redirect_uri (see this
+            # handler's docstring) -- the AI assistant that started the attempt gets no callback
+            # at all and just times out. A bare JSON body reads as a broken page to that person;
+            # a short HTML message tells them what happened and that retrying is the right move
+            # (Devin review finding, AI-2883). `error_description` is HTML-escaped, not just the
+            # log-injection filtering above -- it's the same caller-controlled query param, now
+            # rendered into markup instead of a log line.
+            description = request.query_params.get('error_description') or 'Please try connecting again.'
+            return HTMLResponse(
                 status_code=400,
-                content={'error': error, 'error_description': request.query_params.get('error_description')},
+                content=(
+                    '<!doctype html><html><head><meta charset="utf-8">'
+                    '<title>Keboola login temporarily unavailable</title></head><body>'
+                    f'<p>Keboola login temporarily unavailable: {html.escape(description)}</p>'
+                    '<p>Please close this window and try connecting again.</p>'
+                    '</body></html>'
+                ),
             )
 
         code = request.query_params.get('code')
