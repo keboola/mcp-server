@@ -15,22 +15,21 @@ must open the UI and configure OIDC by hand. Worse, any later agent-driven updat
 the app to a shared password (AI-1848). The platform already accepts OIDC — no backend change is
 needed — so this is purely a gap in what the MCP tools can express.
 
-Two smaller problems surface alongside it:
+One further problem has to be fixed before OIDC can ship, because OIDC is what makes it bite.
 
-1. **Plaintext secret at rest on one write path.** `StorageClient._encrypt_secrets`
-   (`clients/storage.py:360`) encrypts every `#`-prefixed key fail-closed inside
-   `configuration_create` / `configuration_update`, so anything written through Storage is safe —
-   this covers the python-js *update* path (`tools/data_apps.py:1186`) and the streamlit update
-   path. Data-app **creates**, however, POST to the data-science API
-   (`data_science_client.create_data_app`), bypassing Storage entirely. The streamlit create path
-   compensates by encrypting explicitly (`tools/data_apps.py:673`), but python-js create only
-   encrypts inside `if git_block is not None:` (`tools/data_apps.py:1305`) — i.e. for drafts. A
-   python-js **prod** create writes its config unencrypted. No `#` key reaches that path today, so
-   nothing leaks yet; introducing `#client_secret` would be the first.
+**Plaintext secret at rest on one write path.** `StorageClient._encrypt_secrets`
+(`clients/storage.py:360`) encrypts every `#`-prefixed key fail-closed inside
+`configuration_create` / `configuration_update`, so anything written through Storage is safe — that
+covers the python-js *update* path (`tools/data_apps.py:1186`) and the streamlit update path.
+Data-app **creates**, however, POST to the data-science API
+(`data_science_client.create_data_app`), bypassing Storage entirely. The streamlit create path
+compensates by encrypting explicitly (`tools/data_apps.py:673`), but python-js create only encrypts
+inside `if git_block is not None:` (`tools/data_apps.py:1305`) — i.e. for drafts only. A python-js
+**prod** create writes its config unencrypted.
 
-2. **No way for an agent to produce a cipher.** Nothing outside `tools/data_apps.py` uses
-   `encryption_client`, and there is no tool that turns a plaintext secret into a
-   `KBC::ProjectSecure::…` value. An agent therefore cannot complete any flow that requires one.
+No `#` key reaches that path today, so nothing leaks yet. `#client_secret` would be the first, which
+turns a latent inconsistency into a live one: without the fix, creating a python-js data app with
+OIDC in a single call stores the client secret in plaintext.
 
 ## Required Behavior
 
@@ -43,7 +42,7 @@ optional structured `oidc` parameter.
 | --- | --- | --- |
 | `client_id` | yes | Written verbatim. |
 | `issuer_url` | yes | Written verbatim. No IdP presets — see *Rejected alternatives*. |
-| `client_secret` | **on create** | Must already be a `KBC::…` cipher; plaintext is rejected. Required whenever the app has no stored OIDC secret yet, so a create can never produce an app that validates and deploys but cannot complete a login. On an update that already has one, omitting it preserves the stored cipher — that is what makes rotating `issuer_url` or `allowed_roles` possible without re-supplying the secret. |
+| `client_secret` | **on create** | Plaintext, encrypted via the Encryption API before any write — the same contract `_encrypt_secrets` applies to every other component config. An already-encrypted `KBC::…` value is accepted and passed through unchanged. Required whenever the app has no stored OIDC secret yet, so a create can never produce an app that validates and deploys but can never complete a login. On an update that already has one, omitting it preserves the stored cipher, which is what makes rotating `issuer_url` or `allowed_roles` possible without re-supplying the secret. |
 | `logout_url` | no | Key omitted from the stored config when `None`. |
 | `allowed_roles` | no | Key omitted from the stored config when `None`. |
 | `provider_id` | no | Defaults to `'oidc'`. Internal key, not user-facing copy: it is what `auth_rules[].auth` references and what makes update-merge deterministic. See *Verified downstream contract* for why it stays invisible in the single-provider case. |
@@ -54,7 +53,6 @@ Rejections, each with a message naming the fix:
 | --- | --- |
 | `authentication_type='oidc'` without `oidc` | `ValueError` |
 | `oidc` passed with any other `authentication_type` | `ValueError` — never silently ignored |
-| `client_secret` not starting with `KBC::` | `ValueError` pointing at `encrypt_secret` |
 | `client_secret` omitted with no stored cipher to preserve | `ValueError` — an OIDC app without a secret can never complete a login |
 | `allowed_roles=[]` (empty list) | `ValueError` — rejected on both sides downstream; pass `None` to mean "no role requirement" |
 | `authentication_type='oidc'` on a python-js **draft** | `ValueError` — a draft has its own slug *and* its own app id, therefore its own callback URL; OIDC belongs on the prod app |
@@ -144,37 +142,37 @@ registration without a redirect URI and the URI is not known until the app exist
 1. Create with `authentication_type='basic-auth'`.
 2. Read `oidc_callback_url` from the response.
 3. Register it as a redirect URI at the IdP; obtain `client_id` / secret.
-4. `encrypt_secret(...)` → cipher.
-5. Update with `authentication_type='oidc'` and the `oidc` block.
-6. `deploy_data_app`.
+4. Update with `authentication_type='oidc'` and the `oidc` block, secret included.
+5. `deploy_data_app`.
 
-### `encrypt_secret` tool
+### Secret handling
 
-```
-encrypt_secret(value: str, component_id: str, project_id: ProjectIdArg = None)
-    -> {cipher: str, already_encrypted: bool}
-```
+`client_secret` is accepted as plaintext and encrypted before any write. This is not a weaker
+position than requiring a pre-encrypted value — it is the same one, reached in one step instead of
+two.
 
-| Requirement | Rationale |
-| --- | --- |
-| Always `KBC::ProjectSecure::` scope (`project_id` + `component_id`) | Per Keboola encryption guidance this is the right default; see below for why `configuration_id` is not exposed. |
-| A `KBC::…` input returns unchanged with `already_encrypted=True` | Idempotent, so a retry cannot double-wrap a cipher. |
-| `value` never appears in the output or in any error message | The cipher is safe to log and pass around; the plaintext is not. |
-| `readOnlyHint=True`, `destructiveHint=False` | It mutates nothing. Clients with auto-approval policies should not treat it as a write. |
+The encrypted-only rule was originally proposed to keep plaintext secrets out of the model's
+context. It does not achieve that: whoever hands the secret to the agent has already put it in the
+context window and the transcript, whether the agent then forwards it to a dedicated encryption
+tool or straight to `modify_*_data_app`. An `encrypt_secret` tool was considered and dropped for
+exactly this reason — it added a tool, a round trip and a field contract agents get wrong, in
+exchange for no reduction in exposure.
 
-`configuration_id` is deliberately not a parameter: supplying it yields a `ConfigSecure` cipher,
-which is valid only inside one exact config and makes config copy fail. That is a footgun worth
-withholding from an agent; the handful of cases that genuinely need `ConfigSecure` can use the
-Encryption API directly.
+What the design does guarantee is that the secret is **never at rest in plaintext**:
+`_encrypt_secrets` (`clients/storage.py:360`) is fail-closed on every Storage write, and the two
+data-app create paths that bypass Storage encrypt explicitly (which is what the fix below makes
+true of the fourth path). Reads are safe by construction — the stored value is a `KBC::` cipher,
+which is opaque.
 
-**Security boundary — stated plainly.** This tool does not keep plaintext out of the model's
-context. The agent passes the secret as a tool argument, so it lands in the context window and
-the transcript exactly as it would in a plaintext `client_secret` field. What it provides is
-narrower and still worth having: plaintext is accepted at exactly one auditable call site
-instead of four data-app write paths; the resulting cipher is safe to reuse, store and log; and
-the capability is generic across components rather than OIDC-specific. Operators who require
-that the plaintext never enter the agent's context at all must use the skeleton route and enter
-the secret in the UI, which stays fully supported.
+Keeping the plaintext out of the agent's context entirely is a different requirement and this
+design does not meet it. The only mechanism that would is out-of-band entry: the agent writes the
+provider skeleton and a human types the secret into the UI. If a customer's compliance posture
+demands that, it is a follow-up, and the indirection patterns worth evaluating then are a
+reference-not-value parameter (`client_secret_env`, resolved by the MCP process — viable for local
+stdio and kbagent, **not** for the hosted remote server, whose environment belongs to Keboola), a
+Keboola Vault reference if the platform grows one for `app_proxy`, or dropping the static secret
+altogether via federated credentials. That last is the real fix and the largest change: apps-proxy
+reads a literal `ClientSecret` string today (`provider/oidc.go`).
 
 ## Resolution Strategy
 
@@ -201,16 +199,10 @@ the secret in the UI, which stays fully supported.
   `if git_block is not None:` branch so python-js prod create encrypts unconditionally, matching
   streamlit create at `:673`. The encryption service walks the payload and touches only
   `#`-prefixed keys, passing already-encrypted values through untouched, so this is safe for
-  configs that contain no secrets at all. This costs one extra API call on prod create; that is
-  the correct trade against a silent plaintext write, and it removes the standing trap for the
-  next `#` field anyone adds.
-
-### `tools/encryption.py` (new)
-
-Holds `encrypt_secret` and `add_encryption_tools(mcp)`, registered in `server.py` beside the
-other `add_*_tools` calls. A dedicated module rather than an addition to
-`tools/components/tools.py`, whose `check_suitable` (`tools/components/utils.py:1093`) actively
-refuses `keboola.data-apps` — the main caller here.
+  configs that contain no secrets at all. This is **load-bearing, not hygiene**: with plaintext
+  accepted on the tool surface, `#client_secret` is the first `#` value to travel this path, and
+  without the fix a python-js prod create stores it in plaintext. It costs one extra API call on
+  prod create.
 
 ### `clients/data_science.py`
 
@@ -227,18 +219,19 @@ already give.
   Each preset is a hardcoded URL template that rots when an IdP changes its scheme, and an LLM
   can already produce the issuer URL for any mainstream provider. `issuer_url` alone keeps the
   surface minimal and nothing to maintain.
-- **Accepting a plaintext `client_secret` on the `oidc` param.** Would have made the field's
-  contract ambiguous (cipher or plaintext?) and spread plaintext acceptance across four write
-  paths. One rule, one entry point.
-- **Skeleton-only, no `encrypt_secret`.** Leaves every OIDC app with a mandatory manual UI step,
-  which is the thing the ticket set out to remove.
+- **Requiring a pre-encrypted `KBC::…` `client_secret`, with a new `encrypt_secret` tool to
+  produce one.** Rejected: it does not reduce what reaches the model's context (see *Secret
+  handling*), makes OIDC the only field in the product that refuses a plaintext `#` value, and adds
+  a permanent tool plus a round trip to buy nothing.
+- **Skeleton-only — write the provider, leave the secret to the UI.** Leaves every OIDC app with a
+  mandatory manual step, which is the thing the ticket set out to remove. It remains the answer for
+  a customer who requires the plaintext never reach the agent at all, and is noted as a follow-up.
 
 ## Scope
 
 **In scope** (`keboola/mcp-server`):
 
 - `oidc` on `modify_streamlit_data_app` and `modify_python_js_data_app`, with merge-on-update.
-- The `encrypt_secret` tool.
 - Unconditional encryption on the python-js prod create path.
 - `oidc_callback_url` on both output models.
 - Tool docstrings and regenerated `TOOLS.md`.
@@ -271,9 +264,9 @@ adding parallel functions, per the project's testing conventions:
 | Optional fields omitted | `logout_url` / `allowed_roles` keys absent, not null |
 | Generated `auth_rules` | `auth_required: true` ⇒ `auth` present; `auth_required: false` ⇒ `auth` absent; every id in `auth` exists in `auth_providers` |
 | Golden fixture | Generated provider dict matches the validator-passing fixture from sandboxes-service `AppConfigValidatorTest.php` field-for-field |
-| Six rejection conditions | `ValueError`, each message naming the remedy |
-| All create paths | `contains_plaintext_secrets()` is `False` on the payload handed to `create_data_app` — this is the test that fails today on python-js prod create |
-| `encrypt_secret` | Cipher returned; `KBC::` input idempotent; plaintext absent from output and from raised errors |
+| Five rejection conditions | `ValueError`, each message naming the remedy |
+| All four write paths | `contains_plaintext_secrets()` is `False` on the payload handed to `create_data_app` / `configuration_update` — the create-path case is the one that fails today on python-js prod create |
+| Plaintext `client_secret` | Encrypted before the write on all four paths; an already-`KBC::` value passes through unchanged |
 
 `tox` must pass in full (pytest, ruff, check-tools-docs).
 
@@ -281,9 +274,10 @@ Manual verification on a dev stack, since neither unit tests nor CI can exercise
 
 1. Create a python-js app with `basic-auth`; note `oidc_callback_url`.
 2. Register the callback URL at an Entra test tenant; obtain `client_id` + secret.
-3. `encrypt_secret(secret, component_id='keboola.data-apps')`.
-4. Update with `authentication_type='oidc'`; confirm the stored config matches a UI-configured
-   app and that the config version diff shows no plaintext.
-5. `deploy_data_app`; confirm the browser is redirected to the IdP and login succeeds.
-6. Re-run the update with `authentication_type='default'`; confirm the OIDC block survives.
-7. Repeat steps 1–5 for a streamlit app.
+3. Update with `authentication_type='oidc'`, passing the secret as plaintext; confirm the stored
+   config holds a `KBC::` cipher and that the config version diff shows no plaintext anywhere.
+4. `deploy_data_app`; confirm the browser is redirected to the IdP and login succeeds.
+5. Re-run the update with `authentication_type='default'`; confirm the OIDC block survives.
+6. Repeat steps 1–4 for a streamlit app.
+7. Create a python-js prod app with `oidc` in a single call; confirm the create-path encryption fix
+   holds (this is the path that stores plaintext today).
