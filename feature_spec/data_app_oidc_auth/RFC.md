@@ -46,8 +46,7 @@ optional structured `oidc` parameter.
 | `client_secret` | no | Must already be a `KBC::…` cipher. Plaintext is rejected. Omitted on create → provider skeleton, secret entered in the UI. Omitted on update → the stored cipher is preserved. |
 | `logout_url` | no | Key omitted from the stored config when `None`. |
 | `allowed_roles` | no | Key omitted from the stored config when `None`. |
-| `provider_id` | no | Defaults to `'oidc'`. Stable id — this is what makes update-merge deterministic. **User-visible**: apps-proxy falls back to the id as the login-button label when `name` is unset (`provider/base.go`, `Base.Name()`), so `'oidc'` renders a button labelled "oidc". Callers should pass something presentable (`'okta'`, `'entra'`). |
-| `name` | no | Human-readable provider label. `Info.Name` exists in apps-proxy and extra keys survive both the validator and the normalizer, so this *should* reach the login page — but `Base.Name()` carries the comment "until name is added to Sandboxes API", so treat it as unconfirmed until step 8 of the manual verification below. |
+| `provider_id` | no | Defaults to `'oidc'`. Internal key, not user-facing copy: it is what `auth_rules[].auth` references and what makes update-merge deterministic. See *Verified downstream contract* for why it stays invisible in the single-provider case. |
 
 Rejections, each with a message naming the fix:
 
@@ -100,6 +99,7 @@ it. Recording the references here so a future change can re-check them cheaply.
 | Golden fixture | sandboxes-service `tests/Unit/AppConfig/AppConfigValidatorTest.php` | A validator-passing OIDC provider written exactly as this RFC specifies: `id`, `type: oidc`, `client_id`, `#client_secret`, `issuer_url`, `logout_url`, `allowed_roles`. |
 | Decrypt + rename | sandboxes-service `ProxyConfigProvider::provideProxyConfig` → `ProxyConfigNormalizer::normalizeConfigKeys` | `decryptForConfiguration` resolves `KBC::` ciphers, then keys are snake_case→camelCase with the `#` prefix stripped. `#client_secret` → `clientSecret`, `issuer_url` → `issuerUrl`, `auth_providers` → `authProviders`. |
 | Consumption | keboola-as-code `appsproxy/dataapps/auth/provider/oidc.go` | Reads `clientId`, `clientSecret`, `issuerUrl`, `logoutUrl`, `allowedRoles`. `AllowedRoles` is `*[]string`: nil means no role requirement, and an **empty slice is an explicit error**. |
+| Provider id visibility | keboola-as-code `authproxy/selector/selector.go` (`:108`, `selectorPageData`), `provider/base.go` (`Base.Name()`) | `Base.Name()` falls back to the provider id when `name` is empty and feeds the provider-selection page — **but that page is only rendered when an app has more than one provider**. With exactly one, the selector short-circuits and sends the user straight to the IdP. Switching an app to OIDC leaves exactly one provider, so the id is never displayed in the normal flow and needs no presentable default. |
 | Callback URL | keboola-as-code `appsproxy/config/static.go` (`InternalPrefix = "/_proxy"`), `authproxy/oauthproxy/config.go`, `dataapps/api/config.go` (`Domain()`, `CookieDomain()`) | Redirect URL is `<scheme>://<slug>-<appId>.<hostname>/_proxy/callback` — i.e. `<deployment_url>/_proxy/callback`. One callback per **app**, not per provider. It depends on the app id, which does not exist before create: this is why the two-step flow is unavoidable and why a draft cannot share the prod app's OIDC block. |
 
 keboola-operator is **not** in this path — it provisions Kubernetes workloads and handles no data-app
@@ -283,6 +283,3 @@ Manual verification on a dev stack, since neither unit tests nor CI can exercise
 5. `deploy_data_app`; confirm the browser is redirected to the IdP and login succeeds.
 6. Re-run the update with `authentication_type='default'`; confirm the OIDC block survives.
 7. Repeat steps 1–5 for a streamlit app.
-8. Confirm whether a stored `name` reaches the login-button label, or whether apps-proxy falls back
-   to the provider id. This decides whether `name` stays in the tool surface or is dropped as
-   unsupported — it is the one field in this RFC not settled by reading the code.
