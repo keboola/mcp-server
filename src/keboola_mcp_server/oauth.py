@@ -149,14 +149,29 @@ def _connection_client_id(redirect_uri: str) -> str:
     return f'mcp-{digest}'
 
 
+def _strip_unprintable(value: str) -> str:
+    """Strips control/bidi/zero-width characters. `str.isprintable()` already excludes control
+    (Cc), format (Cf -- covers zero-width and bidi-override characters), surrogate, private-use
+    and separator categories, which is exactly what Connection's own DECEPTIVE_CHARS_PATTERN
+    targets."""
+    return ''.join(ch for ch in value if ch.isprintable())
+
+
 def _sanitize_client_name(name: str) -> str:
-    """Strips control/bidi/zero-width characters Connection's pending_mcp_client decoder would
-    otherwise reject outright (which would silently drop the whole approval payload -- see
+    """Strips unprintable characters Connection's pending_mcp_client decoder would otherwise
+    reject outright (which would silently drop the whole approval payload -- see
     PendingMcpClientApprovalListener's catch-and-ignore on a malformed payload), and truncates to
-    Connection's 128-character cap. `str.isprintable()` already excludes control (Cc), format
-    (Cf -- covers zero-width and bidi-override characters), surrogate, private-use and separator
-    categories, which is exactly what Connection's own DECEPTIVE_CHARS_PATTERN targets."""
-    return ''.join(ch for ch in name if ch.isprintable())[:128]
+    Connection's 128-character cap."""
+    return _strip_unprintable(name)[:128]
+
+
+def _sanitize_for_log(value: str) -> str:
+    """Same unprintable-character stripping as `_sanitize_client_name`, applied to any other
+    caller-controlled value (e.g. `redirect_uri`) before it's interpolated into a log line --
+    log injection via crafted control/bidi characters, same class of finding as the client_name
+    fix above (Devin review, AI-2883). No length cap here: `redirect_uri` is already bounded to
+    2048 characters by `validate_redirect_uri` before it can reach a log call site."""
+    return _strip_unprintable(value)
 
 
 def _create_http_client(*, follow_redirects: bool = True, timeout: httpx.Timeout | None = None) -> httpx.AsyncClient:
@@ -224,12 +239,14 @@ class ConnectionClientRegistry:
         # cap alone bounds (Copilot review finding).
         self._client_names: OrderedDict[str, str] = OrderedDict()
 
-        # (connection_client_id, redirect_uri) -> (result, expires_at), REGISTERED only. /authorize
-        # is unauthenticated, so every hit costs Connection one call to /oauth/clients/validate --
-        # which is itself IP-rate-limited, and this server's whole egress IP shares that budget
-        # across every user of the stack. Caching REGISTERED results means the common case (the
-        # same handful of already-registered clients reconnecting with the same redirect_uri) never
-        # leaves this process.
+        # redirect_uri -> expires_at, REGISTERED only. Keyed on redirect_uri alone, not also
+        # connection_client_id: _connection_client_id() derives the latter deterministically from
+        # the former, so the pair is redundant -- a call site never has one without the other
+        # (Devin review finding, AI-2883). /authorize is unauthenticated, so every hit costs
+        # Connection one call to /oauth/clients/validate -- which is itself IP-rate-limited, and
+        # this server's whole egress IP shares that budget across every user of the stack. Caching
+        # REGISTERED results means the common case (the same handful of already-registered clients
+        # reconnecting with the same redirect_uri) never leaves this process.
         #
         # NOT_REGISTERED and ERROR are deliberately never cached:
         # - A cached NOT_REGISTERED would still show stale on the very next retry right after an
@@ -239,7 +256,7 @@ class ConnectionClientRegistry:
         #   was never a real defense against that flood; local throttling below is what handles it.
         # - Caching ERROR would prolong an outage instead of retrying it -- fail-closed still
         #   applies on every uncached call (see AI-3792).
-        self._registration_cache: OrderedDict[tuple[str, str], float] = OrderedDict()
+        self._registration_cache: OrderedDict[str, float] = OrderedDict()
 
         self._validate_rate_limiter = _SlidingWindowRateLimiter(
             _VALIDATE_RATE_LIMIT_MAX_CALLS, _VALIDATE_RATE_LIMIT_WINDOW_SECONDS
@@ -270,31 +287,37 @@ class ConnectionClientRegistry:
         Fails closed: any error talking to Connection (timeout, network error, unexpected status)
         returns ERROR, never REGISTERED and never silently NOT_REGISTERED -- see AI-3792.
         """
-        cache_key = (connection_client_id, redirect_uri)
-        expires_at = self._registration_cache.get(cache_key)
+        expires_at = self._registration_cache.get(redirect_uri)
         if expires_at is not None:
             if time.monotonic() < expires_at:
                 # Touch on read, not just on write -- otherwise a frequently-reused entry (e.g.
                 # Claude.ai's own pair) never gets bumped and can still be the oldest-inserted
                 # entry once enough unique, unrelated keys flood in, making it the first evicted
                 # despite being the most valuable entry to keep (Copilot review finding).
-                self._registration_cache.move_to_end(cache_key)
+                self._registration_cache.move_to_end(redirect_uri)
                 return _ClientRegistration.REGISTERED
-            del self._registration_cache[cache_key]
+            del self._registration_cache[redirect_uri]
 
         result = await self._check_registration_uncached(connection_client_id, redirect_uri)
         if result is _ClientRegistration.REGISTERED:
-            self._registration_cache[cache_key] = time.monotonic() + _REGISTERED_CACHE_TTL_SECONDS
-            self._registration_cache.move_to_end(cache_key)
+            self._registration_cache[redirect_uri] = time.monotonic() + _REGISTERED_CACHE_TTL_SECONDS
+            self._registration_cache.move_to_end(redirect_uri)
             if len(self._registration_cache) > _MAX_CACHED_REGISTRATIONS:
                 self._registration_cache.popitem(last=False)
         return result
 
     async def _check_registration_uncached(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
-        if not self._validate_rate_limiter.try_acquire():
+        # A well-known pair (today: only claude.ai) is exempt from the local limiter -- a fixed,
+        # tiny handful of redirect_uris, so letting them always through Connection's own (much
+        # higher, IP-shared) limit costs nothing. Without this, an attacker flooding /authorize with
+        # distinct, never-cached redirect_uris exhausts the shared limiter budget, and once claude.ai's
+        # own 5-minute REGISTERED cache entry expires it gets ERROR'd out right along with the
+        # attacker's traffic -- turning a limiter meant to protect Connection into the easier target
+        # (Devin review finding, AI-2883).
+        if redirect_uri not in _WELL_KNOWN_CONNECTION_CLIENT_IDS and not self._validate_rate_limiter.try_acquire():
             LOG.warning(
                 f'[check_registration] Local rate limit exceeded, not calling Connection: '
-                f'connection_client_id={connection_client_id}, redirect_uri={redirect_uri}'
+                f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri)}'
             )
             return _ClientRegistration.ERROR
 
@@ -769,7 +792,7 @@ class SimpleOAuthProvider(OAuthProvider):
         if registration is _ClientRegistration.ERROR:
             LOG.warning(
                 f'[authorize] Could not verify client with Connection: client_id={client.client_id}, '
-                f'connection_client_id={connection_client_id}, redirect_uri={redirect_uri_str}'
+                f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
             # Deliberately NOT `raise AuthorizeError(...)` here: the mcp SDK's own handler catches
             # that and redirects to the *caller-supplied* redirect_uri with the error params
@@ -790,7 +813,7 @@ class SimpleOAuthProvider(OAuthProvider):
         if registration is _ClientRegistration.NOT_REGISTERED:
             LOG.info(
                 f'[authorize] Unregistered client sent to Connection for approval: client_id={client.client_id}, '
-                f'connection_client_id={connection_client_id}, redirect_uri={redirect_uri_str}'
+                f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
             return self._client_registry.pending_approval_url(
                 connection_client_id=connection_client_id,
