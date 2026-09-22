@@ -547,7 +547,7 @@ class DatabaseUnavailableMiddleware:
 class UntrustedAuthorizeRedirectMiddleware:
     """Blocks `/authorize` from ever redirecting to a host this server didn't intend.
 
-    The mcp SDK's `AuthorizationHandler.handle` (pinned mcp==1.28.1,
+    The mcp SDK's `AuthorizationHandler.handle` (pinned mcp==2.2.0,
     `mcp/server/auth/handlers/authorize.py`) validates the raw request against its
     `AuthorizationRequest` pydantic model *before* `provider.authorize()` ever runs. On failure
     (e.g. a request missing the required `code_challenge` field), its `error_response()` fallback
