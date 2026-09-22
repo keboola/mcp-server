@@ -944,8 +944,8 @@ class TestSimpleOAuthProvider:
         # eviction order is purely insertion order and client-1 would be evicted instead.
         await registry.check_registration('client-3', 'https://c.example/cb')
 
-        assert 'client-1' in [k[0] for k in registry._registration_cache]
-        assert 'client-2' not in [k[0] for k in registry._registration_cache]
+        assert 'https://a.example/cb' in registry._registration_cache
+        assert 'https://b.example/cb' not in registry._registration_cache
 
     @pytest.mark.asyncio
     async def test_check_client_registration_never_caches_error(
@@ -1017,6 +1017,13 @@ class TestSimpleOAuthProvider:
         assert second is _ClientRegistration.NOT_REGISTERED
         assert third is _ClientRegistration.ERROR  # refused locally, not by Connection
         assert call_count == 2  # the 3rd check never reached the network
+
+        # A well-known pair (claude.ai) is exempt from the exhausted local limiter -- once its own
+        # cache entry has expired, it must still reach Connection instead of getting ERROR'd out
+        # alongside the flooding traffic that spent the budget (Devin review finding, AI-2883).
+        fourth = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+        assert fourth is _ClientRegistration.NOT_REGISTERED
+        assert call_count == 3  # reached Connection despite the limiter being spent
 
     @staticmethod
     def _stub_exchanger(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
