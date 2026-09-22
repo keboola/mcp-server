@@ -46,7 +46,8 @@ optional structured `oidc` parameter.
 | `client_secret` | no | Must already be a `KBC::…` cipher. Plaintext is rejected. Omitted on create → provider skeleton, secret entered in the UI. Omitted on update → the stored cipher is preserved. |
 | `logout_url` | no | Key omitted from the stored config when `None`. |
 | `allowed_roles` | no | Key omitted from the stored config when `None`. |
-| `provider_id` | no | Defaults to `'oidc'`. A stable id is what makes update-merge deterministic. |
+| `provider_id` | no | Defaults to `'oidc'`. Stable id — this is what makes update-merge deterministic. **User-visible**: apps-proxy falls back to the id as the login-button label when `name` is unset (`provider/base.go`, `Base.Name()`), so `'oidc'` renders a button labelled "oidc". Callers should pass something presentable (`'okta'`, `'entra'`). |
+| `name` | no | Human-readable provider label. `Info.Name` exists in apps-proxy and extra keys survive both the validator and the normalizer, so this *should* reach the login page — but `Base.Name()` carries the comment "until name is added to Sandboxes API", so treat it as unconfirmed until step 8 of the manual verification below. |
 
 Rejections, each with a message naming the fix:
 
@@ -55,7 +56,8 @@ Rejections, each with a message naming the fix:
 | `authentication_type='oidc'` without `oidc` | `ValueError` |
 | `oidc` passed with any other `authentication_type` | `ValueError` — never silently ignored |
 | `client_secret` not starting with `KBC::` | `ValueError` pointing at `encrypt_secret` and at the skeleton route |
-| `authentication_type='oidc'` on a python-js **draft** | `ValueError` — a draft has its own slug, therefore its own callback URL; OIDC belongs on the prod app |
+| `allowed_roles=[]` (empty list) | `ValueError` — rejected on both sides downstream; pass `None` to mean "no role requirement" |
+| `authentication_type='oidc'` on a python-js **draft** | `ValueError` — a draft has its own slug *and* its own app id, therefore its own callback URL; OIDC belongs on the prod app |
 
 Streamlit apps have no draft concept, so the last check is python-js only.
 
@@ -86,6 +88,31 @@ indistinguishable and passes `AppProxyDefinition` validation:
 ```
 
 `logout_url` and `allowed_roles` keys are absent, not null, when unset.
+
+### Verified downstream contract
+
+The shape above is not inferred — it was traced end-to-end through the three services that consume
+it. Recording the references here so a future change can re-check them cheaply.
+
+| Stage | Where | What it establishes |
+| --- | --- | --- |
+| Validation | `job-queue-job-configuration` `AppProxyDefinition.php`, vendored into sandboxes-service | `id` + `type` required on every provider; `auth_rules` requires `type` and boolean `auth_required`; extra keys are preserved (`ignoreExtraKeys(false)`), which is how `client_id` / `#client_secret` / `issuer_url` survive. Provider `type` is **not** enum-constrained here — a typo passes validation and fails later in the proxy. |
+| Golden fixture | sandboxes-service `tests/Unit/AppConfig/AppConfigValidatorTest.php` | A validator-passing OIDC provider written exactly as this RFC specifies: `id`, `type: oidc`, `client_id`, `#client_secret`, `issuer_url`, `logout_url`, `allowed_roles`. |
+| Decrypt + rename | sandboxes-service `ProxyConfigProvider::provideProxyConfig` → `ProxyConfigNormalizer::normalizeConfigKeys` | `decryptForConfiguration` resolves `KBC::` ciphers, then keys are snake_case→camelCase with the `#` prefix stripped. `#client_secret` → `clientSecret`, `issuer_url` → `issuerUrl`, `auth_providers` → `authProviders`. |
+| Consumption | keboola-as-code `appsproxy/dataapps/auth/provider/oidc.go` | Reads `clientId`, `clientSecret`, `issuerUrl`, `logoutUrl`, `allowedRoles`. `AllowedRoles` is `*[]string`: nil means no role requirement, and an **empty slice is an explicit error**. |
+| Callback URL | keboola-as-code `appsproxy/config/static.go` (`InternalPrefix = "/_proxy"`), `authproxy/oauthproxy/config.go`, `dataapps/api/config.go` (`Domain()`, `CookieDomain()`) | Redirect URL is `<scheme>://<slug>-<appId>.<hostname>/_proxy/callback` — i.e. `<deployment_url>/_proxy/callback`. One callback per **app**, not per provider. It depends on the app id, which does not exist before create: this is why the two-step flow is unavoidable and why a draft cannot share the prod app's OIDC block. |
+
+keboola-operator is **not** in this path — it provisions Kubernetes workloads and handles no data-app
+auth. Nothing there to change.
+
+Two coupling rules fall out of the validator and must hold in `_build_authorization`:
+
+- `auth_required` and `auth` are strictly paired — `auth_required: true` requires `auth`,
+  `auth_required: false` requires its *absence*. The definition rejects either mismatch.
+- Every provider id named in `auth_rules[].auth` must exist in `auth_providers`.
+
+Both already hold in today's code; they are pinned as tests because `_build_authorization` rewrites
+the function that produces them.
 
 ### Update semantics
 
@@ -150,12 +177,14 @@ the secret in the UI, which stays fully supported.
 ### `tools/data_apps.py`
 
 - `AuthenticationType` gains `'oidc'`.
-- New `OidcAuthConfig(BaseModel)` with the fields above and a validator rejecting a non-`KBC::`
-  `client_secret` (reusing `is_encrypted_value` from `clients/encryption.py`).
+- New `OidcAuthConfig(BaseModel)` with the fields above, a validator rejecting a non-`KBC::`
+  `client_secret` (reusing `is_encrypted_value` from `clients/encryption.py`), and a validator
+  rejecting an empty `allowed_roles` list.
 - `_get_authorization(auth_with_password: bool)` (`:2134`) is replaced by
   `_build_authorization(authentication_type, oidc=None, existing=None)`. The two existing
   branches are preserved unchanged; the OIDC branch builds the block above and performs the merge
-  against `existing`. All four current call sites are updated: python-js create (`:1238`),
+  against `existing`, upholding the two coupling rules recorded under *Verified downstream
+  contract*. All four current call sites are updated: python-js create (`:1238`),
   python-js update (`:1601`), streamlit create via `_build_data_app_config` (`:1879`), and
   streamlit update via `_update_existing_data_app_config` (`:1913`).
 - `_uses_basic_authentication()` (`:2261`) needs no change — it matches `simpleAuth` and already
@@ -216,7 +245,11 @@ already give.
   defines and cannot be reviewed in this repo's PR.
 - ai-kit `dataapp-development/references/authentication.md` — follow-up, same reason.
 - `github` / `gitlab` / `jumpcloud` providers.
-- Stack-level `enforcedAppsAuth` (ČS stacks already gate every app).
+- Stack-level `enforcedAppsAuth` (ČS stacks already gate every app). Worth knowing while it stays
+  out of scope: `ProxyConfigProvider` uses the stack's `ENFORCED_APPS_AUTH` config *instead of* the
+  app's own `app_proxy` block when it is set, rather than merging. On such a stack an agent can
+  write a perfectly valid OIDC block and see it silently ignored. The tools cannot currently detect
+  this, so it is a documentation matter for the follow-up ai-kit page.
 - Exposing `allowed_roles` in the UI.
 - Opening the generic `create_config` / `update_config` tools to `keboola.data-apps`.
 
@@ -232,7 +265,9 @@ adding parallel functions, per the project's testing conventions:
 | `oidc` → `oidc` update, `client_secret` omitted | Stored cipher preserved; other supplied fields overwritten |
 | `default` on an app with OIDC | `authorization` unchanged — explicit AI-1848 regression |
 | Optional fields omitted | `logout_url` / `allowed_roles` keys absent, not null |
-| Four rejection conditions | `ValueError`, each message naming the remedy |
+| Generated `auth_rules` | `auth_required: true` ⇒ `auth` present; `auth_required: false` ⇒ `auth` absent; every id in `auth` exists in `auth_providers` |
+| Golden fixture | Generated provider dict matches the validator-passing fixture from sandboxes-service `AppConfigValidatorTest.php` field-for-field |
+| Five rejection conditions | `ValueError`, each message naming the remedy |
 | All create paths | `contains_plaintext_secrets()` is `False` on the payload handed to `create_data_app` — this is the test that fails today on python-js prod create |
 | `encrypt_secret` | Cipher returned; `KBC::` input idempotent; plaintext absent from output and from raised errors |
 
@@ -248,3 +283,6 @@ Manual verification on a dev stack, since neither unit tests nor CI can exercise
 5. `deploy_data_app`; confirm the browser is redirected to the IdP and login succeeds.
 6. Re-run the update with `authentication_type='default'`; confirm the OIDC block survives.
 7. Repeat steps 1–5 for a streamlit app.
+8. Confirm whether a stored `name` reaches the login-button label, or whether apps-proxy falls back
+   to the provider id. This decides whether `name` stays in the tool surface or is dropped as
+   unsupported — it is the one field in this RFC not settled by reading the code.
