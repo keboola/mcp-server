@@ -1218,12 +1218,14 @@ async def modify_python_js_data_app(
         # Logged so the remaining exposure is measurable per project -- the fallback can only be
         # retired once we know who still depends on it. Worth one extra `tokens/verify` on a
         # deprecated path that is already doing a workspace lookup.
+        # Deliberately logs no workspace id: `project_id` + `configuration_id` are what the
+        # rollout needs to count, the id is recoverable from the config, and keeping values that
+        # reach a `secrets` map out of the logs avoids clear-text-logging findings entirely.
         legacy_project_id = await client.storage_client.project_id()
         LOG.warning(
-            f'Data app Storage access is using the deprecated {SECRET_WORKSPACE_ID} secret fallback: '
-            f'project_id={legacy_project_id}, configuration_id={configuration_id or "<new>"}, '
-            f'workspace_id={legacy_workspace_id}. The {DATA_APPS_STORAGE_WORKSPACE_FEATURE} feature '
-            f'is not enabled on this project.'
+            f'Data app Storage access is using the deprecated WORKSPACE_ID secret fallback: '
+            f'project_id={legacy_project_id}, configuration_id={configuration_id or "<new>"}. '
+            f'The {DATA_APPS_STORAGE_WORKSPACE_FEATURE} feature is not enabled on this project.'
         )
 
     if configuration_id:
