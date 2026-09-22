@@ -43,7 +43,7 @@ optional structured `oidc` parameter.
 | --- | --- | --- |
 | `client_id` | yes | Written verbatim. |
 | `issuer_url` | yes | Written verbatim. No IdP presets — see *Rejected alternatives*. |
-| `client_secret` | no | Must already be a `KBC::…` cipher. Plaintext is rejected. Omitted on create → provider skeleton, secret entered in the UI. Omitted on update → the stored cipher is preserved. |
+| `client_secret` | **on create** | Must already be a `KBC::…` cipher; plaintext is rejected. Required whenever the app has no stored OIDC secret yet, so a create can never produce an app that validates and deploys but cannot complete a login. On an update that already has one, omitting it preserves the stored cipher — that is what makes rotating `issuer_url` or `allowed_roles` possible without re-supplying the secret. |
 | `logout_url` | no | Key omitted from the stored config when `None`. |
 | `allowed_roles` | no | Key omitted from the stored config when `None`. |
 | `provider_id` | no | Defaults to `'oidc'`. Internal key, not user-facing copy: it is what `auth_rules[].auth` references and what makes update-merge deterministic. See *Verified downstream contract* for why it stays invisible in the single-provider case. |
@@ -54,7 +54,8 @@ Rejections, each with a message naming the fix:
 | --- | --- |
 | `authentication_type='oidc'` without `oidc` | `ValueError` |
 | `oidc` passed with any other `authentication_type` | `ValueError` — never silently ignored |
-| `client_secret` not starting with `KBC::` | `ValueError` pointing at `encrypt_secret` and at the skeleton route |
+| `client_secret` not starting with `KBC::` | `ValueError` pointing at `encrypt_secret` |
+| `client_secret` omitted with no stored cipher to preserve | `ValueError` — an OIDC app without a secret can never complete a login |
 | `allowed_roles=[]` (empty list) | `ValueError` — rejected on both sides downstream; pass `None` to mean "no role requirement" |
 | `authentication_type='oidc'` on a python-js **draft** | `ValueError` — a draft has its own slug *and* its own app id, therefore its own callback URL; OIDC belongs on the prod app |
 
@@ -62,8 +63,11 @@ Streamlit apps have no draft concept, so the last check is python-js only.
 
 ### Stored shape
 
-`authorization` must equal what the UI writes, so an app configured either way is
-indistinguishable and passes `AppProxyDefinition` validation:
+`authorization` must pass `AppProxyDefinition` validation and be consumed correctly by apps-proxy.
+Both were verified directly (see *Verified downstream contract*). Note the weaker claim: this RFC
+does **not** assert the block is byte-identical to what the UI writes — the UI's writer was not
+examined. If an app configured through the UI turns out to differ, the difference is worth
+reconciling, but conformance to the validator and the proxy is the contract that actually matters.
 
 ```json
 {
@@ -140,7 +144,7 @@ registration without a redirect URI and the URI is not known until the app exist
 1. Create with `authentication_type='basic-auth'`.
 2. Read `oidc_callback_url` from the response.
 3. Register it as a redirect URI at the IdP; obtain `client_id` / secret.
-4. `encrypt_secret(...)` → cipher (or skip and enter the secret in the UI).
+4. `encrypt_secret(...)` → cipher.
 5. Update with `authentication_type='oidc'` and the `oidc` block.
 6. `deploy_data_app`.
 
@@ -267,7 +271,7 @@ adding parallel functions, per the project's testing conventions:
 | Optional fields omitted | `logout_url` / `allowed_roles` keys absent, not null |
 | Generated `auth_rules` | `auth_required: true` ⇒ `auth` present; `auth_required: false` ⇒ `auth` absent; every id in `auth` exists in `auth_providers` |
 | Golden fixture | Generated provider dict matches the validator-passing fixture from sandboxes-service `AppConfigValidatorTest.php` field-for-field |
-| Five rejection conditions | `ValueError`, each message naming the remedy |
+| Six rejection conditions | `ValueError`, each message naming the remedy |
 | All create paths | `contains_plaintext_secrets()` is `False` on the payload handed to `create_data_app` — this is the test that fails today on python-js prod create |
 | `encrypt_secret` | Cipher returned; `KBC::` input idempotent; plaintext absent from output and from raised errors |
 
