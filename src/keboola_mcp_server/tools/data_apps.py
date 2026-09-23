@@ -313,6 +313,9 @@ class DataApp(BaseModel):
             'supports additional types, which can be retrieved from the API.'
         )
     )
+    desired_state: str | None = Field(
+        description='The state the data app was last asked to reach.', default=None, exclude=True
+    )
     deployment_url: str | None = Field(description='The URL of the running data app.', default=None)
     auto_suspend_after_seconds: int | None = Field(
         description='The number of seconds after which the running data app is automatically suspended.',
@@ -377,6 +380,7 @@ class DataApp(BaseModel):
             branch_id=api_response.branch_id or '',
             config_version=str(api_configuration.version),
             state=api_response.state,
+            desired_state=api_response.desired_state,
             type=api_response.type,
             deployment_url=api_response.url,
             auto_suspend_after_seconds=api_response.auto_suspend_after_seconds,
@@ -1170,10 +1174,10 @@ async def modify_python_js_data_app(
     ## Slug on update
 
     The slug is the app URL (`https://<slug>-<app id>.hub.<stack>`), so changing it moves the app.
-    1. Renaming a prod app whose slug still follows its name (e.g. `new-app` for "New App"), and
-       whose slug was never changed before, moves the slug to the new name automatically — once.
-    2. Every later rename keeps the slug. Change it only with an explicit `slug`, and only after the
-       user approved the new URL.
+    1. Until the prod app is first deployed, a rename moves a slug that follows the name (e.g.
+       `new-app` for "New App") to the new name automatically — nobody has the URL yet.
+    2. Once the app has been deployed, a rename keeps the slug. Change it only with an explicit
+       `slug`, and only after the user approved the new URL.
     3. Drafts never change their slug.
     Either way the new URL applies after the next `deploy_data_app`; the old URL stops working. Tell
     the user both when `change_summary` reports a slug change.
@@ -1219,7 +1223,7 @@ async def modify_python_js_data_app(
         if _is_draft_config(data_app.configuration):
             _reject_no_auth_on_draft(authentication_type)
         normalized_branch = _validate_branch_update(branch, data_app, configuration_id) if branch else None
-        new_slug = await _resolve_slug_update(client, data_app, name=name, explicit_slug=slug)
+        new_slug = _resolve_slug_update(data_app, name=name, explicit_slug=slug)
         if (
             not has_storage_workspace
             and wants_storage_access
@@ -1257,7 +1261,6 @@ async def modify_python_js_data_app(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=configuration_id,
             configuration_version=int(data_app.config_version),
-            extra_metadata={MetadataField.DATA_APP_SLUG_CHANGED: 'true'} if new_slug is not None else None,
         )
         folder_hint = await apply_folder_metadata(
             client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
@@ -2355,21 +2358,29 @@ def _validate_explicit_slug(slug: str) -> None:
         )
 
 
+def _is_never_deployed(data_app: 'DataApp') -> bool:
+    """Whether the data app has never been deployed.
+
+    - Every app nobody has deployed rests in `state='created'`.
+    - A first deploy keeps `state='created'` while the app comes up, with `desired_state='running'`;
+      that app counts as deployed.
+    """
+    return data_app.state == 'created' and data_app.desired_state != 'running'
+
+
 def _config_slug(configuration: Mapping[str, Any]) -> str | None:
     """The `parameters.dataApp.slug` of a stored data-app configuration, or None when it has none."""
     slug = _data_app_block(configuration).get('slug')
     return slug if isinstance(slug, str) and slug else None
 
 
-async def _resolve_slug_update(
-    client: KeboolaClient, data_app: 'DataApp', *, name: str, explicit_slug: str | None
-) -> str | None:
+def _resolve_slug_update(data_app: 'DataApp', *, name: str, explicit_slug: str | None) -> str | None:
     """The slug a python-js update writes, or None to keep the stored one.
 
     1. An explicit slug on a draft raises — draft slugs never change.
     2. An explicit slug on a prod app is written as given.
-    3. A rename of a prod app moves the slug to `_derive_slug_from_name(name)` when the stored slug
-       still follows the current name and `MetadataField.DATA_APP_SLUG_CHANGED` is not set.
+    3. A rename of a prod app that was never deployed moves the slug to `_derive_slug_from_name(name)`
+       when the stored slug still follows the current name.
     4. Anything else keeps the stored slug.
 
     - "Follows the name" compares both through `_derive_slug_from_name`, so a slug the UI derived
@@ -2383,12 +2394,9 @@ async def _resolve_slug_update(
     current_slug = _config_slug(data_app.configuration)
     if explicit_slug:
         return None if explicit_slug == current_slug else explicit_slug
-    if not name or name == data_app.name or current_slug is None:
+    if not name or name == data_app.name or current_slug is None or not _is_never_deployed(data_app):
         return None
     if _derive_slug_from_name(current_slug, draft=False) != _derive_slug_from_name(data_app.name, draft=False):
-        return None
-    metadata = await client.storage_client.configuration_metadata_get(DATA_APP_COMPONENT_ID, data_app.configuration_id)
-    if get_metadata_property(metadata, MetadataField.DATA_APP_SLUG_CHANGED):
         return None
     new_slug = _derive_slug_from_name(name, draft=False)
     return None if new_slug == current_slug else new_slug

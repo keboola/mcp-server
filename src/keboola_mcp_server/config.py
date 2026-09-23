@@ -402,9 +402,6 @@ class MetadataField:
     # Folder name for organizing configurations in the UI
     CONFIGURATION_FOLDER_NAME = 'KBC.configuration.folderName'
 
-    # set on a python-js data app whose slug changed since create; expected value: 'true'
-    DATA_APP_SLUG_CHANGED = 'KBC.MCP.dataApp.slugChanged'
-
     # Data type metadata fields
     DATATYPE_TYPE = 'KBC.datatype.type'
     DATATYPE_NULLABLE = 'KBC.datatype.nullable'
