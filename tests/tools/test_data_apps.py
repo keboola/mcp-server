@@ -1238,24 +1238,109 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('disallowed_arg', 'kwargs', 'error_match'),
+    ('stored_name', 'stored_slug', 'is_draft', 'slug_changed_before', 'kwargs', 'expected_slug'),
     [
-        (
-            'slug',
-            {'name': 'A', 'description': '', 'configuration_id': 'cfg-1', 'slug': 'new'},
-            'slug cannot be changed',
-        ),
+        # Generic slug created by the UI, first rename → the slug follows the new name.
+        ('New App', 'new-app', False, False, {'name': 'Sales Dashboard'}, 'sales-dashboard'),
+        # A UI-derived slug that kept repeated hyphens still counts as following the name.
+        ('Sales & Ops', 'sales---ops', False, False, {'name': 'Ops Board'}, 'ops-board'),
+        # The slug already moved once → a later rename keeps it.
+        ('Sales Dashboard', 'sales-dashboard', False, True, {'name': 'Revenue'}, 'sales-dashboard'),
+        # A custom slug that never followed the name → a rename keeps it.
+        ('Sales Dashboard', 'sales', False, False, {'name': 'Revenue'}, 'sales'),
+        # Drafts never change their slug on rename.
+        ('New App', 'new-app-draft-a1b2c3', True, False, {'name': 'Sales'}, 'new-app-draft-a1b2c3'),
+        # Same name → nothing to follow.
+        ('New App', 'new-app', False, False, {'name': 'New App'}, 'new-app'),
+        # An explicit slug on a prod app is written even after an earlier change.
+        ('Sales Dashboard', 'sales-dashboard', False, True, {'name': 'Sales Dashboard', 'slug': 'kpis'}, 'kpis'),
     ],
 )
-async def test_modify_python_js_data_app_update_rejects_create_only_args(
+async def test_modify_python_js_data_app_update_slug(
+    mocker,
     mcp_context_client: Context,
-    disallowed_arg: str,
+    stored_name: str,
+    stored_slug: str,
+    is_draft: bool,
+    slug_changed_before: bool,
     kwargs: dict,
+    expected_slug: str,
+) -> None:
+    """Update path: a rename moves a name-following slug once; later changes need an explicit slug."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    data_app_block: dict = {'slug': stored_slug}
+    if is_draft:
+        data_app_block |= {'isDraft': True, 'parentConfigurationId': 'cfg-prod'}
+    existing = DataApp(
+        name=stored_name,
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-1',
+        data_app_id='app-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='2',
+        type='python-js',
+        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': data_app_block}},
+        state='running',
+    )
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(side_effect=[existing, existing.model_copy(update={'config_version': '3'})]),
+    )
+    keboola_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
+        return_value=[{'key': MetadataField.DATA_APP_SLUG_CHANGED, 'value': 'true'}] if slug_changed_before else []
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    set_update_metadata = mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+
+    result = await modify_python_js_data_app(ctx=mcp_context_client, description='', configuration_id='cfg-1', **kwargs)
+
+    new_cfg = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
+    assert new_cfg['parameters']['dataApp']['slug'] == expected_slug
+    extra_metadata = set_update_metadata.await_args.kwargs['extra_metadata']
+    if expected_slug == stored_slug:
+        assert extra_metadata is None
+        assert 'slug' not in (result.change_summary or '')
+    else:
+        assert extra_metadata == {MetadataField.DATA_APP_SLUG_CHANGED: 'true'}
+        assert f"'{expected_slug}'" in result.change_summary
+        assert 'old URL stops working' in result.change_summary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('slug', 'is_draft', 'error_match'),
+    [
+        ('kpis', True, 'slug cannot be changed on a draft'),
+        ('Not A Label', False, 'only lowercase letters, digits and hyphens'),
+        ('-kpis', False, 'must not start or end with a hyphen'),
+        ('a' * 64, False, 'at most 63 characters'),
+    ],
+)
+async def test_modify_python_js_data_app_update_rejects_invalid_slug(
+    mocker,
+    mcp_context_client: Context,
+    slug: str,
+    is_draft: bool,
     error_match: str,
 ) -> None:
-    """Update path rejects slug (immutable subdomain)."""
+    """Update path rejects an explicit slug on a draft and any slug that is not a DNS label."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    existing = (
+        _make_python_js_draft_data_app(configuration_id='cfg-1', data_app_id='app-1', parent_configuration_id='p')
+        if is_draft
+        else _make_python_js_prod_data_app(configuration_id='cfg-1')
+    )
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=existing))
+
     with pytest.raises(ValueError, match=error_match):
-        await modify_python_js_data_app(ctx=mcp_context_client, **kwargs)
+        await modify_python_js_data_app(
+            ctx=mcp_context_client, name=existing.name, description='', configuration_id='cfg-1', slug=slug
+        )
+    keboola_client.storage_client.configuration_update.assert_not_called()
 
 
 @pytest.mark.asyncio

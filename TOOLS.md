@@ -2539,12 +2539,12 @@ draft handle.
   repo — branch it off `origin/main` explicitly (see Scenario B step 3).
   On **update** `branch` repoints an existing **external-git** app's pinned branch (see below).
 - `slug` is optional on create (auto-derived from `name` when omitted; drafts get a unique
-  suffix) and immutable after.
+  suffix). See "Slug on update" below.
 - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
   `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or
-  a draft, and for repointing an **external-git** app's `branch` (a draft, or an app bound
-  to an external repository — an app on a Keboola-managed git repo is rejected, its branch
-  is owned by the platform). Source code changes go through the git flow above, not this
+  a draft, for changing a prod app's `slug` (see "Slug on update"), and for repointing an
+  **external-git** app's `branch` (a draft, or an app bound to an external repository — an
+  app on a Keboola-managed git repo is rejected, its branch is owned by the platform). Source code changes go through the git flow above, not this
   tool. After a `branch` repoint, call `deploy_data_app` to serve the new branch.
 
 ## Authentication
@@ -2566,6 +2566,17 @@ by the UI; drafts additionally get a short unique `-draft-<suffix>`, still withi
 slugs unique across the prod app and its drafts). Pass an explicit slug to override; an explicit
 slug must be at most 63 characters (the DNS-label max), and note the UI's own URL-prefix limit is
 50, so an explicit slug of 51-63 characters may still be rejected at deploy time.
+
+## Slug on update
+
+The slug is the app URL (`https://<slug>-<app id>.hub.<stack>`), so changing it moves the app.
+1. Renaming a prod app whose slug still follows its name (e.g. `new-app` for "New App"), and
+   whose slug was never changed before, moves the slug to the new name automatically — once.
+2. Every later rename keeps the slug. Change it only with an explicit `slug`, and only after the
+   user approved the new URL.
+3. Drafts never change their slug.
+Either way the new URL applies after the next `deploy_data_app`; the old URL stops working. Tell
+the user both when `change_summary` reports a slug change.
 
 
 **Input JSON Schema**:
@@ -2601,7 +2612,7 @@ slug must be at most 63 characters (the DNS-label max), and note the UI's own UR
         }
       ],
       "default": null,
-      "description": "URL-safe slug for the data app (used as a subdomain). Optional on create \u2014 when omitted it is auto-derived from `name` (drafts get a unique suffix). An explicit slug must be at most 63 characters (DNS-label max; the UI URL-prefix limit is 50). Immutable after create."
+      "description": "URL-safe slug for the data app (used as a subdomain). Optional on create \u2014 when omitted it is auto-derived from `name` (drafts get a unique suffix). An explicit slug must be at most 63 characters (DNS-label max; the UI URL-prefix limit is 50). On update it moves a prod app to a new URL \u2014 pass it only after the user approved that URL (see \"Slug on update\")."
     },
     "parent_configuration_id": {
       "anyOf": [

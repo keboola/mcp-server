@@ -397,6 +397,7 @@ async def set_cfg_update_metadata(
     component_id: str,
     configuration_id: str,
     configuration_version: int,
+    extra_metadata: Mapping[str, str] | None = None,
 ) -> None:
     """
     Sets the configuration metadata to indicate it was updated by MCP.
@@ -405,13 +406,14 @@ async def set_cfg_update_metadata(
     :param component_id: ID of the component
     :param configuration_id: ID of the configuration
     :param configuration_version: Version of the configuration
+    :param extra_metadata: Further metadata written in the same request
     """
     updated_by_md_key = f'{MetadataField.UPDATED_BY_MCP_PREFIX}{configuration_version}'
     try:
         await client.storage_client.configuration_metadata_update(
             component_id=component_id,
             configuration_id=configuration_id,
-            metadata={updated_by_md_key: 'true'},
+            metadata={updated_by_md_key: 'true', **(extra_metadata or {})},
         )
     except HTTPStatusError:
         LOG.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}')

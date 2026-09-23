@@ -923,7 +923,8 @@ async def modify_python_js_data_app(
             description=(
                 'URL-safe slug for the data app (used as a subdomain). Optional on create — when omitted '
                 'it is auto-derived from `name` (drafts get a unique suffix). An explicit slug must be at '
-                'most 63 characters (DNS-label max; the UI URL-prefix limit is 50). Immutable after create.'
+                'most 63 characters (DNS-label max; the UI URL-prefix limit is 50). On update it moves a '
+                'prod app to a new URL — pass it only after the user approved that URL (see "Slug on update").'
             ),
         ),
     ] = None,
@@ -1138,12 +1139,12 @@ async def modify_python_js_data_app(
       repo — branch it off `origin/main` explicitly (see Scenario B step 3).
       On **update** `branch` repoints an existing **external-git** app's pinned branch (see below).
     - `slug` is optional on create (auto-derived from `name` when omitted; drafts get a unique
-      suffix) and immutable after.
+      suffix). See "Slug on update" below.
     - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
       `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or
-      a draft, and for repointing an **external-git** app's `branch` (a draft, or an app bound
-      to an external repository — an app on a Keboola-managed git repo is rejected, its branch
-      is owned by the platform). Source code changes go through the git flow above, not this
+      a draft, for changing a prod app's `slug` (see "Slug on update"), and for repointing an
+      **external-git** app's `branch` (a draft, or an app bound to an external repository — an
+      app on a Keboola-managed git repo is rejected, its branch is owned by the platform). Source code changes go through the git flow above, not this
       tool. After a `branch` repoint, call `deploy_data_app` to serve the new branch.
 
     ## Authentication
@@ -1165,10 +1166,21 @@ async def modify_python_js_data_app(
     slugs unique across the prod app and its drafts). Pass an explicit slug to override; an explicit
     slug must be at most 63 characters (the DNS-label max), and note the UI's own URL-prefix limit is
     50, so an explicit slug of 51-63 characters may still be rejected at deploy time.
+
+    ## Slug on update
+
+    The slug is the app URL (`https://<slug>-<app id>.hub.<stack>`), so changing it moves the app.
+    1. Renaming a prod app whose slug still follows its name (e.g. `new-app` for "New App"), and
+       whose slug was never changed before, moves the slug to the new name automatically — once.
+    2. Every later rename keeps the slug. Change it only with an explicit `slug`, and only after the
+       user approved the new URL.
+    3. Drafts never change their slug.
+    Either way the new URL applies after the next `deploy_data_app`; the old URL stops working. Tell
+    the user both when `change_summary` reports a slug change.
     """
     if configuration_id:
         if slug:
-            raise ValueError('slug cannot be changed after the data app is created.')
+            _validate_explicit_slug(slug)
         if parent_configuration_id:
             raise ValueError('parent_configuration_id is only valid when creating a draft (no configuration_id).')
         # `branch` IS allowed on update — it repoints an external-git app's pinned branch
@@ -1179,15 +1191,8 @@ async def modify_python_js_data_app(
             # DNS-label-safe slug from `name` instead of raising; drafts get a unique suffix so
             # they don't collide with the parent prod app or with each other.
             slug = _derive_slug_from_name(name, draft=bool(parent_configuration_id))
-        elif len(slug) > MAX_DNS_LABEL_LENGTH:
-            # The derived path is length-capped, but an explicitly-passed slug is written through
-            # verbatim — so guard its length too. Use the DNS-label max (63) as the hard limit
-            # rather than the tighter 50-char UI limit: explicit slugs up to 63 are DNS-valid, but
-            # warn that 51-63 may still be rejected by the data-app URL-prefix UI at deploy time.
-            raise ValueError(
-                f'slug must be at most {MAX_DNS_LABEL_LENGTH} characters (got {len(slug)}); '
-                f'note the data-app URL-prefix UI limit is {MAX_DATA_APP_SLUG_LENGTH} characters.'
-            )
+        else:
+            _validate_explicit_slug(slug)
         if branch is not None and not parent_configuration_id:
             raise ValueError('branch is only valid on the draft create path (pair it with parent_configuration_id).')
         if parent_configuration_id:
@@ -1214,6 +1219,7 @@ async def modify_python_js_data_app(
         if _is_draft_config(data_app.configuration):
             _reject_no_auth_on_draft(authentication_type)
         normalized_branch = _validate_branch_update(branch, data_app, configuration_id) if branch else None
+        new_slug = await _resolve_slug_update(client, data_app, name=name, explicit_slug=slug)
         if (
             not has_storage_workspace
             and wants_storage_access
@@ -1235,6 +1241,7 @@ async def modify_python_js_data_app(
             legacy_workspace_id=legacy_workspace_id,
             storage=validated_storage,
             branch=normalized_branch,
+            slug=new_slug,
         )
         await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
@@ -1250,9 +1257,17 @@ async def modify_python_js_data_app(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=configuration_id,
             configuration_version=int(data_app.config_version),
+            extra_metadata={MetadataField.DATA_APP_SLUG_CHANGED: 'true'} if new_slug is not None else None,
         )
         folder_hint = await apply_folder_metadata(
             client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
+        )
+        slug_hint = (
+            f"Changed the URL slug to '{new_slug}'. The app keeps its current URL until it is redeployed "
+            '(deploy_data_app); from then on it is served under the new slug and the old URL stops working. '
+            'Tell the user both.'
+            if new_slug is not None
+            else None
         )
         branch_hint = (
             f"Repointed the external-git branch to '{normalized_branch}'. Redeploy the app "
@@ -1267,7 +1282,11 @@ async def modify_python_js_data_app(
             else None
         )
         change_summary = (
-            '\n'.join(note for note in (folder_hint, branch_hint, storage_access_hint, legacy_fallback_hint) if note)
+            '\n'.join(
+                note
+                for note in (folder_hint, slug_hint, branch_hint, storage_access_hint, legacy_fallback_hint)
+                if note
+            )
             or None
         )
         repo_url = data_app.repo_url
@@ -1702,10 +1721,12 @@ def _update_existing_code_data_app_config(
     legacy_workspace_id: str | None = None,
     storage: dict[str, Any] | None = None,
     branch: str | None = None,
+    slug: str | None = None,
 ) -> dict[str, Any]:
     """Apply requested updates to the existing python-js data app storage configuration.
 
-    Slug is intentionally not updated here (immutable post-create). `runtime.image.version` is
+    `slug` rewrites `parameters.dataApp.slug` (None leaves it untouched); `_resolve_slug_update`
+    decides whether it may change. `runtime.image.version` is
     not touched either — the platform now picks a default for python-js apps, and any legacy
     `image.version` pin already in the stored config is preserved verbatim via deepcopy.
     `authentication_type='default'` preserves the existing `authorization` block (including OIDC
@@ -1740,6 +1761,8 @@ def _update_existing_code_data_app_config(
                 '(not an external-git data app).'
             )
         git_block['branch'] = branch
+    if slug is not None:
+        new_config['parameters'].setdefault('dataApp', {})['slug'] = slug
     if storage_access is not None:
         if has_storage_workspace:
             # Write the flag either way rather than dropping the block on disable: an explicit
@@ -2170,13 +2193,14 @@ def _is_draft_config(configuration: Mapping[str, Any]) -> bool:
     Shape-safe: a malformed/corrupted config whose `parameters` or `dataApp` is not a mapping is
     simply "not a draft" rather than an `AttributeError` (this helper runs in the detail-fetch path).
     """
+    return _data_app_block(configuration).get('isDraft') is True
+
+
+def _data_app_block(configuration: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The `parameters.dataApp` mapping of a stored configuration; empty when it is missing or malformed."""
     parameters = configuration.get('parameters')
-    if not isinstance(parameters, Mapping):
-        return False
-    data_app = parameters.get('dataApp')
-    if not isinstance(data_app, Mapping):
-        return False
-    return data_app.get('isDraft') is True
+    data_app = parameters.get('dataApp') if isinstance(parameters, Mapping) else None
+    return data_app if isinstance(data_app, Mapping) else {}
 
 
 def _validate_branch_update(branch: str, data_app: 'DataApp', configuration_id: str) -> str:
@@ -2307,6 +2331,67 @@ MAX_DATA_APP_SLUG_LENGTH = 50
 
 class DataAppSlugTooLongError(ValueError):
     """Raised when the generated data app slug exceeds the DNS label length limit."""
+
+
+_DNS_LABEL_PATTERN = re.compile(r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?$')
+
+
+def _validate_explicit_slug(slug: str) -> None:
+    """Reject a caller-supplied slug that is not a DNS label.
+
+    - The hard length limit is the DNS-label max (63), not the 50-char UI limit, so a slug of 51-63
+      characters is accepted but may still be rejected at deploy time.
+    - Allowed characters are lowercase letters, digits and inner hyphens.
+    """
+    if len(slug) > MAX_DNS_LABEL_LENGTH:
+        raise ValueError(
+            f'slug must be at most {MAX_DNS_LABEL_LENGTH} characters (got {len(slug)}); '
+            f'note the data-app URL-prefix UI limit is {MAX_DATA_APP_SLUG_LENGTH} characters.'
+        )
+    if not _DNS_LABEL_PATTERN.match(slug):
+        raise ValueError(
+            f'slug "{slug}" must contain only lowercase letters, digits and hyphens, '
+            'and must not start or end with a hyphen.'
+        )
+
+
+def _config_slug(configuration: Mapping[str, Any]) -> str | None:
+    """The `parameters.dataApp.slug` of a stored data-app configuration, or None when it has none."""
+    slug = _data_app_block(configuration).get('slug')
+    return slug if isinstance(slug, str) and slug else None
+
+
+async def _resolve_slug_update(
+    client: KeboolaClient, data_app: 'DataApp', *, name: str, explicit_slug: str | None
+) -> str | None:
+    """The slug a python-js update writes, or None to keep the stored one.
+
+    1. An explicit slug on a draft raises — draft slugs never change.
+    2. An explicit slug on a prod app is written as given.
+    3. A rename of a prod app moves the slug to `_derive_slug_from_name(name)` when the stored slug
+       still follows the current name and `MetadataField.DATA_APP_SLUG_CHANGED` is not set.
+    4. Anything else keeps the stored slug.
+
+    - "Follows the name" compares both through `_derive_slug_from_name`, so a slug the UI derived
+      (`prepareSlug`, which keeps repeated hyphens) counts as well.
+    - Returns None when the resulting slug equals the stored one.
+    """
+    if _is_draft_config(data_app.configuration):
+        if explicit_slug:
+            raise ValueError('slug cannot be changed on a draft data app; change the prod app instead.')
+        return None
+    current_slug = _config_slug(data_app.configuration)
+    if explicit_slug:
+        return None if explicit_slug == current_slug else explicit_slug
+    if not name or name == data_app.name or current_slug is None:
+        return None
+    if _derive_slug_from_name(current_slug, draft=False) != _derive_slug_from_name(data_app.name, draft=False):
+        return None
+    metadata = await client.storage_client.configuration_metadata_get(DATA_APP_COMPONENT_ID, data_app.configuration_id)
+    if get_metadata_property(metadata, MetadataField.DATA_APP_SLUG_CHANGED):
+        return None
+    new_slug = _derive_slug_from_name(name, draft=False)
+    return None if new_slug == current_slug else new_slug
 
 
 def _get_data_app_slug(name: str) -> str:
