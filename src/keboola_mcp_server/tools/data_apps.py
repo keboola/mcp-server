@@ -1954,7 +1954,7 @@ async def deploy_data_app(
             raise ValueError('Data app is currently "stopping", could not be started at the moment.')
         # Always pin the latest config version (python-js included): without `configVersion` the data-app
         # service keeps the previously published version, so config-only changes (secrets, Storage access,
-        # git branch, ...) would never go live (AJDA-3375).
+        # git branch, ...) would never go live.
         config_version = await client.storage_client.configuration_version_latest(
             DATA_APP_COMPONENT_ID, data_app.configuration_id
         )

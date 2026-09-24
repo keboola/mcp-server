@@ -2420,7 +2420,7 @@ def test_validate_branch_update_rejects_managed_and_unknown(is_managed_git_repo:
         _validate_branch_update('feature-x', app, 'cfg-1')
 
 
-# ===== Tests for deploy_data_app config publishing (AJDA-3375) =====
+# ===== Tests for deploy_data_app config publishing =====
 
 
 @pytest.mark.asyncio
