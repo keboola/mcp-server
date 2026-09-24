@@ -272,7 +272,24 @@ class AppRunInfo(BaseModel):
 class DeploymentInfo(BaseModel):
     """Deployment information of a data app."""
 
-    version: str = Field(description='The version of the data app deployment.')
+    version: str = Field(
+        description=(
+            'The configuration version the data app is actually running (the published version pinned '
+            'by the data-app service). This is NOT necessarily the latest saved configuration version -- '
+            'compare with `latest_config_version`.'
+        )
+    )
+    latest_config_version: str | None = Field(
+        default=None, description='The latest saved version of the data app configuration in Storage.'
+    )
+    has_unpublished_changes: bool = Field(
+        default=False,
+        description=(
+            'True when the latest saved configuration version is newer than the running (published) '
+            'version, i.e. configuration changes (secrets, Storage access, git branch, size, ...) are '
+            'saved but NOT live. Call `deploy_data_app(action="deploy")` to publish them.'
+        ),
+    )
     state: str = Field(description='The state of the data app deployment.')
     url: str | None = Field(description='The URL of the running data app deployment.', default=None)
     last_request_timestamp: str | None = Field(
@@ -305,7 +322,14 @@ class DataApp(BaseModel):
     data_app_id: str = Field(description='The ID of the data app.')
     project_id: str = Field(description='The ID of the project.')
     branch_id: str = Field(description='The ID of the branch.')
-    config_version: str = Field(description='The version of the data app config.')
+    config_version: str = Field(description='The latest saved version of the data app config.')
+    published_config_version: str | None = Field(
+        default=None,
+        description=(
+            'The config version the data app is actually running (published). When it is lower than '
+            '`config_version`, the latest configuration changes are not live yet.'
+        ),
+    )
     state: SafeState = Field(description='The state of the data app.')
     type: SafeType = Field(
         description=(
@@ -379,6 +403,7 @@ class DataApp(BaseModel):
             project_id=api_response.project_id,
             branch_id=api_response.branch_id or '',
             config_version=str(api_configuration.version),
+            published_config_version=api_response.config_version or None,
             state=api_response.state,
             desired_state=api_response.desired_state,
             type=api_response.type,
@@ -403,8 +428,11 @@ class DataApp(BaseModel):
         :param last_run: The most recent deployment attempt (AppRun), when available.
         :return: The data app with the deployment info.
         """
+        published_version = self.published_config_version or self.config_version
         self.deployment_info = DeploymentInfo(
-            version=self.config_version,
+            version=published_version,
+            latest_config_version=self.config_version,
+            has_unpublished_changes=_is_version_newer(self.config_version, published_version),
             state=self.state,
             url=self.deployment_url or 'deployment link not available yet',
             logs=logs,
@@ -1898,8 +1926,15 @@ async def deploy_data_app(
       the prod app picks up the current `main`.
     - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
       there is no deploy-time override.
-    - python-js apps do NOT fetch a Storage `configVersion` for deployment (their source lives in
-      git, not in the Storage configuration); this is handled automatically.
+
+    ## Configuration publishing
+    - Every deploy **publishes the latest saved configuration version** (for both python-js and
+      Streamlit apps), so configuration-only changes -- secrets, Storage access, git branch, size --
+      go live together with the code. For python-js apps the code itself is always re-pulled from git.
+    - `deployment_info.version` is the configuration version the app is actually running;
+      `deployment_info.latest_config_version` is the latest saved one. If
+      `deployment_info.has_unpublished_changes` is true, the configuration was changed after the
+      deploy was triggered -- deploy again to publish it.
 
     ## Streamlit apps
     Streamlit apps have no managed git repo, so `mode` has no effect on the deployed app.
@@ -1917,17 +1952,15 @@ async def deploy_data_app(
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
         if data_app.state == 'stopping':
             raise ValueError('Data app is currently "stopping", could not be started at the moment.')
-        # python-js apps don't carry a Storage configVersion in the deploy payload; only Streamlit apps do.
-        if data_app.type == 'python-js':
-            config_version_arg: str | None = None
-        else:
-            config_version = await client.storage_client.configuration_version_latest(
-                DATA_APP_COMPONENT_ID, data_app.configuration_id
-            )
-            config_version_arg = str(config_version)
+        # Always pin the latest config version (python-js included): without `configVersion` the data-app
+        # service keeps the previously published version, so config-only changes (secrets, Storage access,
+        # git branch, ...) would never go live (AJDA-3375).
+        config_version = await client.storage_client.configuration_version_latest(
+            DATA_APP_COMPONENT_ID, data_app.configuration_id
+        )
         _ = await client.data_science_client.deploy_data_app(
             data_app.data_app_id,
-            config_version_arg,
+            str(config_version),
             mode=mode,
         )
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
@@ -2504,6 +2537,15 @@ def _derive_slug_from_name(name: str, *, draft: bool) -> str:
         base = base[: MAX_DATA_APP_SLUG_LENGTH - len(suffix)].strip('-') or 'data-app'
         return f'{base}{suffix}'
     return base[:MAX_DATA_APP_SLUG_LENGTH].strip('-') or 'data-app'
+
+
+def _is_version_newer(latest: str, published: str) -> bool:
+    """True iff the `latest` config version is newer than the `published` one. Config versions are numeric
+    strings; anything non-numeric is compared for inequality only."""
+    try:
+        return int(latest) > int(published)
+    except ValueError:
+        return latest != published
 
 
 def _uses_basic_authentication(authorization: dict[str, Any]) -> bool:

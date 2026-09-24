@@ -19,6 +19,7 @@ from keboola_mcp_server.tools.data_apps import (
     _DEFAULT_PACKAGES,
     DataApp,
     DataAppSummary,
+    DeploymentDataAppOutput,
     GetDataAppsOutput,
     ModifiedDataAppOutput,
     ModifiedPythonJsDataAppOutput,
@@ -617,6 +618,114 @@ async def test_python_js_data_app_storage_access_can_be_enabled_after_create(
         assert enabled.change_summary is not None
         assert 'Storage access enabled' in enabled.change_summary
         assert has_storage_access(await fetch_configuration(created.data_app.configuration_id)) is True
+
+    finally:
+        if created is not None:
+            try:
+                await keboola_client.data_science_client.suspend_data_app(created.data_app.data_app_id)
+            except Exception as exc:
+                LOG.info(f'suspend failed for {created.data_app.data_app_id}: {exc}')
+            try:
+                await keboola_client.data_science_client.delete_data_app(created.data_app.data_app_id)
+            except Exception as exc:
+                LOG.error(f'delete failed for {created.data_app.data_app_id}: {exc}')
+
+
+@pytest.mark.asyncio
+async def test_python_js_data_app_deploy_publishes_config_only_change(
+    mcp_client: Client,
+    keboola_client: KeboolaClient,
+    tmp_path: Path,
+    python_js_app_py: str,
+) -> None:
+    """AJDA-3375: a config-only change (no git push) goes live on `deploy_data_app`, and the tool
+    reports the version the app actually runs instead of the latest saved one.
+
+    Before the fix a python-js deploy sent no `configVersion`, so the data-science API kept the
+    previously published version while `deployment_info.version` echoed the latest config version.
+    """
+
+    async def deploy(configuration_id: str) -> DeploymentDataAppOutput:
+        result = await mcp_client.call_tool(
+            name='deploy_data_app', arguments={'action': 'deploy', 'configuration_id': configuration_id}
+        )
+        assert result.structured_content is not None
+        return DeploymentDataAppOutput.model_validate(result.structured_content)
+
+    async def fetch_detail(configuration_id: str) -> DataApp:
+        result = await mcp_client.call_tool(name='get_data_apps', arguments={'configuration_ids': [configuration_id]})
+        assert result.structured_content is not None
+        app = GetDataAppsOutput.model_validate(result.structured_content).data_apps[0]
+        assert isinstance(app, DataApp)
+        return app
+
+    unique = uuid.uuid4().hex[:8]
+    created: ModifiedPythonJsDataAppOutput | None = None
+    try:
+        # Step 1: create a prod app and push minimal code to `main`.
+        create_result = await mcp_client.call_tool(
+            name='modify_python_js_data_app',
+            arguments={
+                'name': f'Integration publish {unique}',
+                'description': 'AJDA-3375 config publishing integration test',
+                'slug': f'int-pub-{unique}',
+                'authentication_type': 'no-auth',
+                'auto_suspend_after_seconds': 900,
+            },
+        )
+        assert create_result.structured_content is not None
+        created = ModifiedPythonJsDataAppOutput.model_validate(create_result.structured_content)
+        configuration_id = created.data_app.configuration_id
+
+        credential_result = await mcp_client.call_tool(
+            name='create_python_js_data_app_git_credential', arguments={'configuration_id': configuration_id}
+        )
+        assert credential_result.structured_content is not None
+        git_clone_url = credential_result.structured_content['git_clone_url']
+        repo_dir = tmp_path / 'repo'
+        env = {**os.environ, 'GIT_TERMINAL_PROMPT': '0'}
+        subprocess.run(['git', 'clone', git_clone_url, str(repo_dir)], check=True, capture_output=True, env=env)
+        _git('config', 'user.email', 'mcp-integration@keboola.com', cwd=repo_dir)
+        _git('config', 'user.name', 'MCP Integration Test', cwd=repo_dir)
+        _git('checkout', '-B', 'main', cwd=repo_dir)
+        (repo_dir / 'app.py').write_text(python_js_app_py)
+        _git('add', 'app.py', cwd=repo_dir)
+        _git('commit', '-m', f'AJDA-3375 integration test commit {unique}', cwd=repo_dir)
+        subprocess.run(['git', 'push', '-u', 'origin', 'main'], cwd=repo_dir, check=True, capture_output=True, env=env)
+
+        # Step 2: the first deploy publishes the current config version.
+        first = await deploy(configuration_id)
+        assert first.deployment_info is not None
+        assert first.deployment_info.version == first.deployment_info.latest_config_version
+        assert first.deployment_info.has_unpublished_changes is False
+        published_before = first.deployment_info.version
+
+        # Step 3: a config-only change -- nothing is pushed to git. It is saved but not live yet.
+        update_result = await mcp_client.call_tool(
+            name='modify_python_js_data_app',
+            arguments={
+                'name': '',
+                'description': '',
+                'configuration_id': configuration_id,
+                'auto_suspend_after_seconds': 1800,
+                'change_description': 'AJDA-3375 config-only change',
+            },
+        )
+        assert update_result.structured_content is not None
+        pending = await fetch_detail(configuration_id)
+        assert pending.deployment_info is not None
+        assert int(pending.config_version) > int(published_before)
+        assert pending.deployment_info.version == published_before
+        assert pending.deployment_info.has_unpublished_changes is True
+
+        # Step 4: redeploy publishes it, and the response reports the version actually running.
+        second = await deploy(configuration_id)
+        assert second.deployment_info is not None
+        assert second.deployment_info.version == pending.config_version
+        assert second.deployment_info.latest_config_version == pending.config_version
+        assert second.deployment_info.has_unpublished_changes is False
+        published = await keboola_client.data_science_client.get_data_app(created.data_app.data_app_id)
+        assert published.config_version == pending.config_version
 
     finally:
         if created is not None:
