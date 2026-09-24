@@ -9,6 +9,7 @@ from fastmcp import Context
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import AppRunResponse, DataAppConfig, DataAppResponse
+from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
@@ -2332,67 +2333,103 @@ def test_validate_branch_update_rejects_managed_and_unknown(is_managed_git_repo:
         _validate_branch_update('feature-x', app, 'cfg-1')
 
 
-# ===== Tests for deploy_data_app with mode and python-js =====
+# ===== Tests for deploy_data_app config publishing (AJDA-3375) =====
 
 
 @pytest.mark.asyncio
-async def test_deploy_data_app_python_js_skips_storage_config_version_and_passes_mode(
+@pytest.mark.parametrize(
+    ('app_type', 'mode', 'published_after', 'latest_after', 'expected_unpublished'),
+    [
+        # python-js used to omit configVersion, so DSAPI kept the old published version while the tool
+        # reported the latest one as deployed.
+        pytest.param('python-js', 'dev', '5', '5', False, id='python_js_dev_publishes_latest'),
+        pytest.param('python-js', None, '5', '5', False, id='python_js_prod_publishes_latest'),
+        pytest.param('streamlit', None, '5', '5', False, id='streamlit_publishes_latest'),
+        # The config was saved again after the deploy was triggered: report the drift, not the latest version.
+        pytest.param('python-js', None, '5', '6', True, id='config_changed_after_deploy'),
+    ],
+)
+async def test_deploy_data_app_publishes_latest_config_version_and_reports_published(
     mocker,
     mcp_context_client: Context,
-) -> None:
-    """python-js deploy: no configVersion fetch from Storage, mode forwarded to DSAPI."""
-    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    keboola_client.data_science_client = mocker.AsyncMock()
-
-    pyjs_app = DataApp(
-        name='py-app',
-        component_id=DATA_APP_COMPONENT_ID,
-        configuration_id='cfg-1',
-        data_app_id='app-1',
-        project_id='proj-1',
-        branch_id='branch-1',
-        config_version='1',
-        type='python-js',
-        configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}}},
-        state='stopped',
-    )
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=pyjs_app))
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
-
-    # If the code accidentally calls storage_client.configuration_version_latest, this AsyncMock raises.
-    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(
-        side_effect=AssertionError('Should not call configuration_version_latest for python-js apps')
-    )
-
-    _ = await deploy_data_app(
-        ctx=mcp_context_client,
-        action='deploy',
-        configuration_id='cfg-1',
-        mode='dev',
-    )
-
-    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-1', None, mode='dev')
-    keboola_client.storage_client.configuration_version_latest.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_deploy_data_app_streamlit_still_passes_config_version(
-    mocker,
-    mcp_context_client: Context,
-    data_app: DataApp,  # streamlit fixture
+    app_type: str,
+    mode: Literal['dev', 'production'] | None,
+    published_after: str,
+    latest_after: str,
+    expected_unpublished: bool,
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
-    data_app.state = 'stopped'
-    data_app.type = 'streamlit'
-    data_app.configuration = {'authorization': {'app_proxy': {'auth_providers': [], 'auth_rules': []}}}
-    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
+    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
+
+    def make_app(config_version: str, published_config_version: str) -> DataApp:
+        return DataApp(
+            name='app',
+            component_id=DATA_APP_COMPONENT_ID,
+            configuration_id='cfg-1',
+            data_app_id='app-1',
+            project_id='proj-1',
+            branch_id='branch-1',
+            config_version=config_version,
+            published_config_version=published_config_version,
+            type=app_type,
+            configuration={'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}}},
+            state='running',
+        )
+
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(side_effect=[make_app('5', '3'), make_app(latest_after, published_after)]),
+    )
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
-    keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=7)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_latest_run', mocker.AsyncMock(return_value=None))
 
-    _ = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-streamlit')
+    result = await deploy_data_app(ctx=mcp_context_client, action='deploy', configuration_id='cfg-1', mode=mode)
 
-    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with(data_app.data_app_id, '7', mode=None)
+    keboola_client.storage_client.configuration_version_latest.assert_awaited_once_with(DATA_APP_COMPONENT_ID, 'cfg-1')
+    keboola_client.data_science_client.deploy_data_app.assert_awaited_once_with('app-1', '5', mode=mode)
+    assert result.deployment_info is not None
+    assert result.deployment_info.version == published_after
+    assert result.deployment_info.latest_config_version == latest_after
+    assert result.deployment_info.has_unpublished_changes is expected_unpublished
+
+
+@pytest.mark.parametrize(
+    ('config_version', 'published_config_version', 'expected_version', 'expected_unpublished'),
+    [
+        pytest.param('5', '5', '5', False, id='up_to_date'),
+        pytest.param('5', '3', '3', True, id='unpublished_changes'),
+        pytest.param('5', None, '5', False, id='published_unknown_falls_back_to_latest'),
+    ],
+)
+def test_with_deployment_info_reports_published_version(
+    data_app: DataApp,
+    config_version: str,
+    published_config_version: str | None,
+    expected_version: str,
+    expected_unpublished: bool,
+) -> None:
+    data_app.config_version = config_version
+    data_app.published_config_version = published_config_version
+
+    info = data_app.with_deployment_info(logs=[]).deployment_info
+
+    assert info is not None
+    assert info.version == expected_version
+    assert info.latest_config_version == config_version
+    assert info.has_unpublished_changes is expected_unpublished
+
+
+def test_data_app_from_api_responses_keeps_published_and_latest_versions_apart() -> None:
+    api_response = _make_data_app_response().model_copy(update={'config_version': '3'})
+    api_configuration = ConfigurationAPIResponse.model_validate(
+        {'componentId': DATA_APP_COMPONENT_ID, 'id': 'cfg-123', 'name': 'app', 'version': 5, 'configuration': {}}
+    )
+
+    data_app = DataApp.from_api_responses(api_response, api_configuration)
+
+    assert data_app.config_version == '5'
+    assert data_app.published_config_version == '3'
 
 
 # ===== Tests for modify_python_js_data_app draft create path =====

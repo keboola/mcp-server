@@ -2301,8 +2301,15 @@ branch-delete — is yours. This tool only triggers deploys against existing git
   the prod app picks up the current `main`.
 - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
   there is no deploy-time override.
-- python-js apps do NOT fetch a Storage `configVersion` for deployment (their source lives in
-  git, not in the Storage configuration); this is handled automatically.
+
+## Configuration publishing
+- Every deploy **publishes the latest saved configuration version** (for both python-js and
+  Streamlit apps), so configuration-only changes -- secrets, Storage access, git branch, size --
+  go live together with the code. For python-js apps the code itself is always re-pulled from git.
+- `deployment_info.version` is the configuration version the app is actually running;
+  `deployment_info.latest_config_version` is the latest saved one. If
+  `deployment_info.has_unpublished_changes` is true, the configuration was changed after the
+  deploy was triggered -- deploy again to publish it.
 
 ## Streamlit apps
 Streamlit apps have no managed git repo, so `mode` has no effect on the deployed app.
