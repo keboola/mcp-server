@@ -95,11 +95,17 @@ The MCP server never writes `BRANCH_ID`, `KBC_TOKEN` or `KBC_URL` into a python-
 
 A change on the update path only reaches the running app after a redeploy (`deploy_data_app`).
 
+#### What Storage access grants
+
+The workspace is scoped to the **whole project**, not to the tables the app queries: the app can read every table in the project's Storage. That is normally what is wanted — it is why the read-only workspace is the default pattern — but it is worth stating to the user rather than leaving them to discover it, and the `storage_access` tool description tells agents to do so. It matters most when the app is `no-auth`, where project-wide read sits behind a URL anyone can open. An app that must be limited to particular tables needs an input/output mapping via `storage`, not this switch.
+
+Note the MCP does not currently verify that the platform-provisioned per-app workspace is read-only in practice (see the comment in `workspace.py`), so treat "read-only" as the platform's contract rather than something this server enforces.
+
 #### Backfill: explicit only
 
 **An update never backfills Storage access.** Omitting `storage_access` leaves the stored config untouched on both mechanisms, so renaming an app or changing its auto-suspend can neither grant nor revoke its Storage access. Repairing an app that fails with `missing required env vars: WORKSPACE_ID` is a deliberate `storage_access=True` call.
 
-This is a change in behaviour on **projects without the feature**: before AJDA-3374 the update path merged a `WORKSPACE_ID` secret into every app that lacked one, as a side effect of any update. Apps created through the MCP already carry the secret from create time, so the change is a no-op for them; an app created in the UI (or predating that code) now needs the explicit call. The trade-off was taken deliberately — a silent grant is worse than an explicit one, and consistency between the two mechanisms is worth more than the incidental repair.
+This is a change in behaviour on **projects without the feature**: the update path previously merged a `WORKSPACE_ID` secret into every app that lacked one, as a side effect of any update. Apps created through the MCP already carry the secret from create time, so the change is a no-op for them; an app created in the UI (or predating that code) now needs the explicit call. The trade-off was taken deliberately — a silent grant is worse than an explicit one, and consistency between the two mechanisms is worth more than the incidental repair.
 
 Two details of the disable path are worth spelling out, because the two mechanisms are not as mutually exclusive as the table suggests:
 

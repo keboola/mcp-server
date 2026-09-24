@@ -1025,6 +1025,11 @@ async def modify_python_js_data_app(
                 'you fix an existing app failing with `missing required env vars: WORKSPACE_ID`, with '
                 'no UI step), or `False` to turn it off. Redeploy the app afterwards to apply it.\n'
                 'Check `data_app.storage_access_enabled` in the response to confirm the result.\n'
+                'The workspace is scoped to the **whole project**, not to the tables the app '
+                'queries -- the app can read every table in the project Storage. Tell the user that '
+                'when you turn it on, and especially when the app is `no-auth`, where anyone with '
+                'the URL reaches project data through it. If the app must be limited to particular '
+                'tables, that is an input/output mapping via `storage`, not this switch.\n'
                 'On projects without the `data-apps-storage-workspace` feature this falls back to '
                 'writing `parameters.dataApp.secrets.WORKSPACE_ID`, which is **deprecated** -- it pins '
                 'the app to the shared MCP-managed workspace instead of a per-app one. Never write that '
@@ -1198,7 +1203,7 @@ async def modify_python_js_data_app(
     has_storage_workspace = await client.has_feature(DATA_APPS_STORAGE_WORKSPACE_FEATURE)
     # Create keeps its historical default of Storage access ON; update only ever moves the flag
     # when explicitly asked to, so an unrelated edit (a rename, an auto-suspend change) can neither
-    # grant nor revoke Storage access -- on either mechanism (AJDA-3374).
+    # grant nor revoke Storage access -- on either mechanism.
     wants_storage_access = storage_access is True if configuration_id else storage_access is not False
     legacy_workspace_id: str | None = None
     legacy_fallback_hint: str | None = None
@@ -1709,7 +1714,7 @@ def _update_existing_code_data_app_config(
     project supports: `runtime.workspace.enabled` when `has_storage_workspace` is true, and the
     legacy `parameters.dataApp.secrets.WORKSPACE_ID` entry (taken from `legacy_workspace_id`) when
     it is false. `None` is the no-op: the stored config keeps whatever it has, so an update that
-    only renames an app never grants or revokes Storage access (AJDA-3374). Any other pre-existing
+    only renames an app never grants or revokes Storage access. Any other pre-existing
     secrets are preserved verbatim by the deepcopy either way.
     `storage` replaces the entire `storage` block when provided (None preserves the existing one;
     an empty dict — or one that prunes down to nothing — is an explicit wipe that removes the

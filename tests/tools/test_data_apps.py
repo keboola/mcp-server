@@ -1732,7 +1732,7 @@ async def test_modify_python_js_data_app_create_storage_access(
     # (image is platform-default, workspace off), hence the `.get` chain rather than indexing.
     assert serialized.get('runtime', {}).get('workspace') == expected_workspace
     assert serialized['parameters']['dataApp'].get('secrets') == expected_secrets
-    # The agent must be able to verify Storage access rather than assume it (AJDA-3374).
+    # The agent must be able to verify Storage access rather than assume it.
     assert result.data_app.storage_access_enabled is (storage_access is not False)
     _assert_legacy_fallback_hint(result.change_summary, expected=expected_secrets is not None)
 
@@ -1754,7 +1754,7 @@ async def test_modify_python_js_data_app_create_storage_access(
         (True, None, None, {'KEEP': 'x'}, None, {'KEEP': 'x'}, False),
         (True, None, {'enabled': True}, {'KEEP': 'x'}, {'enabled': True}, {'KEEP': 'x'}, False),
         (False, None, None, {'KEEP': 'x'}, None, {'KEEP': 'x'}, False),
-        # Explicit enable — the gap AJDA-3374 closes: an existing flagless app becomes
+        # Explicit enable — an existing flagless app becomes
         # Storage-enabled through MCP alone, with no UI step.
         (True, True, None, {'KEEP': 'x'}, {'enabled': True}, {'KEEP': 'x'}, False),
         (False, True, None, {'KEEP': 'x'}, None, {'KEEP': 'x', 'WORKSPACE_ID': 'wid-legacy'}, True),
@@ -1811,7 +1811,7 @@ async def test_modify_python_js_data_app_update_storage_access(
     expect_legacy_fallback: bool,
 ) -> None:
     """On update, `storage_access` is the only thing that moves Storage access. Omitting it leaves
-    the stored config alone — no silent backfill on either mechanism (AJDA-3374)."""
+    the stored config alone — no silent backfill on either mechanism."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.has_feature = mocker.AsyncMock(return_value=has_feature)
 
