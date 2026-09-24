@@ -19,7 +19,6 @@ from typing import Annotated, Any
 import httpx
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
-from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 
@@ -31,8 +30,8 @@ from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import (
     TOKEN_INFO_VAR,
     KeboolaMcpServer,
+    ToonCompactFunctionTool,
     process_concurrently,
-    toon_serializer_compact,
     unwrap_results,
 )
 from keboola_mcp_server.scope import ProjectIdArg
@@ -105,11 +104,7 @@ def add_merge_request_tools(mcp: KeboolaMcpServer) -> None:
         (get_merge_request_conflicts, read_only),
         (resolve_merge_request_conflict, destructive),
     ):
-        mcp.add_tool(
-            FunctionTool.from_function(
-                fn, annotations=annotations, serializer=toon_serializer_compact, tags={MERGE_REQUEST_TOOLS_TAG}
-            )
-        )
+        mcp.add_tool(ToonCompactFunctionTool.from_function(fn, annotations=annotations, tags={MERGE_REQUEST_TOOLS_TAG}))
     LOG.info('Merge-request tools added to the MCP server.')
 
 
