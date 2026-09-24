@@ -638,7 +638,7 @@ async def test_python_js_data_app_deploy_publishes_config_only_change(
     tmp_path: Path,
     python_js_app_py: str,
 ) -> None:
-    """AJDA-3375: a config-only change (no git push) goes live on `deploy_data_app`, and the tool
+    """A config-only change (no git push) goes live on `deploy_data_app`, and the tool
     reports the version the app actually runs instead of the latest saved one.
 
     Before the fix a python-js deploy sent no `configVersion`, so the data-science API kept the
@@ -667,7 +667,7 @@ async def test_python_js_data_app_deploy_publishes_config_only_change(
             name='modify_python_js_data_app',
             arguments={
                 'name': f'Integration publish {unique}',
-                'description': 'AJDA-3375 config publishing integration test',
+                'description': 'Config publishing integration test',
                 'slug': f'int-pub-{unique}',
                 'authentication_type': 'no-auth',
                 'auto_suspend_after_seconds': 900,
@@ -690,7 +690,7 @@ async def test_python_js_data_app_deploy_publishes_config_only_change(
         _git('checkout', '-B', 'main', cwd=repo_dir)
         (repo_dir / 'app.py').write_text(python_js_app_py)
         _git('add', 'app.py', cwd=repo_dir)
-        _git('commit', '-m', f'AJDA-3375 integration test commit {unique}', cwd=repo_dir)
+        _git('commit', '-m', f'Integration test commit {unique}', cwd=repo_dir)
         subprocess.run(['git', 'push', '-u', 'origin', 'main'], cwd=repo_dir, check=True, capture_output=True, env=env)
 
         # Step 2: the first deploy publishes the current config version.
@@ -708,7 +708,7 @@ async def test_python_js_data_app_deploy_publishes_config_only_change(
                 'description': '',
                 'configuration_id': configuration_id,
                 'auto_suspend_after_seconds': 1800,
-                'change_description': 'AJDA-3375 config-only change',
+                'change_description': 'Config-only change',
             },
         )
         assert update_result.structured_content is not None
