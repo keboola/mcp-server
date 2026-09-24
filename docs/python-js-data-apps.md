@@ -58,7 +58,7 @@ The data-science platform does not yet support sharing a managed repo across app
 | Tool | Change in v1.64.0 | Purpose |
 |---|---|---|
 | `modify_python_js_data_app` | Default draft branch is a generated, unique `'draft-<6-hex>'` (v1.64 shipped the fixed literal `'init'`; it was replaced — see below). Drafts persist `parameters.dataApp.parentConfigurationId` so they can be discovered cheaply. Docstring rewritten to drop "dev twin". | Create/update a prod app; create a draft bound to the parent prod app's managed repo. |
-| `deploy_data_app` | No behaviour change (later: publishes the latest config version, AJDA-3375). Docstring reframes `mode='dev'` as "deploys the draft as a **dev version of the data app**" (hot reload + auto-auth for iframe preview). | Deploy/redeploy or stop. `mode='dev'` only meaningful on drafts. |
+| `deploy_data_app` | No behaviour change (later: publishes the latest config version). Docstring reframes `mode='dev'` as "deploys the draft as a **dev version of the data app**" (hot reload + auto-auth for iframe preview). | Deploy/redeploy or stop. `mode='dev'` only meaningful on drafts. |
 | `create_python_js_data_app_git_credential` | No behaviour change. Docstring tightens the prod-only contract: drafts have no managed repo, always mint against prod. | Mint a one-time HTTPS token on a python-js prod app's managed repo. |
 | `get_data_apps` | Detail responses for python-js **prod** apps now include a `drafts: [...]` array of `DataAppSummary` entries — every draft (`isDraft=true`, `parentConfigurationId == <prod-cfg>`) parented to that prod, fetched with one extra `configuration_list` round-trip. Empty for drafts themselves and for Streamlit apps. | List or detail-fetch data apps; discover drafts. |
 | **NEW** `delete_python_js_data_app_draft` | New tool. Deletes a draft's data-app instance (DSAPI) and its Storage configuration. Refuses prod apps (no `isDraft` flag) and Streamlit apps. | Cleanup primitive — call after a draft's branch has been promoted to `main`. |
@@ -305,7 +305,7 @@ Distinct from create / edit: when only `auto_suspend_after_seconds`, `name`, `de
 
 - Updates the Storage configuration in place — works on both prod apps and drafts.
 - **Rejects** `slug` (immutable subdomain), `parent_configuration_id` (repo binding is fixed at creation), and `branch` (only meaningful for draft creates).
-- After updating, the caller MUST call `deploy_data_app(...)` so changes take effect. The deploy publishes the latest saved configuration version (see [Configuration publishing](#configuration-publishing-ajda-3375)).
+- After updating, the caller MUST call `deploy_data_app(...)` so changes take effect. The deploy publishes the latest saved configuration version (see [Configuration publishing](#configuration-publishing)).
 
 The update flow does NOT involve git — source code changes go through the edit flow. To rotate or add a token, use `create_python_js_data_app_git_credential` on the prod app.
 
@@ -352,11 +352,11 @@ Always call against the **prod** app's configuration ID — the draft has no man
 - **Type**: `Optional[Literal['dev', 'production']]`
 - **Semantics**: `mode='dev'` deploys the target as a **dev version of the data app** — the runtime uses a development `setup.sh` (hot reload), and the data-app proxy enables an auto-auth path so an iframe preview can render without a manual login. Only meaningful on drafts (python-js apps with `isDraft=true`). For prod redeploys, omit `mode`.
 
-#### Configuration publishing (AJDA-3375)
+#### Configuration publishing
 
 The data-science API pins every app to a **published** Storage config version (`app.configVersion`). The runtime reads secrets, `runtime.workspace`, the git binding, size etc. from that pinned version, not from the latest one. A `PATCH /apps/{id}` without `configVersion` restarts the app and re-pulls git code, but keeps the old pinned version — so config-only changes never went live, while the tool reported the latest version as deployed.
 
-`deploy_data_app(action='deploy')` therefore always sends `configVersion = <latest Storage config version>` for python-js apps too (Streamlit already did). This is exactly what the Keboola UI's Deploy / Publish buttons send. There is no opt-out: publishing is what "deploy" means to every caller, and the consent gate for prod deploys (AI-3809) sits on the `deploy_data_app` call itself.
+`deploy_data_app(action='deploy')` therefore always sends `configVersion = <latest Storage config version>` for python-js apps too (Streamlit already did). This is exactly what the Keboola UI's Deploy / Publish buttons send. There is no opt-out: publishing is what "deploy" means to every caller, and the consent gate for prod deploys sits on the `deploy_data_app` call itself.
 
 The response reports the truth:
 
@@ -416,7 +416,7 @@ The tool surface maps to the underlying APIs as follows. Confirm field names wit
 | Prod create (default) | `POST /apps` | `useManagedGitRepo: true`. No `parameters.dataApp.git` block. |
 | `parent_configuration_id` (draft) | `POST /apps` | `useManagedGitRepo` omitted/false. `configuration.parameters.dataApp.git = {repository, username, '#password' (encrypted via EncryptionClient), branch}`. Also writes `isDraft: true` and `parentConfigurationId: <prod cfg id>`. |
 | `deploy_data_app(mode='dev')` | `PATCH /apps/{id}` | `mode: 'dev'` (alongside `desiredState: 'running'`). The deployed branch is whatever the draft's config pins — there is no deploy-time branch field. |
-| `deploy_data_app(action='deploy')` (any mode) | `PATCH /apps/{id}` | `configVersion: <latest Storage config version>`, `desiredState: 'running'`, `restartIfRunning: true` — publishes the latest config (AJDA-3375). |
+| `deploy_data_app(action='deploy')` (any mode) | `PATCH /apps/{id}` | `configVersion: <latest Storage config version>`, `desiredState: 'running'`, `restartIfRunning: true` — publishes the latest config. |
 | `create_python_js_data_app_git_credential` | `POST /apps/{id}/git-repo/credentials` | Request: `{type: 'http_token', permissions: 'readWrite'}`. Response: `{id, type, permissions, secret, ...}`. The one-time `secret` is what we embed (with `kai` as username) into `git_clone_url`. |
 | (clone URL lookup) | `GET /apps/{id}/git-repo` | Response: `{sshUrl, httpsUrl, isManagedGitRepo}`. The MCP server uses `httpsUrl` only. |
 | `storage_access` (create default on; update explicit only) | `POST /apps` / Storage config update | `configuration.runtime.workspace.enabled`, or `configuration.parameters.dataApp.secrets.WORKSPACE_ID` on projects without the `data-apps-storage-workspace` feature |
