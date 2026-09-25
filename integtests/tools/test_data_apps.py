@@ -553,7 +553,7 @@ async def test_python_js_data_app_storage_access_can_be_enabled_after_create(
     mcp_client: Client,
     keboola_client: KeboolaClient,
 ) -> None:
-    """AJDA-3374: an agent can turn read-only Storage access on for an existing python-js app
+    """An agent can turn read-only Storage access on for an existing python-js app
     using MCP tools alone, with no UI step.
 
     Creates an app that explicitly opts out of Storage access, verifies the stored configuration
@@ -587,7 +587,7 @@ async def test_python_js_data_app_storage_access_can_be_enabled_after_create(
             name='modify_python_js_data_app',
             arguments={
                 'name': f'Integration storage-access {unique}',
-                'description': 'AJDA-3374 storage access integration test',
+                'description': 'storage access integration test',
                 'slug': f'int-sa-{unique}',
                 'authentication_type': 'basic-auth',
                 'storage_access': False,
@@ -599,7 +599,7 @@ async def test_python_js_data_app_storage_access_can_be_enabled_after_create(
         assert created.data_app.storage_access_enabled is False
         assert has_storage_access(await fetch_configuration(created.data_app.configuration_id)) is False
 
-        # Step 2: enable it through MCP alone -- the gap AJDA-3374 closes.
+        # Step 2: enable it through MCP alone -- the gap this closes.
         enable_result = await mcp_client.call_tool(
             name='modify_python_js_data_app',
             arguments={
@@ -607,7 +607,7 @@ async def test_python_js_data_app_storage_access_can_be_enabled_after_create(
                 'description': '',
                 'configuration_id': created.data_app.configuration_id,
                 'storage_access': True,
-                'change_description': 'AJDA-3374 enable storage access',
+                'change_description': 'enable storage access',
             },
         )
         assert enable_result.structured_content is not None

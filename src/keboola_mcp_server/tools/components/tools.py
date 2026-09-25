@@ -1633,7 +1633,7 @@ async def update_config_internal(
     processors_after: list[dict[str, Any]] | None = None,
     runtime: dict[str, Any] | None = None,
 ) -> tuple[JsonDict, JsonDict]:
-    check_suitable('update_config', component_id)
+    check_suitable('update_config', component_id, runtime=runtime)
 
     current_config = await client.storage_client.configuration_detail(
         component_id=component_id, configuration_id=configuration_id

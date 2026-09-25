@@ -1101,10 +1101,24 @@ _UNSUITABLE_COMPONENTS_MESSAGES: Mapping[str, str] = {
 }
 
 
-def check_suitable(tool_name: str, component_id: str) -> None:
+def check_suitable(tool_name: str, component_id: str, *, runtime: Mapping[str, Any] | None = None) -> None:
     """
     Checks if the general components tooling can be used with the given component.
+
+    `runtime` is the runtime block the caller was trying to write, when the tool has one. It only
+    steers the error text: a rejection that names the exact call is the difference between an agent
+    recovering and an agent concluding the capability does not exist.
     :raises ValueError: If the component needs to be handled by special tools.
     """
     if message := _UNSUITABLE_COMPONENTS_MESSAGES.get(component_id):
+        if component_id == DATA_APP_COMPONENT_ID and isinstance(runtime, Mapping) and 'workspace' in runtime:
+            # Writing `runtime.workspace` on a data app is an attempt to toggle Storage access.
+            # Answer with the call that does it, so the rejection is the recovery path rather than
+            # a redirect the caller still has to interpret.
+            message = (
+                "To change a data app's Storage access, call "
+                '`modify_python_js_data_app(configuration_id=..., storage_access=True)` (or '
+                '`storage_access=False` to turn it off), then `deploy_data_app`. '
+                f'{message}'
+            )
         raise ValueError(f'The "{tool_name}" tool cannot be used with {component_id} component. {message}')

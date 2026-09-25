@@ -1892,6 +1892,23 @@ async def test_update_config_folder_skipped_for_extractor(
             'Use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app` instead.',
         ),
         (
+            # A `runtime.workspace` write is an attempt to toggle Storage access, so the rejection
+            # names the exact call instead of leaving the agent to pick among three tools.
+            update_config,
+            {
+                'configuration_id': 'foo',
+                'change_description': 'bar',
+                'runtime': {'workspace': {'enabled': True}},
+            },
+            DATA_APP_COMPONENT_ID,
+            (
+                "To change a data app's Storage access, call "
+                '`modify_python_js_data_app(configuration_id=..., storage_access=True)` (or '
+                '`storage_access=False` to turn it off), then `deploy_data_app`. '
+                'Use `modify_python_js_data_app` / `modify_streamlit_data_app` / `deploy_data_app` instead.'
+            ),
+        ),
+        (
             update_config,
             {'configuration_id': 'foo', 'change_description': 'bar'},
             CONDITIONAL_FLOW_COMPONENT_ID,
@@ -2016,7 +2033,7 @@ async def test_generic_tools_reject_specialized_components(
     mcp_context_components_configs: Context,
 ):
     m = f'The "{tool_fn.__name__}" tool cannot be used with {component_id} component. {message}'
-    with pytest.raises(ValueError, match=m):
+    with pytest.raises(ValueError, match=re.escape(m)):
         await tool_fn(
             ctx=mcp_context_components_configs,
             component_id=component_id,
