@@ -1144,6 +1144,7 @@ from keboola_mcp_server.tools.data_apps import (  # noqa: E402
     CreatedGitCredentialOutput,
     ModifiedPythonJsDataAppOutput,
     _is_draft_config,
+    _slug_change_hint,
     _update_existing_code_data_app_config,
     _validate_branch_update,
     create_python_js_data_app_git_credential,
@@ -1306,7 +1307,34 @@ async def test_modify_python_js_data_app_update_slug(
         assert 'slug' not in (result.change_summary or '')
     else:
         assert f"'{expected_slug}'" in result.change_summary
-        assert 'old URL stops working' in result.change_summary
+        # The explicit-slug row is a deployed app; every other change is a rename of a never-deployed one.
+        expected_phrase = 'old URL stops working' if 'slug' in kwargs else 'part of the rename'
+        assert expected_phrase in result.change_summary
+
+
+@pytest.mark.parametrize(
+    ('new_slug', 'explicit', 'never_deployed', 'expected_phrase', 'unexpected_phrase'),
+    [
+        # A deployed app moves off a URL people already use.
+        ('kpis', True, False, 'old URL stops working', 'part of the rename'),
+        # An explicit slug on a never-deployed app: there is no old URL to lose.
+        ('kpis', True, True, 'on its first deploy', 'old URL stops working'),
+        # A slug that followed a rename: the agent is told the move belongs to the rename.
+        ('sales', False, True, 'part of the rename', 'old URL stops working'),
+    ],
+)
+def test_slug_change_hint(
+    new_slug: str, explicit: bool, never_deployed: bool, expected_phrase: str, unexpected_phrase: str
+) -> None:
+    hint = _slug_change_hint(new_slug, explicit=explicit, never_deployed=never_deployed)
+    assert hint is not None
+    assert f"'{new_slug}'" in hint
+    assert expected_phrase in hint
+    assert unexpected_phrase not in hint
+
+
+def test_slug_change_hint_unchanged_slug() -> None:
+    assert _slug_change_hint(None, explicit=False, never_deployed=True) is None
 
 
 @pytest.mark.asyncio
