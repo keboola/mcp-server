@@ -10,6 +10,7 @@ import dataclasses
 import logging
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from http import HTTPStatus
 from typing import Any, TypeVar, cast
 from unittest.mock import MagicMock
@@ -61,6 +62,10 @@ from keboola_mcp_server.session_store.kai_scope import KaiScopeStore
 from keboola_mcp_server.session_store.repository import SessionStore
 from keboola_mcp_server.tools.constants import (
     BOOTSTRAP_TOOLS,
+    MERGE_REQUEST_BRANCH_ONLY_MESSAGE,
+    MERGE_REQUEST_BRANCH_ONLY_TOOLS,
+    MERGE_REQUEST_TOOL_NAMES,
+    MERGE_REQUESTS_FEATURE,
     MODIFY_FLOW_TOOL_NAME,
     SEMANTIC_TOOLS_TAG,
     UPDATE_FLOW_TOOL_NAME,
@@ -73,6 +78,11 @@ CONVERSATION_ID = 'conversation_id'
 # bootstrap session (no credential yet, see `create_session_state`) has no KeboolaClient to read it
 # from, and `ServerState.config` holds only the server-level value, not the request's.
 STORAGE_API_URL = 'storage_api_url'
+# ToolsFilteringMiddleware.on_call_tool publishes the `verify_token` result of the current call here, so tool
+# bodies (merge requests: role, admin id, project id) can read it without a second call. A contextvar, not
+# session state: it is scoped to this call's task, so concurrent calls (multi-project fan-out) cannot see each
+# other's token info.
+TOKEN_INFO_VAR: ContextVar[JsonDict | None] = ContextVar('token_info', default=None)
 
 R = TypeVar('R')
 T = TypeVar('T')
@@ -1106,6 +1116,14 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in DATA_APP_BRANCH_GATED_TOOLS]
 
+        # Merge-request tools: hidden when the project lacks the feature; the writes hidden for roles that cannot
+        # use them. The branch-only tools stay visible on production on purpose (call-time denial only) so the
+        # model keeps their descriptions and can hand the user off to a development-branch session.
+        if MERGE_REQUESTS_FEATURE not in features:
+            tools = [t for t in tools if t.name not in MERGE_REQUEST_TOOL_NAMES]
+        elif not (token_role in ('admin', 'share') or is_oauth):
+            tools = [t for t in tools if t.name not in MERGE_REQUEST_TOOL_NAMES or is_read_only_tool(t)]
+
         if token_role == 'readonly':
             tools = [t for t in tools if is_read_only_tool(t)]
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
@@ -1185,6 +1203,22 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         if tool_name in DATA_APP_BRANCH_GATED_TOOLS and not is_main_branch:
             return 'Data apps are supported only in the main production branch.'
 
+        if tool_name in MERGE_REQUEST_TOOL_NAMES:
+            # Three axes (RFC feature_spec/branches_merge_requests_mcp): feature, role (+ OAuth carve-out as for
+            # the flow tools above), and session branch. Reads are open to every role.
+            if MERGE_REQUESTS_FEATURE not in features:
+                return (
+                    f'The tool "{tool_name}" is not available in this project. Merge requests require the '
+                    f'"{MERGE_REQUESTS_FEATURE}" project feature; ask Keboola support to enable it.'
+                )
+            if not is_read_only and token_role not in ('admin', 'share') and not is_oauth:
+                return (
+                    f'The tool "{tool_name}" is not available for your role ({token_role or "unknown"}). '
+                    'Only project admins (role "admin" or "share") can modify merge requests.'
+                )
+            if is_main_branch and tool_name in MERGE_REQUEST_BRANCH_ONLY_TOOLS:
+                return MERGE_REQUEST_BRANCH_ONLY_MESSAGE
+
         return None
 
     async def on_call_tool(
@@ -1222,7 +1256,11 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         if denial:
             raise ToolError(denial)
 
-        return await call_next(context)
+        token = TOKEN_INFO_VAR.set(token_info)
+        try:
+            return await call_next(context)
+        finally:
+            TOKEN_INFO_VAR.reset(token)
 
 
 def _to_python(data: Any, exclude_none: bool = True) -> Any | None:
