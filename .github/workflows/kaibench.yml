@@ -25,13 +25,23 @@ on:
         required: false
         type: string
         default: ''
+      questions:
+        description: 'Specific question IDs (comma-separated). Intersects with the other filters.'
+        required: false
+        type: string
+        default: ''
+      repeat:
+        description: 'Trials per question, for consistency/noise measurement (default 1)'
+        required: false
+        type: string
+        default: ''
   workflow_call:
 
 jobs:
   evaluate:
     name: Run KaiBench evaluation
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     continue-on-error: ${{ github.event_name == 'workflow_call' }}
     outputs:
       status: ${{ steps.parse.outputs.status }}
@@ -41,7 +51,12 @@ jobs:
       pass_rate: ${{ steps.parse.outputs.pass_rate }}
       duration: ${{ steps.parse.outputs.duration }}
       regressions: ${{ steps.parse.outputs.regressions }}
+      regressed_qids: ${{ steps.parse.outputs.regressed_qids }}
+      flaky_regressions: ${{ steps.parse.outputs.flaky_regressions }}
+      flaky_regressed_qids: ${{ steps.parse.outputs.flaky_regressed_qids }}
       baseline_run: ${{ steps.parse.outputs.baseline_run }}
+      baseline_overlap: ${{ steps.parse.outputs.baseline_overlap }}
+      baseline_shared: ${{ steps.parse.outputs.baseline_shared }}
 
     services:
       postgres:
@@ -209,6 +224,8 @@ jobs:
           KAIBENCH_EVAL_PARALLEL_WORKERS: '4'
           KAIBENCH_EVAL_KAI_BACKEND_URL: http://localhost:3000
           QUESTION_TYPES: ${{ inputs.question_types }}
+          QUESTION_IDS: ${{ inputs.questions }}
+          REPEAT: ${{ inputs.repeat }}
         run: |
           CMD_ARGS=()
           if [ -n "$QUESTION_TYPES" ]; then
@@ -220,11 +237,22 @@ jobs:
           else
             CMD_ARGS=(-t "Data Analysis Query" -t "Configuration Reasoning" -t "Storage Object Reasoning" -t "MCP Tool Validation")
           fi
+          if [ -n "$QUESTION_IDS" ]; then
+            IFS=',' read -ra QIDS <<< "$QUESTION_IDS"
+            for q in "${QIDS[@]}"; do
+              trimmed=$(echo "$q" | xargs)
+              CMD_ARGS+=(--question "$trimmed")
+            done
+          fi
+          if [ -n "$REPEAT" ]; then
+            CMD_ARGS+=(--repeat "$REPEAT")
+          fi
           if [ "${{ inputs.regression_only }}" = "true" ]; then
             # the CLI option is `--regression` (see kaibench/cli.py); `--regression-only` is rejected by
             # typer as an unknown option, and because this step is continue-on-error it failed silently
             CMD_ARGS+=(--regression)
           fi
+          echo "Running: kaibench run ${CMD_ARGS[*]}"
           uv run kaibench run "${CMD_ARGS[@]}"
         continue-on-error: true
 
