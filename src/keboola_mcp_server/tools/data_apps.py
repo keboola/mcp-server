@@ -1175,12 +1175,12 @@ async def modify_python_js_data_app(
 
     The slug is the app URL (`https://<slug>-<app id>.hub.<stack>`), so changing it moves the app.
     1. Until the prod app is first deployed, a rename moves a slug that follows the name (e.g.
-       `new-app` for "New App") to the new name automatically. Nobody has the URL yet, so this is
-       part of the rename, also when the user asks to change only the name.
+       `new-app` for "New App") to the new name automatically — nobody has the URL yet.
     2. Once the app has been deployed, a rename keeps the slug. Change it only with an explicit
        `slug`, and only after the user approved the new URL.
     3. Drafts never change their slug.
-    `change_summary` reports a slug change and when the new URL applies; pass that on to the user.
+    After an explicit `slug` the new URL applies on the next `deploy_data_app` and the old URL stops
+    working; tell the user both.
     """
     if configuration_id:
         if slug:
@@ -1224,7 +1224,6 @@ async def modify_python_js_data_app(
             _reject_no_auth_on_draft(authentication_type)
         normalized_branch = _validate_branch_update(branch, data_app, configuration_id) if branch else None
         new_slug = _resolve_slug_update(data_app, name=name, explicit_slug=slug)
-        never_deployed = _is_never_deployed(data_app)
         if (
             not has_storage_workspace
             and wants_storage_access
@@ -1266,7 +1265,20 @@ async def modify_python_js_data_app(
         folder_hint = await apply_folder_metadata(
             client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
         )
-        slug_hint = _slug_change_hint(new_slug, explicit=bool(slug), never_deployed=never_deployed)
+        # Without an explicit `slug`, a new slug is a never-deployed app's slug following its name.
+        if new_slug is None:
+            slug_hint = None
+        elif slug:
+            slug_hint = (
+                f"Changed the URL slug to '{new_slug}'. The app keeps its current URL until it is redeployed "
+                '(deploy_data_app); from then on it is served under the new slug and the old URL stops working. '
+                'Tell the user both.'
+            )
+        else:
+            slug_hint = (
+                f"The URL slug followed the new name to '{new_slug}': the app has never been deployed, so its "
+                'URL still tracks its name. Nothing to do or undo.'
+            )
         branch_hint = (
             f"Repointed the external-git branch to '{normalized_branch}'. Redeploy the app "
             '(deploy_data_app) to serve the new branch.'
@@ -2395,35 +2407,6 @@ def _resolve_slug_update(data_app: 'DataApp', *, name: str, explicit_slug: str |
         return None
     new_slug = _derive_slug_from_name(name, draft=False)
     return None if new_slug == current_slug else new_slug
-
-
-def _slug_change_hint(new_slug: str | None, *, explicit: bool, never_deployed: bool) -> str | None:
-    """The `change_summary` line for the slug a python-js update wrote, or None when it kept the slug.
-
-    1. A deployed app: the old URL serves until the next deploy, then stops working.
-    2. A never-deployed app with an explicit slug: the new slug becomes the URL on the first deploy.
-    3. A never-deployed app whose slug followed a rename: as (2), and the line tells the agent why the
-       move belongs to the rename — asked to "change only the name", an agent otherwise restores the slug.
-    """
-    if new_slug is None:
-        return None
-    if not never_deployed:
-        return (
-            f"Changed the URL slug to '{new_slug}'. The app keeps its current URL until it is redeployed "
-            '(deploy_data_app); from then on it is served under the new slug and the old URL stops working. '
-            'Tell the user both.'
-        )
-    if explicit:
-        return (
-            f"Changed the URL slug to '{new_slug}'. The app has never been deployed, so it gets this URL "
-            'on its first deploy (deploy_data_app). Tell the user.'
-        )
-    return (
-        f"Renaming moved the URL slug to '{new_slug}'. The app has never been deployed, so nobody has its "
-        'URL yet; a slug that follows the name is part of the rename, also when the user asked to change '
-        'only the name. Tell the user the app gets the new URL on its first deploy (deploy_data_app). '
-        'Set the old slug back only if the user asks to keep the old URL.'
-    )
 
 
 def _get_data_app_slug(name: str) -> str:

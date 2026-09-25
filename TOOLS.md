@@ -2571,12 +2571,12 @@ slug must be at most 63 characters (the DNS-label max), and note the UI's own UR
 
 The slug is the app URL (`https://<slug>-<app id>.hub.<stack>`), so changing it moves the app.
 1. Until the prod app is first deployed, a rename moves a slug that follows the name (e.g.
-   `new-app` for "New App") to the new name automatically. Nobody has the URL yet, so this is
-   part of the rename, also when the user asks to change only the name.
+   `new-app` for "New App") to the new name automatically — nobody has the URL yet.
 2. Once the app has been deployed, a rename keeps the slug. Change it only with an explicit
    `slug`, and only after the user approved the new URL.
 3. Drafts never change their slug.
-`change_summary` reports a slug change and when the new URL applies; pass that on to the user.
+After an explicit `slug` the new URL applies on the next `deploy_data_app` and the old URL stops
+working; tell the user both.
 
 
 **Input JSON Schema**:
