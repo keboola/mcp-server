@@ -20,7 +20,8 @@ class DataAppResponse(BaseModel):
         validation_alias=AliasChoices('configId', 'config_id'), description='The component config ID'
     )
     config_version: str = Field(
-        validation_alias=AliasChoices('configVersion', 'config_version'), description='The config version'
+        validation_alias=AliasChoices('configVersion', 'config_version'),
+        description='The config version the app is deployed with (published), not necessarily the latest one',
     )
     type: str = Field(description='The type of the data app')
     state: str = Field(description='The state of the data app')
@@ -426,8 +427,8 @@ class DataScienceClient(KeboolaServiceClient):
         Deploy a data app by its ID.
 
         :param data_app_id: The ID of the data app
-        :param config_version: The version of the config to deploy. Required for Streamlit apps; omit for python-js
-                    apps backed by a managed git repo (they have no Storage configVersion).
+        :param config_version: The version of the config to deploy (publish). When omitted, the service keeps the
+                    previously published version, so configuration changes saved since then do not go live.
         :param mode: Deployment mode. Set to 'dev' to deploy a python-js draft as a dev version
                     (hot reload + auto-auth for iframe preview). Leave None for Streamlit apps and
                     for prod deploys.
