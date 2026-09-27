@@ -364,6 +364,21 @@ class AppRunResponse(BaseModel):
     mode: str | None = Field(default=None, description='The mode of the run, e.g. "prod" or "dev".')
 
 
+class AppPreviewLinkResponse(BaseModel):
+    """Response of the preview-link mint endpoint of a dev-mode data app."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    url: str = Field(
+        repr=False,
+        description='Link that opens the app in a browser; the token sits in the `#t=` fragment.',
+    )
+    link_expires_at: str = Field(
+        validation_alias=AliasChoices('linkExpiresAt', 'link_expires_at'),
+        description='When the link stops working (ISO 8601 with offset).',
+    )
+
+
 class DataScienceClient(KeboolaServiceClient):
     def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
         """
@@ -466,6 +481,16 @@ class DataScienceClient(KeboolaServiceClient):
         response = await self.get(endpoint=f'apps/{data_app_id}/password')
         assert isinstance(response, dict)
         return cast(str, response['password'])
+
+    async def create_app_preview_link(self, data_app_id: str) -> AppPreviewLinkResponse:
+        """
+        Mint a short-lived preview link for a data app in dev mode.
+
+        :param data_app_id: The ID of the data app
+        :return: The link and its expiry
+        """
+        response = await self.post(endpoint=f'apps/{data_app_id}/preview-link')
+        return AppPreviewLinkResponse.model_validate(response)
 
     async def create_data_app(
         self,
