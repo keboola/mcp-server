@@ -3,6 +3,7 @@ import logging
 import re
 import secrets
 from collections.abc import Mapping, Sequence
+from http import HTTPStatus
 from importlib import resources
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -544,6 +545,21 @@ class DeletedDraftOutput(BaseModel):
         ),
     )
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
+
+
+class DataAppPreviewLinkOutput(BaseModel):
+    """Output of `get_data_app_preview_link`."""
+
+    url: str = Field(
+        repr=False,
+        description=(
+            "Link that opens the data app in a browser without the app's login. It contains a secret: open it "
+            'only in your browser tool, before `link_expires_at`.'
+        ),
+    )
+    link_expires_at: str = Field(
+        description='When the link stops working (ISO 8601). After that, call `get_data_app_preview_link` again.'
+    )
 
 
 class GetDataAppsOutput(BaseModel):
@@ -2063,6 +2079,127 @@ async def delete_python_js_data_app_draft(
         data_app_id=data_app.data_app_id,
         parent_configuration_id=parent_configuration_id,
         links=links,
+    )
+
+
+@tool_errors()
+async def get_data_app_preview_link(
+    ctx: Context,
+    configuration_id: Annotated[
+        str,
+        Field(
+            description=(
+                'Storage configuration ID of the data app to preview: a python-js draft deployed with mode="dev".'
+            )
+        ),
+    ],
+    project_id: ProjectIdArg = None,
+) -> DataAppPreviewLinkOutput:
+    """Creates a short-lived link that opens a dev-mode data app in your browser without the app's login.
+
+    Use it to see or test a python-js **draft** that runs in dev mode
+    (`deploy_data_app(action='deploy', mode='dev')`). Production and Streamlit apps have no preview link.
+
+    ## How to use the link
+    - Open `url` in your browser tool before `link_expires_at` (about 60 seconds after this call). Do not fetch
+      it with an HTTP client or curl: only a browser can turn it into a session.
+    - The browser session belongs to this one app. It ends without notice: after about 4 hours without
+      requests, 12 hours after the link was opened at the latest, or at once when the app leaves dev mode.
+    - The sign that the session ended is the app's login page ("This app is password protected") or an app
+      that looks broken until reloaded. Then call this tool again and open the new `url`.
+    - Never type a password into the app's login page, and never ask the user for one.
+    - Do not share `url`: do not show it to the user and do not put it into files, commits, messages or any
+      tool other than your browser. Anyone who opens it before it expires gets into the app.
+
+    ## Errors
+    - "not running in dev mode": deploy the draft with `deploy_data_app` (mode='dev') first.
+    - "is a production app": preview a draft of it instead; never switch a production app to dev mode.
+    - "not configured on this Keboola stack": preview links are not available here; tell the user.
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+    try:
+        link = await client.data_science_client.create_app_preview_link(data_app.data_app_id)
+    except httpx.HTTPStatusError as e:
+        mapped = _preview_link_error(e, data_app)
+        if mapped is None:
+            raise
+        raise mapped from e
+    return DataAppPreviewLinkOutput(url=link.url, link_expires_at=link.link_expires_at)
+
+
+_PREVIEW_LINK_NOT_DEV = 'is not in dev mode'
+_PREVIEW_LINK_NO_URL = 'has no URL yet'
+_PREVIEW_LINK_NOT_CONFIGURED = 'not configured'
+_PREVIEW_LINK_NO_ROUTE = 'No route found'
+
+
+def _api_error_text(response: httpx.Response) -> str:
+    """The `error` field of a Keboola API error body, or the raw body text when it is not that JSON shape."""
+    try:
+        body = response.json()
+    except ValueError:
+        return response.text
+    if isinstance(body, Mapping) and isinstance(body.get('error'), str):
+        return body['error']
+    return response.text
+
+
+def _preview_link_error(exc: httpx.HTTPStatusError, data_app: DataApp) -> ValueError | None:
+    """An agent-actionable error for a known preview-link refusal, or None to re-raise `exc` unchanged."""
+    status = exc.response.status_code
+    api_error = _api_error_text(exc.response)
+    cfg = data_app.configuration_id
+    if status == HTTPStatus.BAD_REQUEST and _PREVIEW_LINK_NOT_DEV in api_error:
+        return ValueError(_not_in_dev_mode_message(data_app))
+    if status == HTTPStatus.BAD_REQUEST and _PREVIEW_LINK_NO_URL in api_error:
+        return ValueError(
+            f'Data app "{cfg}" has no URL yet, so it has no preview link. Deploy it with `deploy_data_app` '
+            f'(action="deploy", mode="dev") if that has not happened, wait until `get_data_apps` reports it '
+            f'running, then call this tool again.'
+        )
+    if status == HTTPStatus.FORBIDDEN:
+        return ValueError(
+            f'The token cannot manage data app "{cfg}": the app belongs to a project this token does not grant. '
+            f"Pass the app's project as `project_id`, or use a token of that project. API error: {api_error}"
+        )
+    if status == HTTPStatus.NOT_FOUND and _PREVIEW_LINK_NO_ROUTE in api_error:
+        return ValueError(
+            'Preview links are not available on this Keboola stack yet (the data-science service does not know '
+            "the endpoint). Tell the user. Do not try the app's password login instead."
+        )
+    if status == HTTPStatus.NOT_FOUND:
+        return ValueError(
+            f'Data app "{cfg}" (data app ID "{data_app.data_app_id}") was not found by the data-science '
+            f'service when minting the link. It may have just been deleted; check with `get_data_apps`. '
+            f'API error: {api_error}'
+        )
+    if status == HTTPStatus.SERVICE_UNAVAILABLE and _PREVIEW_LINK_NOT_CONFIGURED in api_error:
+        return ValueError(
+            'Preview links are not configured on this Keboola stack, so the app cannot be opened through a '
+            "preview link. Tell the user. Do not try the app's password login instead."
+        )
+    return None
+
+
+def _not_in_dev_mode_message(data_app: DataApp) -> str:
+    cfg = data_app.configuration_id
+    if data_app.type != 'python-js':
+        return (
+            f'Data app "{cfg}" is a {data_app.type} app. Preview links exist only for python-js drafts deployed '
+            f'with `deploy_data_app` (mode="dev"), so this app has no preview link.'
+        )
+    if _is_draft_config(data_app.configuration):
+        return (
+            f'Data app "{cfg}" is not running in dev mode, so it has no preview link. Deploy it in dev mode first '
+            f'with `deploy_data_app` (action="deploy", mode="dev", configuration_id="{cfg}"), then call this tool '
+            f'again.'
+        )
+    return (
+        f'Data app "{cfg}" is a production app and is not in dev mode, so it has no preview link. Do not switch '
+        f'it to dev mode. Preview a draft instead: find one with `get_data_apps` (configuration_ids=["{cfg}"]) '
+        f'or create one with `modify_python_js_data_app` (parent_configuration_id="{cfg}"), deploy it with '
+        f"`deploy_data_app` (mode=\"dev\") and call this tool with the draft's configuration_id."
     )
 
 
