@@ -76,6 +76,7 @@ class TestServer:
             'get_components',
             'get_config_examples',
             'get_configs',
+            'get_data_app_preview_link',
             'get_data_apps',
             'get_flow_examples',
             'get_flow_schema',
@@ -464,6 +465,7 @@ async def test_tool_annotations_and_tags():
         ('create_python_js_data_app_git_credential', None, False, None, {DATA_APP_TOOLS_TAG}),
         ('get_data_apps', True, None, None, {DATA_APP_TOOLS_TAG}),
         ('deploy_data_app', None, False, None, {DATA_APP_TOOLS_TAG}),
+        ('get_data_app_preview_link', None, False, None, {DATA_APP_TOOLS_TAG}),
     ],
 )
 async def test_tool_annotations_tags_values(
