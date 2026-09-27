@@ -367,7 +367,7 @@ class AppRunResponse(BaseModel):
 class AppPreviewLinkResponse(BaseModel):
     """Response of the preview-link mint endpoint of a dev-mode data app."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, hide_input_in_errors=True)
 
     url: str = Field(
         repr=False,
