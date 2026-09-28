@@ -174,7 +174,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             run_sync_action,
             tags={COMPONENT_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(destructiveHint=True),
         )
     )
 
@@ -2026,6 +2026,7 @@ async def run_sync_action(
 ) -> dict[str, Any] | list[Any]:
     """
     Executes a synchronous action for a component configuration or a component row configuration.
+    Effects depend on the component and action; execution can modify external resources.
 
     WHEN TO USE:
     - For finding available values of a configuration field

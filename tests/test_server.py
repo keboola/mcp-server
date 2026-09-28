@@ -401,6 +401,10 @@ async def test_tool_annotations_and_tags():
     assert isinstance(server, FastMCP)
     tools = await server.list_tools(run_middleware=False)
     for tool in tools:
+        published = tool.to_mcp_tool().model_dump(by_alias=True, exclude_none=True)
+        assert published.get('title'), f'{tool.name} has no published title'
+        assert len(published['name']) <= 64, f'{tool.name} exceeds the directory name limit'
+        assert published.get('annotations'), f'{tool.name} has no published annotations'
         assert tool.tags is not None, f'{tool.name} has no tags'
         if tool.annotations is not None:
             if tool.annotations.read_only_hint:
@@ -426,7 +430,7 @@ async def test_tool_annotations_and_tags():
         ('update_config', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
         ('add_config_row', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_config_row', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
-        ('run_sync_action', True, None, None, {COMPONENT_TOOLS_TAG}),
+        ('run_sync_action', None, True, None, {COMPONENT_TOOLS_TAG}),
         ('create_sql_transformation', None, False, None, {COMPONENT_TOOLS_TAG}),
         ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
         # storage
@@ -463,7 +467,7 @@ async def test_tool_annotations_and_tags():
         ('modify_python_js_data_app', None, True, None, {DATA_APP_TOOLS_TAG}),
         ('create_python_js_data_app_git_credential', None, False, None, {DATA_APP_TOOLS_TAG}),
         ('get_data_apps', True, None, None, {DATA_APP_TOOLS_TAG}),
-        ('deploy_data_app', None, False, None, {DATA_APP_TOOLS_TAG}),
+        ('deploy_data_app', None, True, None, {DATA_APP_TOOLS_TAG}),
     ],
 )
 async def test_tool_annotations_tags_values(
