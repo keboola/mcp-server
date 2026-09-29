@@ -1,7 +1,6 @@
 """MCP server implementation for Keboola Connection."""
 
 import dataclasses
-import html
 import logging
 import os
 from collections.abc import AsyncIterator, Callable
@@ -152,17 +151,22 @@ class CustomRoutes:
             # handler's docstring) -- the AI assistant that started the attempt gets no callback
             # at all and just times out. A bare JSON body reads as a broken page to that person;
             # a short HTML message tells them what happened and that retrying is the right move
-            # (Devin review finding, AI-2883). `error_description` is HTML-escaped, not just the
-            # log-injection filtering above -- it's the same caller-controlled query param, now
-            # rendered into markup instead of a log line.
-            description = request.query_params.get('error_description') or 'Please try connecting again.'
+            # (Devin review finding, AI-2883).
+            #
+            # `error_description` is deliberately NEVER rendered here, escaped or not: it's a
+            # caller-controlled query param, and this is this server's own trusted origin. Anyone
+            # can link `/oauth/callback?error=x&error_description=<arbitrary text>` and have that
+            # text shown under a "Keboola login temporarily unavailable" heading here -- content
+            # spoofing, not XSS (HTML-escaping alone doesn't stop that) (Vojtěch Biberle + Devin
+            # review, AI-2883). `authorize()`'s own fail-closed branch only ever emits two fixed
+            # error_description strings, so a single fixed message loses nothing legitimate.
             return HTMLResponse(
                 status_code=400,
                 content=(
                     '<!doctype html><html><head><meta charset="utf-8">'
                     '<title>Keboola login temporarily unavailable</title></head><body>'
-                    f'<p>Keboola login temporarily unavailable: {html.escape(description)}</p>'
-                    '<p>Please close this window and try connecting again.</p>'
+                    '<p>Keboola login temporarily unavailable. Please close this window and try '
+                    'connecting again.</p>'
                     '</body></html>'
                 ),
             )
