@@ -37,7 +37,12 @@ from keboola_mcp_server.auth_login import (
     introspect_token,
     load_tokens,
 )
-from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver, is_programmatic_token, strip_bearer
+from keboola_mcp_server.clients.auth_bridge import (
+    StorageTokenExchangeError,
+    StorageTokenResolver,
+    is_programmatic_token,
+    strip_bearer,
+)
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import (
@@ -971,7 +976,12 @@ class SessionStateMiddleware(fmw.Middleware):
             state[KeboolaClient.STATE_KEY] = client
             LOG.info('Successfully initialized Storage API client.')
         except Exception as e:
-            LOG.error(f'Failed to initialize Keboola client: {e}')
+            # A caller's own token being rejected (StorageTokenExchangeError with a pass-through
+            # 400/401/403, already logged as such in StorageTokenResolver.resolve()) is not this
+            # server's fault -- avoid double-logging the same routine failure at ERROR here too.
+            is_caller_fault = isinstance(e, StorageTokenExchangeError) and e.status_code != int(HTTPStatus.BAD_GATEWAY)
+            log = LOG.warning if is_caller_fault else LOG.error
+            log(f'Failed to initialize Keboola client: {e}')
             raise
 
         try:
