@@ -4,8 +4,10 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from functools import wraps
+from http import HTTPStatus
 from typing import Any, TypeVar, cast
 
+import httpx
 import jsonschema
 import yaml
 from fastmcp import Context
@@ -33,6 +35,22 @@ _USER_AGENT_TO_COMPONENT_ID: Mapping[str, str] = {
 
 
 MAX_ARG_VALUE_LEN = 10_000  # Maximum length (bytes) of a single tool argument value in the Storage Events payload.
+
+# 4xx statuses that signal throttling/timeouts of the upstream service rather than a caller mistake.
+_UPSTREAM_4XX = (HTTPStatus.REQUEST_TIMEOUT, HTTPStatus.TOO_MANY_REQUESTS)
+
+
+def _is_caller_error(exc: BaseException) -> bool:
+    """
+    True if the tool failed because of the caller's input/credentials rather than a server-side fault.
+
+    A pydantic ``ValidationError`` raised inside a tool is deliberately NOT a caller error: the tool's
+    arguments are validated before ``tool_errors`` runs, so it means our own models rejected data.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return 400 <= status < 500 and status not in _UPSTREAM_4XX
+    return isinstance(exc, jsonschema.ValidationError)
 
 
 class _JsonWrapper(BaseModel):
@@ -196,13 +214,23 @@ def tool_errors(
                 elif recovery_msg:
                     error_msg = f'{e}\nRecovery: {recovery_msg}'
 
+                caller_fault = _is_caller_error(e)
+                extra = {
+                    'tool_name': func.__name__,
+                    'error_type': type(e).__name__,
+                    'error_category': 'client' if caller_fault else 'internal',
+                }
                 try:
                     if error_msg:
                         raise ToolError(error_msg) from e
                     else:
                         raise
                 except Exception as e:
-                    LOG.exception(f'MCP tool "{func.__name__}" call failed.')
+                    if caller_fault:
+                        # Routine (expired token, missing object, bad input): no traceback, not an ERROR.
+                        LOG.warning(f'MCP tool "{func.__name__}" call failed: {str(e).splitlines()[0]}', extra=extra)
+                    else:
+                        LOG.exception(f'MCP tool "{func.__name__}" call failed.', extra=extra)
                     exception = e
                     raise
 

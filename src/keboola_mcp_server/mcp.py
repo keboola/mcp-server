@@ -10,6 +10,7 @@ import dataclasses
 import logging
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from http import HTTPStatus
 from typing import Any, TypeVar, cast
 from unittest.mock import MagicMock
@@ -78,6 +79,27 @@ CONVERSATION_ID = 'conversation_id'
 # bootstrap session (no credential yet, see `create_session_state`) has no KeboolaClient to read it
 # from, and `ServerState.config` holds only the server-level value, not the request's.
 STORAGE_API_URL = 'storage_api_url'
+
+# The project the current request runs against, stamped on every log record (see
+# `install_project_id_log_field`) so logs can be filtered per project/organization in Datadog.
+_PROJECT_ID_LOG_CTX: ContextVar[str | None] = ContextVar('project_id_log_ctx', default=None)
+
+
+def install_project_id_log_field() -> None:
+    """Adds `project_id` to every log record; the JSON formatter emits it as a top-level attribute."""
+    factory = logging.getLogRecordFactory()
+    if getattr(factory, '_stamps_project_id', False):
+        return
+
+    def stamping_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+        record = factory(*args, **kwargs)
+        if project_id := _PROJECT_ID_LOG_CTX.get():
+            record.project_id = project_id
+        return record
+
+    stamping_factory._stamps_project_id = True
+    logging.setLogRecordFactory(stamping_factory)
+
 
 R = TypeVar('R')
 T = TypeVar('T')
@@ -933,6 +955,7 @@ class SessionStateMiddleware(fmw.Middleware):
             round-trips; see the `on_request` call site).
         :return: The session state dictionary containing the created client and workspace manager instances.
         """
+        _PROJECT_ID_LOG_CTX.set(config.project_id)
         LOG.info(f'Creating SessionState from config: {config}.')
 
         state: dict[str, Any] = {STORAGE_API_URL: config.storage_api_url}

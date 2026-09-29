@@ -149,6 +149,42 @@ async def test_logging_on_tool_exception(caplog, function_with_value_error, mcp_
     assert 'Simulated ValueError' in caplog.text
 
 
+def _http_status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request('GET', 'https://connection.test.keboola.com/v1/auth/token/introspect')
+    return httpx.HTTPStatusError(f'HTTP {status}', request=request, response=httpx.Response(status, request=request))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('exception', 'expected_level', 'expected_category'),
+    [
+        # the caller's own fault (expired token, missing object, bad input) is routine -> WARNING, no traceback
+        (_http_status_error(401), logging.WARNING, 'client'),
+        (_http_status_error(404), logging.WARNING, 'client'),
+        (jsonschema.ValidationError('bad input'), logging.WARNING, 'client'),
+        # upstream/server faults stay ERROR with the traceback (429/408 are throttling/timeouts, not caller mistakes)
+        (_http_status_error(500), logging.ERROR, 'internal'),
+        (_http_status_error(429), logging.ERROR, 'internal'),
+        (ValueError('boom'), logging.ERROR, 'internal'),
+    ],
+)
+async def test_tool_exception_log_level_and_fields(
+    exception, expected_level, expected_category, caplog, mcp_context_client: Context
+):
+    async def func(_ctx: Context):
+        raise exception
+
+    with pytest.raises((type(exception), ToolError)):  # jsonschema errors are re-raised wrapped in ToolError
+        await tool_errors()(func)(mcp_context_client)
+
+    records = [r for r in caplog.records if r.name == 'keboola_mcp_server.errors']
+    assert len(records) == 1
+    assert records[0].levelno == expected_level
+    assert bool(records[0].exc_info) is (expected_level == logging.ERROR)
+    assert records[0].tool_name == 'func'
+    assert records[0].error_category == expected_category
+
+
 @pytest.mark.asyncio
 async def test_jsonschema_validation_error_wrapped(
     function_with_jsonschema_validation_error, mcp_context_client: Context
