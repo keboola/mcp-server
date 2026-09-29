@@ -659,16 +659,20 @@ async def test_oauth_callback_handler_renders_error_param_without_invoking_callb
     assert response.status_code == 400
     assert response.headers['content-type'].startswith('text/html')
     body = response.body.decode()
-    assert 'Could not verify OAuth client' in body
+    # error_description ('Could not verify OAuth client') is deliberately NOT rendered -- see
+    # the next test -- only the fixed generic message is.
+    assert 'Could not verify OAuth client' not in body
     assert 'temporarily unavailable' in body.lower()
     oauth_provider.handle_oauth_callback.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_oauth_callback_handler_escapes_error_description_for_html(mocker) -> None:
-    """error_description is a caller-controlled query param now rendered into an HTML page
-    (see the previous test) rather than a JSON body -- it must be HTML-escaped, or a crafted
-    `error_description` becomes a reflected-XSS payload on this server's own origin."""
+async def test_oauth_callback_handler_never_reflects_caller_supplied_error_description(mocker) -> None:
+    """error_description is a caller-controlled query param; anyone can link
+    `/oauth/callback?error=x&error_description=<arbitrary text>` and have it rendered under a
+    trusted "Keboola login temporarily unavailable" heading -- content spoofing, not XSS, so
+    HTML-escaping it wouldn't be enough. It must never appear in the response body at all, escaped
+    or not (Vojtěch Biberle + Devin review, AI-2883)."""
     server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
     oauth_provider = mocker.Mock()
     oauth_provider.handle_oauth_callback = mocker.AsyncMock()
@@ -685,7 +689,8 @@ async def test_oauth_callback_handler_escapes_error_description_for_html(mocker)
 
     body = response.body.decode()
     assert '<script>' not in body
-    assert '&lt;script&gt;' in body
+    assert '&lt;script&gt;' not in body
+    assert 'alert(1)' not in body
 
 
 class TestCreateServerOAuthSessionStore:
