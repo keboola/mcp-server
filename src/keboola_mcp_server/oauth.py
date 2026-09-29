@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Any, cast
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 import jwt
@@ -131,6 +131,29 @@ class _ClientRegistration(Enum):
     ERROR = auto()
 
 
+# Loopback hosts whose port the pinned mcp SDK's own league OAuth library already ignores when
+# matching redirect_uris (vendor/league/oauth2-server's RedirectUriValidator: isLoopbackUri() /
+# matchUriExcludingPort() -- 127.0.0.1 and [::1] only, deliberately NOT 'localhost', per RFC 8252
+# §7.3's "any port" allowance for native/loopback clients). Mirrored here, not the broader
+# _LOOPBACK_HOSTS shape-check set above, so the derived Connection client_id below is only made
+# port-stable for the hosts where that stability is actually honored end-to-end (Connection's own
+# registry normalizes the same way -- see connection's ClientValidationProcessor/
+# ClientApprovalProcessor, Vojtěch Biberle review, connection#8573-adjacent). 'localhost' still
+# gets a fresh client_id (and a fresh approval) per port -- a residual gap shared with league
+# itself, not fixable without a vendor patch.
+_PORT_INSENSITIVE_LOOPBACK_HOSTS = frozenset({'127.0.0.1', '::1'})
+
+
+def _without_port_for_loopback(redirect_uri: str) -> str:
+    """Strips the port from a loopback http:// URI (see _PORT_INSENSITIVE_LOOPBACK_HOSTS);
+    returns every other URI unchanged."""
+    parsed = urlparse(redirect_uri)
+    if parsed.scheme != 'http' or (parsed.hostname or '') not in _PORT_INSENSITIVE_LOOPBACK_HOSTS:
+        return redirect_uri
+    host = f'[{parsed.hostname}]' if ':' in (parsed.hostname or '') else parsed.hostname
+    return urlunparse(parsed._replace(netloc=host))
+
+
 def _connection_client_id(redirect_uri: str) -> str:
     """
     Maps an AI assistant's own redirect_uri to the client_id used when talking to Connection's
@@ -142,10 +165,16 @@ def _connection_client_id(redirect_uri: str) -> str:
     never fit. Deriving a short, stable id from redirect_uri instead means the same tool
     reconnecting (same callback URL) lands on the same Connection identity and reuses an earlier
     approval, even though the SDK hands it a fresh uuid on every /register call.
+
+    The port is stripped first for 127.0.0.1/[::1] (see _without_port_for_loopback) -- a loopback
+    tool's ephemeral port changes on every reconnect (RFC 8252 §7.3; examples: Claude Code, VS
+    Code, MCP Inspector, Codex, Gemini CLI), and without this every reconnect would derive a new
+    id, need a fresh human approval, and leave behind a permanent, never-cleaned-up
+    oauth2_client row on every stack (Vojtěch Biberle review, AI-2883/connection#8573).
     """
     if known := _WELL_KNOWN_CONNECTION_CLIENT_IDS.get(redirect_uri):
         return known
-    digest = hashlib.sha256(redirect_uri.encode()).hexdigest()[:24]
+    digest = hashlib.sha256(_without_port_for_loopback(redirect_uri).encode()).hexdigest()[:24]
     return f'mcp-{digest}'
 
 
@@ -1310,8 +1339,11 @@ class SimpleOAuthProvider(OAuthProvider):
 
     async def _exchange_oauth_for_session(self, oauth_access_token: str) -> TokenSet:
         """
-        Exchanges a league OAuth access token (``claudai projectless`` scope) for a whole-stack
-        Keboola programmatic session via ``manage/internal/auth-bridge/exchange-oauth-token``.
+        Exchanges a league OAuth access token -- ``claudai projectless`` scope for a whole-stack
+        session (Flow A), or ``claudai`` alone for a session pinned to the one project the admin
+        picked on Connection's legacy selector (Flow B, a dynamically-approved client; see
+        ``_scope_for``) -- for a Keboola programmatic session via
+        ``manage/internal/auth-bridge/exchange-oauth-token``.
 
         Raised as ``TokenError`` (not ``HTTPException``): this runs inside ``exchange_authorization_code``,
         invoked by the mcp SDK's own ``/token`` endpoint handler, which only recognizes ``TokenError``
