@@ -77,7 +77,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             deploy_data_app,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=False),
+            annotations=ToolAnnotations(destructiveHint=True),
         )
     )
     mcp.add_tool(

@@ -771,13 +771,14 @@ EXAMPLES:
 ---
 <a name="run_sync_action"></a>
 ## run_sync_action
-**Annotations**: `read-only`
+**Annotations**: `destructive`
 
 **Tags**: `components`
 
 **Description**:
 
 Executes a synchronous action for a component configuration or a component row configuration.
+Effects depend on the component and action; execution can modify external resources.
 
 WHEN TO USE:
 - For finding available values of a configuration field
@@ -2280,7 +2281,7 @@ in the response) or to `get_data_apps` for further work.
 ---
 <a name="deploy_data_app"></a>
 ## deploy_data_app
-**Annotations**: 
+**Annotations**: `destructive`
 
 **Tags**: `data-apps`
 
