@@ -310,6 +310,34 @@ class TestConnectionClientIdentity:
         assert len(_connection_client_id('https://example.com/' + 'a' * 2000)) <= 32
 
     @pytest.mark.parametrize(
+        'host',
+        ['127.0.0.1', '[::1]'],
+    )
+    def test_loopback_client_id_is_stable_across_ephemeral_ports(self, host: str) -> None:
+        """A loopback tool (Claude Code, VS Code, MCP Inspector, Codex, Gemini CLI, ...) reconnects
+        with a new ephemeral port every time (RFC 8252 §7.3); the derived id must not change, or
+        every reconnect needs a fresh human approval and leaves behind a permanent, never-cleaned-up
+        oauth2_client row on every stack (Vojtěch Biberle review, AI-2883). Mirrors what Connection's
+        own registry now also normalizes for these two hosts."""
+        from keboola_mcp_server.oauth import _connection_client_id
+
+        first = _connection_client_id(f'http://{host}:54321/callback')
+        second = _connection_client_id(f'http://{host}:9999/callback')
+
+        assert first == second
+
+    def test_localhost_client_id_still_varies_by_port(self) -> None:
+        """Documents the residual gap: unlike 127.0.0.1/[::1], the pinned mcp SDK's own league
+        OAuth library does not ignore the port for 'localhost' either, so normalizing it here alone
+        wouldn't actually help -- not fixable without a vendor patch."""
+        from keboola_mcp_server.oauth import _connection_client_id
+
+        first = _connection_client_id('http://localhost:54321/callback')
+        second = _connection_client_id('http://localhost:9999/callback')
+
+        assert first != second
+
+    @pytest.mark.parametrize(
         ('name', 'expected'),
         [
             ('My Custom Tool', 'My Custom Tool'),
@@ -1167,6 +1195,52 @@ class TestSimpleOAuthProvider:
 
         loaded = await oauth_provider.load_access_token(oauth_token.access_token)
         assert loaded is not None
+        assert loaded.scope_confirmed is True
+        assert loaded.scope_project_ids == [42]
+        assert loaded.scope_read_only is False
+        assert loaded.scope_scoped_token == 'kbc_at_scoped'
+
+    @pytest.mark.asyncio
+    async def test_exchange_authorization_code_auto_confirms_flow_b_pinned_session(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A dynamically-approved (Flow B, claudai-only, no projectless) client's session goes
+        through exactly this same auto-confirm path, just with a `claudai`-only league token
+        (Devin review finding, AI-2883: no test previously exercised this branch). Connection's own
+        OAuthSubjectTokenResolver pins such a session to exactly one project
+        (resolveLegacySubject -> ProjectScope::forProjects([...])), and its introspect endpoint
+        returns exactly that frozen allow-list, never the admin's broader membership (verified
+        against connection's TokenIntrospectProcessor) -- so introspection for a Flow B session
+        always looks like this single-project happy path, never the multi-project one above."""
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, 'deployed_sa_token_path', lambda: '/tmp/sa-token')
+        captured: dict[str, Any] = {}
+        self._stub_exchanger(monkeypatch, captured)
+        monkeypatch.setattr(
+            oauth_module,
+            'introspect_token',
+            mock.AsyncMock(
+                return_value=Introspection(user_id=1, user_email=None, user_name=None, projects=[_project(42)])
+            ),
+        )
+        monkeypatch.setattr(
+            oauth_module,
+            'exchange_scoped_token',
+            mock.AsyncMock(
+                return_value=ScopedToken(
+                    access_token='kbc_at_scoped', expires_at=time.time() + 3600, project_ids=[42], read_only=False
+                )
+            ),
+        )
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        auth_code = _ExtendedAuthorizationCode.model_validate(self.authorization_code(oauth_projectless=False))
+        oauth_token = await oauth_provider.exchange_authorization_code(client, auth_code)
+
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.scopes == ['claudai']
         assert loaded.scope_confirmed is True
         assert loaded.scope_project_ids == [42]
         assert loaded.scope_read_only is False

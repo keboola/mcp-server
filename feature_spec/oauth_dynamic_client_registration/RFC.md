@@ -269,8 +269,11 @@ functions, per project convention):
   network error / non-200/404 status from validate → a same-origin redirect to this server's own
   `/oauth/callback?error=temporarily_unavailable&...` (**not** a raised `AuthorizeError` — see
   Decision §9 for why raising it would itself be an open redirect), which `server.py`'s
-  `oauth_callback_handler` renders as a 400 JSON response without ever calling
-  `handle_oauth_callback()`. Never a redirect to the caller-supplied `redirect_uri` for this case.
+  `oauth_callback_handler` renders as a 400 HTML page (a person's browser lands here, not the MCP
+  client — see Decision §9) without ever calling `handle_oauth_callback()`. Never a redirect to the
+  caller-supplied `redirect_uri` for this case. The caller-supplied `error_description` is never
+  rendered into that page (or logged) — only a fixed message is (Vojtěch Biberle + Devin review,
+  content spoofing on this server's own trusted origin).
 - `register_client()` → `authorize()`: `client_name` submitted at `/register` shows up in the
   `pending_mcp_client` payload, sanitized and length-capped at storage time (not just at read
   time — an unauthenticated `/register` caller must not be able to inflate this cache's memory via
@@ -282,13 +285,36 @@ functions, per project convention):
   oversized URI, a non-loopback `http://`, and an unlisted `cursor://` host; no longer rejects an
   arbitrary `https://` host (that's Connection's job now).
 - `oauth_callback_handler` (`server.py`): a route-level test asserting `GET /oauth/callback?error=...`
-  returns 400 JSON without invoking `handle_oauth_callback()` at all — this is the regression test
-  for the open-redirect fix itself, not just a unit test of `authorize()`'s return value.
+  returns a 400 HTML page without invoking `handle_oauth_callback()` at all — this is the
+  regression test for the open-redirect fix itself, not just a unit test of `authorize()`'s return
+  value. A second test pins that a caller-supplied `error_description` never appears in that page
+  at all, escaped or not — not just an XSS-escaping check, since unescaped-but-absent is the actual
+  requirement (content spoofing, not injection).
 - `_SlidingWindowRateLimiter` (`TestSlidingWindowRateLimiter`): allows exactly `max_calls` within
   the window then refuses the next one; recovers once the oldest call falls outside the window.
   `check_registration()`: a caller varying `(client_id, redirect_uri)` on every request (so every
   check misses the cache) still gets refused, locally, without an HTTP call, once the budget is
-  spent — the scenario the registration cache alone cannot stop.
+  spent — the scenario the registration cache alone cannot stop. Left as documented, deliberately
+  deferred prose (no Linear ticket filed this round): a fleet-wide/Redis-backed limiter is the real
+  fix, since this only bounds one process, not the fleet (Vojtěch Biberle review, AI-2883).
+- `_connection_client_id`: two loopback URIs (127.0.0.1 or [::1]) differing only by port derive the
+  *same* id (RFC 8252 §7.3 — a loopback tool's ephemeral port changes on every reconnect; without
+  this every reconnect needed a fresh human approval and left behind a permanent, never-cleaned-up
+  Connection registry row); the same case for `localhost` still derives different ids — a
+  documented residual, since the pinned mcp SDK's own league OAuth library doesn't ignore the port
+  for `localhost` either, so normalizing it here alone wouldn't help end-to-end (Vojtěch Biberle
+  review, AI-2883; matching fix on Connection's own registry in a companion connection PR).
+- `exchange_authorization_code` → `_auto_confirm_project_scope`: the existing single/multi-project
+  cases above always used a `claudai projectless` (Flow A) token; a new case exercises the same
+  path for a `claudai`-only (Flow B, dynamically-approved client) token and asserts it auto-confirms
+  identically for its one pinned project (Devin review finding — no prior test exercised this
+  branch). Verified against Connection's own `TokenIntrospectProcessor`: a pinned session's
+  introspect response is always exactly its own frozen allow-list, never the admin's broader
+  membership, so this is genuinely the only shape Flow B introspection can take today, not just a
+  representative case. The live dev/canary click-through through an actual dynamically-approved
+  client (register → approve → retry → project-selector → token exchange → a real tool call) is
+  still the authoritative confirmation and remains outstanding — this unit coverage does not
+  replace it.
 
 **Integration** (`integtests/`, against a real Connection instance, no project lock needed — this
 call is unauthenticated and doesn't touch a project): `ConnectionClientRegistry.check_registration()`
