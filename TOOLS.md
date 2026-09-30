@@ -2411,6 +2411,7 @@ preview link.
 ## Errors
 - "not running in dev mode": deploy the draft with `deploy_data_app` (mode='dev') first.
 - "is a production app": preview a draft of it instead; never switch a production app to dev mode.
+- "is not in dev mode" on another app type: tell the user; do not change its deploy mode.
 - "not configured on this Keboola stack": preview links are not available here; tell the user.
 
 

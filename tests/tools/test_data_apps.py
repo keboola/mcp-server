@@ -3835,8 +3835,8 @@ async def test_get_data_app_preview_link_returns_link_without_leaking_it(
             'streamlit',
             400,
             _sandboxes_error(400, 'App "app-sl-1" is not in dev mode.'),
-            r'"cfg-sl-1" \(streamlit\) is not in dev mode.*cannot switch a streamlit app to dev mode',
-            'Deploy it in dev mode first',
+            r'"cfg-sl-1" \(streamlit\) is not in dev mode.*Tell the user; do not change its deploy mode',
+            'mode="dev"',
         ),
         (
             'draft',
