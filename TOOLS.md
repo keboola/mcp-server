@@ -44,6 +44,7 @@ and push to the app's managed git repo over HTTPS.
 configuration.
 - [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
 action and the configuration ID.
+- [get_data_app_preview_link](#get_data_app_preview_link): Creates a short-lived link that opens a dev-mode data app in your browser without the app's login.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
 - [modify_python_js_data_app](#modify_python_js_data_app): Creates or updates a python-js data app.
@@ -2298,6 +2299,7 @@ branch-delete — is yours. This tool only triggers deploys against existing git
   development `setup.sh` (hot reload) and the data-app proxy enables an auto-auth path so an
   iframe preview can render without a manual login. Only meaningful on **draft** configs
   (python-js apps with `isDraft=true`).
+- To open a dev-mode draft in your own browser, call `get_data_app_preview_link` once the deploy is running.
 - For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
   the prod app picks up the current `main`.
 - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
@@ -2371,6 +2373,69 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
   },
   "required": [
     "action",
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_data_app_preview_link"></a>
+## get_data_app_preview_link
+**Annotations**: 
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Creates a short-lived link that opens a dev-mode data app in your browser without the app's login.
+
+Use it to see or test a python-js **draft** that runs in dev mode
+(`deploy_data_app(action='deploy', mode='dev')`). Production and Streamlit apps have no preview link.
+
+## How to use the link
+- Open `url` in your browser tool before `link_expires_at` (about 60 seconds after this call). Do not fetch
+  it with an HTTP client or curl: only a browser can turn it into a session.
+- After one successful open, the browser session keeps working and slides while you use the app, so reloads,
+  navigation and later checks of the same app need no new link. Do not call this tool before every check.
+- The session belongs to this one app. It ends without notice: after about 4 hours without requests,
+  12 hours after the link was opened at the latest, or at once when the app leaves dev mode.
+- Call this tool again only when the app shows its login page ("This app is password protected") or looks
+  broken until reloaded, or when you did not open the previous `url` before its `link_expires_at` (the
+  browser then shows "Preview link is invalid or expired").
+- Never type a password into the app's login page, and never ask the user for one.
+- Do not share `url`: do not show it to the user and do not put it into files, commits, messages or any
+  tool other than your browser. Anyone who opens it before it expires gets into the app.
+
+## Errors
+- "not running in dev mode": deploy the draft with `deploy_data_app` (mode='dev') first.
+- "is a production app": preview a draft of it instead; never switch a production app to dev mode.
+- "not configured on this Keboola stack": preview links are not available here; tell the user.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "configuration_id": {
+      "description": "Storage configuration ID of the data app to preview: a python-js draft deployed with mode=\"dev\".",
+      "type": "string"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "required": [
     "configuration_id"
   ],
   "type": "object"

@@ -1958,6 +1958,7 @@ async def deploy_data_app(
       development `setup.sh` (hot reload) and the data-app proxy enables an auto-auth path so an
       iframe preview can render without a manual login. Only meaningful on **draft** configs
       (python-js apps with `isDraft=true`).
+    - To open a dev-mode draft in your own browser, call `get_data_app_preview_link` once the deploy is running.
     - For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
       the prod app picks up the current `main`.
     - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
