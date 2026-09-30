@@ -497,9 +497,7 @@ class DataScienceClient(KeboolaServiceClient):
                 f'{".".join(str(part) for part in err["loc"])}: {err["type"]}'
                 for err in e.errors(include_input=False, include_url=False)
             )
-            raise ValueError(
-                f'Unexpected response from the data-science API preview-link endpoint: {problems}'
-            ) from None
+        raise ValueError(f'Unexpected response from the data-science API preview-link endpoint: {problems}')
 
     async def create_data_app(
         self,
