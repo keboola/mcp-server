@@ -2140,6 +2140,7 @@ async def get_data_app_preview_link(
     ## Errors
     - "not running in dev mode": deploy the draft with `deploy_data_app` (mode='dev') first.
     - "is a production app": preview a draft of it instead; never switch a production app to dev mode.
+    - "is not in dev mode" on another app type: tell the user; do not change its deploy mode.
     - "not configured on this Keboola stack": preview links are not available here; tell the user.
     """
     client = KeboolaClient.from_state(ctx.session.state)
@@ -2228,8 +2229,7 @@ def _not_in_dev_mode_message(data_app: DataApp) -> str:
     if data_app.type != 'python-js':
         return (
             f'Data app "{cfg}" ({data_app.type}) is not in dev mode, so it has no preview link. '
-            f'`deploy_data_app` cannot switch a {data_app.type} app to dev mode (its `mode` applies to '
-            f'python-js apps only).'
+            f'Tell the user; do not change its deploy mode.'
         )
     if _is_draft_config(data_app.configuration):
         return (
