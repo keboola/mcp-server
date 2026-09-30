@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
+import pydantic
 import pytest
 
 from keboola_mcp_server.clients.data_science import (
@@ -311,3 +312,17 @@ async def test_create_app_preview_link_posts_without_body_and_hides_url_in_repr(
     assert token not in repr(result)
     assert token not in str(result)
     client.post.assert_awaited_once_with(endpoint='apps/app-123/preview-link')
+
+
+@pytest.mark.asyncio
+async def test_create_app_preview_link_hides_url_in_validation_error() -> None:
+    token = 'SENTINEL-PREVIEW-TOKEN-' + 'x' * 40 + 'TAIL42'
+    url = f'https://my-app-123.hub.example.com/_proxy/preview#t={token}'
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.post = AsyncMock(return_value={'url': url})  # type: ignore[assignment]
+
+    with pytest.raises(pydantic.ValidationError) as exc_info:
+        await client.create_app_preview_link('app-123')
+
+    assert token not in str(exc_info.value)
+    assert token[-6:] not in str(exc_info.value)
