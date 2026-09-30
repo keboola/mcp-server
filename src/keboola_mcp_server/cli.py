@@ -21,7 +21,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ForwardSlashMiddleware, is_read_only_tool, is_semantic_tool
+from keboola_mcp_server.mcp import (
+    ForwardSlashMiddleware,
+    install_project_id_log_field,
+    is_read_only_tool,
+    is_semantic_tool,
+)
 from keboola_mcp_server.server import CustomRoutes, create_server
 from keboola_mcp_server.session_store import DatabaseUnavailableError
 
@@ -500,6 +505,7 @@ async def run_server(args: list[str] | None = None) -> None:
         LOG.warning(f'Invalid log config file: {log_config}. Using default logging configuration.')
         log_config = None
 
+    install_project_id_log_field()  # independent of the log config, so it also covers deployments not using logging-json.conf
     if log_config:
         # remove fastmcp's rich handler, which is aggressively set up during "import fastmcp"
         fastmcp_logger = logging.getLogger('fastmcp')

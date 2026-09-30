@@ -115,7 +115,17 @@ class RawKeboolaClient:
 
             try:
                 error_data = response.json()
-                LOG.error(f'API error data: {error_data}')
+                # 4xx (not found, access denied, invalid token) is the caller's/data problem and is
+                # routine -- only a 5xx is this deployment's problem worth ERROR-level alerting.
+                log = LOG.error if response.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR else LOG.warning
+                log(
+                    f'API error data: {error_data}',
+                    extra={
+                        'http_status': response.status_code,
+                        'error_code': error_data.get('code'),
+                        'exception_id': error_data.get('exceptionId'),
+                    },
+                )
 
                 if error_msg := error_data.get('exception'):
                     # Query Service error message

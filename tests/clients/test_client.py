@@ -104,6 +104,30 @@ class TestRawKeboolaClient:
         with pytest.raises(httpx.HTTPStatusError, match=match):
             raw_client._raise_for_status(mock_http_response_500)
 
+    @pytest.mark.parametrize(
+        ('response_fixture', 'expected_level'),
+        [
+            ('mock_http_response_404', 'WARNING'),
+            ('mock_http_response_401', 'WARNING'),
+            ('mock_http_response_500', 'ERROR'),
+        ],
+    )
+    def test_raise_for_status_logs_api_error_by_status_class(
+        self, raw_client: RawKeboolaClient, response_fixture: str, expected_level: str, request, caplog
+    ):
+        """4xx is the caller's/data problem (WARNING); only 5xx is an ERROR. Error details are structured fields."""
+        response = request.getfixturevalue(response_fixture)
+        response.json.return_value = {'error': 'boom', 'code': 'storage.tables.notFound', 'exceptionId': 'exc-1'}
+
+        with pytest.raises(httpx.HTTPStatusError):
+            raw_client._raise_for_status(response)
+
+        records = [r for r in caplog.records if r.getMessage().startswith('API error data')]
+        assert [r.levelname for r in records] == [expected_level]
+        assert records[0].http_status == response.status_code
+        assert records[0].error_code == 'storage.tables.notFound'
+        assert records[0].exception_id == 'exc-1'
+
     def test_raise_for_status_500_without_exception_id(
         self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
     ):

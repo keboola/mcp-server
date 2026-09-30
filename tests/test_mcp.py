@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import dataclasses
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -30,6 +31,7 @@ from keboola_mcp_server.mcp import (
     _exclude_none_serializer,
     _filter_toon_nulls,
     _is_unauthorized,
+    install_project_id_log_field,
     process_concurrently,
     toon_serializer,
     unwrap_results,
@@ -2287,3 +2289,18 @@ class TestProvisionedSessionIsPickedUpByTheNextRequest:
         scope = ctx.session.state[SCOPE_KEY]
         assert scope.project_ids == [4321]
         assert scope.confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_session_state_project_id_is_stamped_on_log_records(caplog):
+    """Every log record of the request carries `project_id`, so DD can filter errors by project."""
+    install_project_id_log_field()
+    await SessionStateMiddleware.create_session_state(
+        Config(storage_api_url='https://connection.test.keboola.com', project_id='451'),
+        ServerRuntimeInfo(transport='stdio'),
+        own_stack_storage_api_url=None,
+    )
+
+    logging.getLogger('keboola_mcp_server.test').warning('something failed')
+
+    assert [r.project_id for r in caplog.records if r.getMessage() == 'something failed'] == ['451']
