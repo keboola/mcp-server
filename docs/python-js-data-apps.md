@@ -382,9 +382,9 @@ The response reports the truth:
 ### `get_data_app_preview_link(configuration_id=...)`
 
 - **`configuration_id`** (`str`, required): Storage configuration ID of a python-js **draft** deployed with `deploy_data_app(mode='dev')`.
-- **Behaviour**: calls DSAPI `POST /apps/{data_app_id}/preview-link` (sandboxes-service mints a 60 s signed link). The agent opens `url` in its browser; apps-proxy turns it into a session cookie for that app host only (about 4 h idle, 12 h cap, valid only while the app stays in dev mode). After one successful open the session keeps working (it slides while in use); get a new link only when the app shows its login page ("This app is password protected") or when a link was not opened before `link_expires_at`.
+- **Behaviour**: calls DSAPI `POST /apps/{data_app_id}/preview-link` (sandboxes-service mints a 60 s signed link). The agent opens `url` in its browser; apps-proxy turns it into a session cookie for that app host only (about 4 h idle, 12 h cap, valid only while the app stays in dev mode). After one successful open the session keeps working (it slides while in use); get a new link only when the app shows its login page ("This app is password protected") or looks broken until reloaded, or when a link was not opened before `link_expires_at`.
 - **Returns**: `{url, link_expires_at}`. `url` carries the token in its `#t=` fragment and is never logged by the MCP server.
-- **Refusals**: not in dev mode (draft → deploy with `mode='dev'`; prod → preview a draft, never switch prod to dev; Streamlit → no preview link), no URL yet, other-project token (400 today, 403 later), 404 deleted app, 503 preview links not configured on the stack.
+- **Refusals**: not in dev mode (draft → deploy with `mode='dev'`; prod → preview a draft, never switch prod to dev; Streamlit → no preview link), no URL yet, other-project token (400 today, 403 later), 404 no route (stack without the endpoint yet), 404 deleted app, 503 preview links not configured on the stack.
 
 ### `get_data_apps(configuration_ids=[<prod-cfg>])` — `drafts: [...]`
 

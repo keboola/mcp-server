@@ -413,7 +413,7 @@ async def test_python_js_data_app_prod_and_draft_lifecycle(
         # The data-app runtime is async — we only assert the deploy call was accepted; not its
         # eventual state, since CI cannot afford to poll the full startup loop.
 
-        # Step 4a: mint a preview link for the dev-mode draft. The url is not logged.
+        # Step 4a: mint a preview link for the dev-mode draft.
         preview_result = await mcp_client.call_tool(
             name='get_data_app_preview_link',
             arguments={'configuration_id': draft_output.data_app.configuration_id},
