@@ -49,7 +49,7 @@ Refusals from sandboxes-service are mapped to actionable tool errors:
 | --- | --- |
 | 400 `App "<id>" is not in dev mode.` on a python-js draft | deploy it with `deploy_data_app(action="deploy", mode="dev", configuration_id=...)`, then call again |
 | 400 not-dev on a python-js prod app | do not switch the prod app to dev mode; find or create a draft (`get_data_apps`, `modify_python_js_data_app(parent_configuration_id=...)`), deploy it in dev mode, preview the draft |
-| 400 not-dev on another app type (e.g. Streamlit) | the app is not in dev mode, and `deploy_data_app` cannot switch it to dev mode (its `mode` applies to python-js apps only) |
+| 400 not-dev on another app type (e.g. Streamlit) | the app is not in dev mode; tell the user; do not change its deploy mode |
 | 400 `App "<id>" has no URL yet.` | deploy the app if needed, wait until it runs, call again |
 | 400 or 403 `Token is not authorized to manage app …` (permission checker; 400 today, 403 after its fix), any other 403 | the tool reports that the token cannot manage this app and the agent tells the user; the refusal usually already comes from the app lookup (`GET /apps/{id}`) before the mint, and is mapped there too |
 | 404 `No route found for …` (sandboxes-service without the endpoint yet) | preview links are not available on this stack yet; tell the user |
@@ -66,8 +66,9 @@ The link and its token are never logged: the client response model and the tool 
   aliased from `linkExpiresAt`) and `DataScienceClient.create_app_preview_link(data_app_id)`.
 - `tools/data_apps.py`: `DataAppPreviewLinkOutput` and the tool. The tool resolves the data-app ID
   with the existing `_fetch_data_app(client, configuration_id=..., data_app_id=None)`, which also
-  validates the component and gives the app type and draft flag used for the not-dev message. Only
-  the mint call is wrapped in the error mapping. The 400 cases are told apart by the `error` field
+  validates the component and gives the app type and draft flag used for the not-dev message. The
+  mint call is wrapped in the error mapping, and the app lookup is wrapped only for the other-project
+  refusal. The 400 cases are told apart by the `error` field
   of the sandboxes-service JSON body (`keboola/api-error-control` format:
   `{"error", "code", "exceptionId", "status", "context"}`), not by status code alone.
 - `mcp.py`: add the tool to `DATA_APP_BRANCH_GATED_TOOLS`.
