@@ -19,7 +19,7 @@ valid only while the app is in dev mode). The MCP server needs a tool that mints
 
 ## Required Behavior
 
-New tool `get_data_app_preview_link`.
+New tool `get_data_app_preview_link`. It works for any data app type while the app is in dev mode (the backend checks only the mode); the usual target is a python-js draft.
 
 | Item | Value |
 | --- | --- |
@@ -49,7 +49,7 @@ Refusals from sandboxes-service are mapped to actionable tool errors:
 | --- | --- |
 | 400 `App "<id>" is not in dev mode.` on a python-js draft | deploy it with `deploy_data_app(action="deploy", mode="dev", configuration_id=...)`, then call again |
 | 400 not-dev on a python-js prod app | do not switch the prod app to dev mode; find or create a draft (`get_data_apps`, `modify_python_js_data_app(parent_configuration_id=...)`), deploy it in dev mode, preview the draft |
-| 400 not-dev on a Streamlit app | Streamlit apps have no preview link (no dev mode) |
+| 400 not-dev on another app type (e.g. Streamlit) | the app is not in dev mode, and `deploy_data_app` cannot switch it to dev mode (its `mode` applies to python-js apps only) |
 | 400 `App "<id>" has no URL yet.` | deploy the app if needed, wait until it runs, call again |
 | 400 or 403 `Token is not authorized to manage app …` (permission checker; 400 today, 403 after its fix), any other 403 | the tool reports that the token cannot manage this app and the agent tells the user; the refusal usually already comes from the app lookup (`GET /apps/{id}`) before the mint, and is mapped there too |
 | 404 `No route found for …` (sandboxes-service without the endpoint yet) | preview links are not available on this stack yet; tell the user |

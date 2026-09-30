@@ -2101,7 +2101,8 @@ async def get_data_app_preview_link(
         str,
         Field(
             description=(
-                'Storage configuration ID of the data app to preview: a python-js draft deployed with mode="dev".'
+                'Storage configuration ID of a data app running in dev mode, of any type. The usual case is a '
+                'python-js draft deployed with `deploy_data_app` (mode="dev").'
             )
         ),
     ],
@@ -2109,8 +2110,9 @@ async def get_data_app_preview_link(
 ) -> DataAppPreviewLinkOutput:
     """Creates a short-lived link that opens a dev-mode data app in your browser without the app's login.
 
-    Use it to see or test a python-js **draft** that runs in dev mode
-    (`deploy_data_app(action='deploy', mode='dev')`). Production and Streamlit apps have no preview link.
+    Use it to see or test any data app while it runs in dev mode. The usual case is a python-js **draft**
+    deployed with `deploy_data_app(action='deploy', mode='dev')`. An app that is not in dev mode has no
+    preview link.
 
     ## How to use the link
     - Open `url` in your browser tool before `link_expires_at` (about 60 seconds after this call). Do not fetch
@@ -2216,8 +2218,9 @@ def _not_in_dev_mode_message(data_app: DataApp) -> str:
     cfg = data_app.configuration_id
     if data_app.type != 'python-js':
         return (
-            f'Data app "{cfg}" is a {data_app.type} app. Preview links exist only for python-js drafts deployed '
-            f'with `deploy_data_app` (mode="dev"), so this app has no preview link.'
+            f'Data app "{cfg}" ({data_app.type}) is not in dev mode, so it has no preview link. '
+            f'`deploy_data_app` cannot switch a {data_app.type} app to dev mode (its `mode` applies to '
+            f'python-js apps only).'
         )
     if _is_draft_config(data_app.configuration):
         return (
