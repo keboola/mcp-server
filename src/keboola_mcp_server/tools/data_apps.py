@@ -565,7 +565,10 @@ class DataAppPreviewLinkOutput(BaseModel):
         ),
     )
     link_expires_at: str = Field(
-        description='When the link stops working (ISO 8601). After that, call `get_data_app_preview_link` again.'
+        description=(
+            'Open `url` before this time (ISO 8601). A browser session opened with it keeps working after this '
+            'time; call `get_data_app_preview_link` again only when the app shows its login page.'
+        )
     )
 
 
@@ -2110,10 +2113,12 @@ async def get_data_app_preview_link(
     ## How to use the link
     - Open `url` in your browser tool before `link_expires_at` (about 60 seconds after this call). Do not fetch
       it with an HTTP client or curl: only a browser can turn it into a session.
-    - The browser session belongs to this one app. It ends without notice: after about 4 hours without
-      requests, 12 hours after the link was opened at the latest, or at once when the app leaves dev mode.
-    - The sign that the session ended is the app's login page ("This app is password protected") or an app
-      that looks broken until reloaded. Then call this tool again and open the new `url`.
+    - After one successful open, the browser session keeps working and slides while you use the app, so reloads,
+      navigation and later checks of the same app need no new link. Do not call this tool before every check.
+    - The session belongs to this one app. It ends without notice: after about 4 hours without requests,
+      12 hours after the link was opened at the latest, or at once when the app leaves dev mode.
+    - Call this tool again only when the app shows its login page ("This app is password protected") or looks
+      broken until reloaded, or when you did not open the previous `url` before its `link_expires_at`.
     - Never type a password into the app's login page, and never ask the user for one.
     - Do not share `url`: do not show it to the user and do not put it into files, commits, messages or any
       tool other than your browser. Anyone who opens it before it expires gets into the app.
@@ -2137,6 +2142,7 @@ async def get_data_app_preview_link(
 
 _PREVIEW_LINK_NOT_DEV = 'is not in dev mode'
 _PREVIEW_LINK_NO_URL = 'has no URL yet'
+_PREVIEW_LINK_NOT_AUTHORIZED = 'is not authorized to manage app'
 _PREVIEW_LINK_NOT_CONFIGURED = 'not configured'
 _PREVIEW_LINK_NO_ROUTE = 'No route found'
 
@@ -2165,7 +2171,9 @@ def _preview_link_error(exc: httpx.HTTPStatusError, data_app: DataApp) -> ValueE
             f'(action="deploy", mode="dev") if that has not happened, wait until `get_data_apps` reports it '
             f'running, then call this tool again.'
         )
-    if status == HTTPStatus.FORBIDDEN:
+    if status == HTTPStatus.FORBIDDEN or (
+        status == HTTPStatus.BAD_REQUEST and _PREVIEW_LINK_NOT_AUTHORIZED in api_error
+    ):
         return ValueError(
             f'The token cannot manage data app "{cfg}": the app belongs to a project this token does not grant. '
             f"Pass the app's project as `project_id`, or use a token of that project. API error: {api_error}"
