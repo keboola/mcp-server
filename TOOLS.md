@@ -2390,8 +2390,9 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
 
 Creates a short-lived link that opens a dev-mode data app in your browser without the app's login.
 
-Use it to see or test a python-js **draft** that runs in dev mode
-(`deploy_data_app(action='deploy', mode='dev')`). Production and Streamlit apps have no preview link.
+Use it to see or test any data app while it runs in dev mode. The usual case is a python-js **draft**
+deployed with `deploy_data_app(action='deploy', mode='dev')`. An app that is not in dev mode has no
+preview link.
 
 ## How to use the link
 - Open `url` in your browser tool before `link_expires_at` (about 60 seconds after this call). Do not fetch
@@ -2419,7 +2420,7 @@ Use it to see or test a python-js **draft** that runs in dev mode
   "additionalProperties": false,
   "properties": {
     "configuration_id": {
-      "description": "Storage configuration ID of the data app to preview: a python-js draft deployed with mode=\"dev\".",
+      "description": "Storage configuration ID of a data app running in dev mode, of any type. The usual case is a python-js draft deployed with `deploy_data_app` (mode=\"dev\").",
       "type": "string"
     },
     "project_id": {
