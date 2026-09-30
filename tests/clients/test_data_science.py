@@ -7,6 +7,7 @@ import pytest
 
 from keboola_mcp_server.clients.data_science import (
     AppGitRepoResponse,
+    AppPreviewLinkResponse,
     AppRunResponse,
     CodeDataAppConfig,
     CreatedGitCredentialResponse,
@@ -291,3 +292,22 @@ async def test_list_app_runs_gets_expected_endpoint_and_parses_failure_reason() 
     assert runs[0].failure_reason.message == 'failed to decrypt key "#API_KEY"'
     assert runs[1].failure_reason is None
     assert runs[1].startup_logs == 'booting\nready'
+
+
+@pytest.mark.asyncio
+async def test_create_app_preview_link_posts_without_body_and_hides_url_in_repr() -> None:
+    token = 'SENTINEL-PREVIEW-TOKEN'
+    url = f'https://my-app-123.hub.example.com/_proxy/preview#t={token}'
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.post = AsyncMock(  # type: ignore[assignment]
+        return_value={'url': url, 'linkExpiresAt': '2026-09-27T10:01:00+00:00'}
+    )
+
+    result = await client.create_app_preview_link('app-123')
+
+    assert isinstance(result, AppPreviewLinkResponse)
+    assert result.url == url
+    assert result.link_expires_at == '2026-09-27T10:01:00+00:00'
+    assert token not in repr(result)
+    assert token not in str(result)
+    client.post.assert_awaited_once_with(endpoint='apps/app-123/preview-link')
