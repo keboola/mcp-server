@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, StrictBool, field_validator
 
 from keboola_mcp_server.links import Link
 
-DerivedState = Literal['rejected', 'closed', 'in_development', 'in_review', 'approved', 'in_merge', 'merged']
+DerivedState = Literal['rejected', 'closed', 'in_development', 'in_review', 'approved', 'in_merge', 'merged', 'unknown']
 MergeRequestStateFilter = Literal[
     'development',
     'in_review',

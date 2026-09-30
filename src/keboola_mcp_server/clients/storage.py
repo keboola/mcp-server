@@ -981,7 +981,9 @@ class AsyncStorageClient(KeboolaServiceClient):
         Starts the merge; returns the Storage job (`{id, ...}`) to await. On a 409 the raised
         `httpx.HTTPStatusError` carries the body with `code`, `error` and (for conflicts) `params.errors`.
         """
-        return cast(JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}/merge'))
+        # No retry: the first attempt may start the (irreversible) merge job and then time out; a repeat would get a
+        # 409 "not ready" and the started merge would be misreported as refused.
+        return cast(JsonDict, await self.put(endpoint=f'merge-request/{merge_request_id}/merge', retry=False))
 
     # Branch-scoped endpoints of the conflict-resolution flow (the current session branch).
 

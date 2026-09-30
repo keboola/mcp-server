@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import httpx
 import pytest
+from httpx_retries import RetryTransport
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.auth_bridge import StorageTokenExchangeError, StorageTokenResolver
@@ -82,6 +83,21 @@ class TestRawKeboolaClient:
     def raw_client(self) -> RawKeboolaClient:
         """Create a RawKeboolaClient instance for testing."""
         return RawKeboolaClient(base_api_url='https://api.example.com', api_token='test-token')
+
+    @pytest.mark.parametrize(
+        ('retry', 'expected_type'),
+        [
+            pytest.param(True, RetryTransport, id='default_retries'),
+            pytest.param(False, httpx.AsyncHTTPTransport, id='opt_out'),
+        ],
+    )
+    def test_create_transport_retry_opt_out(
+        self, raw_client: RawKeboolaClient, retry: bool, expected_type: type
+    ) -> None:
+        """A call that starts a non-idempotent operation (e.g. a merge job) can opt out of the retry policy."""
+        transport = raw_client._create_transport(retry=retry)
+
+        assert type(transport) is expected_type
 
     def test_raise_for_status_500_with_exception_id(
         self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
@@ -1311,7 +1327,11 @@ class TestAsyncStorageClientMergeRequests:
                 id='request_changes_with_reason',
             ),
             pytest.param(
-                'merge_request_merge', {'merge_request_id': 7}, 'put', {'endpoint': 'merge-request/7/merge'}, id='merge'
+                'merge_request_merge',
+                {'merge_request_id': 7},
+                'put',
+                {'endpoint': 'merge-request/7/merge', 'retry': False},
+                id='merge_without_retry',
             ),
             pytest.param(
                 'configuration_diff',
