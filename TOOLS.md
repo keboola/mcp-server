@@ -4014,7 +4014,7 @@ follow `next_step`.
         }
       ],
       "default": null,
-      "description": "ISO-8601 date-time; required if and only if auto_merge='scheduled'."
+      "description": "ISO-8601 date-time with a timezone offset (e.g. 2026-10-01T18:00:00+02:00), in the future; required if and only if auto_merge='scheduled'."
     }
   },
   "required": [
@@ -4478,7 +4478,7 @@ Returns the merge request with its status; follow `next_step`.
         }
       ],
       "default": null,
-      "description": "ISO-8601 date-time of a 'scheduled' auto-merge. Required with auto_merge='scheduled'."
+      "description": "When a 'scheduled' auto-merge runs: ISO-8601 date-time with a timezone offset (e.g. 2026-10-01T18:00:00+02:00), in the future. To reschedule, pass BOTH auto_merge='scheduled' and auto_merge_at; a time alone is rejected."
     },
     "project_id": {
       "anyOf": [

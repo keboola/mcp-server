@@ -95,11 +95,17 @@ class RawKeboolaClient:
             self.headers.update(headers)
         self.readonly = readonly
 
-    def _create_transport(self) -> RetryTransport:
+    def _create_transport(self, *, retry: bool = True) -> httpx.AsyncBaseTransport:
         """
-        Creates a new RetryTransport instance. Each AsyncClient instance needs its own transport.
+        Creates a new transport instance. Each AsyncClient instance needs its own transport.
         The transports cannot be shared among the AsyncClient instances.
+
+        :param retry: When False, a plain transport without the retry policy is returned. Use it for a call that
+            starts a non-idempotent server-side operation (e.g. a merge job): repeating it after a timeout could
+            turn a started operation into a misleading "already running" error.
         """
+        if not retry:
+            return httpx.AsyncHTTPTransport()
         return RetryTransport(retry=self._retry)
 
     @staticmethod
@@ -250,6 +256,7 @@ class RawKeboolaClient:
         data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
+        retry: bool = True,
     ) -> JsonStruct:
         """
         Makes a PUT request to the service API.
@@ -258,13 +265,14 @@ class RawKeboolaClient:
         :param data: Request payload
         :param params: Query parameters for the request
         :param headers: Additional headers for the request
+        :param retry: Whether to apply the retry policy (timeouts, 429/5xx, 409); see `_create_transport`
         :return: API response as dictionary
         """
         if self.readonly:
             raise RuntimeError(f'Forbidden PUT operation on a readonly client: {self.base_api_url}')
 
         headers = self.headers | (headers or {})
-        async with httpx.AsyncClient(timeout=self.timeout, transport=self._create_transport()) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, transport=self._create_transport(retry=retry)) as client:
             response = await client.put(
                 f'{self.base_api_url}/{endpoint}',
                 params=params,
@@ -403,6 +411,7 @@ class KeboolaServiceClient:
         endpoint: str,
         data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
+        retry: bool = True,
     ) -> JsonStruct:
         """
         Makes a PUT request to the service API.
@@ -410,9 +419,10 @@ class KeboolaServiceClient:
         :param endpoint: API endpoint to call
         :param data: Request payload
         :param params: Query parameters for the request
+        :param retry: Whether to apply the retry policy; False for calls that start a non-idempotent operation
         :return: API response as dictionary
         """
-        return await self.raw_client.put(endpoint=endpoint, data=data, params=params)
+        return await self.raw_client.put(endpoint=endpoint, data=data, params=params, retry=retry)
 
     async def delete(
         self,

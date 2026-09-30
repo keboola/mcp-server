@@ -368,6 +368,15 @@ def _validate_resolved(resolved: Mapping[str, Any]) -> ResolvedConfiguration:
         ) from exc
 
 
+# Fields Connection will serialize under DMD-1988; a locally overridden `state` must not be contradicted by them.
+_SERVER_DERIVED_KEYS = ('derivedState', 'mergeBlockers', 'allowedActions', 'viewer')
+
+
+def _with_state(mr: Mapping[str, Any], state: str) -> dict[str, Any]:
+    """The MR payload with `state` overridden and any server-derived status fields dropped."""
+    return {k: v for k, v in mr.items() if k not in _SERVER_DERIVED_KEYS} | {'state': state}
+
+
 def _job_error_message(job: Mapping[str, Any]) -> str:
     error = job.get('error')
     if isinstance(error, Mapping) and error.get('message'):
@@ -504,7 +513,13 @@ async def update_merge_request(
     ] = None,
     auto_merge_at: Annotated[
         str | None,
-        Field(description="ISO-8601 date-time of a 'scheduled' auto-merge. Required with auto_merge='scheduled'."),
+        Field(
+            description=(
+                "When a 'scheduled' auto-merge runs: ISO-8601 date-time with a timezone offset "
+                "(e.g. 2026-10-01T18:00:00+02:00), in the future. To reschedule, pass BOTH auto_merge='scheduled' "
+                'and auto_merge_at; a time alone is rejected.'
+            )
+        ),
     ] = None,
     project_id: ProjectIdArg = None,
 ) -> MergeRequestDetail:
@@ -516,7 +531,9 @@ async def update_merge_request(
     the user first. Not allowed once the merge request is merged or canceled. Works from any session.
     Returns the merge request with its status; follow `next_step`.
     """
-    _validate_auto_merge(auto_merge, auto_merge_at, require_pairing=False)
+    # The backend applies auto-merge settings only when a strategy is sent; a lone `auto_merge_at` would be silently
+    # ignored while the tool reported success, so the pairing is enforced here (as the kbagent CLI does).
+    _validate_auto_merge(auto_merge, auto_merge_at, require_pairing=True)
     payload: JsonDict = {}
     if title is not None:
         payload['title'] = title
@@ -559,7 +576,13 @@ async def create_merge_request(
         ),
     ] = 'none',
     auto_merge_at: Annotated[
-        str | None, Field(description="ISO-8601 date-time; required if and only if auto_merge='scheduled'.")
+        str | None,
+        Field(
+            description=(
+                'ISO-8601 date-time with a timezone offset (e.g. 2026-10-01T18:00:00+02:00), in the future; required '
+                "if and only if auto_merge='scheduled'."
+            )
+        ),
     ] = None,
 ) -> MergeRequestDetail:
     """
@@ -724,13 +747,34 @@ async def merge_merge_request(
         conflicts = _parse_conflicts(await c.client.storage_client.merge_request_conflicts(mr_id))
         if not conflicts:
             refusal, conflicts = 'not_ready', None
+    if refusal == 'not_ready':
+        # "Not ready" may mean a merge is already running (an earlier attempt that timed out client-side, or the
+        # auto-merge scheduler): re-read the MR and report the running merge instead of a refusal.
+        current = await c.client.storage_client.merge_request_detail(mr_id)
+        if current.get('state') == 'in_merge':
+            status = build_status(
+                current, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name
+            )
+            return MergeResult(
+                merge_request_id=mr_id,
+                merged=False,
+                state='in_merge',
+                job_id=None,
+                refusal=None,
+                refusal_message=None,
+                conflicts=None,
+                status=status,
+                source_branch_deleting=False,
+                warnings=[f'A merge is already running for this merge request; the backend said: {message}'],
+                next_step=status.next_step,
+            )
     if refusal is not None:
         return _refused_merge(c, mr, refusal=refusal, message=message, conflicts=conflicts)
 
     job_id = str(job['id'])
     final, poll_error = await _await_storage_job(c.client, job_id)
     if final is None:
-        in_merge = {**mr, 'state': 'in_merge'}
+        in_merge = _with_state(mr, 'in_merge')
         status = build_status(
             in_merge, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name
         )
@@ -781,7 +825,7 @@ async def merge_merge_request(
                 branch_from_name=branch_name,
             ),
         )
-    rolled_back = {**mr, 'state': 'approved'}  # the backend rolls a failed merge back to `approved`
+    rolled_back = _with_state(mr, 'approved')  # the backend rolls a failed merge back to `approved`
     status = build_status(
         rolled_back, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name
     )
