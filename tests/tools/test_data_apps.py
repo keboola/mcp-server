@@ -3691,6 +3691,7 @@ async def test_get_data_apps_detail_includes_last_run_failure(mocker, mcp_contex
 import logging  # noqa: E402
 
 import httpx  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 
 from keboola_mcp_server.clients.base import RawKeboolaClient  # noqa: E402
 from keboola_mcp_server.clients.data_science import AppPreviewLinkResponse, DataScienceClient  # noqa: E402
@@ -3762,6 +3763,19 @@ async def test_get_data_app_preview_link_malformed_response_does_not_leak_link(
         await get_data_app_preview_link(ctx=mcp_context_client, configuration_id='cfg-draft-1')
 
     assert _PREVIEW_TOKEN not in str(exc_info.value)
+    chain: list[BaseException] = []
+    pending: list[BaseException | None] = [exc_info.value]
+    while pending:
+        current = pending.pop()
+        if current is None or any(current is seen for seen in chain):
+            continue
+        chain.append(current)
+        pending.extend([current.__cause__, current.__context__])
+    for link in chain:
+        assert _PREVIEW_TOKEN not in str(link)
+        assert _PREVIEW_TOKEN not in repr(link)
+        if isinstance(link, ValidationError):
+            assert _PREVIEW_TOKEN not in repr(link.errors())
     assert _PREVIEW_TOKEN not in caplog.text
     assert _PREVIEW_TOKEN not in str(keboola_client.storage_client.trigger_event.call_args_list)
 

@@ -327,4 +327,4 @@ async def test_create_app_preview_link_hides_url_in_validation_error() -> None:
     assert token[-6:] not in str(exc_info.value)
     assert 'linkExpiresAt' in str(exc_info.value)
     assert exc_info.value.__cause__ is None
-    assert exc_info.value.__suppress_context__ is True
+    assert exc_info.value.__context__ is None
