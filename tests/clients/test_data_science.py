@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
-import pydantic
 import pytest
 
 from keboola_mcp_server.clients.data_science import (
@@ -321,8 +320,11 @@ async def test_create_app_preview_link_hides_url_in_validation_error() -> None:
     client = DataScienceClient.create('https://api.example.com', token=None)
     client.post = AsyncMock(return_value={'url': url})  # type: ignore[assignment]
 
-    with pytest.raises(pydantic.ValidationError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:
         await client.create_app_preview_link('app-123')
 
     assert token not in str(exc_info.value)
     assert token[-6:] not in str(exc_info.value)
+    assert 'linkExpiresAt' in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__suppress_context__ is True

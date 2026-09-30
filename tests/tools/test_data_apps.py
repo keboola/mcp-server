@@ -3693,7 +3693,7 @@ import logging  # noqa: E402
 import httpx  # noqa: E402
 
 from keboola_mcp_server.clients.base import RawKeboolaClient  # noqa: E402
-from keboola_mcp_server.clients.data_science import AppPreviewLinkResponse  # noqa: E402
+from keboola_mcp_server.clients.data_science import AppPreviewLinkResponse, DataScienceClient  # noqa: E402
 from keboola_mcp_server.tools.data_apps import (  # noqa: E402
     DataAppPreviewLinkOutput,
     get_data_app_preview_link,
@@ -3742,6 +3742,28 @@ def _http_error(status: int, body: dict | str) -> httpx.HTTPStatusError:
     with pytest.raises(httpx.HTTPStatusError) as exc_info:
         RawKeboolaClient._raise_for_status(response)
     return exc_info.value
+
+
+@pytest.mark.asyncio
+async def test_get_data_app_preview_link_malformed_response_does_not_leak_link(
+    mocker,
+    mcp_context_client: Context,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=_preview_app('draft'))
+    )
+    keboola_client.data_science_client = DataScienceClient.create('https://api.example.com', token=None)
+    keboola_client.data_science_client.post = mocker.AsyncMock(return_value={'url': _PREVIEW_URL})
+
+    with pytest.raises(Exception) as exc_info:
+        await get_data_app_preview_link(ctx=mcp_context_client, configuration_id='cfg-draft-1')
+
+    assert _PREVIEW_TOKEN not in str(exc_info.value)
+    assert _PREVIEW_TOKEN not in caplog.text
+    assert _PREVIEW_TOKEN not in str(keboola_client.storage_client.trigger_event.call_args_list)
 
 
 @pytest.mark.asyncio
