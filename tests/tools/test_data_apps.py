@@ -3796,26 +3796,31 @@ async def test_get_data_app_preview_link_malformed_response_does_not_leak_link(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('app_kind', 'data_app_id'),
+    [('draft', 'app-draft-1'), ('streamlit', 'app-sl-1')],
+)
 async def test_get_data_app_preview_link_returns_link_without_leaking_it(
     mocker,
     mcp_context_client: Context,
     caplog: pytest.LogCaptureFixture,
+    app_kind: str,
+    data_app_id: str,
 ) -> None:
     caplog.set_level(logging.DEBUG)
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-    mocker.patch(
-        'keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=_preview_app('draft'))
-    )
+    data_app = _preview_app(app_kind)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
     keboola_client.data_science_client.create_app_preview_link = mocker.AsyncMock(
         return_value=AppPreviewLinkResponse(url=_PREVIEW_URL, link_expires_at='2026-09-27T10:01:00+00:00')
     )
 
-    result = await get_data_app_preview_link(ctx=mcp_context_client, configuration_id='cfg-draft-1')
+    result = await get_data_app_preview_link(ctx=mcp_context_client, configuration_id=data_app.configuration_id)
 
     assert isinstance(result, DataAppPreviewLinkOutput)
     assert result.url == _PREVIEW_URL
     assert result.link_expires_at == '2026-09-27T10:01:00+00:00'
-    keboola_client.data_science_client.create_app_preview_link.assert_awaited_once_with('app-draft-1')
+    keboola_client.data_science_client.create_app_preview_link.assert_awaited_once_with(data_app_id)
     assert _PREVIEW_TOKEN not in repr(result)
     assert _PREVIEW_TOKEN not in str(result)
     assert _PREVIEW_TOKEN not in caplog.text
@@ -3845,7 +3850,7 @@ async def test_get_data_app_preview_link_returns_link_without_leaking_it(
             'streamlit',
             400,
             _sandboxes_error(400, 'App "app-sl-1" is not in dev mode.'),
-            r'is a streamlit app\. Preview links exist only for python-js drafts',
+            r'"cfg-sl-1" \(streamlit\) is not in dev mode.*cannot switch a streamlit app to dev mode',
             'Deploy it in dev mode first',
         ),
         (
