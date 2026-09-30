@@ -567,8 +567,8 @@ class DataAppPreviewLinkOutput(BaseModel):
     link_expires_at: str = Field(
         description=(
             'Open `url` before this time (ISO 8601). A browser session opened with it keeps working after this '
-            'time; call `get_data_app_preview_link` again when the app shows its login page, or when `url` was '
-            'not opened before this time.'
+            'time; call `get_data_app_preview_link` again only when the app shows its login page ("This app is '
+            'password protected") or looks broken until reloaded, or when `url` was not opened before this time.'
         )
     )
 
