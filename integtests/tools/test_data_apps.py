@@ -4,6 +4,7 @@ import re
 import subprocess
 import uuid
 from collections.abc import AsyncGenerator, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,6 +12,7 @@ import pytest
 import pytest_asyncio
 import toon_format
 from fastmcp import Client, FastMCP
+from fastmcp.exceptions import ToolError
 
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient, get_metadata_property
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
@@ -18,6 +20,7 @@ from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.data_apps import (
     _DEFAULT_PACKAGES,
     DataApp,
+    DataAppPreviewLinkOutput,
     DataAppSummary,
     DeploymentDataAppOutput,
     GetDataAppsOutput,
@@ -410,6 +413,17 @@ async def test_python_js_data_app_prod_and_draft_lifecycle(
         # The data-app runtime is async — we only assert the deploy call was accepted; not its
         # eventual state, since CI cannot afford to poll the full startup loop.
 
+        # Step 4a: mint a preview link for the dev-mode draft. The url is not logged.
+        preview_result = await mcp_client.call_tool(
+            name='get_data_app_preview_link',
+            arguments={'configuration_id': draft_output.data_app.configuration_id},
+        )
+        assert preview_result.structured_content is not None
+        preview = DataAppPreviewLinkOutput.model_validate(preview_result.structured_content)
+        assert preview.url.startswith('https://')
+        assert '/_proxy/preview#t=' in preview.url
+        assert datetime.fromisoformat(preview.link_expires_at) > datetime.now(timezone.utc)
+
         # Fetching the prod's detail must now list the draft under `drafts`.
         prod_detail_before = await mcp_client.call_tool(
             name='get_data_apps',
@@ -502,6 +516,13 @@ async def test_python_js_data_app_prod_and_draft_lifecycle(
             },
         )
         assert prod_deploy.structured_content is not None
+
+        # Step 6a: the prod app is not in dev mode, so the tool refuses and points at drafts.
+        with pytest.raises(ToolError, match='is a production app'):
+            await mcp_client.call_tool(
+                name='get_data_app_preview_link',
+                arguments={'configuration_id': prod_output.data_app.configuration_id},
+            )
 
         # Step 7: delete the draft via the new MCP tool, then verify it's gone from prod's drafts.
         # Stop the draft first — DSAPI delete requires desiredState == currentState.
