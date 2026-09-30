@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from typing import Any, Union, cast
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 from keboola_mcp_server.clients.base import KeboolaServiceClient, RawKeboolaClient
 
@@ -490,7 +490,16 @@ class DataScienceClient(KeboolaServiceClient):
         :return: The link and its expiry
         """
         response = await self.post(endpoint=f'apps/{data_app_id}/preview-link')
-        return AppPreviewLinkResponse.model_validate(response)
+        try:
+            return AppPreviewLinkResponse.model_validate(response)
+        except ValidationError as e:
+            problems = ', '.join(
+                f'{".".join(str(part) for part in err["loc"])}: {err["type"]}'
+                for err in e.errors(include_input=False, include_url=False)
+            )
+            raise ValueError(
+                f'Unexpected response from the data-science API preview-link endpoint: {problems}'
+            ) from None
 
     async def create_data_app(
         self,

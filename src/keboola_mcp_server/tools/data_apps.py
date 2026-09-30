@@ -567,7 +567,8 @@ class DataAppPreviewLinkOutput(BaseModel):
     link_expires_at: str = Field(
         description=(
             'Open `url` before this time (ISO 8601). A browser session opened with it keeps working after this '
-            'time; call `get_data_app_preview_link` again only when the app shows its login page.'
+            'time; call `get_data_app_preview_link` again when the app shows its login page, or when `url` was '
+            'not opened before this time.'
         )
     )
 
@@ -2127,7 +2128,8 @@ async def get_data_app_preview_link(
     - The session belongs to this one app. It ends without notice: after about 4 hours without requests,
       12 hours after the link was opened at the latest, or at once when the app leaves dev mode.
     - Call this tool again only when the app shows its login page ("This app is password protected") or looks
-      broken until reloaded, or when you did not open the previous `url` before its `link_expires_at`.
+      broken until reloaded, or when you did not open the previous `url` before its `link_expires_at` (the
+      browser then shows "Preview link is invalid or expired").
     - Never type a password into the app's login page, and never ask the user for one.
     - Do not share `url`: do not show it to the user and do not put it into files, commits, messages or any
       tool other than your browser. Anyone who opens it before it expires gets into the app.
