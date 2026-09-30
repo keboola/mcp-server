@@ -168,6 +168,22 @@ class TestMultiProjectMiddleware:
             await MultiProjectMiddleware().on_call_tool(context, call_next)
 
     @pytest.mark.asyncio
+    async def test_branch_only_merge_request_tool_targets_active_project_without_project_id(self) -> None:
+        """The five branch-only MR tools declare no project_id: in a 2+ project scope they must still run
+        (against the active project's session branch) instead of failing as ambiguous."""
+        scope = SessionScope(project_ids=[11, 22], confirmed=True)
+        context, state = self._ctx(scope, 'merge_merge_request', read_only=False, arguments={})
+        expected = self._result('merged')
+
+        async def call_next(_):
+            assert state[KeboolaClient.STATE_KEY] == 'orig-client'  # the active project's client, no swap
+            return expected
+
+        result = await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        assert result is expected
+
+    @pytest.mark.asyncio
     async def test_write_tool_project_id_outside_scope_raises(self) -> None:
         scope = SessionScope(project_ids=[11, 22], confirmed=True)
         context, _ = self._ctx(scope, 'update_config', read_only=False, arguments={'project_id': '33'})
