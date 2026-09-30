@@ -2662,9 +2662,16 @@ working; tell the user both.
       "type": "string"
     },
     "auto_suspend_after_seconds": {
-      "default": 900,
-      "description": "Number of seconds after which the running data app is automatically suspended.",
-      "type": "integer"
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Number of seconds after which the running data app is automatically suspended. Leave unset (None) to keep the app's current value on update; on create it defaults to 900."
     },
     "storage": {
       "anyOf": [

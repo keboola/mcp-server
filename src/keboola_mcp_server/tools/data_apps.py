@@ -1024,11 +1024,15 @@ async def modify_python_js_data_app(
         ),
     ] = 'default',
     auto_suspend_after_seconds: Annotated[
-        int,
+        int | None,
         Field(
-            description='Number of seconds after which the running data app is automatically suspended.',
+            description=(
+                'Number of seconds after which the running data app is automatically suspended. '
+                'Leave unset (None) to keep the app\'s current value on update; on create it defaults '
+                'to 900.'
+            ),
         ),
-    ] = 900,
+    ] = None,
     storage: Annotated[
         dict[str, Any] | None,
         Field(
@@ -1410,7 +1414,9 @@ async def modify_python_js_data_app(
 
         config = CodeDataAppConfig(
             parameters=CodeDataAppConfig.Parameters(
-                auto_suspend_after_seconds=auto_suspend_after_seconds,
+                auto_suspend_after_seconds=(
+                    auto_suspend_after_seconds if auto_suspend_after_seconds is not None else 900
+                ),
                 data_app=CodeDataAppConfig.Parameters.DataApp(
                     slug=slug,
                     secrets={SECRET_WORKSPACE_ID: legacy_workspace_id} if legacy_workspace_id else None,
@@ -1752,7 +1758,7 @@ def _code_config_has_storage_access(config: Mapping[str, Any]) -> bool:
 
 def _update_existing_code_data_app_config(
     existing_config: Mapping[str, Any],
-    auto_suspend_after_seconds: int,
+    auto_suspend_after_seconds: int | None = None,
     authentication_type: AuthenticationType = 'default',
     storage_access: bool | None = None,
     has_storage_workspace: bool = True,
@@ -1763,6 +1769,8 @@ def _update_existing_code_data_app_config(
 ) -> dict[str, Any]:
     """Apply requested updates to the existing python-js data app storage configuration.
 
+    `auto_suspend_after_seconds` rewrites `parameters.autoSuspendAfterSeconds` (None leaves it
+    untouched, so a rename keeps the app's suspend timeout).
     `slug` rewrites `parameters.dataApp.slug` (None leaves it untouched); `_resolve_slug_update`
     decides whether it may change. `runtime.image.version` is
     not touched either — the platform now picks a default for python-js apps, and any legacy
@@ -1787,7 +1795,8 @@ def _update_existing_code_data_app_config(
     """
     new_config = cast(dict[str, Any], copy.deepcopy(existing_config))
     new_config.setdefault('parameters', {})
-    new_config['parameters']['autoSuspendAfterSeconds'] = auto_suspend_after_seconds
+    if auto_suspend_after_seconds is not None:
+        new_config['parameters']['autoSuspendAfterSeconds'] = auto_suspend_after_seconds
     if authentication_type != 'default':
         new_config['authorization'] = _get_authorization(authentication_type == 'basic-auth')
     if branch is not None:
