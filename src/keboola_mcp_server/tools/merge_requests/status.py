@@ -86,7 +86,8 @@ def derive_state(mr: Mapping[str, Any]) -> DerivedState:
         return 'rejected'
     if state == 'canceled' or (state == 'development' and creator_self_rejected):
         return 'closed'
-    return _DERIVED_STATE_BY_RAW.get(state, 'in_development')
+    # An unrecognized raw state is reported as such, never as a state the agent may act on.
+    return _DERIVED_STATE_BY_RAW.get(state, 'unknown')
 
 
 def derive_merge_blockers(mr: Mapping[str, Any], conflicts: Sequence[Any] | None) -> list[MergeBlocker]:
@@ -113,7 +114,8 @@ def derive_merge_blockers(mr: Mapping[str, Any], conflicts: Sequence[Any] | None
         blockers.append('conflicts')
     if state == 'in_review':
         blockers.append('approvals')
-    if state in ('in_merge', 'published', 'canceled'):
+    if state in ('in_merge', 'published', 'canceled') or state not in _DERIVED_STATE_BY_RAW:
+        # Unknown states block too: when unsure, the answer is "no", never "mergeable".
         blockers.append('state')
     return blockers
 
@@ -200,6 +202,11 @@ def build_next_step(
     """The 15-row decision table (RFC "next_step — the deterministic guide"); the first matching row wins."""
     branch = f"branch '{branch_from_name}'" if branch_from_name else "the merge request's source branch"
 
+    if derived_state == 'unknown':  # 0: an unrecognized raw state; never recommend an action on it
+        return (
+            f"The merge request is in a state this server does not recognize ('{state}'); do not act on it from "
+            'here, check it in the Keboola UI.'
+        )
     if derived_state == 'merged':  # 1
         return (
             'Done: the changes are in production and the source branch is being deleted. '

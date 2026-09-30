@@ -62,6 +62,7 @@ UNKNOWN_VIEWER = Viewer(is_creator=None, has_approved=None)
         ),
         pytest.param(_mr('development', derivedState='rejected'), 'rejected', id='server_first_override'),
         pytest.param(_mr('development', derivedState='nonsense'), 'in_development', id='unknown_server_value_ignored'),
+        pytest.param(_mr('blocked_new'), 'unknown', id='unknown_raw_state'),
     ],
 )
 def test_derive_state(mr: dict[str, Any], expected: str) -> None:
@@ -80,6 +81,7 @@ def test_derive_state(mr: dict[str, Any], expected: str) -> None:
         pytest.param(_mr('published'), None, ['state'], id='published'),
         pytest.param(_mr('canceled'), None, ['state'], id='canceled'),
         pytest.param(_mr('approved'), [], [], id='approved_mergeable'),
+        pytest.param(_mr('blocked_new'), [], ['state'], id='unknown_state_blocks'),
         pytest.param(
             _mr('in_review', mergeBlockers=['state']),
             [_conflict()],
@@ -145,6 +147,12 @@ def test_derive_viewer(mr: dict[str, Any], admin_id: Any, expected: Viewer) -> N
 @pytest.mark.parametrize(
     ('row', 'kwargs', 'expected_fragment'),
     [
+        pytest.param(
+            0,
+            {'state': 'blocked_new', 'derived_state': 'unknown', 'allowed_actions': [], 'merge_blockers': ['state']},
+            "state this server does not recognize ('blocked_new'); do not act on it",
+            id='0_unknown_state_recommends_nothing',
+        ),
         pytest.param(
             1,
             {'state': 'published', 'derived_state': 'merged', 'allowed_actions': [], 'merge_blockers': ['state']},
@@ -389,6 +397,7 @@ def test_next_step_rules(kwargs: dict[str, Any], expected_fragment: str, reason:
         pytest.param(_mr('approved'), [], True, [], id='fetched_empty_is_true'),
         pytest.param(_mr('approved'), [_conflict()], False, ['conflicts'], id='conflicts_is_false'),
         pytest.param(_mr('in_review'), [], False, ['approvals'], id='approvals_blocker_even_without_conflicts'),
+        pytest.param(_mr('blocked_new'), [], False, ['state'], id='unknown_state_is_never_mergeable'),
     ],
 )
 def test_build_status_mergeable_fail_closed(
