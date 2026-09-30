@@ -51,7 +51,7 @@ Refusals from sandboxes-service are mapped to actionable tool errors:
 | 400 not-dev on a python-js prod app | do not switch the prod app to dev mode; find or create a draft (`get_data_apps`, `modify_python_js_data_app(parent_configuration_id=...)`), deploy it in dev mode, preview the draft |
 | 400 not-dev on a Streamlit app | Streamlit apps have no preview link (no dev mode) |
 | 400 `App "<id>" has no URL yet.` | deploy the app if needed, wait until it runs, call again |
-| 400 or 403 `Token is not authorized to manage app …` (permission checker; 400 today, 403 after its fix), any other 403 | the token cannot manage this app (other project); use `project_id` or a token of that project |
+| 400 or 403 `Token is not authorized to manage app …` (permission checker; 400 today, 403 after its fix), any other 403 | the tool reports that the token cannot manage this app and the agent tells the user; the refusal usually already comes from the app lookup (`GET /apps/{id}`) before the mint, and is mapped there too |
 | 404 `No route found for …` (sandboxes-service without the endpoint yet) | preview links are not available on this stack yet; tell the user |
 | other 404 | the data app was not found by the data-science service (probably just deleted) |
 | 503 `App preview links are not configured.` | preview links are unavailable on this stack; tell the user; do not try the password login |

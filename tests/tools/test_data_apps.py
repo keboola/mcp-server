@@ -3845,15 +3845,15 @@ async def test_get_data_app_preview_link_returns_link_without_leaking_it(
             'draft',
             403,
             _sandboxes_error(403, "You don't have access to the resource."),
-            r'The token cannot manage data app "cfg-draft-1"',
-            None,
+            r'The token cannot manage data app "cfg-draft-1", so it cannot get a preview link',
+            'project_id',
         ),
         (
             'draft',
             400,
             _sandboxes_error(400, "Token is not authorized to manage app 'app-draft-1', app is from different project"),
-            r'The token cannot manage data app "cfg-draft-1"',
-            'not running in dev mode',
+            r'The token cannot manage data app "cfg-draft-1", so it cannot get a preview link',
+            'project_id',
         ),
         (
             'draft',
@@ -3954,4 +3954,39 @@ async def test_get_data_app_preview_link_does_not_mint_when_lookup_fails(
         await get_data_app_preview_link(ctx=mcp_context_client, configuration_id='cfg-missing')
 
     assert exc_info.value is error
+    keboola_client.data_science_client.create_app_preview_link.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', [400, 403], ids=['400', '403'])
+async def test_get_data_app_preview_link_maps_other_project_refusal_from_lookup(
+    mocker,
+    mcp_context_client: Context,
+    status: int,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        return_value={
+            'id': 'cfg-draft-1',
+            'name': 'draft',
+            'description': 'draft',
+            'configuration': {'parameters': {'id': 'app-draft-1'}},
+            'version': 1,
+        }
+    )
+    keboola_client.data_science_client.get_data_app = mocker.AsyncMock(
+        side_effect=_http_error(
+            status,
+            _sandboxes_error(
+                status, "Token is not authorized to manage app 'app-draft-1', app is from different project"
+            ),
+        )
+    )
+    keboola_client.data_science_client.create_app_preview_link = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match=r'The token cannot manage data app "cfg-draft-1"') as exc_info:
+        await get_data_app_preview_link(ctx=mcp_context_client, configuration_id='cfg-draft-1')
+
+    assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
+    assert 'project_id' not in str(exc_info.value)
     keboola_client.data_science_client.create_app_preview_link.assert_not_called()
