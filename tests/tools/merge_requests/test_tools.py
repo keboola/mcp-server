@@ -393,6 +393,17 @@ async def test_update_merge_request_sends_only_supplied_keys(mcp_context_client:
 
 
 @pytest.mark.asyncio
+async def test_update_merge_request_rejects_time_without_scheduled_strategy(
+    mcp_context_client: Context, storage: AsyncMock
+) -> None:
+    """The backend applies auto-merge only when a strategy is sent; a lone time would be silently ignored."""
+    with pytest.raises(ToolError, match='only meaningful'):
+        await update_merge_request(mcp_context_client, merge_request_id=42, auto_merge_at='2026-10-01T18:00:00+02:00')
+
+    storage.merge_request_update.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_update_merge_request_requires_a_change(mcp_context_client: Context, storage: AsyncMock) -> None:
     with pytest.raises(ToolError, match='Nothing to update'):
         await update_merge_request(mcp_context_client, merge_request_id=42)
@@ -662,6 +673,49 @@ async def test_merge_not_ready_on_approved_says_wait(mcp_context_client: Context
     assert 'wait for it to clear' in result.next_step
     assert 'Another merge request is being processed.' in result.next_step
     assert 'Ready: merge it' not in result.next_step
+
+
+@pytest.mark.asyncio
+async def test_merge_not_ready_while_a_merge_is_running_is_not_a_refusal(
+    mcp_context_client: Context, storage: AsyncMock
+) -> None:
+    """A timed-out first attempt (or auto-merge) already started the job: the 409 must not read as 'nothing changed'."""
+    storage.merge_request_detail.side_effect = [_mr_raw('approved'), _mr_raw('in_merge')]
+    storage.merge_request_merge.side_effect = _http_error(
+        409, {'code': 'storage.mergeRequests.notReadyToMerge', 'error': 'Cannot merge, branch is in "in_merge" state.'}
+    )
+
+    result = await merge_merge_request(mcp_context_client, merge_request_id=42)
+
+    assert result.refusal is None
+    assert result.merged is False
+    assert result.state == 'in_merge'
+    assert 'A merge is already running' in result.warnings[0]
+    assert 'Do not edit this branch' in result.next_step and 'do not start a second merge' in result.next_step
+    assert result.status is not None and result.status.next_step == result.next_step
+
+
+@pytest.mark.asyncio
+async def test_merge_state_override_drops_server_derived_fields(
+    mcp_context_client: Context, storage: AsyncMock, monkeypatch
+) -> None:
+    """After a timeout the local `in_merge` override must win over DMD-1988 fields still saying 'approved'."""
+    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
+    monkeypatch.setattr(mr_tools, 'MERGE_JOB_TIMEOUT_SEC', 0)
+    storage.merge_request_detail.return_value = _mr_raw(
+        'approved', derivedState='approved', allowedActions=['merge'], mergeBlockers=[]
+    )
+    storage.merge_request_merge.return_value = {'id': 991}
+    storage.job_detail.return_value = {'id': 991, 'status': 'processing'}
+
+    result = await merge_merge_request(mcp_context_client, merge_request_id=42)
+
+    assert result.state == 'in_merge'
+    assert result.status is not None
+    assert result.status.derived_state == 'in_merge'
+    assert result.status.mergeable is not True
+    assert 'Ready: merge it' not in result.status.next_step
+    assert 'do not start a second merge' in result.status.next_step
 
 
 @pytest.mark.asyncio
