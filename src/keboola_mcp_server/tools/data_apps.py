@@ -2132,7 +2132,15 @@ async def get_data_app_preview_link(
     - "not configured on this Keboola stack": preview links are not available here; tell the user.
     """
     client = KeboolaClient.from_state(ctx.session.state)
-    data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+    try:
+        data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
+    except httpx.HTTPStatusError as e:
+        api_error = _api_error_text(e.response)
+        if e.response.status_code in (HTTPStatus.BAD_REQUEST, HTTPStatus.FORBIDDEN) and (
+            _PREVIEW_LINK_NOT_AUTHORIZED in api_error
+        ):
+            raise _not_authorized_error(configuration_id, api_error) from e
+        raise
     try:
         link = await client.data_science_client.create_app_preview_link(data_app.data_app_id)
     except httpx.HTTPStatusError as e:
@@ -2177,10 +2185,7 @@ def _preview_link_error(exc: httpx.HTTPStatusError, data_app: DataApp) -> ValueE
     if status == HTTPStatus.FORBIDDEN or (
         status == HTTPStatus.BAD_REQUEST and _PREVIEW_LINK_NOT_AUTHORIZED in api_error
     ):
-        return ValueError(
-            f'The token cannot manage data app "{cfg}": the app belongs to a project this token does not grant. '
-            f"Pass the app's project as `project_id`, or use a token of that project. API error: {api_error}"
-        )
+        return _not_authorized_error(cfg, api_error)
     if status == HTTPStatus.NOT_FOUND and _PREVIEW_LINK_NO_ROUTE in api_error:
         return ValueError(
             'Preview links are not available on this Keboola stack yet (the data-science service does not know '
@@ -2198,6 +2203,13 @@ def _preview_link_error(exc: httpx.HTTPStatusError, data_app: DataApp) -> ValueE
             "preview link. Tell the user. Do not try the app's password login instead."
         )
     return None
+
+
+def _not_authorized_error(configuration_id: str, api_error: str) -> ValueError:
+    return ValueError(
+        f'The token cannot manage data app "{configuration_id}", so it cannot get a preview link for it. '
+        f'Tell the user. API error: {api_error}'
+    )
 
 
 def _not_in_dev_mode_message(data_app: DataApp) -> str:
