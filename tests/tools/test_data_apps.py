@@ -3828,6 +3828,13 @@ async def test_get_data_app_preview_link_returns_link_without_leaking_it(
         ),
         (
             'draft',
+            400,
+            _sandboxes_error(400, "Token is not authorized to manage app 'app-draft-1', app is from different project"),
+            r'The token cannot manage data app "cfg-draft-1"',
+            'not running in dev mode',
+        ),
+        (
+            'draft',
             404,
             _sandboxes_error(404, 'App "app-draft-1" not found.'),
             r'"cfg-draft-1" \(data app ID "app-draft-1"\) was not found by the data-science service',
@@ -3854,6 +3861,7 @@ async def test_get_data_app_preview_link_returns_link_without_leaking_it(
         'streamlit_not_dev',
         'no_url',
         'forbidden',
+        'forbidden_400',
         'not_found',
         'no_route',
         'not_configured',
