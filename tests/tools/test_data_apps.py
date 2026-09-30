@@ -1347,10 +1347,13 @@ async def test_modify_python_js_data_app_update_rejects_invalid_slug(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(('auto_suspend_after_seconds', 'expected_auto_suspend'), [(300, 300), (None, 900)])
 async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
+    auto_suspend_after_seconds: int | None,
+    expected_auto_suspend: int,
 ) -> None:
     """Create path: POST /apps with type=python-js + useManagedGitRepo, fetch repo URL. Git
     credential creation is now a separate tool — not exercised here."""
@@ -1379,7 +1382,7 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
         name='My App',
         description='desc',
         slug='my-app',
-        auto_suspend_after_seconds=300,
+        auto_suspend_after_seconds=auto_suspend_after_seconds,
     )
 
     assert isinstance(result, ModifiedPythonJsDataAppOutput)
@@ -1395,7 +1398,7 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
     # Verify auto_suspend_after_seconds flows through and we don't pin runtime.image (the
     # platform now picks a default for python-js apps).
     serialized = create_kwargs['configuration'].model_dump(by_alias=True, exclude_none=True)
-    assert serialized['parameters']['autoSuspendAfterSeconds'] == 300
+    assert serialized['parameters']['autoSuspendAfterSeconds'] == expected_auto_suspend
     assert serialized['parameters']['dataApp']['slug'] == 'my-app'
     assert 'image' not in serialized.get('runtime', {})
     # Created with the auto-workspace flag so the platform provisions a per-app workspace
@@ -1552,12 +1555,18 @@ async def test_modify_python_js_data_app_no_auth_rejected_only_on_drafts(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(('auto_suspend_after_seconds', 'expected_auto_suspend'), [(600, 600), (None, 3600)])
 async def test_modify_python_js_data_app_update_patches_storage_config(
     mocker,
     mcp_context_client: Context,
     workspace_manager,
+    auto_suspend_after_seconds: int | None,
+    expected_auto_suspend: int,
 ) -> None:
-    """Update path: fetch storage config → merge updates → PATCH via configuration_update."""
+    """Update path: fetch storage config → merge updates → PATCH via configuration_update.
+
+    An omitted `auto_suspend_after_seconds` keeps the app's value, so a rename leaves it alone.
+    """
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
 
@@ -1573,7 +1582,7 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
         config_version='2',
         type='python-js',
         configuration={
-            'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'old-slug'}},
+            'parameters': {'autoSuspendAfterSeconds': 3600, 'dataApp': {'slug': 'old-slug'}},
             'runtime': {'image': {'version': 'old-version'}},
         },
         state='stopped',
@@ -1601,7 +1610,7 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
         name='New',
         description='new desc',
         configuration_id='cfg-1',
-        auto_suspend_after_seconds=600,
+        auto_suspend_after_seconds=auto_suspend_after_seconds,
     )
 
     assert isinstance(result, ModifiedPythonJsDataAppOutput)
@@ -1609,7 +1618,7 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
     # The PATCH should carry merged config
     patch_kwargs = keboola_client.storage_client.configuration_update.await_args.kwargs
     new_cfg = patch_kwargs['configuration']
-    assert new_cfg['parameters']['autoSuspendAfterSeconds'] == 600
+    assert new_cfg['parameters']['autoSuspendAfterSeconds'] == expected_auto_suspend
     # The platform now picks a default image for python-js apps; the MCP must NOT overwrite a
     # legacy image pin already in the config, but must NOT force it to any new value either.
     assert new_cfg['runtime']['image']['version'] == 'old-version'
@@ -2219,6 +2228,12 @@ def test_update_existing_code_data_app_config_leaves_legacy_image_pin_alone() ->
     assert new['parameters']['autoSuspendAfterSeconds'] == 600
     # original must not be mutated
     assert existing['parameters']['autoSuspendAfterSeconds'] == 900
+
+
+def test_update_existing_code_data_app_config_keeps_auto_suspend_when_omitted() -> None:
+    existing = {'parameters': {'autoSuspendAfterSeconds': 3600, 'dataApp': {'slug': 'x'}}}
+    new = _update_existing_code_data_app_config(existing)
+    assert new['parameters']['autoSuspendAfterSeconds'] == 3600
 
 
 def test_update_existing_code_data_app_config_default_auth_preserves_existing() -> None:
