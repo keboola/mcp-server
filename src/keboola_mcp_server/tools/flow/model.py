@@ -384,6 +384,28 @@ class ConditionalFlowConfiguration(BaseExtraModel):
 _T = ConditionalFlowPhase | ConditionalFlowTask
 
 
+def _with_inferred_job_task_type(raw: dict[str, Any]) -> dict[str, Any]:
+    """Some flows carry a task's inner ``task`` object without a ``type`` discriminator at all —
+    just ``{componentId, configId, mode, ...}`` (observed in production: an older/implicit shape
+    that predates ``type`` being required, still returned by the backend for some flows). Of the
+    three ``TaskConfiguration`` variants, only ``JobTaskConfiguration`` has ``componentId``, so
+    this is unambiguous — inferring ``type: 'job'`` here lets it validate as a proper
+    ``JobTaskConfiguration`` instead of falling all the way back to an untyped raw-dict passthrough
+    (which would also silently drop `type` from a round-trip: an agent that reads this task back
+    and resubmits it verbatim to ``modify_flow`` would then fail write-path validation, since that
+    path requires `type` — see ``get_flow_configuration``).
+
+    Only fills in a *missing* discriminator; a task with an explicit (even unrecognized) `type`
+    is left untouched, still handled by ``_safe_validate``'s own model_construct fallback below.
+    """
+    inner = raw.get('task')
+    if not isinstance(inner, dict) or 'type' in inner:
+        return raw
+    if 'componentId' not in inner and 'component_id' not in inner:
+        return raw
+    return {**raw, 'task': {**inner, 'type': 'job'}}
+
+
 def _safe_validate(model_cls: type[_T], raw: dict[str, Any], flow_id: str, kind: str) -> _T:
     """Validate a flow element; on failure log and fall back to ``model_construct``.
 
@@ -393,6 +415,8 @@ def _safe_validate(model_cls: type[_T], raw: dict[str, Any], flow_id: str, kind:
     raw dicts on the typed field; this is safe for display/serialization but is intentionally
     NOT used on the WRITE paths (``utils.get_flow_configuration``), which must remain strict.
     """
+    if model_cls is ConditionalFlowTask:
+        raw = _with_inferred_job_task_type(raw)
     try:
         return model_cls.model_validate(raw)
     except ValidationError as exc:

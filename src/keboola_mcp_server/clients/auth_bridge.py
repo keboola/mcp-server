@@ -159,7 +159,13 @@ class StorageTokenResolver:
         if response.status_code != HTTPStatus.OK:
             status = response.status_code
             mapped = status if status in _PASS_THROUGH_STATUSES else int(HTTPStatus.BAD_GATEWAY)
-            LOG.error(f'Auth-bridge token exchange failed: resolver status {status}, mapped to {mapped}.')
+            # A pass-through status (400/401/403) is the CALLER's token being invalid/expired/
+            # unauthorized for this project -- routine, expected, and observed ~90x/day in
+            # production. Logging that at ERROR pollutes error-rate dashboards/alerts with normal
+            # caller mistakes; only a mapped-to-502 (Connection unreachable/erroring) is this
+            # server's own problem and warrants ERROR.
+            log = LOG.error if mapped == int(HTTPStatus.BAD_GATEWAY) else LOG.warning
+            log(f'Auth-bridge token exchange failed: resolver status {status}, mapped to {mapped}.')
             raise StorageTokenExchangeError(
                 f'Auth-bridge token exchange was rejected (resolver status {status}).',
                 status_code=mapped,
@@ -231,7 +237,11 @@ class OAuthSessionExchanger:
         if response.status_code != HTTPStatus.OK:
             status = response.status_code
             mapped = status if status in _PASS_THROUGH_STATUSES else int(HTTPStatus.BAD_GATEWAY)
-            LOG.error(f'OAuth-token exchange failed: resolver status {status}, mapped to {mapped}.')
+            # See the matching comment in StorageTokenResolver.resolve(): a pass-through status is
+            # the caller's own token being rejected, not a server fault -- only ERROR when mapped
+            # to 502 (Connection itself unreachable/erroring).
+            log = LOG.error if mapped == int(HTTPStatus.BAD_GATEWAY) else LOG.warning
+            log(f'OAuth-token exchange failed: resolver status {status}, mapped to {mapped}.')
             raise OAuthTokenExchangeError(
                 f'OAuth-token exchange was rejected (resolver status {status}).',
                 status_code=mapped,

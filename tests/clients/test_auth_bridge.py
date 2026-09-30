@@ -98,20 +98,31 @@ async def test_resolve_creates_a_new_client_after_aclose(sa_token_file: Path) ->
 
 @pytest.mark.parametrize('status', [HTTPStatus.BAD_REQUEST, HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN])
 @pytest.mark.asyncio
-async def test_resolve_passes_through_client_errors(sa_token_file: Path, status: HTTPStatus) -> None:
+async def test_resolve_passes_through_client_errors(
+    sa_token_file: Path, status: HTTPStatus, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A pass-through status is the caller's own token being rejected, not this server's fault --
+    must log at WARNING, not ERROR, or routine expired/invalid caller tokens pollute error-rate
+    dashboards (observed ~90x/day in production, DataDog false-alarm investigation)."""
     resolver = _resolver(sa_token_file, lambda rq: httpx.Response(status, json={'error': 'nope'}))
-    with pytest.raises(StorageTokenExchangeError) as exc:
+    with caplog.at_level('WARNING'), pytest.raises(StorageTokenExchangeError) as exc:
         await resolver.resolve(subject_token='kbc_at_abc', project_id=1)
     assert exc.value.status_code == int(status)
+    assert not any(r.levelname == 'ERROR' for r in caplog.records)
+    assert any(r.levelname == 'WARNING' and 'Auth-bridge token exchange failed' in r.message for r in caplog.records)
 
 
 @pytest.mark.parametrize('status', [HTTPStatus.INTERNAL_SERVER_ERROR, HTTPStatus.BAD_GATEWAY, HTTPStatus.NOT_FOUND])
 @pytest.mark.asyncio
-async def test_resolve_maps_other_statuses_to_502(sa_token_file: Path, status: HTTPStatus) -> None:
+async def test_resolve_maps_other_statuses_to_502(
+    sa_token_file: Path, status: HTTPStatus, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Unlike a pass-through status, a genuine backend/network failure still warrants ERROR."""
     resolver = _resolver(sa_token_file, lambda rq: httpx.Response(status))
-    with pytest.raises(StorageTokenExchangeError) as exc:
+    with caplog.at_level('WARNING'), pytest.raises(StorageTokenExchangeError) as exc:
         await resolver.resolve(subject_token='kbc_at_abc', project_id=1)
     assert exc.value.status_code == int(HTTPStatus.BAD_GATEWAY)
+    assert any(r.levelname == 'ERROR' for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -206,11 +217,16 @@ async def test_exchange_empty_sa_token_file_fails_loudly(tmp_path: Path) -> None
 
 @pytest.mark.parametrize('status', [HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN])
 @pytest.mark.asyncio
-async def test_exchange_passes_through_client_errors(sa_token_file: Path, status: HTTPStatus) -> None:
+async def test_exchange_passes_through_client_errors(
+    sa_token_file: Path, status: HTTPStatus, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Same log-level split as StorageTokenResolver.resolve(): a pass-through status is the
+    caller's own token being rejected, not this server's fault."""
     exchanger = _exchanger(sa_token_file, lambda rq: httpx.Response(status, json={'error': 'nope'}))
-    with pytest.raises(OAuthTokenExchangeError) as exc:
+    with caplog.at_level('WARNING'), pytest.raises(OAuthTokenExchangeError) as exc:
         await exchanger.exchange(oauth_access_token='league-oauth-token')
     assert exc.value.status_code == int(status)
+    assert not any(r.levelname == 'ERROR' for r in caplog.records)
 
 
 @pytest.mark.parametrize('status', [HTTPStatus.INTERNAL_SERVER_ERROR, HTTPStatus.BAD_GATEWAY, HTTPStatus.NOT_FOUND])

@@ -259,6 +259,72 @@ class TestConditionalFlowValidationResilience:
         assert bad.id == 'task-bad'
         assert any('failed strict validation' in m for m in caplog.messages)
 
+    def test_missing_task_type_is_inferred_as_job_in_read_path(self, caplog: pytest.LogCaptureFixture):
+        """Some flows carry a task's inner `task` object with no `type` discriminator at all --
+        just `{componentId, mode}` (observed in production). Of the three TaskConfiguration
+        variants only JobTaskConfiguration has componentId, so this must validate as a proper
+        JobTaskConfiguration (not the raw-dict `model_construct` passthrough, which would drop
+        `type` and break a later round-trip through modify_flow's strict write path)."""
+        raw = {
+            'id': '99',
+            'name': 'Flow with legacy-shaped task',
+            'description': '',
+            'version': 1,
+            'isDisabled': False,
+            'isDeleted': False,
+            'configuration': {
+                'phases': [{'id': 'p1', 'name': 'Phase 1', 'next': [{'id': 't1', 'goto': None}]}],
+                'tasks': [
+                    {
+                        'id': 'task-legacy',
+                        'name': 'legacy',
+                        'phase': 'p1',
+                        'task': {'componentId': 'keboola.ex-aws-s3', 'mode': 'run'},
+                    },
+                ],
+            },
+            'metadata': [],
+            'created': '2026-01-01T00:00:00+0000',
+        }
+        api_model = APIFlowResponse.model_validate(raw)
+        with caplog.at_level('WARNING'):
+            flow = Flow.from_api_response(api_config=api_model, flow_component_id=CONDITIONAL_FLOW_COMPONENT_ID)
+
+        assert isinstance(flow.configuration, ConditionalFlowConfiguration)
+        task = flow.configuration.tasks[0].task
+        assert isinstance(task, JobTaskConfiguration)
+        assert task.component_id == 'keboola.ex-aws-s3'
+        # No fallback warning: this is inferred and validated strictly, not model_construct'ed.
+        assert not any('failed strict validation' in m for m in caplog.messages)
+
+    def test_missing_task_type_without_component_id_still_falls_back(self, caplog: pytest.LogCaptureFixture):
+        """The type inference is scoped to the unambiguous componentId+no-type shape; a task
+        missing `type` with no componentId either (genuinely unrecognizable) must still take the
+        existing model_construct fallback, not crash the whole read path."""
+        raw = {
+            'id': '99',
+            'name': 'Flow with unrecognizable task',
+            'description': '',
+            'version': 1,
+            'isDisabled': False,
+            'isDeleted': False,
+            'configuration': {
+                'phases': [{'id': 'p1', 'name': 'Phase 1', 'next': [{'id': 't1', 'goto': None}]}],
+                'tasks': [
+                    {'id': 'task-bad', 'name': 'bad', 'phase': 'p1', 'task': {'foo': 'bar'}},
+                ],
+            },
+            'metadata': [],
+            'created': '2026-01-01T00:00:00+0000',
+        }
+        api_model = APIFlowResponse.model_validate(raw)
+        with caplog.at_level('WARNING'):
+            flow = Flow.from_api_response(api_config=api_model, flow_component_id=CONDITIONAL_FLOW_COMPONENT_ID)
+
+        assert isinstance(flow.configuration, ConditionalFlowConfiguration)
+        assert flow.configuration.tasks[0].id == 'task-bad'
+        assert any('failed strict validation' in m for m in caplog.messages)
+
     def test_unknown_task_type_still_strict_in_write_path(self):
         """Write paths (`utils.get_flow_configuration`) must remain strict to reject agent garbage.
 
