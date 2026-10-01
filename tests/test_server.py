@@ -632,8 +632,18 @@ async def test_oauth_callback_handler_propagates_http_exception(mocker) -> None:
     assert exc.value.detail == 'Invalid state parameter'
 
 
+@pytest.mark.parametrize(
+    ('error', 'expected_text'),
+    [
+        ('temporarily_unavailable', 'temporarily unavailable'),
+        # the user clicked Deny on Connection's consent screen -- not an outage
+        ('access_denied', 'authorization was denied'),
+    ],
+)
 @pytest.mark.asyncio
-async def test_oauth_callback_handler_renders_error_param_without_invoking_callback(mocker) -> None:
+async def test_oauth_callback_handler_renders_error_param_without_invoking_callback(
+    mocker, error: str, expected_text: str
+) -> None:
     """Regression test for the AI-2883 open-redirect fix: SimpleOAuthProvider.authorize() redirects
     a Connection-check failure to this server's own /oauth/callback with an `error=` param (never to
     the caller-supplied redirect_uri -- see that method's docstring). This route must render that as
@@ -649,7 +659,7 @@ async def test_oauth_callback_handler_renders_error_param_without_invoking_callb
         {
             'type': 'http',
             'headers': [],
-            'query_string': b'error=temporarily_unavailable&error_description=Could+not+verify+OAuth+client',
+            'query_string': f'error={error}&error_description=Could+not+verify+OAuth+client'.encode(),
         }
     )
     response = await routes.oauth_callback_handler(request)
@@ -660,7 +670,9 @@ async def test_oauth_callback_handler_renders_error_param_without_invoking_callb
     # error_description ('Could not verify OAuth client') is deliberately NOT rendered -- see
     # the next test -- only the fixed generic message is.
     assert 'Could not verify OAuth client' not in body
-    assert 'temporarily unavailable' in body.lower()
+    assert expected_text in body.lower()
+    if error == 'access_denied':
+        assert 'unavailable' not in body.lower()
     oauth_provider.handle_oauth_callback.assert_not_called()
 
 
