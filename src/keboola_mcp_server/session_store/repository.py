@@ -63,6 +63,14 @@ class SessionStore(Protocol):
 
     async def get_by_refresh_token(self, refresh_token: str) -> OAuthSession | None: ...
 
+    async def get_by_id(self, session_id: str) -> OAuthSession | None:
+        """Looks a session up by its row id rather than by a token the caller presented.
+
+        Used by a provisioned (agent) session, whose caller holds only the row's handle inside its
+        `scope_token` and never a token of its own -- see the remote_agent_provisioning RFC.
+        """
+        ...
+
     async def rotate_kbc_tokens(
         self, session_id: str, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
     ) -> None:
@@ -186,6 +194,15 @@ class PostgresSessionStore:
         row = await pool.fetchrow(
             'SELECT * FROM oauth_sessions WHERE refresh_token_hash = $1 AND revoked_at IS NULL',
             _hash_token(refresh_token),
+        )
+        return self._to_session(row) if row is not None else None
+
+    @guard_db_errors
+    async def get_by_id(self, session_id: str) -> OAuthSession | None:
+        pool = await self._get_pool()
+        row = await pool.fetchrow(
+            'UPDATE oauth_sessions SET last_used_at = now() WHERE id = $1 AND revoked_at IS NULL RETURNING *',
+            session_id,
         )
         return self._to_session(row) if row is not None else None
 

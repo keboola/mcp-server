@@ -80,6 +80,15 @@ So provisioning becomes: call the endpoint → `SessionStore.create(...)` → re
 `confirm_url` to the model, and the opaque handle to the **transport**, never to the model as a
 credential.
 
+### Precedence: the handle wins over the caller's own credential
+
+A provisioned project belongs to the stack's agent maintainer, so the caller's own session cannot
+reach it at all — resolving the handle is the only way the call they asked for can work. The
+protection against someone *else* replaying the handle is where it belongs: `scope_token` is
+encrypted and bound (`to_token`'s `aad`) to the credential the caller presented when it was minted,
+so a different caller cannot decrypt it. A caller with no credential at all gets an unbound handle,
+which is the only shape available to a session that has no identity yet.
+
 ### How the session is recognised on the next request
 
 This is the one genuinely new problem, and the obvious answer does not work: the server runs
@@ -110,8 +119,20 @@ mechanisms, to be chosen against fastmcp 4.0.3 (now pinned):
 * **(b) A second, unauthenticated FastMCP app** on a distinct path exposing only `create_project`. No
   auth internals touched, but the newcomer must add a second server URL and then switch.
 
-Recommend (a), (b) as fallback. Gate it on a deployment setting (`KBC_ALLOW_ANONYMOUS_PROVISIONING`,
-default off), enabled in kbc-stacks only for the public `mcp-server` chart, never `mcp-server-agent`.
+**API check done (fastmcp 4.0.3): (a) has no clean seam.** With `auth` set, `create_streamable_http_app`
+wraps the whole MCP route in `RequireAuthMiddleware`, which rejects an unauthenticated request at the
+ASGI layer — before any JSON-RPC body is parsed, so the tool name is not knowable there and no
+per-tool exception is possible. Allowing anonymous access would mean rebuilding fastmcp's route table
+ourselves to drop that wrapper and re-enforcing authentication in our own MCP middleware: invasive,
+fragile across upgrades, and a mistake there exposes *every* tool unauthenticated on a public,
+multi-tenant endpoint.
+
+So (b) — a second FastMCP app on its own path, with no auth, exposing only `create_project` — is the
+safe shape, at the cost of the newcomer using a different URL first. **Not implemented**: it is a
+product decision (a second URL in the docs and the onboarding flow), not a detail, and the
+authenticated path below is independently useful. Gate whichever is chosen on a deployment setting
+(`KBC_ALLOW_ANONYMOUS_PROVISIONING`, default off), enabled in kbc-stacks only for the public
+`mcp-server` chart, never `mcp-server-agent`.
 
 An **authenticated** remote caller needs none of this: they already reach the tool. Dropping the
 `deployed_sa_token_path()` guard (decision 1) is all that is required there, and Connection answers
@@ -136,6 +157,24 @@ went first. The strict limits are correct and stay; this only means that if/when
 remote needs a bucket dimension that is not the pod IP — a forwarded client IP honored from a trusted
 caller, or a per-conversation key the endpoint accepts. Until then, remote provisioning throughput is
 whatever one shared bucket allows, and users will occasionally be told to retry later.
+
+## Implementation status
+
+Shipped in this increment:
+
+* The deployed-server guard is gone. What remains is the local one-session-per-stack collision, whose
+  message now says that instead of implying a permission rule.
+* `create_project` on a server that has a session store writes the provisioned credentials there
+  (`SessionStore.create`, AES-256-GCM at rest) and returns only the row's handle, inside the
+  encrypted `scope_token` every tool already accepts. `SessionScope.provisioned_session_id` carries
+  it; `SessionStore.get_by_id` was added to resolve it.
+* `SessionStateMiddleware._resolve_provisioned_session` turns the handle into the request's token,
+  refreshing server-side and persisting the rotation (`rotate_kbc_tokens`) when it nears expiry.
+* `_handle_provisioned_session_unauthorized` ends the session when the claim revokes it: introspect
+  to be sure, `revoke()` the row, and replace the 401 with the "the project is now yours, sign in"
+  message.
+
+Not implemented: the anonymous entry path (see above).
 
 ## Scope
 

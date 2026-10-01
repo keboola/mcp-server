@@ -11,6 +11,7 @@ import logging
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
 from contextvars import ContextVar
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from typing import Any, TypeVar, cast
 from unittest.mock import MagicMock
@@ -32,11 +33,13 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import (
+    _REFRESH_SKEW_SECONDS,
     exchange_scoped_token,
     forget_rejected_access_token,
     get_access_token,
     introspect_token,
     load_tokens,
+    refresh_tokens,
 )
 from keboola_mcp_server.clients.auth_bridge import (
     StorageTokenExchangeError,
@@ -317,6 +320,8 @@ class SessionStateMiddleware(fmw.Middleware):
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
 
         config: Config | None = None
+        scope: SessionScope | None = None
+        server_state: ServerState | None = None
         if not isinstance(ctx.session, MagicMock):
             server_state = ServerState.from_context(ctx)
             config = server_state.config
@@ -391,6 +396,12 @@ class SessionStateMiddleware(fmw.Middleware):
                 scope = await self._read_persisted_login_scope(config)
             if scope is None and not config.project_id and not is_list:
                 scope = await self._autolease_default_scope(config)
+            # A project provisioned by `create_project` on this (deployed) server keeps its
+            # credentials in the session store, not in the caller's hands -- the caller only echoes
+            # the row's handle inside `scope_token`. Resolve it into a usable token before anything
+            # else needs one. Done for /list too: unlike the login-store paths above this is a cheap
+            # Postgres read, and without it a listing for such a session has no credentials at all.
+            config = await self._resolve_provisioned_session(config, scope, server_state)
             if not is_list:
                 scoped_token_before = scope.scoped_token if scope is not None else None
                 config, scope = await self._resolve_local_tokens(config, scope)
@@ -442,15 +453,74 @@ class SessionStateMiddleware(fmw.Middleware):
             return await call_next(context)
         except Exception as e:
             if config is not None and _is_unauthorized(e):
-                await self._handle_unauthorized(config)
+                await self._handle_unauthorized(config, scope, server_state)
             raise
         finally:
             # NOTE: This line is commented following a bug related to session state clearance in Claude client
             # ctx.session.state = {}
             pass
 
+    @staticmethod
+    async def _resolve_provisioned_session(
+        config: Config, scope: 'SessionScope | None', server_state: ServerState
+    ) -> Config:
+        """Turns a provisioned session's handle (``SessionScope.provisioned_session_id``) into the
+        access token for this request, refreshing it server-side when it nears expiry.
+
+        This is the deployed server's equivalent of the local credential file: the Keboola tokens
+        never leave the server, so the caller cannot refresh them and must not be asked to.
+
+        The handle takes precedence over whatever credential the request otherwise carries. That is
+        not a weakening: a provisioned project belongs to the stack's agent maintainer, so a
+        caller's own session cannot reach it at all, and resolving the handle is the only way the
+        call they asked for can work. Replay by someone else is prevented where it has to be --
+        `scope_token` is encrypted and bound to the caller it was minted for (`to_token`'s ``aad``),
+        so a different caller cannot even decrypt it.
+
+        Best-effort: a Postgres outage or a revoked row leaves the config untouched, and the request
+        then falls back to whatever credential it already had, rather than 500ing here.
+        """
+        store = server_state.session_store
+        if store is None or scope is None or scope.provisioned_session_id is None:
+            return config
+        try:
+            session = await store.get_by_id(scope.provisioned_session_id)
+        except Exception as e:
+            LOG.warning(f'Could not load the provisioned session: {e}', exc_info=True)
+            return config
+        if session is None:
+            # Revoked (the human claimed the project) or expired out of the store.
+            LOG.info('The provisioned session referenced by this scope_token no longer exists.')
+            return config
+
+        access_token = session.kbc_access_token
+        if session.kbc_access_expires_at <= datetime.now(timezone.utc) + timedelta(seconds=_REFRESH_SKEW_SECONDS):
+            try:
+                refreshed = await refresh_tokens(
+                    cast(str, config.storage_api_url), refresh_token=session.kbc_refresh_token
+                )
+            except Exception as e:
+                # Keep using the current token: it may still have minutes left, and the 401 handler
+                # below deals with it properly if it does not.
+                LOG.warning(f'Could not refresh the provisioned session: {e}', exc_info=True)
+            else:
+                access_token = refreshed.access_token
+                await store.rotate_kbc_tokens(
+                    session.id,
+                    kbc_access_token=refreshed.access_token,
+                    kbc_refresh_token=refreshed.refresh_token,
+                    kbc_access_expires_at=datetime.fromtimestamp(refreshed.expires_at, tz=timezone.utc),
+                )
+        project_id = str(scope.active_project_id) if scope.active_project_id is not None else config.project_id
+        return dataclasses.replace(config, storage_token=access_token, project_id=project_id)
+
     @classmethod
-    async def _handle_unauthorized(cls, config: Config) -> None:
+    async def _handle_unauthorized(
+        cls,
+        config: Config,
+        scope: 'SessionScope | None' = None,
+        server_state: ServerState | None = None,
+    ) -> None:
         """Drops a locally stored session whose credential Connection no longer accepts.
 
         An expired session already self-heals: the refresh fails and `get_access_token` forgets it.
@@ -474,6 +544,14 @@ class SessionStateMiddleware(fmw.Middleware):
           `forget_rejected_access_token`, which compares under the credential-store locks, so a
           concurrent refresh or a fresh `login` is never thrown away.
         """
+        if (
+            scope is not None
+            and scope.provisioned_session_id is not None
+            and server_state is not None
+            and server_state.session_store is not None
+        ):
+            await cls._handle_provisioned_session_unauthorized(config, scope, server_state.session_store)
+            return
         if not cls._is_local_programmatic(config):
             return
         storage_api_url = cast(str, config.storage_api_url)
@@ -494,6 +572,46 @@ class SessionStateMiddleware(fmw.Middleware):
             return
         if await forget_rejected_access_token(storage_api_url, access_token):
             LOG.info(f'The stored session for {storage_api_url} was rejected by Connection; dropped it.')
+
+    @staticmethod
+    async def _handle_provisioned_session_unauthorized(
+        config: Config, scope: 'SessionScope', store: SessionStore
+    ) -> None:
+        """Ends a provisioned session that Connection no longer accepts.
+
+        The expected cause is the happy one: the human opened the confirm link and claimed the
+        project, which revokes the agent session that created it. The session has done its job and
+        the user now signs in as themselves -- so this replaces the bare 401 with that explanation
+        rather than letting it surface as a failure.
+
+        Same discipline as the local path: a 401 alone is not proof, so the credential is re-checked
+        with `introspect_token` and the row is revoked only when that fails with an authentication
+        error. A transient failure leaves the session alone and the original error stands.
+        """
+        try:
+            await introspect_token(
+                cast(str, config.storage_api_url), subject_token=strip_bearer(cast(str, config.storage_token))
+            )
+            return  # the credential is fine; this 401 was about something else
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code not in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+                LOG.warning(f'Could not verify the provisioned session; keeping it: {e}')
+                return
+        except Exception as e:
+            LOG.warning(f'Could not verify the provisioned session; keeping it: {e}')
+            return
+
+        try:
+            await store.revoke(cast(str, scope.provisioned_session_id))
+        except Exception as e:
+            LOG.warning(f'Could not revoke the provisioned session row: {e}', exc_info=True)
+        project_id = scope.active_project_id
+        raise ValueError(
+            f'The temporary session that created project {project_id} has ended. This normally means the '
+            'project has been claimed and now belongs to a real Keboola account -- stop resending the '
+            'scope_token from "create_project" and sign in to this server with that account to keep '
+            'working in the project.'
+        )
 
     async def on_list_tools(
         self,
