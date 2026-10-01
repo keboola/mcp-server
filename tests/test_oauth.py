@@ -714,6 +714,7 @@ class TestSimpleOAuthProvider:
         # The approval is registered against this server's own callback, never the caller's
         # redirect_uri (RFC Decision §15); the real target goes into the displayed name instead.
         assert query['redirect_uri'] == [oauth_provider._mcp_callback_url]
+        assert query['return_to_client_after_approval'] == ['1']
 
         decoded = json.loads(base64.urlsafe_b64decode(query['pending_mcp_client'][0]))
         assert decoded == {
@@ -763,18 +764,28 @@ class TestSimpleOAuthProvider:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        'registration_after_approval',
-        ['REGISTERED', 'NOT_REGISTERED', 'ERROR'],
+        ('registration_after_approval', 'connection_code'),
+        [
+            ('REGISTERED', 'connection-code'),
+            # Connection no longer issues a code when it approves a new client (AI-3995)
+            ('REGISTERED', None),
+            ('NOT_REGISTERED', 'connection-code'),
+            ('ERROR', None),
+        ],
     )
     async def test_callback_after_approval_continues_to_consent_without_exchanging_the_code(
-        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, registration_after_approval: str
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        registration_after_approval: str,
+        connection_code: str | None,
     ):
         """AI-3995: after the user clicks Allow on the new-client screen, the browser comes back to
         this server's /oauth/callback with the (unredeemable) Connection code and the pending state.
         A registered client is sent straight on to /oauth/consent with a normal state; anything else
         fails closed. The Connection code is never exchanged."""
         from keboola_mcp_server import oauth as oauth_module
-        from keboola_mcp_server.oauth import _ClientRegistration
+        from keboola_mcp_server.oauth import _ClientRegistration, _connection_client_id
 
         self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
@@ -795,21 +806,46 @@ class TestSimpleOAuthProvider:
 
         if registration_after_approval != 'REGISTERED':
             with pytest.raises(HTTPException) as exc:
-                await oauth_provider.handle_oauth_callback('connection-code', pending_state)
+                await oauth_provider.handle_oauth_callback(connection_code, pending_state)
             assert exc.value.status_code == 400
             return
 
-        consent_url = await oauth_provider.handle_oauth_callback('connection-code', pending_state)
+        consent_url = await oauth_provider.handle_oauth_callback(connection_code, pending_state)
 
         parsed = urlparse(consent_url)
         assert parsed.path == '/oauth/consent'
         query = parse_qs(parsed.query)
         assert query['scope'] == ['claudai projectless']
         assert query['redirect_uri'] == [oauth_provider._mcp_callback_url]
+        # lets Connection's consent screen name the app that is asking, not just the broker
+        assert query['mcp_client_id'] == [_connection_client_id('https://my.tool/oauth/callback')]
         state = oauth_provider._decode(query['state'][0])
         assert 'pending' not in state
         assert state['redirect_uri'] == 'https://my.tool/oauth/callback'
         assert state['code_challenge'] == 'challenge'
+
+    @pytest.mark.asyncio
+    async def test_callback_without_code_is_rejected_for_a_normal_state(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Only the post-approval (pending) callback may arrive without a code; every other state still needs it."""
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://my.tool/oauth/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+        consent_url = await oauth_provider.authorize(client, params)
+        state = parse_qs(urlparse(consent_url).query)['state'][0]
+
+        with pytest.raises(HTTPException) as exc:
+            await oauth_provider.handle_oauth_callback(None, state)
+        assert exc.value.status_code == 400
 
     @pytest.mark.asyncio
     async def test_authorize_redirects_to_own_callback_when_connection_check_errors(

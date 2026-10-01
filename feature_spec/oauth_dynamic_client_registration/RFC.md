@@ -599,6 +599,14 @@ approval).
       it (`_connection_client_id`), not by Connection's stored redirect_uri.
     - Clients approved before this change are registered against their own redirect_uri and need one
       re-approval.
+    - **Two-repo follow-up (AI-3995):** without more, Connection still continues the approved request into a
+      second, redundant consent screen for the per-redirect client (its grant is discarded) and names the
+      broker (`mcp-server`) on the consent that is used. The authorize request therefore carries
+      `return_to_client_after_approval=1`: a Connection that supports it sends the browser straight back to
+      `redirect_uri` (this server's callback) after Allow with `state` and `client_approved=1`, no code. The
+      callback accepts a pending state without a `code`, and the `/oauth/consent` URL carries `mcp_client_id`
+      (the derived `mcp-<hash>` id) so Connection can show the registered client's own name. Both parameters
+      are ignored by an older Connection, so the order of the two deployments doesn't matter.
 
 ## Security Review Addendum
 

@@ -418,6 +418,11 @@ class ConnectionClientRegistry:
             redirect_uri=redirect_uri,
             response_type='code',
             state=state,
+            # Ask Connection to send the browser back to `redirect_uri` (this server's callback) right after
+            # Allow, with `state` and no code, instead of continuing the request into a second consent screen
+            # for the per-redirect client whose grant this server discards (AI-3995). A Connection that
+            # doesn't know the parameter just keeps the old behaviour, which the callback also handles.
+            return_to_client_after_approval='1',
             # MANDATORY, not defensive -- see this method's docstring. secrets.token_urlsafe(32) is
             # a random value presented AS IF it were a SHA-256 digest; no code_verifier can exist
             # for it, so Connection's PKCE check (AuthCodeGrant::validateCodeChallenge, league/
@@ -899,6 +904,10 @@ class SimpleOAuthProvider(OAuthProvider):
             redirect_uri=self._mcp_callback_url,
             state=self._encode(state),
             scope=_CONNECTION_SCOPE,
+            # The app that is actually asking, so Connection's consent screen can name it instead of the
+            # broker (this server). Connection resolves it to the registered client's own name; it never
+            # takes a label from the URL. Ignored by a Connection that doesn't know the parameter yet.
+            mcp_client_id=_connection_client_id(cast(str, state['redirect_uri'])),
         )
 
     async def _continue_after_approval(self, state_data: dict[str, Any]) -> str:
@@ -917,11 +926,12 @@ class SimpleOAuthProvider(OAuthProvider):
         state['expires_at'] = time.time() + 5 * 60
         return self._connection_consent_url(state)
 
-    async def handle_oauth_callback(self, code: str, state: str) -> str:
+    async def handle_oauth_callback(self, code: str | None, state: str) -> str:
         """
         Handles the callback from the OAuth server.
 
-        :param code: The authorization code provided by the OAuth server.
+        :param code: The authorization code provided by the OAuth server; absent (or ignored) when the
+            callback follows the approval of a new client, see `_continue_after_approval`.
         :param state: The state originally generated in the authorize() function.
 
         :return: The URL that redirects back to the AI assistant OAuth client.
@@ -943,6 +953,9 @@ class SimpleOAuthProvider(OAuthProvider):
 
         if state_data.get('pending'):
             return await self._continue_after_approval(state_data)
+
+        if not code:
+            raise HTTPException(400, 'Missing code or state parameter')
 
         # Exchange the authorization code for the access token with the OAuth server.
         async with _create_http_client() as http_client:
