@@ -1,6 +1,7 @@
 import base64
 import dataclasses
 import hashlib
+import hmac
 import json
 import logging
 import math
@@ -183,12 +184,55 @@ def _strip_unprintable(value: str) -> str:
     return ''.join(ch for ch in value if ch.isprintable())
 
 
+def _sign_mcp_client_id(secret: str, mcp_client_id: str, state: str) -> str:
+    """Authenticates the `mcp_client_id` this server puts on Connection's consent URL (AI-3995).
+
+    HMAC-SHA256 over the id AND this request's `state`, keyed with this server's own OAuth client
+    secret -- which Connection already holds for that client, so it can recompute it. Binding it to
+    `state` (a JWT that carries the caller's redirect_uri) means a link cannot pair a trusted app's
+    name with someone else's flow: the pair is only valid for the flow it was issued for."""
+    # Length-prefixed so the (id, state) pair has exactly one encoding: with a plain separator, a
+    # signature for ("a", "b.c") would also verify ("a.b", "c") because both fields may contain dots.
+    message = f'{len(mcp_client_id.encode())}:{mcp_client_id}:{state}'
+    return hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
+
+
+_MAX_CLIENT_NAME_BYTES = 128  # Connection's cap on the pending client's client_name: PHP strlen(), i.e. BYTES
+_MIN_CLIENT_NAME_BYTES = 16  # always keep at least this much of the client's own name
+
+
+def _truncate_utf8(text: str, max_bytes: int) -> str:
+    """Cuts `text` to at most `max_bytes` UTF-8 bytes without splitting a character."""
+    return text.encode('utf-8')[:max_bytes].decode('utf-8', 'ignore')
+
+
 def _sanitize_client_name(name: str) -> str:
     """Strips unprintable characters Connection's pending_mcp_client decoder would otherwise
     reject outright (which would silently drop the whole approval payload -- see
     PendingMcpClientApprovalListener's catch-and-ignore on a malformed payload), and truncates to
-    Connection's 128-character cap."""
-    return _strip_unprintable(name)[:128]
+    Connection's 128-BYTE cap (its decoder uses strlen(), so 200 emoji would not fit as 128 characters)."""
+    return _truncate_utf8(_strip_unprintable(name), _MAX_CLIENT_NAME_BYTES)
+
+
+def _approval_client_name(client_name: str, redirect_uri: str) -> str:
+    """The name Connection's approval screen shows: the client's own name plus where it redirects,
+    `<name> (redirects to https://host)`. Connection shows this server's callback as the redirect URI
+    (RFC Decision §15), so this suffix is the only place the approver sees the caller's destination.
+
+    Always within Connection's 128-byte cap. When it doesn't fit, the client's own name is shortened
+    first, and a very long host loses its START (`...`) rather than its end: the final labels are the
+    part that says who the destination is.
+    """
+    parsed = urlparse(redirect_uri)
+    prefix = f'{parsed.scheme}://'
+    host = parsed.netloc
+    wrapper_bytes = len(b' (redirects to )') + len(prefix.encode())
+    max_host_bytes = _MAX_CLIENT_NAME_BYTES - _MIN_CLIENT_NAME_BYTES - wrapper_bytes
+    host_bytes = host.encode('utf-8')
+    if len(host_bytes) > max_host_bytes:
+        host = '...' + host_bytes[-(max_host_bytes - 3) :].decode('utf-8', 'ignore')
+    suffix = f' (redirects to {prefix}{host})'
+    return _truncate_utf8(client_name, _MAX_CLIENT_NAME_BYTES - len(suffix.encode())) + suffix
 
 
 def _sanitize_for_log(value: str) -> str:
@@ -236,10 +280,12 @@ class ConnectionClientRegistry:
         # cap alone bounds (Copilot review finding).
         self._client_names: OrderedDict[str, str] = OrderedDict()
 
-        # redirect_uri -> expires_at, REGISTERED only. Keyed on redirect_uri alone, not also
-        # connection_client_id: _connection_client_id() derives the latter deterministically from
-        # the former, so the pair is redundant -- a call site never has one without the other
-        # (Devin review finding, AI-2883). /authorize is unauthenticated, so every hit costs
+        # (connection_client_id, redirect_uri) -> expires_at, REGISTERED only. Keyed on the pair: the
+        # redirect_uri alone would let one client's approval admit every other one, since every
+        # dynamically-approved client shares this server's own /oauth/callback (see
+        # SimpleOAuthProvider._authorize); the client id alone would let a verdict for one of a client's
+        # redirect_uris (its own, or ours) admit another one.
+        # /authorize is unauthenticated, so every hit costs
         # Connection one call to /oauth/clients/validate -- which is itself IP-rate-limited, and
         # this server's whole egress IP shares that budget across every user of the stack. Caching
         # REGISTERED results means the common case (the same handful of already-registered clients
@@ -253,7 +299,7 @@ class ConnectionClientRegistry:
         #   was never a real defense against that flood; local throttling below is what handles it.
         # - Caching ERROR would prolong an outage instead of retrying it -- fail-closed still
         #   applies on every uncached call (see AI-3792).
-        self._registration_cache: OrderedDict[str, float] = OrderedDict()
+        self._registration_cache: OrderedDict[tuple[str, str], float] = OrderedDict()
 
         self._validate_rate_limiter = _SlidingWindowRateLimiter(
             _VALIDATE_RATE_LIMIT_MAX_CALLS, _VALIDATE_RATE_LIMIT_WINDOW_SECONDS
@@ -284,21 +330,24 @@ class ConnectionClientRegistry:
         Fails closed: any error talking to Connection (timeout, network error, unexpected status)
         returns ERROR, never REGISTERED and never silently NOT_REGISTERED -- see AI-3792.
         """
-        expires_at = self._registration_cache.get(redirect_uri)
+        # Keyed on the pair: a client can be registered against more than one redirect_uri (its own, from
+        # before AI-3995, and this server's callback), and one pair's verdict must not admit another.
+        key = (connection_client_id, redirect_uri)
+        expires_at = self._registration_cache.get(key)
         if expires_at is not None:
             if time.monotonic() < expires_at:
                 # Touch on read, not just on write -- otherwise a frequently-reused entry (e.g.
                 # Claude.ai's own pair) never gets bumped and can still be the oldest-inserted
                 # entry once enough unique, unrelated keys flood in, making it the first evicted
                 # despite being the most valuable entry to keep (Copilot review finding).
-                self._registration_cache.move_to_end(redirect_uri)
+                self._registration_cache.move_to_end(key)
                 return _ClientRegistration.REGISTERED
-            del self._registration_cache[redirect_uri]
+            del self._registration_cache[key]
 
         result = await self._check_registration_uncached(connection_client_id, redirect_uri)
         if result is _ClientRegistration.REGISTERED:
-            self._registration_cache[redirect_uri] = time.monotonic() + _REGISTERED_CACHE_TTL_SECONDS
-            self._registration_cache.move_to_end(redirect_uri)
+            self._registration_cache[key] = time.monotonic() + _REGISTERED_CACHE_TTL_SECONDS
+            self._registration_cache.move_to_end(key)
             if len(self._registration_cache) > _MAX_CACHED_REGISTRATIONS:
                 self._registration_cache.popitem(last=False)
         return result
@@ -363,7 +412,9 @@ class ConnectionClientRegistry:
             )
             return _ClientRegistration.ERROR
 
-    def pending_approval_url(self, *, connection_client_id: str, redirect_uri: str, client_name: str | None) -> str:
+    def pending_approval_url(
+        self, *, connection_client_id: str, redirect_uri: str, client_name: str | None, state: str
+    ) -> str:
         """
         Builds the URL that sends the browser to Connection's own `/oauth/authorize` carrying a
         `pending_mcp_client` payload, so an authenticated Keboola user can approve this client
@@ -371,16 +422,16 @@ class ConnectionClientRegistry:
         `/oauth/consent`, which `SimpleOAuthProvider` otherwise talks to directly; see the AI-2883
         RFC Decisions §3-4).
 
-        The resulting authorization code (if the user allows it) is a REAL, live Connection
-        authorization code, delivered to `redirect_uri` -- which, until the moment of approval, is
-        still just whatever the *caller* of this server's own `/authorize` claimed (RFC Decisions
-        §2-3: the Allow click is a real grant on the approving admin's account, not an inert
-        registration side effect). It is unredeemable ONLY because `code_challenge` below is a
-        high-entropy random value with no known preimage, and Connection's league config requires
-        a code challenge for public clients (`require_code_challenge_for_public_clients: true`,
-        `connection/config/packages/league_oauth2_server.yaml`) -- so redeeming it needs a SHA-256
-        preimage nobody has. This is load-bearing, not a curiosity: it is what stands between "the
-        approval only registers a client" and "the approval hands the caller a live grant".
+        `redirect_uri` is this server's own `/oauth/callback`, never the caller's: the Allow click
+        issues a REAL Connection authorization code to it, and `state` brings the browser back
+        with the original authorize request so `SimpleOAuthProvider.handle_oauth_callback()` can
+        continue straight into `/oauth/consent` (RFC Decision §15, AI-3995). The code itself is
+        never redeemed -- `code_challenge` below is a high-entropy random value with no known
+        preimage, and Connection's league config requires a code challenge for public clients
+        (`require_code_challenge_for_public_clients: true`,
+        `connection/config/packages/league_oauth2_server.yaml`) -- so even though it never leaves
+        this server's origin, nobody could redeem it. Keep that property: never replace the
+        challenge with a value this server or its caller could recompute.
         """
         # Sanitize BEFORE falling back, not after: a client_name that is truthy but sanitizes to
         # '' (e.g. all control/zero-width characters) must still fall back to connection_client_id
@@ -401,6 +452,12 @@ class ConnectionClientRegistry:
             client_id=connection_client_id,
             redirect_uri=redirect_uri,
             response_type='code',
+            state=state,
+            # Ask Connection to send the browser back to `redirect_uri` (this server's callback) right after
+            # Allow, with `state` and no code, instead of continuing the request into a second consent screen
+            # for the per-redirect client whose grant this server discards (AI-3995). A Connection that
+            # doesn't know the parameter just keeps the old behaviour, which the callback also handles.
+            return_to_client_after_approval='1',
             # MANDATORY, not defensive -- see this method's docstring. secrets.token_urlsafe(32) is
             # a random value presented AS IF it were a SHA-256 digest; no code_verifier can exist
             # for it, so Connection's PKCE check (AuthCodeGrant::validateCodeChallenge, league/
@@ -776,7 +833,7 @@ class SimpleOAuthProvider(OAuthProvider):
         redirect_uri_str = str(params.redirect_uri)
         connection_client_id = _connection_client_id(redirect_uri_str)
 
-        registration = await self._client_registry.check_registration(connection_client_id, redirect_uri_str)
+        registration = await self._check_registration(connection_client_id, redirect_uri_str)
         if registration is _ClientRegistration.ERROR:
             LOG.warning(
                 f'[authorize] Could not verify client with Connection: client_id={client.client_id}, '
@@ -798,19 +855,6 @@ class SimpleOAuthProvider(OAuthProvider):
                 error_description='Could not verify OAuth client with Connection.',
             )
 
-        if registration is _ClientRegistration.NOT_REGISTERED:
-            LOG.info(
-                f'[authorize] Unregistered client sent to Connection for approval: client_id={client.client_id}, '
-                f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}'
-            )
-            return self._client_registry.pending_approval_url(
-                connection_client_id=connection_client_id,
-                redirect_uri=redirect_uri_str,
-                client_name=self._client_registry.get_client_name(client.client_id),
-            )
-
-        # registration is REGISTERED from here on -- proceed exactly as before this RFC.
-        #
         # Create and encode the authorization state.
         # We don't store the authentication states that we create here to avoid having to persist them.
         # Instead, we encode them to JWT and pass them back to the client.
@@ -831,29 +875,90 @@ class SimpleOAuthProvider(OAuthProvider):
             # (Copilot review finding).
             'projectless': True,
         }
-        state_jwt = self._encode(state)
-
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, state={state}')
 
-        # create the authorization URL
-        url_params = {
-            'client_id': self._oauth_client_id,
-            'response_type': 'code',
-            'redirect_uri': self._mcp_callback_url,
-            'state': state_jwt,
-            'scope': _CONNECTION_SCOPE,
-        }
+        if registration is _ClientRegistration.NOT_REGISTERED:
+            LOG.info(
+                f'[authorize] Unregistered client sent to Connection for approval: client_id={client.client_id}, '
+                f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}'
+            )
+            # The approval screen shows the payload's redirect_uri, which is now this server's own
+            # callback (RFC Decision §15) -- so the client's real redirect target goes into the
+            # displayed name instead, so the approver can still see where the client sends users.
+            name = _sanitize_client_name(
+                self._client_registry.get_client_name(client.client_id) or connection_client_id
+            )
+            return self._client_registry.pending_approval_url(
+                connection_client_id=connection_client_id,
+                redirect_uri=self._mcp_callback_url,
+                client_name=_approval_client_name(name, redirect_uri_str),
+                # longer than the usual 5 minutes: the user may have to log in to Connection first
+                state=self._encode({**state, 'pending': True, 'expires_at': time.time() + 15 * 60}),
+            )
 
-        auth_url = construct_redirect_uri(self._oauth_server_auth_url, **url_params)
+        # registration is REGISTERED from here on.
+        auth_url = self._connection_consent_url(state)
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
-
         return auth_url
 
-    async def handle_oauth_callback(self, code: str, state: str) -> str:
+    async def _check_registration(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
+        """Whether Connection admits this client: registered against this server's callback (a client
+        approved since AI-3995, or Claude.ai against its own URI), or -- for clients approved before that
+        -- against its OWN redirect_uri. Such a client must keep working: Connection's approval gate skips
+        an existing client id, so asking it to approve again would end in League rejecting the mismatching
+        redirect_uri as `invalid_client`, a dead end the user cannot get out of."""
+        connection_redirect_uri = self._connection_redirect_uri(redirect_uri)
+        registration = await self._client_registry.check_registration(connection_client_id, connection_redirect_uri)
+        if registration is _ClientRegistration.NOT_REGISTERED and connection_redirect_uri != redirect_uri:
+            registration = await self._client_registry.check_registration(connection_client_id, redirect_uri)
+        return registration
+
+    def _connection_redirect_uri(self, redirect_uri: str) -> str:
+        """The redirect_uri Connection has registered for this client: the client's own for a
+        Keboola pre-registered one, this server's /oauth/callback for a dynamically approved one."""
+        return redirect_uri if redirect_uri in _WELL_KNOWN_CONNECTION_CLIENT_IDS else self._mcp_callback_url
+
+    def _connection_consent_url(self, state: dict[str, Any]) -> str:
+        """Connection's /oauth/consent URL for an already-registered client; `state` comes back to
+        handle_oauth_callback() with the authorization code."""
+        state_jwt = self._encode(state)
+        mcp_client_id = _connection_client_id(cast(str, state['redirect_uri']))
+        return construct_redirect_uri(
+            self._oauth_server_auth_url,
+            client_id=self._oauth_client_id,
+            response_type='code',
+            redirect_uri=self._mcp_callback_url,
+            state=state_jwt,
+            scope=_CONNECTION_SCOPE,
+            # The app that is actually asking, so Connection's consent screen can name it instead of the
+            # broker (this server). Connection shows the registered client's own name, and only when the
+            # signature below matches. Both are ignored by a Connection that doesn't know them yet.
+            mcp_client_id=mcp_client_id,
+            mcp_client_sig=_sign_mcp_client_id(self._oauth_client_secret, mcp_client_id, state_jwt),
+        )
+
+    async def _continue_after_approval(self, state_data: dict[str, Any]) -> str:
+        """The user just approved a new client (Flow B): re-check the registration and carry on to
+        /oauth/consent in the same browser session, instead of handing the client a dead code
+        (AI-3995, RFC Decision §15). The Connection authorization code that came with the callback
+        is ignored -- it is unredeemable by design, see ConnectionClientRegistry.pending_approval_url."""
+        redirect_uri = cast(str, state_data['redirect_uri'])
+        registration = await self._client_registry.check_registration(
+            _connection_client_id(redirect_uri), self._connection_redirect_uri(redirect_uri)
+        )
+        if registration is not _ClientRegistration.REGISTERED:
+            LOG.warning(f'[handle_oauth_callback] Pending client not registered after approval: {registration}')
+            raise HTTPException(400, 'The OAuth client was not approved. Please try connecting again.')
+        state = {k: v for k, v in state_data.items() if k != 'pending'}
+        state['expires_at'] = time.time() + 5 * 60
+        return self._connection_consent_url(state)
+
+    async def handle_oauth_callback(self, code: str | None, state: str) -> str:
         """
         Handles the callback from the OAuth server.
 
-        :param code: The authorization code provided by the OAuth server.
+        :param code: The authorization code provided by the OAuth server; absent (or ignored) when the
+            callback follows the approval of a new client, see `_continue_after_approval`.
         :param state: The state originally generated in the authorize() function.
 
         :return: The URL that redirects back to the AI assistant OAuth client.
@@ -872,6 +977,12 @@ class SimpleOAuthProvider(OAuthProvider):
         if state_data['expires_at'] < time.time():
             LOG.debug(f'[handle_oauth_callback] Expired state: {state_data}')
             raise HTTPException(400, 'Invalid state parameter')
+
+        if state_data.get('pending'):
+            return await self._continue_after_approval(state_data)
+
+        if not code:
+            raise HTTPException(400, 'Missing code or state parameter')
 
         # Exchange the authorization code for the access token with the OAuth server.
         async with _create_http_client() as http_client:
