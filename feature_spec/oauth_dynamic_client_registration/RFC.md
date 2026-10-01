@@ -209,12 +209,10 @@ async def authorize(self, client, params) -> str:
             pending_mcp_client=pending_payload,
         )
 
-    # status is REGISTERED: still the MCP server's own fixed oauth_client_id/secret, but the
-    # TARGET URL now depends on scope (see Decision §14) -- /oauth/consent only ever resolves a
-    # 'projectless' request; a non-projectless (Flow B) one must go to Connection's real
-    # /oauth/authorize instead, or it loops forever between /oauth/consent and the project selector.
-    auth_url_base = self._oauth_server_auth_url if is_projectless else self._oauth_server_authorize_url
-    return construct_redirect_uri(auth_url_base, **url_params)
+    # status is REGISTERED: still the MCP server's own fixed oauth_client_id/secret, and every
+    # registered client (pre-registered or dynamically approved) gets the same scope and target --
+    # see Decisions §10 and §14.
+    return construct_redirect_uri(self._oauth_server_auth_url, **{**url_params, 'scope': _CONNECTION_SCOPE})
 ```
 
 `_check_client_registration()` POSTs to `{oauth_server_url}/oauth/clients/validate` with a short,
@@ -231,8 +229,8 @@ round trip on an approval screen that's going to fail the same way.
 `_WELL_KNOWN_DOMAINS`/`_FORBIDDEN_SCHEMES`-equivalent (`_ALLOWED_DOMAINS`/`_RE_LOCALHOST`) gone
 per Connection's own "Deliverables / MCP Server (Phase 2)" list. No other deletions — the code exchange
 leg still uses this server's own fixed `oauth_client_id`/`secret` throughout (see Decisions §2 for
-why that's correct, not an oversight), but which Connection URL it targets now depends on scope
-(`/oauth/consent` for `projectless`, `/oauth/authorize` otherwise — see Decision §14).
+why that's correct, not an oversight), and every registered client targets `/oauth/consent` with
+`claudai projectless` (Decisions §10, §14).
 
 ## Scope
 
@@ -259,11 +257,9 @@ functions, per project convention):
 - `_connection_client_id`: known redirect_uri → literal `claude-ai`; two calls with the same
   arbitrary redirect_uri → identical derived id; two different redirect_uris → different ids;
   derived id always ≤32 chars.
-- `authorize()`: 200 from validate for a well-known (Keboola-vetted) `connection_client_id` → today's
-  exact `/oauth/consent` URL (regression check — Flow A must be byte-for-byte unchanged), `projectless`
-  in scope; 200 for a dynamically-approved (non-well-known) `connection_client_id` → targets
-  `/oauth/authorize` instead, `projectless` absent from scope (Decision §14 — this was previously
-  and incorrectly asserted to also target `/oauth/consent`); 404 → redirect targets
+- `authorize()`: 200 from validate for any REGISTERED `connection_client_id` — pre-registered
+  (well-known, e.g. `claude-ai`) or dynamically approved — → the `/oauth/consent` URL with
+  `scope=claudai projectless` (one parametrized test, Decisions §10 and §14); 404 → redirect targets
   `/oauth/authorize` (not `/oauth/consent`) with `pending_mcp_client` decodable back to
   `{client_id, client_name, redirect_uri}` matching what was sent, plus a `code_challenge`;
   network error / non-200/404 status from validate → a same-origin redirect to this server's own
@@ -305,16 +301,13 @@ functions, per project convention):
   for `localhost` either, so normalizing it here alone wouldn't help end-to-end (Vojtěch Biberle
   review, AI-2883; matching fix on Connection's own registry in a companion connection PR).
 - `exchange_authorization_code` → `_auto_confirm_project_scope`: the existing single/multi-project
-  cases above always used a `claudai projectless` (Flow A) token; a new case exercises the same
-  path for a `claudai`-only (Flow B, dynamically-approved client) token and asserts it auto-confirms
-  identically for its one pinned project (Devin review finding — no prior test exercised this
-  branch). Verified against Connection's own `TokenIntrospectProcessor`: a pinned session's
-  introspect response is always exactly its own frozen allow-list, never the admin's broader
-  membership, so this is genuinely the only shape Flow B introspection can take today, not just a
-  representative case. The live dev/canary click-through through an actual dynamically-approved
-  client (register → approve → retry → project-selector → token exchange → a real tool call) is
-  still the authoritative confirmation and remains outstanding — this unit coverage does not
-  replace it.
+  cases above use a `claudai projectless` token; a further case covers a session persisted as
+  `claudai`-only (`oauth_projectless=False`, the shape a Flow B session had before Decision §10) and
+  asserts it auto-confirms identically for its one pinned project. Verified against Connection's own
+  `TokenIntrospectProcessor`: a pinned session's introspect response is always exactly its own frozen
+  allow-list, never the admin's broader membership. The live canary-orion click-through for a freshly
+  registered client (register → Allow → retry → `/oauth/consent` → token exchange → a real tool call over
+  the whole-stack session) was run manually and passed; it is not automated here.
 
 **Integration** (`integtests/`, against a real Connection instance, no project lock needed — this
 call is unauthenticated and doesn't touch a project): `ConnectionClientRegistry.check_registration()`
@@ -439,23 +432,23 @@ approval).
    gets no callback at all and must time out and retry — the same shape as Connection's own
    "Deny gets no callback" behavior, not a new UX pattern.
 
-10. **A dynamically-approved (Flow B) client's authorize request omits the `projectless` scope —
-    only a client in `_WELL_KNOWN_CONNECTION_CLIENT_IDS` (today: `claude-ai`) gets it.** Adversarial
-    review found that Connection's `AuthorizationRequestResolveListener` decides whether to grant the
-    unrestricted, every-project ("projectless") session by checking whether **this server's own
-    fixed Connection identity** (`self._oauth_client_id`, which the broker leg always authenticates
-    as — see Decision §2) has `projectless` in its own scopes — not whether the *underlying,
-    dynamically-approved* client does. Connection's `ClientApprovalProcessor` deliberately withholds
-    `projectless` from a self-service-approved client (any authenticated user, no elevated role
-    required — see Decision §12) specifically because such approval isn't vetted the way a reviewed
-    Keboola migration is. Without this fix, every dynamically-approved client would silently inherit
-    the same unrestricted grant as Claude.ai regardless of Connection's intent — verified by tracing
-    `AuthorizationRequestResolveListener::scopeRequested()`/`clientAllowsProjectlessScope()`
-    (`connection/src/Core/OAuth/EventListener/AuthorizationRequestResolveListener.php`) against a
-    real checkout of `origin/master`, not assumed. Omitting `projectless` is meant to route the user
-    through normal per-project consent (`ProjectSelectionAction`) instead, matching what Connection's
-    own scopes intended for a self-service client — but making that actually happen needed a second
-    fix; see Decision §14.
+10. **Every registered client — pre-registered or dynamically approved — gets `claudai projectless`
+    (reverses an earlier draft).** An earlier draft withheld `projectless` from a Flow B client, on the
+    grounds that Connection's `ClientApprovalProcessor` deliberately omits it from a self-service
+    approval (any authenticated user, no elevated role required — Decision §12) and that this server's
+    own broker identity (`self._oauth_client_id`, which the broker leg always authenticates as — Decision
+    §2) is what Connection checks for `projectless`, not the dynamically-approved client. That is
+    `AuthorizationRequestResolveListener` / `OAuthScopes::mayGrantUnrestrictedScope()` in
+    `keboola/connection` `master`: `projectless` is granted when it is in both the request scope and the
+    requesting client's own registration, and the requesting client is the broker. The broker already has
+    it (it is how every client got it before this registry), so requesting it for every registered client
+    preserves the pre-registry behaviour: no new Connection change, and no per-client project picker for
+    clients such as Cursor, ChatGPT or n8n. **Trade-off, accepted:** the trust root for a client changed
+    from a reviewed redirect-URI list to one Allow click by any authenticated user (Decision §12), and an
+    approved client now receives an unrestricted, every-project grant for that user. Closing that needs
+    Connection to gate the approval screen; a narrower alternative is to grant `projectless` only to
+    pre-registered clients (Connection migrations plus `_WELL_KNOWN_CONNECTION_CLIENT_IDS`) and leave
+    unknown clients project-scoped.
 
 11. **`ConnectionClientRegistry.check_registration()` caches REGISTERED for 5 minutes; NOT_REGISTERED
     and ERROR are never cached** (an earlier draft also cached NOT_REGISTERED briefly, but that
@@ -511,7 +504,8 @@ approval).
     review). This is **not fixable from this repo** — the missing check is in Connection's PHP, not
     here — and is called out explicitly rather than left as a silent gap for whoever reviews this RFC
     to decide whether it needs to go back to the Connection team before this ships. Decision §10
-    limits the *blast radius* of an unvetted approval (no `projectless`) but does not close this gap.
+    removed the one thing that limited the *blast radius* of an unvetted approval (no `projectless`),
+    so this gap now applies to every registered client; it is not closed here.
 
     **Status (2026-09-16): still open.** A project-admin gate for `ClientApprovalProcessor::process()`
     was drafted (AI-3936, `keboola/connection#8497`), but that PR is closed, unmerged, with no
@@ -531,29 +525,19 @@ approval).
     invalidation hook the revoke action can call, or shortening the TTL) -- building that now, for a
     revocation path that cannot yet be exercised, would be speculative. Tracked as a follow-up.
 
-14. **A dynamically-approved client's authorize request must target Connection's real
-    `/oauth/authorize`, not `/oauth/consent` — the two are not interchangeable for a non-`projectless`
-    request ([DMD-2180](https://linear.app/keboola/issue/DMD-2180)).** Decision §10 above omits
-    `projectless` for a Flow-B client and says that "routes the user through normal per-project
-    consent instead" — but the code kept sending *every* registered client's authorize request to
-    `self._oauth_server_auth_url` (`/oauth/consent`) regardless of scope, so that routing never
-    actually happened. Manual end-to-end testing against `dev-keboola-aws-eu-west-1` found the real
-    consequence: a Flow-B session loops forever between `/oauth/consent` and Connection's
-    `/oauth/project-selector`, because `/oauth/consent`'s own Approve action
-    (`ConsentSubmissionAction`) only ever sets the `oauth_consent_approved` session key, never the
-    `oauth_selected_project_id` key the plain project-selector branch needs — and that branch is the
-    only one `AuthorizationRequestResolveListener` will take for a non-`projectless` scope (verified
-    against a real checkout of `origin/master` in `keboola/connection`, including
-    `connection/docs/rfc/mcp-projectless-oauth/mcp-projectless-oauth.md`, which documents this split
-    as Connection's own intended contract: "No `projectless` scope → the legacy selector flow,
-    byte-for-byte. Scope present → consent flow, admin-subject grant."). A Flow-B client could
-    therefore never complete authorization at all — not a UI confusion, a structural dead end.
-    Fix: `_authorize()` now picks the target URL from the same `is_projectless` flag it already
-    computes for the state JWT — `_oauth_server_auth_url` (`/oauth/consent`) only when `projectless`
-    is in scope (Flow A, unchanged), `_oauth_server_authorize_url` (`/oauth/authorize`) otherwise.
-    No Connection-side change needed: Connection has no way to distinguish Flow A from Flow B at this
-    layer other than the scope string on the request — the trust decision itself lives entirely in
-    this server's `_scope_for()`/registry check, further upstream.
+14. **Every registered client — including a dynamically-approved (Flow B) one — targets
+    `/oauth/consent` with `claudai projectless` ([DMD-2180](https://linear.app/keboola/issue/DMD-2180)).**
+    *Superseded history:* a first fix for the loop described below routed a non-`projectless` request to
+    Connection's `/oauth/authorize` instead of `/oauth/consent`, because at the time `/oauth/consent`'s
+    Approve action (`ConsentSubmissionAction`) never set the `oauth_selected_project_id` session key the
+    plain project-selector branch needs, so a Flow B session looped between `/oauth/consent` and
+    `/oauth/project-selector`. That split is gone: Connection `master` now lets `/oauth/consent` resolve a
+    non-`projectless` MCP request too (`fa9563ba7b`, "let /oauth/consent resolve a non-projectless MCP
+    request too"; entry is gated on the client's own `claudai` scope, not the request's `projectless`), and
+    Decision §10 grants `projectless` to every registered client anyway. `_authorize()` therefore always
+    targets `_oauth_server_auth_url` (`/oauth/consent`) with `_CONNECTION_SCOPE` (`claudai projectless`).
+    Verified manually end to end on canary-orion: register → Allow (Flow B, unredeemable code) → retry
+    `/authorize` (Flow A, `/oauth/consent`) → token exchange → a tool call over the whole-stack session.
 
 ## Security Review Addendum
 
@@ -568,7 +552,7 @@ resolutions:
 | `authorize()`'s `ERROR` branch raised `AuthorizeError`, which the mcp SDK redirects to the caller-supplied (now host-unrestricted) `redirect_uri` — an open redirect reachable on demand via the rate-limit DoS below | High | Fixed — Decisions §8, §9 |
 | Unauthenticated `/authorize` amplifies 1:1 into Connection's IP-shared `/oauth/clients/validate` rate limit — a stack-wide OAuth login DoS, and the enabler for the open redirect above | High | Fixed — Decision §11 (registration cache + a local per-process rate limiter; a caller varying `redirect_uri` per request defeats the cache alone, so the limiter is what actually bounds it) |
 | `check_registration()` used `follow_redirects=True`; any 200 at the end of a redirect chain (misconfigured proxy, login page, ...) would read as REGISTERED | Medium | Fixed (`follow_redirects=False` on this call) |
-| A dynamically-approved client silently inherited the same unrestricted `projectless` grant Connection deliberately withholds from self-service approvals | Medium-High | Fixed — Decision §10 |
+| A dynamically-approved client inherits the same unrestricted `projectless` grant Connection withholds from self-service approvals | Medium-High | **Accepted, reversed** — Decision §10: every registered client gets `projectless` to preserve pre-registry behaviour; the exposure is Decision §12's, now for every client |
 | `client_name` sanitizing to `''` (all control/zero-width chars) silently dropped the whole approval payload instead of falling back to the derived id | Low | Fixed (sanitize before, not after, the fallback) |
 | RFC Decisions §2/§3/§6 justified the throwaway-PKCE code's safety with an incorrect claim ("the AI assistant doesn't know Connection's endpoints") | Low (documentation) | Corrected — Decisions §2, §3, §6 |
 | `except httpx.HTTPError` didn't cover `httpx.InvalidURL`; a misconfigured `server_url` degraded to the mcp SDK's generic error instead of this code's own specific warning (fail-closed either way, via the SDK's own catch-all) | Low (debuggability only) | Fixed (broadened the except) |
@@ -579,5 +563,5 @@ resolutions:
 | `validate_redirect_uri`'s userinfo/fragment checks used truthiness; an empty-but-present component (`https://evil.example/cb#` → `fragment=''`) parses as falsy and slipped through | Low-Medium | Fixed (`is not None`, not truthiness) |
 | `register_client()`'s debug log interpolated the raw, unauthenticated `client_name` directly — unbounded length and control characters bypassed the sanitize-at-insertion protection for this one log line | Low | Fixed (logs the already-sanitized stored value instead) |
 | The REGISTERED cache's 5-minute TTL is also a revocation-latency window — a deactivated client stays admitted for up to 5 minutes | Low (no live trigger yet — Connection has no revoke UI) | Accepted, documented — Decision §13; revisit when Connection ships a revoke path |
-| A dynamically-approved (Flow B) client's authorize request always targeted `/oauth/consent`, which Connection only ever resolves for a `projectless` request — a Flow B session (correctly denied `projectless` per Decision §10) looped forever between `/oauth/consent` and Connection's `/oauth/project-selector` and could never complete authorization; found via manual end-to-end testing against a real dev stack, not a code review | High (feature-breaking, not exploitable) | Fixed — Decision §14 ([DMD-2180](https://linear.app/keboola/issue/DMD-2180)) |
+| A dynamically-approved (Flow B) client's authorize request targeted `/oauth/consent` while omitting `projectless`, which Connection's consent flow did not resolve at the time — the session looped between `/oauth/consent` and `/oauth/project-selector`; found via manual end-to-end testing against a real dev stack | High (feature-breaking, not exploitable) | Superseded — Decision §14 ([DMD-2180](https://linear.app/keboola/issue/DMD-2180)): every registered client now gets `projectless` and `/oauth/consent`, so the split this finding led to was removed |
 | Two RFC "Resolution Strategy" sections (§2's sync-hook description, §5's `authorize()` code sketch) described an earlier, narrower design (minimal scheme rejection only; `raise AuthorizeError`) that the final Decisions (§8, §9) superseded, making the RFC internally contradictory | Low (documentation) | Fixed — both sections rewritten to match the shipped behavior |
