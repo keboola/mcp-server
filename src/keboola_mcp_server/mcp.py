@@ -67,7 +67,7 @@ from keboola_mcp_server.scope import (
     resolve_scope_key,
 )
 from keboola_mcp_server.session_store.kai_scope import KaiScopeStore
-from keboola_mcp_server.session_store.repository import SessionStore
+from keboola_mcp_server.session_store.repository import OAuthSession, SessionStore
 from keboola_mcp_server.tools.constants import (
     BOOTSTRAP_TOOLS,
     MODIFY_FLOW_TOOL_NAME,
@@ -461,8 +461,23 @@ class SessionStateMiddleware(fmw.Middleware):
             pass
 
     @staticmethod
+    def _provisioned_session_ended(project_id: int | None) -> ValueError:
+        """The one explanation a caller gets once their provisioned session is gone.
+
+        Shared by both places that discover it -- the 401 that first reveals the revocation, and
+        every later request whose handle no longer resolves -- so the answer does not degrade into
+        an unexplained failure after the first one.
+        """
+        return ValueError(
+            f'The temporary session that created project {project_id} has ended. This normally means the '
+            'project has been claimed and now belongs to a real Keboola account -- stop resending the '
+            'scope_token from "create_project" and sign in to this server with that account to keep '
+            'working in the project.'
+        )
+
+    @classmethod
     async def _resolve_provisioned_session(
-        config: Config, scope: 'SessionScope | None', server_state: ServerState
+        cls, config: Config, scope: 'SessionScope | None', server_state: ServerState
     ) -> Config:
         """Turns a provisioned session's handle (``SessionScope.provisioned_session_id``) into the
         access token for this request, refreshing it server-side when it nears expiry.
@@ -477,8 +492,12 @@ class SessionStateMiddleware(fmw.Middleware):
         `scope_token` is encrypted and bound to the caller it was minted for (`to_token`'s ``aad``),
         so a different caller cannot even decrypt it.
 
-        Best-effort: a Postgres outage or a revoked row leaves the config untouched, and the request
-        then falls back to whatever credential it already had, rather than 500ing here.
+        A *gone* row ends the request with the "this session has ended" explanation rather than
+        letting it fall back to the caller's own credential: the scope still points at a project
+        that credential cannot reach, so the fallback can only produce a confusing failure -- and
+        after the claim has revoked the row, it would produce one on every single later call.
+        A row that merely cannot be *read* right now (a Postgres blip) is different: that is
+        transient, so the config is left untouched and the request takes its chances.
         """
         store = server_state.session_store
         if store is None or scope is None or scope.provisioned_session_id is None:
@@ -491,28 +510,49 @@ class SessionStateMiddleware(fmw.Middleware):
         if session is None:
             # Revoked (the human claimed the project) or expired out of the store.
             LOG.info('The provisioned session referenced by this scope_token no longer exists.')
-            return config
+            raise cls._provisioned_session_ended(scope.active_project_id)
 
         access_token = session.kbc_access_token
         if session.kbc_access_expires_at <= datetime.now(timezone.utc) + timedelta(seconds=_REFRESH_SKEW_SECONDS):
-            try:
+            access_token = await cls._refresh_provisioned_session(config, session, store)
+        project_id = str(scope.active_project_id) if scope.active_project_id is not None else config.project_id
+        return dataclasses.replace(config, storage_token=access_token, project_id=project_id)
+
+    @staticmethod
+    async def _refresh_provisioned_session(config: Config, session: OAuthSession, store: SessionStore) -> str:
+        """Exchanges the session's refresh token for a fresh pair and persists the rotation.
+
+        Serialized across every worker and replica by a lock on the session row, because Connection
+        rotates the refresh token: two requests refreshing the same session concurrently would have
+        one of them spend a token the other has already invalidated, and a late write-back could
+        persist that dead pair and strand the session for good. The lock re-reads the row, so the
+        loser of the race finds the winner's fresh credentials and makes no second call at all --
+        the same double-checked pattern `get_access_token` uses for the local credential file.
+
+        Returns the token to use. A refresh that fails returns the current one: it may still have
+        minutes left, and the 401 handling deals with it properly if it does not.
+        """
+        try:
+            async with store.lock_session(session.id) as current:
+                if current is None:
+                    return session.kbc_access_token  # revoked while we waited; the 401 path explains it
+                if current.kbc_access_expires_at > datetime.now(timezone.utc) + timedelta(
+                    seconds=_REFRESH_SKEW_SECONDS
+                ):
+                    return current.kbc_access_token  # another worker refreshed it while we waited
                 refreshed = await refresh_tokens(
-                    cast(str, config.storage_api_url), refresh_token=session.kbc_refresh_token
+                    cast(str, config.storage_api_url), refresh_token=current.kbc_refresh_token
                 )
-            except Exception as e:
-                # Keep using the current token: it may still have minutes left, and the 401 handler
-                # below deals with it properly if it does not.
-                LOG.warning(f'Could not refresh the provisioned session: {e}', exc_info=True)
-            else:
-                access_token = refreshed.access_token
                 await store.rotate_kbc_tokens(
-                    session.id,
+                    current.id,
                     kbc_access_token=refreshed.access_token,
                     kbc_refresh_token=refreshed.refresh_token,
                     kbc_access_expires_at=datetime.fromtimestamp(refreshed.expires_at, tz=timezone.utc),
                 )
-        project_id = str(scope.active_project_id) if scope.active_project_id is not None else config.project_id
-        return dataclasses.replace(config, storage_token=access_token, project_id=project_id)
+                return refreshed.access_token
+        except Exception as e:
+            LOG.warning(f'Could not refresh the provisioned session: {e}', exc_info=True)
+            return session.kbc_access_token
 
     @classmethod
     async def _handle_unauthorized(
@@ -605,13 +645,7 @@ class SessionStateMiddleware(fmw.Middleware):
             await store.revoke(cast(str, scope.provisioned_session_id))
         except Exception as e:
             LOG.warning(f'Could not revoke the provisioned session row: {e}', exc_info=True)
-        project_id = scope.active_project_id
-        raise ValueError(
-            f'The temporary session that created project {project_id} has ended. This normally means the '
-            'project has been claimed and now belongs to a real Keboola account -- stop resending the '
-            'scope_token from "create_project" and sign in to this server with that account to keep '
-            'working in the project.'
-        )
+        raise SessionStateMiddleware._provisioned_session_ended(scope.active_project_id)
 
     async def on_list_tools(
         self,
