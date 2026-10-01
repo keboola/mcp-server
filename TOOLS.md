@@ -2747,6 +2747,9 @@ Considerations:
 `{QUERY_DATA_FUNCTION}` where a `query_data` function will be injected. This function queries the workspace to get
 data, it accepts a string of SQL query following current sql dialect and returns a pandas DataFrame with the results
 from the workspace.
+- The placeholder is substituted only by this tool when it saves the configuration; it is not a platform
+feature. A configuration written any other way (e.g. Storage API, CLI) must define `query_data` itself, otherwise
+the literal placeholder breaks the app.
 - Write SQL queries so they are compatible with the current workspace backend, you can ensure this by using the
 `query_data` tool to inspect the data in the workspace before using it in the data app.
 - If you're updating an existing data app, provide the `configuration_id` parameter and the `change_description`

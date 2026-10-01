@@ -144,12 +144,33 @@ def test_is_authorized_behavior():
     assert _uses_basic_authentication(_get_authorization(False)) is False
 
 
-def test_inject_query_to_source_code_when_already_included():
-    query_code = _STORAGE_QUERY_DATA_FUNCTION_CODE
-    backend = 'bigquery'
-    source_code = f"""prelude{query_code}postlude"""
+@pytest.mark.parametrize(
+    ('query_code', 'backend', 'source_template', 'expected_template'),
+    [
+        (_STORAGE_QUERY_DATA_FUNCTION_CODE, 'bigquery', 'prelude{code}postlude', 'prelude{code}postlude'),
+        # a placeholder sent on top of the already injected code must not be saved as a literal
+        (
+            _QUERY_SERVICE_QUERY_DATA_FUNCTION_CODE,
+            'snowflake',
+            'prelude\n{code}\n{{QUERY_DATA_FUNCTION}}\npostlude',
+            'prelude\n\n{code}\npostlude',
+        ),
+        # the injected code moves to the placeholder so query_data is defined before its first use
+        (
+            _STORAGE_QUERY_DATA_FUNCTION_CODE,
+            'bigquery',
+            '{{QUERY_DATA_FUNCTION}}\ndf = query_data("SELECT 1")\n{code}',
+            '{code}\ndf = query_data("SELECT 1")\n',
+        ),
+    ],
+    ids=['no-placeholder', 'placeholder-after-code', 'placeholder-before-code'],
+)
+def test_inject_query_to_source_code_when_already_included(
+    query_code: str, backend: str, source_template: str, expected_template: str
+):
+    source_code = source_template.format(code=query_code)
     result = _inject_query_to_source_code(source_code, backend)
-    assert result == source_code
+    assert result == expected_template.format(code=query_code)
 
 
 def test_inject_query_to_source_code_with_markers():
