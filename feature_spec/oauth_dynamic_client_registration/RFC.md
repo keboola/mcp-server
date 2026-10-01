@@ -539,6 +539,31 @@ approval).
     Verified manually end to end on canary-orion: register → Allow (Flow B, unredeemable code) → retry
     `/authorize` (Flow A, `/oauth/consent`) → token exchange → a tool call over the whole-stack session.
 
+15. **Flow B approves against this server's own `/oauth/callback`, then continues straight into
+    `/oauth/consent` in the same browser session ([AI-3995](https://linear.app/keboola/issue/AI-3995)).**
+    Before, the Allow click sent Connection's (unredeemable, Decision §6) code to the caller's own
+    `redirect_uri`; the client then failed at `/token` and the user had to reconnect once to get
+    Flow A. Now `pending_approval_url()` registers `(connection_client_id, <this server's
+    /oauth/callback>)` with Connection and carries the original authorize request in a signed
+    `state` (`pending: true`, 15-minute expiry). `handle_oauth_callback()` ignores the Connection code,
+    re-checks the registration, and redirects to `/oauth/consent` with a normal state, so the client
+    only ever receives a real code. Consequences:
+    - The caller's `redirect_uri` is no longer sent to Connection for a dynamic client, so no live
+      Connection grant is ever delivered to a caller-chosen host (this also removes the residual
+      risk Decision §3 describes).
+    - `/oauth/clients/validate` is asked about `(connection_client_id, /oauth/callback)` for a dynamic
+      client and `(claude-ai, claude.ai's URI)` for the Keboola-pre-registered one
+      (`SimpleOAuthProvider._connection_redirect_uri`). The registration cache is therefore keyed on
+      `connection_client_id` — keying on the redirect_uri would let one approved client admit every
+      other.
+    - **Trade-off, accepted:** Connection's approval screen now shows this server's callback URL as
+      the redirect URI, so the client's real redirect target is put into the displayed name instead
+      (`<name> (redirects to https://host)`, within Connection's 128-character cap). The binding of an
+      approval to the client's own `redirect_uri` is by `connection_client_id`, which is derived from
+      it (`_connection_client_id`), not by Connection's stored redirect_uri.
+    - Clients approved before this change are registered against their own redirect_uri and need one
+      re-approval.
+
 ## Security Review Addendum
 
 Post-implementation, this RFC was reviewed by two independent adversarial passes (one general OWASP-
