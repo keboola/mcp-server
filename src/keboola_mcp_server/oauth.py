@@ -1,6 +1,7 @@
 import base64
 import dataclasses
 import hashlib
+import hmac
 import json
 import logging
 import math
@@ -185,6 +186,16 @@ def _strip_unprintable(value: str) -> str:
     return ''.join(ch for ch in value if ch.isprintable())
 
 
+def _sign_mcp_client_id(secret: str, mcp_client_id: str, state: str) -> str:
+    """Authenticates the `mcp_client_id` this server puts on Connection's consent URL (AI-3995).
+
+    HMAC-SHA256 over the id AND this request's `state`, keyed with this server's own OAuth client
+    secret -- which Connection already holds for that client, so it can recompute it. Binding it to
+    `state` (a JWT that carries the caller's redirect_uri) means a link cannot pair a trusted app's
+    name with someone else's flow: the pair is only valid for the flow it was issued for."""
+    return hmac.new(secret.encode(), f'{mcp_client_id}.{state}'.encode(), hashlib.sha256).hexdigest()
+
+
 def _sanitize_client_name(name: str) -> str:
     """Strips unprintable characters Connection's pending_mcp_client decoder would otherwise
     reject outright (which would silently drop the whole approval payload -- see
@@ -192,6 +203,30 @@ def _sanitize_client_name(name: str) -> str:
     Connection's 128-byte cap (PHP `strlen()` counts UTF-8 bytes, not characters), without splitting
     a multibyte character."""
     return _strip_unprintable(name).encode()[:128].decode(errors='ignore')
+
+
+_MAX_CLIENT_NAME_LENGTH = 128  # Connection's cap on the pending client's client_name (strlen, i.e. bytes)
+_MIN_CLIENT_NAME_CHARS = 16  # always keep at least this much of the client's own name
+
+
+def _approval_client_name(client_name: str, redirect_uri: str) -> str:
+    """The name Connection's approval screen shows: the client's own name plus where it redirects,
+    `<name> (redirects to https://host)`. Connection shows this server's callback as the redirect URI
+    (RFC Decision §15), so this suffix is the only place the approver sees the caller's destination.
+
+    Always within Connection's 128-character cap. When it doesn't fit, the client's own name is
+    shortened first, and a very long host loses its START (`...`, ASCII so characters equal bytes)
+    rather than its end: the final labels are the part that says who the destination is.
+    """
+    parsed = urlparse(redirect_uri)
+    prefix = f'{parsed.scheme}://'
+    host = parsed.netloc
+    wrapper_length = len(' (redirects to )') + len(prefix)
+    max_host_length = _MAX_CLIENT_NAME_LENGTH - _MIN_CLIENT_NAME_CHARS - wrapper_length
+    if len(host) > max_host_length:
+        host = '...' + host[-(max_host_length - 3) :]
+    suffix = f' (redirects to {prefix}{host})'
+    return client_name[: _MAX_CLIENT_NAME_LENGTH - len(suffix)] + suffix
 
 
 def _sanitize_for_log(value: str) -> str:
@@ -863,15 +898,13 @@ class SimpleOAuthProvider(OAuthProvider):
             # The approval screen shows the payload's redirect_uri, which is now this server's own
             # callback (RFC Decision §15) -- so the client's real redirect target goes into the
             # displayed name instead, so the approver can still see where the client sends users.
-            parsed = urlparse(redirect_uri_str)
-            suffix = f' (redirects to {parsed.scheme}://{parsed.netloc})'
             name = _sanitize_client_name(
                 self._client_registry.get_client_name(client.client_id) or connection_client_id
             )
             return self._client_registry.pending_approval_url(
                 connection_client_id=connection_client_id,
                 redirect_uri=self._mcp_callback_url,
-                client_name=name[: max(1, 128 - len(suffix))] + suffix,
+                client_name=_approval_client_name(name, redirect_uri_str),
                 # longer than the usual 5 minutes: the user may have to log in to Connection first
                 state=self._encode({**state, 'pending': True, 'expires_at': time.time() + 15 * 60}),
             )
@@ -897,17 +930,20 @@ class SimpleOAuthProvider(OAuthProvider):
     def _connection_consent_url(self, state: dict[str, Any]) -> str:
         """Connection's /oauth/consent URL for an already-registered client; `state` comes back to
         handle_oauth_callback() with the authorization code."""
+        state_jwt = self._encode(state)
+        mcp_client_id = _connection_client_id(cast(str, state['redirect_uri']))
         return construct_redirect_uri(
             self._oauth_server_auth_url,
             client_id=self._oauth_client_id,
             response_type='code',
             redirect_uri=self._mcp_callback_url,
-            state=self._encode(state),
+            state=state_jwt,
             scope=_CONNECTION_SCOPE,
             # The app that is actually asking, so Connection's consent screen can name it instead of the
-            # broker (this server). Connection resolves it to the registered client's own name; it never
-            # takes a label from the URL. Ignored by a Connection that doesn't know the parameter yet.
-            mcp_client_id=_connection_client_id(cast(str, state['redirect_uri'])),
+            # broker (this server). Connection shows the registered client's own name, and only when the
+            # signature below matches. Both are ignored by a Connection that doesn't know them yet.
+            mcp_client_id=mcp_client_id,
+            mcp_client_sig=_sign_mcp_client_id(self._oauth_client_secret, mcp_client_id, state_jwt),
         )
 
     async def _continue_after_approval(self, state_data: dict[str, Any]) -> str:

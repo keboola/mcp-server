@@ -1,5 +1,7 @@
 import base64
 import dataclasses
+import hashlib
+import hmac
 import json
 import logging
 import secrets
@@ -729,6 +731,37 @@ class TestSimpleOAuthProvider:
         assert state['redirect_uri'] == 'https://my.tool/oauth/callback'
         assert state['state'] == 'client-state'
 
+    @pytest.mark.parametrize(
+        ('client_name', 'redirect_uri', 'expected'),
+        [
+            ('My Tool', 'https://my.tool/cb', 'My Tool (redirects to https://my.tool)'),
+            ('Cursor', 'http://localhost:9876/callback', 'Cursor (redirects to http://localhost:9876)'),
+            # a long name is shortened first, the destination stays whole
+            ('N' * 200, 'https://my.tool/cb', 'N' * 97 + ' (redirects to https://my.tool)'),
+        ],
+    )
+    def test_approval_client_name_fits_connections_cap_and_keeps_the_destination(
+        self, client_name: str, redirect_uri: str, expected: str
+    ):
+        from keboola_mcp_server.oauth import _approval_client_name
+
+        name = _approval_client_name(client_name, redirect_uri)
+        assert name == expected
+        assert len(name) <= 128
+
+    def test_approval_client_name_keeps_the_end_of_a_very_long_host(self):
+        """The final labels of a hostname are what identify the destination, so a host too long to fit
+        loses its start, never its end (Copilot review, AI-3995)."""
+        from keboola_mcp_server.oauth import _approval_client_name
+
+        host = '.'.join(['a' * 60] * 3) + '.evil.example'
+        name = _approval_client_name('My Tool', f'https://{host}/cb')
+
+        assert len(name) <= 128
+        assert name.endswith('.evil.example)')
+        assert '(redirects to https://...' in name
+        assert name.startswith('My Tool')
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         'registered_name',
@@ -819,6 +852,13 @@ class TestSimpleOAuthProvider:
         assert query['redirect_uri'] == [oauth_provider._mcp_callback_url]
         # lets Connection's consent screen name the app that is asking, not just the broker
         assert query['mcp_client_id'] == [_connection_client_id('https://my.tool/oauth/callback')]
+        # ... and authenticated, bound to this very flow's state (Connection recomputes it with the broker secret)
+        expected_sig = hmac.new(
+            oauth_provider._oauth_client_secret.encode(),
+            f'{query["mcp_client_id"][0]}.{query["state"][0]}'.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        assert query['mcp_client_sig'] == [expected_sig]
         state = oauth_provider._decode(query['state'][0])
         assert 'pending' not in state
         assert state['redirect_uri'] == 'https://my.tool/oauth/callback'
