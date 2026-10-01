@@ -1,6 +1,7 @@
 import asyncio
 import dataclasses
 import logging
+from datetime import datetime, timezone
 from typing import Annotated, Literal, cast
 
 import httpx
@@ -708,6 +709,16 @@ class CreatedProject(BaseModel):
             'first data operations may fail for a short while.'
         )
     )
+    scope_token: str | None = Field(
+        default=None,
+        description=(
+            'Opaque handle to the session this project was created with, on servers that keep it '
+            'server-side (the deployed one). Pass it as the "scope_token" argument on every later tool '
+            'call in this conversation -- without it the next call has no credentials for the project. '
+            'Null on a locally run server, which keeps the session in its own credential file and needs '
+            'nothing resent. Carries no Keboola token: the credentials stay encrypted on the server.'
+        ),
+    )
     llm_instruction: str = Field(description='What to tell the user next.')
 
 
@@ -748,10 +759,10 @@ async def create_project(
     Creates a brand-new Keboola project for a session that has no Keboola credentials yet, and
     signs this session in to it.
 
-    Use this ONLY when a tool call has reported that the session has no Keboola credentials and the
-    user has no project/token to give you -- it is how a first-time user gets started without
-    leaving the conversation. Never call it to add a project to a session that already works: it
-    refuses, because it would replace the credentials that session is using.
+    Use this when the user has no Keboola project to work in -- it is how a first-time user gets
+    started without leaving the conversation. Whether a given caller may create a project is
+    Keboola's decision, not this tool's; on a locally run server it does refuse when the session is
+    already signed in, because that server keeps only one session per stack and would overwrite it.
 
     Not every Keboola stack offers this -- it is gated by a stack feature. On a stack without it the
     tool says so and the user has to bring their own project instead; that is a fact about the
@@ -760,7 +771,11 @@ async def create_project(
     The project starts out owned by nobody. Show the user the returned `confirm_url` and tell them
     to open it: signing in there makes the project permanently theirs. Until they do, the project is
     temporary and Keboola may reclaim it, and once they do, the session created here is revoked and
-    they continue with their own login. Data tools work against the new project in the meantime.
+    they continue with their own login. Data tools work against the new project in the meantime --
+    that is the point: the agent can build in the project before anyone signs anything.
+
+    When the result carries a `scope_token`, resend it as the "scope_token" argument on every later
+    tool call in this conversation: that is what keeps the session signed in to the new project.
     """
     storage_api_url = ctx.session.state.get(STORAGE_API_URL) or ServerState.from_context(ctx).config.storage_api_url
     if not storage_api_url:
@@ -769,20 +784,19 @@ async def create_project(
             'pointing at the stack to create the project on.'
         )
 
-    if deployed_sa_token_path():
-        # The deployed server authenticates its sessions with OAuth and has no local credential
-        # store to keep the provisioned session in -- provisioning here would create a project the
-        # caller then has no way to use.
+    # Where the provisioned session can be kept decides what this tool may do, not who is asking:
+    # whether a given caller is allowed to provision is the provisioning endpoint's decision, and
+    # it answers it on its own (remote_agent_provisioning RFC). The server-side session store is
+    # the deployed server's place to keep one; a local server has the per-user credential file.
+    session_store = ServerState.from_context(ctx).session_store
+    if session_store is None and (KeboolaClient.STATE_KEY in ctx.session.state or load_tokens(storage_api_url)):
+        # Not a permission rule -- the local credential file holds exactly one session per stack and
+        # profile, so provisioning into it would overwrite the login this session is using.
         raise ValueError(
-            'Creating a Keboola project is only supported by a locally run MCP server. '
-            'Sign in through this server\'s OAuth flow instead.'
-        )
-
-    if KeboolaClient.STATE_KEY in ctx.session.state or load_tokens(storage_api_url) is not None:
-        raise ValueError(
-            f'This session already has Keboola credentials for {storage_api_url}, and creating a project '
-            'would replace them. Use the projects this session can already reach (see '
-            '"get_accessible_projects"), or create the new project from the Keboola UI.'
+            f'This session already has Keboola credentials for {storage_api_url}, and this server keeps '
+            'only one session per stack, so creating a project here would replace them. Use the projects '
+            'this session can already reach (see "get_accessible_projects"), create the new project from '
+            'the Keboola UI, or run this tool from a session that is not signed in.'
         )
 
     client_id = sanitize_client_id(ctx.session.client_params.client_info.name if ctx.session.client_params else None)
@@ -790,15 +804,50 @@ async def create_project(
         storage_api_url, client_id=client_id, project_name=name, backend=backend
     )
 
-    # Storing the session under the stack's credential entry is what makes the next tool call work:
-    # `SessionStateMiddleware._maybe_use_stored_session` reads it, `get_access_token` refreshes it
-    # from the refresh token before the 1h access token expires, and `project_ids` makes
-    # `_read_persisted_login_scope` hand back a confirmed single-project scope so data tools are
-    # usable immediately rather than held at the ask-first gate.
-    save_tokens(
-        storage_api_url,
-        dataclasses.replace(provisioned.tokens, project_ids=[provisioned.project_id], read_only=False),
-    )
+    # Keeping the session is what makes the next tool call work, and where it is kept is the only
+    # thing that differs between a local and a deployed server.
+    scope_token: str | None = None
+    if session_store is not None:
+        # Deployed: the credentials go into the session store, encrypted at rest with the key this
+        # deployment already uses for OAuth sessions, and only the row id travels back to the caller
+        # (inside the encrypted `scope_token` every tool already accepts). The caller echoes that
+        # handle like any other scope_token; `SessionStateMiddleware` resolves it, refreshes the
+        # access token when it nears expiry, and revokes the row when the claim kills the session.
+        _, _, session = await session_store.create(
+            client_id=client_id,
+            user_email=None,
+            kbc_access_token=provisioned.tokens.access_token,
+            kbc_refresh_token=provisioned.tokens.refresh_token,
+            kbc_access_expires_at=datetime.fromtimestamp(provisioned.tokens.expires_at, tz=timezone.utc),
+        )
+        scope = SessionScope(
+            project_ids=[provisioned.project_id],
+            confirmed=True,
+            provisioned_session_id=session.id,
+        )
+        # Bound to the credential this caller presented, exactly as `set_project_scope` binds its
+        # own token: a handle minted while serving one caller cannot be replayed by another who
+        # obtains the opaque string. A caller with no credential at all (the newcomer this feature
+        # exists for) has nothing to bind to, and gets an unbound handle.
+        caller_bearer = (
+            KeboolaClient.from_state(ctx.session.state).bearer_token
+            if KeboolaClient.STATE_KEY in ctx.session.state
+            else None
+        )
+        scope_token = scope.to_token(
+            resolve_scope_key(ServerState.from_context(ctx).config),
+            aad=resolve_scope_binding_aad(caller_bearer),
+        )
+        ctx.session.state[SCOPE_KEY] = scope
+    else:
+        # Local: the per-user credential file. `_maybe_use_stored_session` reads it on the next
+        # request, `get_access_token` refreshes it before the 1h access token expires, and
+        # `project_ids` makes `_read_persisted_login_scope` hand back a confirmed single-project
+        # scope, so data tools are usable immediately rather than held at the ask-first gate.
+        save_tokens(
+            storage_api_url,
+            dataclasses.replace(provisioned.tokens, project_ids=[provisioned.project_id], read_only=False),
+        )
     LOG.info(f'Provisioned agent project {provisioned.project_id} on {storage_api_url}.')
 
     return CreatedProject(
@@ -807,12 +856,19 @@ async def create_project(
         backend=provisioned.backend,
         confirm_url=provisioned.confirm_url,
         backend_init_pending=provisioned.backend_init_dispatched_async,
+        scope_token=scope_token,
         llm_instruction=(
             f'Project {provisioned.project_id} ("{provisioned.project_name}", {provisioned.backend}) was '
             'created and this session is now signed in to it, so the other tools work. The project is '
             'NOT owned by anyone yet: show the user the confirm_url and ask them to open it and sign in, '
             'which makes the project theirs permanently -- otherwise Keboola may reclaim it. After they '
             'confirm, this session ends and they continue with their own login.'
+            + (
+                ' Resend the returned scope_token as the "scope_token" argument on every later tool call '
+                'in this conversation -- it is what keeps this session signed in to the new project.'
+                if scope_token
+                else ''
+            )
             + (
                 ' The storage backend is still being set up, so the first data operations may fail for a '
                 'moment; retry them.'

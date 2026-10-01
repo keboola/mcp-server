@@ -1,5 +1,6 @@
 import time
 from types import SimpleNamespace
+from typing import cast
 
 import httpx
 import pytest
@@ -27,6 +28,8 @@ from keboola_mcp_server.scope import (
     resolve_scope_binding_aad,
     resolve_scope_key,
 )
+from keboola_mcp_server.session_store.crypto import DecryptionError
+from keboola_mcp_server.session_store.repository import SessionStore
 from keboola_mcp_server.tools.project import (
     ProjectInfo,
     _get_toolset_restrictions,
@@ -839,17 +842,77 @@ async def test_create_project_refuses_when_the_session_already_has_a_client(
     provision.assert_not_awaited()
 
 
+@pytest.fixture
+def session_store(mocker: MockerFixture):
+    """A deployed server's session store: the place a provisioned session is kept when there is no
+    per-user credential file."""
+    store = mocker.AsyncMock(spec=SessionStore)
+    store.create.return_value = (
+        'opaque-access',
+        'opaque-refresh',
+        mocker.MagicMock(id='sess-row-1'),
+    )
+    return store
+
+
+def _as_deployed(ctx: Context, store) -> None:
+    """Rebuilds the context's ServerState with a session store, i.e. a deployed server."""
+    ctx.request_context.lifespan_context = ServerState(
+        config=Config(storage_api_url=STACK),
+        runtime_info=ServerRuntimeInfo(transport='streamable-http'),
+        session_store=store,
+    )
+
+
 @pytest.mark.asyncio
-async def test_create_project_is_refused_on_the_deployed_server(
-    bootstrap_context: Context, mocker: MockerFixture, monkeypatch
+async def test_create_project_on_a_deployed_server_keeps_the_session_server_side(
+    bootstrap_context: Context, session_store, mocker: MockerFixture
 ) -> None:
-    monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
-    provision = mocker.patch('keboola_mcp_server.tools.project.provision_agent_project', mocker.AsyncMock())
+    _as_deployed(bootstrap_context, session_store)
+    mocker.patch(
+        'keboola_mcp_server.tools.project.provision_agent_project',
+        mocker.AsyncMock(return_value=_provisioned()),
+    )
 
-    with pytest.raises(Exception, match='locally run MCP server'):
-        await create_project(bootstrap_context)
+    result = await create_project(bootstrap_context)
 
-    provision.assert_not_awaited()
+    # The credentials go to the store, encrypted there, and never into the local file.
+    session_store.create.assert_awaited_once()
+    kwargs = session_store.create.await_args.kwargs
+    assert kwargs['kbc_access_token'] == 'kbc_at_sess-9_secret'
+    assert kwargs['kbc_refresh_token'] == 'kbc_rt_sess-9_secret'
+    assert load_tokens(STACK) is None
+
+    # What comes back is a handle, not a credential.
+    serialized = result.model_dump_json()
+    assert 'kbc_at_' not in serialized
+    assert 'kbc_rt_' not in serialized
+    assert result.scope_token
+    scope = SessionScope.from_token(result.scope_token, resolve_scope_key(Config(storage_api_url=STACK)))
+    assert scope.provisioned_session_id == 'sess-row-1'
+    assert scope.project_ids == [4321]
+    assert scope.confirmed is True
+    assert scope.scoped_token is None
+    assert 'scope_token' in result.llm_instruction
+
+
+@pytest.mark.asyncio
+async def test_create_project_on_a_deployed_server_does_not_judge_the_caller(
+    bootstrap_context: Context, keboola_client: KeboolaClient, session_store, mocker: MockerFixture
+) -> None:
+    """Whether an already-signed-in caller may provision is the provisioning endpoint's decision,
+    not ours -- there is no local credential slot to overwrite on a deployed server."""
+    _as_deployed(bootstrap_context, session_store)
+    bootstrap_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
+    provision = mocker.patch(
+        'keboola_mcp_server.tools.project.provision_agent_project',
+        mocker.AsyncMock(return_value=_provisioned()),
+    )
+
+    result = await create_project(bootstrap_context)
+
+    provision.assert_awaited_once()
+    assert result.project_id == 4321
 
 
 @pytest.mark.asyncio
@@ -881,3 +944,32 @@ async def test_create_project_reports_a_stack_without_agent_provisioning(
     assert 'Keboola UI' in message
     assert 'administrator' in message
     assert load_tokens(STACK) is None
+
+
+@pytest.mark.asyncio
+async def test_create_project_handle_is_bound_to_the_caller_it_was_minted_for(
+    bootstrap_context: Context, keboola_client: KeboolaClient, session_store, mocker: MockerFixture, monkeypatch
+) -> None:
+    """The handle is replay-protected the same way `set_project_scope`'s token is: another caller
+    who obtains the opaque string cannot decrypt it. Binding applies on the deployed server, which
+    is the only place with more than one caller to tell apart."""
+    monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+    _as_deployed(bootstrap_context, session_store)
+    keboola_client.bearer_token = 'kbc_at_caller'
+    bootstrap_context.session.state[KeboolaClient.STATE_KEY] = keboola_client
+    mocker.patch(
+        'keboola_mcp_server.tools.project.provision_agent_project',
+        mocker.AsyncMock(return_value=_provisioned()),
+    )
+
+    result = await create_project(bootstrap_context)
+    key = resolve_scope_key(Config(storage_api_url=STACK))
+
+    # The middleware unseals it with the same caller's token (see `_read_scope_from_request`).
+    scope = SessionScope.from_token(cast(str, result.scope_token), key, aad=resolve_scope_binding_aad('kbc_at_caller'))
+    assert scope.provisioned_session_id == 'sess-row-1'
+
+    with pytest.raises(DecryptionError):
+        SessionScope.from_token(
+            cast(str, result.scope_token), key, aad=resolve_scope_binding_aad('kbc_at_somebody_else')
+        )
