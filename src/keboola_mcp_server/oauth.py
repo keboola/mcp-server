@@ -829,9 +829,7 @@ class SimpleOAuthProvider(OAuthProvider):
         redirect_uri_str = str(params.redirect_uri)
         connection_client_id = _connection_client_id(redirect_uri_str)
 
-        registration = await self._client_registry.check_registration(
-            connection_client_id, self._connection_redirect_uri(redirect_uri_str)
-        )
+        registration = await self._check_registration(connection_client_id, redirect_uri_str)
         if registration is _ClientRegistration.ERROR:
             LOG.warning(
                 f'[authorize] Could not verify client with Connection: client_id={client.client_id}, '
@@ -898,6 +896,18 @@ class SimpleOAuthProvider(OAuthProvider):
         auth_url = self._connection_consent_url(state)
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
         return auth_url
+
+    async def _check_registration(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
+        """Whether Connection admits this client: registered against this server's callback (a client
+        approved since AI-3995, or Claude.ai against its own URI), or -- for clients approved before that
+        -- against its OWN redirect_uri. Such a client must keep working: Connection's approval gate skips
+        an existing client id, so asking it to approve again would end in League rejecting the mismatching
+        redirect_uri as `invalid_client`, a dead end the user cannot get out of."""
+        connection_redirect_uri = self._connection_redirect_uri(redirect_uri)
+        registration = await self._client_registry.check_registration(connection_client_id, connection_redirect_uri)
+        if registration is _ClientRegistration.NOT_REGISTERED and connection_redirect_uri != redirect_uri:
+            registration = await self._client_registry.check_registration(connection_client_id, redirect_uri)
+        return registration
 
     def _connection_redirect_uri(self, redirect_uri: str) -> str:
         """The redirect_uri Connection has registered for this client: the client's own for a

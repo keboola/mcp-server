@@ -623,6 +623,57 @@ class TestSimpleOAuthProvider:
         assert query['scope'] == ['claudai projectless']
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('registered_against', 'expected_path', 'expected_checks'),
+        [
+            # approved since AI-3995: registered against this server's callback
+            ('callback', '/oauth/consent', 1),
+            # approved BEFORE AI-3995: registered against its own redirect_uri; must keep working (a new approval
+            # would end in League rejecting the mismatching redirect_uri as `invalid_client`)
+            ('own_redirect_uri', '/oauth/consent', 2),
+            # genuinely new
+            (None, '/oauth/authorize', 2),
+        ],
+    )
+    async def test_authorize_admits_a_client_registered_against_its_own_redirect_uri(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        registered_against: str | None,
+        expected_path: str,
+        expected_checks: int,
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        own = 'https://my.tool/oauth/callback'
+        registered_uri = {'callback': oauth_provider._mcp_callback_url, 'own_redirect_uri': own}.get(registered_against)
+        checked: list[str] = []
+
+        async def _fake(self, connection_client_id: str, redirect_uri: str):
+            checked.append(redirect_uri)
+            return (
+                _ClientRegistration.REGISTERED if redirect_uri == registered_uri else _ClientRegistration.NOT_REGISTERED
+            )
+
+        monkeypatch.setattr(oauth_module.ConnectionClientRegistry, 'check_registration', _fake)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl(own),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        auth_url = await oauth_provider.authorize(client, params)
+
+        assert urlparse(auth_url).path == expected_path
+        assert len(checked) == expected_checks
+        # the new form is always asked first
+        assert checked[0] == oauth_provider._mcp_callback_url
+
+    @pytest.mark.asyncio
     async def test_authorize_unregistered_client_redirects_to_connection_approval(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
