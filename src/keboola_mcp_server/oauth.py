@@ -48,11 +48,8 @@ from keboola_mcp_server.session_store import DatabaseUnavailableError
 from keboola_mcp_server.session_store.repository import SessionStore
 
 
-# The two possible OAuth scopes this server requests at /oauth/consent for a session (see
-# _scope_for/authorize()) -- 'claudai' always, 'projectless' only for a pre-registered client.
-# Which one applies is per-session (OAuthSession.oauth_projectless), not fixed for the whole
-# flow: a Flow B (dynamically-approved) session's ProxyAccessToken/ProxyRefreshToken must not
-# claim 'projectless' when Connection only ever granted 'claudai' for it (Copilot review finding).
+# The OAuth scopes advertised on a session's tokens. authorize() now always requests
+# 'claudai projectless'; a session persisted before that (oauth_projectless=False) keeps 'claudai' only.
 def _scopes_for_session(oauth_projectless: bool) -> list[str]:
     return ['claudai', 'projectless'] if oauth_projectless else ['claudai']
 
@@ -207,40 +204,11 @@ def _create_http_client(*, follow_redirects: bool = True, timeout: httpx.Timeout
     return httpx.AsyncClient(follow_redirects=follow_redirects, timeout=timeout or httpx.Timeout(30.0))
 
 
-def _scope_for(connection_client_id: str) -> str:
-    """
-    The OAuth scope `SimpleOAuthProvider.authorize()` requests from Connection for a given
-    (already-REGISTERED) client.
-
-    'claudai' satisfies the exchange endpoint's MissingClaudaiScopeException guard; 'projectless'
-    makes the exchanged session whole-stack instead of project-pinned.
-
-    'projectless' is requested ONLY for a client Keboola itself vetted and pre-registered (today:
-    claude-ai). Connection's own ClientApprovalProcessor deliberately withholds 'projectless' from
-    a client approved through the dynamic (Flow B) screen -- that scope mints an unrestricted,
-    every-project grant, and a self-service approval (any authenticated user, no elevated role
-    required -- see AI-2883 RFC Decisions §7/§8) is not the same level of vetting as a reviewed
-    Keboola migration. This server's own broker identity (`SimpleOAuthProvider._oauth_client_id`)
-    is what actually requests the scope, though, so without this function it would silently
-    request 'projectless' regardless of which underlying client triggered the flow -- laundering
-    the unrestricted grant right back in for a client Connection specifically tried to keep it
-    from. Falling through to plain project-selection consent for a dynamically-approved client
-    matches what Connection's own scopes intended.
-
-    Known residual gap (Copilot review finding, accepted -- no cheap fix without a Connection-side
-    change): this checks the *redirect_uri*, not the row's actual provenance on Connection.
-    `/oauth/clients/validate` returns a bare 200/404, so this server has no way to distinguish
-    "claude-ai registered by Keboola's migration" from "claude-ai registered via a Flow B approval
-    that happened to name the real claude.ai callback". In practice this requires the *exact*
-    claude.ai redirect_uri to already be in Flow B, which itself requires the pre-registration
-    migration to be absent (it runs on RUN_ON_MIGRATE | RUN_ON_INIT, so every stack gets it) --
-    narrow, self-inflicted, and still bounded by the same redirect_uri (the code can only ever
-    reach claude.ai's own endpoint either way), not attacker-triggerable. Closing it for real needs
-    Connection to expose registration provenance/scopes on the validate response; tracked as a
-    follow-up, not fixed here.
-    """
-    is_pre_registered = connection_client_id in _WELL_KNOWN_CONNECTION_CLIENT_IDS.values()
-    return 'claudai projectless' if is_pre_registered else 'claudai'
+# 'claudai' satisfies the exchange endpoint's MissingClaudaiScopeException guard; 'projectless' makes the
+# exchanged session whole-stack instead of project-pinned. Requested for every REGISTERED client (as before the
+# AI-2883 registry): this server's own broker client, not the per-redirect client, is the one Connection checks
+# for 'projectless'.
+_CONNECTION_SCOPE = 'claudai projectless'
 
 
 class ConnectionClientRegistry:
@@ -525,7 +493,7 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
 class _ExtendedAuthorizationCode(AuthorizationCode):
     oauth_access_token: AccessToken
     oauth_refresh_token: RefreshToken
-    # Whether the Connection OAuth scope requested in authorize() (see _scope_for) included
+    # Whether the Connection OAuth scope requested in authorize() included
     # 'projectless' for THIS session, carried from the state JWT so exchange_authorization_code
     # can persist it on the session row instead of load_access_token/load_refresh_token later
     # advertising 'projectless' unconditionally for every session (Copilot review finding).
@@ -700,13 +668,6 @@ class SimpleOAuthProvider(OAuthProvider):
         self._oauth_client_id = client_id
         self._oauth_client_secret = client_secret
         self._oauth_server_auth_url = urljoin(server_url, '/oauth/consent')
-        # Only ever the target for a 'projectless'-scope request -- see _authorize()'s routing and
-        # connection/docs/rfc/mcp-projectless-oauth/mcp-projectless-oauth.md ("No projectless scope
-        # -> the legacy selector flow, byte-for-byte. Scope present -> consent flow, admin-subject
-        # grant."). A non-projectless session (a dynamically-approved client, denied 'projectless'
-        # by _scope_for) must go to Connection's real /oauth/authorize instead: /oauth/consent's
-        # own Approve action never sets the session key that route's plain project-selector branch
-        # needs, so a non-projectless request sent there loops forever between the two (DMD-2180).
         self._oauth_server_authorize_url = urljoin(server_url, '/oauth/authorize')
         self._oauth_server_token_url = urljoin(server_url, '/oauth/token')
         self._oauth_scope = scope
@@ -780,10 +741,8 @@ class SimpleOAuthProvider(OAuthProvider):
         RFC (feature_spec/oauth_dynamic_client_registration/RFC.md) for the full design and why
         this replaced a hardcoded domain whitelist. An already-registered, well-known pair
         (pre-registered, e.g. Claude.ai) proceeds exactly as before, unchanged, to Connection's
-        `/oauth/consent`. A dynamically-approved pair is registered but never gets 'projectless'
-        scope (see `_scope_for`), so it is routed instead to Connection's real `/oauth/authorize`
-        -- the only route that resolves a non-'projectless' request (DMD-2180; see
-        `_oauth_server_authorize_url`'s docstring). An unregistered pair is sent to Connection's
+        `/oauth/consent` with `claudai projectless` scope; a dynamically-approved pair (Flow B, once
+        approved) takes the same path. An unregistered pair is sent to Connection's
         own `/oauth/authorize` with a `pending_mcp_client` payload instead, so an authenticated
         Keboola user can approve it there. Connection being unreachable or erroring never falls
         through to any of these outcomes (fails closed, see AI-3792).
@@ -857,8 +816,6 @@ class SimpleOAuthProvider(OAuthProvider):
         # Instead, we encode them to JWT and pass them back to the client.
         # The states expire after 5 minutes.
         scopes = cast(list[str], params.scopes or [])
-        scope = _scope_for(connection_client_id)
-        is_projectless = 'projectless' in scope.split()
         state = {
             'redirect_uri': redirect_uri_str,
             'redirect_uri_provided_explicitly': str(params.redirect_uri_provided_explicitly),
@@ -872,7 +829,7 @@ class SimpleOAuthProvider(OAuthProvider):
             # what Connection actually granted for THIS pair, instead of load_access_token /
             # load_refresh_token later advertising 'projectless' for every session regardless
             # (Copilot review finding).
-            'projectless': is_projectless,
+            'projectless': True,
         }
         state_jwt = self._encode(state)
 
@@ -884,15 +841,10 @@ class SimpleOAuthProvider(OAuthProvider):
             'response_type': 'code',
             'redirect_uri': self._mcp_callback_url,
             'state': state_jwt,
-            'scope': scope,
+            'scope': _CONNECTION_SCOPE,
         }
 
-        # /oauth/consent only handles a 'projectless' request (Connection's own documented
-        # contract, see _oauth_server_authorize_url's docstring) -- a non-projectless session
-        # (a dynamically-approved client) must go to Connection's real /oauth/authorize instead,
-        # which resolves it through the plain project-selector path with no separate consent step.
-        auth_url_base = self._oauth_server_auth_url if is_projectless else self._oauth_server_authorize_url
-        auth_url = construct_redirect_uri(auth_url_base, **url_params)
+        auth_url = construct_redirect_uri(self._oauth_server_auth_url, **url_params)
         LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
 
         return auth_url
@@ -1341,8 +1293,8 @@ class SimpleOAuthProvider(OAuthProvider):
         """
         Exchanges a league OAuth access token -- ``claudai projectless`` scope for a whole-stack
         session (Flow A), or ``claudai`` alone for a session pinned to the one project the admin
-        picked on Connection's legacy selector (Flow B, a dynamically-approved client; see
-        ``_scope_for``) -- for a Keboola programmatic session via
+        picked on Connection's legacy selector (a session persisted before every registered client
+        was granted ``projectless``) -- for a Keboola programmatic session via
         ``manage/internal/auth-bridge/exchange-oauth-token``.
 
         Raised as ``TokenError`` (not ``HTTPException``): this runs inside ``exchange_authorization_code``,
