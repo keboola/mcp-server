@@ -160,14 +160,20 @@ class CustomRoutes:
             # spoofing, not XSS (HTML-escaping alone doesn't stop that) (Vojtěch Biberle + Devin
             # review, AI-2883). `authorize()`'s own fail-closed branch only ever emits two fixed
             # error_description strings, so a single fixed message loses nothing legitimate.
+            #
+            # A user clicking Deny on Connection's consent screen lands here too (error=access_denied);
+            # that is not an outage, so it gets its own fixed message. Still never anything derived
+            # from the query string.
+            if error == 'access_denied':
+                title = message = 'Authorization was denied. You can close this window.'
+            else:
+                title = 'Keboola login temporarily unavailable'
+                message = 'Keboola login temporarily unavailable. Please close this window and try connecting again.'
             return HTMLResponse(
                 status_code=400,
                 content=(
-                    '<!doctype html><html><head><meta charset="utf-8">'
-                    '<title>Keboola login temporarily unavailable</title></head><body>'
-                    '<p>Keboola login temporarily unavailable. Please close this window and try '
-                    'connecting again.</p>'
-                    '</body></html>'
+                    f'<!doctype html><html><head><meta charset="utf-8"><title>{title}</title></head><body>'
+                    f'<p>{message}</p></body></html>'
                 ),
             )
 
