@@ -3994,3 +3994,16 @@ async def test_get_data_app_preview_link_maps_other_project_refusal_from_lookup(
     assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
     assert 'project_id' not in str(exc_info.value)
     keboola_client.data_science_client.create_app_preview_link.assert_not_called()
+
+
+def test_get_data_app_preview_link_description_allows_a_browser_run_from_the_shell():
+    """Kai has no browser tool, only a headless browser CLI in its shell; the text must not rule that out."""
+    doc = get_data_app_preview_link.__doc__ or ''
+    url_description = DataAppPreviewLinkOutput.model_fields['url'].description or ''
+    for text in (doc, url_description):
+        assert 'your browser tool' not in text
+        assert 'other than your browser' not in text
+    assert 'a headless browser CLI run from your shell' in doc
+    assert "npx -y chrome-devtools-axi open '<url>'" in doc
+    assert 'any command other than the one that opens the browser' in doc
+    assert 'Do not fetch it with an HTTP client or curl' in doc
