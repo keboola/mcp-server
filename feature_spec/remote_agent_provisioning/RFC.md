@@ -172,7 +172,17 @@ Shipped in this increment:
   refreshing server-side and persisting the rotation (`rotate_kbc_tokens`) when it nears expiry.
 * `_handle_provisioned_session_unauthorized` ends the session when the claim revokes it: introspect
   to be sure, `revoke()` the row, and replace the 401 with the "the project is now yours, sign in"
-  message.
+  message. Every later request whose handle no longer resolves gets the *same* message rather than
+  an unexplained failure -- a revoked row is a dead end, not a reason to fall back to the caller's
+  own credential against a project it cannot reach.
+* The refresh is serialized across workers and replicas by `SessionStore.lock_session()`
+  (a transaction-scoped Postgres advisory lock) and re-reads the row under it: Connection rotates
+  refresh tokens, so two concurrent refreshes would have one spend a token the other already
+  invalidated, and a late write-back would strand the session. Same double-checked shape
+  `get_access_token` uses for the local credential file.
+* A **deployed** server with no session store configured refuses outright. Its credential file is
+  process-wide and shared by every caller on the replica, so writing a provisioned session there
+  would hand it to all of them.
 
 Not implemented: the anonymous entry path (see above).
 

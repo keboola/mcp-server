@@ -916,6 +916,23 @@ async def test_create_project_on_a_deployed_server_does_not_judge_the_caller(
 
 
 @pytest.mark.asyncio
+async def test_create_project_refuses_on_a_deployed_server_with_no_session_storage(
+    bootstrap_context: Context, mocker: MockerFixture, monkeypatch
+) -> None:
+    """A deployed pod serves every caller from one process, so its credential file is shared.
+    With no session store there is nowhere safe to put the provisioned session, and writing it to
+    that file would hand the new project's credentials to every other session on the replica."""
+    monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+    provision = mocker.patch('keboola_mcp_server.tools.project.provision_agent_project', mocker.AsyncMock())
+
+    with pytest.raises(ValueError, match='no session storage'):
+        await create_project(bootstrap_context)
+
+    provision.assert_not_awaited()
+    assert load_tokens(STACK) is None
+
+
+@pytest.mark.asyncio
 async def test_create_project_reports_a_stack_without_agent_provisioning(
     bootstrap_context: Context, mocker: MockerFixture
 ) -> None:
