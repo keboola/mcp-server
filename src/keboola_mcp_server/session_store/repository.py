@@ -8,6 +8,8 @@ import asyncio
 import dataclasses
 import hashlib
 import secrets
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime
 from typing import Protocol
 
@@ -62,6 +64,25 @@ class SessionStore(Protocol):
         ...
 
     async def get_by_refresh_token(self, refresh_token: str) -> OAuthSession | None: ...
+
+    async def get_by_id(self, session_id: str) -> OAuthSession | None:
+        """Looks a session up by its row id rather than by a token the caller presented.
+
+        Used by a provisioned (agent) session, whose caller holds only the row's handle inside its
+        `scope_token` and never a token of its own -- see the remote_agent_provisioning RFC.
+        """
+        ...
+
+    def lock_session(self, session_id: str) -> AbstractAsyncContextManager[OAuthSession | None]:
+        """Serializes work on one session across every worker and replica, yielding the row as it
+        is *after* the lock was taken (None if it is gone).
+
+        For credential refresh: Connection rotates refresh tokens, so two concurrent refreshes of
+        the same session would have one spend a token the other already invalidated, and a late
+        write-back could persist that dead pair. Re-reading under the lock lets the loser of the
+        race use the winner's fresh credentials instead of refreshing again.
+        """
+        ...
 
     async def rotate_kbc_tokens(
         self, session_id: str, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
@@ -188,6 +209,29 @@ class PostgresSessionStore:
             _hash_token(refresh_token),
         )
         return self._to_session(row) if row is not None else None
+
+    @guard_db_errors
+    async def get_by_id(self, session_id: str) -> OAuthSession | None:
+        pool = await self._get_pool()
+        row = await pool.fetchrow(
+            'UPDATE oauth_sessions SET last_used_at = now() WHERE id = $1 AND revoked_at IS NULL RETURNING *',
+            session_id,
+        )
+        return self._to_session(row) if row is not None else None
+
+    @asynccontextmanager
+    async def _lock_session(self, session_id: str) -> AsyncIterator[OAuthSession | None]:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn, conn.transaction():
+            # A transaction-scoped advisory lock: released on commit, so a crashed worker cannot
+            # wedge the session. It does not block reads or writes of the row itself -- it only
+            # serializes the holders of this same lock, which is exactly the refresh path.
+            await conn.execute('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', session_id)
+            row = await conn.fetchrow('SELECT * FROM oauth_sessions WHERE id = $1 AND revoked_at IS NULL', session_id)
+            yield self._to_session(row) if row is not None else None
+
+    def lock_session(self, session_id: str) -> AbstractAsyncContextManager[OAuthSession | None]:
+        return self._lock_session(session_id)
 
     @guard_db_errors
     async def rotate_kbc_tokens(
