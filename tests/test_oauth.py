@@ -585,18 +585,27 @@ class TestSimpleOAuthProvider:
 
         monkeypatch.setattr(oauth_module.ConnectionClientRegistry, 'check_registration', _fake)
 
+    @pytest.mark.parametrize(
+        'redirect_uri',
+        [
+            # pre-registered by Keboola in Connection (claude-ai)
+            'https://claude.ai/api/mcp/auth_callback',
+            # became REGISTERED via the dynamic-approval screen (Flow B)
+            'https://my-self-service-tool.example/cb',
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_authorize_pre_registered_client_gets_projectless_scope(
-        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    async def test_authorize_registered_client_gets_projectless_scope(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, redirect_uri: str
     ):
-        """Only a client Keboola itself vetted and pre-registered (today: claude-ai) gets the
-        unrestricted whole-stack 'projectless' grant."""
+        """Every REGISTERED client -- pre-registered or dynamically approved -- gets the whole-stack
+        'projectless' grant via /oauth/consent, as before the client registry existed."""
         from keboola_mcp_server.oauth import _ClientRegistration
 
         self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         params = AuthorizationParams(
-            redirect_uri=AnyUrl('https://claude.ai/api/mcp/auth_callback'),
+            redirect_uri=AnyUrl(redirect_uri),
             redirect_uri_provided_explicitly=True,
             code_challenge='challenge',
             state='client-state',
@@ -608,41 +617,6 @@ class TestSimpleOAuthProvider:
         assert parsed.path == '/oauth/consent'
         query = parse_qs(parsed.query)
         assert query['scope'] == ['claudai projectless']
-
-    @pytest.mark.asyncio
-    async def test_authorize_dynamically_approved_client_does_not_get_projectless_scope(
-        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
-    ):
-        """A client that became REGISTERED via Connection's dynamic-approval screen (Flow B) must
-        NOT get 'projectless' -- Connection's own ClientApprovalProcessor deliberately withholds it
-        from a self-service approval (any authenticated user, no elevated role required), but this
-        server's broker identity always has 'projectless' on ITS OWN registration. Without this
-        distinction, every dynamically-approved client would silently inherit an unrestricted,
-        every-project grant regardless of Connection's intent -- see AI-2883 RFC security review.
-
-        A non-'projectless' request must target Connection's real `/oauth/authorize`, not
-        `/oauth/consent` -- the latter only ever resolves a 'projectless' request (Connection's own
-        documented contract, mcp-projectless-oauth RFC); sending a non-'projectless' request there
-        loops forever between it and Connection's plain project-selector, since /oauth/consent's own
-        Approve action never sets the session key that selector branch needs (DMD-2180).
-        """
-        from keboola_mcp_server.oauth import _ClientRegistration
-
-        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
-        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
-        params = AuthorizationParams(
-            redirect_uri=AnyUrl('https://my-self-service-tool.example/cb'),
-            redirect_uri_provided_explicitly=True,
-            code_challenge='challenge',
-            state='client-state',
-            scopes=None,
-        )
-        auth_url = await oauth_provider.authorize(client, params)
-
-        parsed = urlparse(auth_url)
-        assert parsed.path == '/oauth/authorize'
-        query = parse_qs(parsed.query)
-        assert query['scope'] == ['claudai']
 
     @pytest.mark.asyncio
     async def test_authorize_unregistered_client_redirects_to_connection_approval(
