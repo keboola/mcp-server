@@ -561,7 +561,7 @@ class DataAppPreviewLinkOutput(BaseModel):
         repr=False,
         description=(
             "Link that opens the data app in a browser without the app's login. It contains a secret: open it "
-            'only in your browser tool, before `link_expires_at`.'
+            'only in a browser, before `link_expires_at`.'
         ),
     )
     link_expires_at: str = Field(
@@ -2124,8 +2124,9 @@ async def get_data_app_preview_link(
     preview link.
 
     ## How to use the link
-    - Open `url` in your browser tool before `link_expires_at` (about 60 seconds after this call). Do not fetch
-      it with an HTTP client or curl: only a browser can turn it into a session.
+    - Open `url` in a real browser before `link_expires_at` (about 60 seconds after this call): a browser tool,
+      or a headless browser CLI run from your shell, for example `npx -y chrome-devtools-axi open '<url>'`.
+      Do not fetch it with an HTTP client or curl: only a browser can turn it into a session.
     - After one successful open, the browser session keeps working and slides while you use the app, so reloads,
       navigation and later checks of the same app need no new link. Do not call this tool before every check.
     - The session belongs to this one app. It ends without notice: after about 4 hours without requests,
@@ -2134,8 +2135,9 @@ async def get_data_app_preview_link(
       broken until reloaded, or when you did not open the previous `url` before its `link_expires_at` (the
       browser then shows "Preview link is invalid or expired").
     - Never type a password into the app's login page, and never ask the user for one.
-    - Do not share `url`: do not show it to the user and do not put it into files, commits, messages or any
-      tool other than your browser. Anyone who opens it before it expires gets into the app.
+    - Do not share `url`: do not show it to the user and do not put it into files, commits, messages, or any
+      tool or any command other than the one that opens the browser. Anyone who opens it before it expires gets
+      into the app.
 
     ## Errors
     - "not running in dev mode": deploy the draft with `deploy_data_app` (mode='dev') first.
