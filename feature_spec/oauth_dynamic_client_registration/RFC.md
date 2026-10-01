@@ -594,11 +594,17 @@ approval).
       other.
     - **Trade-off, accepted:** Connection's approval screen now shows this server's callback URL as
       the redirect URI, so the client's real redirect target is put into the displayed name instead
-      (`<name> (redirects to https://host)`, within Connection's 128-character cap). The binding of an
+      (`<name> (redirects to https://host)`, within Connection's 128-**byte** cap: it checks `strlen`, so a multi-byte name leaves room for fewer characters). The binding of an
       approval to the client's own `redirect_uri` is by `connection_client_id`, which is derived from
       it (`_connection_client_id`), not by Connection's stored redirect_uri.
-    - Clients approved before this change are registered against their own redirect_uri and need one
-      re-approval.
+    - **Clients approved before this change keep working.** They are registered in Connection against their
+      OWN redirect_uri, so the check against this server's callback finds nothing. `_check_registration()`
+      therefore also asks for the client's own redirect_uri, and a match counts as registered (Flow A needs no
+      per-client interaction). Without it such a client would be sent to a new approval that Connection's
+      gate skips (it ignores an existing client id), and League would then reject the mismatching
+      redirect_uri as `invalid_client` -- a dead end seen on canary-orion with Cursor, whose client had been
+      approved under the earlier model. Costs one more `/oauth/clients/validate` call for a client that is
+      not registered either way.
     - **Two-repo follow-up (AI-3995):** without more, Connection still continues the approved request into a
       second, redundant consent screen for the per-redirect client (its grant is discarded) and names the
       broker (`mcp-server`) on the consent that is used. The authorize request therefore carries
