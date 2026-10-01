@@ -1142,12 +1142,13 @@ class TestSimpleOAuthProvider:
         assert second is _ClientRegistration.REGISTERED
         assert call_count == 1  # second call was served from cache, no second HTTP request
 
-        # The cache is keyed per client, never per redirect_uri: every dynamically-approved client is
-        # registered with the same redirect_uri (this server's own callback), so one client's
-        # approval must not admit another that happens to share it.
+        # Neither half of the key alone admits a call: every dynamically-approved client shares this
+        # server's own callback, and one client can be registered against several redirect_uris.
         third = await registry.check_registration('mcp-another-client', 'https://claude.ai/api/mcp/auth_callback')
+        fourth = await registry.check_registration('claude-ai', 'https://other.example/callback')
         assert third is _ClientRegistration.REGISTERED
-        assert call_count == 2
+        assert fourth is _ClientRegistration.REGISTERED
+        assert call_count == 3
 
     @pytest.mark.asyncio
     async def test_check_client_registration_never_caches_not_registered(
@@ -1211,8 +1212,8 @@ class TestSimpleOAuthProvider:
         # eviction order is purely insertion order and client-1 would be evicted instead.
         await registry.check_registration('client-3', 'https://c.example/cb')
 
-        assert 'client-1' in registry._registration_cache
-        assert 'client-2' not in registry._registration_cache
+        assert ('client-1', 'https://a.example/cb') in registry._registration_cache
+        assert ('client-2', 'https://b.example/cb') not in registry._registration_cache
 
     @pytest.mark.asyncio
     async def test_check_client_registration_never_caches_error(

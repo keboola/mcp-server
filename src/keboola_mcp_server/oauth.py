@@ -290,10 +290,11 @@ class ConnectionClientRegistry:
         # cap alone bounds (Copilot review finding).
         self._client_names: OrderedDict[str, str] = OrderedDict()
 
-        # connection_client_id -> expires_at, REGISTERED only. Keyed on connection_client_id, not on
-        # the redirect_uri sent to Connection: every dynamically-approved client is registered with
-        # the same redirect_uri (this server's own /oauth/callback, see SimpleOAuthProvider._authorize),
-        # so that URI alone would let one client's approval admit every other one.
+        # (connection_client_id, redirect_uri) -> expires_at, REGISTERED only. Keyed on the pair: the
+        # redirect_uri alone would let one client's approval admit every other one, since every
+        # dynamically-approved client shares this server's own /oauth/callback (see
+        # SimpleOAuthProvider._authorize); the client id alone would let a verdict for one of a client's
+        # redirect_uris (its own, or ours) admit another one.
         # /authorize is unauthenticated, so every hit costs
         # Connection one call to /oauth/clients/validate -- which is itself IP-rate-limited, and
         # this server's whole egress IP shares that budget across every user of the stack. Caching
@@ -308,9 +309,10 @@ class ConnectionClientRegistry:
         #   was never a real defense against that flood; local throttling below is what handles it.
         # - Caching ERROR would prolong an outage instead of retrying it -- fail-closed still
         #   applies on every uncached call (see AI-3792).
-        # Keyed by `redirect_uri` alone: `connection_client_id` is derived deterministically from it
-        # (`_connection_client_id`), so a second key component would add nothing.
-        self._registration_cache: OrderedDict[str, float] = OrderedDict()
+        # Keyed by the (connection_client_id, redirect_uri) pair, not the redirect_uri alone: a dynamically
+        # approved client is registered with Connection against this server's own callback (RFC Decision
+        # §15), so the redirect_uri sent to Connection no longer identifies the client by itself.
+        self._registration_cache: OrderedDict[tuple[str, str], float] = OrderedDict()
 
         self._validate_rate_limiter = _SlidingWindowRateLimiter(
             _VALIDATE_RATE_LIMIT_MAX_CALLS, _VALIDATE_RATE_LIMIT_WINDOW_SECONDS
@@ -341,21 +343,24 @@ class ConnectionClientRegistry:
         Fails closed: any error talking to Connection (timeout, network error, unexpected status)
         returns ERROR, never REGISTERED and never silently NOT_REGISTERED -- see AI-3792.
         """
-        expires_at = self._registration_cache.get(connection_client_id)
+        # Keyed on the pair: a client can be registered against more than one redirect_uri (its own, from
+        # before AI-3995, and this server's callback), and one pair's verdict must not admit another.
+        key = (connection_client_id, redirect_uri)
+        expires_at = self._registration_cache.get(key)
         if expires_at is not None:
             if time.monotonic() < expires_at:
                 # Touch on read, not just on write -- otherwise a frequently-reused entry (e.g.
                 # Claude.ai's own pair) never gets bumped and can still be the oldest-inserted
                 # entry once enough unique, unrelated keys flood in, making it the first evicted
                 # despite being the most valuable entry to keep (Copilot review finding).
-                self._registration_cache.move_to_end(connection_client_id)
+                self._registration_cache.move_to_end(key)
                 return _ClientRegistration.REGISTERED
-            del self._registration_cache[connection_client_id]
+            del self._registration_cache[key]
 
         result = await self._check_registration_uncached(connection_client_id, redirect_uri)
         if result is _ClientRegistration.REGISTERED:
-            self._registration_cache[connection_client_id] = time.monotonic() + _REGISTERED_CACHE_TTL_SECONDS
-            self._registration_cache.move_to_end(connection_client_id)
+            self._registration_cache[key] = time.monotonic() + _REGISTERED_CACHE_TTL_SECONDS
+            self._registration_cache.move_to_end(key)
             if len(self._registration_cache) > _MAX_CACHED_REGISTRATIONS:
                 self._registration_cache.popitem(last=False)
         return result
