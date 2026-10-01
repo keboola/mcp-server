@@ -3952,10 +3952,10 @@ configuration is created e.g. keboola.ex-google-analytics-v4 and keboola.ex-gmai
 Creates a brand-new Keboola project for a session that has no Keboola credentials yet, and
 signs this session in to it.
 
-Use this ONLY when a tool call has reported that the session has no Keboola credentials and the
-user has no project/token to give you -- it is how a first-time user gets started without
-leaving the conversation. Never call it to add a project to a session that already works: it
-refuses, because it would replace the credentials that session is using.
+Use this when the user has no Keboola project to work in -- it is how a first-time user gets
+started without leaving the conversation. Whether a given caller may create a project is
+Keboola's decision, not this tool's; on a locally run server it does refuse when the session is
+already signed in, because that server keeps only one session per stack and would overwrite it.
 
 Not every Keboola stack offers this -- it is gated by a stack feature. On a stack without it the
 tool says so and the user has to bring their own project instead; that is a fact about the
@@ -3964,7 +3964,11 @@ stack, so do not retry.
 The project starts out owned by nobody. Show the user the returned `confirm_url` and tell them
 to open it: signing in there makes the project permanently theirs. Until they do, the project is
 temporary and Keboola may reclaim it, and once they do, the session created here is revoked and
-they continue with their own login. Data tools work against the new project in the meantime.
+they continue with their own login. Data tools work against the new project in the meantime --
+that is the point: the agent can build in the project before anyone signs anything.
+
+When the result carries a `scope_token`, resend it as the "scope_token" argument on every later
+tool call in this conversation: that is what keeps the session signed in to the new project.
 
 
 **Input JSON Schema**:

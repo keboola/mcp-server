@@ -104,6 +104,16 @@ class SessionScope:
     confirmed: bool = False
     """True once the user has explicitly chosen a scope via ``set_project_scope``. The default
     auto-leased scope is unconfirmed, which gates data tools until the user decides."""
+    provisioned_session_id: str | None = None
+    """The session-store row holding the credentials of a project provisioned by ``create_project``
+    on a server with no local credential file (the deployed one) -- see the remote_agent_provisioning
+    RFC.
+
+    Only the row id travels in the ``scope_token``, never the Keboola tokens themselves: those stay
+    encrypted in Postgres, are refreshed server-side, and are revoked outright when the human claims
+    the project. So the worst a leaked ``scope_token`` yields is a handle that the claim (or an
+    explicit revoke) has already turned into nothing -- unlike ``scoped_token`` above, which is a
+    live credential and the reason this whole value is encrypted rather than signed."""
 
     @property
     def active_project_id(self) -> int | None:
