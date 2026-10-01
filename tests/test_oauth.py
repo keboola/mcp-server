@@ -369,6 +369,7 @@ class TestConnectionClientIdentity:
         [
             ('My Custom Tool', 'My Custom Tool'),
             ('a' * 200, 'a' * 128),  # Connection's client_name cap
+            ('\U0001f680' * 200, '\U0001f680' * 32),  # the cap is in bytes: 32 four-byte emoji, not 128 characters
             ('Evil\u200bName', 'EvilName'),  # zero-width space stripped
             ('Evil\u202eName', 'EvilName'),  # bidi override stripped
             ('Evil\x00Name', 'EvilName'),  # control character stripped
@@ -738,6 +739,8 @@ class TestSimpleOAuthProvider:
             ('Cursor', 'http://localhost:9876/callback', 'Cursor (redirects to http://localhost:9876)'),
             # a long name is shortened first, the destination stays whole
             ('N' * 200, 'https://my.tool/cb', 'N' * 97 + ' (redirects to https://my.tool)'),
+            # multi-byte characters: 24 four-byte emoji (96 bytes) + the 31-byte suffix, not 97 characters
+            ('\U0001f680' * 200, 'https://my.tool/cb', '\U0001f680' * 24 + ' (redirects to https://my.tool)'),
         ],
     )
     def test_approval_client_name_fits_connections_cap_and_keeps_the_destination(
@@ -747,7 +750,15 @@ class TestSimpleOAuthProvider:
 
         name = _approval_client_name(client_name, redirect_uri)
         assert name == expected
-        assert len(name) <= 128
+        assert len(name.encode()) <= 128  # Connection counts bytes (PHP strlen), not characters
+
+    def test_mcp_client_signature_is_unambiguous_for_ids_and_states_containing_dots(self):
+        """With a plain '.' separator a signature for ("a", "b.c") would also verify ("a.b", "c")."""
+        from keboola_mcp_server.oauth import _sign_mcp_client_id
+
+        assert _sign_mcp_client_id('secret', 'a', 'b.c') != _sign_mcp_client_id('secret', 'a.b', 'c')
+        assert _sign_mcp_client_id('secret', 'a', 'b') == _sign_mcp_client_id('secret', 'a', 'b')
+        assert _sign_mcp_client_id('secret', 'a', 'b') != _sign_mcp_client_id('other', 'a', 'b')
 
     def test_approval_client_name_keeps_the_end_of_a_very_long_host(self):
         """The final labels of a hostname are what identify the destination, so a host too long to fit
@@ -757,7 +768,7 @@ class TestSimpleOAuthProvider:
         host = '.'.join(['a' * 60] * 3) + '.evil.example'
         name = _approval_client_name('My Tool', f'https://{host}/cb')
 
-        assert len(name) <= 128
+        assert len(name.encode()) <= 128
         assert name.endswith('.evil.example)')
         assert '(redirects to https://...' in name
         assert name.startswith('My Tool')
@@ -855,7 +866,7 @@ class TestSimpleOAuthProvider:
         # ... and authenticated, bound to this very flow's state (Connection recomputes it with the broker secret)
         expected_sig = hmac.new(
             oauth_provider._oauth_client_secret.encode(),
-            f'{query["mcp_client_id"][0]}.{query["state"][0]}'.encode(),
+            f'{len(query["mcp_client_id"][0].encode())}:{query["mcp_client_id"][0]}:{query["state"][0]}'.encode(),
             hashlib.sha256,
         ).hexdigest()
         assert query['mcp_client_sig'] == [expected_sig]
