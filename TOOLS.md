@@ -2382,7 +2382,7 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
 ---
 <a name="get_data_app_preview_link"></a>
 ## get_data_app_preview_link
-**Annotations**: 
+**Annotations**: `read-only`
 
 **Tags**: `data-apps`
 

@@ -92,7 +92,7 @@ def add_data_app_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             get_data_app_preview_link,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=False),
+            annotations=ToolAnnotations(readOnlyHint=True),
         )
     )
     LOG.info('Data app tools initialized.')
