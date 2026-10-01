@@ -191,19 +191,27 @@ def _sign_mcp_client_id(secret: str, mcp_client_id: str, state: str) -> str:
     secret -- which Connection already holds for that client, so it can recompute it. Binding it to
     `state` (a JWT that carries the caller's redirect_uri) means a link cannot pair a trusted app's
     name with someone else's flow: the pair is only valid for the flow it was issued for."""
-    return hmac.new(secret.encode(), f'{mcp_client_id}.{state}'.encode(), hashlib.sha256).hexdigest()
+    # Length-prefixed so the (id, state) pair has exactly one encoding: with a plain separator, a
+    # signature for ("a", "b.c") would also verify ("a.b", "c") because both fields may contain dots.
+    message = f'{len(mcp_client_id.encode())}:{mcp_client_id}:{state}'
+    return hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
+
+
+_MAX_CLIENT_NAME_BYTES = 128  # Connection's cap on the pending client's client_name: PHP strlen(), i.e. BYTES
+_MIN_CLIENT_NAME_BYTES = 16  # always keep at least this much of the client's own name
+
+
+def _truncate_utf8(text: str, max_bytes: int) -> str:
+    """Cuts `text` to at most `max_bytes` UTF-8 bytes without splitting a character."""
+    return text.encode('utf-8')[:max_bytes].decode('utf-8', 'ignore')
 
 
 def _sanitize_client_name(name: str) -> str:
     """Strips unprintable characters Connection's pending_mcp_client decoder would otherwise
     reject outright (which would silently drop the whole approval payload -- see
     PendingMcpClientApprovalListener's catch-and-ignore on a malformed payload), and truncates to
-    Connection's 128-character cap."""
-    return _strip_unprintable(name)[:128]
-
-
-_MAX_CLIENT_NAME_LENGTH = 128  # Connection's cap on the pending client's client_name (strlen, i.e. bytes)
-_MIN_CLIENT_NAME_CHARS = 16  # always keep at least this much of the client's own name
+    Connection's 128-BYTE cap (its decoder uses strlen(), so 200 emoji would not fit as 128 characters)."""
+    return _truncate_utf8(_strip_unprintable(name), _MAX_CLIENT_NAME_BYTES)
 
 
 def _approval_client_name(client_name: str, redirect_uri: str) -> str:
@@ -211,19 +219,20 @@ def _approval_client_name(client_name: str, redirect_uri: str) -> str:
     `<name> (redirects to https://host)`. Connection shows this server's callback as the redirect URI
     (RFC Decision §15), so this suffix is the only place the approver sees the caller's destination.
 
-    Always within Connection's 128-character cap. When it doesn't fit, the client's own name is
-    shortened first, and a very long host loses its START (`...`, ASCII so characters equal bytes)
-    rather than its end: the final labels are the part that says who the destination is.
+    Always within Connection's 128-byte cap. When it doesn't fit, the client's own name is shortened
+    first, and a very long host loses its START (`...`) rather than its end: the final labels are the
+    part that says who the destination is.
     """
     parsed = urlparse(redirect_uri)
     prefix = f'{parsed.scheme}://'
     host = parsed.netloc
-    wrapper_length = len(' (redirects to )') + len(prefix)
-    max_host_length = _MAX_CLIENT_NAME_LENGTH - _MIN_CLIENT_NAME_CHARS - wrapper_length
-    if len(host) > max_host_length:
-        host = '...' + host[-(max_host_length - 3) :]
+    wrapper_bytes = len(b' (redirects to )') + len(prefix.encode())
+    max_host_bytes = _MAX_CLIENT_NAME_BYTES - _MIN_CLIENT_NAME_BYTES - wrapper_bytes
+    host_bytes = host.encode('utf-8')
+    if len(host_bytes) > max_host_bytes:
+        host = '...' + host_bytes[-(max_host_bytes - 3) :].decode('utf-8', 'ignore')
     suffix = f' (redirects to {prefix}{host})'
-    return client_name[: _MAX_CLIENT_NAME_LENGTH - len(suffix)] + suffix
+    return _truncate_utf8(client_name, _MAX_CLIENT_NAME_BYTES - len(suffix.encode())) + suffix
 
 
 def _sanitize_for_log(value: str) -> str:
