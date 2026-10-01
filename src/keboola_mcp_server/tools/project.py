@@ -789,6 +789,16 @@ async def create_project(
     # it answers it on its own (remote_agent_provisioning RFC). The server-side session store is
     # the deployed server's place to keep one; a local server has the per-user credential file.
     session_store = ServerState.from_context(ctx).session_store
+    if session_store is None and deployed_sa_token_path():
+        # A deployed pod serves every caller from one process, so its credential file is shared:
+        # writing a provisioned session into it would hand that session to every other session on
+        # the replica. With no session store configured there is nowhere safe to put it at all.
+        raise ValueError(
+            'This server cannot create a Keboola project: it has no session storage configured to keep '
+            'the new project\'s credentials in. Report this to whoever operates it; in the meantime use a '
+            'project you already have, or create one in the Keboola UI.'
+        )
+
     if session_store is None and (KeboolaClient.STATE_KEY in ctx.session.state or load_tokens(storage_api_url)):
         # Not a permission rule -- the local credential file holds exactly one session per stack and
         # profile, so provisioning into it would overwrite the login this session is using.
