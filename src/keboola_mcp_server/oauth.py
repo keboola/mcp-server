@@ -48,8 +48,9 @@ from keboola_mcp_server.session_store import DatabaseUnavailableError
 from keboola_mcp_server.session_store.repository import SessionStore
 
 
-# The OAuth scopes advertised on a session's tokens. authorize() now always requests
-# 'claudai projectless'; a session persisted before that (oauth_projectless=False) keeps 'claudai' only.
+# The OAuth scopes advertised on a session's tokens.
+# - Every new session is 'claudai projectless' (authorize() requests it for every registered client).
+# - 'claudai' only is a session persisted with oauth_projectless=False, before that was the case.
 def _scopes_for_session(oauth_projectless: bool) -> list[str]:
     return ['claudai', 'projectless'] if oauth_projectless else ['claudai']
 
@@ -493,12 +494,9 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
 class _ExtendedAuthorizationCode(AuthorizationCode):
     oauth_access_token: AccessToken
     oauth_refresh_token: RefreshToken
-    # Whether the Connection OAuth scope requested in authorize() included
-    # 'projectless' for THIS session, carried from the state JWT so exchange_authorization_code
-    # can persist it on the session row instead of load_access_token/load_refresh_token later
-    # advertising 'projectless' unconditionally for every session (Copilot review finding).
-    # Defaults to True (the pre-AI-2883 behaviour) so an in-flight code encoded just before a
-    # deploy, whose state JWT predates this field, still decodes.
+    # Whether the Connection OAuth scope requested in authorize() included 'projectless'.
+    # - Always True for a code issued now; kept so the session row records what was requested.
+    # - Defaults to True so an in-flight code whose state JWT predates this field still decodes.
     oauth_projectless: bool = True
 
 
@@ -739,10 +737,10 @@ class SimpleOAuthProvider(OAuthProvider):
         First checks the requesting client + redirect_uri against Connection's OAuth client
         registry (`POST /oauth/clients/validate`, via `self._client_registry`) -- see the AI-2883
         RFC (feature_spec/oauth_dynamic_client_registration/RFC.md) for the full design and why
-        this replaced a hardcoded domain whitelist. An already-registered, well-known pair
-        (pre-registered, e.g. Claude.ai) proceeds exactly as before, unchanged, to Connection's
-        `/oauth/consent` with `claudai projectless` scope; a dynamically-approved pair (Flow B, once
-        approved) takes the same path. An unregistered pair is sent to Connection's
+        this replaced a hardcoded domain whitelist. Every registered pair -- pre-registered
+        (e.g. Claude.ai) or dynamically approved (Flow B, once approved) -- goes to Connection's
+        `/oauth/consent` with `claudai projectless` scope, and each such request is logged at INFO
+        (`Registered client proceeding to consent`). An unregistered pair is sent to Connection's
         own `/oauth/authorize` with a `pending_mcp_client` payload instead, so an authenticated
         Keboola user can approve it there. Connection being unreachable or erroring never falls
         through to any of these outcomes (fails closed, see AI-3792).
@@ -809,7 +807,15 @@ class SimpleOAuthProvider(OAuthProvider):
                 client_name=self._client_registry.get_client_name(client.client_id),
             )
 
-        # registration is REGISTERED from here on -- proceed exactly as before this RFC.
+        # registration is REGISTERED from here on.
+        # INFO on purpose: Connection keeps no list of registered clients to inspect later, so this
+        # line is the record of which callback was sent to consent, and whether it was pre-registered.
+        LOG.info(
+            f'[authorize] Registered client proceeding to consent: client_id={client.client_id}, '
+            f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}, '
+            f'pre_registered={connection_client_id in _WELL_KNOWN_CONNECTION_CLIENT_IDS.values()}, '
+            f'scope={_CONNECTION_SCOPE!r}'
+        )
         #
         # Create and encode the authorization state.
         # We don't store the authentication states that we create here to avoid having to persist them.
@@ -825,10 +831,8 @@ class SimpleOAuthProvider(OAuthProvider):
             'state': params.state,
             'client_id': client.client_id,
             'expires_at': time.time() + 5 * 60,  # 5 minutes from now
-            # Carried through to exchange_authorization_code so the session it persists records
-            # what Connection actually granted for THIS pair, instead of load_access_token /
-            # load_refresh_token later advertising 'projectless' for every session regardless
-            # (Copilot review finding).
+            # Carried through to exchange_authorization_code onto the session row. Always True
+            # now: _CONNECTION_SCOPE below requests 'projectless' for every registered client.
             'projectless': True,
         }
         state_jwt = self._encode(state)
