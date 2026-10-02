@@ -411,12 +411,15 @@ async def _list_semantic_type_objects(
     semantic_model_ids: Sequence[str] | None = None,
 ) -> list[SemanticServiceData]:
     """List all semantic objects of a given type, optionally filtered by a set of semantic model IDs."""
-    if not semantic_model_ids or object_type == SemanticObjectType.SEMANTIC_MODEL:
+    if object_type == SemanticObjectType.SEMANTIC_MODEL:
         return await _list_semantic_type_pages(client, object_type, semantic_model_ids)
 
-    # Child objects are filtered by `modelUUID` server-side: the unfiltered list spans every model the
-    # project can see, and paging through it one small page at a time costs a request per object.
-    model_ids = list(dict.fromkeys(semantic_model_ids))
+    # Child objects are filtered by `modelUUID` server-side: the unfiltered list also holds children of
+    # deleted models, and paging through it one small page at a time costs a request per object.
+    # Without model IDs, the models the project lists stand in for them.
+    model_ids = list(dict.fromkeys(semantic_model_ids)) if semantic_model_ids else await _list_model_ids(client)
+    if not model_ids:
+        return []
     results = await process_concurrently(
         model_ids,
         lambda model_id: _list_semantic_type_pages(client, object_type, [model_id], model_uuid=model_id),
@@ -424,6 +427,12 @@ async def _list_semantic_type_objects(
     )
     pages = unwrap_results(results, f'Failed to list semantic objects for type "{object_type.value}".')
     return [item for page in pages for item in page]
+
+
+async def _list_model_ids(client: KeboolaClient) -> list[str]:
+    """IDs of the semantic models the project lists."""
+    models = await _list_semantic_type_pages(client, SemanticObjectType.SEMANTIC_MODEL, None)
+    return [model.id for model in models]
 
 
 async def _list_semantic_type_pages(
@@ -647,12 +656,17 @@ async def search_semantic_context(
         except re.error as e:
             raise ValueError(f'Invalid regex pattern "{pattern}": {e}') from e
 
+    # The types are listed one after another, so resolve the models once rather than once per type.
+    model_ids = semantic_model_ids or await _list_model_ids(client)
+    if not model_ids:
+        return []
+
     matches: list[SemanticSearchHit] = []
     for object_type in target_types:
         if len(matches) >= max_results:
             break
 
-        objects = await _list_semantic_type_objects(client, object_type, semantic_model_ids)
+        objects = await _list_semantic_type_objects(client, object_type, model_ids)
         for semantic_object in objects:
             if len(matches) >= max_results:
                 break

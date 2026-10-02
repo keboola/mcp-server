@@ -882,6 +882,34 @@ async def test_search_semantic_context_returns_expected_matches(
     assert [hit.matched_paths for hit in hits] == ([expected_paths] if expected_paths else [])
 
 
+@pytest.mark.asyncio
+async def test_search_semantic_context_without_model_ids_skips_deleted_models(
+    keboola_client: KeboolaClient,
+    mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
+) -> None:
+    mock_semantic_api[SemanticObjectType.SEMANTIC_DATASET].append(
+        _metastore_object(
+            SemanticObjectType.SEMANTIC_DATASET,
+            'dataset-orphan-orders',
+            name='Orphan orders',
+            attributes={'tableId': 'in.c-old.orders', 'modelUUID': 'model-deleted'},
+        )
+    )
+
+    hits = await search_semantic_context(keboola_client, ['orders'], max_results=100)
+
+    hit_ids = [hit.object.id for hit in hits]
+    assert 'dataset-orders' in hit_ids
+    assert 'dataset-orphan-orders' not in hit_ids
+    # Once to resolve the models for every type, once for the semantic-model type itself.
+    model_listings = [
+        call
+        for call in keboola_client.metastore_client.list_objects.await_args_list
+        if SemanticObjectType(call.args[0]) == SemanticObjectType.SEMANTIC_MODEL
+    ]
+    assert len(model_listings) == 2
+
+
 @pytest.mark.parametrize(
     ('patterns', 'max_results', 'message'),
     [
@@ -941,23 +969,39 @@ async def test_list_semantic_type_objects_carries_scope_metadata_through_the_lis
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('object_type', 'semantic_model_ids', 'expected_ids', 'expected_requests'),
+    ('object_type', 'semantic_model_ids', 'expected_ids', 'expected_requests', 'expected_model_uuids'),
     [
         # One model's 2 datasets take 3 one-object pages, not one page per dataset of every model.
-        (SemanticObjectType.SEMANTIC_DATASET, ['model-1'], ['dataset-orders', 'dataset-customers'], 3),
-        (SemanticObjectType.SEMANTIC_DATASET, ['model-1', 'model-1'], ['dataset-orders', 'dataset-customers'], 3),
-        (SemanticObjectType.SEMANTIC_DATASET, ['model-other'], [f'other-dataset-{i}' for i in range(40)], 41),
+        (SemanticObjectType.SEMANTIC_DATASET, ['model-1'], ['dataset-orders', 'dataset-customers'], 3, {'model-1'}),
+        (
+            SemanticObjectType.SEMANTIC_DATASET,
+            ['model-1', 'model-1'],
+            ['dataset-orders', 'dataset-customers'],
+            3,
+            {'model-1'},
+        ),
+        (
+            SemanticObjectType.SEMANTIC_DATASET,
+            ['model-other'],
+            [f'other-dataset-{i}' for i in range(40)],
+            41,
+            {'model-other'},
+        ),
+        # Without model ids, the listed models stand in for them: one model page, then model-1's datasets.
+        # The 40 datasets of model-other, which the model listing lacks (deleted), are skipped.
+        (SemanticObjectType.SEMANTIC_DATASET, None, ['dataset-orders', 'dataset-customers'], 4, {None, 'model-1'}),
         # Models themselves are listed unfiltered and narrowed client-side.
-        (SemanticObjectType.SEMANTIC_MODEL, ['model-1'], ['model-1'], 1),
+        (SemanticObjectType.SEMANTIC_MODEL, ['model-1'], ['model-1'], 1, {None}),
     ],
 )
 async def test_list_semantic_type_objects_filters_by_model_server_side(
     keboola_client: KeboolaClient,
     mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
     object_type: SemanticObjectType,
-    semantic_model_ids: list[str],
+    semantic_model_ids: list[str] | None,
     expected_ids: list[str],
     expected_requests: int,
+    expected_model_uuids: set[str | None],
 ) -> None:
     mock_semantic_api[SemanticObjectType.SEMANTIC_DATASET].extend(
         _metastore_object(
@@ -974,5 +1018,4 @@ async def test_list_semantic_type_objects_filters_by_model_server_side(
     assert sorted(obj.id for obj in objects) == sorted(expected_ids)
     list_objects = keboola_client.metastore_client.list_objects
     assert list_objects.await_count == expected_requests
-    expected_model_uuid = None if object_type == SemanticObjectType.SEMANTIC_MODEL else semantic_model_ids[0]
-    assert all(call.kwargs['model_uuid'] == expected_model_uuid for call in list_objects.await_args_list)
+    assert {call.kwargs['model_uuid'] for call in list_objects.await_args_list} == expected_model_uuids
