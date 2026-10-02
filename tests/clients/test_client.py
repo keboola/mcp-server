@@ -1205,3 +1205,73 @@ class TestStepUpStorageClient:
         stepped = client.step_up_storage_client(str(token_file))
 
         assert stepped.raw_client.readonly is None
+
+
+class TestStepUpMetastoreClient:
+    """KeboolaClient.step_up_metastore_client: Kubernetes step-up header on the Metastore client, own stack only."""
+
+    OWN_STACK_URL = 'https://connection.keboola.com'
+
+    def test_attaches_step_up_header_and_keeps_user_token(self, tmp_path):
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt\n')
+        client = KeboolaClient(
+            storage_api_url=self.OWN_STACK_URL,
+            legacy_storage_token='user-token',
+            headers={'User-Agent': 'test'},
+            own_stack_storage_api_url=self.OWN_STACK_URL,
+        )
+
+        stepped = client.step_up_metastore_client(str(token_file))
+
+        assert stepped is not client.metastore_client
+        assert stepped.raw_client.base_api_url == 'https://metastore.keboola.com'
+        headers = stepped.raw_client.headers
+        assert headers['X-Kubernetes-Authorization'] == 'Bearer sa-jwt'
+        assert headers['X-StorageAPI-Token'] == 'user-token'
+        assert headers['User-Agent'] == 'test'
+        # The plain client must stay free of the SA credential.
+        assert 'X-Kubernetes-Authorization' not in client.metastore_client.raw_client.headers
+
+    def test_uses_bearer_for_programmatic_token(self, tmp_path):
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt')
+        client = KeboolaClient(
+            storage_api_url=self.OWN_STACK_URL,
+            legacy_storage_token='kbc_at_abc',
+            bearer_token='kbc_at_abc',
+            own_stack_storage_api_url=self.OWN_STACK_URL,
+        )
+
+        headers = client.step_up_metastore_client(str(token_file)).raw_client.headers
+
+        assert headers['Authorization'] == 'Bearer kbc_at_abc'
+        assert 'X-StorageAPI-Token' not in headers
+
+    @pytest.mark.parametrize('own_stack_storage_api_url', [None, 'https://connection.other.keboola.com'])
+    def test_foreign_or_unknown_stack_fails_closed_and_never_gets_the_jwt(self, tmp_path, own_stack_storage_api_url):
+        # Falling back to the plain client would let a non-admin see no policies and query a
+        # governed table unfiltered, so the step-up refuses instead.
+        token_file = tmp_path / 'token'
+        token_file.write_text('sa-jwt')
+        client = KeboolaClient(
+            storage_api_url=self.OWN_STACK_URL,
+            legacy_storage_token='user-token',
+            own_stack_storage_api_url=own_stack_storage_api_url,
+        )
+
+        with pytest.raises(ValueError, match='query is refused'):
+            client.step_up_metastore_client(str(token_file))
+        assert 'X-Kubernetes-Authorization' not in client.metastore_client.raw_client.headers
+
+    def test_empty_token_file_raises(self, tmp_path):
+        token_file = tmp_path / 'token'
+        token_file.write_text('  \n')
+        client = KeboolaClient(
+            storage_api_url=self.OWN_STACK_URL,
+            legacy_storage_token='user-token',
+            own_stack_storage_api_url=self.OWN_STACK_URL,
+        )
+
+        with pytest.raises(ValueError, match='empty'):
+            client.step_up_metastore_client(str(token_file))
