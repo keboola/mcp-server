@@ -937,3 +937,42 @@ async def test_list_semantic_type_objects_carries_scope_metadata_through_the_lis
     assert objects[0].data.meta.scope == 'project'
     assert objects[0].data.meta.project_id == 123
     assert objects[0].data.meta.scope_elevation_requested_at == '2026-01-03T00:00:00Z'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('object_type', 'semantic_model_ids', 'expected_ids', 'expected_requests'),
+    [
+        # One model's 2 datasets take 3 one-object pages, not one page per dataset of every model.
+        (SemanticObjectType.SEMANTIC_DATASET, ['model-1'], ['dataset-orders', 'dataset-customers'], 3),
+        (SemanticObjectType.SEMANTIC_DATASET, ['model-1', 'model-1'], ['dataset-orders', 'dataset-customers'], 3),
+        (SemanticObjectType.SEMANTIC_DATASET, ['model-other'], [f'other-dataset-{i}' for i in range(40)], 41),
+        # Models themselves are listed unfiltered and narrowed client-side.
+        (SemanticObjectType.SEMANTIC_MODEL, ['model-1'], ['model-1'], 1),
+    ],
+)
+async def test_list_semantic_type_objects_filters_by_model_server_side(
+    keboola_client: KeboolaClient,
+    mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
+    object_type: SemanticObjectType,
+    semantic_model_ids: list[str],
+    expected_ids: list[str],
+    expected_requests: int,
+) -> None:
+    mock_semantic_api[SemanticObjectType.SEMANTIC_DATASET].extend(
+        _metastore_object(
+            SemanticObjectType.SEMANTIC_DATASET,
+            f'other-dataset-{i}',
+            name=f'Other {i}',
+            attributes={'tableId': f'in.c-other.t{i}', 'modelUUID': 'model-other'},
+        )
+        for i in range(40)
+    )
+
+    objects = await _list_semantic_type_objects(keboola_client, object_type, semantic_model_ids)
+
+    assert sorted(obj.id for obj in objects) == sorted(expected_ids)
+    list_objects = keboola_client.metastore_client.list_objects
+    assert list_objects.await_count == expected_requests
+    expected_model_uuid = None if object_type == SemanticObjectType.SEMANTIC_MODEL else semantic_model_ids[0]
+    assert all(call.kwargs['model_uuid'] == expected_model_uuid for call in list_objects.await_args_list)

@@ -191,12 +191,16 @@ def mock_semantic_api(
     async def list_objects_side_effect(
         object_type: SemanticObjectType | str,
         *,
+        model_uuid: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
         **_: object,
     ) -> list[MetastoreObject]:
         semantic_type = object_type if isinstance(object_type, SemanticObjectType) else SemanticObjectType(object_type)
         items = semantic_api_objects.get(semantic_type, [])
+        if model_uuid is not None:
+            # The metastore filters child objects by their `modelUUID` attribute.
+            items = [item for item in items if (item.attributes or {}).get('modelUUID') == model_uuid]
         start = offset or 0
         if limit is None:
             return items[start:]

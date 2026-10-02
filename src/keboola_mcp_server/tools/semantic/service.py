@@ -411,6 +411,29 @@ async def _list_semantic_type_objects(
     semantic_model_ids: Sequence[str] | None = None,
 ) -> list[SemanticServiceData]:
     """List all semantic objects of a given type, optionally filtered by a set of semantic model IDs."""
+    if not semantic_model_ids or object_type == SemanticObjectType.SEMANTIC_MODEL:
+        return await _list_semantic_type_pages(client, object_type, semantic_model_ids)
+
+    # Child objects are filtered by `modelUUID` server-side: the unfiltered list spans every model the
+    # project can see, and paging through it one small page at a time costs a request per object.
+    model_ids = list(dict.fromkeys(semantic_model_ids))
+    results = await process_concurrently(
+        model_ids,
+        lambda model_id: _list_semantic_type_pages(client, object_type, [model_id], model_uuid=model_id),
+        max_concurrency=min(len(model_ids), 10),
+    )
+    pages = unwrap_results(results, f'Failed to list semantic objects for type "{object_type.value}".')
+    return [item for page in pages for item in page]
+
+
+async def _list_semantic_type_pages(
+    client: KeboolaClient,
+    object_type: SemanticObjectType,
+    semantic_model_ids: Sequence[str] | None,
+    *,
+    model_uuid: str | None = None,
+) -> list[SemanticServiceData]:
+    """Page through one metastore listing; objects of other models are dropped client-side as well."""
     metastore = client.metastore_client
     limit = DEFAULT_PAGE_LIMITS.get(object_type, DEFAULT_PAGE_LIMIT)
     offset = 0
@@ -418,7 +441,7 @@ async def _list_semantic_type_objects(
     model_id_set = set(semantic_model_ids) if semantic_model_ids else None
 
     while True:
-        page = await metastore.list_objects(object_type, limit=limit, offset=offset)
+        page = await metastore.list_objects(object_type, model_uuid=model_uuid, limit=limit, offset=offset)
         data.extend(
             _to_semantic_service_data(object_type, obj)
             for obj in page
