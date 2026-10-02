@@ -479,14 +479,18 @@ class KeboolaClient:
         on the user's own token; a SA-verified request is served the policies visible to the calling
         project regardless of the user's role. Without it a regular member sees no policies at all, so
         a governed table would look ungoverned. The same own-stack guard as `step_up_storage_client()`
-        applies; when it fails (or the server runs locally) the plain client is returned.
+        applies, but it fails CLOSED here: a silent fallback to the plain client would let every
+        non-admin query a governed table unfiltered.
 
         :param kubernetes_token_path: Path to the projected ServiceAccount token file.
-        :raises ValueError: If the token file is empty.
+        :raises ValueError: If the session is not on this server's own stack, or the token file is empty.
         """
         headers = self._step_up_headers(kubernetes_token_path)
         if headers is None:
-            return self.metastore_client
+            raise ValueError(
+                'RLS: cannot read the row/column-level security policies because this session is not on '
+                "this server's own Keboola stack, so the query is refused."
+            )
 
         return MetastoreClient.create(
             root_url=self._metastore_api_url,
