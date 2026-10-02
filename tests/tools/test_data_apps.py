@@ -4019,6 +4019,6 @@ def test_get_data_app_preview_link_description_allows_a_browser_run_from_the_she
         assert 'your browser tool' not in text
         assert 'other than your browser' not in text
     assert 'a headless browser CLI run from your shell' in doc
-    assert "npx -y chrome-devtools-axi open '<url>'" in doc
+    assert 'chrome-devtools-axi' not in doc, 'the description must not assume a specific browser tool'
     assert 'any command other than the one that opens the browser' in doc
     assert 'Do not fetch it with an HTTP client or curl' in doc

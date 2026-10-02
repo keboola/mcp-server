@@ -2125,8 +2125,8 @@ async def get_data_app_preview_link(
 
     ## How to use the link
     - Open `url` in a real browser before `link_expires_at` (about 60 seconds after this call): a browser tool,
-      or a headless browser CLI run from your shell, for example `npx -y chrome-devtools-axi open '<url>'`.
-      Do not fetch it with an HTTP client or curl: only a browser can turn it into a session.
+      or a headless browser CLI run from your shell. Do not fetch it with an HTTP client or curl: only a browser
+      can turn it into a session.
     - After one successful open, the browser session keeps working and slides while you use the app, so reloads,
       navigation and later checks of the same app need no new link. Do not call this tool before every check.
     - The session belongs to this one app. It ends without notice: after about 4 hours without requests,
