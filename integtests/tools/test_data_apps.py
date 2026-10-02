@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import os
 import re
 import subprocess
+import time
 import uuid
 from collections.abc import AsyncGenerator, Mapping
 from datetime import datetime, timezone
@@ -31,6 +33,27 @@ from keboola_mcp_server.tools.data_apps import (
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
+
+_PREVIEW_URL_WAIT_SECONDS = 120
+_PREVIEW_URL_POLL_SECONDS = 5
+
+
+async def _mint_preview_link_once_routed(mcp_client: Client, configuration_id: str) -> Any:
+    """Mints a preview link, retrying while the freshly deployed app has no URL yet.
+
+    The operator publishes the URL a few seconds after the deploy is accepted.
+    """
+    deadline = time.monotonic() + _PREVIEW_URL_WAIT_SECONDS
+    while True:
+        try:
+            return await mcp_client.call_tool(
+                name='get_data_app_preview_link', arguments={'configuration_id': configuration_id}
+            )
+        except ToolError as e:
+            if 'has no URL yet' not in str(e) or time.monotonic() >= deadline:
+                raise
+            LOG.info(f'preview link for {configuration_id}: no URL yet, retrying')
+            await asyncio.sleep(_PREVIEW_URL_POLL_SECONDS)
 
 
 @pytest.fixture
@@ -414,10 +437,7 @@ async def test_python_js_data_app_prod_and_draft_lifecycle(
         # eventual state, since CI cannot afford to poll the full startup loop.
 
         # Step 4a: mint a preview link for the dev-mode draft.
-        preview_result = await mcp_client.call_tool(
-            name='get_data_app_preview_link',
-            arguments={'configuration_id': draft_output.data_app.configuration_id},
-        )
+        preview_result = await _mint_preview_link_once_routed(mcp_client, draft_output.data_app.configuration_id)
         assert preview_result.structured_content is not None
         preview = DataAppPreviewLinkOutput.model_validate(preview_result.structured_content)
         assert preview.url.startswith('https://')
