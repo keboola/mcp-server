@@ -58,6 +58,11 @@ _SUPPORTED_DIALECTS = ('bigquery', 'snowflake')
 _RULE_KEY_RE = re.compile(r'^[A-Za-z0-9_.\-]+$')
 _RULE_KEY_HINT = 'keys must be non-empty strings of letters, digits, underscore, dot or hyphen'
 
+# A principal is the caller's login identity -- an email (`@`, `+`, ...) -- not an identifier. It is
+# only ever compared to the session's identity (a dict key), never put into SQL, so it needs a looser
+# check than `_RULE_KEY_RE`: no whitespace or control characters, nothing that reads as empty.
+_PRINCIPAL_RE = re.compile(r'^[^\s\x00-\x1f\x7f]+$')
+
 # What a query with no real table may still call. Everything here either reads the clock or is a
 # pure scalar expression over its own arguments -- nothing that reaches the catalog, the query
 # history or a model. `exp.Localtime`/`exp.Localtimestamp` are what Snowflake's `CURRENT_TIME` and
@@ -369,7 +374,7 @@ class RlsRules:
                     raise RlsError(f"RLS: metastore object '{obj_id}' has a rule with no principal(s): {rule!r}")
                 predicate = _compile_primitive(rule.get('condition'), dialect=dialect).sql(dialect=dialect)
                 for name in names:
-                    if not isinstance(name, str) or not _RULE_KEY_RE.match(name):
+                    if not isinstance(name, str) or not _PRINCIPAL_RE.match(name):
                         raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid principal {name!r}")
                     user_key = name.lower()
                     if user_key in users:
@@ -540,7 +545,7 @@ class ClsRules:
                         raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid column name {col!r}")
                     columns.append(col)
                 for name in names:
-                    if not isinstance(name, str) or not _RULE_KEY_RE.match(name):
+                    if not isinstance(name, str) or not _PRINCIPAL_RE.match(name):
                         raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid principal {name!r}")
                     user_key = name.lower()
                     if user_key in users:
