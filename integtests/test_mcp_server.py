@@ -183,6 +183,7 @@ async def _assert_basic_setup(client: Client):
         'get_accessible_projects',
         'get_config_examples',
         'get_configs',
+        'get_data_app_preview_link',
         'get_data_apps',
         'get_flow_examples',
         'get_flow_schema',

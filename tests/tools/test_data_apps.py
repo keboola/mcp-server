@@ -3699,3 +3699,326 @@ async def test_get_data_apps_detail_includes_last_run_failure(mocker, mcp_contex
     assert last_run.state == 'failed'
     assert last_run.failure_reason == 'ConfigDecryptionFailed'
     assert last_run.failure_message == 'failed to decrypt key "#API_KEY"'
+
+
+# ===== Tests for get_data_app_preview_link =====
+
+import logging  # noqa: E402
+
+import httpx  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
+
+from keboola_mcp_server.clients.base import RawKeboolaClient  # noqa: E402
+from keboola_mcp_server.clients.data_science import AppPreviewLinkResponse, DataScienceClient  # noqa: E402
+from keboola_mcp_server.tools.data_apps import (  # noqa: E402
+    DataAppPreviewLinkOutput,
+    get_data_app_preview_link,
+)
+
+_PREVIEW_TOKEN = 'SENTINEL-PREVIEW-TOKEN-4f2a'
+_PREVIEW_URL = f'https://draft-cfg-draft-1-123.hub.test.keboola.com/_proxy/preview#t={_PREVIEW_TOKEN}'
+
+
+def _make_streamlit_data_app() -> DataApp:
+    return DataApp(
+        name='SL',
+        component_id=DATA_APP_COMPONENT_ID,
+        configuration_id='cfg-sl-1',
+        data_app_id='app-sl-1',
+        project_id='proj-1',
+        branch_id='branch-1',
+        config_version='1',
+        type='streamlit',
+        configuration={'parameters': {'dataApp': {'slug': 'sl'}}},
+        state='running',
+    )
+
+
+def _preview_app(kind: str) -> DataApp:
+    if kind == 'prod':
+        return _make_python_js_prod_data_app()
+    if kind == 'streamlit':
+        return _make_streamlit_data_app()
+    return _make_python_js_draft_data_app(
+        configuration_id='cfg-draft-1', data_app_id='app-draft-1', parent_configuration_id='cfg-prod-1'
+    )
+
+
+def _sandboxes_error(status: int, message: str) -> dict:
+    return {'error': message, 'code': status, 'exceptionId': 'exc-1', 'status': 'error', 'context': {}}
+
+
+def _http_error(status: int, body: dict | str) -> httpx.HTTPStatusError:
+    """Builds the exception exactly as the real client raises it (via `_raise_for_status`)."""
+    request = httpx.Request('POST', 'https://data-science.test.keboola.com/apps/app-1/preview-link')
+    if isinstance(body, dict):
+        response = httpx.Response(status, json=body, request=request)
+    else:
+        response = httpx.Response(status, text=body, request=request)
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        RawKeboolaClient._raise_for_status(response)
+    return exc_info.value
+
+
+@pytest.mark.asyncio
+async def test_get_data_app_preview_link_malformed_response_does_not_leak_link(
+    mocker,
+    mcp_context_client: Context,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=_preview_app('draft'))
+    )
+    keboola_client.data_science_client = DataScienceClient.create('https://api.example.com', token=None)
+    keboola_client.data_science_client.post = mocker.AsyncMock(return_value={'url': _PREVIEW_URL})
+
+    with pytest.raises(Exception) as exc_info:
+        await get_data_app_preview_link(ctx=mcp_context_client, configuration_id='cfg-draft-1')
+
+    assert _PREVIEW_TOKEN not in str(exc_info.value)
+    chain: list[BaseException] = []
+    pending: list[BaseException | None] = [exc_info.value]
+    while pending:
+        current = pending.pop()
+        if current is None or any(current is seen for seen in chain):
+            continue
+        chain.append(current)
+        pending.extend([current.__cause__, current.__context__])
+    for link in chain:
+        assert _PREVIEW_TOKEN not in str(link)
+        assert _PREVIEW_TOKEN not in repr(link)
+        if isinstance(link, ValidationError):
+            assert _PREVIEW_TOKEN not in repr(link.errors())
+    assert _PREVIEW_TOKEN not in caplog.text
+    assert _PREVIEW_TOKEN not in str(keboola_client.storage_client.trigger_event.call_args_list)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('app_kind', 'data_app_id'),
+    [('draft', 'app-draft-1'), ('streamlit', 'app-sl-1')],
+)
+async def test_get_data_app_preview_link_returns_link_without_leaking_it(
+    mocker,
+    mcp_context_client: Context,
+    caplog: pytest.LogCaptureFixture,
+    app_kind: str,
+    data_app_id: str,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    data_app = _preview_app(app_kind)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
+    keboola_client.data_science_client.create_app_preview_link = mocker.AsyncMock(
+        return_value=AppPreviewLinkResponse(url=_PREVIEW_URL, link_expires_at='2026-09-27T10:01:00+00:00')
+    )
+
+    result = await get_data_app_preview_link(ctx=mcp_context_client, configuration_id=data_app.configuration_id)
+
+    assert isinstance(result, DataAppPreviewLinkOutput)
+    assert result.url == _PREVIEW_URL
+    assert result.link_expires_at == '2026-09-27T10:01:00+00:00'
+    keboola_client.data_science_client.create_app_preview_link.assert_awaited_once_with(data_app_id)
+    assert _PREVIEW_TOKEN not in repr(result)
+    assert _PREVIEW_TOKEN not in str(result)
+    assert _PREVIEW_TOKEN not in caplog.text
+    keboola_client.storage_client.trigger_event.assert_awaited_once()
+    assert _PREVIEW_TOKEN not in str(keboola_client.storage_client.trigger_event.call_args_list)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('app_kind', 'status', 'body', 'expected_match', 'not_expected'),
+    [
+        (
+            'draft',
+            400,
+            _sandboxes_error(400, 'App "app-draft-1" is not in dev mode.'),
+            r'not running in dev mode.*`deploy_data_app`.*mode="dev", configuration_id="cfg-draft-1"\)',
+            None,
+        ),
+        (
+            'prod',
+            400,
+            _sandboxes_error(400, 'App "app-prod-1" is not in dev mode.'),
+            r'is a production app.*Do not switch it to dev mode.*parent_configuration_id="cfg-prod-1"',
+            'Deploy it in dev mode first',
+        ),
+        (
+            'streamlit',
+            400,
+            _sandboxes_error(400, 'App "app-sl-1" is not in dev mode.'),
+            r'"cfg-sl-1" \(streamlit\) is not in dev mode.*Tell the user; do not change its deploy mode',
+            'mode="dev"',
+        ),
+        (
+            'draft',
+            400,
+            _sandboxes_error(400, 'App "app-draft-1" has no URL yet.'),
+            r'has no URL yet.*wait until `get_data_apps` reports it running',
+            'not running in dev mode',
+        ),
+        (
+            'draft',
+            403,
+            _sandboxes_error(403, "You don't have access to the resource."),
+            r'The token cannot manage data app "cfg-draft-1", so it cannot get a preview link',
+            'project_id',
+        ),
+        (
+            'draft',
+            400,
+            _sandboxes_error(400, "Token is not authorized to manage app 'app-draft-1', app is from different project"),
+            r'The token cannot manage data app "cfg-draft-1", so it cannot get a preview link',
+            'project_id',
+        ),
+        (
+            'draft',
+            404,
+            _sandboxes_error(404, 'App "app-draft-1" not found.'),
+            r'"cfg-draft-1" \(data app ID "app-draft-1"\) was not found by the data-science service',
+            None,
+        ),
+        (
+            'draft',
+            404,
+            _sandboxes_error(404, 'No route found for "POST http://localhost/apps/app-draft-1/preview-link"'),
+            r'not available on this Keboola stack yet',
+            'was not found by the data-science service',
+        ),
+        (
+            'draft',
+            503,
+            _sandboxes_error(503, 'App preview links are not configured.'),
+            r"not configured on this Keboola stack.*Do not try the app's password login",
+            None,
+        ),
+    ],
+    ids=[
+        'draft_not_dev',
+        'prod_not_dev',
+        'streamlit_not_dev',
+        'no_url',
+        'forbidden',
+        'forbidden_400',
+        'not_found',
+        'no_route',
+        'not_configured',
+    ],
+)
+async def test_get_data_app_preview_link_maps_errors(
+    mocker,
+    mcp_context_client: Context,
+    app_kind: str,
+    status: int,
+    body: dict,
+    expected_match: str,
+    not_expected: str | None,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    data_app = _preview_app(app_kind)
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=data_app))
+    keboola_client.data_science_client.create_app_preview_link = mocker.AsyncMock(side_effect=_http_error(status, body))
+
+    with pytest.raises(ValueError, match=expected_match) as exc_info:
+        await get_data_app_preview_link(ctx=mcp_context_client, configuration_id=data_app.configuration_id)
+
+    assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
+    if not_expected:
+        assert not_expected not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('status', 'body'),
+    [
+        (400, _sandboxes_error(400, 'Some other validation error.')),
+        (503, '<html><body>503 Service Temporarily Unavailable</body></html>'),
+        (500, _sandboxes_error(500, 'Internal Server Error occurred.')),
+    ],
+    ids=['other_400', 'html_503', 'server_error'],
+)
+async def test_get_data_app_preview_link_passes_through_unmapped_errors(
+    mocker,
+    mcp_context_client: Context,
+    status: int,
+    body: dict | str,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=_preview_app('draft'))
+    )
+    error = _http_error(status, body)
+    keboola_client.data_science_client.create_app_preview_link = mocker.AsyncMock(side_effect=error)
+
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await get_data_app_preview_link(ctx=mcp_context_client, configuration_id='cfg-draft-1')
+
+    assert exc_info.value is error
+
+
+@pytest.mark.asyncio
+async def test_get_data_app_preview_link_does_not_mint_when_lookup_fails(
+    mocker,
+    mcp_context_client: Context,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    error = _http_error(404, {'error': 'Configuration cfg-missing not found', 'code': 404})
+    mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(side_effect=error))
+    keboola_client.data_science_client.create_app_preview_link = mocker.AsyncMock()
+
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await get_data_app_preview_link(ctx=mcp_context_client, configuration_id='cfg-missing')
+
+    assert exc_info.value is error
+    keboola_client.data_science_client.create_app_preview_link.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', [400, 403], ids=['400', '403'])
+async def test_get_data_app_preview_link_maps_other_project_refusal_from_lookup(
+    mocker,
+    mcp_context_client: Context,
+    status: int,
+) -> None:
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+        return_value={
+            'id': 'cfg-draft-1',
+            'name': 'draft',
+            'description': 'draft',
+            'configuration': {'parameters': {'id': 'app-draft-1'}},
+            'version': 1,
+        }
+    )
+    keboola_client.data_science_client.get_data_app = mocker.AsyncMock(
+        side_effect=_http_error(
+            status,
+            _sandboxes_error(
+                status, "Token is not authorized to manage app 'app-draft-1', app is from different project"
+            ),
+        )
+    )
+    keboola_client.data_science_client.create_app_preview_link = mocker.AsyncMock()
+
+    with pytest.raises(ValueError, match=r'The token cannot manage data app "cfg-draft-1"') as exc_info:
+        await get_data_app_preview_link(ctx=mcp_context_client, configuration_id='cfg-draft-1')
+
+    assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
+    assert 'project_id' not in str(exc_info.value)
+    keboola_client.data_science_client.create_app_preview_link.assert_not_called()
+
+
+def test_get_data_app_preview_link_description_allows_a_browser_run_from_the_shell():
+    """Kai has no browser tool, only a headless browser CLI in its shell; the text must not rule that out."""
+    doc = get_data_app_preview_link.__doc__ or ''
+    url_description = DataAppPreviewLinkOutput.model_fields['url'].description or ''
+    for text in (doc, url_description):
+        assert 'your browser tool' not in text
+        assert 'other than your browser' not in text
+    assert 'a headless browser CLI run from your shell' in doc
+    assert 'chrome-devtools-axi' not in doc, 'the description must not assume a specific browser tool'
+    assert 'any command other than the one that opens the browser' in doc
+    assert 'Do not fetch it with an HTTP client or curl' in doc
