@@ -17,11 +17,17 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.mcp import get_http_request_or_none
-from keboola_mcp_server.rls import ClsRules, RlsRules, references_governed_table, rewrite_query
+from keboola_mcp_server.rls import (
+    ACCESS_DENIED_MESSAGE,
+    ClsRules,
+    RlsRules,
+    references_governed_table,
+    rewrite_query,
+)
+from keboola_mcp_server.rls_policies import RLS_FEATURE, load_policy_rules
 from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY
 from keboola_mcp_server.workspace import JobSubmittedInfo, QueryResult, SqlSelectData, WorkspaceManager
 
@@ -31,11 +37,10 @@ SQL_TOOLS_TAG = 'sql'
 MAX_ROWS = 10_000
 MAX_CHARS = 50_000
 
-# Project feature flag gating row-level security entirely -- see feature_spec/rls_query_tool/RFC.md
-# "Project-level opt-in". Off by default: `query_data` doesn't even look up `rls-policy` objects
-# unless this is enabled, so a stray policy in an opted-out project has no effect. Same mechanism
-# as GLOBAL_SEARCH_FEATURE/STORAGE_BRANCHES_FEATURE (tools/search_models.py, tools/storage_helpers.py).
-RLS_FEATURE = 'row-level-security'
+# The project feature gating row-level security (`RLS_FEATURE`, see `rls_policies.py` and
+# feature_spec/rls_query_tool/RFC.md "Project-level opt-in") is off by default: `query_data` doesn't even
+# look up `rls-policy` objects unless it is enabled, so a stray policy in an opted-out project has no
+# effect. Same mechanism as GLOBAL_SEARCH_FEATURE/STORAGE_BRANCHES_FEATURE.
 # Bounds the cost of the sqlglot parse `references_governed_table`/`rewrite_query` do once RLS is
 # enabled for the project -- applies to every query then, not just ones touching a governed table,
 # since the parse itself is what needs bounding.
@@ -235,14 +240,6 @@ class QueryDataOutput(BaseModel):
     csv_data: str = Field(description='The retrieved data in CSV format')
     message: str | None = Field(default=None, description='A message from the query execution')
     query_ref: str | None = Field(default=None, description='Correlation token echoed from the request.')
-    applied_rules: list[str] = Field(
-        default_factory=list,
-        description=(
-            'Row-level-security disclosure: "<bucket>.<table>" keys of the tables this query result '
-            'was filtered by, if any -- always tell the user when this is non-empty, the result is a '
-            'slice of the table, not the whole thing. Empty when no table in the query has RLS applied.'
-        ),
-    )
 
 
 def add_sql_tools(mcp: FastMCP) -> None:
@@ -333,18 +330,7 @@ async def _apply_rls(
         raise ValueError(f'RLS: query too long ({len(sql_query)} chars, limit {RLS_MAX_QUERY_CHARS})')
 
     dialect = (await workspace_manager.get_sql_dialect()).lower()
-    project_id = int(await client.storage_client.project_id())
-    # Policies are served to regular members only on the SA step-up (see `step_up_metastore_client`);
-    # without it they would see none, and a governed table would look ungoverned. Not narrowed by
-    # `?principal=`: a policy that names only other users must still mark its table as governed.
-    metastore = client.metastore_client
-    if kubernetes_token_path := deployed_sa_token_path():
-        metastore = client.step_up_metastore_client(kubernetes_token_path)
-    rls_objects, cls_objects = await asyncio.gather(
-        metastore.list_objects('rls-policy'), metastore.list_objects('cls-policy')
-    )
-    rules = RlsRules.from_metastore(rls_objects, dialect=dialect, project_id=project_id)
-    cls_rules = ClsRules.from_metastore(cls_objects, dialect=dialect, project_id=project_id)
+    rules, cls_rules = await load_policy_rules(client, dialect=dialect)
     if (not rules.tables and not cls_rules.tables) or not references_governed_table(
         sql_query, dialect=dialect, rules=rules, cls_rules=cls_rules
     ):
@@ -356,7 +342,7 @@ async def _apply_rls(
     if not principal:
         reason = 'this session has no resolvable login identity'
         _log_rls_outcome('refused', query_name=query_name, principal=None, reason=reason)
-        raise ValueError(f'RLS: {reason}, so it cannot query a row-level-security-governed table.')
+        raise ValueError(ACCESS_DENIED_MESSAGE)
     try:
         try:
             # sqlglot parsing/transformation is CPU-bound and holds the GIL only in short bursts,
@@ -465,17 +451,11 @@ async def query_data(
     DATA VALIDATION:
     * When querying columns with categorical values, use query_data tool to inspect distinct values beforehand
     * Ensure valid filtering by checking actual data values first
-
-    ROW-LEVEL SECURITY: some tables in some projects have a row-level-security policy attached.
-    Such a table is never refused outright -- if you (the current login) have no rule on it, the
-    query is refused with an error naming the table; if you do, the result is a filtered SLICE of
-    that table, and `applied_rules` in the output names every table this happened for. Always tell
-    the user when `applied_rules` is non-empty: the result is not the whole table.
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
-    sql_query, applied_rules = await _apply_rls(
-        sql_query, query_name=query_name, ctx=ctx, workspace_manager=workspace_manager
-    )
+    # Row/column-level security is applied silently: the caller is not told that a policy shaped
+    # the result (the applied tables only go to the server log, see `_log_rls_outcome`).
+    sql_query, _ = await _apply_rls(sql_query, query_name=query_name, ctx=ctx, workspace_manager=workspace_manager)
 
     progress_token = _client_progress_token(ctx)
 
@@ -515,7 +495,6 @@ async def query_data(
             csv_data=output.getvalue(),
             message=result.message,
             query_ref=query_ref,
-            applied_rules=applied_rules,
         )
 
     else:
