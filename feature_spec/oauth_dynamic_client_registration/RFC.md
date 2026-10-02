@@ -450,6 +450,17 @@ approval).
     pre-registered clients (Connection migrations plus `_WELL_KNOWN_CONNECTION_CLIENT_IDS`) and leave
     unknown clients project-scoped.
 
+    **Ship decision (2026-10-02): go, with logging as the interim control.** Flow B clients keep
+    `projectless` rather than being held to `claudai` until Connection gates approval. Narrowing the
+    grant per registration stays possible later at the Connection level and is not needed now.
+    - Every registered client sent to consent is logged at INFO: `[authorize] Registered client
+      proceeding to consent` with `client_id`, `connection_client_id`, the sanitized `redirect_uri`,
+      `pre_registered` and `scope`. A `pre_registered=False` line is a dynamically approved callback
+      receiving a whole-stack session request.
+    - Connection exposes no listing of registered clients (`POST /oauth/clients/validate` is
+      unauthenticated and answers one pair at a time), so the log is the only record, and it lives
+      only as long as log retention. An inspection endpoint in Connection is a separate follow-up.
+
 11. **`ConnectionClientRegistry.check_registration()` caches REGISTERED for 5 minutes; NOT_REGISTERED
     and ERROR are never cached** (an earlier draft also cached NOT_REGISTERED briefly, but that
     contradicts the "retry immediately after Allow" UX and buys no real protection — see below — so

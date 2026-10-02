@@ -586,20 +586,26 @@ class TestSimpleOAuthProvider:
         monkeypatch.setattr(oauth_module.ConnectionClientRegistry, 'check_registration', _fake)
 
     @pytest.mark.parametrize(
-        'redirect_uri',
+        ('redirect_uri', 'pre_registered'),
         [
             # pre-registered by Keboola in Connection (claude-ai)
-            'https://claude.ai/api/mcp/auth_callback',
+            ('https://claude.ai/api/mcp/auth_callback', True),
             # became REGISTERED via the dynamic-approval screen (Flow B)
-            'https://my-self-service-tool.example/cb',
+            ('https://my-self-service-tool.example/cb', False),
         ],
     )
     @pytest.mark.asyncio
     async def test_authorize_registered_client_gets_projectless_scope(
-        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, redirect_uri: str
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        redirect_uri: str,
+        pre_registered: bool,
     ):
         """Every REGISTERED client -- pre-registered or dynamically approved -- gets the whole-stack
-        'projectless' grant via /oauth/consent, as before the client registry existed."""
+        'projectless' grant via /oauth/consent, and the request is logged at INFO with its callback
+        and whether it was pre-registered (Connection keeps no registry listing to inspect later)."""
         from keboola_mcp_server.oauth import _ClientRegistration
 
         self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
@@ -611,12 +617,19 @@ class TestSimpleOAuthProvider:
             state='client-state',
             scopes=None,
         )
-        auth_url = await oauth_provider.authorize(client, params)
+        with caplog.at_level(logging.INFO):
+            auth_url = await oauth_provider.authorize(client, params)
 
         parsed = urlparse(auth_url)
         assert parsed.path == '/oauth/consent'
         query = parse_qs(parsed.query)
         assert query['scope'] == ['claudai projectless']
+
+        [record] = [r for r in caplog.records if 'Registered client proceeding to consent' in r.message]
+        assert record.levelno == logging.INFO
+        assert f'redirect_uri={redirect_uri}' in record.message
+        assert f'pre_registered={pre_registered}' in record.message
+        assert 'client_id=foo-client-id' in record.message
 
     @pytest.mark.asyncio
     async def test_authorize_unregistered_client_redirects_to_connection_approval(
