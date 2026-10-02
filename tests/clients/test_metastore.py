@@ -85,18 +85,25 @@ async def test_list_objects_returns_meta_objects() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_objects_with_filter() -> None:
+@pytest.mark.parametrize(
+    ('kwargs', 'expected_params'),
+    [
+        ({'filter_by': 'name=filtered'}, {'filter': 'name=filtered'}),
+        ({'model_uuid': 'model-a'}, {'modelUUID': 'model-a'}),
+    ],
+)
+async def test_list_objects_with_filter(kwargs: dict[str, str], expected_params: dict[str, str]) -> None:
     client = MetastoreClient.create('https://metastore.example.com', token='test-token')
     client.raw_client.get = AsyncMock(  # type: ignore[assignment]
         return_value=_list_response(_jsonapi_object('filtered', 'u2')),
     )
 
-    result = await client.list_objects('semantic-model', filter_by='name=filtered')
+    result = await client.list_objects('semantic-model', **kwargs)
 
     assert len(result) == 1
     client.raw_client.get.assert_awaited_once_with(  # type: ignore[attr-defined]
         endpoint='api/v1/repository/semantic-model',
-        params={'filter': 'name=filtered'},
+        params=expected_params,
     )
 
 

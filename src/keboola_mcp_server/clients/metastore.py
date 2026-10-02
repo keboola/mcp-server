@@ -129,6 +129,7 @@ class MetastoreClient(KeboolaServiceClient):
         object_type: str,
         *,
         filter_by: str | None = None,
+        model_uuid: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
         organization_scope: bool = False,
@@ -141,6 +142,8 @@ class MetastoreClient(KeboolaServiceClient):
         params: dict[str, Any] = {}
         if filter_by is not None:
             params['filter'] = filter_by
+        if model_uuid is not None:
+            params['modelUUID'] = model_uuid
         if limit is not None:
             params['limit'] = limit
         if offset is not None:
