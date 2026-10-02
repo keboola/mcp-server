@@ -13,6 +13,8 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
+from keboola_mcp_server.rls import ClsRules, RlsRules
+from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import (
     BucketCounts,
@@ -24,6 +26,7 @@ from keboola_mcp_server.tools.storage.tools import (
     TableDetail,
     TableSummary,
     UpdateDescriptionsOutput,
+    _apply_metadata_restrictions,
     get_buckets,
     get_tables,
     update_descriptions,
@@ -2039,3 +2042,121 @@ async def test_get_table_storage_branches(mocker: MockerFixture, mcp_context_cli
     keboola_client.storage_client.table_detail.assert_has_calls(
         [call('out.c-model.customers', branch_id='default'), call('out.c-model.customers', branch_id=branch_id)]
     )
+
+
+class TestHideClsRestrictedColumns:
+    """`get_tables` must not advertise columns a column-level-security policy withholds from the caller."""
+
+    pytestmark = pytest.mark.asyncio
+
+    @staticmethod
+    def _table(table_id: str) -> TableDetail:
+        return TableDetail(
+            id=table_id,
+            name=table_id.rsplit('.', 1)[-1],
+            display_name=table_id.rsplit('.', 1)[-1],
+            primary_key=['id', 'ssn'],
+            columns=[
+                TableColumnInfo(name=name, quoted_name=f'"{name}"', database_native_type='VARCHAR', nullable=True)
+                for name in ('id', 'region', 'customer_email', 'amount', 'ssn')
+            ],
+        )
+
+    @pytest.fixture
+    def setup(self, mocker: MockerFixture, mcp_context_client: Context) -> tuple[Context, KeboolaClient, AsyncMock]:
+        client = KeboolaClient.from_state(mcp_context_client.session.state)
+        client.has_feature = mocker.AsyncMock(return_value=True)
+        workspace_manager = WorkspaceManager.from_state(mcp_context_client.session.state)
+        workspace_manager.get_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
+        cls_rules = ClsRules(
+            tables={'in.c-rls_test.orders': {'member@x.com': ('id', 'region', 'amount')}}, dialect='snowflake'
+        )
+        rls_rules = RlsRules(tables={'in.c-rls_test.orders': {'member@x.com': 'TRUE'}}, dialect='snowflake')
+        loader = mocker.patch(
+            'keboola_mcp_server.tools.storage.tools.load_policy_rules',
+            new=mocker.AsyncMock(return_value=(rls_rules, cls_rules)),
+        )
+        return mcp_context_client, client, loader
+
+    @pytest.mark.parametrize(
+        ('user', 'expected_columns', 'expected_pk'),
+        [
+            ('member@x.com', ['id', 'region', 'amount'], ['id']),
+            ('MEMBER@x.com', ['id', 'region', 'amount'], ['id']),  # identity is matched case-insensitively
+            ('other@x.com', [], []),  # governed table, no rule for this caller: nothing is shown
+            (None, [], []),  # no resolvable identity: nothing is shown
+        ],
+    )
+    async def test_governed_table_shows_only_allowed_columns(
+        self, setup, user: str | None, expected_columns: list[str], expected_pk: list[str]
+    ) -> None:
+        ctx, client, _ = setup
+        ctx.session.state[OAUTH_USER_EMAIL_KEY] = user
+        table = self._table('in.c-rls_test.orders')
+
+        await _apply_metadata_restrictions(ctx, client, WorkspaceManager.from_state(ctx.session.state), [table])
+
+        assert [c.name for c in table.columns] == expected_columns
+        assert table.primary_key == expected_pk
+
+    async def test_ungoverned_table_is_untouched(self, setup) -> None:
+        ctx, client, _ = setup
+        ctx.session.state[OAUTH_USER_EMAIL_KEY] = 'member@x.com'
+        table = self._table('in.c-rls_test.public_dim')
+
+        await _apply_metadata_restrictions(ctx, client, WorkspaceManager.from_state(ctx.session.state), [table])
+
+        assert len(table.columns) == 5
+        assert table.primary_key == ['id', 'ssn']
+
+    async def test_feature_off_never_loads_policies(self, setup, mocker: MockerFixture) -> None:
+        ctx, client, loader = setup
+        client.has_feature = mocker.AsyncMock(return_value=False)
+        table = self._table('in.c-rls_test.orders')
+
+        await _apply_metadata_restrictions(ctx, client, WorkspaceManager.from_state(ctx.session.state), [table])
+
+        assert len(table.columns) == 5
+        loader.assert_not_called()
+
+    async def test_row_governed_table_hides_its_true_counts(self, setup) -> None:
+        """A row-level policy hides rows, so the table's real row count / size must not be shown."""
+        ctx, client, _ = setup
+        ctx.session.state[OAUTH_USER_EMAIL_KEY] = 'member@x.com'
+        governed = self._table('in.c-rls_test.orders')
+        ungoverned = self._table('in.c-rls_test.public_dim')
+        for table in (governed, ungoverned):
+            table.rows_count = 4
+            table.data_size_bytes = 2048
+
+        await _apply_metadata_restrictions(
+            ctx, client, WorkspaceManager.from_state(ctx.session.state), [governed, ungoverned]
+        )
+
+        assert (governed.rows_count, governed.data_size_bytes) == (None, None)
+        assert (ungoverned.rows_count, ungoverned.data_size_bytes) == (4, 2048)
+
+    async def test_summaries_get_the_same_treatment_as_details(self, setup) -> None:
+        """Bucket listings return summaries (no columns) -- counts and primary key must still be restricted."""
+        ctx, client, _ = setup
+        ctx.session.state[OAUTH_USER_EMAIL_KEY] = 'member@x.com'
+        summary = TableSummary(
+            id='in.c-rls_test.orders',
+            name='orders',
+            display_name='orders',
+            primary_key=['id', 'ssn'],
+            rows_count=4,
+            data_size_bytes=2048,
+        )
+
+        await _apply_metadata_restrictions(ctx, client, WorkspaceManager.from_state(ctx.session.state), [summary])
+
+        assert summary.primary_key == ['id']
+        assert (summary.rows_count, summary.data_size_bytes) == (None, None)
+
+    async def test_no_tables_never_loads_policies(self, setup) -> None:
+        ctx, client, loader = setup
+
+        await _apply_metadata_restrictions(ctx, client, WorkspaceManager.from_state(ctx.session.state), [])
+
+        loader.assert_not_called()

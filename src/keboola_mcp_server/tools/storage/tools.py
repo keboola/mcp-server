@@ -22,7 +22,8 @@ from keboola_mcp_server.mcp import (
     process_concurrently,
     unwrap_results,
 )
-from keboola_mcp_server.scope import ProjectIdArg
+from keboola_mcp_server.rls_policies import RLS_FEATURE, load_policy_rules
+from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY, ProjectIdArg
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.storage.usage import (
     ComponentUsageReference,
@@ -746,11 +747,49 @@ async def get_tables(
                 elif not table_id:
                     LOG.error(f'Target ID has changed during searching for usage: prod_id={id_usage.target_id}.')
 
+    await _apply_metadata_restrictions(ctx, client, workspace_manager, tables_by_id.values())
+
     return GetTablesOutput(
         tables=list(tables_by_id.values()),
         tables_not_found=missing_ids if missing_ids else None,
         links=[links_manager.get_bucket_dashboard_link()],
     ).pack_links()
+
+
+async def _apply_metadata_restrictions(
+    ctx: Context,
+    client: KeboolaClient,
+    workspace_manager: WorkspaceManager,
+    tables: Iterable[TableDetail | TableSummary],
+) -> None:
+    """Keeps the table metadata consistent with what `query_data` lets the caller see.
+
+    Row-/column-level security is applied silently, so the metadata must not betray it:
+    * a column the caller's column-level policy withholds is dropped from the columns and the primary
+      key (its name, e.g. `ssn`, is sensitive on its own, and `query_data` could not select it);
+    * a table with a row-level policy shows no row count / size (the true totals would reveal that
+      rows are hidden).
+
+    No-op when the project does not have the feature or no policy governs the table. Fails closed: a
+    column-governed table with no rule for the caller shows no columns.
+    """
+    tables = list(tables)
+    if not tables or not await client.has_feature(RLS_FEATURE):
+        return
+    dialect = (await workspace_manager.get_sql_dialect()).lower()
+    rls_rules, cls_rules = await load_policy_rules(client, dialect=dialect)
+    user = ctx.session.state.get(OAUTH_USER_EMAIL_KEY)
+    for table in tables:
+        if rls_rules.governs_table_id(table.id):
+            table.rows_count = None
+            table.data_size_bytes = None
+        visible = cls_rules.visible_columns(table_id=table.id, user=user)
+        if visible is None:
+            continue
+        allowed = set(visible)
+        table.primary_key = [column for column in table.primary_key or [] if column in allowed]
+        if isinstance(table, TableDetail):
+            table.columns = [column for column in table.columns or [] if column.name in allowed]
 
 
 async def _get_table(

@@ -101,6 +101,15 @@ class RlsError(ValueError):
     """Any RLS failure: bad rules file, unsupported SQL, missing rule. Always means "no data"."""
 
 
+# What a caller with no rule for a governed table is told. Deliberately says nothing about policies:
+# row-/column-level security is applied silently, so the refusal reads like any other missing grant.
+ACCESS_DENIED_MESSAGE = 'Access denied: you do not have permission to query one of the requested tables.'
+
+
+class RlsAccessDenied(RlsError):
+    """The caller has no rule for a governed table. The detail goes to the log, never to the caller."""
+
+
 def _clean_error(error: Exception) -> str:
     """A sqlglot error message fit to put in front of a user (or a model).
 
@@ -425,6 +434,12 @@ class RlsRules:
         """
         return bool(schema) and _rule_key(schema, table_name, self.dialect) in self.tables
 
+    def governs_table_id(self, table_id: str) -> bool:
+        """Whether a row-level policy applies to the table with Storage id `<bucket>.<table>`, for
+        metadata views (a governed table's true row count / size must not be shown)."""
+        bucket, _, name = table_id.rpartition('.')
+        return bool(bucket) and _rule_key(_normalize_schema(bucket, self.dialect), name, self.dialect) in self.tables
+
     def predicate_for(self, *, table_name: str, schema: str | None, user: str) -> tuple[str, str]:
         """Return `(matched_key, predicate)` for the table/user, or raise `RlsError`.
 
@@ -442,7 +457,8 @@ class RlsRules:
             raise RlsError(f"RLS: no rule for table '{key}'")
         predicate = users.get(user.lower())
         if predicate is None:
-            raise RlsError(f"RLS: no rule for user '{user.lower()}' on table '{key}'")
+            LOG.info(f"RLS: no rule for user '{user.lower()}' on table '{key}'")
+            raise RlsAccessDenied(ACCESS_DENIED_MESSAGE)
         return key, predicate
 
 
@@ -576,6 +592,19 @@ class ClsRules:
         `RlsRules.is_governed`, identical semantics."""
         return bool(schema) and _rule_key(schema, table_name, self.dialect) in self.tables
 
+    def visible_columns(self, *, table_id: str, user: str | None) -> tuple[str, ...] | None:
+        """The columns `user` may see of the table with Storage id `<bucket>.<table>`, for metadata views.
+
+        `None` = no policy governs the table (every column is visible). Fail closed otherwise: a
+        governed table with no rule for `user` (or no resolvable identity) shows no columns at all.
+        """
+        bucket, _, name = table_id.rpartition('.')
+        key = _rule_key(_normalize_schema(bucket, self.dialect), name, self.dialect) if bucket else None
+        users = self.tables.get(key) if key else None
+        if users is None:
+            return None
+        return users.get(user.lower(), ()) if user else ()
+
     def columns_for(self, *, table_name: str, schema: str | None, user: str) -> tuple[str, tuple[str, ...]]:
         """Return `(matched_key, visible_columns)` for the table/user, or raise `RlsError` -- see
         `RlsRules.predicate_for`, identical fail-closed semantics (governed table, no rule for this
@@ -588,7 +617,8 @@ class ClsRules:
             raise RlsError(f"CLS: no rule for table '{key}'")
         columns = users.get(user.lower())
         if columns is None:
-            raise RlsError(f"CLS: no rule for user '{user.lower()}' on table '{key}'")
+            LOG.info(f"CLS: no rule for user '{user.lower()}' on table '{key}'")
+            raise RlsAccessDenied(ACCESS_DENIED_MESSAGE)
         return key, columns
 
 

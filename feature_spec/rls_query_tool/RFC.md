@@ -647,3 +647,29 @@ Ordered by what unblocks what, not by size:
   resolves to its principal; an unbound token falls through; a binding whose `source_project_id`/
   `target_project_ids` don't cover the current project is ignored, mirroring `rls-policy`.
 - `tox` clean, per repo convention.
+
+## v4 Amendment: findings from the canary run
+
+Decisions taken while testing RLS + CLS end to end on canary-orion. They supersede the earlier text where
+they conflict.
+
+- **Silent application (supersedes the "disclosure of which tables were filtered").** `query_data` no
+  longer returns `applied_rules` and its description no longer tells the model to warn the user. A user
+  must not be able to tell from the output that a policy shaped the result; the applied tables go to the
+  server log only (`_log_rls_outcome`). A caller with no rule for a governed table gets a generic
+  `Access denied` refusal that names no policy; the detail is logged.
+- **Metadata follows the same rule.** `get_tables` hides columns a column-level policy withholds (and
+  drops them from the primary key) and shows no row count / size for a row-governed table, otherwise the
+  metadata would reveal exactly what `query_data` conceals. Other tools that return column names or table
+  statistics (`search`, the semantic-layer tools) have not been audited for this yet.
+- **Policies must be readable by regular members.** The metastore serves `rls-policy` / `cls-policy` to
+  admins only on the user's own token, so the server reads them with its Kubernetes ServiceAccount
+  (`X-Kubernetes-Authorization`). Every client the server builds must know the server's own stack
+  (including the per-project clients of multi-project sessions), and the step-up **fails closed**: if it
+  cannot be made, the query is refused instead of running unfiltered.
+- **Principals are emails.** A principal is the caller's OAuth login, so it is validated as an identity
+  (no whitespace / control characters), not as an SQL identifier.
+- **Policy columns are quoted.** The predicate and the CLS projection quote column names, so a column is
+  taken exactly as the policy spells it (Snowflake would otherwise fold `id` to `ID`). Column names in a
+  policy are therefore case-sensitive and must match Storage.
+
