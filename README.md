@@ -119,27 +119,34 @@ X-Read-Only-Mode: true
 
 For detailed documentation, see [developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control](https://developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control).
 
-### Row-Level Security
+### Row-Level and Column-Level Security
 
-`query_data` can filter a table's rows per the current user, for projects that opt in. It is off by
-default and requires two things before it does anything:
+`query_data` can restrict the rows and columns of a table per the current user, for projects that opt
+in. It is off by default and requires two things before it does anything:
 
-1. **A project-level feature.** An org admin enables it for a specific project; without it,
-   `query_data` never even looks up a policy — behavior is unchanged.
-2. **A policy for the specific table**, authored by an org admin (never a project admin, even for
-   that project's own tables) as a Keboola Metastore `rls-policy` object — a declarative
-   `column`/`operator`/`value` condition per user, not hand-written SQL. A table with no policy is
-   always unfiltered; a table with one is fail-closed (no rule for the current user ⇒ the query is
-   refused, naming the table).
+1. **A project-level feature** (`row-level-security`). Without it, `query_data` never even looks up a
+   policy — behavior is unchanged.
+2. **A policy for the specific table**, authored as a Keboola Metastore `rls-policy` (rows) and/or
+   `cls-policy` (columns) object — a declarative condition or column allowlist per user, not
+   hand-written SQL. Organization-scope policies and cross-project grants are reserved for
+   organization admins; the owning project's admin may author `targeted` policies for that project.
+   A table with no policy is always unfiltered; a table with one is fail-closed (no rule for the
+   current user ⇒ the query is refused with a generic "access denied").
 
-The identity `query_data` filters by is the caller's own OAuth login — there is no header or tool
-argument to set it. `query_data`'s output always includes `applied_rules`, the `<bucket>.<table>`
-keys of every table the result was filtered by; when non-empty, the result is a slice of the data,
-not the whole table.
+The restrictions are applied **silently**: the tool output and descriptions never say that a policy
+shaped the result, and `get_tables` hides what the user cannot query — columns withheld by a
+column-level policy are not listed, and a row-governed table shows no row count or size. Which tables a
+query was restricted by is only written to the server log. Because policies live in the metastore,
+regular members' policies are read with the server's own Kubernetes ServiceAccount (step-up); a
+deployment where that step-up is unavailable refuses the query rather than returning it unfiltered.
+
+The identity `query_data` filters by is the caller's own OAuth login (an email) — there is no header
+or tool argument to set it. Column names in a policy are matched exactly (case-sensitively), as
+Storage spells them.
 
 See [`feature_spec/rls_query_tool/RFC.md`](feature_spec/rls_query_tool/RFC.md) for the full design,
-including why policies are org-authored rather than project-scoped, and known limitations (this is
-a proxy-level control scoped to `query_data`, not a substitute for native warehouse row security).
+and known limitations (this is a proxy-level control scoped to the MCP server's own tools, not a
+substitute for native warehouse row security).
 
 ---
 

@@ -1414,6 +1414,14 @@ class TestQueryDataRowLevelSecurity:
     def _ok_result(rows: list[dict]) -> QueryResult:
         return QueryResult(status='ok', data=SqlSelectData(columns=list(rows[0]), rows=rows), message=None)
 
+    def test_restrictions_are_not_disclosed_to_the_caller(self) -> None:
+        """Row-/column-level security is applied silently: neither the output nor the tool description
+        tells the model (or the user) that a policy shaped the result."""
+        assert 'applied_rules' not in QueryDataOutput.model_fields
+        description = (query_data.__doc__ or '').lower()
+        for word in ('row-level security', 'column-level', 'policy', 'applied_rules', 'rls'):
+            assert word not in description
+
     @pytest.mark.asyncio
     async def test_flag_off_query_data_is_unfiltered(
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
@@ -1421,9 +1429,8 @@ class TestQueryDataRowLevelSecurity:
         keboola_client.has_feature.return_value = False
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
 
-        result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+        await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
 
-        assert result.applied_rules == []
         keboola_client.metastore_client.list_objects.assert_not_called()
         workspace_manager.execute_query.assert_awaited_once_with(
             'SELECT * FROM "in.c-crm"."invoices"',
@@ -1472,9 +1479,8 @@ class TestQueryDataRowLevelSecurity:
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
 
-        result = await query_data('SELECT * FROM "in.c-crm"."unrelated"', 'q', mcp_context_client)
+        await query_data('SELECT * FROM "in.c-crm"."unrelated"', 'q', mcp_context_client)
 
-        assert result.applied_rules == []
         workspace_manager.execute_query.assert_awaited_once_with(
             'SELECT * FROM "in.c-crm"."unrelated"',
             max_rows=10_000,
@@ -1496,7 +1502,7 @@ class TestQueryDataRowLevelSecurity:
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         # mcp_context_client carries no OAUTH_USER_EMAIL_KEY -- a non-OAuth (PAT/header) session.
 
-        with pytest.raises(ValueError, match='no resolvable login identity'):
+        with pytest.raises(ValueError, match='Access denied'):
             await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
         workspace_manager.execute_query.assert_not_called()
 
@@ -1514,7 +1520,7 @@ class TestQueryDataRowLevelSecurity:
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'monika'
 
-        with pytest.raises(ValueError, match="no rule for user 'monika'"):
+        with pytest.raises(ValueError, match='Access denied'):
             await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
         workspace_manager.execute_query.assert_not_called()
 
@@ -1537,9 +1543,8 @@ class TestQueryDataRowLevelSecurity:
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
         keboola_client.storage_client.table_detail.return_value = {'columns': ['id', 'country']}
 
-        result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+        await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
 
-        assert result.applied_rules == ['in.c-crm.invoices']
         rewritten_sql = workspace_manager.execute_query.await_args.args[0]
         assert 'WHERE "country" = \'CZ\'' in rewritten_sql
 
@@ -1614,9 +1619,8 @@ class TestQueryDataSchemaDrift:
         keboola_client.storage_client.table_detail.return_value = {'columns': ['id', 'country_code']}
 
         with caplog.at_level('WARNING'):
-            result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+            await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
 
-        assert result.applied_rules == ['in.c-crm.invoices']  # enforcement itself is unaffected
         keboola_client.storage_client.table_detail.assert_awaited_once_with('in.c-crm.invoices')
         assert any("references column(s) not on the table: ['country']" in r.message for r in caplog.records), (
             f'expected a drift warning; got: {[r.message for r in caplog.records]}'
@@ -1665,9 +1669,7 @@ class TestQueryDataSchemaDrift:
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
         keboola_client.storage_client.table_detail.side_effect = RuntimeError('Storage API unavailable')
 
-        result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
-
-        assert result.applied_rules == ['in.c-crm.invoices']  # the real query still succeeds
+        await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
 
 
 class TestQueryDataColumnLevelSecurity:
@@ -1707,9 +1709,8 @@ class TestQueryDataColumnLevelSecurity:
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
         keboola_client.storage_client.table_detail.return_value = {'columns': ['id', 'amount', 'ssn']}
 
-        result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+        await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
 
-        assert result.applied_rules == ['in.c-crm.invoices']
         rewritten_sql = workspace_manager.execute_query.await_args.args[0]
         assert 'SELECT "id", "amount" FROM' in rewritten_sql
         assert 'ssn' not in rewritten_sql
@@ -1730,7 +1731,7 @@ class TestQueryDataColumnLevelSecurity:
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'monika'
 
-        with pytest.raises(ValueError, match="no rule for user 'monika'"):
+        with pytest.raises(ValueError, match='Access denied'):
             await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
         workspace_manager.execute_query.assert_not_called()
 
@@ -1765,8 +1766,7 @@ class TestQueryDataColumnLevelSecurity:
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
         keboola_client.storage_client.table_detail.return_value = {'columns': ['id', 'amount', 'country']}
 
-        result = await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+        await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
 
-        assert result.applied_rules == ['in.c-crm.invoices']
         rewritten_sql = workspace_manager.execute_query.await_args.args[0]
         assert 'SELECT "id", "amount", "country" FROM "in.c-crm"."invoices" WHERE "country" = \'CZ\'' in rewritten_sql

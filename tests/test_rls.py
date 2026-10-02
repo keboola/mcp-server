@@ -2,8 +2,10 @@ import pytest
 
 from keboola_mcp_server.clients.metastore import MetaObjectMeta, MetastoreObject
 from keboola_mcp_server.rls import (
+    ACCESS_DENIED_MESSAGE,
     ClsRules,
     RewrittenQuery,
+    RlsAccessDenied,
     RlsError,
     RlsRules,
     _check_output,
@@ -331,8 +333,8 @@ class TestPredicateFor:
         ('table_name', 'schema', 'user', 'match'),
         [
             ('customers', 'in.c-crm', 'petr', "table 'in.c-crm.customers'"),
-            ('invoices', 'in.c-crm', 'nobody', "user 'nobody'"),
-            ('orders', 'in.c-crm', 'monika', "user 'monika'"),
+            ('invoices', 'in.c-crm', 'nobody', 'Access denied'),
+            ('orders', 'in.c-crm', 'monika', 'Access denied'),
             # A rule for the table in one bucket says nothing about the table in another.
             ('invoices', 'in.c-sales', 'petr', "table 'in.c-sales.invoices'"),
             # No bucket at all: there is no key to look up, so there is nothing to allow.
@@ -343,6 +345,13 @@ class TestPredicateFor:
     def test_lookup_denied(self, rules: RlsRules, table_name, schema, user, match) -> None:
         with pytest.raises(RlsError, match=match):
             rules.predicate_for(table_name=table_name, schema=schema, user=user)
+
+    def test_no_rule_for_user_is_a_generic_denial_that_reveals_no_policy(self, rules: RlsRules) -> None:
+        with pytest.raises(RlsAccessDenied) as exc:
+            rules.predicate_for(table_name='invoices', schema='in.c-crm', user='nobody')
+
+        assert str(exc.value) == ACCESS_DENIED_MESSAGE
+        assert not any(word in str(exc.value).lower() for word in ('rule', 'policy', 'rls', 'nobody', 'invoices'))
 
 
 class TestRewriteQuery:
@@ -657,7 +666,7 @@ class TestRewriteQuery:
             # A table with no rule for THIS user is refused even though the table itself is
             # governed -- unlike an entirely ungoverned table (see TestRewriteQuery's dedicated
             # "ungoverned table" tests above), a table a policy names at all is fail-closed.
-            ('SELECT * FROM "in.c-crm"."invoices"', 'nobody', 'snowflake', "user 'nobody'"),
+            ('SELECT * FROM "in.c-crm"."invoices"', 'nobody', 'snowflake', 'Access denied'),
             # A CTE reading its own name without RECURSIVE resolves to the base table on the
             # engine, whatever the CTE is called.
             (
@@ -1211,7 +1220,7 @@ class TestColumnsFor:
         ('table_name', 'schema', 'user', 'match'),
         [
             ('customers', 'in.c-crm', 'petr', "table 'in.c-crm.customers'"),
-            ('invoices', 'in.c-crm', 'nobody', "user 'nobody'"),
+            ('invoices', 'in.c-crm', 'nobody', 'Access denied'),
             ('invoices', None, 'petr', 'must be qualified'),
         ],
     )
@@ -1260,7 +1269,7 @@ class TestComposedRewrite:
     def test_cls_governed_no_rule_for_principal_is_refused(self, rules: RlsRules, cls_rules: ClsRules) -> None:
         """Fail-closed, symmetric with RLS: a CLS-governed table with no rule for this principal
         refuses, even though the same principal has an RLS rule on the same table."""
-        with pytest.raises(RlsError, match="no rule for user 'nobody'"):
+        with pytest.raises(RlsError, match='Access denied'):
             rewrite_query(
                 'SELECT * FROM "in.c-crm"."invoices"',
                 user='nobody',
