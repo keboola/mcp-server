@@ -901,6 +901,13 @@ async def get_semantic_context(
 
     client = KeboolaClient.from_state(ctx.session.state)
 
+    # Child types are listed per model, so resolve the models once rather than once per listed type.
+    if not semantic_model_ids and any(
+        not selection.ids and selection.object_type != SemanticObjectType.SEMANTIC_MODEL
+        for selection in semantic_objects
+    ):
+        semantic_model_ids = await semantic_service.list_semantic_model_ids(client)
+
     results = await process_concurrently(
         semantic_objects,
         lambda selection: semantic_service.load_semantic_context_for_semantic_type(

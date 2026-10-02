@@ -412,49 +412,52 @@ async def _list_semantic_type_objects(
 ) -> list[SemanticServiceData]:
     """List all semantic objects of a given type, optionally filtered by a set of semantic model IDs."""
     if object_type == SemanticObjectType.SEMANTIC_MODEL:
-        return await _list_semantic_type_pages(client, object_type, semantic_model_ids)
+        models = await _list_semantic_type_pages(client, object_type)
+        wanted_ids = set(semantic_model_ids or ())
+        return [model for model in models if not wanted_ids or model.id in wanted_ids]
 
     # Child objects are filtered by `modelUUID` server-side: the unfiltered list also holds children of
     # deleted models, and paging through it one small page at a time costs a request per object.
     # Without model IDs, the models the project lists stand in for them.
-    model_ids = list(dict.fromkeys(semantic_model_ids)) if semantic_model_ids else await _list_model_ids(client)
+    model_ids = list(dict.fromkeys(semantic_model_ids)) if semantic_model_ids else await list_semantic_model_ids(client)
     if not model_ids:
         return []
     results = await process_concurrently(
         model_ids,
-        lambda model_id: _list_semantic_type_pages(client, object_type, [model_id], model_uuid=model_id),
+        lambda model_id: _list_semantic_type_pages(client, object_type, model_uuid=model_id),
         max_concurrency=min(len(model_ids), 10),
     )
     pages = unwrap_results(results, f'Failed to list semantic objects for type "{object_type.value}".')
     return [item for page in pages for item in page]
 
 
-async def _list_model_ids(client: KeboolaClient) -> list[str]:
+async def list_semantic_model_ids(client: KeboolaClient) -> list[str]:
     """IDs of the semantic models the project lists."""
-    models = await _list_semantic_type_pages(client, SemanticObjectType.SEMANTIC_MODEL, None)
+    models = await _list_semantic_type_pages(client, SemanticObjectType.SEMANTIC_MODEL)
     return [model.id for model in models]
 
 
 async def _list_semantic_type_pages(
     client: KeboolaClient,
     object_type: SemanticObjectType,
-    semantic_model_ids: Sequence[str] | None,
     *,
     model_uuid: str | None = None,
 ) -> list[SemanticServiceData]:
-    """Page through one metastore listing; objects of other models are dropped client-side as well."""
+    """Page through one metastore listing, narrowed to the `model_uuid` model when given.
+
+    The same id is checked client-side as well, since the metastore ignores filter keys a schema lacks.
+    """
     metastore = client.metastore_client
     limit = DEFAULT_PAGE_LIMITS.get(object_type, DEFAULT_PAGE_LIMIT)
     offset = 0
     data: list[SemanticServiceData] = []
-    model_id_set = set(semantic_model_ids) if semantic_model_ids else None
 
     while True:
         page = await metastore.list_objects(object_type, model_uuid=model_uuid, limit=limit, offset=offset)
         data.extend(
             _to_semantic_service_data(object_type, obj)
             for obj in page
-            if model_id_set is None or _get_semantic_model_id(obj) in model_id_set
+            if model_uuid is None or _get_semantic_model_id(obj) == model_uuid
         )
         if len(page) < limit:
             return data
@@ -657,7 +660,7 @@ async def search_semantic_context(
             raise ValueError(f'Invalid regex pattern "{pattern}": {e}') from e
 
     # The types are listed one after another, so resolve the models once rather than once per type.
-    model_ids = semantic_model_ids or await _list_model_ids(client)
+    model_ids = semantic_model_ids or await list_semantic_model_ids(client)
     if not model_ids:
         return []
 
