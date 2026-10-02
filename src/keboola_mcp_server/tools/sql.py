@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.mcp import get_http_request_or_none
@@ -333,8 +334,14 @@ async def _apply_rls(
 
     dialect = (await workspace_manager.get_sql_dialect()).lower()
     project_id = int(await client.storage_client.project_id())
+    # Policies are served to regular members only on the SA step-up (see `step_up_metastore_client`);
+    # without it they would see none, and a governed table would look ungoverned. Not narrowed by
+    # `?principal=`: a policy that names only other users must still mark its table as governed.
+    metastore = client.metastore_client
+    if kubernetes_token_path := deployed_sa_token_path():
+        metastore = client.step_up_metastore_client(kubernetes_token_path)
     rls_objects, cls_objects = await asyncio.gather(
-        client.metastore_client.list_objects('rls-policy'), client.metastore_client.list_objects('cls-policy')
+        metastore.list_objects('rls-policy'), metastore.list_objects('cls-policy')
     )
     rules = RlsRules.from_metastore(rls_objects, dialect=dialect, project_id=project_id)
     cls_rules = ClsRules.from_metastore(cls_objects, dialect=dialect, project_id=project_id)
