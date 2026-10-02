@@ -225,7 +225,9 @@ def _compile_primitive(condition: Any, *, dialect: str) -> exp.Condition:
         raise RlsError(f"RLS: condition is missing a valid 'column': {condition!r}")
     if not isinstance(op, str):
         raise RlsError(f"RLS: condition is missing a valid 'op': {condition!r}")
-    column = exp.column(column_name)
+    # Quoted so the name is taken exactly as the policy spells it: Keboola creates Snowflake columns
+    # with their exact (usually lower-case) names, and an unquoted `id` would fold to `ID` and not exist.
+    column = exp.column(column_name, quoted=True)
 
     if op in _COMPARISON_OPS:
         if 'value' not in condition:
@@ -862,7 +864,7 @@ def _check_output(
             # No CLS rule matched this key -- the wrapper must carry a plain, untouched `SELECT *`.
             projection_ok = isinstance(select, exp.Select) and [type(e) for e in select.expressions] == [exp.Star]
         else:
-            expected_col_sql = [exp.column(c).sql(dialect=dialect) for c in expected_cols]
+            expected_col_sql = [exp.column(c, quoted=True).sql(dialect=dialect) for c in expected_cols]
             projection_ok = (
                 isinstance(select, exp.Select)
                 and [e.sql(dialect=dialect) for e in select.expressions] == expected_col_sql
@@ -1071,7 +1073,10 @@ def rewrite_query(
                     f'RLS: predicate for table {key!r} is not valid SQL for dialect {dialect!r}: {_clean_error(e)}'
                 )
                 raise RlsError(_RULE_NOT_APPLIED.format(key=key)) from e
-        select_columns: list[str] = list(columns) if columns is not None else ['*']
+        # Quoted for the same reason as in `_compile_primitive`: exact, case-sensitive column names.
+        select_columns: list[exp.Expression] = (
+            [exp.column(c, quoted=True) for c in columns] if columns is not None else [exp.Star()]
+        )
         filtered = exp.select(*select_columns).from_(inner).where(predicate_expr)
         # Returning a new node stops `transform` from descending into it, so the inner table is
         # not wrapped a second time.

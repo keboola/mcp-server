@@ -1541,7 +1541,7 @@ class TestQueryDataRowLevelSecurity:
 
         assert result.applied_rules == ['in.c-crm.invoices']
         rewritten_sql = workspace_manager.execute_query.await_args.args[0]
-        assert 'WHERE country = \'CZ\'' in rewritten_sql
+        assert 'WHERE "country" = \'CZ\'' in rewritten_sql
 
     @pytest.mark.asyncio
     async def test_flag_on_join_filters_only_the_governed_table(
@@ -1569,7 +1569,7 @@ class TestQueryDataRowLevelSecurity:
         )
 
         rewritten_sql = workspace_manager.execute_query.await_args.args[0]
-        assert 'WHERE country = \'CZ\'' in rewritten_sql
+        assert 'WHERE "country" = \'CZ\'' in rewritten_sql
         assert '"in.c-crm"."unrelated"' in rewritten_sql  # left untouched, not wrapped
 
 
@@ -1711,7 +1711,7 @@ class TestQueryDataColumnLevelSecurity:
 
         assert result.applied_rules == ['in.c-crm.invoices']
         rewritten_sql = workspace_manager.execute_query.await_args.args[0]
-        assert 'SELECT id, amount FROM' in rewritten_sql
+        assert 'SELECT "id", "amount" FROM' in rewritten_sql
         assert 'ssn' not in rewritten_sql
 
     @pytest.mark.asyncio
@@ -1769,4 +1769,4 @@ class TestQueryDataColumnLevelSecurity:
 
         assert result.applied_rules == ['in.c-crm.invoices']
         rewritten_sql = workspace_manager.execute_query.await_args.args[0]
-        assert 'SELECT id, amount, country FROM "in.c-crm"."invoices" WHERE country = \'CZ\'' in rewritten_sql
+        assert 'SELECT "id", "amount", "country" FROM "in.c-crm"."invoices" WHERE "country" = \'CZ\'' in rewritten_sql

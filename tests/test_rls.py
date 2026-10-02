@@ -112,24 +112,26 @@ class TestCompilePrimitive:
     @pytest.mark.parametrize(
         ('condition', 'expected'),
         [
-            ({'column': 'country', 'op': 'eq', 'value': 'CZ'}, "country = 'CZ'"),
-            ({'column': 'country', 'op': 'ne', 'value': 'CZ'}, "country <> 'CZ'"),
-            ({'column': 'amount', 'op': 'gt', 'value': 5}, 'amount > 5'),
-            ({'column': 'amount', 'op': 'gte', 'value': 5}, 'amount >= 5'),
-            ({'column': 'amount', 'op': 'lt', 'value': 5}, 'amount < 5'),
-            ({'column': 'amount', 'op': 'lte', 'value': 5}, 'amount <= 5'),
-            ({'column': 'region', 'op': 'in', 'values': ['CZ', 'SK']}, "region IN ('CZ', 'SK')"),
-            ({'column': 'region', 'op': 'not_in', 'values': ['CZ']}, "NOT region IN ('CZ')"),
-            ({'column': 'deleted_at', 'op': 'is_null'}, 'deleted_at IS NULL'),
-            ({'column': 'deleted_at', 'op': 'is_not_null'}, 'NOT deleted_at IS NULL'),
+            ({'column': 'country', 'op': 'eq', 'value': 'CZ'}, "\"country\" = 'CZ'"),
+            ({'column': 'country', 'op': 'ne', 'value': 'CZ'}, "\"country\" <> 'CZ'"),
+            ({'column': 'amount', 'op': 'gt', 'value': 5}, '"amount" > 5'),
+            ({'column': 'amount', 'op': 'gte', 'value': 5}, '"amount" >= 5'),
+            ({'column': 'amount', 'op': 'lt', 'value': 5}, '"amount" < 5'),
+            ({'column': 'amount', 'op': 'lte', 'value': 5}, '"amount" <= 5'),
+            ({'column': 'region', 'op': 'in', 'values': ['CZ', 'SK']}, "\"region\" IN ('CZ', 'SK')"),
+            ({'column': 'region', 'op': 'not_in', 'values': ['CZ']}, "NOT \"region\" IN ('CZ')"),
+            ({'column': 'deleted_at', 'op': 'is_null'}, '"deleted_at" IS NULL'),
+            ({'column': 'deleted_at', 'op': 'is_not_null'}, 'NOT "deleted_at" IS NULL'),
+            # Quoted so the name is kept exactly: an unquoted column folds to upper case on Snowflake.
+            ({'column': 'MixedCase_id', 'op': 'eq', 'value': 1}, '"MixedCase_id" = 1'),
             ({'true': True}, 'TRUE'),
             (
                 {'and': [{'column': 'a', 'op': 'eq', 'value': 1}, {'column': 'b', 'op': 'eq', 'value': 2}]},
-                'a = 1 AND b = 2',
+                '"a" = 1 AND "b" = 2',
             ),
             (
                 {'or': [{'column': 'a', 'op': 'eq', 'value': 1}, {'column': 'b', 'op': 'eq', 'value': 2}]},
-                'a = 1 OR b = 2',
+                '"a" = 1 OR "b" = 2',
             ),
             (
                 {
@@ -139,7 +141,7 @@ class TestCompilePrimitive:
                         {'column': 'c', 'op': 'eq', 'value': 3},
                     ]
                 },
-                '(a = 1 AND b = 2) AND c = 3',
+                '("a" = 1 AND "b" = 2) AND "c" = 3',
             ),
         ],
     )
@@ -179,8 +181,8 @@ class TestFromMetastore:
             ],
         )
         rules = RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
-        assert rules.tables['in.c-crm.invoices']['petr'] == "country = 'CZ'"
-        assert rules.tables['in.c-crm.invoices']['monika'] == "country = 'DE'"
+        assert rules.tables['in.c-crm.invoices']['petr'] == "\"country\" = 'CZ'"
+        assert rules.tables['in.c-crm.invoices']['monika'] == "\"country\" = 'DE'"
         assert rules.tables['in.c-crm.invoices']['admin'] == 'TRUE'
 
     def test_principals_list_expands_to_individual_entries(self) -> None:
@@ -205,7 +207,7 @@ class TestFromMetastore:
             'SELECT * FROM "in.c-crm"."invoices"', user=email.upper(), dialect='snowflake', rules=rules
         )
 
-        assert "country = 'CZ'" in result.sql
+        assert "\"country\" = 'CZ'" in result.sql
 
     def test_skips_objects_authored_for_a_different_project(self) -> None:
         obj = _policy_object(
@@ -1243,7 +1245,7 @@ class TestComposedRewrite:
             rules=empty_rls,
             cls_rules=cls_rules,
         )
-        assert out.sql == 'SELECT * FROM (SELECT id, amount FROM "in.c-crm"."invoices" WHERE TRUE) AS "invoices"'
+        assert out.sql == 'SELECT * FROM (SELECT "id", "amount" FROM "in.c-crm"."invoices" WHERE TRUE) AS "invoices"'
         assert out.applied_rules == ['in.c-crm.invoices']
 
     def test_both_rls_and_cls_compose_in_one_wrapper(self, rules: RlsRules, cls_rules: ClsRules) -> None:
@@ -1251,7 +1253,7 @@ class TestComposedRewrite:
             'SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect='snowflake', rules=rules, cls_rules=cls_rules
         )
         assert out.sql == (
-            'SELECT * FROM (SELECT id, amount, country FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices"'
+            'SELECT * FROM (SELECT "id", "amount", "country" FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices"'
         )
         assert out.applied_rules == ['in.c-crm.invoices']
 
@@ -1275,7 +1277,7 @@ class TestComposedRewrite:
             rules=rules,
             cls_rules=cls_rules,
         )
-        assert '(SELECT id, amount, country FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS i' in out.sql
+        assert '(SELECT "id", "amount", "country" FROM "in.c-crm"."invoices" WHERE country = \'CZ\') AS i' in out.sql
         assert '"in.c-crm"."unrelated"' in out.sql  # left untouched, not wrapped
         assert out.applied_rules == ['in.c-crm.invoices']
 
