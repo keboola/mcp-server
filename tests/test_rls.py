@@ -192,6 +192,21 @@ class TestFromMetastore:
         assert rules.tables['in.c-crm.invoices']['petr'] == 'TRUE'
         assert rules.tables['in.c-crm.invoices']['monika'] == 'TRUE'
 
+    @pytest.mark.parametrize('email', ['Role_Dev_Go+AgentRO@keboola.com', 'first.last@example.co.uk', "o'brien@x.io"])
+    def test_accepts_email_principals_and_matches_them_case_insensitively(self, email: str) -> None:
+        """A principal is a login email: `@` and `+` must be accepted (the OAuth identity is an email)."""
+        obj = _policy_object(
+            table='in.c-crm.invoices',
+            rules_list=[{'principal': email, 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+        )
+        rules = RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
+        result = rewrite_query(
+            'SELECT * FROM "in.c-crm"."invoices"', user=email.upper(), dialect='snowflake', rules=rules
+        )
+
+        assert "country = 'CZ'" in result.sql
+
     def test_skips_objects_authored_for_a_different_project(self) -> None:
         obj = _policy_object(
             table='in.c-crm.invoices',
@@ -1126,6 +1141,14 @@ class TestClsFromMetastore:
         rules = ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
         assert rules.tables['in.c-crm.invoices']['petr'] == ('id',)
         assert rules.tables['in.c-crm.invoices']['monika'] == ('id',)
+
+    @pytest.mark.parametrize('email', ['role_dev_go+agentro@keboola.com', 'first.last@example.co.uk'])
+    def test_accepts_email_principals(self, email: str) -> None:
+        obj = _cls_policy_object(
+            table='in.c-crm.invoices', rules_list=[{'principal': email, 'visible_columns': ['id']}]
+        )
+        rules = ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+        assert rules.tables['in.c-crm.invoices'][email.lower()] == ('id',)
 
     def test_skips_objects_authored_for_a_different_project(self) -> None:
         obj = _cls_policy_object(
