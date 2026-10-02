@@ -267,7 +267,9 @@ class KeboolaClient:
 
         self._storage_api_url = normalize_storage_api_url(storage_api_url)
         self._hostname_suffix = cast(str, urlparse(self._storage_api_url).hostname).split('connection.')[1]
-        metastore_api_url = urlunparse(('https', f'metastore.{self._hostname_suffix}', '', '', '', ''))
+        metastore_api_url = self._metastore_api_url = urlunparse(
+            ('https', f'metastore.{self._hostname_suffix}', '', '', '', '')
+        )
         queue_api_url = urlunparse(('https', f'queue.{self._hostname_suffix}', '', '', '', ''))
         ai_service_api_url = urlunparse(('https', f'ai.{self._hostname_suffix}', '', '', '', ''))
         data_science_api_url = urlunparse(('https', f'data-science.{self._hostname_suffix}', '', '', '', ''))
@@ -453,18 +455,10 @@ class KeboolaClient:
         :param kubernetes_token_path: Path to the projected ServiceAccount token file.
         :raises ValueError: If the token file is empty.
         """
-        if not is_same_stack(self._storage_api_url, self._own_stack_storage_api_url):
-            LOG.warning(
-                f'Not sending the Kubernetes ServiceAccount step-up header to "{self._storage_api_url}": '
-                f"it is not the Storage API URL of this server's own stack "
-                f'({self._own_stack_storage_api_url or "not configured"}).'
-            )
+        headers = self._step_up_headers(kubernetes_token_path)
+        if headers is None:
             return self.writable_storage_client
 
-        jwt = read_service_account_jwt(kubernetes_token_path)
-
-        headers = dict(self._headers or {})
-        headers['X-Kubernetes-Authorization'] = f'Bearer {jwt}'
         return AsyncStorageClient.create(
             root_url=self._storage_api_url,
             # Bearer, not the raw legacy_storage_token: for a programmatic (kbc_at_/kbc_pat_) session
@@ -475,6 +469,51 @@ class KeboolaClient:
             headers=headers,
             readonly=None,
         )
+
+    def step_up_metastore_client(self, kubernetes_token_path: str) -> 'MetastoreClient':
+        """
+        Returns a Metastore client that keeps this client's user token and additionally sends the
+        projected Kubernetes ServiceAccount JWT as the X-Kubernetes-Authorization step-up header.
+
+        The metastore only serves `rls-policy` / `cls-policy` objects to organization / project admins
+        on the user's own token; a SA-verified request is served the policies visible to the calling
+        project regardless of the user's role. Without it a regular member sees no policies at all, so
+        a governed table would look ungoverned. The same own-stack guard as `step_up_storage_client()`
+        applies; when it fails (or the server runs locally) the plain client is returned.
+
+        :param kubernetes_token_path: Path to the projected ServiceAccount token file.
+        :raises ValueError: If the token file is empty.
+        """
+        headers = self._step_up_headers(kubernetes_token_path)
+        if headers is None:
+            return self.metastore_client
+
+        return MetastoreClient.create(
+            root_url=self._metastore_api_url,
+            token=self._bearer_or_sapi_token,
+            branch_id=self._branch_id,
+            headers=headers,
+            readonly=None,
+        )
+
+    def _step_up_headers(self, kubernetes_token_path: str) -> dict[str, Any] | None:
+        """
+        Request headers extended with the Kubernetes ServiceAccount step-up header, or None when this
+        session does not talk to the server's own stack (the JWT is a credential of the deployment and
+        must never be sent anywhere else). The token file is read on each call so kubelet rotation
+        needs no restart.
+        """
+        if not is_same_stack(self._storage_api_url, self._own_stack_storage_api_url):
+            LOG.warning(
+                f'Not sending the Kubernetes ServiceAccount step-up header to "{self._storage_api_url}": '
+                f"it is not the Storage API URL of this server's own stack "
+                f'({self._own_stack_storage_api_url or "not configured"}).'
+            )
+            return None
+
+        headers = dict(self._headers or {})
+        headers['X-Kubernetes-Authorization'] = f'Bearer {read_service_account_jwt(kubernetes_token_path)}'
+        return headers
 
     @property
     def jobs_queue_client(self) -> 'JobsQueueClient':

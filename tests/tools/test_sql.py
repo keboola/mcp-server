@@ -1432,6 +1432,37 @@ class TestQueryDataRowLevelSecurity:
             on_job_submitted=None,
         )
 
+    @pytest.mark.parametrize('deployed', [True, False])
+    @pytest.mark.asyncio
+    async def test_policies_are_read_with_sa_step_up_only_when_deployed(
+        self,
+        deployed: bool,
+        monkeypatch: pytest.MonkeyPatch,
+        mcp_context_client: Context,
+        keboola_client: KeboolaClient,
+        workspace_manager: WorkspaceManager,
+    ) -> None:
+        if deployed:
+            monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/sa-token')
+        else:
+            monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        keboola_client.has_feature.return_value = True
+        keboola_client.metastore_client.list_objects.return_value = []
+        stepped = keboola_client.step_up_metastore_client.return_value
+        stepped.list_objects = AsyncMock(return_value=[])
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+
+        await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+
+        if deployed:
+            keboola_client.step_up_metastore_client.assert_called_once_with('/var/run/sa-token')
+            assert stepped.list_objects.await_count == 2  # rls-policy + cls-policy
+            keboola_client.metastore_client.list_objects.assert_not_called()
+        else:
+            keboola_client.step_up_metastore_client.assert_not_called()
+            assert keboola_client.metastore_client.list_objects.await_count == 2
+
     @pytest.mark.asyncio
     async def test_flag_on_no_applicable_policy_is_unfiltered(
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
