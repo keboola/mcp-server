@@ -632,6 +632,77 @@ async def test_oauth_callback_handler_propagates_http_exception(mocker) -> None:
     assert exc.value.detail == 'Invalid state parameter'
 
 
+@pytest.mark.parametrize(
+    ('error', 'expected_text'),
+    [
+        ('temporarily_unavailable', 'temporarily unavailable'),
+        # the user clicked Deny on Connection's consent screen -- not an outage
+        ('access_denied', 'authorization was denied'),
+    ],
+)
+@pytest.mark.asyncio
+async def test_oauth_callback_handler_renders_error_param_without_invoking_callback(
+    mocker, error: str, expected_text: str
+) -> None:
+    """Regression test for the AI-2883 open-redirect fix: SimpleOAuthProvider.authorize() redirects
+    a Connection-check failure to this server's own /oauth/callback with an `error=` param (never to
+    the caller-supplied redirect_uri -- see that method's docstring). This route must render that as
+    a human-readable 400 HTML page (a person's browser lands here, not the MCP client -- Devin review
+    finding, AI-2883) and must NEVER call handle_oauth_callback() for it -- that method expects a
+    real `code`/`state` pair and calling it here would be meaningless at best."""
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    oauth_provider = mocker.Mock()
+    oauth_provider.handle_oauth_callback = mocker.AsyncMock()
+    routes = CustomRoutes(server_state=server_state, oauth_provider=oauth_provider)
+
+    request = Request(
+        {
+            'type': 'http',
+            'headers': [],
+            'query_string': f'error={error}&error_description=Could+not+verify+OAuth+client'.encode(),
+        }
+    )
+    response = await routes.oauth_callback_handler(request)
+
+    assert response.status_code == 400
+    assert response.headers['content-type'].startswith('text/html')
+    body = response.body.decode()
+    # error_description ('Could not verify OAuth client') is deliberately NOT rendered -- see
+    # the next test -- only the fixed generic message is.
+    assert 'Could not verify OAuth client' not in body
+    assert expected_text in body.lower()
+    if error == 'access_denied':
+        assert 'unavailable' not in body.lower()
+    oauth_provider.handle_oauth_callback.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_handler_never_reflects_caller_supplied_error_description(mocker) -> None:
+    """error_description is a caller-controlled query param; anyone can link
+    `/oauth/callback?error=x&error_description=<arbitrary text>` and have it rendered under a
+    trusted "Keboola login temporarily unavailable" heading -- content spoofing, not XSS, so
+    HTML-escaping it wouldn't be enough. It must never appear in the response body at all, escaped
+    or not (Vojtěch Biberle + Devin review, AI-2883)."""
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    oauth_provider = mocker.Mock()
+    oauth_provider.handle_oauth_callback = mocker.AsyncMock()
+    routes = CustomRoutes(server_state=server_state, oauth_provider=oauth_provider)
+
+    request = Request(
+        {
+            'type': 'http',
+            'headers': [],
+            'query_string': b'error=temporarily_unavailable&error_description=%3Cscript%3Ealert(1)%3C%2Fscript%3E',
+        }
+    )
+    response = await routes.oauth_callback_handler(request)
+
+    body = response.body.decode()
+    assert '<script>' not in body
+    assert '&lt;script&gt;' not in body
+    assert 'alert(1)' not in body
+
+
 class TestCreateServerOAuthSessionStore:
     """OAuth sessions live in Postgres (oauth_session_persistence RFC) -- create_server() must
     refuse to enable OAuth without a DSN rather than silently falling back to something unrevoked."""
