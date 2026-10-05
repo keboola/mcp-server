@@ -1563,6 +1563,24 @@ class TestQueryDataRowLevelSecurity(_DeployedServer):
         workspace_manager.execute_query.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_flag_on_no_identity_still_runs_a_query_that_touches_no_governed_table(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                self._policy(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
+            ],
+        )
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        workspace_manager.execute_query.return_value = self._ok_result([{'x': 1}])
+
+        await query_data('SELECT CURRENT_TIMESTAMP()', 'q', mcp_context_client)
+
+        workspace_manager.execute_query.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_flag_on_governed_table_no_rule_for_principal_is_refused(
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
     ) -> None:

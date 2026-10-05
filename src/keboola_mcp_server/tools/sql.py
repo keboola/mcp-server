@@ -21,7 +21,6 @@ from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.mcp import get_http_request_or_none
 from keboola_mcp_server.rls import (
-    ACCESS_DENIED_MESSAGE,
     ClsRules,
     RlsRules,
     references_governed_table,
@@ -339,11 +338,10 @@ async def _apply_rls(
         # query touches -- behave exactly like today's unfiltered query_data, no rewrite attempted.
         return sql_query, []
 
-    principal = ctx.session.state.get(OAUTH_USER_EMAIL_KEY)
-    if not principal:
-        reason = 'this session has no resolvable login identity'
-        _log_rls_outcome('refused', query_name=query_name, principal=None, reason=reason)
-        raise ValueError(ACCESS_DENIED_MESSAGE)
+    # A session without a login identity gets the empty principal: no rule is ever keyed by it, so any
+    # governed table is refused ("Access denied") by the rewrite itself, while a query touching no
+    # governed table (`SELECT 1`) still runs.
+    principal = ctx.session.state.get(OAUTH_USER_EMAIL_KEY) or ''
     try:
         try:
             # sqlglot parsing/transformation is CPU-bound and holds the GIL only in short bursts,
