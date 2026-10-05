@@ -16,6 +16,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
+from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 
@@ -27,6 +28,7 @@ from keboola_mcp_server.mcp import (
     SessionStateMiddleware,
     _SerializingFunctionTool,
 )
+from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.server import CustomRoutes, create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
@@ -703,6 +705,48 @@ async def test_oauth_callback_handler_never_reflects_caller_supplied_error_descr
     assert '<script>' not in body
     assert '&lt;script&gt;' not in body
     assert 'alert(1)' not in body
+
+
+@pytest.mark.parametrize(
+    ('redirect_uri', 'expected_status'),
+    [
+        # fails SDK validation (no code_challenge) -> SDK would 302 to the caller-supplied URI
+        ('https://attacker.example/cb', 400),
+        ('https://mcp.example/callback', 302),
+    ],
+)
+def test_add_to_starlette_guards_root_authorize_route(redirect_uri: str, expected_status: int) -> None:
+    """Vojtěch Biberle's blocking review finding (AI-2883): the root-level /authorize route is added
+    to the outer Starlette app by add_to_starlette(), bypassing the provider's get_middleware() (which
+    only wraps the mounted /mcp app), so an invalid request could still be redirected off-origin."""
+    from starlette.testclient import TestClient
+
+    from tests.test_oauth import JWT_KEY, FakeSessionStore
+
+    oauth_provider = SimpleOAuthProvider(
+        storage_api_url='https://sapi',
+        mcp_server_url='https://mcp.example',
+        callback_endpoint='/callback',
+        client_id='mcp-server-id',
+        client_secret='mcp-server-secret',
+        server_url='https://oauth.example',
+        scope='scope',
+        jwt_secret=JWT_KEY,
+        session_store=FakeSessionStore(),
+    )
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    app = Starlette()
+    CustomRoutes(server_state=server_state, oauth_provider=oauth_provider).add_to_starlette(app)
+
+    response = TestClient(app, raise_server_exceptions=False).get(
+        '/authorize',
+        params={'client_id': 'x', 'redirect_uri': redirect_uri, 'response_type': 'code'},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == expected_status
+    if expected_status == 400:
+        assert 'attacker.example' not in response.headers.get('location', '')
 
 
 class TestCreateServerOAuthSessionStore:
