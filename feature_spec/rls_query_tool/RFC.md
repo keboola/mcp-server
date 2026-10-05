@@ -672,4 +672,16 @@ they conflict.
 - **Policy columns are quoted.** The predicate and the CLS projection quote column names, so a column is
   taken exactly as the policy spells it (Snowflake would otherwise fold `id` to `ID`). Column names in a
   policy are therefore case-sensitive and must match Storage.
+- **Authorship, as the metastore actually enforces it.** The `rls-policy` / `cls-policy` schema ACLs let an
+  organization admin author policies at `organization` or `targeted` scope, and additionally let the owning
+  project's admin create/update/delete `targeted` policies for that project (AI-3965). Organization scope and
+  cross-project grants (`manageGrants`) stay organization-admin only. This supersedes the earlier "never a
+  project admin" wording; if that stricter rule is wanted, the schema ACL is where to change it.
+- **The enforcement boundary fails closed.** A policy whose project cannot be determined (neither
+  `source_project_id` nor `target_project_ids`) and a rule carrying both `principal` and `principals` are
+  rejected rather than skipped or silently resolved. The pre-check that decides whether a query needs the
+  rewrite also treats everything it cannot see into as "governed" -- an unparseable statement, a non-query
+  statement (`EXECUTE IMMEDIATE`, `CALL`, ...) and a dynamically named table (`IDENTIFIER(...)`,
+  `RESULT_SCAN(...)`, `TABLE(...)`) -- so the strict rewrite refuses them. Policies are only evaluated on a
+  deployed server (Kubernetes SA step-up); anywhere else a project with the feature refuses the query.
 

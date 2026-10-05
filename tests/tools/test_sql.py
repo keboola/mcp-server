@@ -1396,7 +1396,17 @@ def _stub_metastore_objects(
     keboola_client.metastore_client.list_objects.side_effect = _list_objects
 
 
-class TestQueryDataRowLevelSecurity:
+class _DeployedServer:
+    """RLS/CLS policies are only evaluated on a deployed server (Kubernetes SA step-up). These tests exercise
+    everything after that, so the step-up hands back the same mocked metastore client."""
+
+    @pytest.fixture(autouse=True)
+    def _deployed(self, monkeypatch: pytest.MonkeyPatch, keboola_client: KeboolaClient) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/sa-token')
+        keboola_client.step_up_metastore_client = MagicMock(return_value=keboola_client.metastore_client)
+
+
+class TestQueryDataRowLevelSecurity(_DeployedServer):
     """`query_data`'s RLS integration (see `_apply_rls`, `feature_spec/rls_query_tool/RFC.md`):
     off unless the project has the feature flag on AND the query touches a table a policy names.
     """
@@ -1439,36 +1449,45 @@ class TestQueryDataRowLevelSecurity:
             on_job_submitted=None,
         )
 
-    @pytest.mark.parametrize('deployed', [True, False])
     @pytest.mark.asyncio
-    async def test_policies_are_read_with_sa_step_up_only_when_deployed(
+    async def test_policies_are_read_with_the_sa_step_up(
         self,
-        deployed: bool,
-        monkeypatch: pytest.MonkeyPatch,
         mcp_context_client: Context,
         keboola_client: KeboolaClient,
         workspace_manager: WorkspaceManager,
     ) -> None:
-        if deployed:
-            monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/sa-token')
-        else:
-            monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
         keboola_client.has_feature.return_value = True
-        keboola_client.metastore_client.list_objects.return_value = []
-        stepped = keboola_client.step_up_metastore_client.return_value
+        stepped = MagicMock()
         stepped.list_objects = AsyncMock(return_value=[])
+        keboola_client.step_up_metastore_client = MagicMock(return_value=stepped)
         workspace_manager.get_sql_dialect.return_value = 'snowflake'
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
 
         await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
 
-        if deployed:
-            keboola_client.step_up_metastore_client.assert_called_once_with('/var/run/sa-token')
-            assert stepped.list_objects.await_count == 2  # rls-policy + cls-policy
-            keboola_client.metastore_client.list_objects.assert_not_called()
-        else:
-            keboola_client.step_up_metastore_client.assert_not_called()
-            assert keboola_client.metastore_client.list_objects.await_count == 2
+        keboola_client.step_up_metastore_client.assert_called_once_with('/var/run/sa-token')
+        assert stepped.list_objects.await_count == 2  # rls-policy + cls-policy
+        keboola_client.metastore_client.list_objects.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_not_a_deployed_server_refuses_instead_of_reading_policies_unprivileged(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mcp_context_client: Context,
+        keboola_client: KeboolaClient,
+        workspace_manager: WorkspaceManager,
+    ) -> None:
+        """Without the SA step-up the metastore shows a regular member no policies, which would read as
+        "nothing is governed" and run the query unfiltered -- so the query is refused."""
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        keboola_client.has_feature.return_value = True
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+
+        with pytest.raises(ValueError, match='deployed MCP server'):
+            await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+
+        keboola_client.metastore_client.list_objects.assert_not_called()
+        workspace_manager.execute_query.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_flag_on_no_applicable_policy_is_unfiltered(
@@ -1578,7 +1597,7 @@ class TestQueryDataRowLevelSecurity:
         assert '"in.c-crm"."unrelated"' in rewritten_sql  # left untouched, not wrapped
 
 
-class TestQueryDataSchemaDrift:
+class TestQueryDataSchemaDrift(_DeployedServer):
     """`_log_schema_drift`'s integration into `query_data` (Phase 1.5, see
     `feature_spec/rls_query_tool/RFC.md` "Data-contract maturity"): a diagnostic-only warning when
     an RLS-matched table's policy references a column the table no longer has. Never changes what
@@ -1672,7 +1691,7 @@ class TestQueryDataSchemaDrift:
         await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
 
 
-class TestQueryDataColumnLevelSecurity:
+class TestQueryDataColumnLevelSecurity(_DeployedServer):
     """`query_data`'s CLS integration (`_apply_rls` fetching `cls-policy` alongside `rls-policy`,
     see `feature_spec/rls_query_tool/RFC.md` "Column-Level Security"): same two-level opt-in as
     RLS, same `RLS_FEATURE` flag, composed into the same wrapper when both apply to a table.

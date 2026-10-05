@@ -110,6 +110,42 @@ class RlsAccessDenied(RlsError):
     """The caller has no rule for a governed table. The detail goes to the log, never to the caller."""
 
 
+def _applies_to_project(obj: Any, *, project_id: int, label: str, obj_id: str) -> bool:
+    """Whether a policy object applies to `project_id`: its `source_project_id` is the project, or the
+    project is among its `target_project_ids`.
+
+    Fails closed when that cannot be decided (no `meta`, or neither field set): this loader is the
+    enforcement boundary, so a malformed or legacy policy must refuse the query, not be skipped and
+    leave its table unfiltered.
+    """
+    meta = getattr(obj, 'meta', None)
+    source = getattr(meta, 'source_project_id', None)
+    targets = getattr(meta, 'target_project_ids', None) or ()
+    if source is None and not targets:
+        raise RlsError(
+            f"{label}: metastore object '{obj_id}' has neither a source_project_id nor target_project_ids, "
+            'so it cannot be matched to a project'
+        )
+    return source == project_id or project_id in targets
+
+
+def _rule_principals(rule: Mapping[str, Any], *, label: str, obj_id: str) -> Sequence[Any]:
+    """The principal(s) a rule applies to: exactly one of `principal` / `principals` (the schema's
+    `oneOf`). Both or neither is rejected -- silently preferring one would apply a different access
+    rule than the author wrote."""
+    principals_raw = rule.get('principals')
+    principal_raw = rule.get('principal')
+    if principals_raw is not None and principal_raw is not None:
+        raise RlsError(f"{label}: metastore object '{obj_id}' has a rule with both 'principal' and 'principals'")
+    if principals_raw is not None:
+        if not isinstance(principals_raw, Sequence) or isinstance(principals_raw, (str, bytes)) or not principals_raw:
+            raise RlsError(f"{label}: metastore object '{obj_id}' has an invalid 'principals': {rule!r}")
+        return principals_raw
+    if isinstance(principal_raw, str) and principal_raw:
+        return [principal_raw]
+    raise RlsError(f"{label}: metastore object '{obj_id}' has a rule with no principal(s): {rule!r}")
+
+
 def _clean_error(error: Exception) -> str:
     """A sqlglot error message fit to put in front of a user (or a model).
 
@@ -329,14 +365,9 @@ class RlsRules:
         tables: dict[str, dict[str, str]] = {}
         table_ids: dict[str, str] = {}
         for obj in objects:
-            meta = getattr(obj, 'meta', None)
-            applies = meta is not None and (
-                getattr(meta, 'source_project_id', None) == project_id
-                or project_id in (getattr(meta, 'target_project_ids', None) or ())
-            )
-            if not applies:
-                continue
             obj_id = getattr(obj, 'id', None) or '<unknown>'
+            if not _applies_to_project(obj, project_id=project_id, label='RLS', obj_id=obj_id):
+                continue
             data = getattr(obj, 'attributes', None)
             if not isinstance(data, Mapping):
                 raise RlsError(f"RLS: metastore object '{obj_id}' has no attributes")
@@ -369,20 +400,7 @@ class RlsRules:
             for rule in rules_raw:
                 if not isinstance(rule, Mapping):
                     raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid rule entry: {rule!r}")
-                principals_raw = rule.get('principals')
-                principal_raw = rule.get('principal')
-                if principals_raw is not None:
-                    if (
-                        not isinstance(principals_raw, Sequence)
-                        or isinstance(principals_raw, (str, bytes))
-                        or not principals_raw
-                    ):
-                        raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid 'principals': {rule!r}")
-                    names: Sequence[Any] = principals_raw
-                elif isinstance(principal_raw, str) and principal_raw:
-                    names = [principal_raw]
-                else:
-                    raise RlsError(f"RLS: metastore object '{obj_id}' has a rule with no principal(s): {rule!r}")
+                names = _rule_principals(rule, label='RLS', obj_id=obj_id)
                 predicate = _compile_primitive(rule.get('condition'), dialect=dialect).sql(dialect=dialect)
                 for name in names:
                     if not isinstance(name, str) or not _PRINCIPAL_RE.match(name):
@@ -504,14 +522,9 @@ class ClsRules:
         tables: dict[str, dict[str, tuple[str, ...]]] = {}
         table_ids: dict[str, str] = {}
         for obj in objects:
-            meta = getattr(obj, 'meta', None)
-            applies = meta is not None and (
-                getattr(meta, 'source_project_id', None) == project_id
-                or project_id in (getattr(meta, 'target_project_ids', None) or ())
-            )
-            if not applies:
-                continue
             obj_id = getattr(obj, 'id', None) or '<unknown>'
+            if not _applies_to_project(obj, project_id=project_id, label='CLS', obj_id=obj_id):
+                continue
             data = getattr(obj, 'attributes', None)
             if not isinstance(data, Mapping):
                 raise RlsError(f"CLS: metastore object '{obj_id}' has no attributes")
@@ -540,20 +553,7 @@ class ClsRules:
             for rule in rules_raw:
                 if not isinstance(rule, Mapping):
                     raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid rule entry: {rule!r}")
-                principals_raw = rule.get('principals')
-                principal_raw = rule.get('principal')
-                if principals_raw is not None:
-                    if (
-                        not isinstance(principals_raw, Sequence)
-                        or isinstance(principals_raw, (str, bytes))
-                        or not principals_raw
-                    ):
-                        raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid 'principals': {rule!r}")
-                    names: Sequence[Any] = principals_raw
-                elif isinstance(principal_raw, str) and principal_raw:
-                    names = [principal_raw]
-                else:
-                    raise RlsError(f"CLS: metastore object '{obj_id}' has a rule with no principal(s): {rule!r}")
+                names = _rule_principals(rule, label='CLS', obj_id=obj_id)
                 columns_raw = rule.get('visible_columns')
                 if not isinstance(columns_raw, Sequence) or isinstance(columns_raw, (str, bytes)) or not columns_raw:
                     raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid 'visible_columns': {rule!r}")
@@ -942,21 +942,23 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
     every query the moment a project has any policy configured. `cls_rules` is optional so every
     existing RLS-only call site needs no change.
 
-    Deliberately lenient about *shape*: unlike `rewrite_query`, this does not require a single
-    `SELECT` statement, and does not reject multi-statement input or exotic FROM sources -- it only
-    asks "is a governed table's name present in this parse tree at all," so it never falsely says
-    "no" for a query `rewrite_query` would in fact need to touch. A query that fails to parse
-    entirely returns `False`: RLS cannot reason about it either way, and a query this malformed
-    would fail at the backend regardless -- exactly the same outcome plain `query_data` already has
-    for it today, not a new gap.
+    Lenient about *shape* only where that cannot hide a governed table: it does not require a single
+    `SELECT` and ignores ordinary table functions (`LATERAL FLATTEN`, `UNNEST`, ...), so a query that
+    touches no governed table behaves exactly like plain `query_data`. It fails CLOSED -- returns
+    `True`, routing the query into `rewrite_query()`, which refuses it -- for everything whose
+    tables this cannot see: a parse failure (the warehouse may accept syntax sqlglot rejects), a
+    statement that is not a query (`EXECUTE IMMEDIATE`, `CALL`, ... can read any table through
+    dynamic SQL), and a table named dynamically (`IDENTIFIER(...)`, `RESULT_SCAN(...)`).
     """
     try:
         statements = sqlglot.parse(sql, dialect=dialect)
     except sqlglot.errors.SqlglotError:
-        return False
+        return True
     for statement in statements:
         if statement is None:
             continue
+        if not isinstance(statement, exp.Query) or _names_table_dynamically(statement):
+            return True
         for table in statement.find_all(exp.Table):
             if table.db and (
                 rules.is_governed(table_name=table.name, schema=table.db)
@@ -964,6 +966,19 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
             ):
                 return True
     return False
+
+
+# Table-valued functions that pick the table they read at run time, so its name is never in the SQL.
+_DYNAMIC_TABLE_FUNCTIONS = frozenset({'IDENTIFIER', 'RESULT_SCAN'})
+
+
+def _names_table_dynamically(statement: exp.Expression) -> bool:
+    """Whether a statement reads a table whose name is only known at run time."""
+    if any(not isinstance(table.this, exp.Identifier) for table in statement.find_all(exp.Table)):
+        return True
+    if next(statement.find_all(exp.TableFromRows), None) is not None:  # TABLE(...): the table is a function result
+        return True
+    return any(fn.name.upper() in _DYNAMIC_TABLE_FUNCTIONS for fn in statement.find_all(exp.Anonymous))
 
 
 def rewrite_query(

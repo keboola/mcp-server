@@ -14,6 +14,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, MetadataField, ServerRuntimeInfo
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.rls import ClsRules, RlsRules
+from keboola_mcp_server.rls_policies import RLS_FEATURE
 from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import (
@@ -1902,7 +1903,7 @@ async def test_list_buckets_storage_branches(mocker: MockerFixture, mcp_context_
     branch_id = '35403'
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.branch_id = branch_id
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    keboola_client.has_feature = mocker.AsyncMock(side_effect=lambda feature: feature != RLS_FEATURE)
 
     prod_buckets = _get_sb_prod_buckets()
     branch_buckets = _get_sb_branch_buckets(branch_id)
@@ -1942,7 +1943,7 @@ async def test_find_buckets_storage_branches(mocker: MockerFixture, mcp_context_
     branch_id = '35403'
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.branch_id = branch_id
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    keboola_client.has_feature = mocker.AsyncMock(side_effect=lambda feature: feature != RLS_FEATURE)
 
     prod_bucket = _get_sb_prod_buckets()[1]  # out.c-model
     branch_bucket = _get_sb_branch_buckets(branch_id)[0]  # out.c-model (branch)
@@ -1982,7 +1983,7 @@ async def test_get_table_storage_branches(mocker: MockerFixture, mcp_context_cli
     branch_id = '35403'
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.branch_id = branch_id
-    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    keboola_client.has_feature = mocker.AsyncMock(side_effect=lambda feature: feature != RLS_FEATURE)
 
     branch_table = {
         'id': 'out.c-model.customers',
