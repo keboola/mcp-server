@@ -426,6 +426,24 @@ class TestIsGovernedAndReferencesGovernedTable:
 
         assert out.startswith('SELECT "invoices".* FROM (SELECT * FROM "in.c-crm"."invoices" WHERE')
 
+    @pytest.mark.parametrize(
+        ('dialect', 'sql'),
+        [
+            ('snowflake', 'SELECT QUERY_TEXT FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY'),
+            ('snowflake', 'SELECT QUERY_TEXT FROM "DB".INFORMATION_SCHEMA.QUERY_HISTORY_BY_USER'),
+            ('bigquery', 'SELECT query FROM `region-us`.INFORMATION_SCHEMA.JOBS'),
+            ('bigquery', 'SELECT query FROM `proj`.`region-us`.INFORMATION_SCHEMA.JOBS_BY_USER'),
+        ],
+    )
+    def test_query_history_sources_are_refused(
+        self, rules: RlsRules, bq_rules: RlsRules, dialect: str, sql: str
+    ) -> None:
+        """Query history holds the REWRITTEN text of earlier queries, i.e. the injected predicate."""
+        r = bq_rules if dialect == 'bigquery' else rules
+        assert references_governed_table(sql, dialect=dialect, rules=r) is True
+        with pytest.raises(RlsError, match='query history'):
+            rewrite_query(sql, user='petr', dialect=dialect, rules=r)
+
     def test_references_governed_table_true_for_a_catalog_function_next_to_an_ungoverned_table(
         self, rules: RlsRules
     ) -> None:
