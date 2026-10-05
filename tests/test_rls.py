@@ -214,17 +214,6 @@ class TestFromMetastore:
 
         assert "\"country\" = 'CZ'" in result.sql
 
-    @pytest.mark.parametrize('source', [None])
-    def test_policy_that_cannot_be_matched_to_a_project_fails_closed(self, source) -> None:
-        """No source_project_id and no target_project_ids: skipping it would leave its table unfiltered."""
-        obj = _policy_object(
-            table='in.c-crm.invoices',
-            rules_list=[{'principal': 'petr', 'condition': {'true': True}}],
-            source_project_id=source,
-        )
-        with pytest.raises(RlsError, match='cannot be matched to a project'):
-            RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
-
     @pytest.mark.parametrize('scope', ['organization', 'targeted', None])
     def test_supported_scopes_are_accepted(self, scope) -> None:
         obj = _policy_object(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
@@ -261,16 +250,6 @@ class TestFromMetastore:
         with pytest.raises(RlsError, match="unsupported scope 'project'"):
             ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
-    def test_policy_with_no_meta_at_all_fails_closed(self) -> None:
-        obj = MetastoreObject(
-            type='rls-policy',
-            id='obj-1',
-            attributes={'table': 'in.c-crm.invoices', 'dialect': 'snowflake', 'rules': []},
-            meta=MetaObjectMeta(),
-        )
-        with pytest.raises(RlsError, match='cannot be matched to a project'):
-            RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
-
     @pytest.mark.parametrize('bad_table', ['in.c-crm.invoices\n', 'in.c-crm.invoices\n\n', '\nin.c-crm.invoices'])
     def test_a_table_key_with_a_newline_is_rejected_not_stored_under_a_key_nothing_matches(
         self, bad_table: str
@@ -297,24 +276,32 @@ class TestFromMetastore:
         with pytest.raises(RlsError, match="both 'principal' and 'principals'"):
             RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
-    def test_skips_objects_authored_for_a_different_project(self) -> None:
+    @pytest.mark.parametrize('target_project_ids', [None, (2, 3)])
+    def test_a_policy_granted_from_another_project_is_enforced(self, target_project_ids) -> None:
+        """The metastore's project-scoped list returns what the project owns, was granted or inherits. For a
+        project that sees a policy only through a grant, `projectId` is the AUTHORING project and
+        `targetProjectIds` is omitted, so the object must be applied as listed -- filtering it out would
+        leave its table silently ungoverned."""
         obj = _policy_object(
             table='in.c-crm.invoices',
             rules_list=[{'principal': 'petr', 'condition': {'true': True}}],
             source_project_id=1,
-        )
-        rules = RlsRules.from_metastore([obj], dialect='snowflake', project_id=2)
-        assert rules.tables == {}
-
-    def test_targeted_scope_applies_only_to_listed_projects(self) -> None:
-        obj = _policy_object(
-            table='in.c-crm.invoices',
-            rules_list=[{'principal': 'petr', 'condition': {'true': True}}],
-            source_project_id=1,
-            target_project_ids=(2, 3),
+            target_project_ids=target_project_ids,
         )
         assert 'in.c-crm.invoices' in RlsRules.from_metastore([obj], dialect='snowflake', project_id=2).tables
-        assert RlsRules.from_metastore([obj], dialect='snowflake', project_id=99).tables == {}
+
+    def test_a_policy_with_no_project_information_is_still_enforced(self) -> None:
+        obj = MetastoreObject(
+            type='rls-policy',
+            id='obj-1',
+            attributes={
+                'table': 'in.c-crm.invoices',
+                'dialect': 'snowflake',
+                'rules': [{'principal': 'petr', 'condition': {'true': True}}],
+            },
+            meta=MetaObjectMeta(),
+        )
+        assert 'in.c-crm.invoices' in RlsRules.from_metastore([obj], dialect='snowflake', project_id=1).tables
 
     def test_normalizes_bigquery_schema(self) -> None:
         obj = _policy_object(
@@ -1483,15 +1470,6 @@ class TestClsFromMetastore:
         rules = ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
         assert rules.tables['in.c-crm.invoices'][email.lower()] == ('id',)
 
-    def test_policy_that_cannot_be_matched_to_a_project_fails_closed(self) -> None:
-        obj = _cls_policy_object(
-            table='in.c-crm.invoices',
-            rules_list=[{'principal': 'petr', 'visible_columns': ['id']}],
-            source_project_id=None,
-        )
-        with pytest.raises(RlsError, match='cannot be matched to a project'):
-            ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
-
     def test_rule_with_both_principal_and_principals_is_rejected(self) -> None:
         obj = _cls_policy_object(
             table='in.c-crm.invoices',
@@ -1500,14 +1478,13 @@ class TestClsFromMetastore:
         with pytest.raises(RlsError, match="both 'principal' and 'principals'"):
             ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
-    def test_skips_objects_authored_for_a_different_project(self) -> None:
+    def test_a_policy_granted_from_another_project_is_enforced(self) -> None:
         obj = _cls_policy_object(
             table='in.c-crm.invoices',
             rules_list=[{'principal': 'petr', 'visible_columns': ['id']}],
             source_project_id=1,
         )
-        rules = ClsRules.from_metastore([obj], dialect='snowflake', project_id=2)
-        assert rules.tables == {}
+        assert 'in.c-crm.invoices' in ClsRules.from_metastore([obj], dialect='snowflake', project_id=2).tables
 
     def test_normalizes_bigquery_schema(self) -> None:
         obj = _cls_policy_object(

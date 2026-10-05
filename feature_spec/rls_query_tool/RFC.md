@@ -150,17 +150,18 @@ ways, redundantly:
   `project` and `targeted` scope currently alias to the same ACL hint — moot here since `project`
   scope is never used for this type.
 
-Because `organization` scope makes an object visible to *every* project in the org
-(`project_id IS NULL` in the metastore's own read-enforcement predicate), and a `<bucket>.<table>`
-key is not guaranteed unique across an org's projects, the MCP server must not match a fetched
-policy on table-key text alone. Every policy also carries `source_project_id`
-(`MetaObjectMeta.source_project_id`, already part of the metastore's object metadata) recording
-which project it was actually written for. The MCP server applies a fetched policy to the current
-project only when `source_project_id` matches it, or the current project is listed in
-`target_project_ids` for a `targeted` policy — never merely because the table name matches.
-`targeted` is the mechanism for deliberately sharing one org-authored policy across specific
-sibling customer projects; plain `organization` scope means "applies only where its
-`source_project_id` says," not "applies everywhere."
+Which policies apply to the current project is decided by the metastore, not re-derived here. The
+SA-verified list is scoped to the calling project: objects it owns, objects granted to it
+(`targeted`), and `organization`-scope objects, which are visible to every project in the org by
+design. The MCP server applies **every** object that list returns. It must not filter again on
+`source_project_id` / `target_project_ids`: for a project that sees a policy only through a grant the
+metastore sets `projectId` to the authoring project and omits `targetProjectIds` (that project has no
+need to know who else was granted access), so such a filter would drop exactly the granted policies and
+leave their tables silently ungoverned. `targeted` is the mechanism for deliberately sharing one
+org-authored policy with specific sibling customer projects; `organization` scope means org-wide, and a
+project opts in to enforcement only through the `row-level-security` project feature. Because an
+org-wide `<bucket>.<table>` key is not guaranteed unique across an org's projects, org-wide scope is a
+deliberate choice an admin makes, not a default.
 
 Branch-awareness is inherited automatically from the metastore (every object type gets it), so a
 policy change can be drafted/tested in a dev branch first.
@@ -181,8 +182,8 @@ RLS must never be an accidental default. It is off unless *both* of these are tr
    `tools/search.py` gates its textual-search path on `GLOBAL_SEARCH_FEATURE`. Add
    `'row-level-security'` to that set. Without it, `query_data` never even looks up
    `rls-policy` objects — behavior is byte-for-byte identical to today.
-2. **The specific table has an applicable `rls-policy` object** — one whose `source_project_id`
-   matches the current project (or whose `target_project_ids` includes it), naming this table.
+2. **The specific table has an applicable `rls-policy` object** — one the metastore's project-scoped
+   list returns (owned, granted or organization-scope), naming this table.
    Within an RLS-enabled project, a table with no such policy is unfiltered, exactly as today; a
    table with one is fail-closed exactly as the pilot's engine already enforces (no matching rule
    for the resolved principal ⇒ refuse).
