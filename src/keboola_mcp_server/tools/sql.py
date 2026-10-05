@@ -331,8 +331,9 @@ async def _apply_rls(
 
     dialect = (await workspace_manager.get_sql_dialect()).lower()
     rules, cls_rules = await load_policy_rules(client, dialect=dialect)
-    if (not rules.tables and not cls_rules.tables) or not references_governed_table(
-        sql_query, dialect=dialect, rules=rules, cls_rules=cls_rules
+    # Same isolation as the rewrite below: the pre-check is a full sqlglot parse too.
+    if (not rules.tables and not cls_rules.tables) or not await asyncio.to_thread(
+        references_governed_table, sql_query, dialect=dialect, rules=rules, cls_rules=cls_rules
     ):
         # No RLS or CLS policy applies to this project at all, or none of them name a table this
         # query touches -- behave exactly like today's unfiltered query_data, no rewrite attempted.
