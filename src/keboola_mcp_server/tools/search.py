@@ -516,7 +516,10 @@ async def search(
 
     client = KeboolaClient.from_state(ctx.session.state)
 
-    column_visibility = await _column_visibility(ctx, client)
+    # Only a search that can reach tables needs the (privileged) policy load; searching configurations or
+    # buckets alone must not depend on it.
+    searches_tables = not spec.item_types or 'table' in spec.item_types
+    column_visibility = await _column_visibility(ctx, client) if searches_tables else None
     enumerate_kwargs: dict[str, Any] = {'column_visibility': column_visibility} if column_visibility else {}
 
     # The server-side index may match on column names, which a column-level policy conceals, so a project
