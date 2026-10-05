@@ -138,7 +138,8 @@ shaped the result, and `get_tables` hides what the user cannot query — columns
 column-level policy are not listed, and a row-governed table shows no row count or size. Which tables a
 query was restricted by is only written to the server log. Because policies live in the metastore,
 regular members' policies are read with the server's own Kubernetes ServiceAccount (step-up); a
-deployment where that step-up is unavailable refuses the query rather than returning it unfiltered.
+server where that step-up is unavailable (including a locally run one) refuses the query rather than returning it
+unfiltered.
 
 The identity `query_data` filters by is the caller's own OAuth login (an email) — there is no header
 or tool argument to set it. Column names in a policy are matched exactly (case-sensitively), as

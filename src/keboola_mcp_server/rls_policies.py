@@ -24,12 +24,18 @@ async def load_policy_rules(client: KeboolaClient, *, dialect: str) -> tuple[Rls
     that names only other users must still mark its table as governed.
 
     :param dialect: lower-cased workspace SQL dialect the rules must be pinned to.
-    :raises ValueError: when the step-up is required but cannot be made, or a policy is malformed.
+    :raises ValueError: when the step-up cannot be made (not a deployed server, or not the server's own
+        stack), or a policy is malformed.
     """
     project_id = int(await client.storage_client.project_id())
-    metastore = client.metastore_client
-    if kubernetes_token_path := deployed_sa_token_path():
-        metastore = client.step_up_metastore_client(kubernetes_token_path)
+    kubernetes_token_path = deployed_sa_token_path()
+    if not kubernetes_token_path:
+        # Without the step-up the metastore shows a regular member no policies at all, which would read
+        # as "nothing is governed" and run the query unfiltered. Refuse instead.
+        raise ValueError(
+            'RLS: the security policies can only be evaluated by a deployed MCP server, so the query is refused.'
+        )
+    metastore = client.step_up_metastore_client(kubernetes_token_path)
     rls_objects, cls_objects = await asyncio.gather(
         metastore.list_objects('rls-policy'), metastore.list_objects('cls-policy')
     )

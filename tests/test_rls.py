@@ -211,6 +211,36 @@ class TestFromMetastore:
 
         assert "\"country\" = 'CZ'" in result.sql
 
+    @pytest.mark.parametrize('source', [None])
+    def test_policy_that_cannot_be_matched_to_a_project_fails_closed(self, source) -> None:
+        """No source_project_id and no target_project_ids: skipping it would leave its table unfiltered."""
+        obj = _policy_object(
+            table='in.c-crm.invoices',
+            rules_list=[{'principal': 'petr', 'condition': {'true': True}}],
+            source_project_id=source,
+        )
+        with pytest.raises(RlsError, match='cannot be matched to a project'):
+            RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
+    def test_policy_with_no_meta_at_all_fails_closed(self) -> None:
+        obj = MetastoreObject(
+            type='rls-policy',
+            id='obj-1',
+            attributes={'table': 'in.c-crm.invoices', 'dialect': 'snowflake', 'rules': []},
+            meta=MetaObjectMeta(),
+        )
+        with pytest.raises(RlsError, match='cannot be matched to a project'):
+            RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
+    def test_rule_with_both_principal_and_principals_is_rejected(self) -> None:
+        """The schema's `oneOf`: silently preferring `principals` would apply a different rule than written."""
+        obj = _policy_object(
+            table='in.c-crm.invoices',
+            rules_list=[{'principal': 'petr', 'principals': ['monika'], 'condition': {'true': True}}],
+        )
+        with pytest.raises(RlsError, match="both 'principal' and 'principals'"):
+            RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
     def test_skips_objects_authored_for_a_different_project(self) -> None:
         obj = _policy_object(
             table='in.c-crm.invoices',
@@ -301,8 +331,44 @@ class TestIsGovernedAndReferencesGovernedTable:
         sql = 'SELECT * FROM "in.c-crm"."unrelated"'
         assert references_governed_table(sql, dialect='snowflake', rules=rules) is False
 
-    def test_references_governed_table_false_for_unparseable_sql(self, rules: RlsRules) -> None:
-        assert references_governed_table('not ( valid sql at', dialect='snowflake', rules=rules) is False
+    def test_unparseable_sql_fails_closed(self, rules: RlsRules) -> None:
+        """The warehouse may accept syntax sqlglot rejects, so "cannot parse" must reach the strict
+        rewrite (which refuses it) rather than read as "no governed table" and run unfiltered."""
+        assert references_governed_table('not ( valid sql at', dialect='snowflake', rules=rules) is True
+        with pytest.raises(RlsError):
+            rewrite_query('not ( valid sql at', user='petr', dialect='snowflake', rules=rules)
+
+    @pytest.mark.parametrize(
+        ('dialect', 'sql'),
+        [
+            # A table named at run time: no schema/table in the SQL for the pre-check to match.
+            ('snowflake', 'SELECT * FROM IDENTIFIER(\'"in.c-crm"."invoices"\')'),
+            ('snowflake', 'SELECT * FROM TABLE(IDENTIFIER(\'"in.c-crm"."invoices"\'))'),
+            ('snowflake', 'SELECT * FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))'),
+            # Dynamic SQL / non-query statements read any table without naming it.
+            ('snowflake', 'EXECUTE IMMEDIATE \'select * from "in.c-crm"."invoices"\''),
+            ('bigquery', 'EXECUTE IMMEDIATE "select * from `in_c_crm.invoices`"'),
+            ('snowflake', 'CALL my_proc()'),
+            ('snowflake', 'SHOW TABLES'),
+        ],
+    )
+    def test_shapes_that_hide_a_table_fail_closed(self, dialect: str, sql: str) -> None:
+        rules = _rules_for(dialect)
+        assert references_governed_table(sql, dialect=dialect, rules=rules) is True
+        with pytest.raises(RlsError):
+            rewrite_query(sql, user='petr', dialect=dialect, rules=rules)
+
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            'SELECT 1',
+            'SELECT * FROM "in.c-crm"."unrelated"',
+            'SELECT t.value FROM "in.c-crm"."unrelated" AS u, LATERAL FLATTEN(input => u.arr) t',
+            'WITH x AS (SELECT 1 AS a) SELECT a FROM x UNION ALL SELECT 2',
+        ],
+    )
+    def test_ordinary_queries_without_a_governed_table_are_still_untouched(self, rules: RlsRules, sql: str) -> None:
+        assert references_governed_table(sql, dialect='snowflake', rules=rules) is False
 
     def test_references_governed_table_lenient_about_multiple_statements(self, rules: RlsRules) -> None:
         """Unlike `rewrite_query`, this must not reject multi-statement input outright -- it only
@@ -1160,6 +1226,23 @@ class TestClsFromMetastore:
         )
         rules = ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
         assert rules.tables['in.c-crm.invoices'][email.lower()] == ('id',)
+
+    def test_policy_that_cannot_be_matched_to_a_project_fails_closed(self) -> None:
+        obj = _cls_policy_object(
+            table='in.c-crm.invoices',
+            rules_list=[{'principal': 'petr', 'visible_columns': ['id']}],
+            source_project_id=None,
+        )
+        with pytest.raises(RlsError, match='cannot be matched to a project'):
+            ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
+    def test_rule_with_both_principal_and_principals_is_rejected(self) -> None:
+        obj = _cls_policy_object(
+            table='in.c-crm.invoices',
+            rules_list=[{'principal': 'petr', 'principals': ['monika'], 'visible_columns': ['id']}],
+        )
+        with pytest.raises(RlsError, match="both 'principal' and 'principals'"):
+            ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
     def test_skips_objects_authored_for_a_different_project(self) -> None:
         obj = _cls_policy_object(
