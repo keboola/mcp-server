@@ -450,7 +450,7 @@ paragraph of v2's "Rule storage" section applies verbatim, substituting `cls-pol
         "properties": {
           "principal": { "type": "string", "minLength": 1 },
           "principals": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
-          "visible_columns": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+          "visible_columns": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9_]+$" }, "minItems": 1 }
         },
         "oneOf": [{ "required": ["principal"] }, { "required": ["principals"] }]
       }

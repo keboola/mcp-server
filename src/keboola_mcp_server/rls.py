@@ -222,6 +222,10 @@ def _normalize_schema(schema: str, dialect: str) -> str:
     return schema.replace('.', '_').replace('-', '_') if dialect == 'bigquery' else schema
 
 
+# `<branchId>_` in front of a Keboola stage (`in`/`out`) in the physical schema of a branch workspace.
+_BRANCH_PREFIX_RE = re.compile(r'^\d+_(?=(?:in|out)[._])')
+
+
 def _rule_key(schema: str, table: str, dialect: str) -> str:
     """The rules-file key a `<schema>.<table>` reference is looked up under.
 
@@ -234,8 +238,13 @@ def _rule_key(schema: str, table: str, dialect: str) -> str:
     * BigQuery dataset and table names are case-SENSITIVE: `in_c_crm.Invoices` is a different table
       from `in_c_crm.invoices`, so a rule for one must not cover the other. Keys keep their case and
       a mismatch simply finds no rule -- which is a refusal.
+
+    A development-branch workspace spells the schema with the branch id in front (`35403_out.c-model`,
+    `35403_out_c_model` on BigQuery) while the policy and the Storage table id stay `out.c-model`. The
+    prefix is dropped on both sides, so a branch query is governed by the same policy as production
+    instead of silently reading the table unfiltered.
     """
-    key = f'{schema}.{table}'
+    key = f'{_BRANCH_PREFIX_RE.sub("", schema)}.{table}'
     return key if dialect == 'bigquery' else key.lower()
 
 

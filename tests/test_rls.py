@@ -900,6 +900,20 @@ class TestRewriteQuery:
                 [],
             ),
             (
+                # A development-branch workspace prefixes the physical schema with the branch id; the
+                # policy still names the production bucket, so the table must stay governed.
+                'SELECT * FROM "123_in.c-crm"."invoices"',
+                'snowflake',
+                ('SELECT * FROM (SELECT * FROM "123_in.c-crm"."invoices" WHERE country = \'CZ\') AS "invoices"'),
+                ['in.c-crm.invoices'],
+            ),
+            (
+                'SELECT * FROM `123_in_c_crm`.`invoices`',
+                'bigquery',
+                ('SELECT * FROM (SELECT * FROM `123_in_c_crm`.`invoices` WHERE country = \'CZ\') AS `invoices`'),
+                ['in_c_crm.invoices'],
+            ),
+            (
                 # BigQuery names are case-sensitive: a qualifier naming a case-DISTINCT relation is
                 # not the wrapped table's qualifier, so it is left alone (the engine rejects it)
                 # instead of being stripped and rebound to the filtered table.
