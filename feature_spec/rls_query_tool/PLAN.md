@@ -39,8 +39,8 @@ proceed independently.
   `principal`/`principals` into individual per-user entries, and build the same
   `tables: Mapping[str, Mapping[str, str]]` structure by storing `condition.sql(dialect=dialect)`
   — so `rewrite_query()`/`_check_output()` need zero changes.
-- Delete `RlsRules.load()` (the YAML loader) and the `pyyaml` dependency it needed — the pilot
-  never shipped, so there's no backward compatibility to preserve.
+- Delete `RlsRules.load()` (the YAML loader) — the pilot never shipped, so there's no backward
+  compatibility to preserve. `pyyaml` stays: `errors.py` and `preview.py` still use it.
 - Tests: mirror the existing `TestLoad` class structure in `tests/test_rls.py`, but against fixture
   `MetastoreObject`s instead of temp YAML files, including cases where `source_project_id`/
   `target_project_ids` do and don't match the calling project. New `TestCompilePrimitive` covering
