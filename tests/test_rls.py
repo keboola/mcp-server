@@ -419,6 +419,15 @@ class TestIsGovernedAndReferencesGovernedTable:
         sql = "WITH t AS (SELECT 1) SELECT GET_DDL('table', 'invoices') FROM t"
         assert references_governed_table(sql, dialect='snowflake', rules=rules) is True
 
+    def test_references_governed_table_true_for_a_catalog_function_next_to_an_ungoverned_table(
+        self, rules: RlsRules
+    ) -> None:
+        """A catalog function can name a governed table in its arguments; no row filter shapes its result."""
+        sql = "SELECT GET_DDL('table', 'in.c-crm.invoices') FROM \"in.c-other\".\"unrelated\""
+        assert references_governed_table(sql, dialect='snowflake', rules=rules) is True
+        with pytest.raises(RlsError, match='not allowed: GET_DDL'):
+            rewrite_query(sql, user='petr', dialect='snowflake', rules=rules)
+
     def test_references_governed_table_false_when_nothing_governed_is_touched(self, rules: RlsRules) -> None:
         sql = 'SELECT * FROM "in.c-crm"."unrelated"'
         assert references_governed_table(sql, dialect='snowflake', rules=rules) is False

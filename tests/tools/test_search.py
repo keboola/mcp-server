@@ -800,6 +800,30 @@ class TestSearch:
         loader.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_search_hides_a_policy_hidden_column_in_a_development_branch_table(
+        self, mocker: MockerFixture, cls_governed: KeboolaClient, mcp_context_client: Context
+    ):
+        """The policy is keyed by the production table id, the branch table id carries `c-<branch>-`."""
+        cls_governed.storage_client.bucket_list = mocker.AsyncMock(
+            return_value=[{'id': 'in.c-123-test-bucket', 'name': 'test-bucket', 'created': '2024-01-01T00:00:00Z'}]
+        )
+        cls_governed.storage_client.bucket_table_list = mocker.AsyncMock(
+            return_value=[
+                {
+                    'id': 'in.c-123-test-bucket.orders',
+                    'name': 'orders',
+                    'created': '2024-01-01T00:00:00Z',
+                    'columns': ['id', 'ssn'],
+                    'metadata': [{'key': MetadataField.FAKE_DEVELOPMENT_BRANCH, 'value': '123'}],
+                },
+            ]
+        )
+
+        result = await search(ctx=mcp_context_client, patterns=['ssn'], item_types=(cast(SearchItemType, 'table'),))
+
+        assert result.hits == []
+
+    @pytest.mark.asyncio
     async def test_search_still_finds_a_visible_column(self, cls_governed: KeboolaClient, mcp_context_client: Context):
         result = await search(ctx=mcp_context_client, patterns=['id'], item_types=(cast(SearchItemType, 'table'),))
 
