@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 import pytest
 import sqlglot
 from sqlglot import exp
@@ -111,6 +113,48 @@ def _cls_rules_for(dialect: str) -> ClsRules:
 @pytest.fixture
 def cls_rules() -> ClsRules:
     return _cls_rules_for('snowflake')
+
+
+class TestRuleLiteralsAreNeverInterpretedAsSql:
+    """The metastore schema leaves rule values unconstrained on the understanding that the engine never
+    interpolates them as SQL. The engine builds sqlglot literal nodes (escaped by the dialect's
+    generator); these cases prove a hostile value round-trips as ONE literal, in both dialects."""
+
+    HOSTILE: ClassVar[list[str]] = [
+        "x' OR '1'='1",
+        "'; DROP TABLE invoices; --",
+        'back\\slash',
+        "it's",
+        "line\nbreak",
+        "x\\' OR 1=1 --",
+        '\u00e9\u4e2d',
+        '"; SELECT 1; --',
+    ]
+
+    @pytest.mark.parametrize('dialect', ['snowflake', 'bigquery'])
+    @pytest.mark.parametrize('value', HOSTILE)
+    def test_a_hostile_value_stays_a_single_literal(self, dialect: str, value: str) -> None:
+        sql = _compile_primitive({'column': 'c', 'op': 'eq', 'value': value}, dialect=dialect).sql(dialect=dialect)
+
+        statements = sqlglot.parse(f'SELECT 1 WHERE {sql}', dialect=dialect)
+        assert len(statements) == 1
+        where = statements[0].args['where'].this
+        assert isinstance(where, exp.EQ)
+        assert isinstance(where.expression, exp.Literal) and where.expression.is_string
+        assert where.expression.this == value
+
+    @pytest.mark.parametrize('dialect', ['snowflake', 'bigquery'])
+    def test_hostile_in_list_values_stay_literals(self, dialect: str) -> None:
+        sql = _compile_primitive({'column': 'c', 'op': 'in', 'values': self.HOSTILE}, dialect=dialect).sql(
+            dialect=dialect
+        )
+
+        statements = sqlglot.parse(f'SELECT 1 WHERE {sql}', dialect=dialect)
+        assert len(statements) == 1
+        in_node = statements[0].args['where'].this
+        assert isinstance(in_node, exp.In)
+        assert [e.this for e in in_node.expressions] == self.HOSTILE
+        assert all(isinstance(e, exp.Literal) for e in in_node.expressions)
 
 
 class TestCompilePrimitive:
