@@ -412,6 +412,22 @@ class TestIsGovernedAndReferencesGovernedTable:
     @pytest.mark.parametrize(
         'sql',
         [
+            # A CTE declared in a nested scope does not excuse the outer, real, unqualified `x`.
+            'SELECT * FROM "in.c-crm"."unrelated" u JOIN x ON TRUE, (WITH x AS (SELECT 1) SELECT * FROM x) s',
+            # Same name, different quoting: the engine and the rewriter could disagree about what it resolves to.
+            'WITH "x" AS (SELECT 1) SELECT * FROM X',
+            # A CTE cannot read itself without RECURSIVE -- the name then resolves to a real table.
+            'WITH x AS (SELECT * FROM x) SELECT * FROM x',
+        ],
+    )
+    def test_a_cte_name_that_is_not_in_scope_does_not_excuse_an_unqualified_table(
+        self, rules: RlsRules, sql: str
+    ) -> None:
+        assert references_governed_table(sql, dialect='snowflake', rules=rules) is True
+
+    @pytest.mark.parametrize(
+        'sql',
+        [
             'SELECT * FROM "in.c-crm"."unrelated"',
             'SELECT t.value FROM "in.c-crm"."unrelated" AS u, LATERAL FLATTEN(input => u.arr) t',
             'WITH x AS (SELECT 1 AS a) SELECT a FROM x UNION ALL SELECT 2',

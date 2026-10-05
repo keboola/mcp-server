@@ -975,10 +975,14 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
         for table in tables:
             if not table.db:
                 # Unqualified: it can resolve to a governed table through the workspace's current schema,
-                # and no policy key can be derived from it. Only a CTE reference is harmless; anything else
-                # goes to the strict rewrite, which refuses an unqualified table.
-                if table.name.lower() in cte_names:
-                    continue
+                # and no policy key can be derived from it. Only a reference to a CTE declared in its OWN scope
+                # chain is harmless (a same-named CTE in a nested or sibling scope must not excuse it); an
+                # ambiguous or out-of-scope match, and anything else, goes to the strict rewrite.
+                try:
+                    if _is_cte_reference(table, cte_names, dialect=dialect):
+                        continue
+                except RlsError:
+                    return True
                 return True
             if rules.is_governed(table_name=table.name, schema=table.db) or (
                 cls_rules is not None and cls_rules.is_governed(table_name=table.name, schema=table.db)
