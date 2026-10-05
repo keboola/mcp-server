@@ -82,6 +82,24 @@ _FROMLESS_ALLOWED_FUNC_TYPES = (
 )
 # `NOW()` has no dedicated node -- it parses as an `exp.Anonymous`, so it is allowed by name.
 _FROMLESS_ALLOWED_FUNC_NAMES = frozenset({'NOW', 'CURRENT_DATE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP'})
+# Functions that read catalog, stage or query-history metadata. A row filter does not constrain them, so
+# they are refused wherever they appear -- a governed table added as a dummy FROM must not unlock them.
+_METADATA_FUNC_NAMES = frozenset(
+    {
+        'GET_DDL',
+        'GET_OBJECT_REFERENCES',
+        'GET_QUERY_OPERATOR_STATS',
+        'INFER_SCHEMA',
+        'EXTRACT_SEMANTIC_CATEGORIES',
+        'GENERATE_COLUMN_DESCRIPTION',
+        'GET_PRESIGNED_URL',
+        'GET_STAGE_LOCATION',
+        'BUILD_STAGE_FILE_URL',
+        'BUILD_SCOPED_FILE_URL',
+        'GET_ABSOLUTE_PATH',
+        'GET_RELATIVE_PATH',
+    }
+)
 
 # sqlglot underlines the offending token in a parse error with ANSI escapes.
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
@@ -805,7 +823,8 @@ def _check_functions(tree: exp.Expression, cte_names: set[str], *, dialect: str)
 
     Two bans, both allowlist-shaped where it matters:
 
-    * `SYSTEM$...` and anything under `CORTEX` are refused wherever they appear. They read metadata,
+    * `SYSTEM$...`, anything under `CORTEX` and the catalog/stage metadata functions
+      (`_METADATA_FUNC_NAMES`) are refused wherever they appear. They read metadata,
       cancel queries or hand text to an LLM -- none of which the row filter constrains, however
       thoroughly the FROM clause is rewritten.
     * A query with no real table to filter (`SELECT GET_DDL(...)`, or the same thing dressed up with
@@ -814,7 +833,12 @@ def _check_functions(tree: exp.Expression, cte_names: set[str], *, dialect: str)
     """
     for node in tree.find_all(exp.Anonymous):
         name = _function_name(node)
-        if any(part.upper().startswith('SYSTEM$') for part in name.split('.')) or 'CORTEX' in name.upper():
+        parts = [part.upper() for part in name.split('.')]
+        if (
+            any(part.startswith('SYSTEM$') for part in parts)
+            or 'CORTEX' in name.upper()
+            or parts[-1] in _METADATA_FUNC_NAMES
+        ):
             raise RlsError(f'RLS: function call is not allowed: {name}')
 
     # An `exp.Table` naming a CTE in scope is not a real table. Resolution goes through
@@ -1088,6 +1112,8 @@ def rewrite_query(
     # aliased with the bare table name, so a column the query qualified with the full name
     # (`"in.c-crm"."invoices"."id"`) must lose that schema qualifier or it no longer resolves.
     unaliased: set[str] = set()
+    # Alias a wrapper of an unaliased table takes -> the table it wraps.
+    wrapper_alias_owner: dict[str, str] = {}
 
     def _transform(node: exp.Expression) -> exp.Expression:
         if not isinstance(node, exp.Table):
@@ -1141,6 +1167,14 @@ def rewrite_query(
         alias_node = node.args.get('alias')
         if alias_node is None:
             unaliased.add(_rule_key(node.db, node.name, dialect))
+            # Two different governed tables with the same bare name (`in.a.orders`, `in.b.orders`) would
+            # both be wrapped as `orders`: duplicate derived-table aliases, and qualifiers that can no
+            # longer tell them apart. The same table repeated (self-join, UNION) is fine.
+            alias_key = node.name if dialect == 'bigquery' else node.name.lower()
+            if wrapper_alias_owner.setdefault(alias_key, key) != key:
+                raise RlsError(
+                    f'RLS: tables named {node.name!r} in different buckets are both governed; give each an alias'
+                )
         alias_identifier = (
             alias_node.this.copy() if alias_node is not None else exp.to_identifier(node.name, quoted=node.this.quoted)
         )

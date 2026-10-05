@@ -1107,12 +1107,31 @@ class TestRewriteQuery:
             ),
             # --- functions in a query with nothing to filter ---
             # `GET_DDL` reads the catalog, so RLS shapes nothing about what it returns.
-            ("SELECT GET_DDL('table', 'invoices')", 'petr', 'snowflake', 'without FROM'),
+            ("SELECT GET_DDL('table', 'invoices')", 'petr', 'snowflake', 'not allowed: GET_DDL'),
             ('SELECT LAST_QUERY_ID()', 'petr', 'snowflake', 'without FROM'),
             ('SELECT COUNT(*)', 'petr', 'snowflake', 'without FROM'),
             # A dummy CTE gives the query an `exp.Table` node but still no table to filter, so the
             # ban must look through it rather than count the CTE reference as a real source.
-            ("WITH t AS (SELECT 1) SELECT GET_DDL('table', 'invoices') FROM t", 'petr', 'snowflake', 'without FROM'),
+            (
+                "WITH t AS (SELECT 1) SELECT GET_DDL('table', 'invoices') FROM t",
+                'petr',
+                'snowflake',
+                'not allowed: GET_DDL',
+            ),
+            # A governed table as a dummy FROM must not unlock a catalog function either.
+            (
+                "SELECT GET_DDL('TABLE', 'secret') FROM \"in.c-crm\".\"invoices\" LIMIT 1",
+                'petr',
+                'snowflake',
+                'not allowed: GET_DDL',
+            ),
+            # Two different governed tables with the same bare name would share one wrapper alias.
+            (
+                'SELECT * FROM "in.c-crm"."orders" JOIN "in.c-sales"."orders" ON 1 = 1',
+                'petr',
+                'snowflake',
+                'give each an alias',
+            ),
             # --- functions banned everywhere, FROM or no FROM ---
             ('SELECT SYSTEM$CANCEL_ALL_QUERIES()', 'petr', 'snowflake', 'not allowed: SYSTEM'),
             (
