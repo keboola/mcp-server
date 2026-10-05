@@ -20,7 +20,7 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport, get_
 from keboola_mcp_server.errors import ValidationErrorMiddleware
 from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
-from keboola_mcp_server.oauth import SimpleOAuthProvider
+from keboola_mcp_server.oauth import SimpleOAuthProvider, UntrustedAuthorizeRedirectMiddleware
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.session_store.crypto import resolve_encryption_key
@@ -217,6 +217,11 @@ class CustomRoutes:
             app.add_route('/oauth/callback', self.oauth_callback_handler, methods=['GET'])
             for route in self.oauth_provider.get_routes():
                 app.add_route(route.path, route.endpoint, methods=route.methods)
+            # The provider's own get_middleware() only wraps the mounted /mcp app; these root-level
+            # OAuth routes (incl. /authorize) live on the outer app and need the guard there too.
+            app.add_middleware(
+                UntrustedAuthorizeRedirectMiddleware, trusted_hosts=self.oauth_provider.trusted_redirect_hosts
+            )
 
 
 def create_server(

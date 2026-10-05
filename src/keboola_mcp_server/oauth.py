@@ -588,6 +588,10 @@ class UntrustedAuthorizeRedirectMiddleware:
 
     Must be the outermost middleware (listed first in `get_middleware()`) so it inspects the final
     response after every inner layer -- including the SDK's own route handler -- has run.
+
+    It must be applied in two places: `get_middleware()` only wraps FastMCP's mounted `/mcp` app,
+    while the CLI attaches `get_routes()` (incl. the public root `/authorize`) to the outer Starlette
+    app, so `CustomRoutes.add_to_starlette()` adds it there too.
     """
 
     def __init__(self, app: ASGIApp, trusted_hosts: frozenset[str]) -> None:
@@ -673,7 +677,7 @@ class SimpleOAuthProvider(OAuthProvider):
         self._client_registry = ConnectionClientRegistry(server_url)
         # The only two hosts `/authorize` may ever legitimately redirect to -- see
         # UntrustedAuthorizeRedirectMiddleware's docstring.
-        self._trusted_redirect_hosts = frozenset(
+        self.trusted_redirect_hosts = frozenset(
             h.lower() for h in (urlparse(mcp_server_url).hostname, urlparse(server_url).hostname) if h
         )
 
@@ -688,7 +692,7 @@ class SimpleOAuthProvider(OAuthProvider):
         dict -- see that middleware's own docstring.
         """
         return [
-            Middleware(UntrustedAuthorizeRedirectMiddleware, trusted_hosts=self._trusted_redirect_hosts),
+            Middleware(UntrustedAuthorizeRedirectMiddleware, trusted_hosts=self.trusted_redirect_hosts),
             Middleware(DatabaseUnavailableMiddleware),
             *super().get_middleware(),
         ]
