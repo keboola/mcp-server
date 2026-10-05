@@ -490,6 +490,12 @@ class RlsRules:
         bucket, _, name = table_id.rpartition('.')
         return bool(bucket) and _rule_key(_normalize_schema(bucket, self.dialect), name, self.dialect) in self.tables
 
+    def governs_bucket_id(self, bucket_id: str) -> bool:
+        """Whether a row-level policy applies to any table of the bucket, for metadata views (a bucket's
+        aggregate size would reveal the rows hidden from a table inside it)."""
+        prefix = _rule_key(_normalize_schema(bucket_id, self.dialect), 't', self.dialect).rpartition('.')[0]
+        return any(key.rpartition('.')[0] == prefix for key in self.tables)
+
     def predicate_for(self, *, table_name: str, schema: str | None, user: str) -> tuple[str, str]:
         """Return `(matched_key, predicate)` for the table/user, or raise `RlsError`.
 

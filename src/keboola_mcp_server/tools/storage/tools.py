@@ -599,6 +599,8 @@ async def get_buckets(
     else:
         output = await _list_buckets(client, links_manager)
 
+    await _apply_bucket_restrictions(client, WorkspaceManager.from_state(ctx.session.state), output.buckets)
+
     return output.pack_links()
 
 
@@ -790,6 +792,21 @@ async def _apply_metadata_restrictions(
         table.primary_key = [column for column in table.primary_key or [] if column in allowed]
         if isinstance(table, TableDetail):
             table.columns = [column for column in table.columns or [] if column.name in allowed]
+
+
+async def _apply_bucket_restrictions(
+    client: KeboolaClient, workspace_manager: WorkspaceManager, buckets: Iterable[BucketDetail]
+) -> None:
+    """A bucket holding a row-level-governed table shows no total size: the aggregate would reveal the
+    rows hidden from that table (same reason `_apply_metadata_restrictions` hides a table's own counts)."""
+    buckets = list(buckets)
+    if not buckets or not await client.has_feature(RLS_FEATURE):
+        return
+    dialect = (await workspace_manager.get_sql_dialect()).lower()
+    rls_rules, _ = await load_policy_rules(client, dialect=dialect)
+    for bucket in buckets:
+        if rls_rules.governs_bucket_id(bucket.prod_id):
+            bucket.data_size_bytes = None
 
 
 async def _get_table(
