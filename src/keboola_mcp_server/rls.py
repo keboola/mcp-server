@@ -128,13 +128,17 @@ class RlsAccessDenied(RlsError):
     """The caller has no rule for a governed table. The detail goes to the log, never to the caller."""
 
 
-def _applies_to_project(obj: Any, *, project_id: int, label: str, obj_id: str) -> bool:
-    """Whether a policy object applies to `project_id`: its `source_project_id` is the project, or the
-    project is among its `target_project_ids`.
+def _applies_to_project(obj: Any, *, label: str, obj_id: str) -> bool:
+    """Whether a listed policy object is enforced for the calling project.
 
-    Fails closed when that cannot be decided (no `meta`, or neither field set): this loader is the
-    enforcement boundary, so a malformed or legacy policy must refuse the query, not be skipped and
-    leave its table unfiltered.
+    Every object the SA-verified, project-scoped metastore list returns applies: the metastore already
+    limits that list to what the project owns, was granted, or inherits at organization scope. The
+    source/target fields cannot be used to filter it again -- for a project that sees a policy only
+    through a grant the metastore omits `targetProjectIds` (the project has no need to know who else was
+    granted access) and `projectId` is the AUTHORING project, so such a policy would match neither and its
+    table would be silently treated as ungoverned.
+
+    Only a `project`-scoped object is refused (see below).
     """
     meta = getattr(obj, 'meta', None)
     if getattr(meta, 'scope', None) == 'project':
@@ -142,14 +146,7 @@ def _applies_to_project(obj: Any, *, project_id: int, label: str, obj_id: str) -
         # project-scoped one means the backend's boundary regressed; enforcing it would quietly accept
         # policy authored outside that boundary, so refuse.
         raise RlsError(f"{label}: metastore object '{obj_id}' has the unsupported scope 'project'")
-    source = getattr(meta, 'source_project_id', None)
-    targets = getattr(meta, 'target_project_ids', None) or ()
-    if source is None and not targets:
-        raise RlsError(
-            f"{label}: metastore object '{obj_id}' has neither a source_project_id nor target_project_ids, "
-            'so it cannot be matched to a project'
-        )
-    return source == project_id or project_id in targets
+    return True
 
 
 def _rule_principals(rule: Mapping[str, Any], *, label: str, obj_id: str) -> Sequence[Any]:
@@ -378,16 +375,11 @@ class RlsRules:
     @classmethod
     def from_metastore(cls, objects: Sequence[Any], *, dialect: str, project_id: int) -> 'RlsRules':
         """Build `RlsRules` from `rls-policy` metastore objects (`clients.metastore.MetastoreObject`)
-        applicable to `project_id`. Raises `RlsError` on any problem with an *applicable* object's
-        own shape.
+        listed for `project_id`. Raises `RlsError` on any problem with an object's own shape.
 
-        An object applies when its `meta.source_project_id` equals `project_id`, or `project_id` is
-        listed in its `meta.target_project_ids` (a `targeted`-scope policy explicitly shared with
-        this project) -- matching purely on the object's `table` key text is never enough on its
-        own, because an `organization`-scope object is visible to every project in the org and a
-        `<bucket>.<table>` key is not guaranteed unique across them (see the RFC's "Rule storage"
-        section). An object that doesn't apply is skipped silently, not refused: a policy authored
-        for a different project is simply not this project's business.
+        Every object in `objects` applies: the SA-verified, project-scoped metastore list already contains
+        exactly what this project owns, was granted, or inherits at organization scope (see
+        `_applies_to_project` for why the source/target fields are not filtered on again).
 
         Every rule's `condition` is compiled via `_compile_primitive` -- never parsed from a
         hand-written predicate string, unlike the file-based pilot this superseded.
@@ -398,7 +390,7 @@ class RlsRules:
         table_ids: dict[str, str] = {}
         for obj in objects:
             obj_id = getattr(obj, 'id', None) or '<unknown>'
-            if not _applies_to_project(obj, project_id=project_id, label='RLS', obj_id=obj_id):
+            if not _applies_to_project(obj, label='RLS', obj_id=obj_id):
                 continue
             data = getattr(obj, 'attributes', None)
             if not isinstance(data, Mapping):
@@ -561,7 +553,7 @@ class ClsRules:
         table_ids: dict[str, str] = {}
         for obj in objects:
             obj_id = getattr(obj, 'id', None) or '<unknown>'
-            if not _applies_to_project(obj, project_id=project_id, label='CLS', obj_id=obj_id):
+            if not _applies_to_project(obj, label='CLS', obj_id=obj_id):
                 continue
             data = getattr(obj, 'attributes', None)
             if not isinstance(data, Mapping):
