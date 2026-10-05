@@ -32,6 +32,7 @@ from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
+from starlette.routing import get_route_path
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import (
@@ -188,8 +189,9 @@ def _sanitize_client_name(name: str) -> str:
     """Strips unprintable characters Connection's pending_mcp_client decoder would otherwise
     reject outright (which would silently drop the whole approval payload -- see
     PendingMcpClientApprovalListener's catch-and-ignore on a malformed payload), and truncates to
-    Connection's 128-character cap."""
-    return _strip_unprintable(name)[:128]
+    Connection's 128-byte cap (PHP `strlen()` counts UTF-8 bytes, not characters), without splitting
+    a multibyte character."""
+    return _strip_unprintable(name).encode()[:128].decode(errors='ignore')
 
 
 def _sanitize_for_log(value: str) -> str:
@@ -599,7 +601,9 @@ class UntrustedAuthorizeRedirectMiddleware:
         self._trusted_hosts = trusted_hosts
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope['type'] != 'http' or scope.get('path') != '/authorize':
+        # Route-relative path: under the production `/mcp` mount `scope['path']` is `/mcp/authorize`
+        # (root_path='/mcp'), which a raw comparison would miss (Vojtěch Biberle review, AI-2883).
+        if scope['type'] != 'http' or get_route_path(scope) != '/authorize':
             await self._app(scope, receive, send)
             return
 

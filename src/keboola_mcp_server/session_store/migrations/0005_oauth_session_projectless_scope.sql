@@ -1,6 +1,7 @@
--- AI-2883 dynamic OAuth client registration: a Flow B (dynamically-approved) client's session
--- must not advertise the 'projectless' (whole-stack) OAuth scope when Connection only ever
--- granted it 'claudai' -- see oauth.py's _scope_for docstring. Every row created before this
--- migration predates that distinction (dynamic registration didn't exist yet), so it was always
--- a 'claudai projectless' grant -- hence the TRUE default/backfill.
+-- AI-2883 dynamic OAuth client registration: records whether a session was granted the
+-- 'projectless' (whole-stack) OAuth scope, so a session can advertise the scope it actually has.
+-- The final design requests 'claudai projectless' for every registered client (RFC Decision §10),
+-- so new sessions are always TRUE; FALSE only exists for a session persisted by an earlier build
+-- of this change, where a dynamically-approved client got 'claudai' alone. Every row created before
+-- this migration was a 'claudai projectless' grant -- hence the TRUE default/backfill.
 ALTER TABLE oauth_sessions ADD COLUMN oauth_projectless BOOLEAN NOT NULL DEFAULT TRUE;

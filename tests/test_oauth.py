@@ -265,6 +265,30 @@ class TestUntrustedAuthorizeRedirectMiddleware:
         assert response.status_code == 400
         assert 'attacker.example' not in response.headers.get('location', '')
 
+    def test_blocks_open_redirect_under_the_production_mcp_mount(self, app) -> None:
+        """Vojtěch Biberle's blocking review finding: cli.py mounts the FastMCP app at `/mcp`, so
+        Starlette presents the route as `/mcp/authorize` (root_path='/mcp'); a raw `scope['path']`
+        comparison with '/authorize' skipped the guard there."""
+        from starlette.applications import Starlette
+        from starlette.routing import Mount
+        from starlette.testclient import TestClient
+
+        mounted = Starlette(routes=[Mount('/mcp', app)])
+        client = TestClient(mounted, raise_server_exceptions=False)
+
+        response = client.get(
+            '/mcp/authorize',
+            params={
+                'client_id': 'attacker-client',
+                'redirect_uri': 'https://attacker.example/cb',
+                'response_type': 'code',
+            },
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 400
+        assert 'attacker.example' not in response.headers.get('location', '')
+
     def test_lets_a_trusted_host_error_redirect_through(self, app) -> None:
         from starlette.testclient import TestClient
 
@@ -357,12 +381,19 @@ class TestConnectionClientIdentity:
             ('Evil\u200bName', 'EvilName'),  # zero-width space stripped
             ('Evil\u202eName', 'EvilName'),  # bidi override stripped
             ('Evil\x00Name', 'EvilName'),  # control character stripped
+            # Connection's cap is 128 UTF-8 *bytes* (PHP strlen), not characters
+            ('\u00e9' * 65, '\u00e9' * 64),
+            ('\u00e9' * 64, '\u00e9' * 64),  # exactly 128 bytes, kept as is
+            ('a' * 127 + '\u00e9', 'a' * 127),  # a multibyte char straddling the cap is dropped, not split
         ],
     )
     def test_sanitize_client_name(self, name: str, expected: str):
         from keboola_mcp_server.oauth import _sanitize_client_name
 
-        assert _sanitize_client_name(name) == expected
+        result = _sanitize_client_name(name)
+
+        assert result == expected
+        assert len(result.encode()) <= 128
 
 
 class TestConnectionClientRegistry:
