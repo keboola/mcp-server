@@ -652,6 +652,19 @@ class ClsRules:
         return key, columns
 
 
+def _reads_query_history(tree: exp.Expression) -> bool:
+    """Whether a statement reads a query-history source (`QUERY_HISTORY*`, BigQuery `INFORMATION_SCHEMA.JOBS*`).
+
+    Such a source returns the SQL text of earlier queries, which is the REWRITTEN text -- the predicate a
+    policy injected -- so it would disclose what the rewrite is meant to keep silent.
+    """
+    for table in tree.find_all(exp.Table):
+        qualified = '.'.join(part for part in (table.catalog, table.db, table.name) if part).upper()
+        if 'QUERY_HISTORY' in qualified or 'INFORMATION_SCHEMA.JOBS' in qualified:
+            return True
+    return False
+
+
 def _check_from_sources(tree: exp.Expression) -> None:
     """Refuse any FROM/JOIN/LATERAL source that is not on `_ALLOWED_FROM_SOURCES`.
 
@@ -1001,7 +1014,11 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
     for statement in statements:
         if statement is None:
             continue
-        if not isinstance(statement, exp.Query) or _names_table_dynamically(statement):
+        if (
+            not isinstance(statement, exp.Query)
+            or _names_table_dynamically(statement)
+            or _reads_query_history(statement)
+        ):
             return True
         tables = list(statement.find_all(exp.Table))
         if not tables:
@@ -1111,6 +1128,8 @@ def rewrite_query(
     # every one of those is still refused, where it happens, by `_is_cte_reference`.
     cte_names = _cte_names(tree)
 
+    if _reads_query_history(tree):
+        raise RlsError('RLS: query history sources are not allowed')
     _check_from_sources(tree)
     _check_functions(tree, cte_names, dialect=dialect)
 
