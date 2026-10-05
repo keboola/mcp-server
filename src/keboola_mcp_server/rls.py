@@ -1087,7 +1087,7 @@ def rewrite_query(
     # (schema, table) of every governed table wrapped WITHOUT a user alias: the wrapper is a derived table
     # aliased with the bare table name, so a column the query qualified with the full name
     # (`"in.c-crm"."invoices"."id"`) must lose that schema qualifier or it no longer resolves.
-    unaliased: set[tuple[str, str]] = set()
+    unaliased: set[str] = set()
 
     def _transform(node: exp.Expression) -> exp.Expression:
         if not isinstance(node, exp.Table):
@@ -1140,7 +1140,7 @@ def rewrite_query(
         # alias is case-sensitive, breaking those other references.
         alias_node = node.args.get('alias')
         if alias_node is None:
-            unaliased.add((node.db.lower(), node.name.lower()))
+            unaliased.add(_rule_key(node.db, node.name, dialect))
         alias_identifier = (
             alias_node.this.copy() if alias_node is not None else exp.to_identifier(node.name, quoted=node.this.quoted)
         )
@@ -1169,7 +1169,7 @@ def rewrite_query(
     rewritten_tree = tree.transform(_transform, copy=True)
     for column in rewritten_tree.find_all(exp.Column):
         qualifier_schema = column.args.get('db')
-        if qualifier_schema is not None and (qualifier_schema.name.lower(), column.table.lower()) in unaliased:
+        if qualifier_schema is not None and _rule_key(qualifier_schema.name, column.table, dialect) in unaliased:
             column.set('db', None)
             column.set('catalog', None)
     rewritten_sql = rewritten_tree.sql(dialect=dialect)

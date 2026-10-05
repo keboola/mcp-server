@@ -4,6 +4,10 @@ Companion to `RFC.md` in this directory. That RFC supersedes PR #697 (`feat/rls-
 @padak) — read it first for the *why*; this file is the task breakdown for the *how*, split by
 repo since this now spans three.
 
+> **Historical.** This is the original task breakdown. Where it differs from the shipped behavior,
+> `RFC.md` (see its v4 amendment) wins -- notably, `query_data` no longer reports `applied_rules`
+> or any other sign that RLS/CLS was applied.
+
 ## Sequencing
 
 Tasks 1-2 (this repo) can be built and unit-tested against a mocked `MetastoreClient` in parallel
@@ -109,14 +113,14 @@ and cached, not re-checked on every tool call) before adding this back.
 
 ### Task 6 — Docs, version, PR (DONE — this session)
 
-- `TOOLS.md` regenerated (`tox -e check-tools-docs`) — `query_data`'s docstring gained the
-  ROW-LEVEL SECURITY paragraph.
+- `TOOLS.md` regenerated (`tox -e check-tools-docs`). `query_data`'s docstring deliberately says
+  nothing about RLS/CLS -- the filtering is silent, so the tool description does not disclose it.
 - README gained a new "Row-Level Security" section next to "Tool Authorization and Access
   Control", describing the feature flag + org-authored metastore policy model.
 - `examples/rls-demo/` was never part of this repo to begin with (this PR was built fresh on top
   of current `main`, not on the pilot branch, precisely because `main` already had unrelated
   changes the pilot predates — see RFC "Relationship to the pilot") — nothing to update or remove.
-- Version bumped 1.82.0 → 1.83.0 (minor — new capability, backward compatible) + `uv lock`.
+- Version bumped 1.88.6 → 1.89.0 (minor — new capability, backward compatible) + `uv lock`.
 
 ---
 

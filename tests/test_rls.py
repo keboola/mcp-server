@@ -900,6 +900,27 @@ class TestRewriteQuery:
                 [],
             ),
             (
+                # BigQuery names are case-sensitive: a qualifier naming a case-DISTINCT relation is
+                # not the wrapped table's qualifier, so it is left alone (the engine rejects it)
+                # instead of being stripped and rebound to the filtered table.
+                'SELECT `in_c_crm`.`Invoices`.id FROM `in_c_crm`.`invoices`',
+                'bigquery',
+                (
+                    'SELECT `in_c_crm`.`Invoices`.id FROM '
+                    "(SELECT * FROM `in_c_crm`.`invoices` WHERE country = 'CZ') AS `invoices`"
+                ),
+                ['in_c_crm.invoices'],
+            ),
+            (
+                'SELECT `in_c_crm`.`invoices`.id FROM `in_c_crm`.`invoices`',
+                'bigquery',
+                (
+                    'SELECT `invoices`.id FROM '
+                    "(SELECT * FROM `in_c_crm`.`invoices` WHERE country = 'CZ') AS `invoices`"
+                ),
+                ['in_c_crm.invoices'],
+            ),
+            (
                 # A recursive CTE named after nothing protected, joined with a protected table.
                 (
                     'WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) '
