@@ -222,6 +222,29 @@ class TestFromMetastore:
         with pytest.raises(RlsError, match='cannot be matched to a project'):
             RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
+    @pytest.mark.parametrize('scope', ['organization', 'targeted', None])
+    def test_supported_scopes_are_accepted(self, scope) -> None:
+        obj = _policy_object(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
+        obj.meta.scope = scope
+        rules = RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+        assert 'in.c-crm.invoices' in rules.tables
+
+    def test_project_scope_is_rejected_at_the_enforcement_boundary(self) -> None:
+        """These types are organization/targeted only; a project-scoped one means the backend's boundary
+        regressed, so it must not be enforced as if authored legitimately."""
+        obj = _policy_object(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
+        obj.meta.scope = 'project'
+        with pytest.raises(RlsError, match="unsupported scope 'project'"):
+            RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
+    def test_cls_project_scope_is_rejected_at_the_enforcement_boundary(self) -> None:
+        obj = _cls_policy_object(
+            table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'visible_columns': ['id']}]
+        )
+        obj.meta.scope = 'project'
+        with pytest.raises(RlsError, match="unsupported scope 'project'"):
+            ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
     def test_policy_with_no_meta_at_all_fails_closed(self) -> None:
         obj = MetastoreObject(
             type='rls-policy',
@@ -361,7 +384,34 @@ class TestIsGovernedAndReferencesGovernedTable:
     @pytest.mark.parametrize(
         'sql',
         [
+            # No table at all: the strict rewrite owns the function allowlist.
+            'SELECT SYSTEM$CANCEL_ALL_QUERIES()',
+            "SELECT GET_DDL('TABLE', 'in.c-crm.invoices')",
             'SELECT 1',
+            'SELECT 1; SELECT 2',
+            # Unqualified table: it can resolve to a governed one through the workspace's current schema.
+            'SELECT * FROM invoices',
+            'SELECT * FROM "invoices"',
+            'SELECT * FROM "in.c-crm"."unrelated" JOIN orders ON TRUE',
+        ],
+    )
+    def test_queries_the_precheck_cannot_map_to_a_policy_key_fail_closed(self, rules: RlsRules, sql: str) -> None:
+        assert references_governed_table(sql, dialect='snowflake', rules=rules) is True
+
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            # A CTE reference is unqualified but harmless.
+            'WITH x AS (SELECT * FROM "in.c-crm"."unrelated") SELECT * FROM x',
+            'WITH a AS (SELECT * FROM "in.c-crm"."u1"), b AS (SELECT * FROM a) SELECT * FROM b',
+        ],
+    )
+    def test_cte_references_do_not_trigger_the_strict_path(self, rules: RlsRules, sql: str) -> None:
+        assert references_governed_table(sql, dialect='snowflake', rules=rules) is False
+
+    @pytest.mark.parametrize(
+        'sql',
+        [
             'SELECT * FROM "in.c-crm"."unrelated"',
             'SELECT t.value FROM "in.c-crm"."unrelated" AS u, LATERAL FLATTEN(input => u.arr) t',
             'WITH x AS (SELECT 1 AS a) SELECT a FROM x UNION ALL SELECT 2',
@@ -372,9 +422,9 @@ class TestIsGovernedAndReferencesGovernedTable:
 
     def test_references_governed_table_lenient_about_multiple_statements(self, rules: RlsRules) -> None:
         """Unlike `rewrite_query`, this must not reject multi-statement input outright -- it only
-        answers "would rewrite_query need to touch this," and a query with zero governed tables
-        should never be routed into the paranoid pipeline just because it has two statements."""
-        sql = 'SELECT 1; SELECT 2'
+        answers "would rewrite_query need to touch this," so two statements over ungoverned tables
+        are not routed into the paranoid pipeline just because there are two of them."""
+        sql = 'SELECT * FROM "in.c-crm"."a"; SELECT * FROM "in.c-crm"."b"'
         assert references_governed_table(sql, dialect='snowflake', rules=rules) is False
         sql_governed = 'SELECT 1; SELECT * FROM "in.c-crm"."invoices"'
         assert references_governed_table(sql_governed, dialect='snowflake', rules=rules) is True

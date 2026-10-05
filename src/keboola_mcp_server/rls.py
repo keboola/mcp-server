@@ -119,6 +119,11 @@ def _applies_to_project(obj: Any, *, project_id: int, label: str, obj_id: str) -
     leave its table unfiltered.
     """
     meta = getattr(obj, 'meta', None)
+    if getattr(meta, 'scope', None) == 'project':
+        # These policy types are organization/targeted only (schema `x-metastore.scope.supported`). A
+        # project-scoped one means the backend's boundary regressed; enforcing it would quietly accept
+        # policy authored outside that boundary, so refuse.
+        raise RlsError(f"{label}: metastore object '{obj_id}' has the unsupported scope 'project'")
     source = getattr(meta, 'source_project_id', None)
     targets = getattr(meta, 'target_project_ids', None) or ()
     if source is None and not targets:
@@ -948,7 +953,9 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
     `True`, routing the query into `rewrite_query()`, which refuses it -- for everything whose
     tables this cannot see: a parse failure (the warehouse may accept syntax sqlglot rejects), a
     statement that is not a query (`EXECUTE IMMEDIATE`, `CALL`, ... can read any table through
-    dynamic SQL), and a table named dynamically (`IDENTIFIER(...)`, `RESULT_SCAN(...)`).
+    dynamic SQL), a table named dynamically (`IDENTIFIER(...)`, `RESULT_SCAN(...)`), an unqualified
+    table that is not a CTE (no policy key can be derived from it), and a query with no table at all
+    (the strict rewrite owns the function allowlist, e.g. against `SYSTEM$CANCEL_ALL_QUERIES()`).
     """
     try:
         statements = sqlglot.parse(sql, dialect=dialect)
@@ -959,10 +966,22 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
             continue
         if not isinstance(statement, exp.Query) or _names_table_dynamically(statement):
             return True
-        for table in statement.find_all(exp.Table):
-            if table.db and (
-                rules.is_governed(table_name=table.name, schema=table.db)
-                or (cls_rules is not None and cls_rules.is_governed(table_name=table.name, schema=table.db))
+        tables = list(statement.find_all(exp.Table))
+        if not tables:
+            # No table at all (`SELECT SYSTEM$CANCEL_ALL_QUERIES()`, `GET_DDL(...)`): the strict rewrite owns
+            # the function allowlist, so it must see these rather than have them run as ordinary data.
+            return True
+        cte_names = _cte_names(statement)
+        for table in tables:
+            if not table.db:
+                # Unqualified: it can resolve to a governed table through the workspace's current schema,
+                # and no policy key can be derived from it. Only a CTE reference is harmless; anything else
+                # goes to the strict rewrite, which refuses an unqualified table.
+                if table.name.lower() in cte_names:
+                    continue
+                return True
+            if rules.is_governed(table_name=table.name, schema=table.db) or (
+                cls_rules is not None and cls_rules.is_governed(table_name=table.name, schema=table.db)
             ):
                 return True
     return False

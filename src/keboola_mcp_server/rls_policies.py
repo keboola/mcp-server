@@ -8,8 +8,25 @@ exist.
 import asyncio
 
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.metastore import MetastoreClient, MetastoreObject
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.rls import ClsRules, RlsRules
+
+# Policies are listed a small page at a time (some Metastore endpoints fail on large responses; same size as
+# the semantic loader). Every page is needed: a policy on a page that is never read leaves its table ungoverned.
+_PAGE_SIZE = 20
+_MAX_PAGES = 1000
+
+
+async def _list_all(metastore: MetastoreClient, object_type: str) -> list[MetastoreObject]:
+    objects: list[MetastoreObject] = []
+    for page_number in range(_MAX_PAGES):
+        page = await metastore.list_objects(object_type, limit=_PAGE_SIZE, offset=page_number * _PAGE_SIZE)
+        objects.extend(page)
+        if len(page) < _PAGE_SIZE:
+            return objects
+    raise ValueError(f'RLS: more than {_MAX_PAGES * _PAGE_SIZE} {object_type} objects, refusing to guess')
+
 
 # Project feature that switches the RLS/CLS mechanism on, one gate for both (see the RFC).
 RLS_FEATURE = 'row-level-security'
@@ -37,7 +54,7 @@ async def load_policy_rules(client: KeboolaClient, *, dialect: str) -> tuple[Rls
         )
     metastore = client.step_up_metastore_client(kubernetes_token_path)
     rls_objects, cls_objects = await asyncio.gather(
-        metastore.list_objects('rls-policy'), metastore.list_objects('cls-policy')
+        _list_all(metastore, 'rls-policy'), _list_all(metastore, 'cls-policy')
     )
     return (
         RlsRules.from_metastore(rls_objects, dialect=dialect, project_id=project_id),
