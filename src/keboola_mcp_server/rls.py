@@ -1078,6 +1078,10 @@ def rewrite_query(
     # applied to it (meaning "expect a plain SELECT *") -- handed to `_check_output` alongside
     # `inserted` so the safety net can verify the SELECT list too, not only the WHERE.
     inserted_columns: dict[str, tuple[str, ...] | None] = {}
+    # (schema, table) of every governed table wrapped WITHOUT a user alias: the wrapper is a derived table
+    # aliased with the bare table name, so a column the query qualified with the full name
+    # (`"in.c-crm"."invoices"."id"`) must lose that schema qualifier or it no longer resolves.
+    unaliased: set[tuple[str, str]] = set()
 
     def _transform(node: exp.Expression) -> exp.Expression:
         if not isinstance(node, exp.Table):
@@ -1129,6 +1133,8 @@ def rewrite_query(
         # the table identifier's quoting for an *existing* alias would silently change whether the
         # alias is case-sensitive, breaking those other references.
         alias_node = node.args.get('alias')
+        if alias_node is None:
+            unaliased.add((node.db.lower(), node.name.lower()))
         alias_identifier = (
             alias_node.this.copy() if alias_node is not None else exp.to_identifier(node.name, quoted=node.this.quoted)
         )
@@ -1154,7 +1160,13 @@ def rewrite_query(
         # not wrapped a second time.
         return exp.Subquery(this=filtered, alias=exp.TableAlias(this=alias_identifier))
 
-    rewritten_sql = tree.transform(_transform, copy=True).sql(dialect=dialect)
+    rewritten_tree = tree.transform(_transform, copy=True)
+    for column in rewritten_tree.find_all(exp.Column):
+        qualifier_schema = column.args.get('db')
+        if qualifier_schema is not None and (qualifier_schema.name.lower(), column.table.lower()) in unaliased:
+            column.set('db', None)
+            column.set('catalog', None)
+    rewritten_sql = rewritten_tree.sql(dialect=dialect)
     _check_output(rewritten_sql, dialect=dialect, predicates=inserted, columns=inserted_columns)
     # `dict.fromkeys` deduplicates while preserving first-seen order: a table joined or unioned with
     # itself is disclosed once.
