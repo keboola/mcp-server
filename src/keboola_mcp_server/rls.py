@@ -387,7 +387,7 @@ class RlsRules:
                     f'{project_id} is {dialect!r}'
                 )
             table_key_raw = data.get('table')
-            if not isinstance(table_key_raw, str) or not _RULE_KEY_RE.match(table_key_raw):
+            if not isinstance(table_key_raw, str) or not _RULE_KEY_RE.fullmatch(table_key_raw):
                 raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid 'table': {table_key_raw!r}")
             bucket, _, table = table_key_raw.rpartition('.')
             if not bucket or not table:
@@ -408,7 +408,7 @@ class RlsRules:
                 names = _rule_principals(rule, label='RLS', obj_id=obj_id)
                 predicate = _compile_primitive(rule.get('condition'), dialect=dialect).sql(dialect=dialect)
                 for name in names:
-                    if not isinstance(name, str) or not _PRINCIPAL_RE.match(name):
+                    if not isinstance(name, str) or not _PRINCIPAL_RE.fullmatch(name):
                         raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid principal {name!r}")
                     user_key = name.lower()
                     if user_key in users:
@@ -540,7 +540,7 @@ class ClsRules:
                     f'{project_id} is {dialect!r}'
                 )
             table_key_raw = data.get('table')
-            if not isinstance(table_key_raw, str) or not _RULE_KEY_RE.match(table_key_raw):
+            if not isinstance(table_key_raw, str) or not _RULE_KEY_RE.fullmatch(table_key_raw):
                 raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid 'table': {table_key_raw!r}")
             bucket, _, table = table_key_raw.rpartition('.')
             if not bucket or not table:
@@ -564,11 +564,11 @@ class ClsRules:
                     raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid 'visible_columns': {rule!r}")
                 columns: list[str] = []
                 for col in columns_raw:
-                    if not isinstance(col, str) or not _RULE_KEY_RE.match(col):
+                    if not isinstance(col, str) or not _RULE_KEY_RE.fullmatch(col):
                         raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid column name {col!r}")
                     columns.append(col)
                 for name in names:
-                    if not isinstance(name, str) or not _PRINCIPAL_RE.match(name):
+                    if not isinstance(name, str) or not _PRINCIPAL_RE.fullmatch(name):
                         raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid principal {name!r}")
                     user_key = name.lower()
                     if user_key in users:

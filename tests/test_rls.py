@@ -237,6 +237,19 @@ class TestFromMetastore:
         with pytest.raises(RlsError, match="unsupported scope 'project'"):
             RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
+    @pytest.mark.parametrize('bad_table', ['in.c-crm.invoices\n', '\nin.c-crm.invoices'])
+    def test_cls_table_key_with_a_newline_is_rejected(self, bad_table: str) -> None:
+        obj = _cls_policy_object(table=bad_table, rules_list=[{'principal': 'petr', 'visible_columns': ['id']}])
+        with pytest.raises(RlsError, match="invalid 'table'"):
+            ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
+    def test_cls_column_name_with_a_newline_is_rejected(self) -> None:
+        obj = _cls_policy_object(
+            table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'visible_columns': ['id\n']}]
+        )
+        with pytest.raises(RlsError, match='invalid column name'):
+            ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
     def test_cls_project_scope_is_rejected_at_the_enforcement_boundary(self) -> None:
         obj = _cls_policy_object(
             table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'visible_columns': ['id']}]
@@ -253,6 +266,23 @@ class TestFromMetastore:
             meta=MetaObjectMeta(),
         )
         with pytest.raises(RlsError, match='cannot be matched to a project'):
+            RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
+    @pytest.mark.parametrize('bad_table', ['in.c-crm.invoices\n', 'in.c-crm.invoices\n\n', '\nin.c-crm.invoices'])
+    def test_a_table_key_with_a_newline_is_rejected_not_stored_under_a_key_nothing_matches(
+        self, bad_table: str
+    ) -> None:
+        """`$` matches before a trailing newline, so `re.match` would accept this key and the table it names
+        would then run unfiltered (the stored key can never equal a real table reference)."""
+        obj = _policy_object(table=bad_table, rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
+        with pytest.raises(RlsError, match="invalid 'table'"):
+            RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+
+    def test_a_principal_with_a_trailing_newline_is_rejected(self) -> None:
+        obj = _policy_object(
+            table='in.c-crm.invoices', rules_list=[{'principal': 'petr@x.com\n', 'condition': {'true': True}}]
+        )
+        with pytest.raises(RlsError, match='invalid principal'):
             RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
     def test_rule_with_both_principal_and_principals_is_rejected(self) -> None:
