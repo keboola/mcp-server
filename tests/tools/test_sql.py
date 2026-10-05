@@ -1450,6 +1450,43 @@ class TestQueryDataRowLevelSecurity(_DeployedServer):
         )
 
     @pytest.mark.asyncio
+    async def test_the_governed_table_pre_check_runs_off_the_event_loop(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mcp_context_client: Context,
+        keboola_client: KeboolaClient,
+        workspace_manager: WorkspaceManager,
+    ) -> None:
+        """The pre-check is a full sqlglot parse, so it must not block the loop any more than the rewrite."""
+        import threading
+
+        from keboola_mcp_server.tools import sql as sql_module
+
+        seen: list[int] = []
+
+        def _not_governed(*args: Any, **kwargs: Any) -> bool:
+            seen.append(threading.get_ident())
+            return False
+
+        monkeypatch.setattr(sql_module, 'references_governed_table', _not_governed)
+        stepped = MagicMock()
+        policy = self._policy(
+            table='in.c-crm.invoices', rules_list=[{'principal': 'a@x.com', 'condition': {'true': True}}]
+        )
+        stepped.list_objects = AsyncMock(
+            side_effect=lambda object_type, **_: [policy] if object_type == 'rls-policy' else []
+        )
+        keboola_client.has_feature.return_value = True
+        keboola_client.step_up_metastore_client = MagicMock(return_value=stepped)
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+
+        await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+
+        assert seen
+        assert threading.get_ident() not in seen
+
+    @pytest.mark.asyncio
     async def test_policies_are_read_with_the_sa_step_up(
         self,
         mcp_context_client: Context,
