@@ -27,6 +27,7 @@ from keboola_mcp_server.tools.storage.tools import (
     TableDetail,
     TableSummary,
     UpdateDescriptionsOutput,
+    _apply_bucket_restrictions,
     _apply_metadata_restrictions,
     get_buckets,
     get_tables,
@@ -2160,4 +2161,35 @@ class TestHideClsRestrictedColumns:
 
         await _apply_metadata_restrictions(ctx, client, WorkspaceManager.from_state(ctx.session.state), [])
 
+        loader.assert_not_called()
+
+    @staticmethod
+    def _bucket(bucket_id: str) -> BucketDetail:
+        return BucketDetail(
+            id=bucket_id,
+            name=bucket_id.split('.', 1)[1],
+            display_name=bucket_id.split('.', 1)[1],
+            stage=bucket_id.split('.', 1)[0],
+            created='2025-01-01T00:00:00Z',
+            data_size_bytes=4096,
+        )
+
+    async def test_bucket_with_a_row_governed_table_hides_its_total_size(self, setup) -> None:
+        ctx, client, _ = setup
+        governed = self._bucket('in.c-rls_test')
+        ungoverned = self._bucket('in.c-other')
+
+        await _apply_bucket_restrictions(client, WorkspaceManager.from_state(ctx.session.state), [governed, ungoverned])
+
+        assert governed.data_size_bytes is None
+        assert ungoverned.data_size_bytes == 4096
+
+    async def test_bucket_sizes_are_untouched_when_the_feature_is_off(self, setup, mocker: MockerFixture) -> None:
+        ctx, client, loader = setup
+        client.has_feature = mocker.AsyncMock(return_value=False)
+        bucket = self._bucket('in.c-rls_test')
+
+        await _apply_bucket_restrictions(client, WorkspaceManager.from_state(ctx.session.state), [bucket])
+
+        assert bucket.data_size_bytes == 4096
         loader.assert_not_called()
