@@ -419,6 +419,13 @@ class TestIsGovernedAndReferencesGovernedTable:
         sql = "WITH t AS (SELECT 1) SELECT GET_DDL('table', 'invoices') FROM t"
         assert references_governed_table(sql, dialect='snowflake', rules=rules) is True
 
+    def test_a_qualified_wildcard_follows_the_wrapped_table(self, rules: RlsRules) -> None:
+        """`schema.table.*` is a Column over a Star: its qualifier is rewritten like any column's."""
+        sql = 'SELECT "in.c-crm"."invoices".* FROM "in.c-crm"."invoices"'
+        out = rewrite_query(sql, user='petr', dialect='snowflake', rules=rules).sql
+
+        assert out.startswith('SELECT "invoices".* FROM (SELECT * FROM "in.c-crm"."invoices" WHERE')
+
     def test_references_governed_table_true_for_a_catalog_function_next_to_an_ungoverned_table(
         self, rules: RlsRules
     ) -> None:

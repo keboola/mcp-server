@@ -165,7 +165,7 @@ async def _fetch_tables(
         if not (bucket_id := bucket.get('id')):
             continue
 
-        tables = await merged_bucket_table_list(client, bucket_id, include=['columns', 'columnMetadata'])
+        tables = await merged_bucket_table_list(client, bucket_id, include=['columns', 'columnMetadata', 'metadata'])
         for table in tables:
             if not (table_id := table.get('id')):
                 continue
@@ -177,7 +177,7 @@ async def _fetch_tables(
             matches = spec.match_texts([table_id, table_name, table_display_name, table_description])
             # Policies are keyed by the production table id; a development-branch table id carries `c-<branch>-`.
             branch_id = get_metadata_property(table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
-            prod_table_id = table_id.replace(f'c-{branch_id}-', 'c-') if branch_id else table_id
+            prod_table_id = table_id.replace(f'c-{branch_id}-', 'c-', 1) if branch_id else table_id
             if column_visibility is not None and (allowed := column_visibility(prod_table_id)) is not None:
                 table = {
                     **table,
