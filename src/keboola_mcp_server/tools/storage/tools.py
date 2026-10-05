@@ -782,10 +782,11 @@ async def _apply_metadata_restrictions(
     rls_rules, cls_rules = await load_policy_rules(client, dialect=dialect)
     user = ctx.session.state.get(OAUTH_USER_EMAIL_KEY)
     for table in tables:
-        if rls_rules.governs_table_id(table.id):
+        # Policies are keyed by the production table id; a development-branch table id carries `c-<branch>-`.
+        if rls_rules.governs_table_id(table.prod_id):
             table.rows_count = None
             table.data_size_bytes = None
-        visible = cls_rules.visible_columns(table_id=table.id, user=user)
+        visible = cls_rules.visible_columns(table_id=table.prod_id, user=user)
         if visible is None:
             continue
         allowed = set(visible)

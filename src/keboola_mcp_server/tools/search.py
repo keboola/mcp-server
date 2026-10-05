@@ -175,7 +175,10 @@ async def _fetch_tables(
             table_description = get_metadata_property(table.get('metadata', []), MetadataField.DESCRIPTION)
 
             matches = spec.match_texts([table_id, table_name, table_display_name, table_description])
-            if column_visibility is not None and (allowed := column_visibility(table_id)) is not None:
+            # Policies are keyed by the production table id; a development-branch table id carries `c-<branch>-`.
+            branch_id = get_metadata_property(table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+            prod_table_id = table_id.replace(f'c-{branch_id}-', 'c-') if branch_id else table_id
+            if column_visibility is not None and (allowed := column_visibility(prod_table_id)) is not None:
                 table = {
                     **table,
                     'columns': [c for c in table.get('columns') or [] if c in allowed],

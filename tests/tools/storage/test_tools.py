@@ -2174,6 +2174,28 @@ class TestHideClsRestrictedColumns:
             data_size_bytes=4096,
         )
 
+    async def test_a_development_branch_table_is_governed_by_its_production_policy(self, setup) -> None:
+        """A branch table id carries `c-<branch>-`; policies are keyed by the production id."""
+        ctx, client, _ = setup
+        ctx.session.state[OAUTH_USER_EMAIL_KEY] = 'member@x.com'
+        table = TableSummary.model_validate(
+            {
+                'id': 'in.c-123-rls_test.orders',
+                'name': 'orders',
+                'displayName': 'orders',
+                'primaryKey': ['id', 'ssn'],
+                'rowsCount': 4,
+                'dataSizeBytes': 2048,
+                'metadata': [{'key': MetadataField.FAKE_DEVELOPMENT_BRANCH, 'value': '123'}],
+            }
+        )
+        assert table.prod_id == 'in.c-rls_test.orders'
+
+        await _apply_metadata_restrictions(ctx, client, WorkspaceManager.from_state(ctx.session.state), [table])
+
+        assert (table.rows_count, table.data_size_bytes) == (None, None)
+        assert table.primary_key == ['id']
+
     async def test_bucket_with_a_row_governed_table_hides_its_total_size(self, setup) -> None:
         ctx, client, _ = setup
         governed = self._bucket('in.c-rls_test')

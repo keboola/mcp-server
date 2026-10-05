@@ -1009,7 +1009,6 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
             # the function allowlist, so it must see these rather than have them run as ordinary data.
             return True
         cte_names = _cte_names(statement)
-        real_table_seen = False
         for table in tables:
             if not table.db:
                 # Unqualified: it can resolve to a governed table through the workspace's current schema,
@@ -1022,18 +1021,18 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
                 except RlsError:
                     return True
                 return True
-            real_table_seen = True
             if rules.is_governed(table_name=table.name, schema=table.db) or (
                 cls_rules is not None and cls_rules.is_governed(table_name=table.name, schema=table.db)
             ):
                 return True
-        if not real_table_seen:
-            # Only CTE references: `WITH t AS (SELECT 1) SELECT GET_DDL(...) FROM t` reads no table at all, so
-            # the function allowlist applies as in the no-table case above. Plain CTE-only queries stay untouched.
-            try:
-                _check_functions(statement, cte_names, dialect=dialect)
-            except RlsError:
-                return True
+        # The function checks apply to every statement, not only table-less ones: a catalog/system function
+        # may name a governed table in its arguments (`SELECT GET_DDL('table', 'in.c-crm.invoices') FROM
+        # "in.c-crm"."unrelated"`) and no row filter shapes what it returns. A CTE-only query (no real table)
+        # gets the table-less allowlist as well. Plain queries with harmless functions stay untouched.
+        try:
+            _check_functions(statement, cte_names, dialect=dialect)
+        except RlsError:
+            return True
     return False
 
 
