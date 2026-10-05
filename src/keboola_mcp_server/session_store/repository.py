@@ -42,10 +42,11 @@ class OAuthSession:
     scope_confirmed: bool
     scope_scoped_token: str | None
     scope_scoped_expires_at: datetime | None
-    # Whether the Connection OAuth scope requested for this session (see oauth._scope_for)
-    # included 'projectless' -- False for a Flow B (dynamically-approved) client, which
-    # Connection never grants it to. Recorded at creation so load_access_token/load_refresh_token
-    # advertise the scope this session actually has, not a fixed value for every session.
+    # Whether the Connection OAuth scope requested for this session included 'projectless'.
+    # Always True for a session created now (RFC Decision §10: every registered client gets
+    # 'claudai projectless'); False only for a session persisted by an earlier build of AI-2883,
+    # where a dynamically-approved client got 'claudai' alone. Kept so load_access_token /
+    # load_refresh_token advertise the scope such a session actually has.
     oauth_projectless: bool
 
 
