@@ -1,4 +1,6 @@
 import pytest
+import sqlglot
+from sqlglot import exp
 
 from keboola_mcp_server.clients.metastore import MetaObjectMeta, MetastoreObject
 from keboola_mcp_server.rls import (
@@ -8,6 +10,7 @@ from keboola_mcp_server.rls import (
     RlsAccessDenied,
     RlsError,
     RlsRules,
+    _check_from_sources,
     _check_output,
     _compile_primitive,
     _normalize_schema,
@@ -517,6 +520,32 @@ class TestPredicateFor:
 
 
 class TestRewriteQuery:
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            # An extra source next to a governed table must be refused, not left untouched beside the filter.
+            'SELECT * FROM "in.c-crm"."invoices", TABLE(RESULT_SCAN(LAST_QUERY_ID()))',
+            'SELECT * FROM "in.c-crm"."invoices" CROSS JOIN TABLE(RESULT_SCAN(LAST_QUERY_ID()))',
+            "SELECT * FROM \"in.c-crm\".\"invoices\", IDENTIFIER('x')",
+        ],
+    )
+    def test_an_unsupported_source_next_to_a_governed_table_is_refused(self, rules: RlsRules, sql: str) -> None:
+        with pytest.raises(RlsError, match='unsupported'):
+            rewrite_query(sql, user='petr', dialect='snowflake', rules=rules)
+
+    def test_extra_sources_stored_in_from_expressions_are_checked_too(self) -> None:
+        """Some sqlglot versions keep the extra comma-separated sources of `FROM a, b` in `From.expressions`
+        instead of `Join` nodes; the check must see them either way."""
+        first = exp.Table(this=exp.to_identifier('invoices'), db=exp.to_identifier('in.c-crm'))
+        extra = sqlglot.parse_one('SELECT * FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))', dialect='snowflake').find(
+            exp.TableFromRows
+        )
+        tree = exp.select('*').from_(first)
+        tree.find(exp.From).set('expressions', [extra.copy()])
+
+        with pytest.raises(RlsError, match='unsupported FROM source: TableFromRows'):
+            _check_from_sources(tree)
+
     @pytest.mark.parametrize(
         'sql',
         [

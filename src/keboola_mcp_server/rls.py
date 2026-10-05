@@ -634,14 +634,20 @@ def _check_from_sources(tree: exp.Expression) -> None:
     type means "no data", never "pass it through".
     """
     for clause in itertools.chain(tree.find_all(exp.From), tree.find_all(exp.Join), tree.find_all(exp.Lateral)):
-        source = clause.this
-        if not isinstance(source, _ALLOWED_FROM_SOURCES):
-            raise RlsError(f'RLS: unsupported FROM source: {type(source).__name__}')
-        if isinstance(source, exp.Table) and not isinstance(source.this, exp.Identifier):
-            # A table function (`FROM my_udtf(1)`) parses as an `exp.Table` wrapping an
-            # `exp.Anonymous`. It has no table name to look a rule up by, so it must be refused
-            # here rather than reach the workspace as an unrewritten source.
-            raise RlsError(f'RLS: unsupported table reference: {source.sql()}')
+        # Every source of the clause, not just the first: depending on the sqlglot version the extra
+        # comma-separated sources of a `FROM a, b` live in `From.expressions` rather than in `Join` nodes,
+        # and one that is not checked would reach the warehouse untouched next to a filtered table.
+        sources = (
+            [clause.this, *(clause.args.get('expressions') or [])] if isinstance(clause, exp.From) else [clause.this]
+        )
+        for source in sources:
+            if not isinstance(source, _ALLOWED_FROM_SOURCES):
+                raise RlsError(f'RLS: unsupported FROM source: {type(source).__name__}')
+            if isinstance(source, exp.Table) and not isinstance(source.this, exp.Identifier):
+                # A table function (`FROM my_udtf(1)`) parses as an `exp.Table` wrapping an
+                # `exp.Anonymous`. It has no table name to look a rule up by, so it must be refused
+                # here rather than reach the workspace as an unrewritten source.
+                raise RlsError(f'RLS: unsupported table reference: {source.sql()}')
 
 
 def _cte_names(tree: exp.Expression) -> set[str]:
