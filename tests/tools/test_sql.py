@@ -1776,7 +1776,7 @@ class TestQueryDataSchemaDrift(_DeployedServer):
 
     @pytest.mark.asyncio
     async def test_table_detail_failure_does_not_break_the_query(
-        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager, caplog
     ) -> None:
         keboola_client.has_feature.return_value = True
         _stub_metastore_objects(
@@ -1793,7 +1793,12 @@ class TestQueryDataSchemaDrift(_DeployedServer):
         workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
         keboola_client.storage_client.table_detail.side_effect = RuntimeError('Storage API unavailable')
 
-        await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+        with caplog.at_level('WARNING'):
+            await query_data('SELECT * FROM "in.c-crm"."invoices"', 'q', mcp_context_client)
+
+        # Best-effort, but the failure is logged WITH its traceback so operators can tell causes apart.
+        failures = [r for r in caplog.records if 'could not check schema drift' in r.message]
+        assert failures and failures[0].exc_info is not None
 
 
 class TestQueryDataColumnLevelSecurity(_DeployedServer):

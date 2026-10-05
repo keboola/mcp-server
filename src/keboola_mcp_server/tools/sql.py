@@ -292,7 +292,7 @@ async def _log_schema_drift(
         try:
             detail = await client.storage_client.table_detail(table_id)
         except Exception as e:
-            LOG.warning(f'RLS: could not check schema drift for table {table_id!r}: {e}')
+            LOG.warning(f'RLS: could not check schema drift for table {table_id!r}: {e}', exc_info=True)
             continue
         live_columns = detail.get('columns')
         if not isinstance(live_columns, list):
@@ -359,10 +359,12 @@ async def _apply_rls(
         _log_rls_outcome('refused', query_name=query_name, principal=principal, reason=str(e))
         raise
     _log_rls_outcome('ok', query_name=query_name, principal=principal, tables=rewritten.applied_rules)
-    with contextlib.suppress(Exception):
-        # Diagnostic only -- see `_log_schema_drift`'s docstring. Any failure here must never turn
-        # a successful, correctly-filtered query into an error.
+    try:
         await _log_schema_drift(client, rules=rules, cls_rules=cls_rules, applied_rules=rewritten.applied_rules)
+    except Exception:
+        # Diagnostic only -- see `_log_schema_drift`'s docstring. Any failure here must never turn
+        # a successful, correctly-filtered query into an error, but it is logged with its traceback.
+        LOG.warning('RLS: the schema-drift check failed', exc_info=True)
     return rewritten.sql, rewritten.applied_rules
 
 
