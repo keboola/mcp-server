@@ -1544,6 +1544,38 @@ class TestQueryDataRowLevelSecurity(_DeployedServer):
         workspace_manager.execute_query.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            'SELECT * FROM invoices',
+            'SELECT * FROM "invoices"',
+            'SELECT * FROM "in.c-crm"."unrelated" u JOIN invoices ON TRUE',
+        ],
+    )
+    async def test_an_unqualified_table_is_refused_not_run_unfiltered(
+        self,
+        sql: str,
+        mcp_context_client: Context,
+        keboola_client: KeboolaClient,
+        workspace_manager: WorkspaceManager,
+    ) -> None:
+        """The warehouse may resolve a bare name to the governed table through its current schema, so it
+        must never execute as "ungoverned"."""
+        keboola_client.has_feature.return_value = True
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                self._policy(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
+            ],
+        )
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
+
+        with pytest.raises(ValueError, match='must be qualified'):
+            await query_data(sql, 'q', mcp_context_client)
+        workspace_manager.execute_query.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_flag_on_governed_table_matching_rule_filters_and_discloses(
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
     ) -> None:
