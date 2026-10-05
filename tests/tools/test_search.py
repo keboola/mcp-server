@@ -789,6 +789,17 @@ class TestSearch:
         assert result.hits == []
 
     @pytest.mark.asyncio
+    async def test_a_search_that_cannot_reach_tables_never_loads_policies(
+        self, mocker: MockerFixture, cls_governed: KeboolaClient, mcp_context_client: Context
+    ):
+        loader = mocker.patch('keboola_mcp_server.tools.search.load_policy_rules', new=mocker.AsyncMock())
+        cls_governed.storage_client.is_enabled = mocker.AsyncMock(return_value=False)
+
+        await search(ctx=mcp_context_client, patterns=['x'], item_types=(cast(SearchItemType, 'bucket'),))
+
+        loader.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_search_still_finds_a_visible_column(self, cls_governed: KeboolaClient, mcp_context_client: Context):
         result = await search(ctx=mcp_context_client, patterns=['id'], item_types=(cast(SearchItemType, 'table'),))
 
