@@ -383,6 +383,11 @@ class TestIsGovernedAndReferencesGovernedTable:
         sql = 'SELECT * FROM "in.c-crm"."invoices" JOIN "in.c-crm"."unrelated" ON 1=1'
         assert references_governed_table(sql, dialect='snowflake', rules=rules) is True
 
+    def test_references_governed_table_true_when_only_a_cte_stands_in_for_a_table(self, rules: RlsRules) -> None:
+        """A dummy CTE is not a real table: the strict rewrite must still check the functions."""
+        sql = "WITH t AS (SELECT 1) SELECT GET_DDL('table', 'invoices') FROM t"
+        assert references_governed_table(sql, dialect='snowflake', rules=rules) is True
+
     def test_references_governed_table_false_when_nothing_governed_is_touched(self, rules: RlsRules) -> None:
         sql = 'SELECT * FROM "in.c-crm"."unrelated"'
         assert references_governed_table(sql, dialect='snowflake', rules=rules) is False

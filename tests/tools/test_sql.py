@@ -1563,6 +1563,24 @@ class TestQueryDataRowLevelSecurity(_DeployedServer):
         workspace_manager.execute_query.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_flag_on_catalog_function_behind_a_dummy_cte_is_refused(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        keboola_client.has_feature.return_value = True
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                self._policy(table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}])
+            ],
+        )
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
+
+        with pytest.raises(ValueError, match='function call is not allowed'):
+            await query_data("WITH t AS (SELECT 1) SELECT GET_DDL('table', 'invoices') FROM t", 'q', mcp_context_client)
+        workspace_manager.execute_query.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_flag_on_no_identity_still_runs_a_query_that_touches_no_governed_table(
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
     ) -> None:
