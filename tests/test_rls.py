@@ -542,6 +542,53 @@ class TestRewriteQuery:
         )
         assert out.applied_rules == ['in.c-crm.invoices']
 
+    @pytest.mark.parametrize(
+        ('sql', 'must_contain', 'must_not_contain'),
+        [
+            (
+                'SELECT "in.c-crm"."invoices"."id" FROM "in.c-crm"."invoices"',
+                'SELECT "invoices"."id" FROM (',
+                '"in.c-crm"."invoices"."id"',
+            ),
+            (
+                'SELECT "id" FROM "in.c-crm"."invoices" ORDER BY "in.c-crm"."invoices"."id"',
+                'ORDER BY "invoices"."id"',
+                '"in.c-crm"."invoices"."id"',
+            ),
+            (
+                'SELECT 1 FROM "in.c-crm"."invoices" JOIN "in.c-crm"."unrelated" u ON u.k = "in.c-crm"."invoices"."k"',
+                'u.k = "invoices"."k"',
+                '"in.c-crm"."invoices"."k"',
+            ),
+            (
+                'SELECT "in.c-crm"."invoices"."id" FROM "in.c-crm"."invoices" WHERE "in.c-crm"."invoices"."x" > 1',
+                'WHERE "invoices"."x" > 1',
+                '"in.c-crm"."invoices"."x"',
+            ),
+        ],
+    )
+    def test_fully_qualified_column_references_follow_the_wrapper_alias(
+        self, rules: RlsRules, sql: str, must_contain: str, must_not_contain: str
+    ) -> None:
+        """The wrapper is a derived table named after the table, so the schema qualifier on a column would
+        no longer resolve ("invalid identifier") -- it is dropped, anywhere in the query."""
+        out = rewrite_query(sql, user='petr', dialect='snowflake', rules=rules)
+
+        assert must_contain in out.sql
+        assert must_not_contain not in out.sql
+        assert out.applied_rules == ['in.c-crm.invoices']
+
+    def test_an_explicit_alias_and_other_tables_qualifiers_are_left_alone(self, rules: RlsRules) -> None:
+        out = rewrite_query(
+            'SELECT i.id, "in.c-crm"."unrelated"."k" FROM "in.c-crm"."invoices" i JOIN "in.c-crm"."unrelated" ON TRUE',
+            user='petr',
+            dialect='snowflake',
+            rules=rules,
+        )
+
+        assert 'i.id' in out.sql
+        assert '"in.c-crm"."unrelated"."k"' in out.sql  # a table the policy does not govern keeps its qualifier
+
     def test_ungoverned_table_alone_is_left_untouched(self, rules: RlsRules) -> None:
         """RLS is opt-in per table (see `RlsRules.is_governed`): a table no policy names at all
         must not be refused just because `rewrite_query` was called -- it's the caller's job
