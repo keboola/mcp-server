@@ -627,9 +627,9 @@ class TestSearch:
         )
         keboola_client.storage_client.bucket_table_list.assert_has_calls(
             [
-                call('in.c-test-bucket-a', include=['columns', 'columnMetadata'], branch_id='default'),
-                call('in.c-test-bucket-b', include=['columns', 'columnMetadata'], branch_id='default'),
-                call('in.c-test-bucket-c', include=['columns', 'columnMetadata'], branch_id='default'),
+                call('in.c-test-bucket-a', include=['columns', 'columnMetadata', 'metadata'], branch_id='default'),
+                call('in.c-test-bucket-b', include=['columns', 'columnMetadata', 'metadata'], branch_id='default'),
+                call('in.c-test-bucket-c', include=['columns', 'columnMetadata', 'metadata'], branch_id='default'),
             ]
         )
         keboola_client.storage_client.component_list.assert_called_once_with(None, include=['configuration', 'rows'])
@@ -812,6 +812,41 @@ class TestSearch:
                 {
                     'id': 'in.c-123-test-bucket.orders',
                     'name': 'orders',
+                    'created': '2024-01-01T00:00:00Z',
+                    'columns': ['id', 'ssn'],
+                    'metadata': [{'key': MetadataField.FAKE_DEVELOPMENT_BRANCH, 'value': '123'}],
+                },
+            ]
+        )
+
+        result = await search(ctx=mcp_context_client, patterns=['ssn'], item_types=(cast(SearchItemType, 'table'),))
+
+        assert result.hits == []
+
+    @pytest.mark.asyncio
+    async def test_search_normalizes_only_the_bucket_prefix_of_a_branch_table_id(
+        self, mocker: MockerFixture, cls_governed: KeboolaClient, mcp_context_client: Context
+    ):
+        """A table NAME that happens to look like the branch marker must not be rewritten too."""
+        from keboola_mcp_server.rls import ClsRules, RlsRules
+
+        mocker.patch(
+            'keboola_mcp_server.tools.search.load_policy_rules',
+            new=mocker.AsyncMock(
+                return_value=(
+                    RlsRules(tables={}, dialect='snowflake'),
+                    ClsRules(tables={'in.c-test-bucket.c-123-secret': {'member@x.com': ('id',)}}, dialect='snowflake'),
+                )
+            ),
+        )
+        cls_governed.storage_client.bucket_list = mocker.AsyncMock(
+            return_value=[{'id': 'in.c-123-test-bucket', 'name': 'test-bucket', 'created': '2024-01-01T00:00:00Z'}]
+        )
+        cls_governed.storage_client.bucket_table_list = mocker.AsyncMock(
+            return_value=[
+                {
+                    'id': 'in.c-123-test-bucket.c-123-secret',
+                    'name': 'c-123-secret',
                     'created': '2024-01-01T00:00:00Z',
                     'columns': ['id', 'ssn'],
                     'metadata': [{'key': MetadataField.FAKE_DEVELOPMENT_BRANCH, 'value': '123'}],

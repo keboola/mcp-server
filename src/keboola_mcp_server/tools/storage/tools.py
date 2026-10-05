@@ -229,7 +229,7 @@ class BucketDetail(BaseModel):
         branch_id = get_metadata_property(values.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
         if branch_id:
             values['branch_id'] = branch_id
-            values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-')
+            values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-', 1)
         else:
             values['branch_id'] = None
             values['prod_id'] = values['id']
@@ -363,7 +363,7 @@ class TableSummary(BaseModel):
         branch_id = get_metadata_property(values.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
         if branch_id:
             values['branch_id'] = branch_id
-            values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-')
+            values['prod_id'] = values['id'].replace(f'c-{branch_id}-', 'c-', 1)
         else:
             values['branch_id'] = None
             values['prod_id'] = values['id']
