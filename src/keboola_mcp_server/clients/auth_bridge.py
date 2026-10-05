@@ -183,9 +183,9 @@ class StorageTokenResolver:
 
 class OAuthSessionExchanger:
     """Exchanges a league OAuth access token for a Keboola programmatic session (PSGO-261
-    oauth_session_exchange RFC): whole-stack for ``claudai projectless`` scope (Flow A), or pinned
-    to a single project for ``claudai`` alone (Flow B, a dynamically-approved client -- see
-    AI-2883's ``_scope_for``)."""
+    oauth_session_exchange RFC): whole-stack for ``claudai projectless`` scope (every registered
+    client since AI-2883, RFC Decision §10), or pinned to a single project for ``claudai`` alone
+    (only a session persisted by an earlier build of AI-2883 for a dynamically-approved client)."""
 
     def __init__(
         self,
