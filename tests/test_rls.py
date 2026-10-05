@@ -517,6 +517,31 @@ class TestPredicateFor:
 
 
 class TestRewriteQuery:
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            'SELECT * FROM invoices',
+            'SELECT * FROM "invoices"',
+            'SELECT * FROM "in.c-crm"."unrelated" JOIN invoices ON TRUE',
+        ],
+    )
+    def test_an_unqualified_table_is_refused_never_passed_through_as_ungoverned(
+        self, rules: RlsRules, sql: str
+    ) -> None:
+        """No policy key can be derived from a bare name, and the warehouse may resolve it to a governed
+        table through its current schema -- so the rewrite refuses it."""
+        with pytest.raises(RlsError, match='must be qualified'):
+            rewrite_query(sql, user='petr', dialect='snowflake', rules=rules)
+
+    def test_a_cte_reference_is_not_mistaken_for_an_unqualified_table(self, rules: RlsRules) -> None:
+        out = rewrite_query(
+            'WITH x AS (SELECT * FROM "in.c-crm"."invoices") SELECT * FROM x',
+            user='petr',
+            dialect='snowflake',
+            rules=rules,
+        )
+        assert out.applied_rules == ['in.c-crm.invoices']
+
     def test_ungoverned_table_alone_is_left_untouched(self, rules: RlsRules) -> None:
         """RLS is opt-in per table (see `RlsRules.is_governed`): a table no policy names at all
         must not be refused just because `rewrite_query` was called -- it's the caller's job

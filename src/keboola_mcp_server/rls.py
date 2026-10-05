@@ -1088,7 +1088,11 @@ def rewrite_query(
             raise RlsError(f'RLS: unsupported table reference: {node.sql()}')
         if _is_cte_reference(node, cte_names, dialect=dialect):
             return node  # reference to a CTE in scope here, not a real table
-        schema = node.db or None
+        if not node.db:
+            # No schema, so no policy key can be derived -- yet the warehouse may resolve the bare name to a
+            # governed table through its current schema. Never pass it through as "ungoverned".
+            raise RlsError(f"RLS: table reference must be qualified as <bucket>.<table>: '{node.name}'")
+        schema = node.db
         rls_governed = rules.is_governed(table_name=node.name, schema=schema)
         cls_governed = cls_rules is not None and cls_rules.is_governed(table_name=node.name, schema=schema)
         if not rls_governed and not cls_governed:

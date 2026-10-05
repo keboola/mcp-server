@@ -18,9 +18,10 @@ Phase 1.5 — see `rls.py`'s `RlsRules.referenced_columns()`/`table_ids` and `to
 `_log_schema_drift()`, PLAN.md Task 10.5, DONE) and Column-Level Security itself (Phase 1 — see
 `rls.py`'s `ClsRules` and `rewrite_query()`'s `cls_rules` parameter, `tools/sql.py`'s `_apply_rls`
 fetching `cls-policy` alongside `rls-policy`, PLAN.md Task 9, DONE). Both are consumer-side only:
-the MCP server can compile and enforce `cls-policy` objects the moment they exist, but the
-`cls-policy` schema itself isn't registered in the metastore backend yet (go-monorepo dependency,
-unchanged from `rls-policy`'s existing one) — see "Dependencies" and PLAN.md's go-monorepo section.
+the MCP server compiles and enforces `cls-policy` objects. Both policy schemas are registered by the
+metastore's 2026-09-29 migrations (released as `metastore-v0.11.0`) and the whole path has been verified on
+canary-orion, so a stack that enables the feature has both types; `load_policy_rules()` requires both and fails
+closed otherwise (see the v4 amendment) — and "Dependencies" / PLAN.md's go-monorepo section for the backend side.
 
 Still Draft, not implemented: the principal-resolution chain (chain step 2's `verify_token()` call,
 chain step 3's `rls-token-principal` binding) and value-masking CLS (Phase 3). Both remain blocked
