@@ -1,5 +1,7 @@
 import base64
 import dataclasses
+import hashlib
+import hmac
 import json
 import logging
 import secrets
@@ -16,6 +18,7 @@ import pytest
 from mcp.server.auth.provider import AccessToken, AuthorizationParams, RefreshToken, TokenError
 from mcp.shared.auth import InvalidRedirectUriError, OAuthClientInformationFull
 from pydantic import AnyHttpUrl, AnyUrl
+from starlette.exceptions import HTTPException
 
 from keboola_mcp_server.auth_login import Introspection, ProjectAccess, ScopedToken
 from keboola_mcp_server.clients.auth_bridge import OAuthTokenExchangeError
@@ -366,6 +369,7 @@ class TestConnectionClientIdentity:
         [
             ('My Custom Tool', 'My Custom Tool'),
             ('a' * 200, 'a' * 128),  # Connection's client_name cap
+            ('\U0001f680' * 200, '\U0001f680' * 32),  # the cap is in bytes: 32 four-byte emoji, not 128 characters
             ('Evil\u200bName', 'EvilName'),  # zero-width space stripped
             ('Evil\u202eName', 'EvilName'),  # bidi override stripped
             ('Evil\x00Name', 'EvilName'),  # control character stripped
@@ -677,6 +681,57 @@ class TestSimpleOAuthProvider:
         assert 'client_id=foo-client-id' in record.message
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('registered_against', 'expected_path', 'expected_checks'),
+        [
+            # approved since AI-3995: registered against this server's callback
+            ('callback', '/oauth/consent', 1),
+            # approved BEFORE AI-3995: registered against its own redirect_uri; must keep working (a new approval
+            # would end in League rejecting the mismatching redirect_uri as `invalid_client`)
+            ('own_redirect_uri', '/oauth/consent', 2),
+            # genuinely new
+            (None, '/oauth/authorize', 2),
+        ],
+    )
+    async def test_authorize_admits_a_client_registered_against_its_own_redirect_uri(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        registered_against: str | None,
+        expected_path: str,
+        expected_checks: int,
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        own = 'https://my.tool/oauth/callback'
+        registered_uri = {'callback': oauth_provider._mcp_callback_url, 'own_redirect_uri': own}.get(registered_against)
+        checked: list[str] = []
+
+        async def _fake(self, connection_client_id: str, redirect_uri: str):
+            checked.append(redirect_uri)
+            return (
+                _ClientRegistration.REGISTERED if redirect_uri == registered_uri else _ClientRegistration.NOT_REGISTERED
+            )
+
+        monkeypatch.setattr(oauth_module.ConnectionClientRegistry, 'check_registration', _fake)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl(own),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        auth_url = await oauth_provider.authorize(client, params)
+
+        assert urlparse(auth_url).path == expected_path
+        assert len(checked) == expected_checks
+        # the new form is always asked first
+        assert checked[0] == oauth_provider._mcp_callback_url
+
+    @pytest.mark.asyncio
     async def test_authorize_unregistered_client_redirects_to_connection_approval(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
@@ -710,14 +765,64 @@ class TestSimpleOAuthProvider:
 
         connection_client_id = query['client_id'][0]
         assert connection_client_id == _connection_client_id('https://my.tool/oauth/callback')
-        assert query['redirect_uri'] == ['https://my.tool/oauth/callback']
+        # The approval is registered against this server's own callback, never the caller's
+        # redirect_uri (RFC Decision §15); the real target goes into the displayed name instead.
+        assert query['redirect_uri'] == [oauth_provider._mcp_callback_url]
+        assert query['return_to_client_after_approval'] == ['1']
 
         decoded = json.loads(base64.urlsafe_b64decode(query['pending_mcp_client'][0]))
         assert decoded == {
             'client_id': connection_client_id,
-            'client_name': 'My Custom Tool',
-            'redirect_uri': 'https://my.tool/oauth/callback',
+            'client_name': 'My Custom Tool (redirects to https://my.tool)',
+            'redirect_uri': oauth_provider._mcp_callback_url,
         }
+
+        # `state` carries the original authorize request back to handle_oauth_callback().
+        state = oauth_provider._decode(query['state'][0])
+        assert state['pending'] is True
+        assert state['redirect_uri'] == 'https://my.tool/oauth/callback'
+        assert state['state'] == 'client-state'
+
+    @pytest.mark.parametrize(
+        ('client_name', 'redirect_uri', 'expected'),
+        [
+            ('My Tool', 'https://my.tool/cb', 'My Tool (redirects to https://my.tool)'),
+            ('Cursor', 'http://localhost:9876/callback', 'Cursor (redirects to http://localhost:9876)'),
+            # a long name is shortened first, the destination stays whole
+            ('N' * 200, 'https://my.tool/cb', 'N' * 97 + ' (redirects to https://my.tool)'),
+            # multi-byte characters: 24 four-byte emoji (96 bytes) + the 31-byte suffix, not 97 characters
+            ('\U0001f680' * 200, 'https://my.tool/cb', '\U0001f680' * 24 + ' (redirects to https://my.tool)'),
+        ],
+    )
+    def test_approval_client_name_fits_connections_cap_and_keeps_the_destination(
+        self, client_name: str, redirect_uri: str, expected: str
+    ):
+        from keboola_mcp_server.oauth import _approval_client_name
+
+        name = _approval_client_name(client_name, redirect_uri)
+        assert name == expected
+        assert len(name.encode()) <= 128  # Connection counts bytes (PHP strlen), not characters
+
+    def test_mcp_client_signature_is_unambiguous_for_ids_and_states_containing_dots(self):
+        """With a plain '.' separator a signature for ("a", "b.c") would also verify ("a.b", "c")."""
+        from keboola_mcp_server.oauth import _sign_mcp_client_id
+
+        assert _sign_mcp_client_id('secret', 'a', 'b.c') != _sign_mcp_client_id('secret', 'a.b', 'c')
+        assert _sign_mcp_client_id('secret', 'a', 'b') == _sign_mcp_client_id('secret', 'a', 'b')
+        assert _sign_mcp_client_id('secret', 'a', 'b') != _sign_mcp_client_id('other', 'a', 'b')
+
+    def test_approval_client_name_keeps_the_end_of_a_very_long_host(self):
+        """The final labels of a hostname are what identify the destination, so a host too long to fit
+        loses its start, never its end (Copilot review, AI-3995)."""
+        from keboola_mcp_server.oauth import _approval_client_name
+
+        host = '.'.join(['a' * 60] * 3) + '.evil.example'
+        name = _approval_client_name('My Tool', f'https://{host}/cb')
+
+        assert len(name.encode()) <= 128
+        assert name.endswith('.evil.example)')
+        assert '(redirects to https://...' in name
+        assert name.startswith('My Tool')
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -747,7 +852,110 @@ class TestSimpleOAuthProvider:
         auth_url = await oauth_provider.authorize(client, params)
 
         decoded = json.loads(base64.urlsafe_b64decode(parse_qs(urlparse(auth_url).query)['pending_mcp_client'][0]))
-        assert decoded['client_name'] == _connection_client_id('https://another.tool/cb')
+        assert (
+            decoded['client_name']
+            == f'{_connection_client_id("https://another.tool/cb")} (redirects to https://another.tool)'
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('registration_after_approval', 'connection_code'),
+        [
+            ('REGISTERED', 'connection-code'),
+            # Connection no longer issues a code when it approves a new client (AI-3995)
+            ('REGISTERED', None),
+            ('NOT_REGISTERED', 'connection-code'),
+            ('ERROR', None),
+        ],
+    )
+    async def test_callback_after_approval_continues_to_consent_without_exchanging_the_code(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        registration_after_approval: str,
+        connection_code: str | None,
+    ):
+        """AI-3995: after the user clicks Allow on the new-client screen, the browser comes back to
+        this server's /oauth/callback with the (unredeemable) Connection code and the pending state.
+        A registered client is sent straight on to /oauth/consent with a normal state; anything else
+        fails closed. The Connection code is never exchanged."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration, _connection_client_id
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://my.tool/oauth/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+        pending_url = await oauth_provider.authorize(client, params)
+        pending_state = parse_qs(urlparse(pending_url).query)['state'][0]
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration[registration_after_approval])
+        monkeypatch.setattr(
+            oauth_module, '_create_http_client', lambda **_kw: pytest.fail('the Connection code must not be exchanged')
+        )
+
+        if registration_after_approval != 'REGISTERED':
+            with pytest.raises(HTTPException) as exc:
+                await oauth_provider.handle_oauth_callback(connection_code, pending_state)
+            assert exc.value.status_code == 400
+            return
+
+        with caplog.at_level(logging.INFO):
+            consent_url = await oauth_provider.handle_oauth_callback(connection_code, pending_state)
+
+        # the interim audit record of which callback was sent to consent (Connection keeps no list of
+        # registered clients) must exist on this path too, not only for a client that is registered up front
+        [record] = [r for r in caplog.records if 'Registered client proceeding to consent' in r.message]
+        assert 'client_id=foo-client-id' in record.message
+        assert 'pre_registered=False' in record.message
+
+        parsed = urlparse(consent_url)
+        assert parsed.path == '/oauth/consent'
+        query = parse_qs(parsed.query)
+        assert query['scope'] == ['claudai projectless']
+        assert query['redirect_uri'] == [oauth_provider._mcp_callback_url]
+        # lets Connection's consent screen name the app that is asking, not just the broker
+        assert query['mcp_client_id'] == [_connection_client_id('https://my.tool/oauth/callback')]
+        # ... and authenticated, bound to this very flow's state (Connection recomputes it with the broker secret)
+        expected_sig = hmac.new(
+            oauth_provider._oauth_client_secret.encode(),
+            f'{len(query["mcp_client_id"][0].encode())}:{query["mcp_client_id"][0]}:{query["state"][0]}'.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        assert query['mcp_client_sig'] == [expected_sig]
+        state = oauth_provider._decode(query['state'][0])
+        assert 'pending' not in state
+        assert state['redirect_uri'] == 'https://my.tool/oauth/callback'
+        assert state['code_challenge'] == 'challenge'
+
+    @pytest.mark.asyncio
+    async def test_callback_without_code_is_rejected_for_a_normal_state(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Only the post-approval (pending) callback may arrive without a code; every other state still needs it."""
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://my.tool/oauth/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+        consent_url = await oauth_provider.authorize(client, params)
+        state = parse_qs(urlparse(consent_url).query)['state'][0]
+
+        with pytest.raises(HTTPException) as exc:
+            await oauth_provider.handle_oauth_callback(None, state)
+        assert exc.value.status_code == 400
 
     @pytest.mark.asyncio
     async def test_authorize_redirects_to_own_callback_when_connection_check_errors(
@@ -942,6 +1150,14 @@ class TestSimpleOAuthProvider:
         assert second is _ClientRegistration.REGISTERED
         assert call_count == 1  # second call was served from cache, no second HTTP request
 
+        # Neither half of the key alone admits a call: every dynamically-approved client shares this
+        # server's own callback, and one client can be registered against several redirect_uris.
+        third = await registry.check_registration('mcp-another-client', 'https://claude.ai/api/mcp/auth_callback')
+        fourth = await registry.check_registration('claude-ai', 'https://other.example/callback')
+        assert third is _ClientRegistration.REGISTERED
+        assert fourth is _ClientRegistration.REGISTERED
+        assert call_count == 3
+
     @pytest.mark.asyncio
     async def test_check_client_registration_never_caches_not_registered(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
@@ -1004,8 +1220,8 @@ class TestSimpleOAuthProvider:
         # eviction order is purely insertion order and client-1 would be evicted instead.
         await registry.check_registration('client-3', 'https://c.example/cb')
 
-        assert 'https://a.example/cb' in registry._registration_cache
-        assert 'https://b.example/cb' not in registry._registration_cache
+        assert ('client-1', 'https://a.example/cb') in registry._registration_cache
+        assert ('client-2', 'https://b.example/cb') not in registry._registration_cache
 
     @pytest.mark.asyncio
     async def test_check_client_registration_never_caches_error(

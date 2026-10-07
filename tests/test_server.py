@@ -635,6 +635,43 @@ async def test_oauth_callback_handler_propagates_http_exception(mocker) -> None:
 
 
 @pytest.mark.parametrize(
+    ('query_string', 'expected_call'),
+    [
+        # right after Connection approved a new client it returns with only the state (AI-3995)
+        (b'state=xyz&client_approved=1', (None, 'xyz')),
+        (b'code=abc&state=xyz', ('abc', 'xyz')),
+        # the state is always required
+        (b'code=abc', None),
+        (b'', None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_oauth_callback_handler_accepts_a_missing_code_but_not_a_missing_state(
+    mocker, query_string: bytes, expected_call: tuple[str | None, str] | None
+) -> None:
+    """The route used to reject any callback without a `code`, which would break the post-approval
+    callback; whether a code is required for a given state is decided by handle_oauth_callback()."""
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    oauth_provider = mocker.Mock()
+    oauth_provider.handle_oauth_callback = mocker.AsyncMock(return_value='https://next.example/oauth/consent')
+    routes = CustomRoutes(server_state=server_state, oauth_provider=oauth_provider)
+    request = Request({'type': 'http', 'headers': [], 'query_string': query_string})
+
+    if expected_call is None:
+        with pytest.raises(HTTPException) as exc:
+            await routes.oauth_callback_handler(request)
+        assert exc.value.status_code == 400
+        oauth_provider.handle_oauth_callback.assert_not_called()
+        return
+
+    response = await routes.oauth_callback_handler(request)
+
+    oauth_provider.handle_oauth_callback.assert_awaited_once_with(*expected_call)
+    assert response.status_code == 302
+    assert response.headers['location'] == 'https://next.example/oauth/consent'
+
+
+@pytest.mark.parametrize(
     ('error', 'expected_text'),
     [
         ('temporarily_unavailable', 'temporarily unavailable'),

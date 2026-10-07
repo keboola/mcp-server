@@ -180,7 +180,10 @@ class CustomRoutes:
         code = request.query_params.get('code')
         state = request.query_params.get('state')
 
-        if not code or not state:
+        # `code` may legitimately be absent right after a new client was approved on Connection
+        # (the approval no longer issues one, AI-3995); handle_oauth_callback() enforces it for
+        # every other state.
+        if not state:
             raise HTTPException(400, 'Missing code or state parameter')
 
         try:
