@@ -921,14 +921,7 @@ class SimpleOAuthProvider(OAuthProvider):
             )
 
         # registration is REGISTERED from here on.
-        # INFO on purpose: Connection keeps no list of registered clients to inspect later, so this
-        # line is the record of which callback was sent to consent, and whether it was pre-registered.
-        LOG.info(
-            f'[authorize] Registered client proceeding to consent: client_id={_sanitize_client_id_for_log(client.client_id)}, '
-            f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}, '
-            f'pre_registered={connection_client_id in _WELL_KNOWN_CONNECTION_CLIENT_IDS.values()}, '
-            f'scope={_CONNECTION_SCOPE!r}'
-        )
+        self._log_proceeding_to_consent(client.client_id, redirect_uri_str)
         auth_url = self._connection_consent_url(state)
         LOG.debug(f'[authorize] client_id={_sanitize_client_id_for_log(client.client_id)}, params={params}, {auth_url}')
         return auth_url
@@ -944,6 +937,19 @@ class SimpleOAuthProvider(OAuthProvider):
         if registration is _ClientRegistration.NOT_REGISTERED and connection_redirect_uri != redirect_uri:
             registration = await self._client_registry.check_registration(connection_client_id, redirect_uri)
         return registration
+
+    @staticmethod
+    def _log_proceeding_to_consent(client_id: str, redirect_uri: str) -> None:
+        """INFO on purpose: Connection keeps no list of registered clients to inspect later, so this line
+        is the record of which callback was sent to consent, and whether it was pre-registered. Written on
+        both paths into /oauth/consent: straight from /authorize, and after a new client was approved."""
+        connection_client_id = _connection_client_id(redirect_uri)
+        LOG.info(
+            f'[authorize] Registered client proceeding to consent: client_id={_sanitize_client_id_for_log(client_id)}, '
+            f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri)}, '
+            f'pre_registered={connection_client_id in _WELL_KNOWN_CONNECTION_CLIENT_IDS.values()}, '
+            f'scope={_CONNECTION_SCOPE!r}'
+        )
 
     def _connection_redirect_uri(self, redirect_uri: str) -> str:
         """The redirect_uri Connection has registered for this client: the client's own for a
@@ -981,6 +987,7 @@ class SimpleOAuthProvider(OAuthProvider):
         if registration is not _ClientRegistration.REGISTERED:
             LOG.warning(f'[handle_oauth_callback] Pending client not registered after approval: {registration}')
             raise HTTPException(400, 'The OAuth client was not approved. Please try connecting again.')
+        self._log_proceeding_to_consent(cast(str, state_data['client_id']), redirect_uri)
         state = {k: v for k, v in state_data.items() if k != 'pending'}
         state['expires_at'] = time.time() + 5 * 60
         return self._connection_consent_url(state)

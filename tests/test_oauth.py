@@ -872,6 +872,7 @@ class TestSimpleOAuthProvider:
         self,
         oauth_provider: SimpleOAuthProvider,
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
         registration_after_approval: str,
         connection_code: str | None,
     ):
@@ -905,7 +906,14 @@ class TestSimpleOAuthProvider:
             assert exc.value.status_code == 400
             return
 
-        consent_url = await oauth_provider.handle_oauth_callback(connection_code, pending_state)
+        with caplog.at_level(logging.INFO):
+            consent_url = await oauth_provider.handle_oauth_callback(connection_code, pending_state)
+
+        # the interim audit record of which callback was sent to consent (Connection keeps no list of
+        # registered clients) must exist on this path too, not only for a client that is registered up front
+        [record] = [r for r in caplog.records if 'Registered client proceeding to consent' in r.message]
+        assert 'client_id=foo-client-id' in record.message
+        assert 'pre_registered=False' in record.message
 
         parsed = urlparse(consent_url)
         assert parsed.path == '/oauth/consent'
