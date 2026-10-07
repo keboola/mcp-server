@@ -309,23 +309,23 @@ functions, per project convention):
   registered client (register → Allow → retry → `/oauth/consent` → token exchange → a real tool call over
   the whole-stack session) was run manually and passed (2026-10-05); it is not automated here.
 
-**Pre-release verification (to run on the next dev stack release; not automated here).** The account-
-takeover chain from the AI-3792 report is blocked on `main` by the hardcoded whitelist, so these
-scenarios are what shows the registry-based replacement is not weaker. Results will be recorded here
-and in the PR before release:
+**Pre-release verification (to run on the next dev stack release; not automated here).** Which
+redirect targets are trusted moves from a hardcoded list to Connection's registry, so these scenarios
+check that the replacement is not weaker. Results will be recorded here and in the PR before release:
 
-1. Replay the customer's report on dev against `main` and against this PR. Pass: no code ever reaches
-   the attacker domain (this PR answers with Connection's approval screen instead of a 400).
+1. Replay the AI-3792 report on dev against `main` and against this PR. Pass: no authorization code
+   reaches the reported domain (this PR answers with Connection's approval screen instead of a 400).
 2. Redirect sweep on `/authorize`, `/mcp/authorize`, `/register`, `/token` and `/.well-known`, with
    probes for missing PKCE, backslash, userinfo, encoded host, IDN, trailing dot and double slash.
    Fail on any 3xx whose host is not Connection or the MCP host, and on any 200 that echoes an
    attacker URI. Also run Connection-down and rate-limited cases; they must fail closed with no
    redirect to the caller.
-3. Dynamic-approval takeover: an attacker account approves `attacker.example/cb`, then a victim
-   follows the attacker's `/authorize` link. Pass: the victim cannot complete the flow, or the code
-   does not reach the attacker. Expected today, without Connection's role gate (AI-3936): it
-   succeeds — which is the evidence for deciding whether to release before the gate.
-4. Role gate: once AI-3936 or an equivalent lands, a minimum-role user clicking Allow must be denied.
+3. Callbacks registered through Connection's approval step: check that a callback registered by one
+   user cannot be used to obtain another user's session, including with a PKCE challenge supplied by
+   the registering user. Record the outcome and whether Connection's approval gating (AI-3936) is
+   needed before release.
+4. Approval gating: once AI-3936 or an equivalent is deployed, a minimum-role user must be unable to
+   approve a new client.
 5. PKCE and scope: S256 required and `plain` rejected; check what a stolen session can do, and that
    revoking it and deactivating a client both take effect within the 5-minute cache TTL.
 6. CI regression: a test over the real `create_server` and CLI composition that fails if any route can
@@ -546,9 +546,8 @@ approval).
     side owner to pick up; nothing in `keboola/mcp-server` can close it. This PR does not change
     Connection's own gap, but it makes that gap **load-bearing for MCP logins**: Connection's approval
     becomes the MCP server's trust root, whereas before a redirect target needed a reviewed
-    Keboola-engineering change. Until the gate is deployed, any authenticated user on a stack can
-    register a callback that the MCP server will then send a victim's login to. Whether and how to
-    narrow the grant per registration is tracked in AI-4007.
+    Keboola-engineering change. Restricting who may approve a new client is Connection's gate
+    (AI-3936); whether and how to narrow the grant per registration is tracked in AI-4007.
 
 13. **The REGISTERED cache's 5-minute TTL is also a revocation-latency window (Copilot review
     finding, accepted).** Connection's contract deliberately maps a deactivated client to the same
