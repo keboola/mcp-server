@@ -23,9 +23,9 @@ LOG = logging.getLogger(__name__)
 # subdomain labels, ending in `.keboola.com`/`.keboola.dev` (multi-tenant stacks), `.keboola.cloud`
 # (single-tenant stacks), or `.keboola-testing.com` (test stacks, e.g. kbc-testing-azure-east-us-2).
 # `hostname.startswith('connection.')` alone is not a domain allowlist -- `connection.attacker.tld`
-# would satisfy it -- see the "Security hardening" RFC increment. Mirrors the domain-allowlist
-# pattern `oauth.py`'s `_ALLOWED_DOMAINS` already uses for redirect URIs, scoped to this server's
-# own kind of host.
+# would satisfy it -- see the "Security hardening" RFC increment. A fixed host-shape allowlist,
+# scoped to this server's own kind of host (redirect URIs are no longer checked this way: Connection's
+# client registry decides, see `oauth.py`'s `ConnectionClientRegistry`).
 _STORAGE_API_HOST_RE = re.compile(
     r'^connection\.(?:[a-z0-9-]+\.)*(?:keboola\.(?:com|dev|cloud)|keboola-testing\.com)$', re.IGNORECASE
 )

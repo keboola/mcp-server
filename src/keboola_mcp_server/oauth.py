@@ -203,6 +203,14 @@ def _sanitize_for_log(value: str) -> str:
     return _strip_unprintable(value)
 
 
+def _sanitize_client_id_for_log(client_id: str) -> str:
+    """`client_id` is a free-form query/body parameter on the unauthenticated `/authorize` and `/token`
+    routes (the SDK's `get_client()` here accepts any value), so cap it and strip control/bidi
+    characters before it reaches a log line -- the audit lines are the interim control for RFC
+    Decision §10, and a crafted value must not forge records in them (Vojtěch Biberle review)."""
+    return _sanitize_for_log(client_id)[:64]
+
+
 def _create_http_client(*, follow_redirects: bool = True, timeout: httpx.Timeout | None = None) -> httpx.AsyncClient:
     return httpx.AsyncClient(follow_redirects=follow_redirects, timeout=timeout or httpx.Timeout(30.0))
 
@@ -256,6 +264,8 @@ class ConnectionClientRegistry:
         #   was never a real defense against that flood; local throttling below is what handles it.
         # - Caching ERROR would prolong an outage instead of retrying it -- fail-closed still
         #   applies on every uncached call (see AI-3792).
+        # Keyed by `redirect_uri` alone: `connection_client_id` is derived deterministically from it
+        # (`_connection_client_id`), so a second key component would add nothing.
         self._registration_cache: OrderedDict[str, float] = OrderedDict()
 
         self._validate_rate_limiter = _SlidingWindowRateLimiter(
@@ -362,7 +372,7 @@ class ConnectionClientRegistry:
         else:
             LOG.warning(
                 f'[check_registration] Unexpected response from Connection: '
-                f'status={response.status_code}, text={response.text}'
+                f'status={response.status_code}, text={response.text[:200]!r}'
             )
             return _ClientRegistration.ERROR
 
@@ -443,7 +453,7 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
         # AI-2883 RFC, feature_spec/oauth_dynamic_client_registration/RFC.md, Resolution
         # Strategy §2).
         #
-        # This is NOT the old per-domain trust list (_ALLOWED_DOMAINS) -- nothing below grants
+        # This is NOT a per-domain trust list (the removed hardcoded whitelist) -- nothing below grants
         # trust to any host, Connection's /oauth/clients/validate still does that exclusively for
         # https. It mirrors exactly the redirect_uri *shape* Connection will ever register (see
         # PendingMcpClientDecoder, cited in the RFC's "Redirect-URI shape" section): https with any
@@ -499,6 +509,8 @@ class _ExtendedAuthorizationCode(AuthorizationCode):
     # Whether the Connection OAuth scope requested in authorize() included 'projectless'.
     # - Always True for a code issued now; kept so the session row records what was requested.
     # - Defaults to True so an in-flight code whose state JWT predates this field still decodes.
+    # Only a session persisted by an earlier build of AI-2883 can have False (a dynamically-approved
+    # client that got 'claudai' alone, before RFC Decision §10); current write paths always set True.
     oauth_projectless: bool = True
 
 
@@ -618,6 +630,8 @@ class UntrustedAuthorizeRedirectMiddleware:
                 return
             if message['type'] == 'http.response.start' and 300 <= message['status'] < 400:
                 location = Headers(raw=message['headers']).get('location')
+                # A missing or host-less (relative) Location has no hostname, so it is blocked too:
+                # fail closed, since a relative redirect can't be proven to stay on a trusted host.
                 host = urlparse(location).hostname if location else None
                 if host is None or host.lower() not in self._trusted_hosts:
                     blocked = True
@@ -717,7 +731,7 @@ class SimpleOAuthProvider(OAuthProvider):
             client_id=client_id,
             token_endpoint_auth_method='none',
         )
-        LOG.debug(f'Client loaded: client_id={client_id}')
+        LOG.debug(f'Client loaded: client_id={_sanitize_client_id_for_log(client_id)}')
         return client
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
@@ -736,7 +750,9 @@ class SimpleOAuthProvider(OAuthProvider):
         # long, and interpolating it directly would defeat the point of sanitizing it on the way
         # into the cache (Copilot review finding: log-injection / unbounded log message).
         sanitized_name = self._client_registry.get_client_name(client_info.client_id)
-        LOG.debug(f'Client registered: client_id={client_info.client_id}, client_name={sanitized_name}')
+        LOG.debug(
+            f'Client registered: client_id={_sanitize_client_id_for_log(client_info.client_id)}, client_name={sanitized_name}'
+        )
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         """
@@ -771,7 +787,9 @@ class SimpleOAuthProvider(OAuthProvider):
             # a domain list -- see its docstring). Route every unexpected failure through the same
             # own-origin fallback as the ERROR branch below, instead of relying on nothing else in
             # this method ever raising (Copilot review finding).
-            LOG.exception(f'[authorize] Unexpected error building authorization URL: client_id={client.client_id}')
+            LOG.exception(
+                f'[authorize] Unexpected error building authorization URL: client_id={_sanitize_client_id_for_log(client.client_id)}'
+            )
             return construct_redirect_uri(
                 self._mcp_callback_url,
                 error='temporarily_unavailable',
@@ -785,7 +803,7 @@ class SimpleOAuthProvider(OAuthProvider):
         registration = await self._client_registry.check_registration(connection_client_id, redirect_uri_str)
         if registration is _ClientRegistration.ERROR:
             LOG.warning(
-                f'[authorize] Could not verify client with Connection: client_id={client.client_id}, '
+                f'[authorize] Could not verify client with Connection: client_id={_sanitize_client_id_for_log(client.client_id)}, '
                 f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
             # Deliberately NOT `raise AuthorizeError(...)` here: the mcp SDK's own handler catches
@@ -806,7 +824,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
         if registration is _ClientRegistration.NOT_REGISTERED:
             LOG.info(
-                f'[authorize] Unregistered client sent to Connection for approval: client_id={client.client_id}, '
+                f'[authorize] Unregistered client sent to Connection for approval: client_id={_sanitize_client_id_for_log(client.client_id)}, '
                 f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
             return self._client_registry.pending_approval_url(
@@ -819,7 +837,7 @@ class SimpleOAuthProvider(OAuthProvider):
         # INFO on purpose: Connection keeps no list of registered clients to inspect later, so this
         # line is the record of which callback was sent to consent, and whether it was pre-registered.
         LOG.info(
-            f'[authorize] Registered client proceeding to consent: client_id={client.client_id}, '
+            f'[authorize] Registered client proceeding to consent: client_id={_sanitize_client_id_for_log(client.client_id)}, '
             f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}, '
             f'pre_registered={connection_client_id in _WELL_KNOWN_CONNECTION_CLIENT_IDS.values()}, '
             f'scope={_CONNECTION_SCOPE!r}'
@@ -845,7 +863,9 @@ class SimpleOAuthProvider(OAuthProvider):
         }
         state_jwt = self._encode(state)
 
-        LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, state={state}')
+        LOG.debug(
+            f'[authorize] client_id={_sanitize_client_id_for_log(client.client_id)}, params={params}, state={state}'
+        )
 
         # create the authorization URL
         url_params = {
@@ -857,7 +877,7 @@ class SimpleOAuthProvider(OAuthProvider):
         }
 
         auth_url = construct_redirect_uri(self._oauth_server_auth_url, **url_params)
-        LOG.debug(f'[authorize] client_id={client.client_id}, params={params}, {auth_url}')
+        LOG.debug(f'[authorize] client_id={_sanitize_client_id_for_log(client.client_id)}, params={params}, {auth_url}')
 
         return auth_url
 
@@ -972,7 +992,7 @@ class SimpleOAuthProvider(OAuthProvider):
             auth_code_raw | {'redirect_uri': AnyUrl(auth_code_raw['redirect_uri'])}
         )
         _log_debug(
-            f'[load_authorization_code] client_id={client.client_id}, authorization_code={authorization_code}, '
+            f'[load_authorization_code] client_id={_sanitize_client_id_for_log(client.client_id)}, authorization_code={authorization_code}, '
             f'auth_code={auth_code}'
         )
 
@@ -1002,7 +1022,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :raises HTTPException: If the OAuth server response indicates an error.
         """
         _log_debug(
-            f'[exchange_authorization_code] authorization_code={authorization_code}, client_id={client.client_id}'
+            f'[exchange_authorization_code] authorization_code={authorization_code}, client_id={_sanitize_client_id_for_log(client.client_id)}'
         )
         # Check that we get the instance loaded by load_authorization_code() function.
         assert isinstance(authorization_code, _ExtendedAuthorizationCode)
@@ -1169,7 +1189,7 @@ class SimpleOAuthProvider(OAuthProvider):
         :raises TokenError: If the session-refresh call indicates an error.
         """
         _log_debug(
-            f'[exchange_refresh_token] client_id={client.client_id}, refresh_token={refresh_token}, scopes={scopes}'
+            f'[exchange_refresh_token] client_id={_sanitize_client_id_for_log(client.client_id)}, refresh_token={refresh_token}, scopes={scopes}'
         )
 
         assert isinstance(refresh_token, ProxyRefreshToken), f'Expected ProxyRefreshToken, got {type(refresh_token)}'

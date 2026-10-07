@@ -383,6 +383,20 @@ class TestConnectionClientIdentity:
         assert result == expected
         assert len(result.encode()) <= 128
 
+    @pytest.mark.parametrize(
+        ('client_id', 'expected'),
+        [
+            ('abc-123', 'abc-123'),
+            ('x\ny=forged record', 'xy=forged record'),  # newline would forge a log line
+            ('Evil\u202eId', 'EvilId'),  # bidi override stripped
+            ('a' * 100, 'a' * 64),  # capped
+        ],
+    )
+    def test_sanitize_client_id_for_log(self, client_id: str, expected: str):
+        from keboola_mcp_server.oauth import _sanitize_client_id_for_log
+
+        assert _sanitize_client_id_for_log(client_id) == expected
+
 
 class TestConnectionClientRegistry:
     """The in-process client-name cache (`ConnectionClientRegistry`) -- display-only, bounded
