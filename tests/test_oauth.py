@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import dataclasses
 import json
@@ -983,6 +984,51 @@ class TestSimpleOAuthProvider:
         assert first is _ClientRegistration.NOT_REGISTERED
         assert second is _ClientRegistration.NOT_REGISTERED
         assert call_count == 2  # neither call was served from a cache
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('redirect_uris', 'expected_calls'),
+        [
+            # 100 concurrent cache misses for the (limiter-exempt) well-known pair share ONE Connection call
+            (['https://claude.ai/api/mcp/auth_callback'] * 100, 1),
+            # only identical pairs are merged: three distinct redirect_uris still make three calls
+            (['https://a.example/cb', 'https://b.example/cb', 'https://c.example/cb'] * 5, 3),
+        ],
+    )
+    async def test_check_client_registration_coalesces_concurrent_cache_misses(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        redirect_uris: list[str],
+        expected_calls: int,
+    ):
+        """Concurrent /authorize requests that miss the cache for the same pair must not each call
+        Connection: the well-known pairs bypass the local limiter, so without single-flight a burst at
+        process start or cache expiry fans out 1:1 into Connection's shared per-IP limit (Vojtěch Biberle
+        review, AI-2883)."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        call_count = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            await asyncio.sleep(0.01)  # keep the call in flight while the other requests arrive
+            return httpx.Response(200, json={})
+
+        monkeypatch.setattr(
+            oauth_module,
+            '_create_http_client',
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+
+        registry = oauth_provider._client_registry
+        results = await asyncio.gather(*(registry.check_registration('mcp-x', uri) for uri in redirect_uris))
+
+        assert set(results) == {_ClientRegistration.REGISTERED}
+        assert call_count == expected_calls
+        assert registry._in_flight == {}  # finished calls are not kept around
 
     @pytest.mark.asyncio
     async def test_check_client_registration_touches_cache_entry_on_hit(

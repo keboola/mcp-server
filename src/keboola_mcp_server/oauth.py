@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import dataclasses
 import hashlib
@@ -267,6 +268,9 @@ class ConnectionClientRegistry:
         # Keyed by `redirect_uri` alone: `connection_client_id` is derived deterministically from it
         # (`_connection_client_id`), so a second key component would add nothing.
         self._registration_cache: OrderedDict[str, float] = OrderedDict()
+        # One in-flight Connection call per redirect_uri: concurrent cache misses for the same pair share
+        # it instead of each calling Connection (see `check_registration`).
+        self._in_flight: dict[str, asyncio.Task[_ClientRegistration]] = {}
 
         self._validate_rate_limiter = _SlidingWindowRateLimiter(
             _VALIDATE_RATE_LIMIT_MAX_CALLS, _VALIDATE_RATE_LIMIT_WINDOW_SECONDS
@@ -308,6 +312,20 @@ class ConnectionClientRegistry:
                 return _ClientRegistration.REGISTERED
             del self._registration_cache[redirect_uri]
 
+        # Single-flight: requests that all miss the cache for the same redirect_uri (process start, cache
+        # expiry) share one call to Connection, so a burst cannot fan out 1:1 into Connection's shared
+        # rate limit -- including for the well-known pairs, which are exempt from the local limiter.
+        # Shielded, so one caller being cancelled doesn't cancel the call the others are waiting on.
+        task = self._in_flight.get(redirect_uri)
+        if task is None:
+            task = asyncio.ensure_future(self._check_and_cache(connection_client_id, redirect_uri))
+            self._in_flight[redirect_uri] = task
+            task.add_done_callback(
+                lambda t: self._in_flight.pop(redirect_uri, None) if self._in_flight.get(redirect_uri) is t else None
+            )
+        return await asyncio.shield(task)
+
+    async def _check_and_cache(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
         result = await self._check_registration_uncached(connection_client_id, redirect_uri)
         if result is _ClientRegistration.REGISTERED:
             self._registration_cache[redirect_uri] = time.monotonic() + _REGISTERED_CACHE_TTL_SECONDS
