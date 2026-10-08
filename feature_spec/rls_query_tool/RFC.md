@@ -716,15 +716,17 @@ It is additive, per "Schema stability" above, and becomes the metastore's defaul
 - **No email = no identity.** A reader without an email is refused before any rule, group rule or default is
   looked at -- for RLS and CLS, in queries and metadata views alike. Groups alone never identify a reader.
 - **Unknown groups are not "no groups".** The caller's groups are either known (possibly empty) or unknown
-  (no group source). With unknown groups, group rules never match AND no `default` applies: a default may be
-  meant only for readers outside some group ("interns see EU, everyone else all"), and an unknown-groups
-  caller could be an intern. A `{"$identity": "groups"}` placeholder resolves to "no groups" (`FALSE`).
+  (no group source). With unknown groups, group rules never match AND a policy that has a group rule applies
+  no `default`: that default may be meant only for readers outside some group ("interns see EU, everyone else
+  all"), and an unknown-groups caller could be an intern. A policy without group rules keeps its default (no
+  group could have selected the reader). A `{"$identity": "groups"}` placeholder resolves to "no groups" (`FALSE`).
 - **`dialect` optional, refused per table.** Absent = the workspace backend. A policy whose `dialect` names
   the other backend refuses reads of its own table only; the project's other governed tables keep working
   (supersedes the whole-load refusal).
 - **Groups for MCP callers.** An MCP session has no group source yet (an OAuth login carries no `groups`
   claim; the `rls-group` object proposed in the *Trusted end-user identity* doc is an open point), so its
-  groups are UNKNOWN: `groups` rules never match an MCP caller and no policy `default` applies to it today.
+  groups are UNKNOWN: `groups` rules never match an MCP caller, and the `default` of a policy that has a group
+  rule does not apply to it today.
   `rewrite_query` and the rule lookups take the identity's groups (`None` = unknown), so a source plugs in
   without touching the engine -- but it must be passed at every call site alike: `query_data`
   (`tools/sql.py`) and the metadata views (`tools/search.py`, `tools/storage/tools.py`), or a query and a

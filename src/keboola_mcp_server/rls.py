@@ -723,8 +723,9 @@ class RlsRules:
         narrow what another allows.
 
         `user` empty = no identity: refused before any rule or default is looked at. `groups` None = the
-        caller's group source is unknown (an MCP session today): group rules never match and no `default`
-        applies, because a default may be meant only for readers outside some group. `()` = known to have none.
+        caller's group source is unknown (an MCP session today): group rules never match, and a policy that
+        has a group rule applies no `default` (it may be meant only for readers outside some group); a policy
+        without group rules keeps its default. `()` = known to have none.
 
         Only call this once `is_governed()` is true for the same table -- a table with no policy
         at all is not this method's job to reject or admit, see `is_governed()`. `schema` is the
@@ -758,7 +759,12 @@ class RlsRules:
                         if rule.compiled is not None
                         else _compile_primitive(rule.condition, dialect=self.dialect, identity=identity)
                     )
-            if not conditions and policy.default is not None and groups is not None:
+            # Unknown groups withhold the default only where a group rule could have matched instead.
+            if (
+                not conditions
+                and policy.default is not None
+                and (groups is not None or not any(rule.groups for rule in policy.rules))
+            ):
                 conditions.append(
                     policy.default_compiled
                     if policy.default_compiled is not None
@@ -1421,7 +1427,8 @@ def rewrite_query(
     :param sql: the caller's SQL, in the workspace dialect
     :param user: identity used to select rules; case-insensitive
     :param groups: the identity's groups (schema 1.1.0 `groups` selectors, `{"$identity": "groups"}`); None when
-        the caller's group source is unknown -- group rules then never match and no policy `default` applies
+        the caller's group source is unknown -- group rules then never match and a policy with a group rule
+        applies no `default`
     :param dialect: sqlglot dialect name (`'snowflake'` / `'bigquery'`)
     :param rules: loaded RLS rules
     :param cls_rules: loaded CLS rules, if any
