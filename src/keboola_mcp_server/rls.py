@@ -62,6 +62,15 @@ _RULE_KEY_HINT = 'keys must be non-empty strings of letters, digits, underscore,
 # only ever compared to the session's identity (a dict key), never put into SQL, so it needs a looser
 # check than `_RULE_KEY_RE`: no whitespace or control characters, nothing that reads as empty.
 _PRINCIPAL_RE = re.compile(r'^[^\s\x00-\x1f\x7f]+$')
+# Case folding for principal matching lower-cases ASCII letters only. `str.lower()` also folds some non-ASCII
+# characters onto ASCII ones (the Kelvin sign U+212A becomes `k`), which would make two different addresses
+# one principal. A non-ASCII character is compared exactly instead.
+_ASCII_LOWER = {ord(c): ord(c) + 32 for c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'}
+
+
+def _fold_principal(value: str) -> str:
+    return value.translate(_ASCII_LOWER)
+
 
 # What a query with no real table may still call. Everything here either reads the clock or is a
 # pure scalar expression over its own arguments -- nothing that reaches the catalog, the query
@@ -429,7 +438,7 @@ class RlsRules:
                 for name in names:
                     if not isinstance(name, str) or not _PRINCIPAL_RE.fullmatch(name):
                         raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid principal {name!r}")
-                    user_key = name.lower()
+                    user_key = _fold_principal(name)
                     if user_key in users:
                         raise RlsError(
                             f"RLS: multiple applicable policies define a rule for principal '{user_key}' "
@@ -503,9 +512,9 @@ class RlsRules:
         users = self.tables.get(key)
         if users is None:
             raise RlsError(f"RLS: no rule for table '{key}'")
-        predicate = users.get(user.lower())
+        predicate = users.get(_fold_principal(user))
         if predicate is None:
-            LOG.info(f"RLS: no rule for user '{user.lower()}' on table '{key}'")
+            LOG.info(f"RLS: no rule for user '{_fold_principal(user)}' on table '{key}'")
             raise RlsAccessDenied(ACCESS_DENIED_MESSAGE)
         return key, predicate
 
@@ -595,7 +604,7 @@ class ClsRules:
                 for name in names:
                     if not isinstance(name, str) or not _PRINCIPAL_RE.fullmatch(name):
                         raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid principal {name!r}")
-                    user_key = name.lower()
+                    user_key = _fold_principal(name)
                     if user_key in users:
                         raise RlsError(
                             f"CLS: multiple applicable policies define a rule for principal '{user_key}' "
@@ -633,7 +642,7 @@ class ClsRules:
         users = self.tables.get(key) if key else None
         if users is None:
             return None
-        return users.get(user.lower(), ()) if user else ()
+        return users.get(_fold_principal(user), ()) if user else ()
 
     def columns_for(self, *, table_name: str, schema: str | None, user: str) -> tuple[str, tuple[str, ...]]:
         """Return `(matched_key, visible_columns)` for the table/user, or raise `RlsError` -- see
@@ -645,24 +654,35 @@ class ClsRules:
         users = self.tables.get(key)
         if users is None:
             raise RlsError(f"CLS: no rule for table '{key}'")
-        columns = users.get(user.lower())
+        columns = users.get(_fold_principal(user))
         if columns is None:
-            LOG.info(f"CLS: no rule for user '{user.lower()}' on table '{key}'")
+            LOG.info(f"CLS: no rule for user '{_fold_principal(user)}' on table '{key}'")
             raise RlsAccessDenied(ACCESS_DENIED_MESSAGE)
         return key, columns
 
 
-def _reads_query_history(tree: exp.Expression) -> bool:
-    """Whether a statement reads a query-history source (`QUERY_HISTORY*`, BigQuery `INFORMATION_SCHEMA.JOBS*`).
+def _reads_system_metadata(tree: exp.Expression) -> bool:
+    """Whether a statement reads a query-history source (`QUERY_HISTORY*`, BigQuery `INFORMATION_SCHEMA.JOBS*`) or
+    any other `INFORMATION_SCHEMA` view.
 
-    Such a source returns the SQL text of earlier queries, which is the REWRITTEN text -- the predicate a
-    policy injected -- so it would disclose what the rewrite is meant to keep silent.
+    A query-history source returns the SQL text of earlier queries, which is the REWRITTEN text -- the predicate a
+    policy injected -- so it would disclose what the rewrite is meant to keep silent. The other `INFORMATION_SCHEMA`
+    views describe every table regardless of any policy: real row counts and sizes (which the table metadata hides)
+    and the names of columns a column policy withholds.
     """
     for table in tree.find_all(exp.Table):
         qualified = '.'.join(part for part in (table.catalog, table.db, table.name) if part).upper()
-        if 'QUERY_HISTORY' in qualified or 'INFORMATION_SCHEMA.JOBS' in qualified:
+        if 'QUERY_HISTORY' in qualified or 'INFORMATION_SCHEMA' in qualified:
             return True
     return False
+
+
+def _is_wildcard_table(table: exp.Table, *, dialect: str) -> bool:
+    """A BigQuery wildcard table (`dataset.prefix*`) expands to every matching table, governed ones included,
+    but names none of them -- so no policy key can be derived from it."""
+    return dialect == 'bigquery' and any(
+        '*' in part or '?' in part for part in (table.catalog, table.db, table.name) if part
+    )
 
 
 def _check_from_sources(tree: exp.Expression) -> None:
@@ -1017,10 +1037,12 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
         if (
             not isinstance(statement, exp.Query)
             or _names_table_dynamically(statement)
-            or _reads_query_history(statement)
+            or _reads_system_metadata(statement)
         ):
             return True
         tables = list(statement.find_all(exp.Table))
+        if any(_is_wildcard_table(t, dialect=dialect) for t in tables):
+            return True  # names no table to look a policy up by; the strict rewrite refuses it
         if not tables:
             # No table at all (`SELECT SYSTEM$CANCEL_ALL_QUERIES()`, `GET_DDL(...)`): the strict rewrite owns
             # the function allowlist, so it must see these rather than have them run as ordinary data.
@@ -1128,8 +1150,8 @@ def rewrite_query(
     # every one of those is still refused, where it happens, by `_is_cte_reference`.
     cte_names = _cte_names(tree)
 
-    if _reads_query_history(tree):
-        raise RlsError('RLS: query history sources are not allowed')
+    if _reads_system_metadata(tree):
+        raise RlsError('RLS: query history and information-schema sources are not allowed')
     _check_from_sources(tree)
     _check_functions(tree, cte_names, dialect=dialect)
 
@@ -1152,6 +1174,8 @@ def rewrite_query(
     def _transform(node: exp.Expression) -> exp.Expression:
         if not isinstance(node, exp.Table):
             return node
+        if _is_wildcard_table(node, dialect=dialect):
+            raise RlsError(f'RLS: wildcard table references are not supported: {node.sql(dialect=dialect)}')
         if not isinstance(node.this, exp.Identifier):
             # A table function has no name to look a rule up by -- `_check_from_sources` already
             # refuses these; this is the same guard on the rewrite path itself.
