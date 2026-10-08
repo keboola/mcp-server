@@ -452,6 +452,11 @@ class TestIsGovernedAndReferencesGovernedTable:
             ('snowflake', 'SELECT * FROM INFORMATION_SCHEMA.TABLES'),
             ('bigquery', 'SELECT * FROM `proj.in_c_crm.INFORMATION_SCHEMA.COLUMNS`'),
             ('bigquery', 'SELECT * FROM `proj`.`in_c_crm`.INFORMATION_SCHEMA.PARTITIONS'),
+            # other system metadata with the same reach: Snowflake's system database, BigQuery's meta tables
+            ('snowflake', 'SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES'),
+            ('snowflake', 'SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.COLUMNS'),
+            ('bigquery', 'SELECT * FROM `proj.in_c_crm.__TABLES__`'),
+            ('bigquery', 'SELECT * FROM `proj`.`in_c_crm`.`__PARTITIONS_SUMMARY__`'),
         ],
     )
     def test_information_schema_sources_are_refused(
