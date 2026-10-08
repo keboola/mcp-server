@@ -314,7 +314,7 @@ def create_server(
             jwt_secret=config.jwt_secret,
             session_store=session_store,
             validate_rate_limit=_parse_validate_rate_limit(config.oauth_validate_rate_limit),
-            dynamic_client_approval=config.oauth_dynamic_client_approval is not False,
+            dynamic_client_approval=config.oauth_dynamic_client_approval is True,
         )
     else:
         oauth_provider = None

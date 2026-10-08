@@ -103,6 +103,10 @@ _VALIDATE_RATE_LIMIT_MAX_CALLS = 100
 _VALIDATE_RATE_LIMIT_WINDOW_SECONDS = 60.0
 # How long the last known REGISTERED answer for a well-known pair may be served when Connection cannot answer.
 _WELL_KNOWN_STALE_GRACE_SECONDS = 3600.0
+# After Connection fails to answer for a well-known pair, it is not asked again for this long: the pair is exempt
+# from the local limiter, so without a pause every sequential request would be one more call into a Connection
+# that is already failing (or rate-limiting this very egress IP).
+_WELL_KNOWN_ERROR_BACKOFF_SECONDS = 15.0
 
 
 class _SlidingWindowRateLimiter:
@@ -243,6 +247,7 @@ class ConnectionClientRegistry:
         self._http_client: httpx.AsyncClient | None = None
         # redirect_uri -> when a well-known pair was last seen REGISTERED (see `_check_and_cache`).
         self._last_known_registered: dict[str, float] = {}
+        self._well_known_error_until: dict[str, float] = {}
 
         # client_id -> client_name submitted at /register, so a dynamically-registered client's
         # approval screen can show a real name instead of just the derived Connection client_id
@@ -332,6 +337,11 @@ class ConnectionClientRegistry:
         return await asyncio.shield(task)
 
     async def _check_and_cache(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
+        well_known = redirect_uri in _WELL_KNOWN_CONNECTION_CLIENT_IDS
+        if well_known and time.monotonic() < self._well_known_error_until.get(redirect_uri, -math.inf):
+            # Connection failed to answer a moment ago: answer from memory instead of calling it again.
+            return self._answer_without_connection(connection_client_id, redirect_uri)
+
         result = await self._check_registration_uncached(connection_client_id, redirect_uri)
         now = time.monotonic()
         if result is _ClientRegistration.REGISTERED:
@@ -339,24 +349,32 @@ class ConnectionClientRegistry:
             self._registration_cache.move_to_end(redirect_uri)
             if len(self._registration_cache) > _MAX_CACHED_REGISTRATIONS:
                 self._registration_cache.popitem(last=False)
-            if redirect_uri in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
+            if well_known:
                 self._last_known_registered[redirect_uri] = now
-        elif (
-            result is _ClientRegistration.ERROR
-            and redirect_uri in _WELL_KNOWN_CONNECTION_CLIENT_IDS
-            and now - self._last_known_registered.get(redirect_uri, -math.inf) < _WELL_KNOWN_STALE_GRACE_SECONDS
+                self._well_known_error_until.pop(redirect_uri, None)
+        elif result is _ClientRegistration.ERROR and well_known:
+            # Bounded: only the fixed set of well-known pairs ever gets an entry.
+            self._well_known_error_until[redirect_uri] = now + _WELL_KNOWN_ERROR_BACKOFF_SECONDS
+            return self._answer_without_connection(connection_client_id, redirect_uri)
+        return result
+
+    def _answer_without_connection(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
+        """
+        The answer for a well-known pair while Connection cannot give one (an outage, or its own rate limit used up
+        by someone else's flood). A pair Keboola pre-registered itself that was registered a moment ago keeps
+        logging in instead of failing together with the flood. Only the absence of an answer gets this: a definite
+        NOT_REGISTERED (deactivated) is never overridden, and no other pair is ever served from memory.
+        """
+        if (
+            time.monotonic() - self._last_known_registered.get(redirect_uri, -math.inf)
+            < _WELL_KNOWN_STALE_GRACE_SECONDS
         ):
-            # Connection could not answer (an outage, or its own rate limit used up by someone else's flood), but
-            # this pair -- one Keboola pre-registered itself -- was registered a moment ago. Serving that answer
-            # keeps the first-party client logging in instead of failing together with the flood. Only ERROR gets
-            # this: a definite NOT_REGISTERED (deactivated) is never overridden, and no other pair is ever served
-            # from memory.
             LOG.warning(
                 f'[check_registration] Connection unavailable; serving the last known registration for '
                 f'connection_client_id={connection_client_id}'
             )
             return _ClientRegistration.REGISTERED
-        return result
+        return _ClientRegistration.ERROR
 
     def _get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
@@ -626,6 +644,9 @@ class DatabaseUnavailableMiddleware:
 # The OAuth routes a redirect to a caller-influenced host must never come out of. Matched without a trailing
 # slash: Starlette answers `/authorize/` with a 307 whose Location is built from the request's Host header.
 _GUARDED_OAUTH_PATHS = frozenset({'/authorize', '/register', '/token', '/revoke'})
+# Every discovery document (`/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/...]`) is
+# guarded too: their trailing-slash form gets the same Host-derived 307 as the OAuth routes.
+_GUARDED_OAUTH_PATH_PREFIX = '/.well-known/'
 _DEFAULT_PORTS = {'http': 80, 'https': 443}
 
 
@@ -665,8 +686,8 @@ class UntrustedAuthorizeRedirectMiddleware:
     redirects straight to the caller-supplied `redirect_uri` (that only happens later, from
     `/oauth/callback`, after the real grant). So allowlisting the outgoing redirect's origin (scheme,
     host and effective port, not the hostname alone) to exactly those two closes the gap without
-    touching the intentional "any https host" shape check. The same guard covers `/register`, `/token`
-    and `/revoke`, and the trailing-slash form of each: Starlette's slash normalisation answers
+    touching the intentional "any https host" shape check. The same guard covers `/register`, `/token`,
+    `/revoke` and the `/.well-known/*` discovery documents, and the trailing-slash form of each: Starlette's slash normalisation answers
     `/authorize/` with a 307 built from the request's Host header.
 
     Must be the outermost middleware (listed first in `get_middleware()`) so it inspects the final
@@ -684,7 +705,10 @@ class UntrustedAuthorizeRedirectMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         # Route-relative path: under the production `/mcp` mount `scope['path']` is `/mcp/authorize`
         # (root_path='/mcp'), which a raw comparison would miss (Vojtěch Biberle review, AI-2883).
-        if scope['type'] != 'http' or get_route_path(scope).rstrip('/') not in _GUARDED_OAUTH_PATHS:
+        route_path = get_route_path(scope).rstrip('/') if scope['type'] == 'http' else ''
+        if not route_path or not (
+            route_path in _GUARDED_OAUTH_PATHS or route_path.startswith(_GUARDED_OAUTH_PATH_PREFIX)
+        ):
             await self._app(scope, receive, send)
             return
 
@@ -732,7 +756,7 @@ class SimpleOAuthProvider(OAuthProvider):
         session_store: SessionStore,
         jwt_secret: str | None = None,
         validate_rate_limit: int | None = None,
-        dynamic_client_approval: bool = True,
+        dynamic_client_approval: bool = False,
     ) -> None:
         """
         Creates OAuth provider implementation.
