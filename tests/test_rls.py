@@ -1841,7 +1841,7 @@ class TestSchema110:
                 rules.predicate_for(table_name='orders', schema='in.c-sales', user='nobody@example.com', groups=())[1]
                 == predicate
             )
-        # Unknown groups (None, an MCP session): no default ever applies.
+        # Unknown groups (None, an MCP session): a policy WITH group rules applies no default.
         with pytest.raises(RlsAccessDenied):
             rules.predicate_for(table_name='orders', schema='in.c-sales', user='nobody@example.com', groups=None)
 
@@ -2036,6 +2036,20 @@ class TestPolicySecurity:
             rewrite_query(self.QUERY, user='x@example.com', dialect='snowflake', rules=rules)  # default: unknown
         assert self._predicate(rules, 'x@example.com', ()) == 'TRUE'
         assert self._predicate(rules, 'x@example.com', ('interns',)) == "\"region\" = 'EU'"
+
+    @pytest.mark.parametrize(('default', 'predicate'), [({'false': True}, 'FALSE'), ({'true': True}, 'TRUE')])
+    def test_unknown_groups_keep_the_default_of_a_policy_without_group_rules(
+        self, default: dict, predicate: str
+    ) -> None:
+        """No group rule could have matched, so the default cannot be the "outside some group" case."""
+        rules = self._rls(
+            {
+                'rules': [{'principal': 'a@example.com', 'condition': {'column': 'region', 'op': 'eq', 'value': 'EU'}}],
+                'default': default,
+            }
+        )
+        assert self._predicate(rules, 'x@example.com', None) == predicate
+        assert self._predicate(rules, 'a@example.com', None) == "\"region\" = 'EU'"
 
     def test_unknown_groups_never_match_a_cls_group_rule(self) -> None:
         rules = self._cls([{'groups': ['sales'], 'visible_columns': ['id']}])

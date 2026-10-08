@@ -317,7 +317,8 @@ DONE and unaffected; these are additive. Phase numbers below match the RFC's "Ro
   only narrow); `$identity` placeholders; per-policy `default` and the `{"false": true}` sentinel; optional
   `dialect` with a per-table refusal on a mismatch. 1.0.0 objects load unchanged.
 - No email = refused before any rule or default (RLS and CLS). Groups are `None` (unknown) or known: with
-  unknown groups no group rule matches and no `default` applies.
+  unknown groups no group rule matches and a policy that has a group rule applies no `default` (a policy
+  without group rules keeps it).
 - `tools/sql.py`, `tools/search.py` and `tools/storage/tools.py` pass `groups=None` -- MCP sessions have no
   group source yet (RFC v5); a later source must be passed at all three.
 - Performance: rules compile once at load unless they hold an `$identity` placeholder; the conditions of one
