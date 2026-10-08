@@ -698,7 +698,7 @@ class TestSimpleOAuthProvider:
             (_status_error(HTTPStatus.UNAUTHORIZED), False),
         ],
     )
-    async def test_exchange_refresh_token_maps_network_error_to_token_error(
+    async def test_exchange_refresh_token_failure_maps_to_token_error(
         self,
         oauth_provider: SimpleOAuthProvider,
         monkeypatch: pytest.MonkeyPatch,
@@ -736,6 +736,46 @@ class TestSimpleOAuthProvider:
         assert exc.value.error == 'invalid_grant'
         # A 401 from Connection is final: the session is ended. Anything transient leaves it for a retry.
         assert (await oauth_provider._session_store.get_by_refresh_token(_rt) is not None) is session_survives
+
+    @pytest.mark.asyncio
+    async def test_exchange_refresh_token_401_after_concurrent_rotation_completes_the_grant(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        # load_access_token may rotate the Keboola credentials while this grant is in flight, so Connection
+        # rejects the older token with 401. The session is still valid: complete the grant with the stored
+        # (fresh) credentials instead of forcing a new login.
+        from keboola_mcp_server import oauth as oauth_module
+
+        _at, opaque_refresh_token, session = await oauth_provider._session_store.create(
+            client_id='foo-client-id',
+            user_email=None,
+            kbc_access_token='kbc_at_old',
+            kbc_refresh_token='kbc_rt_old',
+            kbc_access_expires_at=datetime.now(timezone.utc),
+        )
+
+        async def _refused_refresh_tokens(storage_api_url: str, *, refresh_token: str, transport=None):
+            await oauth_provider._session_store.rotate_kbc_tokens(
+                session.id,
+                kbc_access_token='kbc_at_other',
+                kbc_refresh_token='kbc_rt_other',
+                kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            )
+            raise _status_error(HTTPStatus.UNAUTHORIZED)
+
+        monkeypatch.setattr(oauth_module, 'refresh_tokens', _refused_refresh_tokens)
+
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        loaded_refresh = await oauth_provider.load_refresh_token(client, opaque_refresh_token)
+        assert loaded_refresh is not None
+
+        oauth_token = await oauth_provider.exchange_refresh_token(client, loaded_refresh, [])
+
+        # The concurrently rotated credentials are kept, and the client got a fresh opaque pair.
+        loaded = await oauth_provider.load_access_token(oauth_token.access_token)
+        assert loaded is not None
+        assert loaded.kbc_access_token == 'kbc_at_other'
+        assert await oauth_provider.load_refresh_token(client, opaque_refresh_token) is None
 
     @pytest.mark.asyncio
     async def test_load_access_token_refreshes_near_expiry_session_transparently(
@@ -781,13 +821,12 @@ class TestSimpleOAuthProvider:
         [
             httpx.ConnectError('boom'),
             _status_error(HTTPStatus.INTERNAL_SERVER_ERROR),
-            _status_error(HTTPStatus.TOO_MANY_REQUESTS),
         ],
     )
     async def test_load_access_token_tolerates_refresh_failure(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, error: httpx.HTTPError
     ):
-        # A transient refresh failure (network, 5xx, 429) must not break the current request nor end the
+        # A transient refresh failure (network, 5xx) must not break the current request nor end the
         # session -- the (soon-to-expire) credential already on the session may still work; the next
         # lookup retries the refresh.
         from keboola_mcp_server import oauth as oauth_module

@@ -552,32 +552,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
         if session.kbc_access_expires_at.timestamp() <= time.time() + 60:
             try:
-                token_set = await refresh_tokens(self._storage_api_url, refresh_token=session.kbc_refresh_token)
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code != httpx.codes.UNAUTHORIZED:
-                    LOG.warning(
-                        f'[load_access_token] Could not refresh near-expiry Keboola session: '
-                        f'session_id={session.id}, status={e.response.status_code}: {e}',
-                        exc_info=True,
-                    )
-                else:
-                    # Connection no longer accepts this refresh token (its session has a fixed
-                    # lifetime, or was revoked): retrying can never succeed, so end the session and
-                    # let the client log in again instead of serving a dead credential.
-                    revoked = await self._session_store.revoke_if_kbc_refresh_token(
-                        session.id, session.kbc_refresh_token
-                    )
-                    if revoked:
-                        LOG.warning(
-                            f'[load_access_token] Connection refused the Keboola refresh token (401), '
-                            f'session revoked: session_id={session.id}'
-                        )
-                        return None
-                    # Rotated by a concurrent request (or revoked) since we read it: use what is stored now.
-                    reloaded = await self._session_store.get_by_access_token(token)
-                    if reloaded is None:
-                        return None
-                    session = reloaded
+                token_set = await self._refresh_kbc_tokens(session.id, session.kbc_refresh_token)
             except httpx.HTTPError as e:
                 # Don't fail the request over a refresh hiccup -- the (soon-to-expire) credential we
                 # already have may still work for the next little while; the *next* lookup retries.
@@ -586,16 +561,26 @@ class SimpleOAuthProvider(OAuthProvider):
                     exc_info=True,
                 )
             else:
-                await self._session_store.rotate_kbc_tokens(
-                    session.id,
-                    kbc_access_token=token_set.access_token,
-                    kbc_refresh_token=token_set.refresh_token,
-                    kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
-                )
-                session = dataclasses.replace(
-                    session, kbc_access_token=token_set.access_token, kbc_refresh_token=token_set.refresh_token
-                )
-                LOG.info(f'[load_access_token] Lazily refreshed near-expiry Keboola session: session_id={session.id}')
+                if token_set is None:
+                    # Refused for good: the session is revoked (reloading then finds nothing), unless a
+                    # concurrent request rotated its credentials first -- then use what is stored now.
+                    reloaded = await self._session_store.get_by_access_token(token)
+                    if reloaded is None:
+                        return None
+                    session = reloaded
+                else:
+                    await self._session_store.rotate_kbc_tokens(
+                        session.id,
+                        kbc_access_token=token_set.access_token,
+                        kbc_refresh_token=token_set.refresh_token,
+                        kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
+                    )
+                    session = dataclasses.replace(
+                        session, kbc_access_token=token_set.access_token, kbc_refresh_token=token_set.refresh_token
+                    )
+                    LOG.info(
+                        f'[load_access_token] Lazily refreshed near-expiry Keboola session: session_id={session.id}'
+                    )
 
         proxy_token = ProxyAccessToken(
             token=token,
@@ -673,22 +658,9 @@ class SimpleOAuthProvider(OAuthProvider):
         # HTTPException here would bubble up uncaught and reach the client as an opaque, non-OAuth
         # shaped error.
         try:
-            token_set = await refresh_tokens(self._storage_api_url, refresh_token=refresh_token.kbc_refresh_token)
+            token_set = await self._refresh_kbc_tokens(refresh_token.session_id, refresh_token.kbc_refresh_token)
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == httpx.codes.UNAUTHORIZED:
-                # Connection refuses this refresh token for good (see load_access_token): end the session.
-                await self._session_store.revoke_if_kbc_refresh_token(
-                    refresh_token.session_id, refresh_token.kbc_refresh_token
-                )
-                LOG.warning(
-                    f'[exchange_refresh_token] Connection refused the Keboola refresh token (401): '
-                    f'session_id={refresh_token.session_id}'
-                )
-            else:
-                LOG.exception(
-                    f'[exchange_refresh_token] Failed to refresh session: session_id={refresh_token.session_id}, '
-                    f'status={e.response.status_code}'
-                )
+            LOG.exception(f'[exchange_refresh_token] Failed to refresh session: status={e.response.status_code}')
             raise TokenError(
                 error='invalid_grant', error_description=f'Failed to refresh token: status={e.response.status_code}'
             ) from e
@@ -698,14 +670,38 @@ class SimpleOAuthProvider(OAuthProvider):
                 error='invalid_grant', error_description=f'Failed to refresh token: could not reach Connection ({e}).'
             ) from e
 
-        await self._session_store.rotate_kbc_tokens(
-            refresh_token.session_id,
-            kbc_access_token=token_set.access_token,
-            kbc_refresh_token=token_set.refresh_token,
-            kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
-        )
+        if token_set is not None:
+            await self._session_store.rotate_kbc_tokens(
+                refresh_token.session_id,
+                kbc_access_token=token_set.access_token,
+                kbc_refresh_token=token_set.refresh_token,
+                kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
+            )
+        elif await self._session_store.get_by_refresh_token(refresh_token.token) is None:
+            raise TokenError(error='invalid_grant', error_description='Failed to refresh token: status=401')
+        # else: a concurrent request rotated the Keboola credentials first; they are fresh, so only the
+        # opaque pair is renewed below.
         new_access_token, new_refresh_token = await self._session_store.rotate_opaque_tokens(refresh_token.session_id)
         return self._oauth_token(new_access_token, new_refresh_token, scopes or refresh_token.scopes)
+
+    async def _refresh_kbc_tokens(self, session_id: str, kbc_refresh_token: str) -> TokenSet | None:
+        """
+        Refreshes the Keboola session behind an OAuth session.
+
+        :return: The new tokens, or `None` if Connection refused the refresh token with a 401. That is final
+            (a Keboola session has a fixed lifetime, or was revoked): the OAuth session is then revoked so the
+            client has to log in again -- unless a concurrent request has already rotated the stored refresh
+            token, in which case the session is left alone and the caller re-reads it.
+        :raises httpx.HTTPError: any other failure (network, 5xx, 429...); transient, so the session is kept.
+        """
+        try:
+            return await refresh_tokens(self._storage_api_url, refresh_token=kbc_refresh_token)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != httpx.codes.UNAUTHORIZED:
+                raise
+        if await self._session_store.revoke_if_kbc_refresh_token(session_id, kbc_refresh_token):
+            LOG.warning(f'Connection refused the Keboola refresh token (401), session revoked: session_id={session_id}')
+        return None
 
     @staticmethod
     def _oauth_token(access_token: str, refresh_token: str, scopes: list[str]) -> OAuthToken:

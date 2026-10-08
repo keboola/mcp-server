@@ -57,13 +57,6 @@ def read_service_account_jwt(path: str) -> str:
     return jwt
 
 
-def _sent_bearer_token(response: httpx.Response) -> bool:
-    try:
-        return response.request.headers.get('Authorization', '').startswith('Bearer ')
-    except RuntimeError:  # httpx: the response has no request attached (hand-built responses)
-        return False
-
-
 class RawKeboolaClient:
     """
     Raw async client for Keboola services.
@@ -109,8 +102,7 @@ class RawKeboolaClient:
         """
         return RetryTransport(retry=self._retry)
 
-    @staticmethod
-    def _raise_for_status(response: httpx.Response) -> None:
+    def _raise_for_status(self, response: httpx.Response) -> None:
         """
         Checks the HTTP response status code and raises an exception with a detailed message. The message will
         include "error" and "exceptionId" fields if they are present in the response.
@@ -153,7 +145,7 @@ class RawKeboolaClient:
                 except Exception:
                     LOG.debug('Failed to read response.text while building the error message.', exc_info=True)
 
-            if response.status_code == HTTPStatus.UNAUTHORIZED and _sent_bearer_token(response):
+            if response.status_code == HTTPStatus.UNAUTHORIZED and 'Authorization' in self.headers:
                 # A 401 on a programmatic (Bearer) session is often a project scope that was never
                 # confirmed (or has gone stale), not an actually-invalid credential -- steer the agent
                 # toward the tools that fix that instead of telling the user to re-authenticate. Not
