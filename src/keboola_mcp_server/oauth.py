@@ -542,7 +542,8 @@ class SimpleOAuthProvider(OAuthProvider):
 
         :param token: The opaque access token to look up.
         :return: A `ProxyAccessToken` carrying the (possibly just-refreshed) Keboola access token,
-            or `None` if the token doesn't exist or was revoked.
+            or `None` if the token doesn't exist, was revoked, or Connection refused to refresh the
+            underlying Keboola session (the session is revoked, so the client has to log in again).
         """
         session = await self._session_store.get_by_access_token(token)
         if session is None:
@@ -552,10 +553,38 @@ class SimpleOAuthProvider(OAuthProvider):
         if session.kbc_access_expires_at.timestamp() <= time.time() + 60:
             try:
                 token_set = await refresh_tokens(self._storage_api_url, refresh_token=session.kbc_refresh_token)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code != httpx.codes.UNAUTHORIZED:
+                    LOG.warning(
+                        f'[load_access_token] Could not refresh near-expiry Keboola session: '
+                        f'session_id={session.id}, status={e.response.status_code}: {e}',
+                        exc_info=True,
+                    )
+                else:
+                    # Connection no longer accepts this refresh token (its session has a fixed
+                    # lifetime, or was revoked): retrying can never succeed, so end the session and
+                    # let the client log in again instead of serving a dead credential.
+                    revoked = await self._session_store.revoke_if_kbc_refresh_token(
+                        session.id, session.kbc_refresh_token
+                    )
+                    if revoked:
+                        LOG.warning(
+                            f'[load_access_token] Connection refused the Keboola refresh token (401), '
+                            f'session revoked: session_id={session.id}'
+                        )
+                        return None
+                    # Rotated by a concurrent request (or revoked) since we read it: use what is stored now.
+                    reloaded = await self._session_store.get_by_access_token(token)
+                    if reloaded is None:
+                        return None
+                    session = reloaded
             except httpx.HTTPError as e:
                 # Don't fail the request over a refresh hiccup -- the (soon-to-expire) credential we
                 # already have may still work for the next little while; the *next* lookup retries.
-                LOG.warning(f'[load_access_token] Could not refresh near-expiry Keboola session: {e}', exc_info=True)
+                LOG.warning(
+                    f'[load_access_token] Could not refresh near-expiry Keboola session: session_id={session.id}: {e}',
+                    exc_info=True,
+                )
             else:
                 await self._session_store.rotate_kbc_tokens(
                     session.id,
@@ -646,7 +675,20 @@ class SimpleOAuthProvider(OAuthProvider):
         try:
             token_set = await refresh_tokens(self._storage_api_url, refresh_token=refresh_token.kbc_refresh_token)
         except httpx.HTTPStatusError as e:
-            LOG.exception(f'[exchange_refresh_token] Failed to refresh session: status={e.response.status_code}')
+            if e.response.status_code == httpx.codes.UNAUTHORIZED:
+                # Connection refuses this refresh token for good (see load_access_token): end the session.
+                await self._session_store.revoke_if_kbc_refresh_token(
+                    refresh_token.session_id, refresh_token.kbc_refresh_token
+                )
+                LOG.warning(
+                    f'[exchange_refresh_token] Connection refused the Keboola refresh token (401): '
+                    f'session_id={refresh_token.session_id}'
+                )
+            else:
+                LOG.exception(
+                    f'[exchange_refresh_token] Failed to refresh session: session_id={refresh_token.session_id}, '
+                    f'status={e.response.status_code}'
+                )
             raise TokenError(
                 error='invalid_grant', error_description=f'Failed to refresh token: status={e.response.status_code}'
             ) from e
