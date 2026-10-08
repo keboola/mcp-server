@@ -2338,6 +2338,20 @@ async def test_modify_python_js_data_app_update_pins_image_version(
 
 
 @pytest.mark.asyncio
+async def test_modify_python_js_data_app_image_version_fails_closed_without_catalog(
+    mcp_context_client: Context, python_js_image_client: KeboolaClient
+) -> None:
+    python_js_image_client.data_science_client.list_runtimes.side_effect = httpx.ConnectError('catalog down')
+
+    with pytest.raises(ValueError, match='runtimes catalog is unavailable'):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client, name='My App', description='desc', configuration_id='cfg-1', image_version=_NODE_24
+        )
+
+    python_js_image_client.storage_client.configuration_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('configuration_id', 'image_version'),
     [

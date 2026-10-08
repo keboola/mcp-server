@@ -2435,8 +2435,18 @@ async def _fetch_python_js_images(client: KeboolaClient) -> list[RuntimeImage] |
 
 
 async def _validate_image_version(client: KeboolaClient, image_version: str) -> None:
-    """Raise unless `image_version` is a python-js image the platform catalog offers."""
-    images = _python_js_images(await client.data_science_client.list_runtimes())
+    """Raise unless `image_version` is a python-js image the platform catalog offers.
+
+    - Fails closed when the catalog is unavailable: an unverified tag would only fail at deploy.
+    """
+    try:
+        runtimes = await client.data_science_client.list_runtimes()
+    except httpx.HTTPError as exc:
+        raise ValueError(
+            f'Could not verify image_version "{image_version}": the platform runtimes catalog is unavailable '
+            f'({exc}). Retry, or leave image_version unset to keep the app\'s current image.'
+        ) from exc
+    images = _python_js_images(runtimes)
     if any(image.version == image_version for image in images):
         return
     offered = '; '.join(
