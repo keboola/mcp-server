@@ -661,18 +661,30 @@ class ClsRules:
         return key, columns
 
 
-def _reads_system_metadata(tree: exp.Expression) -> bool:
-    """Whether a statement reads a query-history source (`QUERY_HISTORY*`, BigQuery `INFORMATION_SCHEMA.JOBS*`) or
-    any other `INFORMATION_SCHEMA` view.
+# BigQuery's legacy per-dataset meta tables (`__TABLES__`, `__TABLES_SUMMARY__`, `__PARTITIONS_SUMMARY__`): readable with
+# ordinary dataset access, and they report true row counts and sizes for every table of the dataset.
+_BIGQUERY_META_TABLE_RE = re.compile(r'__[A-Z_]+__')
 
-    A query-history source returns the SQL text of earlier queries, which is the REWRITTEN text -- the predicate a
-    policy injected -- so it would disclose what the rewrite is meant to keep silent. The other `INFORMATION_SCHEMA`
-    views describe every table regardless of any policy: real row counts and sizes (which the table metadata hides)
-    and the names of columns a column policy withholds.
+
+def _reads_system_metadata(tree: exp.Expression) -> bool:
+    """Whether a statement reads a source that describes tables or earlier queries rather than data.
+
+    * Query history (`QUERY_HISTORY*`, BigQuery `INFORMATION_SCHEMA.JOBS*`) returns the SQL text of earlier queries,
+      which is the REWRITTEN text -- the predicate a policy injected -- so it would disclose what the rewrite is
+      meant to keep silent.
+    * `INFORMATION_SCHEMA` views, Snowflake's `SNOWFLAKE` system database (`ACCOUNT_USAGE`, ...) and BigQuery's
+      `__TABLES__`-style meta tables describe every table regardless of any policy: real row counts and sizes
+      (which the table metadata hides) and the names of columns a column policy withholds.
     """
     for table in tree.find_all(exp.Table):
-        qualified = '.'.join(part for part in (table.catalog, table.db, table.name) if part).upper()
-        if 'QUERY_HISTORY' in qualified or 'INFORMATION_SCHEMA' in qualified:
+        parts = [part.upper() for part in (table.catalog, table.db, table.name) if part]
+        qualified = '.'.join(parts)
+        if any(
+            marker in qualified
+            for marker in ('QUERY_HISTORY', 'INFORMATION_SCHEMA', 'ACCOUNT_USAGE', 'ORGANIZATION_USAGE')
+        ):
+            return True
+        if 'SNOWFLAKE' in parts[:-1] or (parts and _BIGQUERY_META_TABLE_RE.fullmatch(parts[-1])):
             return True
     return False
 
@@ -1151,7 +1163,7 @@ def rewrite_query(
     cte_names = _cte_names(tree)
 
     if _reads_system_metadata(tree):
-        raise RlsError('RLS: query history and information-schema sources are not allowed')
+        raise RlsError('RLS: query history and information-schema/system metadata sources are not allowed')
     _check_from_sources(tree)
     _check_functions(tree, cte_names, dialect=dialect)
 
