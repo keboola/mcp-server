@@ -641,7 +641,8 @@ class RlsRules:
         """Return `(matched_key, predicate)` for the table/identity, or raise `RlsError`.
 
         Every rule selecting the identity (its email, or one of its `groups`) applies; their conditions combine
-        with OR. When none does, the policies' `default` applies, else the read is refused.
+        with OR. When none does, the policies' `default` applies to an identified reader, else the read is
+        refused. A reader with no identity (empty `user`) is refused whatever the default says.
 
         Only call this once `is_governed()` is true for the same table -- a table with no policy
         at all is not this method's job to reject or admit, see `is_governed()`. `schema` is the
@@ -665,7 +666,10 @@ class RlsRules:
             for rule in self.dynamic.get(key, ())
             if _rule_matches(rule.principals, rule.groups, user=user, user_groups=groups)
         ]
-        if not predicates:
+        if not predicates and user:
+            # A policy `default` covers an IDENTIFIED reader no rule selects. A caller with no identity (the
+            # empty principal) never reaches it: "no identity" must degrade to no protected data, never to
+            # whatever a permissive default (e.g. {"true": true}) would hand out.
             predicates = [
                 _compile_primitive(condition, dialect=self.dialect, identity=identity).sql(dialect=self.dialect)
                 for condition in self.defaults.get(key, ())

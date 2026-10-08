@@ -338,9 +338,9 @@ async def _apply_rls(
         # query touches -- behave exactly like today's unfiltered query_data, no rewrite attempted.
         return sql_query, []
 
-    # A session without a login identity gets the empty principal: no rule is ever keyed by it, so any
-    # governed table is refused ("Access denied") by the rewrite itself, while a query touching no
-    # governed table (`SELECT 1`) still runs.
+    # A session without a login identity gets the empty principal: no rule is ever keyed by it and a policy
+    # `default` never applies to it, so any governed table is refused ("Access denied") by the rewrite
+    # itself, while a query touching no governed table (`SELECT 1`) still runs.
     principal = ctx.session.state.get(OAUTH_USER_EMAIL_KEY) or ''
     # Schema 1.1.0 rules can select by IdP group. An MCP session has no group source yet (an OAuth login
     # carries no groups claim), so `groups` rules never match an MCP caller; a later source plugs in here.

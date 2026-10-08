@@ -1829,6 +1829,18 @@ class TestSchema110:
                 rules.predicate_for(table_name='orders', schema='in.c-sales', user='nobody@example.com')[1] == predicate
             )
 
+    @pytest.mark.parametrize(
+        'default',
+        [{'true': True}, {'false': True}, {'column': 'public', 'op': 'eq', 'value': True}],
+    )
+    def test_a_reader_with_no_identity_is_refused_whatever_the_default(self, default: dict) -> None:
+        """Fail closed: "no identity" degrades to no protected data, never to what a default hands out."""
+        rules = self._rules(self.RULES, default=default)
+        with pytest.raises(RlsAccessDenied):
+            rules.predicate_for(table_name='orders', schema='in.c-sales', user='')
+        with pytest.raises(RlsAccessDenied):
+            rewrite_query(self.QUERY, user='', dialect='snowflake', rules=rules)
+
     def test_false_default_rewrites_to_an_empty_result_not_an_error(self) -> None:
         rules = self._rules(self.RULES, default={'false': True})
         out = rewrite_query(self.QUERY, user='nobody@example.com', dialect='snowflake', rules=rules)
