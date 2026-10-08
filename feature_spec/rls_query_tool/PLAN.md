@@ -308,6 +308,17 @@ DONE and unaffected; these are additive. Phase numbers below match the RFC's "Ro
    command for admins auditing bindings, but issuing the binding is the provisioning UI's job, not
    a CLI flow.
 
+# v5 — schema 1.1.0
+
+### Task 11 — `rls.py`: read `rls-policy` / `cls-policy` 1.1.0 (DONE)
+
+- `groups` selector; OR of matching RLS rules / union of matching CLS rules (replaces the duplicate-principal
+  load error); `$identity` placeholders; policy `default` and the `{"false": true}` sentinel; optional
+  `dialect` with a per-table refusal on a mismatch. 1.0.0 objects load unchanged.
+- `tools/sql.py` passes the caller's groups -- empty for MCP sessions until a group source exists (RFC v5).
+- Metastore: go-monorepo registers both 1.1.0 schemas as the default version, and the SA read path's
+  `?principal=` narrowing keeps `groups` rules (separate PR there).
+
 ## Phase 3-6
 
 No task breakdown yet — each is a separate RFC amendment (or its own RFC, for Phase 6) once its
