@@ -2094,7 +2094,7 @@ async def deploy_data_app(
         logs, last_run, images = await asyncio.gather(
             _fetch_logs(client, data_app.data_app_id),
             _fetch_latest_run(client, data_app.data_app_id),
-            _fetch_python_js_images(client),
+            _fetch_app_images(client, data_app),
         )
         data_app = data_app.with_deployment_info(logs, last_run=last_run).with_image(images)
         links = links_manager.get_data_app_links(
@@ -2432,6 +2432,11 @@ async def _fetch_python_js_images(client: KeboolaClient) -> list[RuntimeImage] |
     except Exception as exc:
         LOG.warning(f'Could not fetch the runtimes catalog: {exc}')
         return None
+
+
+async def _fetch_app_images(client: KeboolaClient, data_app: DataApp) -> list[RuntimeImage] | None:
+    """The python-js image catalog for a python-js app; `None` for other apps, without fetching it."""
+    return await _fetch_python_js_images(client) if data_app.type == 'python-js' else None
 
 
 async def _validate_image_version(client: KeboolaClient, image_version: str) -> None:

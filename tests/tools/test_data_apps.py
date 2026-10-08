@@ -2647,6 +2647,8 @@ async def test_deploy_data_app_publishes_latest_config_version_and_reports_publi
     is_python_js = app_type == 'python-js'
     assert result.deployment_info.image == (_PYTHON_JS_IMAGES[0] if is_python_js else None)
     assert result.deployment_info.image_pinned is (False if is_python_js else None)
+    # Only a python-js deploy reads the catalog.
+    assert keboola_client.data_science_client.list_runtimes.await_count == (1 if is_python_js else 0)
 
 
 @pytest.mark.parametrize(
