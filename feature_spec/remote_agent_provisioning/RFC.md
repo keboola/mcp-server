@@ -175,6 +175,10 @@ Shipped in this increment:
   message. Every later request whose handle no longer resolves gets the *same* message rather than
   an unexplained failure -- a revoked row is a dead end, not a reason to fall back to the caller's
   own credential against a project it cannot reach.
+* A refresh Connection **refuses** (401) ends the session the way AI-4009 established for OAuth
+  sessions: `revoke_if_kbc_refresh_token` (compare-and-swap, so a concurrent rotation is never
+  killed) and the same "this session has ended" message. For a provisioned session the likely cause
+  is precisely the claim, which revokes the whole Keboola session and its refresh token with it.
 * The refresh is serialized across workers and replicas by `SessionStore.lock_session()`
   (a transaction-scoped Postgres advisory lock) and re-reads the row under it: Connection rotates
   refresh tokens, so two concurrent refreshes would have one spend a token the other already

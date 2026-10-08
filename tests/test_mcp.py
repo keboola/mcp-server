@@ -2484,6 +2484,48 @@ class TestProvisionedSessionOnADeployedServer:
         store.rotate_kbc_tokens.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_a_refused_refresh_token_ends_the_session(self) -> None:
+        # Claiming the project revokes the whole Keboola session, so its refresh token dies with
+        # it. Connection's 401 is final: revoke the row and say so, rather than handing back a
+        # dead access token and letting the next call fail without explanation. Same convention
+        # as SimpleOAuthProvider._refresh_kbc_tokens.
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.return_value = self._session(expires_in=10)
+        self._with_lock(store, self._session(expires_in=10))
+        store.revoke_if_kbc_refresh_token.return_value = True
+        scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
+        refused = httpx.HTTPStatusError('401', request=MagicMock(), response=MagicMock(status_code=401))
+
+        with (
+            patch('keboola_mcp_server.mcp.refresh_tokens', AsyncMock(side_effect=refused)),
+            pytest.raises(ValueError, match='has ended'),
+        ):
+            await SessionStateMiddleware._resolve_provisioned_session(
+                Config(storage_api_url=self.STACK), scope, self._server_state(store)
+            )
+
+        store.revoke_if_kbc_refresh_token.assert_awaited_once_with('sess-row-1', 'kbc_rt_provisioned')
+        store.rotate_kbc_tokens.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_5xx_from_the_refresh_endpoint_keeps_the_session(self) -> None:
+        # Not a refusal: Connection could not answer. Keep the token and let the 401 handling deal
+        # with it if it is actually dead.
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.return_value = self._session(expires_in=10)
+        self._with_lock(store, self._session(expires_in=10))
+        scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
+        failed = httpx.HTTPStatusError('503', request=MagicMock(), response=MagicMock(status_code=503))
+
+        with patch('keboola_mcp_server.mcp.refresh_tokens', AsyncMock(side_effect=failed)):
+            config = await SessionStateMiddleware._resolve_provisioned_session(
+                Config(storage_api_url=self.STACK), scope, self._server_state(store)
+            )
+
+        assert config.storage_token == 'kbc_at_provisioned'
+        store.revoke_if_kbc_refresh_token.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_a_session_revoked_while_waiting_for_the_lock_is_not_refreshed(self) -> None:
         store = AsyncMock(spec=SessionStore)
         store.get_by_id.return_value = self._session(expires_in=10)
