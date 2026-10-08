@@ -104,9 +104,10 @@ its own `/oauth/callback` must time out on its own (already true today — nothi
 
 ## Resolution Strategy
 
-All changes are in `src/keboola_mcp_server/oauth.py` unless noted. No new Postgres table, no new
-`Config` field (`config.oauth_server_url` already resolves to Connection's base URL and is already
-threaded into `SimpleOAuthProvider`).
+All changes are in `src/keboola_mcp_server/oauth.py` unless noted. No new Postgres table for the registry
+(`config.oauth_server_url` already resolves to Connection's base URL and is already threaded into
+`SimpleOAuthProvider`). Two deployment-level `Config` fields were added during review, neither settable from a
+request header: `oauth_validate_rate_limit` (Decision §11) and `oauth_dynamic_client_approval` (Decision §12).
 
 ### 1. Delete the static table
 
@@ -563,6 +564,16 @@ approval).
     earlier stays registered in Connection, and this server cannot list or deactivate those (there is no
     listing endpoint), so cleaning them up is a Connection-side step. The INFO line "Registered client
     proceeding to consent" shows which callbacks are in use.
+
+    **Rollout: clients the hardcoded list used to accept.** The list this PR removes accepted clients by domain
+    (besides claude.ai: ChatGPT, Make, Devin, Onyx, n8n instances, Azure API Management's consent host, a few
+    customer-specific hosts, and Keboola's own domains). Connection matches a full redirect URI, not a domain, so
+    after this ships each of those that is still in use is refused unless it is **registered in Connection first**
+    (a pre-registration migration, as for claude.ai, once its exact redirect URI is known) or approved in a short,
+    supervised window with the switch above turned on. Neither happens by itself: with approval off by default,
+    the first sign of a missed client is a user seeing the "not registered" page. Before enabling this on a
+    stack, list the callbacks actually in use there (the INFO line above, from the previous release) and register
+    the ones that matter. ChatGPT cannot be pre-registered as a constant: its callback is per connector.
 
 13. **The REGISTERED cache's 5-minute TTL is also a revocation-latency window (Copilot review
     finding, accepted).** Connection's contract deliberately maps a deactivated client to the same
