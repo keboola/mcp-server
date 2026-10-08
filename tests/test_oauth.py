@@ -1079,6 +1079,128 @@ class TestSimpleOAuthProvider:
         assert call_count == expected_calls
         assert registry._in_flight == {}  # finished calls are not kept around
 
+    def test_default_rate_limit_keeps_the_fleet_under_connections_shared_ceiling(self):
+        """The limiter is per process but Connection's ceiling is per shared egress IP: the default budget times
+        the largest replica count we deploy must stay below it (Vojtěch Biberle review, AI-2883)."""
+        from keboola_mcp_server import oauth as oauth_module
+
+        fleet_budget = oauth_module._VALIDATE_RATE_LIMIT_MAX_CALLS * oauth_module._ASSUMED_MAX_REPLICAS
+        assert fleet_budget < oauth_module._CONNECTION_VALIDATE_LIMIT_PER_WINDOW
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('replicas', 'limit', 'expected_total_calls'),
+        [
+            (5, None, 500),  # the default budget, at the largest replica count it is sized for
+            (3, 7, 21),  # a configured budget applies per process
+        ],
+    )
+    async def test_flooding_distinct_redirect_uris_across_replicas_stays_under_connections_ceiling(
+        self, monkeypatch: pytest.MonkeyPatch, replicas: int, limit: int | None, expected_total_calls: int
+    ):
+        """Several replicas share one egress IP and so one upstream budget. A caller varying redirect_uri on every
+        request (never cached) must not push the replicas' combined calls past it."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import ConnectionClientRegistry, _ClientRegistration
+
+        upstream_calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal upstream_calls
+            upstream_calls += 1
+            return httpx.Response(404)
+
+        monkeypatch.setattr(
+            oauth_module,
+            '_create_http_client',
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        registries = [
+            ConnectionClientRegistry('https://connection.example', validate_rate_limit=limit) for _ in range(replicas)
+        ]
+
+        results = await asyncio.gather(
+            *(
+                registry.check_registration(f'mcp-{i}', f'https://flood-{r}-{i}.example/cb')
+                for r, registry in enumerate(registries)
+                for i in range(1000)
+            )
+        )
+
+        assert upstream_calls == expected_total_calls
+        assert upstream_calls < oauth_module._CONNECTION_VALIDATE_LIMIT_PER_WINDOW
+        # everything over the budget failed closed
+        assert results.count(_ClientRegistration.ERROR) == replicas * 1000 - expected_total_calls
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'later_status', 'age_seconds', 'expected'),
+        [
+            # Connection cannot answer (a 429 from someone else's flood, an outage): the first-party pair that was
+            # registered a moment ago keeps working
+            ('https://claude.ai/api/mcp/auth_callback', 429, 10, 'REGISTERED'),
+            ('https://claude.ai/api/mcp/auth_callback', 500, 10, 'REGISTERED'),
+            # a definite "not registered" (deactivated) is never overridden
+            ('https://claude.ai/api/mcp/auth_callback', 404, 10, 'NOT_REGISTERED'),
+            # too long ago to vouch for
+            ('https://claude.ai/api/mcp/auth_callback', 429, 3601, 'ERROR'),
+            # only a well-known pair is ever served from memory
+            ('https://tool.example/cb', 429, 10, 'ERROR'),
+        ],
+    )
+    async def test_well_known_pair_survives_connection_being_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch, redirect_uri: str, later_status: int, age_seconds: float, expected: str
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import ConnectionClientRegistry, _ClientRegistration
+
+        status = 200
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(status, json={}) if status == 200 else httpx.Response(status)
+
+        monkeypatch.setattr(
+            oauth_module,
+            '_create_http_client',
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        registry = ConnectionClientRegistry('https://connection.example')
+        assert await registry.check_registration('x', redirect_uri) is _ClientRegistration.REGISTERED
+
+        # the cache entry expires, then Connection answers differently
+        registry._registration_cache.clear()
+        if redirect_uri in registry._last_known_registered:
+            registry._last_known_registered[redirect_uri] -= age_seconds
+        status = later_status
+
+        assert await registry.check_registration('x', redirect_uri) is _ClientRegistration[expected]
+
+    @pytest.mark.asyncio
+    async def test_registry_reuses_one_pooled_client_and_recreates_it_after_aclose(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import ConnectionClientRegistry
+
+        created: list[httpx.AsyncClient] = []
+
+        def factory(**_kwargs) -> httpx.AsyncClient:
+            client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(404)))
+            created.append(client)
+            return client
+
+        monkeypatch.setattr(oauth_module, '_create_http_client', factory)
+        registry = ConnectionClientRegistry('https://connection.example')
+
+        for i in range(3):
+            await registry.check_registration('x', f'https://tool-{i}.example/cb')
+        assert len(created) == 1  # one pooled client, not one per call
+
+        await registry.aclose()
+        assert created[0].is_closed
+        await registry.check_registration('x', 'https://tool-3.example/cb')
+        assert len(created) == 2  # a later call after shutdown starts a fresh client instead of failing
+
     @pytest.mark.asyncio
     async def test_check_client_registration_touches_cache_entry_on_hit(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch

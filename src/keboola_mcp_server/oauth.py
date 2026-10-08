@@ -87,19 +87,22 @@ _MAX_CACHED_REGISTRATIONS = 10_000
 _REGISTERED_CACHE_TTL_SECONDS = 300  # 5 min: a registered+active client's status rarely flips.
 
 # Local cap on calls to Connection's POST /oauth/clients/validate, enforced in
-# _check_registration_uncached before any network call. Connection's own per-IP ceiling for this
-# route is 600 calls/60s -- deliberately
-# high because its whole legitimate caller base is "the MCP server", seen as a handful of shared
-# egress IPs across every user of the stack. The registration cache above already absorbs the
-# common case (repeat callers hit the cache, not Connection), so the only way to burn through that
-# budget is an attacker sending a distinct, never-cached (client_id, redirect_uri) pair on every
-# request (Copilot review finding) -- this bounds that to a fraction of Connection's ceiling per
-# MCP server process, so one flooding caller can no longer exhaust the budget shared by every
-# other stack user. Deliberately conservative (half of Connection's limit): several replicas can
-# share one egress IP, and this only bounds one process, not the fleet -- a real fix needs a
-# limiter shared across replicas (e.g. Redis-backed), tracked as a follow-up, not this PR.
-_VALIDATE_RATE_LIMIT_MAX_CALLS = 300
+# _check_registration_uncached before any network call. Connection's own ceiling for this route is 600
+# calls/60s per egress IP, and every replica of this server shares that IP. The registration cache already
+# absorbs the common case (repeat callers hit the cache, not Connection), so the only way to burn through the
+# budget is a caller sending a distinct, never-cached redirect_uri on every request (Copilot review finding).
+#
+# The limiter is per process, so the bound that matters is the fleet's: the per-process cap times the largest
+# replica count we deploy must stay below Connection's ceiling, or enough replicas together can exhaust it.
+# Hence the default (100 x 5 = 500 < 600); a deployment with more replicas must lower it with
+# `OAUTH_VALIDATE_RATE_LIMIT` rather than rely on this default. A limiter shared across replicas would remove the
+# need for that arithmetic -- tracked in AI-4005.
+_CONNECTION_VALIDATE_LIMIT_PER_WINDOW = 600
+_ASSUMED_MAX_REPLICAS = 5
+_VALIDATE_RATE_LIMIT_MAX_CALLS = 100
 _VALIDATE_RATE_LIMIT_WINDOW_SECONDS = 60.0
+# How long the last known REGISTERED answer for a well-known pair may be served when Connection cannot answer.
+_WELL_KNOWN_STALE_GRACE_SECONDS = 3600.0
 
 
 class _SlidingWindowRateLimiter:
@@ -232,9 +235,14 @@ class ConnectionClientRegistry:
     (feature_spec/oauth_dynamic_client_registration/RFC.md) for the full design.
     """
 
-    def __init__(self, server_url: str) -> None:
+    def __init__(self, server_url: str, *, validate_rate_limit: int | None = None) -> None:
         self._validate_url = urljoin(server_url, '/oauth/clients/validate')
         self._authorize_url = urljoin(server_url, '/oauth/authorize')
+        # One pooled client for every validate call (created on first use, closed by `aclose()` from the server's
+        # lifespan), instead of a new client -- and a new TLS handshake -- per call.
+        self._http_client: httpx.AsyncClient | None = None
+        # redirect_uri -> when a well-known pair was last seen REGISTERED (see `_check_and_cache`).
+        self._last_known_registered: dict[str, float] = {}
 
         # client_id -> client_name submitted at /register, so a dynamically-registered client's
         # approval screen can show a real name instead of just the derived Connection client_id
@@ -271,7 +279,7 @@ class ConnectionClientRegistry:
         self._in_flight: dict[str, asyncio.Task[_ClientRegistration]] = {}
 
         self._validate_rate_limiter = _SlidingWindowRateLimiter(
-            _VALIDATE_RATE_LIMIT_MAX_CALLS, _VALIDATE_RATE_LIMIT_WINDOW_SECONDS
+            validate_rate_limit or _VALIDATE_RATE_LIMIT_MAX_CALLS, _VALIDATE_RATE_LIMIT_WINDOW_SECONDS
         )
 
     def remember_client_name(self, client_id: str | None, client_name: str | None) -> None:
@@ -325,12 +333,48 @@ class ConnectionClientRegistry:
 
     async def _check_and_cache(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
         result = await self._check_registration_uncached(connection_client_id, redirect_uri)
+        now = time.monotonic()
         if result is _ClientRegistration.REGISTERED:
-            self._registration_cache[redirect_uri] = time.monotonic() + _REGISTERED_CACHE_TTL_SECONDS
+            self._registration_cache[redirect_uri] = now + _REGISTERED_CACHE_TTL_SECONDS
             self._registration_cache.move_to_end(redirect_uri)
             if len(self._registration_cache) > _MAX_CACHED_REGISTRATIONS:
                 self._registration_cache.popitem(last=False)
+            if redirect_uri in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
+                self._last_known_registered[redirect_uri] = now
+        elif (
+            result is _ClientRegistration.ERROR
+            and redirect_uri in _WELL_KNOWN_CONNECTION_CLIENT_IDS
+            and now - self._last_known_registered.get(redirect_uri, -math.inf) < _WELL_KNOWN_STALE_GRACE_SECONDS
+        ):
+            # Connection could not answer (an outage, or its own rate limit used up by someone else's flood), but
+            # this pair -- one Keboola pre-registered itself -- was registered a moment ago. Serving that answer
+            # keeps the first-party client logging in instead of failing together with the flood. Only ERROR gets
+            # this: a definite NOT_REGISTERED (deactivated) is never overridden, and no other pair is ever served
+            # from memory.
+            LOG.warning(
+                f'[check_registration] Connection unavailable; serving the last known registration for '
+                f'connection_client_id={connection_client_id}'
+            )
+            return _ClientRegistration.REGISTERED
         return result
+
+    def _get_http_client(self) -> httpx.AsyncClient:
+        if self._http_client is None or self._http_client.is_closed:
+            # Explicit, tighter settings for this call, passed to the factory itself rather than overridden
+            # per-request on top of its defaults. Never follow a redirect here: a misconfigured proxy/gateway
+            # between here and Connection that redirects to something returning 200 (a login page, a catch-all
+            # landing page, ...) must surface as an unexpected status (-> ERROR), never get silently interpreted
+            # as "client is registered".
+            self._http_client = _create_http_client(
+                follow_redirects=False, timeout=httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)
+            )
+        return self._http_client
+
+    async def aclose(self) -> None:
+        """Closes the pooled client. Call once, from the server's lifespan teardown."""
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
     async def _check_registration_uncached(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
         # A well-known pair (today: only claude.ai) is exempt from the local limiter -- a fixed,
@@ -348,20 +392,10 @@ class ConnectionClientRegistry:
             return _ClientRegistration.ERROR
 
         try:
-            # Explicit, tighter settings for this call, passed to the factory itself rather than
-            # overridden per-request on top of its defaults (which would just make the factory's
-            # own follow_redirects=True/30s-timeout defaults dead code for this call site). Never
-            # follow a redirect here: a misconfigured proxy/gateway between here and Connection
-            # that redirects to something returning 200 (a login page, a catch-all landing page,
-            # ...) must surface as an unexpected status (-> ERROR below), never get silently
-            # interpreted as "client is registered".
-            async with _create_http_client(
-                follow_redirects=False, timeout=httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)
-            ) as http_client:
-                response = await http_client.post(
-                    self._validate_url,
-                    json={'client_id': connection_client_id, 'redirect_uri': redirect_uri},
-                )
+            response = await self._get_http_client().post(
+                self._validate_url,
+                json={'client_id': connection_client_id, 'redirect_uri': redirect_uri},
+            )
         except (httpx.HTTPError, httpx.InvalidURL) as e:
             LOG.warning(f'[check_registration] Could not reach Connection: {e}', exc_info=True)
             return _ClientRegistration.ERROR
@@ -697,6 +731,7 @@ class SimpleOAuthProvider(OAuthProvider):
         scope: str,
         session_store: SessionStore,
         jwt_secret: str | None = None,
+        validate_rate_limit: int | None = None,
     ) -> None:
         """
         Creates OAuth provider implementation.
@@ -728,12 +763,16 @@ class SimpleOAuthProvider(OAuthProvider):
         self._oauth_server_token_url = urljoin(server_url, '/oauth/token')
         self._oauth_scope = scope
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
-        self._client_registry = ConnectionClientRegistry(server_url)
+        self._client_registry = ConnectionClientRegistry(server_url, validate_rate_limit=validate_rate_limit)
         # The only two origins the OAuth routes may ever legitimately redirect to -- see
         # UntrustedAuthorizeRedirectMiddleware's docstring.
         self.trusted_redirect_origins = frozenset(
             o for o in (_origin(mcp_server_url), _origin(server_url)) if o is not None
         )
+
+    async def aclose(self) -> None:
+        """Releases what the provider holds open (the pooled client of the client registry)."""
+        await self._client_registry.aclose()
 
     def get_middleware(self) -> list[Middleware]:
         """Prepends `UntrustedAuthorizeRedirectMiddleware` and `DatabaseUnavailableMiddleware`

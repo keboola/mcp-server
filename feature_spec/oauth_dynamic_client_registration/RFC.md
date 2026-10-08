@@ -495,13 +495,23 @@ approval).
     Closing this needed a control that doesn't depend on the request being one the cache has seen
     before: `ConnectionClientRegistry` now also holds a `_SlidingWindowRateLimiter` (plain
     `collections.deque` of call timestamps, no new dependency) capping outbound calls to
-    `/oauth/clients/validate` at 300/60s **per process** -- half of Connection's per-IP ceiling, so
-    even the worst case (every check missing the cache) leaves headroom for other replicas sharing
-    the same egress IP. `_check_registration_uncached` checks this budget *before* making the HTTP
-    call at all, returning `ERROR` locally (no network call, still fail-closed) once it's spent. This
-    is deliberately a single-process, best-effort bound, not a perfectly fair cross-replica one — a
-    distributed limiter (e.g. Redis-backed) would be needed to cap the whole fleet's *combined* call
-    rate precisely; tracked as a follow-up, not blocking this PR.
+    `/oauth/clients/validate` at a configurable budget **per process** (default 100/60s,
+    `OAUTH_VALIDATE_RATE_LIMIT`). Connection's ceiling (600/60s) is per egress IP and shared by every
+    replica, so the bound that matters is the fleet's: the per-process budget times the largest replica
+    count must stay below it. The default is sized for up to 5 replicas (100 x 5 = 500 < 600), a test
+    asserts that arithmetic, and a deployment with more replicas must lower the setting. Review round 3
+    found that the previous 300/process default let two replicas use up the whole upstream allowance.
+    `_check_registration_uncached` checks this budget *before* making the HTTP call at all, returning
+    `ERROR` locally (no network call, still fail-closed) once it's spent. It is still a per-process,
+    best-effort bound, not a perfectly fair cross-replica one — a limiter shared across the fleet would
+    remove the replica arithmetic; tracked as AI-4005, not blocking this PR.
+
+    Two things around the limiter. Concurrent cache misses for the same `redirect_uri` share one in-flight
+    call (single-flight), so a burst cannot fan out past it. And because Connection's own 429 can still
+    hit the pre-registered claude.ai pair (it is exempt from the local limiter), that pair alone is served
+    from its last known REGISTERED answer for up to an hour when Connection cannot answer (an error or a 429,
+    never a definite "not registered"); no other pair is ever answered from memory. The validate calls share
+    one pooled HTTP client, closed in the server's lifespan teardown.
 
     **Known trade-off (security-scanner finding, accepted):** the limiter's budget is global per
     process, not partitioned by caller. `/authorize` is unauthenticated, so one caller sending ~5
