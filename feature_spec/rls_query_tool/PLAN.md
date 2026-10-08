@@ -312,10 +312,18 @@ DONE and unaffected; these are additive. Phase numbers below match the RFC's "Ro
 
 ### Task 11 — `rls.py`: read `rls-policy` / `cls-policy` 1.1.0 (DONE)
 
-- `groups` selector; OR of matching RLS rules / union of matching CLS rules (replaces the duplicate-principal
-  load error); `$identity` placeholders; policy `default` and the `{"false": true}` sentinel; optional
+- `groups` selector; within a policy OR of matching RLS rules / union of matching CLS rules, across the
+  policies on one table AND / intersection (replaces the duplicate-principal load error; a second policy can
+  only narrow); `$identity` placeholders; per-policy `default` and the `{"false": true}` sentinel; optional
   `dialect` with a per-table refusal on a mismatch. 1.0.0 objects load unchanged.
-- `tools/sql.py` passes the caller's groups -- empty for MCP sessions until a group source exists (RFC v5).
+- No email = refused before any rule or default (RLS and CLS). Groups are `None` (unknown) or known: with
+  unknown groups no group rule matches and no `default` applies.
+- `tools/sql.py`, `tools/search.py` and `tools/storage/tools.py` pass `groups=None` -- MCP sessions have no
+  group source yet (RFC v5); a later source must be passed at all three.
+- Performance: rules compile once at load unless they hold an `$identity` placeholder; the conditions of one
+  principal combine once from trees (no re-parse per rule, so a principal with hundreds of rules loads);
+  the schema-drift diagnostic covers only the tables a query touched and runs off the event loop; policies
+  are listed 100 per page.
 - Metastore: go-monorepo registers both 1.1.0 schemas as the default version, and the SA read path's
   `?principal=` narrowing keeps `groups` rules (separate PR there).
 
