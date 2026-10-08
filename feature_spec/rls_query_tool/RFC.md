@@ -687,3 +687,31 @@ they conflict.
   `RESULT_SCAN(...)`, `TABLE(...)`) -- so the strict rewrite refuses them. Policies are only evaluated on a
   deployed server (Kubernetes SA step-up); anywhere else a project with the feature refuses the query.
 
+## v5 Amendment: `rls-policy` / `cls-policy` schema 1.1.0
+
+Schema 1.1.0 (go-monorepo `services/metastore/migrations/schema/*-policy_schema_1.1.0.json`) shapes the
+policies for multi-user Data Apps (Linear: "rls-policy schema 1.1.0 — proposals for Data Apps end users").
+It is additive, per "Schema stability" above, and becomes the metastore's default version; the engine reads
+1.0.0 and 1.1.0 objects alike. It supersedes earlier text where they conflict.
+
+- **`groups` selector.** A rule selects by exactly one of `principal`, `principals` or `groups` (IdP group
+  names or ids, compared exactly as delivered). A rule matches when the identity's email is a listed
+  principal or any of its groups is listed.
+- **OR, not a load error (supersedes the duplicate-principal refusal).** Every rule selecting the reading
+  identity applies: RLS conditions combine with OR, CLS visible columns are the union -- across policies on
+  the same table too. A user in two groups is the normal case, not an authoring mistake.
+- **`$identity` placeholders.** `value: {"$identity": "email"}` and `values: {"$identity": "groups"}` resolve
+  per identity to bound literals through the same builders as authored literals. An identity without an
+  email / without groups makes that comparison match nothing (`FALSE`), never `= ''` or `IN ()`. A
+  placeholder anywhere else is refused.
+- **`default` and `{"false": true}`.** A policy's `default` condition applies to an identity no rule
+  selects (several policies on one table: their defaults OR). Absent = refuse, as before. The
+  `{"false": true}` sentinel matches no row, so an admin can choose "no rows" over "error".
+- **`dialect` optional, refused per table.** Absent = the workspace backend. A policy whose `dialect` names
+  the other backend refuses reads of its own table only; the project's other governed tables keep working
+  (supersedes the whole-load refusal).
+- **Groups for MCP callers.** An MCP session has no group source yet (an OAuth login carries no `groups`
+  claim; the `rls-group` object proposed in the *Trusted end-user identity* doc is an open point), so
+  `groups` rules never match an MCP caller today. `rewrite_query` and the rule lookups already take the
+  identity's groups, so a source plugs in without touching the engine.
+
