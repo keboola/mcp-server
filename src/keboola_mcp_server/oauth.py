@@ -732,6 +732,7 @@ class SimpleOAuthProvider(OAuthProvider):
         session_store: SessionStore,
         jwt_secret: str | None = None,
         validate_rate_limit: int | None = None,
+        dynamic_client_approval: bool = True,
     ) -> None:
         """
         Creates OAuth provider implementation.
@@ -764,6 +765,9 @@ class SimpleOAuthProvider(OAuthProvider):
         self._oauth_scope = scope
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
         self._client_registry = ConnectionClientRegistry(server_url, validate_rate_limit=validate_rate_limit)
+        # Whether an unregistered client is sent to Connection's approval screen. Off means only clients Connection
+        # already knows can log in (see `Config.oauth_dynamic_client_approval`).
+        self._dynamic_client_approval = dynamic_client_approval
         # The only two origins the OAuth routes may ever legitimately redirect to -- see
         # UntrustedAuthorizeRedirectMiddleware's docstring.
         self.trusted_redirect_origins = frozenset(
@@ -895,6 +899,18 @@ class SimpleOAuthProvider(OAuthProvider):
                 self._mcp_callback_url,
                 error='temporarily_unavailable',
                 error_description='Could not verify OAuth client with Connection.',
+            )
+
+        if registration is _ClientRegistration.NOT_REGISTERED and not self._dynamic_client_approval:
+            LOG.info(
+                f'[authorize] Unregistered client refused, dynamic client approval is off: client_id={_sanitize_client_id_for_log(client.client_id)}, '
+                f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}'
+            )
+            # Same-origin error page, never the caller's redirect_uri (see the ERROR branch above for why).
+            return construct_redirect_uri(
+                self._mcp_callback_url,
+                error='unregistered_client',
+                error_description='The OAuth client is not registered.',
             )
 
         if registration is _ClientRegistration.NOT_REGISTERED:

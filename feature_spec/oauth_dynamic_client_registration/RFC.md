@@ -545,6 +545,16 @@ approval).
     narrow the grant per registration is tracked in AI-4007. Verification before release is tracked
     in AI-4008 (see "Pre-release verification" above).
 
+    **Deployment switch.** `OAUTH_DYNAMIC_CLIENT_APPROVAL` (default on, so behavior is as described
+    above) decides whether a client Connection does not know yet is sent to its approval screen. With
+    it off, such a client is refused on a short page of this server's own origin, and only clients
+    already registered with Connection can log in; a registered client still gets `claudai projectless`
+    either way. It is deployment-level configuration and is never read from a request header. Turning
+    it off stops *new* approvals only: a client approved earlier stays registered in Connection, and
+    this server cannot list or deactivate those (there is no listing endpoint), so cleaning them up is
+    a Connection-side step. The INFO line "Registered client proceeding to consent" shows which
+    callbacks are in use.
+
 13. **The REGISTERED cache's 5-minute TTL is also a revocation-latency window (Copilot review
     finding, accepted).** Connection's contract deliberately maps a deactivated client to the same
     404 as "never registered" (see the Contract table above) -- but for up to 5 minutes after
