@@ -515,12 +515,14 @@ class SessionStateMiddleware(fmw.Middleware):
 
         access_token = session.kbc_access_token
         if session.kbc_access_expires_at <= datetime.now(timezone.utc) + timedelta(seconds=_REFRESH_SKEW_SECONDS):
-            access_token = await cls._refresh_provisioned_session(config, session, store)
+            access_token = await cls._refresh_provisioned_session(config, session, store, scope.active_project_id)
         project_id = str(scope.active_project_id) if scope.active_project_id is not None else config.project_id
         return dataclasses.replace(config, storage_token=access_token, project_id=project_id)
 
-    @staticmethod
-    async def _refresh_provisioned_session(config: Config, session: OAuthSession, store: SessionStore) -> str:
+    @classmethod
+    async def _refresh_provisioned_session(
+        cls, config: Config, session: OAuthSession, store: SessionStore, project_id: int | None
+    ) -> str:
         """Exchanges the session's refresh token for a fresh pair and persists the rotation.
 
         Serialized across every worker and replica by a lock on the session row, because Connection
@@ -530,8 +532,14 @@ class SessionStateMiddleware(fmw.Middleware):
         loser of the race finds the winner's fresh credentials and makes no second call at all --
         the same double-checked pattern `get_access_token` uses for the local credential file.
 
-        Returns the token to use. A refresh that fails returns the current one: it may still have
-        minutes left, and the 401 handling deals with it properly if it does not.
+        A refresh Connection *refuses* (401) is final, and for a provisioned session it has one
+        likely cause: the human claimed the project, which revokes the whole Keboola session. The
+        row is revoked (compare-and-swap, so a concurrent rotation is never killed) and the caller
+        gets the same "this session has ended" explanation as every other way of discovering it --
+        the convention `SimpleOAuthProvider._refresh_kbc_tokens` established for OAuth sessions.
+
+        Any other failure is transient, so the current token is returned: it may still have minutes
+        left, and the 401 handling deals with it properly if it does not.
         """
         try:
             async with store.lock_session(session.id) as current:
@@ -541,9 +549,19 @@ class SessionStateMiddleware(fmw.Middleware):
                     seconds=_REFRESH_SKEW_SECONDS
                 ):
                     return current.kbc_access_token  # another worker refreshed it while we waited
-                refreshed = await refresh_tokens(
-                    cast(str, config.storage_api_url), refresh_token=current.kbc_refresh_token
-                )
+                try:
+                    refreshed = await refresh_tokens(
+                        cast(str, config.storage_api_url), refresh_token=current.kbc_refresh_token
+                    )
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code != HTTPStatus.UNAUTHORIZED:
+                        raise
+                    if await store.revoke_if_kbc_refresh_token(current.id, current.kbc_refresh_token):
+                        LOG.info(
+                            'Connection refused the provisioned session\'s refresh token (401); '
+                            f'session revoked: session_id={current.id}'
+                        )
+                    raise cls._provisioned_session_ended(project_id) from e
                 await store.rotate_kbc_tokens(
                     current.id,
                     kbc_access_token=refreshed.access_token,
@@ -551,6 +569,8 @@ class SessionStateMiddleware(fmw.Middleware):
                     kbc_access_expires_at=datetime.fromtimestamp(refreshed.expires_at, tz=timezone.utc),
                 )
                 return refreshed.access_token
+        except ValueError:
+            raise  # the session has ended -- say so rather than handing back a dead token
         except Exception as e:
             LOG.warning(f'Could not refresh the provisioned session: {e}', exc_info=True)
             return session.kbc_access_token
