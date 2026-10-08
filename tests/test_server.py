@@ -642,6 +642,8 @@ async def test_oauth_callback_handler_propagates_http_exception(mocker) -> None:
         ('temporarily_unavailable', 'temporarily unavailable'),
         # the user clicked Deny on Connection's consent screen -- not an outage
         ('access_denied', 'authorization was denied'),
+        # dynamic client approval is switched off and the client is not registered
+        ('unregistered_client', 'not registered with keboola'),
     ],
 )
 @pytest.mark.asyncio

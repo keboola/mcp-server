@@ -183,6 +183,10 @@ class CustomRoutes:
             # from the query string.
             if error == 'access_denied':
                 title = message = 'Authorization was denied. You can close this window.'
+            elif error == 'unregistered_client':
+                title = message = (
+                    'This application is not registered with Keboola. Ask your Keboola administrator to register it.'
+                )
             else:
                 title = 'Keboola login temporarily unavailable'
                 message = 'Keboola login temporarily unavailable. Please close this window and try connecting again.'
@@ -310,6 +314,7 @@ def create_server(
             jwt_secret=config.jwt_secret,
             session_store=session_store,
             validate_rate_limit=_parse_validate_rate_limit(config.oauth_validate_rate_limit),
+            dynamic_client_approval=config.oauth_dynamic_client_approval is not False,
         )
     else:
         oauth_provider = None

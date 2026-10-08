@@ -83,6 +83,10 @@ class Config:
     """Calls per minute one server process may make to the OAuth server's client-validation endpoint (a positive
     integer). Unset means the built-in default. The OAuth server allows a fixed number of such calls per minute per
     egress IP, shared by every replica, so this times the replica count must stay below that number."""
+    oauth_dynamic_client_approval: bool | None = None
+    """Whether a client the OAuth server does not know yet is sent to its approval screen (the default, also when
+    unset). When false, such a client is refused with a short page instead and only clients already registered
+    with the OAuth server can log in. Deployment-level only: never settable from a request header."""
 
     # Fields a per-request HTTP header may legitimately set (see `replace_by_headers`). Everything
     # else -- jwt_secret, postgres_dsn, session_encryption_key, oauth_client_id/secret,

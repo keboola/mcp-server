@@ -1079,6 +1079,52 @@ class TestSimpleOAuthProvider:
         assert call_count == expected_calls
         assert registry._in_flight == {}  # finished calls are not kept around
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('approval_on', [True, False])
+    @pytest.mark.parametrize('registration', ['REGISTERED', 'NOT_REGISTERED', 'ERROR'])
+    async def test_authorize_routes_by_registration_and_the_dynamic_approval_switch(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        registration: str,
+        approval_on: bool,
+    ):
+        """Every combination of the registry's answer and the dynamic-approval switch: a registered client always
+        goes to consent, an error always fails closed to our own origin, and an unregistered one goes to
+        Connection's approval screen only while the switch is on -- otherwise it is refused on our own origin
+        (never at the caller's redirect_uri) and no approval screen is ever built."""
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration[registration])
+        monkeypatch.setattr(oauth_provider, '_dynamic_client_approval', approval_on)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://my.tool/oauth/callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        url = urlparse(await oauth_provider.authorize(client, params))
+        query = parse_qs(url.query)
+
+        mcp_host = urlparse(oauth_provider._mcp_callback_url).netloc
+        if registration == 'REGISTERED':
+            assert url.path == '/oauth/consent'
+            assert query['scope'] == ['claudai projectless']  # unchanged by the switch
+        elif registration == 'ERROR':
+            assert url.netloc == mcp_host
+            assert query['error'] == ['temporarily_unavailable']
+        elif approval_on:
+            assert url.path == '/oauth/authorize'
+            assert 'pending_mcp_client' in query
+        else:
+            assert url.netloc == mcp_host
+            assert url.path == urlparse(oauth_provider._mcp_callback_url).path
+            assert query['error'] == ['unregistered_client']
+            assert 'pending_mcp_client' not in query
+
     def test_default_rate_limit_keeps_the_fleet_under_connections_shared_ceiling(self):
         """The limiter is per process but Connection's ceiling is per shared egress IP: the default budget times
         the largest replica count we deploy must stay below it (Vojtěch Biberle review, AI-2883)."""
