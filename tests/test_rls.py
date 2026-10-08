@@ -444,6 +444,38 @@ class TestIsGovernedAndReferencesGovernedTable:
         with pytest.raises(RlsError, match='query history'):
             rewrite_query(sql, user='petr', dialect=dialect, rules=r)
 
+    @pytest.mark.parametrize(
+        ('dialect', 'sql'),
+        [
+            # views that describe every table whatever its policy: true row counts and hidden column names
+            ('snowflake', 'SELECT * FROM "in.c-crm".INFORMATION_SCHEMA.COLUMNS'),
+            ('snowflake', 'SELECT * FROM INFORMATION_SCHEMA.TABLES'),
+            ('bigquery', 'SELECT * FROM `proj.in_c_crm.INFORMATION_SCHEMA.COLUMNS`'),
+            ('bigquery', 'SELECT * FROM `proj`.`in_c_crm`.INFORMATION_SCHEMA.PARTITIONS'),
+        ],
+    )
+    def test_information_schema_sources_are_refused(
+        self, rules: RlsRules, bq_rules: RlsRules, dialect: str, sql: str
+    ) -> None:
+        r = bq_rules if dialect == 'bigquery' else rules
+        assert references_governed_table(sql, dialect=dialect, rules=r) is True
+        with pytest.raises(RlsError, match='information-schema'):
+            rewrite_query(sql, user='petr', dialect=dialect, rules=r)
+
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            # a BigQuery wildcard expands to the governed table without naming it
+            'SELECT * FROM `proj.in_c_crm.invoices*`',
+            'SELECT * FROM `proj.in_c_crm.inv*`',
+            'SELECT * FROM `proj.in_c_crm.*`',
+        ],
+    )
+    def test_bigquery_wildcard_tables_are_refused(self, bq_rules: RlsRules, sql: str) -> None:
+        assert references_governed_table(sql, dialect='bigquery', rules=bq_rules) is True
+        with pytest.raises(RlsError, match='wildcard'):
+            rewrite_query(sql, user='petr', dialect='bigquery', rules=bq_rules)
+
     def test_references_governed_table_true_for_a_catalog_function_next_to_an_ungoverned_table(
         self, rules: RlsRules
     ) -> None:
@@ -569,6 +601,8 @@ class TestPredicateFor:
         [
             ('customers', 'in.c-crm', 'petr', "table 'in.c-crm.customers'"),
             ('invoices', 'in.c-crm', 'nobody', 'Access denied'),
+            # `str.lower()` folds the Kelvin sign (U+212A) onto 'k', i.e. onto another user's address
+            ('invoices', 'in.c-crm', 'moni\u212aa', 'Access denied'),
             ('orders', 'in.c-crm', 'monika', 'Access denied'),
             # A rule for the table in one bucket says nothing about the table in another.
             ('invoices', 'in.c-sales', 'petr', "table 'in.c-sales.invoices'"),
@@ -1615,6 +1649,8 @@ class TestColumnsFor:
         [
             ('customers', 'in.c-crm', 'petr', "table 'in.c-crm.customers'"),
             ('invoices', 'in.c-crm', 'nobody', 'Access denied'),
+            # `str.lower()` folds the Kelvin sign (U+212A) onto 'k', i.e. onto another user's address
+            ('invoices', 'in.c-crm', 'moni\u212aa', 'Access denied'),
             ('invoices', None, 'petr', 'must be qualified'),
         ],
     )
