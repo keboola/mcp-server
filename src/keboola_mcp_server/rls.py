@@ -1205,7 +1205,8 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
     `SELECT` and ignores ordinary table functions (`LATERAL FLATTEN`, `UNNEST`, ...), so a query that
     touches no governed table behaves exactly like plain `query_data`. It fails CLOSED -- returns
     `True`, routing the query into `rewrite_query()`, which refuses it -- for everything whose
-    tables this cannot see: a parse failure (the warehouse may accept syntax sqlglot rejects), a
+    tables this cannot see: a parse failure (the warehouse may accept syntax sqlglot rejects, or input
+    nested too deep to parse), a
     statement that is not a query (`EXECUTE IMMEDIATE`, `CALL`, ... can read any table through
     dynamic SQL), a table named dynamically (`IDENTIFIER(...)`, `RESULT_SCAN(...)`), an unqualified
     table that is not a CTE (no policy key can be derived from it), and a query with no table at all
@@ -1213,7 +1214,9 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
     """
     try:
         statements = sqlglot.parse(sql, dialect=dialect)
-    except sqlglot.errors.SqlglotError:
+    except (sqlglot.errors.SqlglotError, RecursionError):
+        # RecursionError: input nested deeper than the parser can recurse. Same as a parse failure -- the
+        # strict rewrite refuses it ("query too deeply nested") instead of this raising past query_data.
         return True
     for statement in statements:
         if statement is None:

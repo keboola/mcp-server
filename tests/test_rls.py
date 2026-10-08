@@ -429,6 +429,14 @@ class TestIsGovernedAndReferencesGovernedTable:
         assert rules.is_governed(table_name='invoices', schema=None) is False
         assert rules.is_governed(table_name='invoices', schema='') is False
 
+    def test_references_governed_table_fails_closed_on_input_too_deep_to_parse(self, rules: RlsRules) -> None:
+        """A RecursionError in the pre-check's parse must route the query to the strict path, not escape."""
+        sql = 'SELECT ' + '(' * 5000 + '1' + ')' * 5000
+        assert len(sql) < 20_000  # still under the query_data length cap
+        with pytest.raises(RecursionError):  # the precondition this test is about
+            sqlglot.parse(sql, dialect='snowflake')
+        assert references_governed_table(sql, dialect='snowflake', rules=rules) is True
+
     def test_references_governed_table_true_when_a_governed_table_is_touched(self, rules: RlsRules) -> None:
         sql = 'SELECT * FROM "in.c-crm"."invoices" JOIN "in.c-crm"."unrelated" ON 1=1'
         assert references_governed_table(sql, dialect='snowflake', rules=rules) is True
