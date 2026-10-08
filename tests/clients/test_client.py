@@ -27,6 +27,7 @@ def mock_http_request() -> httpx.Request:
     request = Mock(spec=httpx.Request)
     request.url = 'https://api.example.com/test'
     request.method = 'GET'
+    request.headers = {}
     return request
 
 
@@ -172,19 +173,26 @@ class TestRawKeboolaClient:
         with pytest.raises(httpx.HTTPStatusError, match=match):
             raw_client._raise_for_status(mock_http_response_404)
 
-    @pytest.mark.parametrize(('api_token', 'expect_hint'), [('Bearer kbc_at_x', True), ('legacy-token', False)])
+    @pytest.mark.parametrize(
+        ('request_headers', 'expect_hint'),
+        [({'Authorization': 'Bearer kbc_at_x'}, True), ({'X-StorageAPI-Token': 'legacy-token'}, False)],
+    )
     def test_raise_for_status_401_project_scope_hint(
-        self, mock_http_response_401: httpx.Response, api_token: str, expect_hint: bool
+        self,
+        raw_client: RawKeboolaClient,
+        mock_http_response_401: httpx.Response,
+        request_headers: dict[str, str],
+        expect_hint: bool,
     ):
         """A 401 on a programmatic (Bearer) session often means the project scope was never confirmed or has
         gone stale -- the message steers the agent to get_accessible_projects/set_project_scope instead of
         implying the credential itself is invalid. A legacy Storage token has no scope to fix: no hint."""
 
-        client = RawKeboolaClient(base_api_url='https://api.example.com', api_token=api_token)
+        mock_http_response_401.request.headers = request_headers
         mock_http_response_401.json.return_value = {'error': 'Invalid access token', 'code': 'storage.tokenInvalid'}
 
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            client._raise_for_status(mock_http_response_401)
+            raw_client._raise_for_status(mock_http_response_401)
         assert ('set_project_scope' in str(exc_info.value)) is expect_hint
 
     @pytest.mark.asyncio

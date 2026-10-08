@@ -102,7 +102,8 @@ class RawKeboolaClient:
         """
         return RetryTransport(retry=self._retry)
 
-    def _raise_for_status(self, response: httpx.Response) -> None:
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
         """
         Checks the HTTP response status code and raises an exception with a detailed message. The message will
         include "error" and "exceptionId" fields if they are present in the response.
@@ -145,7 +146,9 @@ class RawKeboolaClient:
                 except Exception:
                     LOG.debug('Failed to read response.text while building the error message.', exc_info=True)
 
-            if response.status_code == HTTPStatus.UNAUTHORIZED and 'Authorization' in self.headers:
+            if response.status_code == HTTPStatus.UNAUTHORIZED and response.request.headers.get(
+                'Authorization', ''
+            ).startswith('Bearer '):
                 # A 401 on a programmatic (Bearer) session is often a project scope that was never
                 # confirmed (or has gone stale), not an actually-invalid credential -- steer the agent
                 # toward the tools that fix that instead of telling the user to re-authenticate. Not
