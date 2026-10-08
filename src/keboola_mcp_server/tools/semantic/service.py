@@ -94,6 +94,33 @@ _SQL_KEYWORDS_UPPER = frozenset(
     }
 )
 
+# Words that can follow a table reference without being its alias.
+_NON_ALIAS_KEYWORDS_UPPER = _SQL_KEYWORDS_UPPER | frozenset(
+    {'ORDER', 'LIMIT', 'HAVING', 'UNION', 'QUALIFY', 'USING', 'NATURAL', 'LATERAL', 'EXCEPT', 'INTERSECT', 'MINUS'}
+)
+_STRING_LITERAL_RE = re.compile(r"'(?:[^']|'')*'")
+_IDENTIFIER_PART = r'(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)'
+_QUALIFIED_COLUMN = rf'{_IDENTIFIER_PART}(?:\s*\.\s*{_IDENTIFIER_PART})+'
+# `a.x = b.y` predicates between two qualified columns, the shape of a join condition.
+_COLUMN_EQUALITY_RE = re.compile(rf'(?<![\w."$])({_QUALIFIED_COLUMN})\s*=\s*({_QUALIFIED_COLUMN})(?![\w"$(])')
+_AGGREGATE_FUNCTIONS = (
+    'APPROX_COUNT_DISTINCT',
+    'AVG',
+    'COUNT_IF',
+    'COUNT',
+    'MAX',
+    'MEDIAN',
+    'MIN',
+    'STDDEV_POP',
+    'STDDEV_SAMP',
+    'STDDEV',
+    'SUM',
+    'VAR_POP',
+    'VAR_SAMP',
+    'VARIANCE',
+)
+_AGGREGATE_CALL_RE = re.compile(rf'(?<![\w."$])(?:{"|".join(_AGGREGATE_FUNCTIONS)})\s*\(', re.IGNORECASE)
+
 
 class SemanticTypeData(BaseModel):
     """Minimal typed semantic object used by the service layer."""
@@ -615,6 +642,237 @@ def _detect_used_relationships(
     return matches
 
 
+def _blank_string_literals(sql: str) -> str:
+    """Replaces the content of single-quoted literals with spaces, keeping every character offset intact."""
+    return _STRING_LITERAL_RE.sub(lambda match: "'" + ' ' * (len(match.group()) - 2) + "'", sql)
+
+
+def _identifier_parts(qualified_name: str) -> list[str]:
+    return [part.strip('"').lower() for part in re.findall(_IDENTIFIER_PART, qualified_name)]
+
+
+def _column_equalities(sql: str) -> list[tuple[tuple[str, str], tuple[str, str]]]:
+    """Returns `((qualifier, column), (qualifier, column))` for every `a.x = b.y` predicate, lower-cased."""
+    equalities = []
+    for match in _COLUMN_EQUALITY_RE.finditer(_blank_string_literals(sql)):
+        left, right = _identifier_parts(match.group(1)), _identifier_parts(match.group(2))
+        equalities.append(((left[-2], left[-1]), (right[-2], right[-1])))
+    return equalities
+
+
+def _table_names(dataset: SemanticDatasetData) -> set[str]:
+    """The bare table name of a dataset, the qualifier relationship ON clauses use."""
+    names = (dataset.table_id, dataset.fqn)
+    return {name.strip().rsplit('.', 1)[-1].strip('"').lower() for name in names if name and name.strip()}
+
+
+def _dataset_references(sql_query: str, dataset: SemanticDatasetData) -> set[str]:
+    """Names the SQL can qualify the dataset's columns with: its bare table name and every alias given to its fqn."""
+    references = _table_names(dataset)
+    if dataset.fqn and dataset.fqn.strip():
+        alias_re = re.compile(
+            rf'{re.escape(dataset.fqn.strip())}\s+(?:AS\s+)?("?)([A-Za-z_][A-Za-z0-9_$]*)\1(?![\w.])', re.IGNORECASE
+        )
+        for match in alias_re.finditer(sql_query):
+            if match.group(2).upper() not in _NON_ALIAS_KEYWORDS_UPPER:
+                references.add(match.group(2).lower())
+    return references
+
+
+def _join_keys_between(
+    sql_query: str,
+    equalities: Sequence[tuple[tuple[str, str], tuple[str, str]]],
+    source: SemanticDatasetData,
+    target: SemanticDatasetData,
+) -> set[tuple[str, str]]:
+    """Returns `(source column, target column)` for every SQL predicate equating a source column with a target one."""
+    source_refs = _dataset_references(sql_query, source)
+    target_refs = _dataset_references(sql_query, target)
+    keys: set[tuple[str, str]] = set()
+    for (left_qualifier, left_column), (right_qualifier, right_column) in equalities:
+        if left_qualifier in source_refs and right_qualifier in target_refs:
+            keys.add((left_column, right_column))
+        elif left_qualifier in target_refs and right_qualifier in source_refs:
+            keys.add((right_column, left_column))
+    return keys
+
+
+def _relationship_join_matches(
+    sql_query: str,
+    sql_equalities: Sequence[tuple[tuple[str, str], tuple[str, str]]],
+    relationship: SemanticRelationshipData,
+    datasets_by_table_id: dict[str, SemanticDatasetData],
+) -> bool | None:
+    """Whether the SQL joins the relationship's datasets on its keys.
+
+    - `None`: the SQL has no predicate between the two datasets, or the ON clause has no `a.x = b.y` key.
+    - `True`: every relationship key is among the SQL's join keys; extra SQL predicates are allowed.
+    - `False`: the SQL joins the two datasets on other keys.
+    """
+    relationship_equalities = _column_equalities(relationship.on or '')
+    source = datasets_by_table_id[relationship.from_dataset or '']
+    target = datasets_by_table_id[relationship.to_dataset or '']
+    sql_keys = _join_keys_between(sql_query, sql_equalities, source, target)
+    if not relationship_equalities or not sql_keys:
+        return None
+
+    source_names, target_names = _table_names(source), _table_names(target)
+    for (left_qualifier, left_column), (right_qualifier, right_column) in relationship_equalities:
+        if left_qualifier in source_names and right_qualifier in target_names:
+            accepted = {(left_column, right_column)}
+        elif left_qualifier in target_names and right_qualifier in source_names:
+            accepted = {(right_column, left_column)}
+        else:
+            accepted = {(left_column, right_column), (right_column, left_column)}
+        if not accepted & sql_keys:
+            return False
+    return True
+
+
+def _classify_relationship_joins(
+    sql_query: str,
+    relationships: Sequence[SemanticRelationshipData],
+    used_datasets: Sequence[SemanticDatasetData],
+) -> tuple[list[SemanticRelationshipData], list[SemanticRelationshipData]]:
+    """Splits relationships between used datasets by how the SQL joins those datasets.
+
+    - Matched: the SQL joins the datasets on the relationship's keys.
+    - Conflicting: the SQL joins the datasets on other keys, and no relationship between them matches the join.
+    - Relationships whose datasets the SQL does not visibly join are in neither list.
+    """
+    datasets_by_table_id = {
+        dataset.table_id.strip(): dataset for dataset in used_datasets if dataset.table_id and dataset.table_id.strip()
+    }
+    sql_equalities = _column_equalities(sql_query)
+    if not sql_equalities:
+        return [], []
+
+    relationships_by_pair: dict[frozenset[str], list[SemanticRelationshipData]] = {}
+    for relationship in relationships:
+        source, target = relationship.from_dataset, relationship.to_dataset
+        if source in datasets_by_table_id and target in datasets_by_table_id and source != target:
+            relationships_by_pair.setdefault(frozenset((source, target)), []).append(relationship)
+
+    matched: list[SemanticRelationshipData] = []
+    conflicts: list[SemanticRelationshipData] = []
+    for pair_relationships in relationships_by_pair.values():
+        verdicts = [
+            (relationship, _relationship_join_matches(sql_query, sql_equalities, relationship, datasets_by_table_id))
+            for relationship in pair_relationships
+        ]
+        matched.extend(relationship for relationship, verdict in verdicts if verdict is True)
+        if not any(verdict is True for _, verdict in verdicts):
+            conflicts.extend(relationship for relationship, verdict in verdicts if verdict is False)
+    return matched, conflicts
+
+
+def _normalize_sql_expression(expression: str) -> str:
+    """Lower-cases, unquotes, drops table qualifiers and insignificant whitespace so that
+    `SUM(o."AMOUNT")` and `sum("AMOUNT")` compare equal."""
+    text = expression.replace('"', '').lower()
+    text = re.sub(r'(?<![\w$])[a-z_][a-z0-9_$]*\s*\.\s*(?=[a-z_*])', '', text)
+    text = re.sub(r'\s+', ' ', text)
+    return re.sub(r'\s*([(),*/+=<>-])\s*', r'\1', text).strip()
+
+
+def _aggregate_expressions(sql_query: str) -> list[str]:
+    """Every aggregate function call in the SQL, e.g. `SUM("orders"."quantity")`, de-duplicated."""
+    searchable = _blank_string_literals(sql_query)
+    expressions: list[str] = []
+    for match in _AGGREGATE_CALL_RE.finditer(searchable):
+        depth = 0
+        for index in range(match.end() - 1, len(searchable)):
+            if searchable[index] == '(':
+                depth += 1
+            elif searchable[index] == ')':
+                depth -= 1
+                if depth == 0:
+                    expressions.append(sql_query[match.start() : index + 1])
+                    break
+    return list(dict.fromkeys(expressions))
+
+
+def _detect_undefined_aggregates(sql_query: str, metrics: Sequence[SemanticMetricData]) -> list[str]:
+    """Aggregates in the SQL that are not part of any metric's SQL expression."""
+    metric_expressions = [
+        _normalize_sql_expression(metric.sql) for metric in metrics if metric.sql and metric.sql.strip()
+    ]
+    return [
+        expression
+        for expression in _aggregate_expressions(sql_query)
+        if not any(_normalize_sql_expression(expression) in metric_sql for metric_sql in metric_expressions)
+    ]
+
+
+def evaluate_sql_against_model(
+    sql_query: str,
+    context_by_type: dict[SemanticObjectType, SemanticServiceDataTypeGroup],
+    used_object_groups_by_type: dict[SemanticObjectType, SemanticServiceDataTypeGroup],
+) -> list[ConstraintValidationFinding]:
+    """Pre-execution findings where the SQL contradicts the model itself rather than one of its constraints.
+
+    - `join_key_mismatch` (error): the SQL joins two datasets on keys no relationship between them defines.
+    - `undefined_metric` (warning): an aggregate matches no defined metric; only checked when a dataset is used.
+    """
+    used_datasets = [
+        dataset
+        for dataset in used_object_groups_by_type.get(
+            SemanticObjectType.SEMANTIC_DATASET,
+            SemanticServiceDataTypeGroup(object_type=SemanticObjectType.SEMANTIC_DATASET),
+        ).objects
+        if isinstance(dataset, SemanticDatasetData)
+    ]
+    if not used_datasets:
+        return []
+    relationships = [
+        relationship
+        for relationship in context_by_type.get(
+            SemanticObjectType.SEMANTIC_RELATIONSHIP,
+            SemanticServiceDataTypeGroup(object_type=SemanticObjectType.SEMANTIC_RELATIONSHIP),
+        ).objects
+        if isinstance(relationship, SemanticRelationshipData)
+    ]
+    metrics = [
+        metric
+        for metric in context_by_type.get(
+            SemanticObjectType.SEMANTIC_METRIC,
+            SemanticServiceDataTypeGroup(object_type=SemanticObjectType.SEMANTIC_METRIC),
+        ).objects
+        if isinstance(metric, SemanticMetricData)
+    ]
+
+    findings: list[ConstraintValidationFinding] = []
+    _, conflicts = _classify_relationship_joins(sql_query, relationships, used_datasets)
+    for relationship in conflicts:
+        relationship_name = relationship.display_name or relationship.id
+        findings.append(
+            ConstraintValidationFinding(
+                constraint_id=f'relationship:{relationship.id}',
+                constraint_name='relationship_join_keys',
+                severity='error',
+                status='join_key_mismatch',
+                message=(
+                    f'The SQL joins {relationship.from_dataset} and {relationship.to_dataset} on keys that do not '
+                    f'match relationship "{relationship_name}" ({relationship.on}). Join on the relationship keys.'
+                ),
+            )
+        )
+    for expression in _detect_undefined_aggregates(sql_query, metrics):
+        findings.append(
+            ConstraintValidationFinding(
+                constraint_id=f'undefined-metric:{expression}',
+                constraint_name='undefined_metric',
+                severity='warning',
+                status='undefined_metric',
+                message=(
+                    f'Aggregate {expression} matches no metric defined in the semantic model, so the model does '
+                    'not back its business meaning. Use a defined metric, or confirm the calculation with the user.'
+                ),
+            )
+        )
+    return findings
+
+
 def _constraint_is_relevant(
     constraint: SemanticConstraintData,
     used_metric_names: set[str],
@@ -780,10 +1038,21 @@ def detect_used_objects_from_context(
         used_metric_objects = used_metric_objects + [obj for obj in expected_objects if obj.id not in ids]
 
     used_relationship_objects = _detect_used_relationships(sql_query, relationships.objects, used_dataset_ids)
+    joined_relationships, conflicting_relationships = _classify_relationship_joins(
+        sql_query, relationships.objects, used_dataset_objects
+    )
+    ids = {obj.id for obj in used_relationship_objects}
+    used_relationship_objects = used_relationship_objects + [obj for obj in joined_relationships if obj.id not in ids]
     if expected := used_objects_by_type.get(SemanticObjectType.SEMANTIC_RELATIONSHIP):
         expected_objects = expected.objects
         ids = {obj.id for obj in used_relationship_objects}
         used_relationship_objects = used_relationship_objects + [obj for obj in expected_objects if obj.id not in ids]
+    conflicting_relationship_ids = {relationship.id for relationship in conflicting_relationships}
+    used_relationship_objects = [
+        relationship
+        for relationship in used_relationship_objects
+        if relationship.id not in conflicting_relationship_ids
+    ]
 
     used_groups: dict[SemanticObjectType, SemanticServiceDataTypeGroup] = {}
     if used_dataset_objects:
@@ -1082,7 +1351,14 @@ async def validate_semantic_query_with_used_objects(
     used_object_groups_by_type = detect_used_objects_from_context(
         sql_query, merged_context, used_objects_by_type=used_object_groups_by_type
     )
-    return _evaluate_used_objects_for_contexts(cleaned_model_ids, contexts_per_model, used_object_groups_by_type)
+    result = _evaluate_used_objects_for_contexts(cleaned_model_ids, contexts_per_model, used_object_groups_by_type)
+    model_findings = evaluate_sql_against_model(sql_query, merged_context, used_object_groups_by_type)
+    return result.model_copy(
+        update={
+            'valid': result.valid and not any(finding.severity == 'error' for finding in model_findings),
+            'violations': [*result.violations, *model_findings],
+        }
+    )
 
 
 async def get_object_by_id(
