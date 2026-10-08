@@ -46,7 +46,7 @@ def _deployed(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_every_page_is_loaded_so_no_policy_is_missed() -> None:
     first = [_policy(i) for i in range(_PAGE_SIZE)]
     second = [_policy(i) for i in range(_PAGE_SIZE, _PAGE_SIZE + 3)]
-    client = _client({'rls-policy': [first, second], 'cls-policy': [[]]})
+    client = _client({'rls-policy': [first, second, []], 'cls-policy': [[]]})
 
     rules, _ = await load_policy_rules(client, dialect='snowflake')
 
@@ -55,12 +55,17 @@ async def test_every_page_is_loaded_so_no_policy_is_missed() -> None:
     assert len(rules.tables) == _PAGE_SIZE + 3
     metastore = client.step_up_metastore_client.return_value
     rls_calls = [c for c in metastore.list_objects.await_args_list if c.args[0] == 'rls-policy']
-    assert [(c.kwargs['limit'], c.kwargs['offset']) for c in rls_calls] == [(_PAGE_SIZE, 0), (_PAGE_SIZE, _PAGE_SIZE)]
+    # The next offset is what was received; only the empty page ends the listing.
+    assert [(c.kwargs['limit'], c.kwargs['offset']) for c in rls_calls] == [
+        (_PAGE_SIZE, 0),
+        (_PAGE_SIZE, _PAGE_SIZE),
+        (_PAGE_SIZE, _PAGE_SIZE + 3),
+    ]
 
 
 @pytest.mark.asyncio
 async def test_a_full_last_page_is_followed_by_one_more_request() -> None:
-    """Exactly one full page can mean there is more: only a short (or empty) page ends the listing."""
+    """Exactly one full page can mean there is more: only an empty page ends the listing."""
     full = [_policy(i) for i in range(_PAGE_SIZE)]
     client = _client({'rls-policy': [full, []], 'cls-policy': [[]]})
 
@@ -72,12 +77,35 @@ async def test_a_full_last_page_is_followed_by_one_more_request() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_single_short_page_is_one_request_per_type() -> None:
-    client = _client({'rls-policy': [[_policy(0)]], 'cls-policy': [[]]})
+async def test_a_short_page_is_followed_by_one_more_request() -> None:
+    client = _client({'rls-policy': [[_policy(0)], []], 'cls-policy': [[]]})
 
     await load_policy_rules(client, dialect='snowflake')
 
-    assert client.step_up_metastore_client.return_value.list_objects.await_count == 2
+    # rls-policy: the short page and the empty one; cls-policy: the empty one.
+    assert client.step_up_metastore_client.return_value.list_objects.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_a_server_that_caps_the_page_size_still_yields_every_policy() -> None:
+    """Fail closed: a page shorter than `limit` (a server or proxy cap) must not end the listing."""
+    stored = [_policy(i) for i in range(250)]
+    cap = 37
+
+    async def list_objects(object_type: str, *, limit: int | None = None, offset: int | None = None):
+        if object_type != 'rls-policy':
+            return []
+        return stored[offset : offset + min(limit, cap)]
+
+    metastore = MagicMock()
+    metastore.list_objects = AsyncMock(side_effect=list_objects)
+    client = MagicMock()
+    client.storage_client.project_id = AsyncMock(return_value='1')
+    client.step_up_metastore_client = MagicMock(return_value=metastore)
+
+    rules, _ = await load_policy_rules(client, dialect='snowflake')
+
+    assert len(rules.tables) == 250
 
 
 @pytest.mark.asyncio
