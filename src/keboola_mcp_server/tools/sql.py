@@ -342,6 +342,9 @@ async def _apply_rls(
     # governed table is refused ("Access denied") by the rewrite itself, while a query touching no
     # governed table (`SELECT 1`) still runs.
     principal = ctx.session.state.get(OAUTH_USER_EMAIL_KEY) or ''
+    # Schema 1.1.0 rules can select by IdP group. An MCP session has no group source yet (an OAuth login
+    # carries no groups claim), so `groups` rules never match an MCP caller; a later source plugs in here.
+    groups: tuple[str, ...] = ()
     try:
         try:
             # sqlglot parsing/transformation is CPU-bound and holds the GIL only in short bursts,
@@ -349,7 +352,13 @@ async def _apply_rls(
             # slows down this one session instead of stalling the event loop for every other
             # in-flight request.
             rewritten = await asyncio.to_thread(
-                rewrite_query, sql_query, user=principal, dialect=dialect, rules=rules, cls_rules=cls_rules
+                rewrite_query,
+                sql_query,
+                user=principal,
+                groups=groups,
+                dialect=dialect,
+                rules=rules,
+                cls_rules=cls_rules,
             )
         except RecursionError as e:
             # sqlglot's parser recurses per nesting level, so deeply nested input hits Python's

@@ -311,13 +311,18 @@ class TestFromMetastore:
         with pytest.raises(RlsError, match='invalid principal'):
             RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
-    def test_rule_with_both_principal_and_principals_is_rejected(self) -> None:
-        """The schema's `oneOf`: silently preferring `principals` would apply a different rule than written."""
-        obj = _policy_object(
-            table='in.c-crm.invoices',
-            rules_list=[{'principal': 'petr', 'principals': ['monika'], 'condition': {'true': True}}],
-        )
-        with pytest.raises(RlsError, match="both 'principal' and 'principals'"):
+    @pytest.mark.parametrize(
+        'selectors',
+        [
+            {'principal': 'petr', 'principals': ['monika']},
+            {'principal': 'petr', 'groups': ['sales']},
+            {'principals': ['petr'], 'groups': ['sales']},
+        ],
+    )
+    def test_rule_with_two_selectors_is_rejected(self, selectors: dict) -> None:
+        """The schema's `oneOf`: silently preferring one selector would apply a different rule than written."""
+        obj = _policy_object(table='in.c-crm.invoices', rules_list=[{**selectors, 'condition': {'true': True}}])
+        with pytest.raises(RlsError, match='exactly one of'):
             RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
     @pytest.mark.parametrize('target_project_ids', [None, (2, 3)])
@@ -359,8 +364,10 @@ class TestFromMetastore:
     @pytest.mark.parametrize(
         ('rules_list', 'match'),
         [
-            ([{'condition': {'true': True}}], 'no principal'),
-            ([{'principal': '', 'condition': {'true': True}}], 'no principal'),
+            ([{'condition': {'true': True}}], 'exactly one of'),
+            ([{'principal': '', 'condition': {'true': True}}], 'invalid principal'),
+            ([{'groups': [], 'condition': {'true': True}}], "invalid 'groups'"),
+            ([{'groups': ['ok', 'bad\n'], 'condition': {'true': True}}], 'invalid group'),
             ([{'principal': 'petr', 'condition': {'column': 'x', 'op': 'bogus'}}], 'unknown condition op'),
             ([{'principal': 'petr'}], 'condition must be an object'),
             ([{'principal': 'pe tr', 'condition': {'true': True}}], 'invalid principal'),
@@ -376,27 +383,39 @@ class TestFromMetastore:
         with pytest.raises(RlsError, match='unqualified table'):
             RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
-    def test_rejects_dialect_mismatch_for_an_applicable_object(self) -> None:
-        """Unlike a project-id mismatch (silently skipped, not this project's business), a dialect
-        mismatch on an object that DOES apply to this project is an authoring inconsistency: it
-        must fail closed, not silently leave the table unfiltered."""
-        obj = _policy_object(
+    def test_a_dialect_mismatch_refuses_only_that_table(self) -> None:
+        """Schema 1.1.0: a policy authored for the other backend fails closed for ITS table only -- the
+        project's other governed tables stay readable (1.0.0 refused the whole rule load)."""
+        mismatched = _policy_object(
+            obj_id='bq',
             table='in.c-crm.invoices',
             dialect='bigquery',
             rules_list=[{'principal': 'petr', 'condition': {'true': True}}],
         )
-        with pytest.raises(RlsError, match='dialect'):
-            RlsRules.from_metastore([obj], dialect='snowflake', project_id=1)
+        other = _policy_object(
+            obj_id='sf', table='in.c-crm.orders', rules_list=[{'principal': 'petr', 'condition': {'true': True}}]
+        )
+        rules = RlsRules.from_metastore([mismatched, other], dialect='snowflake', project_id=1)
 
-    def test_rejects_duplicate_principal_across_objects(self) -> None:
+        with pytest.raises(RlsError, match='could not be applied'):
+            rewrite_query('SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect='snowflake', rules=rules)
+        out = rewrite_query('SELECT * FROM "in.c-crm"."orders"', user='petr', dialect='snowflake', rules=rules)
+        assert out.applied_rules == ['in.c-crm.orders']
+
+    def test_a_principal_in_several_policies_gets_their_conditions_ored(self) -> None:
+        """Schema 1.1.0: rules matching one identity combine with OR, across policies on the same table too."""
         obj_a = _policy_object(
-            obj_id='a', table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}]
+            obj_id='a',
+            table='in.c-crm.invoices',
+            rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
         )
         obj_b = _policy_object(
-            obj_id='b', table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'condition': {'true': True}}]
+            obj_id='b',
+            table='in.c-crm.invoices',
+            rules_list=[{'principal': 'PETR', 'condition': {'column': 'country', 'op': 'eq', 'value': 'SK'}}],
         )
-        with pytest.raises(RlsError, match='multiple applicable policies'):
-            RlsRules.from_metastore([obj_a, obj_b], dialect='snowflake', project_id=1)
+        rules = RlsRules.from_metastore([obj_a, obj_b], dialect='snowflake', project_id=1)
+        assert rules.tables['in.c-crm.invoices']['petr'] == "\"country\" = 'CZ' OR \"country\" = 'SK'"
 
     def test_rejects_unsupported_dialect(self) -> None:
         with pytest.raises(RlsError, match='unsupported workspace dialect'):
@@ -1587,12 +1606,12 @@ class TestClsFromMetastore:
         rules = ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
         assert rules.tables['in.c-crm.invoices'][email.lower()] == ('id',)
 
-    def test_rule_with_both_principal_and_principals_is_rejected(self) -> None:
+    def test_rule_with_two_selectors_is_rejected(self) -> None:
         obj = _cls_policy_object(
             table='in.c-crm.invoices',
-            rules_list=[{'principal': 'petr', 'principals': ['monika'], 'visible_columns': ['id']}],
+            rules_list=[{'principal': 'petr', 'groups': ['sales'], 'visible_columns': ['id']}],
         )
-        with pytest.raises(RlsError, match="both 'principal' and 'principals'"):
+        with pytest.raises(RlsError, match='exactly one of'):
             ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
     def test_a_policy_granted_from_another_project_is_enforced(self) -> None:
@@ -1613,8 +1632,9 @@ class TestClsFromMetastore:
     @pytest.mark.parametrize(
         ('rules_list', 'match'),
         [
-            ([{'visible_columns': ['id']}], 'no principal'),
-            ([{'principal': '', 'visible_columns': ['id']}], 'no principal'),
+            ([{'visible_columns': ['id']}], 'exactly one of'),
+            ([{'principal': '', 'visible_columns': ['id']}], 'invalid principal'),
+            ([{'groups': [''], 'visible_columns': ['id']}], 'invalid group'),
             ([{'principal': 'petr'}], 'invalid'),
             ([{'principal': 'petr', 'visible_columns': []}], 'invalid'),
             ([{'principal': 'petr', 'visible_columns': ['not a valid col!']}], 'invalid column name'),
@@ -1626,15 +1646,19 @@ class TestClsFromMetastore:
         with pytest.raises(RlsError, match=match):
             ClsRules.from_metastore([obj], dialect='snowflake', project_id=1)
 
-    def test_rejects_duplicate_principal_across_objects(self) -> None:
+    def test_a_principal_in_several_policies_sees_the_union_of_their_columns(self) -> None:
         obj_a = _cls_policy_object(
-            obj_id='a', table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'visible_columns': ['id']}]
+            obj_id='a',
+            table='in.c-crm.invoices',
+            rules_list=[{'principal': 'petr', 'visible_columns': ['id', 'amount']}],
         )
         obj_b = _cls_policy_object(
-            obj_id='b', table='in.c-crm.invoices', rules_list=[{'principal': 'petr', 'visible_columns': ['id']}]
+            obj_id='b',
+            table='in.c-crm.invoices',
+            rules_list=[{'principal': 'petr', 'visible_columns': ['amount', 'country']}],
         )
-        with pytest.raises(RlsError, match='multiple applicable policies'):
-            ClsRules.from_metastore([obj_a, obj_b], dialect='snowflake', project_id=1)
+        rules = ClsRules.from_metastore([obj_a, obj_b], dialect='snowflake', project_id=1)
+        assert rules.tables['in.c-crm.invoices']['petr'] == ('id', 'amount', 'country')
 
 
 class TestColumnsFor:
@@ -1731,3 +1755,192 @@ class TestComposedRewrite:
             rewrite_query(
                 'SELECT * FROM "in.c-crm"."invoices"', user='petr', dialect='snowflake', rules=rules, cls_rules=bq_cls
             )
+
+
+class TestSchema110:
+    """rls-policy / cls-policy schema 1.1.0: `groups` selectors, OR of matching rules, `$identity`
+    placeholders, policy `default`, the `{"false": true}` sentinel and an optional `dialect`."""
+
+    TABLE = 'in.c-sales.orders'
+    QUERY = 'SELECT * FROM "in.c-sales"."orders"'
+
+    def _rules(self, rules_list: list, *, dialect: str = 'snowflake', **attributes) -> RlsRules:
+        obj = _policy_object(table=self.TABLE, dialect=dialect, rules_list=rules_list)
+        obj.attributes.update(attributes)
+        return RlsRules.from_metastore([obj], dialect=dialect, project_id=1)
+
+    RULES: ClassVar[list] = [
+        {'groups': ['sales-eu'], 'condition': {'column': 'region', 'op': 'in', 'values': ['EU']}},
+        {'groups': ['sales-reps'], 'condition': {'column': 'owner_email', 'op': 'eq', 'value': {'$identity': 'email'}}},
+        {'groups': ['managers'], 'condition': {'column': 'team', 'op': 'in', 'values': {'$identity': 'groups'}}},
+        {'principals': ['auditor@example.com'], 'condition': {'true': True}},
+    ]
+
+    @pytest.mark.parametrize(
+        ('user', 'groups', 'predicate'),
+        [
+            ('u@example.com', ['sales-eu'], "\"region\" IN ('EU')"),
+            (
+                'u@example.com',
+                ['sales-eu', 'sales-reps'],
+                "\"region\" IN ('EU') OR \"owner_email\" = 'u@example.com'",
+            ),
+            ('u@example.com', ['managers', 'team-a'], "\"team\" IN ('managers', 'team-a')"),
+            ('AUDITOR@example.com', [], 'TRUE'),
+            # the auditor's own rule OR-ed with a group rule
+            ('auditor@example.com', ['sales-eu'], "TRUE OR \"region\" IN ('EU')"),
+            # group names are compared exactly
+            ('u@example.com', ['Sales-EU'], None),
+            ('u@example.com', [], None),
+        ],
+    )
+    def test_groups_and_or_semantics(self, user: str, groups: list, predicate: str | None) -> None:
+        rules = self._rules(self.RULES)
+        if predicate is None:
+            with pytest.raises(RlsAccessDenied):
+                rules.predicate_for(table_name='orders', schema='in.c-sales', user=user, groups=groups)
+            return
+        assert rules.predicate_for(table_name='orders', schema='in.c-sales', user=user, groups=groups) == (
+            self.TABLE,
+            predicate,
+        )
+
+    @pytest.mark.parametrize(
+        ('default', 'predicate'),
+        [
+            (None, None),
+            ({'false': True}, 'FALSE'),
+            ({'true': True}, 'TRUE'),
+            ({'column': 'public', 'op': 'eq', 'value': True}, '"public" = TRUE'),
+        ],
+    )
+    def test_default_applies_only_when_no_rule_matches(self, default: dict | None, predicate: str | None) -> None:
+        extra = {'default': default} if default is not None else {}
+        rules = self._rules(self.RULES, **extra)
+        # a matching rule wins over the default
+        assert rules.predicate_for(table_name='orders', schema='in.c-sales', user='x', groups=['sales-eu'])[1] == (
+            "\"region\" IN ('EU')"
+        )
+        if predicate is None:
+            with pytest.raises(RlsAccessDenied):
+                rules.predicate_for(table_name='orders', schema='in.c-sales', user='nobody@example.com')
+        else:
+            assert (
+                rules.predicate_for(table_name='orders', schema='in.c-sales', user='nobody@example.com')[1] == predicate
+            )
+
+    def test_false_default_rewrites_to_an_empty_result_not_an_error(self) -> None:
+        rules = self._rules(self.RULES, default={'false': True})
+        out = rewrite_query(self.QUERY, user='nobody@example.com', dialect='snowflake', rules=rules)
+        assert out.sql == 'SELECT * FROM (SELECT * FROM "in.c-sales"."orders" WHERE FALSE) AS "orders"'
+
+    @pytest.mark.parametrize('groups', [[], ['managers']])
+    def test_empty_identity_parts_match_nothing(self, groups: list) -> None:
+        """No groups -> `IN` over them is FALSE (never `IN ()`); no email -> `= email` is FALSE (never `= ''`)."""
+        rules = self._rules(
+            [
+                {'groups': ['managers'], 'condition': {'column': 'owner', 'op': 'eq', 'value': {'$identity': 'email'}}},
+                {
+                    'principal': 'p@example.com',
+                    'condition': {'column': 'team', 'op': 'in', 'values': {'$identity': 'groups'}},
+                },
+            ]
+        )
+        user = '' if groups else 'p@example.com'
+        assert rules.predicate_for(table_name='orders', schema='in.c-sales', user=user, groups=groups)[1] == 'FALSE'
+
+    @pytest.mark.parametrize('dialect', ['snowflake', 'bigquery'])
+    @pytest.mark.parametrize('email', ["x' OR '1'='1@example.com", "o'brien@example.com"])
+    def test_a_hostile_identity_email_stays_one_bound_literal(self, dialect: str, email: str) -> None:
+        """The email comes from the session, not the policy, so it is not validated as a principal -- it must
+        still bind as one literal."""
+        rules = self._rules(
+            [{'groups': ['g'], 'condition': {'column': 'owner', 'op': 'eq', 'value': {'$identity': 'email'}}}],
+            dialect=dialect,
+        )
+        _, predicate = rules.predicate_for(
+            table_name='orders', schema=_normalize_schema('in.c-sales', dialect), user=email, groups=['g']
+        )
+        tree = sqlglot.parse_one(predicate, dialect=dialect)
+        literals = list(tree.find_all(exp.Literal))
+        assert isinstance(tree, exp.EQ) and [lit.this for lit in literals] == [email]
+
+    @pytest.mark.parametrize(
+        'condition',
+        [
+            {'column': 'c', 'op': 'eq', 'value': {'$identity': 'groups'}},
+            {'column': 'c', 'op': 'in', 'values': {'$identity': 'email'}},
+            {'column': 'c', 'op': 'eq', 'value': {'$identity': 'email', 'x': 1}},
+            {'column': 'c', 'op': 'eq', 'value': {'other': 1}},
+            {'false': False},
+        ],
+    )
+    def test_a_misplaced_or_malformed_construct_refuses_the_load(self, condition: dict) -> None:
+        with pytest.raises(RlsError):
+            self._rules([{'groups': ['g'], 'condition': condition}])
+
+    def test_a_malformed_default_refuses_the_load(self) -> None:
+        with pytest.raises(RlsError, match="'false' condition"):
+            self._rules(self.RULES, default={'false': 1})
+
+    def test_an_absent_dialect_uses_the_workspace_backend(self) -> None:
+        obj = _policy_object(table=self.TABLE, rules_list=[{'principal': 'p@example.com', 'condition': {'true': True}}])
+        del obj.attributes['dialect']
+        rules = RlsRules.from_metastore([obj], dialect='bigquery', project_id=1)
+        out = rewrite_query(
+            'SELECT * FROM `in_c_sales`.`orders`', user='p@example.com', dialect='bigquery', rules=rules
+        )
+        assert out.applied_rules == ['in_c_sales.orders']
+
+    def test_referenced_columns_include_group_and_default_conditions(self) -> None:
+        rules = self._rules(self.RULES, default={'column': 'public', 'op': 'eq', 'value': True})
+        assert rules.referenced_columns()[self.TABLE] == {'region', 'owner_email', 'team', 'public'}
+
+    def test_cls_groups_union_and_per_table_dialect(self) -> None:
+        sales = _cls_policy_object(
+            obj_id='a',
+            table=self.TABLE,
+            rules_list=[
+                {'groups': ['sales'], 'visible_columns': ['id', 'region']},
+                {'groups': ['finance'], 'visible_columns': ['id', 'amount']},
+                {'principal': 'p@example.com', 'visible_columns': ['note']},
+            ],
+        )
+        del sales.attributes['dialect']
+        foreign = _cls_policy_object(
+            obj_id='b',
+            table='in.c-crm.invoices',
+            dialect='bigquery',
+            rules_list=[{'groups': ['sales'], 'visible_columns': ['id']}],
+        )
+        rules = ClsRules.from_metastore([sales, foreign], dialect='snowflake', project_id=1)
+
+        assert rules.columns_for(
+            table_name='orders', schema='in.c-sales', user='p@example.com', groups=['finance', 'sales']
+        ) == (
+            self.TABLE,
+            ('note', 'id', 'region', 'amount'),  # the identity's own rule first, then group rules in policy order
+        )
+        assert rules.visible_columns(table_id=self.TABLE, user='x@example.com', groups=['sales']) == ('id', 'region')
+        assert rules.visible_columns(table_id=self.TABLE, user='x@example.com') == ()
+        with pytest.raises(RlsAccessDenied):
+            rules.columns_for(table_name='orders', schema='in.c-sales', user='x@example.com')
+        # the bigquery-authored policy refuses only its own table
+        with pytest.raises(RlsError, match='could not be applied'):
+            rules.columns_for(table_name='invoices', schema='in.c-crm', user='x@example.com', groups=['sales'])
+        assert rules.visible_columns(table_id='in.c-crm.invoices', user='x@example.com', groups=['sales']) == ()
+        assert rules.referenced_columns()[self.TABLE] == {'id', 'region', 'amount', 'note'}
+
+    def test_rewrite_query_passes_groups_to_both_rule_kinds(self) -> None:
+        rls = self._rules(self.RULES)
+        cls = ClsRules.from_metastore(
+            [_cls_policy_object(table=self.TABLE, rules_list=[{'groups': ['sales-eu'], 'visible_columns': ['id']}])],
+            dialect='snowflake',
+            project_id=1,
+        )
+        out = rewrite_query(
+            self.QUERY, user='u@example.com', dialect='snowflake', rules=rls, cls_rules=cls, groups=['sales-eu']
+        )
+        assert (
+            out.sql == 'SELECT * FROM (SELECT "id" FROM "in.c-sales"."orders" WHERE "region" IN (\'EU\')) AS "orders"'
+        )
