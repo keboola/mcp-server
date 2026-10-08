@@ -15,7 +15,14 @@ closing the injection surface for a rule author who isn't an engineer. They are 
 SQL dialect: a policy authored against a Snowflake-workspace's column names is not portable to a
 BigQuery workspace. `RlsRules.dialect` pins the workspace backend the compiled predicates are for,
 and `rewrite_query()` refuses outright when the workspace it is asked to rewrite for is not that
-dialect.
+dialect. A policy's own `dialect` is optional (schema 1.1.0); one that names the other backend refuses
+reads of its table only.
+
+Schema 1.1.0 (read alongside 1.0.0): a rule selects by `principal`, `principals` or IdP `groups`; every
+rule selecting the reading identity applies and their conditions combine with OR (CLS: the visible
+columns are the union); `{"$identity": "email"}` / `{"$identity": "groups"}` resolve to bound literals
+per identity; a policy's `default` condition applies to an identity no rule selects, and the
+`{"false": true}` sentinel matches no row.
 
 Column-level security (CLS) is a sibling mechanism, `ClsRules`, backed by `cls-policy` metastore
 objects: an allowlist of visible columns per principal instead of a row predicate. `rewrite_query()`
@@ -70,6 +77,15 @@ _ASCII_LOWER = {ord(c): ord(c) + 32 for c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'}
 
 def _fold_principal(value: str) -> str:
     return value.translate(_ASCII_LOWER)
+
+
+# An IdP group name or id, compared exactly as delivered (schema 1.1.0 `groups`). Names may contain spaces
+# ("Sales EU"); control characters and the empty string are refused.
+_GROUP_RE = re.compile(r'^[^\x00-\x1f\x7f]+$')
+
+# Identity the load-time validation compiles placeholder rules with, so a malformed rule is refused when the
+# policy loads, not only when a matching user first queries the table.
+_VALIDATION_IDENTITY: tuple[str, tuple[str, ...]] = ('validation@example.invalid', ('validation-group',))
 
 
 # What a query with no real table may still call. Everything here either reads the clock or is a
@@ -158,21 +174,61 @@ def _applies_to_project(obj: Any, *, label: str, obj_id: str) -> bool:
     return True
 
 
-def _rule_principals(rule: Mapping[str, Any], *, label: str, obj_id: str) -> Sequence[Any]:
-    """The principal(s) a rule applies to: exactly one of `principal` / `principals` (the schema's
-    `oneOf`). Both or neither is rejected -- silently preferring one would apply a different access
-    rule than the author wrote."""
-    principals_raw = rule.get('principals')
-    principal_raw = rule.get('principal')
-    if principals_raw is not None and principal_raw is not None:
-        raise RlsError(f"{label}: metastore object '{obj_id}' has a rule with both 'principal' and 'principals'")
-    if principals_raw is not None:
-        if not isinstance(principals_raw, Sequence) or isinstance(principals_raw, (str, bytes)) or not principals_raw:
-            raise RlsError(f"{label}: metastore object '{obj_id}' has an invalid 'principals': {rule!r}")
-        return principals_raw
-    if isinstance(principal_raw, str) and principal_raw:
-        return [principal_raw]
-    raise RlsError(f"{label}: metastore object '{obj_id}' has a rule with no principal(s): {rule!r}")
+def _rule_selector(rule: Mapping[str, Any], *, label: str, obj_id: str) -> tuple[list[str], list[str]]:
+    """`(principals, groups)` a rule applies to: exactly one of `principal` / `principals` / `groups` (the
+    schema's `oneOf`; `groups` is new in 1.1.0). Two or none is rejected -- silently preferring one would apply
+    a different access rule than the author wrote. Principals come back case-folded."""
+    present = [field for field in ('principal', 'principals', 'groups') if rule.get(field) is not None]
+    if len(present) != 1:
+        raise RlsError(
+            f"{label}: metastore object '{obj_id}' must have exactly one of 'principal', 'principals', 'groups' "
+            f'in a rule, got {present or "none"}'
+        )
+    field = present[0]
+    value = rule[field]
+    names = [value] if field == 'principal' else value
+    if not isinstance(names, Sequence) or isinstance(names, (str, bytes)) or not names:
+        raise RlsError(f"{label}: metastore object '{obj_id}' has an invalid '{field}': {rule!r}")
+    if field == 'groups':
+        for group in names:
+            if not isinstance(group, str) or not _GROUP_RE.fullmatch(group):
+                raise RlsError(f"{label}: metastore object '{obj_id}' has an invalid group {group!r}")
+        return [], list(names)
+    for name in names:
+        if not isinstance(name, str) or not _PRINCIPAL_RE.fullmatch(name):
+            raise RlsError(f"{label}: metastore object '{obj_id}' has an invalid principal {name!r}")
+    return [_fold_principal(name) for name in names], []
+
+
+def _rule_matches(principals: frozenset[str], groups: frozenset[str], *, user: str, user_groups: Sequence[str]) -> bool:
+    """Whether a rule selects the identity: its email is a listed principal, or it is in a listed group."""
+    return bool(user) and _fold_principal(user) in principals or not groups.isdisjoint(user_groups)
+
+
+def _uses_identity(condition: Any) -> bool:
+    """Whether a condition contains an `$identity` placeholder anywhere (so it must be compiled per identity)."""
+    if not isinstance(condition, Mapping):
+        return False
+    if any(isinstance(condition.get(field), Mapping) for field in ('value', 'values')):
+        return True
+    return any(
+        _uses_identity(branch)
+        for combinator in ('and', 'or')
+        if isinstance(condition.get(combinator), Sequence)
+        for branch in condition[combinator]
+    )
+
+
+def _or_predicates(predicates: Sequence[str], *, dialect: str) -> str:
+    """The predicates of every rule that matched one identity, combined with OR (schema 1.1.0)."""
+    unique = list(dict.fromkeys(predicates))
+    if len(unique) == 1:
+        return unique[0]
+    try:
+        parsed = [sqlglot.parse_one(p, dialect=dialect, into=exp.Condition) for p in unique]
+    except sqlglot.errors.SqlglotError as e:
+        raise RlsError(f'RLS: a rule predicate is not valid SQL for dialect {dialect!r}') from e
+    return exp.or_(*parsed).sql(dialect=dialect)
 
 
 def _clean_error(error: Exception) -> str:
@@ -269,7 +325,9 @@ _COMPARISON_OPS: Mapping[str, Callable[[exp.Column, exp.Expression], exp.Conditi
 }
 
 
-def _compile_primitive(condition: Any, *, dialect: str) -> exp.Condition:
+def _compile_primitive(
+    condition: Any, *, dialect: str, identity: tuple[str, Sequence[str]] | None = None
+) -> exp.Condition:
     """Compile one declarative `condition` primitive (the shape in the RFC's JSON schema for the
     `rls-policy` metastore object type) into a `sqlglot.exp.Condition` tree.
 
@@ -279,6 +337,12 @@ def _compile_primitive(condition: Any, *, dialect: str) -> exp.Condition:
     named column and literal value(s) -- there is no string-formatting step for an admin's (or a
     guided CLI's) input to inject through. Raises `RlsError` for any shape this function doesn't
     recognise; an unrecognised primitive is refused, never silently treated as `TRUE`.
+
+    `identity` is `(email, groups)` of the reading identity. Schema 1.1.0 placeholders resolve against it to
+    bound literals through the same builders: `value: {"$identity": "email"}` and
+    `values: {"$identity": "groups"}`. An identity with no email or no groups makes that comparison match
+    nothing (`FALSE`) -- never `= ''` or `IN ()`. A placeholder with no identity, or in any other place, is
+    refused.
     """
     if not isinstance(condition, Mapping):
         raise RlsError(f'RLS: condition must be an object, got {type(condition).__name__}')
@@ -288,6 +352,11 @@ def _compile_primitive(condition: Any, *, dialect: str) -> exp.Condition:
             raise RlsError(f"RLS: a 'true' condition must be exactly {{'true': true}}, got {condition!r}")
         return exp.true()
 
+    if 'false' in condition:
+        if condition.get('false') is not True or len(condition) != 1:
+            raise RlsError(f"RLS: a 'false' condition must be exactly {{'false': true}}, got {condition!r}")
+        return exp.false()
+
     for combinator in ('and', 'or'):
         if combinator not in condition:
             continue
@@ -296,7 +365,7 @@ def _compile_primitive(condition: Any, *, dialect: str) -> exp.Condition:
         branches = condition[combinator]
         if not isinstance(branches, Sequence) or isinstance(branches, (str, bytes)) or len(branches) < 2:
             raise RlsError(f"RLS: {combinator!r} must be a list of at least 2 conditions, got {branches!r}")
-        compiled = [_compile_primitive(branch, dialect=dialect) for branch in branches]
+        compiled = [_compile_primitive(branch, dialect=dialect, identity=identity) for branch in branches]
         result = compiled[0]
         for branch_expr in compiled[1:]:
             result = result.and_(branch_expr) if combinator == 'and' else result.or_(branch_expr)
@@ -315,11 +384,21 @@ def _compile_primitive(condition: Any, *, dialect: str) -> exp.Condition:
     if op in _COMPARISON_OPS:
         if 'value' not in condition:
             raise RlsError(f"RLS: op {op!r} requires a 'value': {condition!r}")
-        value = exp.convert(condition['value'])
+        raw_value = condition['value']
+        if isinstance(raw_value, Mapping):
+            email = _identity_field(raw_value, 'email', identity, condition)
+            if not email:
+                return exp.false()
+            raw_value = email
+        value = exp.convert(raw_value)
         return _COMPARISON_OPS[op](column, value)
 
     if op in ('in', 'not_in'):
         values = condition.get('values')
+        if isinstance(values, Mapping):
+            values = list(_identity_field(values, 'groups', identity, condition))
+            if not values:
+                return exp.false()
         if not isinstance(values, Sequence) or isinstance(values, (str, bytes)) or not values:
             raise RlsError(f"RLS: op {op!r} requires a non-empty 'values' list: {condition!r}")
         membership = column.isin(*(exp.convert(v) for v in values))
@@ -330,6 +409,49 @@ def _compile_primitive(condition: Any, *, dialect: str) -> exp.Condition:
         return is_null.not_() if op == 'is_not_null' else is_null
 
     raise RlsError(f'RLS: unknown condition op {op!r}: {condition!r}')
+
+
+def _identity_field(
+    placeholder: Mapping[str, Any], field: str, identity: tuple[str, Sequence[str]] | None, condition: Any
+) -> Any:
+    """Resolve `{"$identity": field}` against `identity`; anything else in that position is refused."""
+    if dict(placeholder) != {'$identity': field}:
+        raise RlsError(f'RLS: unsupported placeholder (expected {{"$identity": "{field}"}}): {condition!r}')
+    if identity is None:
+        raise RlsError(f'RLS: an $identity placeholder needs a reading identity: {condition!r}')
+    email, groups = identity
+    return email if field == 'email' else tuple(groups)
+
+
+@dataclasses.dataclass(frozen=True)
+class _DynamicRule:
+    """A schema-1.1.0 rule that is compiled per identity: it selects by `groups`, or its condition has an
+    `$identity` placeholder."""
+
+    principals: frozenset[str]
+    groups: frozenset[str]
+    condition: Mapping[str, Any]
+
+
+def _policy_table_key(data: Mapping[str, Any], *, label: str, obj_id: str, dialect: str) -> tuple[str, str]:
+    """`(rules key, table id as authored)` of a policy object, or `RlsError` for an invalid `table`."""
+    table_key_raw = data.get('table')
+    if not isinstance(table_key_raw, str) or not _RULE_KEY_RE.fullmatch(table_key_raw):
+        raise RlsError(f"{label}: metastore object '{obj_id}' has an invalid 'table': {table_key_raw!r}")
+    bucket, _, table = table_key_raw.rpartition('.')
+    if not bucket or not table:
+        raise RlsError(
+            f"{label}: metastore object '{obj_id}' has an unqualified table '{table_key_raw}': must be <bucket>.<table>"
+        )
+    return _rule_key(_normalize_schema(bucket, dialect), table, dialect), table_key_raw
+
+
+def _dialect_refusal(data: Mapping[str, Any], *, label: str, obj_id: str, key: str, dialect: str) -> str | None:
+    """Why a policy cannot be applied in a `dialect` workspace, or None. `dialect` is optional since 1.1.0."""
+    obj_dialect = data.get('dialect')
+    if obj_dialect is None or obj_dialect == dialect:
+        return None
+    return f"{label}: metastore object '{obj_id}' for table '{key}' is for dialect {obj_dialect!r}, the workspace is {dialect!r}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -380,6 +502,15 @@ class RlsRules:
     unchanged -- an empty mapping here just means "no drift check possible for this instance",
     never a functional difference to `rewrite_query()` itself.
     """
+    dynamic: Mapping[str, tuple[_DynamicRule, ...]] = dataclasses.field(default_factory=dict)
+    """Rules key -> schema-1.1.0 rules compiled per identity (`groups` selectors, `$identity` placeholders).
+    Their table is always in `tables` too (possibly with no literal principal), so it counts as governed."""
+    defaults: Mapping[str, tuple[Mapping[str, Any], ...]] = dataclasses.field(default_factory=dict)
+    """Rules key -> the `default` condition(s) of its policies, applied (OR-ed) to an identity no rule matches.
+    A table without one refuses such an identity, as in schema 1.0.0."""
+    refused: Mapping[str, str] = dataclasses.field(default_factory=dict)
+    """Rules key -> why every read of that table is refused, e.g. a policy authored for the other dialect.
+    Refusing the one table keeps every other governed table of the project readable."""
 
     @classmethod
     def from_metastore(cls, objects: Sequence[Any], *, dialect: str, project_id: int) -> 'RlsRules':
@@ -397,6 +528,9 @@ class RlsRules:
             raise RlsError(f'RLS: unsupported workspace dialect {dialect!r}')
         tables: dict[str, dict[str, str]] = {}
         table_ids: dict[str, str] = {}
+        dynamic: dict[str, list[_DynamicRule]] = {}
+        defaults: dict[str, list[Mapping[str, Any]]] = {}
+        refused: dict[str, str] = {}
         for obj in objects:
             obj_id = getattr(obj, 'id', None) or '<unknown>'
             if not _applies_to_project(obj, label='RLS', obj_id=obj_id):
@@ -404,52 +538,52 @@ class RlsRules:
             data = getattr(obj, 'attributes', None)
             if not isinstance(data, Mapping):
                 raise RlsError(f"RLS: metastore object '{obj_id}' has no attributes")
-            obj_dialect = data.get('dialect')
-            if obj_dialect != dialect:
-                # Applicable to this project but authored for the other workspace backend: this is
-                # an authoring inconsistency, not a normal "not my table" skip -- predicates are
-                # never transpiled, so silently ignoring it here would silently leave a table this
-                # project meant to protect unfiltered. Fail closed and say why.
-                raise RlsError(
-                    f"RLS: metastore object '{obj_id}' is for dialect {obj_dialect!r} but project "
-                    f'{project_id} is {dialect!r}'
-                )
-            table_key_raw = data.get('table')
-            if not isinstance(table_key_raw, str) or not _RULE_KEY_RE.fullmatch(table_key_raw):
-                raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid 'table': {table_key_raw!r}")
-            bucket, _, table = table_key_raw.rpartition('.')
-            if not bucket or not table:
-                raise RlsError(
-                    f"RLS: metastore object '{obj_id}' has an unqualified table '{table_key_raw}': "
-                    f'must be <bucket>.<table>'
-                )
-            key = _rule_key(_normalize_schema(bucket, dialect), table, dialect)
+            key, table_key_raw = _policy_table_key(data, label='RLS', obj_id=obj_id, dialect=dialect)
             table_ids[key] = table_key_raw
+            users = tables.setdefault(key, {})
+            if (reason := _dialect_refusal(data, label='RLS', obj_id=obj_id, key=key, dialect=dialect)) is not None:
+                # Optional since schema 1.1.0 (absent = the workspace backend). Predicates are never transpiled,
+                # so a policy written for the other backend cannot be applied -- but only ITS table is refused;
+                # the rest of the project's policies keep working.
+                refused[key] = reason
+            if (default := data.get('default')) is not None:
+                _compile_primitive(default, dialect=dialect, identity=_VALIDATION_IDENTITY)
+                defaults.setdefault(key, []).append(default)
             rules_raw = data.get('rules')
             if not isinstance(rules_raw, Sequence) or isinstance(rules_raw, (str, bytes)) or not rules_raw:
                 raise RlsError(f"RLS: metastore object '{obj_id}' has no rules")
-
-            users = tables.setdefault(key, {})
             for rule in rules_raw:
                 if not isinstance(rule, Mapping):
                     raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid rule entry: {rule!r}")
-                names = _rule_principals(rule, label='RLS', obj_id=obj_id)
-                predicate = _compile_primitive(rule.get('condition'), dialect=dialect).sql(dialect=dialect)
-                for name in names:
-                    if not isinstance(name, str) or not _PRINCIPAL_RE.fullmatch(name):
-                        raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid principal {name!r}")
-                    user_key = _fold_principal(name)
-                    if user_key in users:
-                        raise RlsError(
-                            f"RLS: multiple applicable policies define a rule for principal '{user_key}' "
-                            f"on table '{key}'"
-                        )
-                    users[user_key] = predicate
+                principals, groups = _rule_selector(rule, label='RLS', obj_id=obj_id)
+                condition = rule.get('condition')
+                if groups or _uses_identity(condition):
+                    _compile_primitive(condition, dialect=dialect, identity=_VALIDATION_IDENTITY)
+                    dynamic.setdefault(key, []).append(
+                        _DynamicRule(frozenset(principals), frozenset(groups), condition)
+                    )
+                    continue
+                predicate = _compile_primitive(condition, dialect=dialect).sql(dialect=dialect)
+                for user_key in principals:
+                    # Schema 1.1.0: every rule matching one identity applies, combined with OR -- across policies
+                    # on the same table too. (1.0.0 refused the whole load on a repeated principal.)
+                    users[user_key] = (
+                        _or_predicates([users[user_key], predicate], dialect=dialect)
+                        if user_key in users
+                        else predicate
+                    )
 
         LOG.info(
             f'Loaded RLS rules for {len(tables)} table(s) from the metastore (dialect {dialect}, project {project_id})'
         )
-        return cls(tables=tables, dialect=dialect, table_ids=table_ids)
+        return cls(
+            tables=tables,
+            dialect=dialect,
+            table_ids=table_ids,
+            dynamic={key: tuple(rules) for key, rules in dynamic.items()},
+            defaults={key: tuple(conditions) for key, conditions in defaults.items()},
+            refused=refused,
+        )
 
     def referenced_columns(self) -> dict[str, set[str]]:
         """Every column name a rule's compiled predicate mentions, per rules key.
@@ -470,6 +604,10 @@ class RlsRules:
                     tree = sqlglot.parse_one(predicate, dialect=self.dialect, into=exp.Condition)
                 except sqlglot.errors.SqlglotError:
                     continue  # unreachable in practice (see docstring); never fatal for a diagnostic
+                columns.update(col.name for col in tree.find_all(exp.Column))
+            conditions = [rule.condition for rule in self.dynamic.get(key, ())] + list(self.defaults.get(key, ()))
+            for condition in conditions:
+                tree = _compile_primitive(condition, dialect=self.dialect, identity=_VALIDATION_IDENTITY)
                 columns.update(col.name for col in tree.find_all(exp.Column))
             result[key] = columns
         return result
@@ -497,8 +635,13 @@ class RlsRules:
         prefix = _rule_key(_normalize_schema(bucket_id, self.dialect), 't', self.dialect).rpartition('.')[0]
         return any(key.rpartition('.')[0] == prefix for key in self.tables)
 
-    def predicate_for(self, *, table_name: str, schema: str | None, user: str) -> tuple[str, str]:
-        """Return `(matched_key, predicate)` for the table/user, or raise `RlsError`.
+    def predicate_for(
+        self, *, table_name: str, schema: str | None, user: str, groups: Sequence[str] = ()
+    ) -> tuple[str, str]:
+        """Return `(matched_key, predicate)` for the table/identity, or raise `RlsError`.
+
+        Every rule selecting the identity (its email, or one of its `groups`) applies; their conditions combine
+        with OR. When none does, the policies' `default` applies, else the read is refused.
 
         Only call this once `is_governed()` is true for the same table -- a table with no policy
         at all is not this method's job to reject or admit, see `is_governed()`. `schema` is the
@@ -512,11 +655,25 @@ class RlsRules:
         users = self.tables.get(key)
         if users is None:
             raise RlsError(f"RLS: no rule for table '{key}'")
-        predicate = users.get(_fold_principal(user))
-        if predicate is None:
+        if (reason := self.refused.get(key)) is not None:
+            LOG.warning(reason)
+            raise RlsError(_RULE_NOT_APPLIED.format(key=key))
+        identity = (user, tuple(groups))
+        predicates = [users[_fold_principal(user)]] if user and _fold_principal(user) in users else []
+        predicates += [
+            _compile_primitive(rule.condition, dialect=self.dialect, identity=identity).sql(dialect=self.dialect)
+            for rule in self.dynamic.get(key, ())
+            if _rule_matches(rule.principals, rule.groups, user=user, user_groups=groups)
+        ]
+        if not predicates:
+            predicates = [
+                _compile_primitive(condition, dialect=self.dialect, identity=identity).sql(dialect=self.dialect)
+                for condition in self.defaults.get(key, ())
+            ]
+        if not predicates:
             LOG.info(f"RLS: no rule for user '{_fold_principal(user)}' on table '{key}'")
             raise RlsAccessDenied(ACCESS_DENIED_MESSAGE)
-        return key, predicate
+        return key, _or_predicates(predicates, dialect=self.dialect)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -534,32 +691,37 @@ class ClsRules:
     subquery per table, never two separate rewrite passes -- see
     `feature_spec/rls_query_tool/RFC.md` "Column-Level Security".
 
-    A sibling dataclass to `RlsRules`, not a field on it, and `from_metastore` below duplicates
-    rather than shares `RlsRules.from_metastore`'s envelope/applicability/key-parsing logic --
-    deliberate, not an oversight: the two object types have different authorship triggers and
-    lifecycles (see the RFC's "Schema stability" section), and touching the already-shipped,
-    heavily-tested `RlsRules.from_metastore` to extract a shared helper is a real risk for a
-    saving that's purely cosmetic.
+    A sibling dataclass to `RlsRules`, not a field on it: the two object types have different authorship
+    triggers and lifecycles (see the RFC's "Schema stability" section). The loaders share the table-key,
+    dialect and selector checks (`_policy_table_key`, `_dialect_refusal`, `_rule_selector`).
     """
 
     tables: Mapping[str, Mapping[str, tuple[str, ...]]]
     dialect: str
     table_ids: Mapping[str, str] = dataclasses.field(default_factory=dict)
     """Same purpose as `RlsRules.table_ids` -- see there."""
+    group_rules: Mapping[str, tuple[tuple[frozenset[str], tuple[str, ...]], ...]] = dataclasses.field(
+        default_factory=dict
+    )
+    """Rules key -> `(groups, visible_columns)` of schema-1.1.0 rules that select by IdP group."""
+    refused: Mapping[str, str] = dataclasses.field(default_factory=dict)
+    """Same purpose as `RlsRules.refused` -- see there."""
 
     @classmethod
     def from_metastore(cls, objects: Sequence[Any], *, dialect: str, project_id: int) -> 'ClsRules':
         """Build `ClsRules` from `cls-policy` metastore objects applicable to `project_id`.
 
-        Mirrors `RlsRules.from_metastore` (same applicability check, same `<bucket>.<table>` key
-        derivation, same `principal`/`principals` handling) -- the only difference is validating
-        `visible_columns` (a non-empty list of column-name strings) instead of compiling a
-        `condition`. See that method's docstring for what the shared parts mean.
+        Mirrors `RlsRules.from_metastore` (same applicability check, `<bucket>.<table>` key derivation,
+        selectors and per-table dialect refusal) -- the only difference is validating `visible_columns`
+        (a non-empty list of column-name strings) instead of compiling a `condition`; several rules for
+        one identity union their columns.
         """
         if dialect not in _SUPPORTED_DIALECTS:
             raise RlsError(f'CLS: unsupported workspace dialect {dialect!r}')
         tables: dict[str, dict[str, tuple[str, ...]]] = {}
         table_ids: dict[str, str] = {}
+        group_rules: dict[str, list[tuple[frozenset[str], tuple[str, ...]]]] = {}
+        refused: dict[str, str] = {}
         for obj in objects:
             obj_id = getattr(obj, 'id', None) or '<unknown>'
             if not _applies_to_project(obj, label='CLS', obj_id=obj_id):
@@ -567,32 +729,19 @@ class ClsRules:
             data = getattr(obj, 'attributes', None)
             if not isinstance(data, Mapping):
                 raise RlsError(f"CLS: metastore object '{obj_id}' has no attributes")
-            obj_dialect = data.get('dialect')
-            if obj_dialect != dialect:
-                raise RlsError(
-                    f"CLS: metastore object '{obj_id}' is for dialect {obj_dialect!r} but project "
-                    f'{project_id} is {dialect!r}'
-                )
-            table_key_raw = data.get('table')
-            if not isinstance(table_key_raw, str) or not _RULE_KEY_RE.fullmatch(table_key_raw):
-                raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid 'table': {table_key_raw!r}")
-            bucket, _, table = table_key_raw.rpartition('.')
-            if not bucket or not table:
-                raise RlsError(
-                    f"CLS: metastore object '{obj_id}' has an unqualified table '{table_key_raw}': "
-                    f'must be <bucket>.<table>'
-                )
-            key = _rule_key(_normalize_schema(bucket, dialect), table, dialect)
+            key, table_key_raw = _policy_table_key(data, label='CLS', obj_id=obj_id, dialect=dialect)
             table_ids[key] = table_key_raw
+            users = tables.setdefault(key, {})
+            if (reason := _dialect_refusal(data, label='CLS', obj_id=obj_id, key=key, dialect=dialect)) is not None:
+                refused[key] = reason
             rules_raw = data.get('rules')
             if not isinstance(rules_raw, Sequence) or isinstance(rules_raw, (str, bytes)) or not rules_raw:
                 raise RlsError(f"CLS: metastore object '{obj_id}' has no rules")
 
-            users = tables.setdefault(key, {})
             for rule in rules_raw:
                 if not isinstance(rule, Mapping):
                     raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid rule entry: {rule!r}")
-                names = _rule_principals(rule, label='CLS', obj_id=obj_id)
+                principals, groups = _rule_selector(rule, label='CLS', obj_id=obj_id)
                 columns_raw = rule.get('visible_columns')
                 if not isinstance(columns_raw, Sequence) or isinstance(columns_raw, (str, bytes)) or not columns_raw:
                     raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid 'visible_columns': {rule!r}")
@@ -601,21 +750,22 @@ class ClsRules:
                     if not isinstance(col, str) or not _RULE_KEY_RE.fullmatch(col):
                         raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid column name {col!r}")
                     columns.append(col)
-                for name in names:
-                    if not isinstance(name, str) or not _PRINCIPAL_RE.fullmatch(name):
-                        raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid principal {name!r}")
-                    user_key = _fold_principal(name)
-                    if user_key in users:
-                        raise RlsError(
-                            f"CLS: multiple applicable policies define a rule for principal '{user_key}' "
-                            f"on table '{key}'"
-                        )
-                    users[user_key] = tuple(columns)
+                if groups:
+                    group_rules.setdefault(key, []).append((frozenset(groups), tuple(columns)))
+                for user_key in principals:
+                    # Schema 1.1.0: several rules for one identity union their visible columns.
+                    users[user_key] = tuple(dict.fromkeys((*users.get(user_key, ()), *columns)))
 
         LOG.info(
             f'Loaded CLS rules for {len(tables)} table(s) from the metastore (dialect {dialect}, project {project_id})'
         )
-        return cls(tables=tables, dialect=dialect, table_ids=table_ids)
+        return cls(
+            tables=tables,
+            dialect=dialect,
+            table_ids=table_ids,
+            group_rules={key: tuple(rules) for key, rules in group_rules.items()},
+            refused=refused,
+        )
 
     def referenced_columns(self) -> dict[str, set[str]]:
         """Every column name any rule allowlists, per rules key -- the CLS analogue of
@@ -623,7 +773,9 @@ class ClsRules:
         parsing needed here (unlike RLS's predicate text): the allowlist already is the column list.
         """
         return {
-            key: {col for columns in principals.values() for col in columns} for key, principals in self.tables.items()
+            key: {col for columns in principals.values() for col in columns}
+            | {col for _, columns in self.group_rules.get(key, ()) for col in columns}
+            for key, principals in self.tables.items()
         }
 
     def is_governed(self, *, table_name: str, schema: str | None) -> bool:
@@ -631,7 +783,18 @@ class ClsRules:
         `RlsRules.is_governed`, identical semantics."""
         return bool(schema) and _rule_key(schema, table_name, self.dialect) in self.tables
 
-    def visible_columns(self, *, table_id: str, user: str | None) -> tuple[str, ...] | None:
+    def _columns(self, key: str, *, user: str | None, groups: Sequence[str]) -> tuple[str, ...] | None:
+        """Union of the visible columns of every rule selecting the identity, or None when none does."""
+        users = self.tables.get(key, {})
+        matched: list[tuple[str, ...]] = (
+            [users[_fold_principal(user)]] if user and _fold_principal(user) in users else []
+        )
+        matched += [
+            columns for rule_groups, columns in self.group_rules.get(key, ()) if not rule_groups.isdisjoint(groups)
+        ]
+        return tuple(dict.fromkeys(col for columns in matched for col in columns)) if matched else None
+
+    def visible_columns(self, *, table_id: str, user: str | None, groups: Sequence[str] = ()) -> tuple[str, ...] | None:
         """The columns `user` may see of the table with Storage id `<bucket>.<table>`, for metadata views.
 
         `None` = no policy governs the table (every column is visible). Fail closed otherwise: a
@@ -639,22 +802,27 @@ class ClsRules:
         """
         bucket, _, name = table_id.rpartition('.')
         key = _rule_key(_normalize_schema(bucket, self.dialect), name, self.dialect) if bucket else None
-        users = self.tables.get(key) if key else None
-        if users is None:
+        if key is None or key not in self.tables:
             return None
-        return users.get(_fold_principal(user), ()) if user else ()
+        if key in self.refused:
+            return ()
+        return self._columns(key, user=user, groups=groups) or ()
 
-    def columns_for(self, *, table_name: str, schema: str | None, user: str) -> tuple[str, tuple[str, ...]]:
+    def columns_for(
+        self, *, table_name: str, schema: str | None, user: str, groups: Sequence[str] = ()
+    ) -> tuple[str, tuple[str, ...]]:
         """Return `(matched_key, visible_columns)` for the table/user, or raise `RlsError` -- see
         `RlsRules.predicate_for`, identical fail-closed semantics (governed table, no rule for this
         principal -> refuse, never fall back to every column)."""
         if not schema:
             raise RlsError(f"CLS: table reference must be qualified as <bucket>.<table>: '{table_name}'")
         key = _rule_key(schema, table_name, self.dialect)
-        users = self.tables.get(key)
-        if users is None:
+        if key not in self.tables:
             raise RlsError(f"CLS: no rule for table '{key}'")
-        columns = users.get(_fold_principal(user))
+        if (reason := self.refused.get(key)) is not None:
+            LOG.warning(reason)
+            raise RlsError(_RULE_NOT_APPLIED.format(key=key))
+        columns = self._columns(key, user=user, groups=groups)
         if columns is None:
             LOG.info(f"CLS: no rule for user '{_fold_principal(user)}' on table '{key}'")
             raise RlsAccessDenied(ACCESS_DENIED_MESSAGE)
@@ -1101,7 +1269,13 @@ def _names_table_dynamically(statement: exp.Expression) -> bool:
 
 
 def rewrite_query(
-    sql: str, *, user: str, dialect: str, rules: RlsRules, cls_rules: 'ClsRules | None' = None
+    sql: str,
+    *,
+    user: str,
+    dialect: str,
+    rules: RlsRules,
+    cls_rules: 'ClsRules | None' = None,
+    groups: Sequence[str] = (),
 ) -> RewrittenQuery:
     """Rewrite a single SELECT so every table an RLS and/or CLS policy governs becomes a filtered,
     column-restricted subquery; a table no policy of either kind names at all is left completely
@@ -1119,6 +1293,7 @@ def rewrite_query(
 
     :param sql: the caller's SQL, in the workspace dialect
     :param user: identity used to select rules; case-insensitive
+    :param groups: the identity's groups (schema 1.1.0 `groups` selectors, `{"$identity": "groups"}`)
     :param dialect: sqlglot dialect name (`'snowflake'` / `'bigquery'`)
     :param rules: loaded RLS rules
     :param cls_rules: loaded CLS rules, if any
@@ -1222,10 +1397,10 @@ def rewrite_query(
         predicate: str | None = None
         columns: tuple[str, ...] | None = None
         if rls_governed:
-            _, predicate = rules.predicate_for(table_name=node.name, schema=schema, user=user)
+            _, predicate = rules.predicate_for(table_name=node.name, schema=schema, user=user, groups=groups)
         if cls_governed:
             assert cls_rules is not None  # narrowed by `cls_governed`
-            _, columns = cls_rules.columns_for(table_name=node.name, schema=schema, user=user)
+            _, columns = cls_rules.columns_for(table_name=node.name, schema=schema, user=user, groups=groups)
         applied.append(key)
         inserted[key] = predicate if predicate is not None else exp.true().sql(dialect=dialect)
         inserted_columns[key] = columns
