@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import dataclasses
+import hashlib
 import json
 import logging
 import secrets
@@ -371,6 +372,9 @@ class TestUntrustedAuthorizeRedirectMiddleware:
         assert response.status_code == 200
 
 
+_KEY = b'k' * 32
+
+
 class TestConnectionClientIdentity:
     """`_connection_client_id`/`_sanitize_client_name` -- the mapping between the mcp SDK's own
     client bookkeeping and the identity Connection's oauth2_client registry actually understands
@@ -379,23 +383,33 @@ class TestConnectionClientIdentity:
     def test_well_known_redirect_uri_maps_to_pre_registered_client_id(self):
         from keboola_mcp_server.oauth import _connection_client_id
 
-        assert _connection_client_id('https://claude.ai/api/mcp/auth_callback') == 'claude-ai'
+        assert _connection_client_id('https://claude.ai/api/mcp/auth_callback', _KEY) == 'claude-ai'
 
     def test_unknown_redirect_uri_derives_a_stable_short_id(self):
         from keboola_mcp_server.oauth import _connection_client_id
 
-        first = _connection_client_id('https://my.tool/oauth/callback')
-        second = _connection_client_id('https://my.tool/oauth/callback')
-        different = _connection_client_id('https://other.tool/oauth/callback')
+        first = _connection_client_id('https://my.tool/oauth/callback', _KEY)
+        second = _connection_client_id('https://my.tool/oauth/callback', _KEY)
+        different = _connection_client_id('https://other.tool/oauth/callback', _KEY)
 
         assert first == second  # stable across the SDK minting a fresh uuid on every /register
         assert first != different
         assert len(first) <= 32  # Connection's oauth2_client.identifier / pending_mcp_client cap
 
+    def test_derived_id_depends_on_the_deployment_key(self):
+        """Nobody without the key can compute the id, so nobody can approve it in Connection out of band."""
+        from keboola_mcp_server.oauth import _connection_client_id
+
+        uri = 'https://my.tool/oauth/callback'
+        public_derivation = f'mcp-{hashlib.sha256(uri.encode()).hexdigest()[:24]}'  # what the id used to be
+
+        assert _connection_client_id(uri, _KEY) != _connection_client_id(uri, b'x' * 32)
+        assert _connection_client_id(uri, _KEY) != public_derivation
+
     def test_derived_id_fits_even_for_a_very_long_redirect_uri(self):
         from keboola_mcp_server.oauth import _connection_client_id
 
-        assert len(_connection_client_id('https://example.com/' + 'a' * 2000)) <= 32
+        assert len(_connection_client_id('https://example.com/' + 'a' * 2000, _KEY)) <= 32
 
     @pytest.mark.parametrize(
         'host',
@@ -409,8 +423,8 @@ class TestConnectionClientIdentity:
         own registry now also normalizes for these two hosts."""
         from keboola_mcp_server.oauth import _connection_client_id
 
-        first = _connection_client_id(f'http://{host}:54321/callback')
-        second = _connection_client_id(f'http://{host}:9999/callback')
+        first = _connection_client_id(f'http://{host}:54321/callback', _KEY)
+        second = _connection_client_id(f'http://{host}:9999/callback', _KEY)
 
         assert first == second
 
@@ -420,8 +434,8 @@ class TestConnectionClientIdentity:
         wouldn't actually help -- not fixable without a vendor patch."""
         from keboola_mcp_server.oauth import _connection_client_id
 
-        first = _connection_client_id('http://localhost:54321/callback')
-        second = _connection_client_id('http://localhost:9999/callback')
+        first = _connection_client_id('http://localhost:54321/callback', _KEY)
+        second = _connection_client_id('http://localhost:9999/callback', _KEY)
 
         assert first != second
 
@@ -788,7 +802,9 @@ class TestSimpleOAuthProvider:
         from keboola_mcp_server.oauth import _connection_client_id
 
         connection_client_id = query['client_id'][0]
-        assert connection_client_id == _connection_client_id('https://my.tool/oauth/callback')
+        assert connection_client_id == _connection_client_id(
+            'https://my.tool/oauth/callback', oauth_provider._client_id_key
+        )
         assert query['redirect_uri'] == ['https://my.tool/oauth/callback']
 
         decoded = json.loads(base64.urlsafe_b64decode(query['pending_mcp_client'][0]))
@@ -826,7 +842,7 @@ class TestSimpleOAuthProvider:
         auth_url = await oauth_provider.authorize(client, params)
 
         decoded = json.loads(base64.urlsafe_b64decode(parse_qs(urlparse(auth_url).query)['pending_mcp_client'][0]))
-        assert decoded['client_name'] == _connection_client_id('https://another.tool/cb')
+        assert decoded['client_name'] == _connection_client_id('https://another.tool/cb', oauth_provider._client_id_key)
 
     @pytest.mark.asyncio
     async def test_authorize_redirects_to_own_callback_when_connection_check_errors(
@@ -1141,6 +1157,46 @@ class TestSimpleOAuthProvider:
             assert url.path == urlparse(oauth_provider._mcp_callback_url).path
             assert query['error'] == ['unregistered_client']
             assert 'pending_mcp_client' not in query
+
+    @pytest.mark.asyncio
+    async def test_an_approval_made_out_of_band_under_the_public_id_does_not_register_the_pair(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Connection accepts an unsigned approval payload from any logged-in user, so a user can approve the pair
+        under any id they can compute. With the switch off, a pair approved under the id this server used to derive
+        from the redirect_uri alone (computable by anyone) must still be refused (Vojtěch Biberle review)."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        redirect_uri = 'https://my.tool/oauth/callback'
+        public_id = f'mcp-{hashlib.sha256(redirect_uri.encode()).hexdigest()[:24]}'
+        asked: list[str] = []
+
+        async def _connection_knows_only_the_public_id(self, connection_client_id: str, uri: str):
+            asked.append(connection_client_id)
+            return (
+                _ClientRegistration.REGISTERED
+                if connection_client_id == public_id
+                else _ClientRegistration.NOT_REGISTERED
+            )
+
+        monkeypatch.setattr(
+            oauth_module.ConnectionClientRegistry, 'check_registration', _connection_knows_only_the_public_id
+        )
+        monkeypatch.setattr(oauth_provider, '_dynamic_client_approval', False)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl(redirect_uri),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        url = urlparse(await oauth_provider.authorize(client, params))
+
+        assert asked and public_id not in asked
+        assert parse_qs(url.query)['error'] == ['unregistered_client']  # refused, never sent to consent
 
     def test_default_rate_limit_keeps_the_fleet_under_connections_shared_ceiling(self):
         """The limiter is per process but Connection's ceiling is per shared egress IP: the default budget times

@@ -297,9 +297,8 @@ def create_server(
                 'OAuth is configured (oauth_client_id/oauth_client_secret) but no session encryption key is '
                 'set. Set KBC_SESSION_ENCRYPTION_KEY so persisted OAuth sessions survive a process restart.'
             )
-        session_store = PostgresSessionStore(
-            config.postgres_dsn, encryption_key=resolve_encryption_key(config.session_encryption_key)
-        )
+        encryption_key = resolve_encryption_key(config.session_encryption_key)
+        session_store = PostgresSessionStore(config.postgres_dsn, encryption_key=encryption_key)
 
         oauth_provider = SimpleOAuthProvider(
             storage_api_url=config.storage_api_url,
@@ -315,6 +314,7 @@ def create_server(
             session_store=session_store,
             validate_rate_limit=_parse_validate_rate_limit(config.oauth_validate_rate_limit),
             dynamic_client_approval=config.oauth_dynamic_client_approval is True,
+            encryption_key=encryption_key,
         )
     else:
         oauth_provider = None

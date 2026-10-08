@@ -135,7 +135,7 @@ still fabricates a client for any `client_id`, it just no longer needs to invent
 does that at `authorize()` time, not `get_client()` time — `get_client()` never sees `redirect_uri`
 so it can't build a `pending_mcp_client` payload anyway).
 
-### 4. `_connection_client_id(redirect_uri) -> str` — map to Connection's identity space, not the SDK's
+### 4. `_connection_client_id(redirect_uri, key) -> str` — map to Connection's identity space, not the SDK's
 
 ```python
 _WELL_KNOWN_CONNECTION_CLIENT_IDS: dict[str, str] = {
@@ -145,7 +145,7 @@ _WELL_KNOWN_CONNECTION_CLIENT_IDS: dict[str, str] = {
     'https://claude.ai/api/mcp/auth_callback': 'claude-ai',
 }
 
-def _connection_client_id(redirect_uri: str) -> str:
+def _connection_client_id(redirect_uri: str, key: bytes) -> str:
     if known := _WELL_KNOWN_CONNECTION_CLIENT_IDS.get(redirect_uri):
         return known
     # Connection caps client_id at 32 chars; the SDK mints a 36-char uuid4() per /register call
@@ -153,7 +153,7 @@ def _connection_client_id(redirect_uri: str) -> str:
     # SDK's ephemeral one: the same tool reconnecting (same callback URL) lands on the same
     # Connection identity and reuses an earlier approval, even though the SDK gives it a fresh
     # uuid every time it re-registers.
-    digest = hashlib.sha256(redirect_uri.encode()).hexdigest()[:24]
+    digest = hmac.new(key, redirect_uri.encode(), hashlib.sha256).hexdigest()[:24]
     return f'mcp-{digest}'
 ```
 
@@ -161,6 +161,18 @@ This is the id sent to `/oauth/clients/validate`, embedded in `pending_mcp_clien
 used as the outer `client_id` query param on the pending-approval redirect (Connection's listener
 requires the two to match exactly). It is never shown to, or expected back from, the AI assistant —
 purely an internal Connection-facing identity.
+
+The id is an **HMAC** of the redirect_uri, keyed with a sub-key derived from the session encryption key
+(`HMAC(session_encryption_key, "keboola-mcp-server/connection-client-id")`), not a plain hash: Connection accepts
+an unsigned `pending_mcp_client` payload from any logged-in user at its public `/oauth/authorize`, so an id anyone
+could compute would let a user approve a pair directly in Connection, skipping `OAUTH_DYNAMIC_CLIENT_APPROVAL`,
+after which `check_registration()` would answer REGISTERED. The session encryption key is already required (the
+server refuses to start without it) and already shared by every replica, so no new setting is needed. The id
+reaches a browser only through the approval redirect, which exists only while the switch is on; the well-known
+pairs keep their literal ids because a Connection migration, not a user, registers them. Rotating the session
+encryption key changes every derived id, so clients approved under the old one need approving again. A client
+pre-registered by a migration cannot use a derived id (the migration cannot compute it): add its pair to
+`_WELL_KNOWN_CONNECTION_CLIENT_IDS` with the migration's literal identifier.
 
 A loopback client's redirect_uri carries an ephemeral port that changes on every run (RFC 8252 §7.3). For
 `127.0.0.1` and `[::1]` the port is therefore stripped before the id is derived, mirroring Connection's own
@@ -257,7 +269,8 @@ client-id/name mapping problem, tests.
 functions, per project convention):
 - `_connection_client_id`: known redirect_uri → literal `claude-ai`; two calls with the same
   arbitrary redirect_uri → identical derived id; two different redirect_uris → different ids;
-  derived id always ≤32 chars.
+  derived id always ≤32 chars; a different key, or the old unkeyed hash, gives a different id.
+- A pair approved in Connection out of band under the old public id is still refused while the switch is off.
 - `authorize()`: 200 from validate for any REGISTERED `connection_client_id` — pre-registered
   (well-known, e.g. `claude-ai`) or dynamically approved — → the `/oauth/consent` URL with
   `scope=claudai projectless` (one parametrized test, Decisions §10 and §14); 404 → redirect targets
@@ -565,11 +578,18 @@ approval).
     listing endpoint), so cleaning them up is a Connection-side step. The INFO line "Registered client
     proceeding to consent" shows which callbacks are in use.
 
+    **The switch is a rollout gate for this server's own approval redirect, not a barrier against Connection
+    itself.** A user can still send Connection an approval payload directly, so what keeps such an approval from
+    registering a pair *for this server* is that the Connection client id is keyed with a secret only this
+    deployment holds (§4): a pair approved under any id a user can compute is not the id this server asks about.
+    What a user can still do is approve a pair under an id of their own choosing in Connection, which does not
+    affect this server, and Connection's own gap (above) is unchanged.
+
     **Rollout: clients the hardcoded list used to accept.** The list this PR removes accepted clients by domain
     (besides claude.ai: ChatGPT, Make, Devin, Onyx, n8n instances, Azure API Management's consent host, a few
     customer-specific hosts, and Keboola's own domains). Connection matches a full redirect URI, not a domain, so
     after this ships each of those that is still in use is refused unless it is **registered in Connection first**
-    (a pre-registration migration, as for claude.ai, once its exact redirect URI is known) or approved in a short,
+    (a pre-registration migration, as for claude.ai, once its exact redirect URI is known, plus an entry in `_WELL_KNOWN_CONNECTION_CLIENT_IDS` here so this server asks about the migration's literal identifier) or approved in a short,
     supervised window with the switch above turned on. Neither happens by itself: with approval off by default,
     the first sign of a missed client is a user seeing the "not registered" page. Before enabling this on a
     stack, list the callbacks actually in use there (the INFO line above, from the previous release) and register
@@ -617,6 +637,7 @@ resolutions:
 | `client_name` sanitizing to `''` (all control/zero-width chars) silently dropped the whole approval payload instead of falling back to the derived id | Low | Fixed (sanitize before, not after, the fallback) |
 | RFC Decisions §2/§3/§6 justified the throwaway-PKCE code's safety with an incorrect claim ("the AI assistant doesn't know Connection's endpoints") | Low (documentation) | Corrected — Decisions §2, §3, §6 |
 | `except httpx.HTTPError` didn't cover `httpx.InvalidURL`; a misconfigured `server_url` degraded to the mcp SDK's generic error instead of this code's own specific warning (fail-closed either way, via the SDK's own catch-all) | Low (debuggability only) | Fixed (broadened the except) |
+| A user approving the pair directly in Connection under the id this server derived (a plain hash anyone could compute), skipping the approval switch | High | Fixed — the id is an HMAC under a key derived from the session encryption key (§4, Decision §12) |
 | `_connection_client_id`'s 96-bit truncated hash, `claude-ai` impersonation via the literal redirect_uri string, and approval-reuse by an unrelated party presenting the same redirect_uri | — | Reviewed, confirmed **not exploitable** — Connection matches the exact pair, and whoever "reuses" an approval must still control the redirect_uri to receive anything from it |
 | Only a mocked `check_registration()` was tested; the real Connection response contract (200/404 mapping) was unverified | Medium | Fixed — a live-Connection integration test (`integtests/`, see Testing/Verification) now exercises the real endpoint; the interactive Allow/Deny click-through remains covered by Connection's own E2E suite, not duplicated here |
 | Any authenticated user (no elevated role) can register a stack-global trusted client via Connection's approval screen | High | **Not fixable here** — flagged, Decision §12. The drafted Connection-side fix (AI-3936 / `keboola/connection#8497`) is currently closed, unmerged — still open in production, tracked on the Linear issue for a Connection-side owner |
