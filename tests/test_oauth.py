@@ -220,11 +220,12 @@ class TestUntrustedAuthorizeRedirectMiddleware:
     open redirect (CWE-601) that never reaches `_authorize()`'s Connection registry check at all.
     """
 
-    _TRUSTED_HOSTS = frozenset({'mcp.example', 'oauth.example'})
+    _TRUSTED_ORIGINS = frozenset({('https', 'mcp.example', 443), ('https', 'oauth.example', 443)})
 
     @pytest.fixture
     def app(self):
         from mcp.server.auth.routes import create_auth_routes
+        from mcp.server.auth.settings import RevocationOptions
         from starlette.applications import Starlette
         from starlette.middleware import Middleware
 
@@ -239,10 +240,16 @@ class TestUntrustedAuthorizeRedirectMiddleware:
             jwt_secret=JWT_KEY,
             session_store=FakeSessionStore(),
         )
-        routes = create_auth_routes(provider, issuer_url=AnyHttpUrl('https://mcp.example'))
+        # every route the guard covers must exist here, or a `/register/` request would 404 instead of redirect
+        routes = create_auth_routes(
+            provider,
+            issuer_url=AnyHttpUrl('https://mcp.example'),
+            client_registration_options=provider.client_registration_options,
+            revocation_options=RevocationOptions(enabled=True),
+        )
         return Starlette(
             routes=routes,
-            middleware=[Middleware(UntrustedAuthorizeRedirectMiddleware, trusted_hosts=self._TRUSTED_HOSTS)],
+            middleware=[Middleware(UntrustedAuthorizeRedirectMiddleware, trusted_origins=self._TRUSTED_ORIGINS)],
         )
 
     def test_blocks_open_redirect_from_a_request_that_fails_sdk_validation(self, app) -> None:
@@ -289,6 +296,48 @@ class TestUntrustedAuthorizeRedirectMiddleware:
 
         assert response.status_code == 400
         assert 'attacker.example' not in response.headers.get('location', '')
+
+    @pytest.mark.parametrize('prefix', ['', '/mcp'])
+    @pytest.mark.parametrize('path', ['/authorize/', '/register/', '/token/', '/revoke/'])
+    def test_blocks_the_slash_redirect_built_from_a_hostile_host_header(self, app, prefix: str, path: str) -> None:
+        """Starlette answers `/authorize/` with a 307 whose Location comes from the request's Host header; the
+        guard used to match only the exact `/authorize`, so that redirect (root and under the `/mcp` mount) went
+        out unchecked (Vojtěch Biberle review, AI-2883)."""
+        from starlette.applications import Starlette
+        from starlette.routing import Mount
+        from starlette.testclient import TestClient
+
+        target = Starlette(routes=[Mount('/mcp', app)]) if prefix else app
+        client = TestClient(target, raise_server_exceptions=False)
+
+        response = client.get(prefix + path, headers={'Host': 'attacker.example'}, follow_redirects=False)
+
+        assert response.status_code == 400
+        assert 'attacker.example' not in response.headers.get('location', '')
+
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'expected_status'),
+        [
+            ('https://mcp.example/callback', 302),  # the configured origin
+            ('https://mcp.example:443/callback', 302),  # the default port spelled out is the same origin
+            ('https://mcp.example:444/callback', 400),  # another port on an allowed host is another origin
+            ('http://mcp.example/callback', 400),  # another scheme is another origin
+        ],
+    )
+    def test_compares_the_whole_origin_not_only_the_hostname(
+        self, app, redirect_uri: str, expected_status: int
+    ) -> None:
+        from starlette.testclient import TestClient
+
+        client = TestClient(app, raise_server_exceptions=False)
+
+        response = client.get(
+            '/authorize',
+            params={'client_id': 'some-client', 'redirect_uri': redirect_uri, 'response_type': 'code'},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == expected_status
 
     def test_lets_a_trusted_host_error_redirect_through(self, app) -> None:
         from starlette.testclient import TestClient

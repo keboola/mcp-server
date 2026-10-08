@@ -220,7 +220,7 @@ class CustomRoutes:
             # The provider's own get_middleware() only wraps the mounted /mcp app; these root-level
             # OAuth routes (incl. /authorize) live on the outer app and need the guard there too.
             app.add_middleware(
-                UntrustedAuthorizeRedirectMiddleware, trusted_hosts=self.oauth_provider.trusted_redirect_hosts
+                UntrustedAuthorizeRedirectMiddleware, trusted_origins=self.oauth_provider.trusted_redirect_origins
             )
 
 
