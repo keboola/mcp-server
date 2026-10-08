@@ -1,3 +1,4 @@
+import time
 from typing import ClassVar
 
 import pytest
@@ -402,8 +403,8 @@ class TestFromMetastore:
         out = rewrite_query('SELECT * FROM "in.c-crm"."orders"', user='petr', dialect='snowflake', rules=rules)
         assert out.applied_rules == ['in.c-crm.orders']
 
-    def test_a_principal_in_several_policies_gets_their_conditions_ored(self) -> None:
-        """Schema 1.1.0: rules matching one identity combine with OR, across policies on the same table too."""
+    def test_a_principal_in_several_policies_gets_their_conditions_anded(self) -> None:
+        """Several policies on one table combine with AND (each may only narrow); rules of one policy OR."""
         obj_a = _policy_object(
             obj_id='a',
             table='in.c-crm.invoices',
@@ -415,7 +416,10 @@ class TestFromMetastore:
             rules_list=[{'principal': 'PETR', 'condition': {'column': 'country', 'op': 'eq', 'value': 'SK'}}],
         )
         rules = RlsRules.from_metastore([obj_a, obj_b], dialect='snowflake', project_id=1)
-        assert rules.tables['in.c-crm.invoices']['petr'] == "\"country\" = 'CZ' OR \"country\" = 'SK'"
+        assert rules.tables['in.c-crm.invoices']['petr'] == "\"country\" = 'CZ' AND \"country\" = 'SK'"
+        assert rules.predicate_for(table_name='invoices', schema='in.c-crm', user='petr')[1] == (
+            "\"country\" = 'CZ' AND \"country\" = 'SK'"
+        )
 
     def test_rejects_unsupported_dialect(self) -> None:
         with pytest.raises(RlsError, match='unsupported workspace dialect'):
@@ -1831,11 +1835,15 @@ class TestSchema110:
         )
         if predicate is None:
             with pytest.raises(RlsAccessDenied):
-                rules.predicate_for(table_name='orders', schema='in.c-sales', user='nobody@example.com')
+                rules.predicate_for(table_name='orders', schema='in.c-sales', user='nobody@example.com', groups=())
         else:
             assert (
-                rules.predicate_for(table_name='orders', schema='in.c-sales', user='nobody@example.com')[1] == predicate
+                rules.predicate_for(table_name='orders', schema='in.c-sales', user='nobody@example.com', groups=())[1]
+                == predicate
             )
+        # Unknown groups (None, an MCP session): no default ever applies.
+        with pytest.raises(RlsAccessDenied):
+            rules.predicate_for(table_name='orders', schema='in.c-sales', user='nobody@example.com', groups=None)
 
     @pytest.mark.parametrize(
         'default',
@@ -1851,23 +1859,44 @@ class TestSchema110:
 
     def test_false_default_rewrites_to_an_empty_result_not_an_error(self) -> None:
         rules = self._rules(self.RULES, default={'false': True})
-        out = rewrite_query(self.QUERY, user='nobody@example.com', dialect='snowflake', rules=rules)
+        out = rewrite_query(self.QUERY, user='nobody@example.com', dialect='snowflake', rules=rules, groups=())
         assert out.sql == 'SELECT * FROM (SELECT * FROM "in.c-sales"."orders" WHERE FALSE) AS "orders"'
 
-    @pytest.mark.parametrize('groups', [[], ['managers']])
-    def test_empty_identity_parts_match_nothing(self, groups: list) -> None:
-        """No groups -> `IN` over them is FALSE (never `IN ()`); no email -> `= email` is FALSE (never `= ''`)."""
+    @pytest.mark.parametrize('op', ['in', 'not_in'])
+    @pytest.mark.parametrize('groups', [(), None])
+    def test_empty_identity_groups_match_nothing(self, op: str, groups: tuple | None) -> None:
+        """No (or unknown) groups -> a groups placeholder is FALSE for `in` AND `not_in` (never `IN ()`, and the
+        logical "NOT IN nothing = everything" is deliberately not taken: fail closed)."""
         rules = self._rules(
             [
-                {'groups': ['managers'], 'condition': {'column': 'owner', 'op': 'eq', 'value': {'$identity': 'email'}}},
                 {
                     'principal': 'p@example.com',
-                    'condition': {'column': 'team', 'op': 'in', 'values': {'$identity': 'groups'}},
-                },
+                    'condition': {'column': 'team', 'op': op, 'values': {'$identity': 'groups'}},
+                }
             ]
         )
-        user = '' if groups else 'p@example.com'
-        assert rules.predicate_for(table_name='orders', schema='in.c-sales', user=user, groups=groups)[1] == 'FALSE'
+        assert rules.predicate_for(table_name='orders', schema='in.c-sales', user='p@example.com', groups=groups)[
+            1
+        ] == ('FALSE')
+
+    def test_a_placeholder_nested_in_and_compiles_per_identity(self) -> None:
+        """`_uses_identity` looks inside and/or: a principal rule with the placeholder nested is resolved per reader."""
+        rules = self._rules(
+            [
+                {
+                    'principal': 'p@example.com',
+                    'condition': {
+                        'and': [
+                            {'column': 'region', 'op': 'eq', 'value': 'EU'},
+                            {'column': 'owner', 'op': 'ne', 'value': {'$identity': 'email'}},
+                        ]
+                    },
+                }
+            ]
+        )
+        assert rules.predicate_for(table_name='orders', schema='in.c-sales', user='p@example.com')[1] == (
+            "\"region\" = 'EU' AND \"owner\" <> 'p@example.com'"
+        )
 
     @pytest.mark.parametrize('dialect', ['snowflake', 'bigquery'])
     @pytest.mark.parametrize('email', ["x' OR '1'='1@example.com", "o'brien@example.com"])
@@ -1964,3 +1993,145 @@ class TestSchema110:
         assert (
             out.sql == 'SELECT * FROM (SELECT "id" FROM "in.c-sales"."orders" WHERE "region" IN (\'EU\')) AS "orders"'
         )
+
+
+class TestPolicySecurity:
+    """Fail-closed combination rules (sr-review): no identity, unknown groups, and several policies on one table."""
+
+    TABLE = 'in.c-sales.orders'
+    QUERY = 'SELECT * FROM "in.c-sales"."orders"'
+
+    def _rls(self, *policies: dict) -> RlsRules:
+        objects = []
+        for index, policy in enumerate(policies):
+            obj = _policy_object(obj_id=f'p{index}', table=self.TABLE, rules_list=policy['rules'])
+            if 'default' in policy:
+                obj.attributes['default'] = policy['default']
+            objects.append(obj)
+        return RlsRules.from_metastore(objects, dialect='snowflake', project_id=1)
+
+    def _cls(self, *rule_lists: list) -> ClsRules:
+        objects = [
+            _cls_policy_object(obj_id=f'c{index}', table=self.TABLE, rules_list=rules)
+            for index, rules in enumerate(rule_lists)
+        ]
+        return ClsRules.from_metastore(objects, dialect='snowflake', project_id=1)
+
+    def _predicate(self, rules: RlsRules, user: str, groups: tuple | None) -> str:
+        return rules.predicate_for(table_name='orders', schema='in.c-sales', user=user, groups=groups)[1]
+
+    # S1 -- unknown groups (None) vs known empty (())
+
+    def test_unknown_groups_never_match_a_group_rule_nor_reach_the_default(self) -> None:
+        """ "Interns see EU only, everyone else all": an MCP caller (groups unknown) must not get the default."""
+        rules = self._rls(
+            {
+                'rules': [{'groups': ['interns'], 'condition': {'column': 'region', 'op': 'eq', 'value': 'EU'}}],
+                'default': {'true': True},
+            }
+        )
+        with pytest.raises(RlsAccessDenied):
+            self._predicate(rules, 'x@example.com', None)
+        with pytest.raises(RlsAccessDenied):
+            rewrite_query(self.QUERY, user='x@example.com', dialect='snowflake', rules=rules)  # default: unknown
+        assert self._predicate(rules, 'x@example.com', ()) == 'TRUE'
+        assert self._predicate(rules, 'x@example.com', ('interns',)) == "\"region\" = 'EU'"
+
+    def test_unknown_groups_never_match_a_cls_group_rule(self) -> None:
+        rules = self._cls([{'groups': ['sales'], 'visible_columns': ['id']}])
+        with pytest.raises(RlsAccessDenied):
+            rules.columns_for(table_name='orders', schema='in.c-sales', user='x@example.com', groups=None)
+        assert rules.visible_columns(table_id=self.TABLE, user='x@example.com', groups=None) == ()
+        assert rules.visible_columns(table_id=self.TABLE, user='x@example.com', groups=('sales',)) == ('id',)
+
+    # S2 -- no email is no identity, groups or not
+
+    def test_no_email_is_refused_even_with_a_matching_group(self) -> None:
+        rls = self._rls({'rules': [{'groups': ['G'], 'condition': {'column': 'region', 'op': 'eq', 'value': 'EU'}}]})
+        with pytest.raises(RlsAccessDenied):
+            self._predicate(rls, '', ('G',))
+        cls = self._cls([{'groups': ['G'], 'visible_columns': ['id']}])
+        with pytest.raises(RlsAccessDenied):
+            cls.columns_for(table_name='orders', schema='in.c-sales', user='', groups=('G',))
+        assert cls.visible_columns(table_id=self.TABLE, user='', groups=('G',)) == ()
+        assert cls.visible_columns(table_id=self.TABLE, user=None, groups=('G',)) == ()
+
+    # S3 -- several policies on one table can only narrow
+
+    def test_a_second_policys_default_does_not_open_a_strict_allowlist(self) -> None:
+        allowlist = {'rules': [{'principal': 'a@example.com', 'condition': {'true': True}}]}
+        permissive = {'rules': [{'principal': 'b@example.com', 'condition': {'true': True}}], 'default': {'true': True}}
+        rules = self._rls(allowlist, permissive)
+        with pytest.raises(RlsAccessDenied):
+            self._predicate(rules, 'nobody@example.com', ())
+
+    def test_a_second_policy_cannot_lift_a_restriction(self) -> None:
+        restrictive = {
+            'rules': [
+                {'principal': 'victim@example.com', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}
+            ]
+        }
+        widening = {'rules': [{'principal': 'victim@example.com', 'condition': {'true': True}}]}
+        rules = self._rls(restrictive, widening)
+        assert self._predicate(rules, 'victim@example.com', ()) == "\"country\" = 'CZ' AND TRUE"
+
+    def test_policies_both_matching_and_their_defaults_combine_with_and(self) -> None:
+        rules = self._rls(
+            {
+                'rules': [{'groups': ['g'], 'condition': {'column': 'region', 'op': 'eq', 'value': 'EU'}}],
+                'default': {'column': 'public', 'op': 'eq', 'value': True},
+            },
+            {
+                'rules': [{'groups': ['g'], 'condition': {'column': 'status', 'op': 'ne', 'value': 'draft'}}],
+                'default': {'column': 'archived', 'op': 'eq', 'value': False},
+            },
+        )
+        assert self._predicate(rules, 'x@example.com', ('g',)) == "\"region\" = 'EU' AND \"status\" <> 'draft'"
+        assert self._predicate(rules, 'x@example.com', ()) == '"public" = TRUE AND "archived" = FALSE'
+
+    def test_rules_of_one_policy_still_combine_with_or(self) -> None:
+        rules = self._rls(
+            {
+                'rules': [
+                    {'principal': 'x@example.com', 'condition': {'column': 'region', 'op': 'eq', 'value': 'EU'}},
+                    {'groups': ['g'], 'condition': {'column': 'region', 'op': 'eq', 'value': 'US'}},
+                ]
+            }
+        )
+        assert self._predicate(rules, 'x@example.com', ('g',)) == "\"region\" = 'EU' OR \"region\" = 'US'"
+
+    def test_cls_policies_intersect_in_the_first_policys_order(self) -> None:
+        rules = self._cls(
+            [{'principal': 'x@example.com', 'visible_columns': ['id', 'amount', 'country']}],
+            [{'principal': 'x@example.com', 'visible_columns': ['country', 'id']}],
+        )
+        assert rules.columns_for(table_name='orders', schema='in.c-sales', user='x@example.com') == (
+            self.TABLE,
+            ('id', 'country'),
+        )
+
+    @pytest.mark.parametrize(
+        'second',
+        [
+            [{'principal': 'other@example.com', 'visible_columns': ['id']}],  # the second policy has no rule for x
+            [{'principal': 'x@example.com', 'visible_columns': ['note']}],  # disjoint: nothing left to show
+        ],
+    )
+    def test_cls_a_policy_without_a_rule_or_an_empty_intersection_refuses(self, second: list) -> None:
+        rules = self._cls([{'principal': 'x@example.com', 'visible_columns': ['id', 'amount']}], second)
+        with pytest.raises(RlsAccessDenied):
+            rules.columns_for(table_name='orders', schema='in.c-sales', user='x@example.com')
+        assert rules.visible_columns(table_id=self.TABLE, user='x@example.com') == ()
+
+    # P1 -- many rules for one principal
+
+    def test_many_rules_for_one_principal_load_without_recursion(self) -> None:
+        many = [
+            {'principal': 'x@example.com', 'condition': {'column': 'id', 'op': 'eq', 'value': index}}
+            for index in range(200)
+        ]
+        started = time.monotonic()
+        rules = self._rls({'rules': many})
+        predicate = self._predicate(rules, 'x@example.com', ())
+        assert time.monotonic() - started < 5
+        assert predicate.count(' OR ') == 199

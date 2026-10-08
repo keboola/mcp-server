@@ -786,7 +786,8 @@ async def _apply_metadata_restrictions(
         if rls_rules.governs_table_id(table.prod_id):
             table.rows_count = None
             table.data_size_bytes = None
-        visible = cls_rules.visible_columns(table_id=table.prod_id, user=user)
+        # groups=None: an MCP session has no group source (see tools/sql.py) -- the same resolution as query_data.
+        visible = cls_rules.visible_columns(table_id=table.prod_id, user=user, groups=None)
         if visible is None:
             continue
         allowed = set(visible)

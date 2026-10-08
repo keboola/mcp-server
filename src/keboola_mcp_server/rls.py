@@ -35,7 +35,7 @@ import dataclasses
 import itertools
 import logging
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 
 import sqlglot
@@ -200,9 +200,12 @@ def _rule_selector(rule: Mapping[str, Any], *, label: str, obj_id: str) -> tuple
     return [_fold_principal(name) for name in names], []
 
 
-def _rule_matches(principals: frozenset[str], groups: frozenset[str], *, user: str, user_groups: Sequence[str]) -> bool:
-    """Whether a rule selects the identity: its email is a listed principal, or it is in a listed group."""
-    return bool(user) and _fold_principal(user) in principals or not groups.isdisjoint(user_groups)
+def _selects(
+    principals: frozenset[str], groups: frozenset[str], *, folded_user: str, user_groups: Sequence[str] | None
+) -> bool:
+    """Whether a rule selects the identity: its (folded) email is a listed principal, or -- only when the caller's
+    groups are KNOWN (`user_groups` is not None) -- it is in a listed group."""
+    return folded_user in principals or (user_groups is not None and not groups.isdisjoint(user_groups))
 
 
 def _uses_identity(condition: Any) -> bool:
@@ -219,16 +222,29 @@ def _uses_identity(condition: Any) -> bool:
     )
 
 
-def _or_predicates(predicates: Sequence[str], *, dialect: str) -> str:
-    """The predicates of every rule that matched one identity, combined with OR (schema 1.1.0)."""
-    unique = list(dict.fromkeys(predicates))
+def _combine(conditions: Sequence[exp.Condition | str], *, op: str, dialect: str) -> exp.Condition | str:
+    """Combine conditions with `op` ('or' / 'and') in one step, from trees -- never by re-parsing an accumulated
+    predicate (that is quadratic and recursion-bound in the number of rules). Duplicates (same generated text)
+    collapse; a single condition comes back unchanged. A `str` is a predicate given as SQL text (direct
+    `RlsRules(tables=...)` construction); it is parsed only when it has to be combined with another."""
+    unique: dict[str, exp.Condition | str] = {}
+    for condition in conditions:
+        unique.setdefault(condition if isinstance(condition, str) else condition.sql(dialect=dialect), condition)
     if len(unique) == 1:
-        return unique[0]
-    try:
-        parsed = [sqlglot.parse_one(p, dialect=dialect, into=exp.Condition) for p in unique]
-    except sqlglot.errors.SqlglotError as e:
-        raise RlsError(f'RLS: a rule predicate is not valid SQL for dialect {dialect!r}') from e
-    return exp.or_(*parsed).sql(dialect=dialect)
+        return next(iter(unique.values()))
+    trees: list[exp.Condition] = []
+    for text, condition in unique.items():
+        if isinstance(condition, str):
+            try:
+                condition = sqlglot.parse_one(text, dialect=dialect, into=exp.Condition)
+            except sqlglot.errors.SqlglotError as e:
+                raise RlsError(f'RLS: a rule predicate is not valid SQL for dialect {dialect!r}') from e
+        trees.append(condition)
+    return exp.or_(*trees, copy=True) if op == 'or' else exp.and_(*trees, copy=True)
+
+
+def _as_sql(condition: exp.Condition | str, *, dialect: str) -> str:
+    return condition if isinstance(condition, str) else condition.sql(dialect=dialect)
 
 
 def _clean_error(error: Exception) -> str:
@@ -424,13 +440,38 @@ def _identity_field(
 
 
 @dataclasses.dataclass(frozen=True)
-class _DynamicRule:
-    """A schema-1.1.0 rule that is compiled per identity: it selects by `groups`, or its condition has an
-    `$identity` placeholder."""
+class _Rule:
+    """A rule matched at read time rather than by a literal principal lookup: it selects by `groups`, or its
+    condition has an `$identity` placeholder. `compiled` is the condition compiled once at load when it has no
+    placeholder; otherwise None and the condition compiles per identity."""
 
     principals: frozenset[str]
     groups: frozenset[str]
     condition: Mapping[str, Any]
+    compiled: exp.Condition | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class _RlsPolicy:
+    """One `rls-policy` object, evaluated on its own: the conditions of its rules selecting an identity combine
+    with OR; when none does, its own `default` applies (identified reader with known groups only), else the
+    policy refuses. Several policies on one table combine with AND, so a second policy can only narrow."""
+
+    principals: Mapping[str, exp.Condition | str] = dataclasses.field(default_factory=dict)
+    """Folded principal -> the OR of its literal-principal rules without placeholders (compiled at load)."""
+    rules: tuple[_Rule, ...] = ()
+    default: Mapping[str, Any] | None = None
+    default_compiled: exp.Condition | None = None
+    """`default` compiled at load when it has no `$identity` placeholder."""
+
+
+@dataclasses.dataclass(frozen=True)
+class _ClsPolicy:
+    """One `cls-policy` object: the union of the visible columns of its rules selecting an identity, or a
+    refusal when none does. Several policies on one table intersect, so a second policy can only narrow."""
+
+    principals: Mapping[str, tuple[str, ...]] = dataclasses.field(default_factory=dict)
+    group_rules: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = ()
 
 
 def _policy_table_key(data: Mapping[str, Any], *, label: str, obj_id: str, dialect: str) -> tuple[str, str]:
@@ -502,12 +543,11 @@ class RlsRules:
     unchanged -- an empty mapping here just means "no drift check possible for this instance",
     never a functional difference to `rewrite_query()` itself.
     """
-    dynamic: Mapping[str, tuple[_DynamicRule, ...]] = dataclasses.field(default_factory=dict)
-    """Rules key -> schema-1.1.0 rules compiled per identity (`groups` selectors, `$identity` placeholders).
-    Their table is always in `tables` too (possibly with no literal principal), so it counts as governed."""
-    defaults: Mapping[str, tuple[Mapping[str, Any], ...]] = dataclasses.field(default_factory=dict)
-    """Rules key -> the `default` condition(s) of its policies, applied (OR-ed) to an identity no rule matches.
-    A table without one refuses such an identity, as in schema 1.0.0."""
+    policies: Mapping[str, tuple[_RlsPolicy, ...]] = dataclasses.field(default_factory=dict)
+    """Rules key -> every policy object on the table, evaluated one by one and combined with AND (see
+    `_RlsPolicy`). This is what `predicate_for` enforces. A key without an entry (a direct
+    `RlsRules(tables=...)` construction) is one implicit policy made of `tables[key]`. `tables` itself stays the
+    governed-table index and a per-principal summary (the AND of each policy's literal-principal predicate)."""
     refused: Mapping[str, str] = dataclasses.field(default_factory=dict)
     """Rules key -> why every read of that table is refused, e.g. a policy authored for the other dialect.
     Refusing the one table keeps every other governed table of the project readable."""
@@ -526,10 +566,8 @@ class RlsRules:
         """
         if dialect not in _SUPPORTED_DIALECTS:
             raise RlsError(f'RLS: unsupported workspace dialect {dialect!r}')
-        tables: dict[str, dict[str, str]] = {}
         table_ids: dict[str, str] = {}
-        dynamic: dict[str, list[_DynamicRule]] = {}
-        defaults: dict[str, list[Mapping[str, Any]]] = {}
+        policies: dict[str, list[_RlsPolicy]] = {}
         refused: dict[str, str] = {}
         for obj in objects:
             obj_id = getattr(obj, 'id', None) or '<unknown>'
@@ -540,38 +578,62 @@ class RlsRules:
                 raise RlsError(f"RLS: metastore object '{obj_id}' has no attributes")
             key, table_key_raw = _policy_table_key(data, label='RLS', obj_id=obj_id, dialect=dialect)
             table_ids[key] = table_key_raw
-            users = tables.setdefault(key, {})
             if (reason := _dialect_refusal(data, label='RLS', obj_id=obj_id, key=key, dialect=dialect)) is not None:
                 # Optional since schema 1.1.0 (absent = the workspace backend). Predicates are never transpiled,
                 # so a policy written for the other backend cannot be applied -- but only ITS table is refused;
                 # the rest of the project's policies keep working.
                 refused[key] = reason
-            if (default := data.get('default')) is not None:
-                _compile_primitive(default, dialect=dialect, identity=_VALIDATION_IDENTITY)
-                defaults.setdefault(key, []).append(default)
+            default = data.get('default')
+            default_compiled: exp.Condition | None = None
+            if default is not None:
+                if _uses_identity(default):
+                    _compile_primitive(default, dialect=dialect, identity=_VALIDATION_IDENTITY)
+                else:
+                    default_compiled = _compile_primitive(default, dialect=dialect)
             rules_raw = data.get('rules')
             if not isinstance(rules_raw, Sequence) or isinstance(rules_raw, (str, bytes)) or not rules_raw:
                 raise RlsError(f"RLS: metastore object '{obj_id}' has no rules")
+            principal_conditions: dict[str, list[exp.Condition]] = {}
+            rules: list[_Rule] = []
             for rule in rules_raw:
                 if not isinstance(rule, Mapping):
                     raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid rule entry: {rule!r}")
                 principals, groups = _rule_selector(rule, label='RLS', obj_id=obj_id)
                 condition = rule.get('condition')
-                if groups or _uses_identity(condition):
+                if _uses_identity(condition):
+                    # Compiled per identity; validated here so a malformed rule is refused at load.
                     _compile_primitive(condition, dialect=dialect, identity=_VALIDATION_IDENTITY)
-                    dynamic.setdefault(key, []).append(
-                        _DynamicRule(frozenset(principals), frozenset(groups), condition)
-                    )
+                    rules.append(_Rule(frozenset(principals), frozenset(groups), condition))
                     continue
-                predicate = _compile_primitive(condition, dialect=dialect).sql(dialect=dialect)
+                compiled = _compile_primitive(condition, dialect=dialect)
+                if groups:
+                    rules.append(_Rule(frozenset(), frozenset(groups), condition, compiled))
+                    continue
                 for user_key in principals:
-                    # Schema 1.1.0: every rule matching one identity applies, combined with OR -- across policies
-                    # on the same table too. (1.0.0 refused the whole load on a repeated principal.)
-                    users[user_key] = (
-                        _or_predicates([users[user_key], predicate], dialect=dialect)
-                        if user_key in users
-                        else predicate
-                    )
+                    # Schema 1.1.0: every rule of the policy matching one identity applies, combined with OR.
+                    principal_conditions.setdefault(user_key, []).append(compiled)
+            policies.setdefault(key, []).append(
+                _RlsPolicy(
+                    principals={
+                        user_key: _combine(conditions, op='or', dialect=dialect)
+                        for user_key, conditions in principal_conditions.items()
+                    },
+                    rules=tuple(rules),
+                    default=default,
+                    default_compiled=default_compiled,
+                )
+            )
+
+        tables: dict[str, dict[str, str]] = {}
+        for key, key_policies in policies.items():
+            per_principal: dict[str, list[exp.Condition | str]] = {}
+            for policy in key_policies:
+                for user_key, condition in policy.principals.items():
+                    per_principal.setdefault(user_key, []).append(condition)
+            tables[key] = {
+                user_key: _as_sql(_combine(conditions, op='and', dialect=dialect), dialect=dialect)
+                for user_key, conditions in per_principal.items()
+            }
 
         LOG.info(
             f'Loaded RLS rules for {len(tables)} table(s) from the metastore (dialect {dialect}, project {project_id})'
@@ -580,35 +642,50 @@ class RlsRules:
             tables=tables,
             dialect=dialect,
             table_ids=table_ids,
-            dynamic={key: tuple(rules) for key, rules in dynamic.items()},
-            defaults={key: tuple(conditions) for key, conditions in defaults.items()},
+            policies={key: tuple(key_policies) for key, key_policies in policies.items()},
             refused=refused,
         )
 
-    def referenced_columns(self) -> dict[str, set[str]]:
-        """Every column name a rule's compiled predicate mentions, per rules key.
+    def _policies(self, key: str) -> tuple[_RlsPolicy, ...]:
+        """The policies on `key`; a direct `RlsRules(tables=...)` construction is one implicit policy."""
+        return self.policies.get(key) or (_RlsPolicy(principals=self.tables.get(key, {})),)
+
+    def referenced_columns(self, keys: Iterable[str] | None = None) -> dict[str, set[str]]:
+        """Every column name a rule's condition (or a policy `default`) mentions, per rules key.
 
         Diagnostic input only, for the schema-drift check in `tools/sql.py` (see
         `feature_spec/rls_query_tool/RFC.md` "Data-contract maturity") -- this says what a policy
         *claims* to reference, nothing about whether that column still exists; this module has no
-        network access and stays that way. Re-parses each already-compiled predicate string (cheap:
-        these are short, and always valid SQL for `self.dialect` -- they came from
-        `_compile_primitive`, never hand-written) rather than keeping the `exp.Condition` tree
-        around, so `tables`' stored shape (plain predicate strings) doesn't have to change.
+        network access and stays that way. `keys` limits the work to those rules keys (the tables one
+        query touched); None means every governed table. Compiled trees are read directly; only a
+        predicate given as SQL text (direct construction) is parsed.
         """
         result: dict[str, set[str]] = {}
-        for key, principals in self.tables.items():
+        for key in self.tables if keys is None else [k for k in keys if k in self.tables]:
             columns: set[str] = set()
-            for predicate in principals.values():
-                try:
-                    tree = sqlglot.parse_one(predicate, dialect=self.dialect, into=exp.Condition)
-                except sqlglot.errors.SqlglotError:
-                    continue  # unreachable in practice (see docstring); never fatal for a diagnostic
-                columns.update(col.name for col in tree.find_all(exp.Column))
-            conditions = [rule.condition for rule in self.dynamic.get(key, ())] + list(self.defaults.get(key, ()))
-            for condition in conditions:
-                tree = _compile_primitive(condition, dialect=self.dialect, identity=_VALIDATION_IDENTITY)
-                columns.update(col.name for col in tree.find_all(exp.Column))
+            for policy in self._policies(key):
+                trees: list[exp.Expression] = []
+                for condition in policy.principals.values():
+                    if isinstance(condition, str):
+                        try:
+                            condition = sqlglot.parse_one(condition, dialect=self.dialect, into=exp.Condition)
+                        except sqlglot.errors.SqlglotError:
+                            continue  # never fatal for a diagnostic
+                    trees.append(condition)
+                for rule in policy.rules:
+                    trees.append(
+                        rule.compiled
+                        if rule.compiled is not None
+                        else _compile_primitive(rule.condition, dialect=self.dialect, identity=_VALIDATION_IDENTITY)
+                    )
+                if policy.default is not None:
+                    trees.append(
+                        policy.default_compiled
+                        if policy.default_compiled is not None
+                        else _compile_primitive(policy.default, dialect=self.dialect, identity=_VALIDATION_IDENTITY)
+                    )
+                for tree in trees:
+                    columns.update(col.name for col in tree.find_all(exp.Column))
             result[key] = columns
         return result
 
@@ -636,13 +713,18 @@ class RlsRules:
         return any(key.rpartition('.')[0] == prefix for key in self.tables)
 
     def predicate_for(
-        self, *, table_name: str, schema: str | None, user: str, groups: Sequence[str] = ()
+        self, *, table_name: str, schema: str | None, user: str, groups: Sequence[str] | None = None
     ) -> tuple[str, str]:
         """Return `(matched_key, predicate)` for the table/identity, or raise `RlsError`.
 
-        Every rule selecting the identity (its email, or one of its `groups`) applies; their conditions combine
-        with OR. When none does, the policies' `default` applies to an identified reader, else the read is
-        refused. A reader with no identity (empty `user`) is refused whatever the default says.
+        Each policy on the table is evaluated on its own: the conditions of its rules selecting the identity
+        (its email, or one of its `groups`) combine with OR; when none does, the policy's `default` applies,
+        else the read is refused. The policies' predicates then combine with AND, so a second policy can only
+        narrow what another allows.
+
+        `user` empty = no identity: refused before any rule or default is looked at. `groups` None = the
+        caller's group source is unknown (an MCP session today): group rules never match and no `default`
+        applies, because a default may be meant only for readers outside some group. `()` = known to have none.
 
         Only call this once `is_governed()` is true for the same table -- a table with no policy
         at all is not this method's job to reject or admit, see `is_governed()`. `schema` is the
@@ -653,31 +735,40 @@ class RlsRules:
         if not schema:
             raise RlsError(f"RLS: table reference must be qualified as <bucket>.<table>: '{table_name}'")
         key = _rule_key(schema, table_name, self.dialect)
-        users = self.tables.get(key)
-        if users is None:
+        if key not in self.tables:
             raise RlsError(f"RLS: no rule for table '{key}'")
         if (reason := self.refused.get(key)) is not None:
             LOG.warning(reason)
             raise RlsError(_RULE_NOT_APPLIED.format(key=key))
-        identity = (user, tuple(groups))
-        predicates = [users[_fold_principal(user)]] if user and _fold_principal(user) in users else []
-        predicates += [
-            _compile_primitive(rule.condition, dialect=self.dialect, identity=identity).sql(dialect=self.dialect)
-            for rule in self.dynamic.get(key, ())
-            if _rule_matches(rule.principals, rule.groups, user=user, user_groups=groups)
-        ]
-        if not predicates and user:
-            # A policy `default` covers an IDENTIFIED reader no rule selects. A caller with no identity (the
-            # empty principal) never reaches it: "no identity" must degrade to no protected data, never to
-            # whatever a permissive default (e.g. {"true": true}) would hand out.
-            predicates = [
-                _compile_primitive(condition, dialect=self.dialect, identity=identity).sql(dialect=self.dialect)
-                for condition in self.defaults.get(key, ())
-            ]
-        if not predicates:
-            LOG.info(f"RLS: no rule for user '{_fold_principal(user)}' on table '{key}'")
+        if not user:
+            # No identity degrades to no protected data, never to what a group rule or a default hands out.
+            LOG.info(f"RLS: no identity for table '{key}'")
             raise RlsAccessDenied(ACCESS_DENIED_MESSAGE)
-        return key, _or_predicates(predicates, dialect=self.dialect)
+        folded = _fold_principal(user)
+        identity = (user, tuple(groups or ()))
+        per_policy: list[exp.Condition | str] = []
+        for policy in self._policies(key):
+            conditions: list[exp.Condition | str] = []
+            if folded in policy.principals:
+                conditions.append(policy.principals[folded])
+            for rule in policy.rules:
+                if _selects(rule.principals, rule.groups, folded_user=folded, user_groups=groups):
+                    conditions.append(
+                        rule.compiled
+                        if rule.compiled is not None
+                        else _compile_primitive(rule.condition, dialect=self.dialect, identity=identity)
+                    )
+            if not conditions and policy.default is not None and groups is not None:
+                conditions.append(
+                    policy.default_compiled
+                    if policy.default_compiled is not None
+                    else _compile_primitive(policy.default, dialect=self.dialect, identity=identity)
+                )
+            if not conditions:
+                LOG.info(f"RLS: no rule for user '{folded}' on table '{key}'")
+                raise RlsAccessDenied(ACCESS_DENIED_MESSAGE)
+            per_policy.append(_combine(conditions, op='or', dialect=self.dialect))
+        return key, _as_sql(_combine(per_policy, op='and', dialect=self.dialect), dialect=self.dialect)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -704,10 +795,10 @@ class ClsRules:
     dialect: str
     table_ids: Mapping[str, str] = dataclasses.field(default_factory=dict)
     """Same purpose as `RlsRules.table_ids` -- see there."""
-    group_rules: Mapping[str, tuple[tuple[frozenset[str], tuple[str, ...]], ...]] = dataclasses.field(
-        default_factory=dict
-    )
-    """Rules key -> `(groups, visible_columns)` of schema-1.1.0 rules that select by IdP group."""
+    policies: Mapping[str, tuple[_ClsPolicy, ...]] = dataclasses.field(default_factory=dict)
+    """Rules key -> every policy object on the table; their column sets intersect (see `_ClsPolicy`). A key
+    without an entry (a direct `ClsRules(tables=...)` construction) is one implicit policy made of
+    `tables[key]`. `tables` stays the governed-table index and a per-principal summary (union of columns)."""
     refused: Mapping[str, str] = dataclasses.field(default_factory=dict)
     """Same purpose as `RlsRules.refused` -- see there."""
 
@@ -717,14 +808,14 @@ class ClsRules:
 
         Mirrors `RlsRules.from_metastore` (same applicability check, `<bucket>.<table>` key derivation,
         selectors and per-table dialect refusal) -- the only difference is validating `visible_columns`
-        (a non-empty list of column-name strings) instead of compiling a `condition`; several rules for
-        one identity union their columns.
+        (a non-empty list of column-name strings) instead of compiling a `condition`. Within one policy
+        several rules for one identity union their columns; several policies intersect.
         """
         if dialect not in _SUPPORTED_DIALECTS:
             raise RlsError(f'CLS: unsupported workspace dialect {dialect!r}')
         tables: dict[str, dict[str, tuple[str, ...]]] = {}
         table_ids: dict[str, str] = {}
-        group_rules: dict[str, list[tuple[frozenset[str], tuple[str, ...]]]] = {}
+        policies: dict[str, list[_ClsPolicy]] = {}
         refused: dict[str, str] = {}
         for obj in objects:
             obj_id = getattr(obj, 'id', None) or '<unknown>'
@@ -742,6 +833,8 @@ class ClsRules:
             if not isinstance(rules_raw, Sequence) or isinstance(rules_raw, (str, bytes)) or not rules_raw:
                 raise RlsError(f"CLS: metastore object '{obj_id}' has no rules")
 
+            policy_principals: dict[str, tuple[str, ...]] = {}
+            policy_group_rules: list[tuple[frozenset[str], tuple[str, ...]]] = []
             for rule in rules_raw:
                 if not isinstance(rule, Mapping):
                     raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid rule entry: {rule!r}")
@@ -755,10 +848,14 @@ class ClsRules:
                         raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid column name {col!r}")
                     columns.append(col)
                 if groups:
-                    group_rules.setdefault(key, []).append((frozenset(groups), tuple(columns)))
+                    policy_group_rules.append((frozenset(groups), tuple(columns)))
                 for user_key in principals:
-                    # Schema 1.1.0: several rules for one identity union their visible columns.
+                    # Schema 1.1.0: several rules of one policy for one identity union their visible columns.
+                    policy_principals[user_key] = tuple(dict.fromkeys((*policy_principals.get(user_key, ()), *columns)))
                     users[user_key] = tuple(dict.fromkeys((*users.get(user_key, ()), *columns)))
+            policies.setdefault(key, []).append(
+                _ClsPolicy(principals=policy_principals, group_rules=tuple(policy_group_rules))
+            )
 
         LOG.info(
             f'Loaded CLS rules for {len(tables)} table(s) from the metastore (dialect {dialect}, project {project_id})'
@@ -767,19 +864,27 @@ class ClsRules:
             tables=tables,
             dialect=dialect,
             table_ids=table_ids,
-            group_rules={key: tuple(rules) for key, rules in group_rules.items()},
+            policies={key: tuple(key_policies) for key, key_policies in policies.items()},
             refused=refused,
         )
 
-    def referenced_columns(self) -> dict[str, set[str]]:
+    def _policies(self, key: str) -> tuple[_ClsPolicy, ...]:
+        """The policies on `key`; a direct `ClsRules(tables=...)` construction is one implicit policy."""
+        return self.policies.get(key) or (_ClsPolicy(principals=self.tables.get(key, {})),)
+
+    def referenced_columns(self, keys: Iterable[str] | None = None) -> dict[str, set[str]]:
         """Every column name any rule allowlists, per rules key -- the CLS analogue of
-        `RlsRules.referenced_columns()`, for the same schema-drift check in `tools/sql.py`. No
-        parsing needed here (unlike RLS's predicate text): the allowlist already is the column list.
+        `RlsRules.referenced_columns()` (same `keys` narrowing), for the same schema-drift check in
+        `tools/sql.py`. No parsing needed here: the allowlist already is the column list.
         """
         return {
-            key: {col for columns in principals.values() for col in columns}
-            | {col for _, columns in self.group_rules.get(key, ()) for col in columns}
-            for key, principals in self.tables.items()
+            key: {
+                col
+                for policy in self._policies(key)
+                for columns in (*policy.principals.values(), *(cols for _, cols in policy.group_rules))
+                for col in columns
+            }
+            for key in (self.tables if keys is None else [k for k in keys if k in self.tables])
         }
 
     def is_governed(self, *, table_name: str, schema: str | None) -> bool:
@@ -787,18 +892,33 @@ class ClsRules:
         `RlsRules.is_governed`, identical semantics."""
         return bool(schema) and _rule_key(schema, table_name, self.dialect) in self.tables
 
-    def _columns(self, key: str, *, user: str | None, groups: Sequence[str]) -> tuple[str, ...] | None:
-        """Union of the visible columns of every rule selecting the identity, or None when none does."""
-        users = self.tables.get(key, {})
-        matched: list[tuple[str, ...]] = (
-            [users[_fold_principal(user)]] if user and _fold_principal(user) in users else []
-        )
-        matched += [
-            columns for rule_groups, columns in self.group_rules.get(key, ()) if not rule_groups.isdisjoint(groups)
-        ]
-        return tuple(dict.fromkeys(col for columns in matched for col in columns)) if matched else None
+    def _columns(self, key: str, *, user: str | None, groups: Sequence[str] | None) -> tuple[str, ...] | None:
+        """The columns the identity may see, or None (refuse).
 
-    def visible_columns(self, *, table_id: str, user: str | None, groups: Sequence[str] = ()) -> tuple[str, ...] | None:
+        Per policy: the union of the visible columns of its rules selecting the identity; a policy with no
+        such rule refuses. Across policies: the intersection, in the first policy's column order -- an empty
+        intersection refuses too (there is no column to show). `user` empty = no identity, refused before any
+        rule is looked at; `groups` None = unknown, so group rules never match (see `RlsRules.predicate_for`).
+        """
+        if not user:
+            return None
+        folded = _fold_principal(user)
+        result: tuple[str, ...] | None = None
+        for policy in self._policies(key):
+            matched: list[tuple[str, ...]] = [policy.principals[folded]] if folded in policy.principals else []
+            if groups is not None:
+                matched += [
+                    columns for rule_groups, columns in policy.group_rules if not rule_groups.isdisjoint(groups)
+                ]
+            if not matched:
+                return None
+            union = tuple(dict.fromkeys(col for columns in matched for col in columns))
+            result = union if result is None else tuple(col for col in result if col in union)
+        return result or None
+
+    def visible_columns(
+        self, *, table_id: str, user: str | None, groups: Sequence[str] | None = None
+    ) -> tuple[str, ...] | None:
         """The columns `user` may see of the table with Storage id `<bucket>.<table>`, for metadata views.
 
         `None` = no policy governs the table (every column is visible). Fail closed otherwise: a
@@ -813,7 +933,7 @@ class ClsRules:
         return self._columns(key, user=user, groups=groups) or ()
 
     def columns_for(
-        self, *, table_name: str, schema: str | None, user: str, groups: Sequence[str] = ()
+        self, *, table_name: str, schema: str | None, user: str, groups: Sequence[str] | None = None
     ) -> tuple[str, tuple[str, ...]]:
         """Return `(matched_key, visible_columns)` for the table/user, or raise `RlsError` -- see
         `RlsRules.predicate_for`, identical fail-closed semantics (governed table, no rule for this
@@ -1282,7 +1402,7 @@ def rewrite_query(
     dialect: str,
     rules: RlsRules,
     cls_rules: 'ClsRules | None' = None,
-    groups: Sequence[str] = (),
+    groups: Sequence[str] | None = None,
 ) -> RewrittenQuery:
     """Rewrite a single SELECT so every table an RLS and/or CLS policy governs becomes a filtered,
     column-restricted subquery; a table no policy of either kind names at all is left completely
@@ -1300,7 +1420,8 @@ def rewrite_query(
 
     :param sql: the caller's SQL, in the workspace dialect
     :param user: identity used to select rules; case-insensitive
-    :param groups: the identity's groups (schema 1.1.0 `groups` selectors, `{"$identity": "groups"}`)
+    :param groups: the identity's groups (schema 1.1.0 `groups` selectors, `{"$identity": "groups"}`); None when
+        the caller's group source is unknown -- group rules then never match and no policy `default` applies
     :param dialect: sqlglot dialect name (`'snowflake'` / `'bigquery'`)
     :param rules: loaded RLS rules
     :param cls_rules: loaded CLS rules, if any

@@ -115,7 +115,8 @@ async def _column_visibility(ctx: Context, client: KeboolaClient) -> ColumnVisib
     if not cls_rules.tables:
         return None
     user = ctx.session.state.get(OAUTH_USER_EMAIL_KEY)
-    return lambda table_id: cls_rules.visible_columns(table_id=table_id, user=user)
+    # groups=None: an MCP session has no group source (see tools/sql.py) -- the same resolution as query_data.
+    return lambda table_id: cls_rules.visible_columns(table_id=table_id, user=user, groups=None)
 
 
 def _check_column_match(table: JsonDict, cfg: SearchSpec) -> list[PatternMatch]:
