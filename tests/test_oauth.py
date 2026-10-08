@@ -1289,6 +1289,35 @@ class TestSimpleOAuthProvider:
             assert redirect_uri not in registry._well_known_error_until
 
     @pytest.mark.asyncio
+    async def test_a_deactivation_is_not_undone_by_a_later_connection_error(self, monkeypatch: pytest.MonkeyPatch):
+        """200 -> cache expiry -> 404 -> 500: the definite 404 must clear the earlier success, so the error that
+        follows fails closed instead of being answered from the stale REGISTERED for the rest of the grace period."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import ConnectionClientRegistry, _ClientRegistration
+
+        status = 200
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(status, json={}) if status == 200 else httpx.Response(status)
+
+        monkeypatch.setattr(
+            oauth_module,
+            '_create_http_client',
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        uri = 'https://claude.ai/api/mcp/auth_callback'
+        registry = ConnectionClientRegistry('https://connection.example')
+        assert await registry.check_registration('x', uri) is _ClientRegistration.REGISTERED
+
+        registry._registration_cache.clear()  # the cache entry expires
+        status = 404  # Connection says the client is deactivated
+        assert await registry.check_registration('x', uri) is _ClientRegistration.NOT_REGISTERED
+        assert uri not in registry._last_known_registered
+
+        status = 500  # and then it fails
+        assert await registry.check_registration('x', uri) is _ClientRegistration.ERROR
+
+    @pytest.mark.asyncio
     async def test_registry_reuses_one_pooled_client_and_recreates_it_after_aclose(
         self, monkeypatch: pytest.MonkeyPatch
     ):

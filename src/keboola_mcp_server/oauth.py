@@ -352,6 +352,11 @@ class ConnectionClientRegistry:
             if well_known:
                 self._last_known_registered[redirect_uri] = now
                 self._well_known_error_until.pop(redirect_uri, None)
+        elif result is _ClientRegistration.NOT_REGISTERED and well_known:
+            # A definite "not registered" (deactivated) must outlive a later error: forget the earlier success and
+            # any pause, or the next failure would serve that stale REGISTERED again and undo the deactivation.
+            self._last_known_registered.pop(redirect_uri, None)
+            self._well_known_error_until.pop(redirect_uri, None)
         elif result is _ClientRegistration.ERROR and well_known:
             # Bounded: only the fixed set of well-known pairs ever gets an entry.
             self._well_known_error_until[redirect_uri] = now + _WELL_KNOWN_ERROR_BACKOFF_SECONDS
