@@ -282,8 +282,10 @@ async def _log_schema_drift(
     governed table in the project, so the added `table_detail()` cost stays bounded by what one
     query touches, not by how many policies the project has.
     """
-    rls_referenced = rules.referenced_columns()
-    cls_referenced = cls_rules.referenced_columns()
+    # Only the tables this call touched, and off the event loop: compiling every policy's conditions is CPU work.
+    rls_referenced, cls_referenced = await asyncio.to_thread(
+        lambda: (rules.referenced_columns(applied_rules), cls_rules.referenced_columns(applied_rules))
+    )
     for key in applied_rules:
         columns = rls_referenced.get(key, set()) | cls_referenced.get(key, set())
         table_id = rules.table_ids.get(key) or cls_rules.table_ids.get(key)

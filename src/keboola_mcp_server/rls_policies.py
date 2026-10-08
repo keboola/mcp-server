@@ -12,9 +12,11 @@ from keboola_mcp_server.clients.metastore import MetastoreClient, MetastoreObjec
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.rls import ClsRules, RlsRules
 
-# Policies are listed a small page at a time (some Metastore endpoints fail on large responses; same size as
-# the semantic loader). Every page is needed: a policy on a page that is never read leaves its table ungoverned.
-_PAGE_SIZE = 20
+# Policies are listed a page at a time: large enough that a project with many policies is not dozens of
+# sequential round trips per query, small enough for the response sizes some Metastore endpoints choke on
+# (the list endpoint itself applies any `limit`). Every page is needed: a policy on a page that is never read
+# leaves its table ungoverned.
+_PAGE_SIZE = 100
 _MAX_PAGES = 1000
 
 
