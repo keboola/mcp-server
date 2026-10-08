@@ -2288,25 +2288,9 @@ def test_resolve_app_image(configuration: JsonDict, expected_image: RuntimeImage
     assert _resolve_app_image(configuration, _PYTHON_JS_IMAGES) == (expected_image, expected_pinned)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ('configuration_id', 'image_version', 'expected_error'),
-    [
-        pytest.param('', _NODE_24, None, id='create_pins'),
-        pytest.param('cfg-1', _NODE_24, None, id='update_pins'),
-        pytest.param('', 'node-24', 'Unknown image_version "node-24"', id='create_rejects_unknown'),
-        # A tag of another app type is not a python-js image.
-        pytest.param('cfg-1', 'streamlit-1.0', 'Unknown image_version "streamlit-1.0"', id='update_rejects_other_type'),
-    ],
-)
-async def test_modify_python_js_data_app_image_version(
-    mocker,
-    mcp_context_client: Context,
-    workspace_manager,
-    configuration_id: str,
-    image_version: str,
-    expected_error: str | None,
-) -> None:
+@pytest.fixture
+def python_js_image_client(mocker, mcp_context_client: Context, workspace_manager) -> KeboolaClient:
+    """A client whose python-js create and update paths both succeed against `_RUNTIMES`."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.has_feature = mocker.AsyncMock(return_value=True)
     workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
@@ -2326,34 +2310,58 @@ async def test_modify_python_js_data_app_image_version(
     for helper in ('set_cfg_creation_metadata', 'set_cfg_update_metadata'):
         mocker.patch(f'keboola_mcp_server.tools.data_apps.{helper}', mocker.AsyncMock())
     mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    return keboola_client
 
-    call = modify_python_js_data_app(
-        ctx=mcp_context_client,
-        name='My App',
-        description='desc',
-        configuration_id=configuration_id,
-        image_version=image_version,
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_pins_image_version(
+    mcp_context_client: Context, python_js_image_client: KeboolaClient
+) -> None:
+    await modify_python_js_data_app(ctx=mcp_context_client, name='My App', description='desc', image_version=_NODE_24)
+
+    configuration = python_js_image_client.data_science_client.create_data_app.await_args.kwargs['configuration']
+    assert configuration.model_dump(by_alias=True, exclude_none=True)['runtime']['image'] == {'version': _NODE_24}
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_update_pins_image_version(
+    mcp_context_client: Context, python_js_image_client: KeboolaClient
+) -> None:
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client, name='My App', description='desc', configuration_id='cfg-1', image_version=_NODE_24
     )
 
-    if expected_error:
-        with pytest.raises(ValueError, match=re.escape(expected_error)) as exc:
-            await call
-        # The error lists the valid tags, so the agent can retry with one.
-        assert _NODE_20 in str(exc.value) and _NODE_24 in str(exc.value)
-        keboola_client.data_science_client.create_data_app.assert_not_awaited()
-        keboola_client.storage_client.configuration_update.assert_not_awaited()
-        return
+    written = python_js_image_client.storage_client.configuration_update.await_args.kwargs['configuration']
+    assert written['runtime']['image'] == {'version': _NODE_24}
+    assert result.change_summary is not None
+    assert f"Backend set to image '{_NODE_24}'" in result.change_summary
 
-    result = await call
-    if configuration_id:
-        written = keboola_client.storage_client.configuration_update.await_args.kwargs['configuration']
-        assert result.change_summary is not None
-        assert f"Backend set to image '{image_version}'" in result.change_summary
-    else:
-        written = keboola_client.data_science_client.create_data_app.await_args.kwargs['configuration'].model_dump(
-            by_alias=True, exclude_none=True
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('configuration_id', 'image_version'),
+    [
+        pytest.param('', 'node-24', id='create_unknown_tag'),
+        # A tag of another app type is not a python-js image.
+        pytest.param('cfg-1', 'streamlit-1.0', id='update_other_type_tag'),
+    ],
+)
+async def test_modify_python_js_data_app_rejects_unknown_image_version(
+    mcp_context_client: Context, python_js_image_client: KeboolaClient, configuration_id: str, image_version: str
+) -> None:
+    with pytest.raises(ValueError, match=re.escape(f'Unknown image_version "{image_version}"')) as exc:
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='My App',
+            description='desc',
+            configuration_id=configuration_id,
+            image_version=image_version,
         )
-    assert written['runtime']['image'] == {'version': image_version}
+
+    # The error lists the valid tags, so the agent can retry with one.
+    assert _NODE_20 in str(exc.value) and _NODE_24 in str(exc.value)
+    python_js_image_client.data_science_client.create_data_app.assert_not_awaited()
+    python_js_image_client.storage_client.configuration_update.assert_not_awaited()
 
 
 def test_update_existing_code_data_app_config_keeps_auto_suspend_when_omitted() -> None:
@@ -3837,7 +3845,7 @@ async def test_get_data_apps_detail_includes_last_run_failure(mocker, mcp_contex
     assert last_run.failure_reason == 'ConfigDecryptionFailed'
     assert last_run.failure_message == 'failed to decrypt key "#API_KEY"'
     # The image catalog and the image the app runs come with the detail.
-    assert detail.available_images == _PYTHON_JS_IMAGES
+    assert result.available_images == _PYTHON_JS_IMAGES
     assert detail.deployment_info.image == _PYTHON_JS_IMAGES[0]
 
 

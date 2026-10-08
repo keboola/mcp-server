@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import logging
 import re
@@ -426,13 +427,6 @@ class DataApp(BaseModel):
             'their absence as "no drafts" before a teardown decision. Retry to get the full list.'
         ),
     )
-    available_images: list[RuntimeImage] = Field(
-        default_factory=list,
-        description=(
-            'For python-js apps on the detail path: every backend image the platform offers — the valid '
-            '`image_version` values for `modify_python_js_data_app`. Empty for other apps.'
-        ),
-    )
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
 
     @classmethod
@@ -466,20 +460,13 @@ class DataApp(BaseModel):
         self.links = links
         return self
 
-    def with_deployment_info(
-        self,
-        logs: list[str],
-        last_run: AppRunInfo | None = None,
-        images: list[RuntimeImage] | None = None,
-    ) -> 'DataApp':
+    def with_deployment_info(self, logs: list[str], last_run: AppRunInfo | None = None) -> 'DataApp':
         """Adds deployment info to the data app.
 
         :param logs: The logs of the data app deployment.
         :param last_run: The most recent deployment attempt (AppRun), when available.
-        :param images: The python-js image catalog; `None` when it is unavailable or the app is not python-js.
         :return: The data app with the deployment info.
         """
-        image, image_pinned = _resolve_app_image(self.configuration, images) if images is not None else (None, None)
         published_version = self.published_config_version or self.config_version
         self.deployment_info = DeploymentInfo(
             version=published_version,
@@ -488,10 +475,19 @@ class DataApp(BaseModel):
             state=self.state,
             url=self.deployment_url or 'deployment link not available yet',
             logs=logs,
-            image=image,
-            image_pinned=image_pinned,
             last_run=last_run,
         )
+        return self
+
+    def with_image(self, images: list[RuntimeImage] | None) -> 'DataApp':
+        """Reports the image a python-js app runs in its deployment info.
+
+        - A no-op for other apps, without deployment info, or when the catalog is unavailable (`None`).
+        """
+        if self.type == 'python-js' and images is not None and self.deployment_info is not None:
+            self.deployment_info.image, self.deployment_info.image_pinned = _resolve_app_image(
+                self.configuration, images
+            )
         return self
 
 
@@ -539,9 +535,8 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
             'on the **draft create path** — defaults to a freshly generated `draft-<hex>` when the caller does '
             'not pass `branch`. Create it from the current production code — '
             '`git fetch origin && git checkout -B <branch> --no-track origin/main` (on a brand-new prod app the '
-            'repo is still empty and `origin/main` does not exist yet — push an empty `main` first, then branch: '
-            '`git checkout -b main && git commit --allow-empty -m "init main" && git push origin main && '
-            'git checkout -b <branch>`) — and push code on this branch before calling `deploy_data_app(mode="dev")`. `--no-track` keeps '
+            'repo is still empty and `origin/main` does not exist yet — push an empty `main` first, as '
+            '`change_summary` spells out) — and push code on this branch before calling `deploy_data_app(mode="dev")`. `--no-track` keeps '
             '`origin/main` from becoming this branch\'s upstream, so a bare `git push` can never target `main`. '
             'A bare `git checkout <branch>` is unsafe: if the branch already exists on the remote it resolves '
             'to that stale tip. None on prod create and on update.'
@@ -624,6 +619,13 @@ class GetDataAppsOutput(BaseModel):
     """Output of the get_data_apps tool. Serves for both DataAppSummary and DataApp outputs."""
 
     data_apps: Sequence[DataAppSummary | DataApp] = Field(description='The data apps in the project.')
+    available_images: list[RuntimeImage] = Field(
+        default_factory=list,
+        description=(
+            'When the details include a python-js app: every backend image the platform offers — the valid '
+            '`image_version` values for `modify_python_js_data_app`.'
+        ),
+    )
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
 
 
@@ -1936,10 +1938,9 @@ def _update_existing_code_data_app_config(
             data_app.pop('secrets', None)
     if image_version is not None:
         new_config['parameters'].pop('imageVersion', None)
-        runtime = new_config.setdefault('runtime', {})
         if image_version:
-            runtime['image'] = {'version': image_version}
-        else:
+            new_config.setdefault('runtime', {})['image'] = {'version': image_version}
+        elif runtime := new_config.get('runtime'):
             runtime.pop('image', None)
             if not runtime:
                 new_config.pop('runtime')
@@ -1990,17 +1991,21 @@ async def get_data_apps(
     if configuration_ids:
         # Get details of the data apps by their configuration IDs using 10 parallel requests at a time to not overload
         # the API
-        images = await _fetch_python_js_images(client)
-
         async def fetch_data_app_detail(configuration_id: str) -> DataApp | str:
-            return await _fetch_data_app_details_task(client, links_manager, configuration_id, images)
+            return await _fetch_data_app_details_task(client, links_manager, configuration_id)
 
-        data_app_details = await process_concurrently(configuration_ids, fetch_data_app_detail, max_concurrency=10)
-        found_data_apps: list[DataApp] = [dap for dap in data_app_details if isinstance(dap, DataApp)]
+        data_app_details, images = await asyncio.gather(
+            process_concurrently(configuration_ids, fetch_data_app_detail, max_concurrency=10),
+            _fetch_python_js_images(client),
+        )
+        found_data_apps: list[DataApp] = [
+            dap.with_image(images) for dap in data_app_details if isinstance(dap, DataApp)
+        ]
         not_found_ids: list[str] = [dap for dap in data_app_details if isinstance(dap, str)]
         if not_found_ids:
             LOG.error(f'Could not find Data Apps Configurations for IDs: {not_found_ids}')
-        return GetDataAppsOutput(data_apps=found_data_apps)
+        has_python_js = any(dap.type == 'python-js' for dap in found_data_apps)
+        return GetDataAppsOutput(data_apps=found_data_apps, available_images=images if has_python_js and images else [])
     else:
         # List all data apps in the project
         data_apps: list[DataAppResponse] = await client.data_science_client.list_data_apps(limit=limit, offset=offset)
@@ -2086,11 +2091,12 @@ async def deploy_data_app(
             mode=mode,
         )
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        data_app = data_app.with_deployment_info(
-            await _fetch_logs(client, data_app.data_app_id),
-            last_run=await _fetch_latest_run(client, data_app.data_app_id),
-            images=await _fetch_python_js_images(client) if data_app.type == 'python-js' else None,
+        logs, last_run, images = await asyncio.gather(
+            _fetch_logs(client, data_app.data_app_id),
+            _fetch_latest_run(client, data_app.data_app_id),
+            _fetch_python_js_images(client),
         )
+        data_app = data_app.with_deployment_info(logs, last_run=last_run).with_image(images)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
@@ -2403,18 +2409,17 @@ def _python_js_images(runtimes: Sequence[RuntimeResponse]) -> list[RuntimeImage]
 
     - The catalog can list one tag twice (the default and a "pinned" twin); the default entry wins.
     """
-    images: dict[str, RuntimeImage] = {}
-    for runtime in runtimes:
-        if runtime.type != 'python-js' or not runtime.image_tag:
-            continue
-        if runtime.image_tag in images and not runtime.is_type_default:
-            continue
-        images[runtime.image_tag] = RuntimeImage(
+    python_js = [runtime for runtime in runtimes if runtime.type == 'python-js' and runtime.image_tag]
+    # Defaults sort last, so they overwrite a twin with the same tag.
+    images = {
+        runtime.image_tag: RuntimeImage(
             version=runtime.image_tag,
             description=runtime.description,
             is_default=runtime.is_type_default,
             end_of_life_date=runtime.end_of_life_date,
         )
+        for runtime in sorted(python_js, key=lambda runtime: runtime.is_type_default)
+    }
     return list(images.values())
 
 
@@ -2546,15 +2551,11 @@ async def _build_data_app_with_repo(
 
 
 async def _fetch_data_app_details_task(
-    client: KeboolaClient,
-    links_manager: ProjectLinksManager,
-    configuration_id: str,
-    images: list[RuntimeImage] | None = None,
+    client: KeboolaClient, links_manager: ProjectLinksManager, configuration_id: str
 ) -> DataApp | str:
     """Task fetching data app details with logs and links by configuration ID.
     :param client: The Keboola client
     :param configuration_id: The ID of the data app configuration
-    :param images: The python-js image catalog, `None` when it is unavailable
     :return: The data app details or the configuration ID if the data app is not found
     """
     try:
@@ -2567,12 +2568,7 @@ async def _fetch_data_app_details_task(
         )
         logs = await _fetch_logs(client, data_app.data_app_id)
         last_run = await _fetch_latest_run(client, data_app.data_app_id)
-        is_python_js = data_app.type == 'python-js'
-        data_app = data_app.with_links(links).with_deployment_info(
-            logs, last_run=last_run, images=images if is_python_js else None
-        )
-        if is_python_js and images is not None:
-            data_app.available_images = images
+        data_app = data_app.with_links(links).with_deployment_info(logs, last_run=last_run)
         # Drafts of a python-js prod are surfaced inline so the agent can find them in one round-trip
         # — see Scenario C in `modify_python_js_data_app`. Skip for drafts themselves and for Streamlit
         # (neither has children).
