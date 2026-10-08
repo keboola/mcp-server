@@ -1,10 +1,10 @@
 # RFC: Replace the hardcoded OAuth redirect-URI whitelist with Connection's client registry
 
-Linear: [AI-2883](https://linear.app/keboola/issue/AI-2883/mcp-server-implement-dynamic-oauth-client-registration-via-connection)
-Related: [AI-3591](https://linear.app/keboola/issue/AI-3591/mcp-server-bypasses-connection-oauth-client-registration-with) (RISK-76), [AI-3792](https://linear.app/keboola/issue/AI-3792/support-17501-critical-unauthenticated-oauth-dynamic-client) (SUPPORT-17501, critical DCR report), [AI-3797](https://linear.app/keboola/issue/AI-3797/support-17488-request-to-allowlist-aieuromediacz-for-keboola-mcp-oauth) (SUPPORT-17488, allowlist request this replaces the need for)
+Linear: AI-2883
+Related: AI-3591, AI-3792, AI-3797
 Connection side (merged, released): [keboola/connection#7016](https://github.com/keboola/connection/pull/7016) — `docs/features/oauth-dynamic-client-registration.md`
 
-Supersedes the stale draft on `AI-2883-dynamic-oauth-client-registration` ([PR #453](https://github.com/keboola/mcp-server/pull/453), still open) and the interim hardening in [#580](https://github.com/keboola/mcp-server/pull/580) (RISK-76 hub-subdomain exclusion) — both predate Connection's final, merged `/oauth/clients/validate` contract and don't match it (see Decisions §1). The RISK-76 hub-subdomain exclusion no longer exists in this repo: which hosts may receive a redirect is now decided by Connection's registry and its approval step, not by a host list here.
+Supersedes the stale draft on `AI-2883-dynamic-oauth-client-registration` ([PR #453](https://github.com/keboola/mcp-server/pull/453), still open) and the interim hardening in [#580](https://github.com/keboola/mcp-server/pull/580) (hub-subdomain exclusion) — both predate Connection's final, merged `/oauth/clients/validate` contract and don't match it (see Decisions §1). The hub-subdomain exclusion no longer exists in this repo: which hosts may receive a redirect is now decided by Connection's registry and its approval step, not by a host list here.
 
 ---
 
@@ -22,13 +22,10 @@ AI assistant is connecting (Claude.ai, ChatGPT, Cursor, n8n, custom MCP clients,
 3. Cannot revoke a client's access individually — there is no registry, just a shared static list
    every caller matching a domain can use.
 
-**Confirmed exploitable pattern (AI-3792 / SUPPORT-17501):** a security researcher registered an
-arbitrary client via `/register` with `redirect_uri=https://attacker.evil-test.example/cb` and got
-a `201` with no validation at all. The attack chain happened to dead-end at `/authorize` today
-because `attacker.evil-test.example` doesn't match `_ALLOWED_DOMAINS` — but the underlying model
-(open registration + a static, ever-growing domain whitelist as the only redirect check) is exactly
-the "inconsistent trust model" risk RISK-76 flags, and it fails closed only by accident of which
-domains happen to be listed, not by design.
+**Motivation (AI-3792, AI-3591):** `/register` accepts any client without validation, so the static,
+ever-growing domain whitelist (`_ALLOWED_DOMAINS`) is the only redirect check. That check holds today,
+but it holds by the choice of which domains are listed, not by design: open registration plus a
+static list is an inconsistent trust model.
 
 Connection's PR #7016 (merged 2026-09-10, live on all stacks per this RFC's authoring context)
 replaces Connection's own equivalent whitelist with a real, per-stack, DB-backed client registry
@@ -247,7 +244,7 @@ client-id/name mapping problem, tests.
 - A user-facing "revoke this MCP client" UI — that's Connection's account-settings surface
   (explicitly flagged as future work in Connection's own doc), not this server's.
 - Pre-registering ChatGPT/Make.com/n8n/etc. on the Connection side — a Connection-repo change
-  (`php bin/console league:oauth2-server:create-client` or a migration like Claude.ai's), tracked
+  (a registration on the Connection side, like Claude.ai's), tracked
   separately; this RFC only makes the MCP server correctly *use* whatever is or isn't registered.
 
 ## Testing / Verification
@@ -336,8 +333,7 @@ call is unauthenticated and doesn't touch a project): `ConnectionClientRegistry.
 against the real, live `/oauth/clients/validate` — the pre-registered `claude-ai` pair maps to
 `REGISTERED`, an arbitrary never-registered pair maps to `NOT_REGISTERED`. This is deliberately
 narrower than a full Allow/Deny click-through — Connection's own live-stack E2E suite
-(`connection/tests/E2E/Auth/McpClientValidationTest.php`) already covers that interactive path from
-Connection's side; what was missing, and what Copilot's review flagged, is proof that *this
+already covers that interactive path from Connection's side; what was missing, and what Copilot's review flagged, is proof that *this
 server's own code* interprets Connection's real response codes correctly, not just a mocked one.
 
 **Manual** — one full run against a real dev stack per client type: (1) `claude-ai` (Flow A,
@@ -399,7 +395,7 @@ approval).
 
 5. **No fallback path to `_ALLOWED_DOMAINS` during rollout.** The user confirmed Connection's side
    is merged and released on all stacks. Keeping two trust models running simultaneously (even
-   temporarily) is exactly the "inconsistent security model" risk RISK-76 named — a single, clean
+   temporarily) is exactly the "inconsistent security model" this change removes — a single, clean
    cutover is safer than a flag-guarded dual path here. Operational consequence: every previously-whitelisted
    integration that Connection hasn't separately pre-registered (ChatGPT, Make.com, all the
    n8n/groupondev hosts, Agnes, librechat, devin.ai, onyx.app, Azure APIM) will show its users a
@@ -410,8 +406,7 @@ approval).
 6. **The pending-approval redirect always sends a fresh, random `code_challenge` (`secrets.token_urlsafe(32)`)
    — this is mandatory, not defensive, and is the entire reason Decision §3's live authorization
    code is unredeemable.** Verified against Connection's actual config and source
-   (`connection/config/packages/league_oauth2_server.yaml`: `require_code_challenge_for_public_clients: true`;
-   `league/oauth2-server`'s `AuthCodeGrant::validateCodeChallenge()` rejects a token request with a
+   (Connection requires a code challenge for public clients and rejects a token request with a
    missing or wrong verifier) — a dynamically-approved client is always public (no secret), so this
    is always enforced for it. The random value is presented *as if* it were `SHA-256(code_verifier)`;
    since it is not actually derived from anything, no verifier can exist for it, and redeeming the
@@ -456,7 +451,7 @@ approval).
 
 10. **Every registered client — pre-registered or dynamically approved — gets `claudai projectless`
     (reverses an earlier draft).** An earlier draft withheld `projectless` from a Flow B client, on the
-    grounds that Connection's `ClientApprovalProcessor` deliberately omits it from a self-service
+    grounds that Connection's approval step deliberately omits it from a self-service
     approval (any authenticated user, no elevated role required — Decision §12) and that this server's
     own broker identity (`self._oauth_client_id`, which the broker leg always authenticates as — Decision
     §2) is what Connection checks for `projectless`, not the dynamically-approved client. That is
@@ -489,7 +484,7 @@ approval).
     it was dropped; a cached ERROR would prolong a real outage instead of retrying it, so that's
     never cached either). `/authorize` is unauthenticated, and every registration check not served
     from cache costs one call to Connection's `/oauth/clients/validate`, which is itself
-    IP-rate-limited (600 calls/60s, `connection/config/packages/oauth_client_rate_limit.yaml`) — and
+    IP-rate-limited (600 calls/60s) — and
     this server's entire egress IP shares that budget across every user of the stack.
 
     **The cache alone does not stop this** (Copilot review finding): a caller that varies
@@ -524,30 +519,21 @@ approval).
     `DatabaseUnavailableMiddleware`), not a change inside `check_registration()`. Tracked as AI-4005
     (fleet-wide, per-caller limiter) alongside the cross-replica-fairness gap above, not blocking this PR.
 
-12. **Flagged, not fixed in this repo: any authenticated Keboola user — no elevated role required —
-    can permanently register a stack-global trusted MCP client via Connection's dynamic-approval
-    screen.** Adversarial review traced `ClientApprovalProcessor::process()`
-    (`connection/src/Core/OAuth/ClientApprovalProcessor.php`) and found it checks only that
-    `$context->admin` exists and a per-admin rate limit — no organization, project, or role
-    membership check. Once approved, `check_registration()` returns REGISTERED for **every** user on
-    that stack (Decision §11's point about "the same handful of registered clients" cuts both ways —
-    the approval is not scoped to the approver). This is a genuine widening versus the old model
-    (adding a trusted redirect target used to require a reviewed Keboola-engineering PR, globally;
-    now it requires one click by any of potentially thousands of tenants on a shared stack, with no
-    review). This is **not fixable from this repo** — the missing check is in Connection's PHP, not
-    here — and is called out explicitly rather than left as a silent gap for whoever reviews this RFC
-    to decide whether it needs to go back to the Connection team before this ships. Decision §10
-    removed the one thing that limited the *blast radius* of an unvetted approval (no `projectless`),
-    so this gap now applies to every registered client; it is not closed here.
+12. **Who may approve a new client is decided by Connection, and no role restriction is deployed
+    there yet.** Connection's dynamic-approval step does not require an elevated role, and once a
+    client is approved `check_registration()` returns REGISTERED for every user on that stack (the
+    approval is not scoped to the approver). Before this change, adding a trusted redirect target
+    required a reviewed change to this repo; with it, Connection's approval is the MCP server's trust
+    root. This is not fixable from this repo; it is called out so that whoever reviews this RFC can
+    decide whether it needs to go back to the Connection team before release. Decision §10 means a
+    registered client is not limited to a single project, so the approval gate matters for every
+    registered client.
 
-    **Status (2026-09-16): still open.** A project-admin gate for `ClientApprovalProcessor::process()`
-    was drafted (AI-3936, `keboola/connection#8497`), but that PR is closed, unmerged, with no
-    successor — so the gate is not deployed anywhere. Flagged on the Linear issue for a Connection-
-    side owner to pick up; nothing in `keboola/mcp-server` can close it. This PR does not change
-    Connection's own gap, but it makes that gap **load-bearing for MCP logins**: Connection's approval
-    becomes the MCP server's trust root, whereas before a redirect target needed a reviewed
-    Keboola-engineering change. Restricting who may approve a new client is Connection's gate
-    (AI-3936); whether and how to narrow the grant per registration is tracked in AI-4007.
+    **Status (2026-09-16): still open.** A project-admin gate on approval was drafted (AI-3936,
+    `keboola/connection#8497`), but that PR is closed and unmerged, so no such gate is deployed.
+    Restricting who may approve a new client is Connection's gate (AI-3936); whether and how to
+    narrow the grant per registration is tracked in AI-4007. Verification before release is tracked
+    in AI-4008 (see "Pre-release verification" above).
 
 13. **The REGISTERED cache's 5-minute TTL is also a revocation-latency window (Copilot review
     finding, accepted).** Connection's contract deliberately maps a deactivated client to the same
@@ -561,7 +547,7 @@ approval).
     revocation path that cannot yet be exercised, would be speculative. Tracked as a follow-up.
 
 14. **Every registered client — including a dynamically-approved (Flow B) one — targets
-    `/oauth/consent` with `claudai projectless` ([DMD-2180](https://linear.app/keboola/issue/DMD-2180)).**
+    `/oauth/consent` with `claudai projectless` (DMD-2180).**
     *Superseded history:* a first fix for the loop described below routed a non-`projectless` request to
     Connection's `/oauth/authorize` instead of `/oauth/consent`, because at the time `/oauth/consent`'s
     Approve action (`ConsentSubmissionAction`) never set the `oauth_selected_project_id` session key the
@@ -599,5 +585,5 @@ resolutions:
 | `register_client()`'s debug log interpolated the raw, unauthenticated `client_name` directly — unbounded length and control characters bypassed the sanitize-at-insertion protection for this one log line | Low | Fixed (logs the already-sanitized stored value instead) |
 | Invalid `/authorize` requests (e.g. missing `code_challenge`) made the mcp SDK's `error_response()` redirect to the caller-supplied `https` `redirect_uri` before `authorize()` ran — an unauthenticated open redirect | High | Fixed — `UntrustedAuthorizeRedirectMiddleware` allows `/authorize` to redirect only to Connection or this server. It guards both the mounted `/mcp` app (`get_middleware()`) and the outer app's root OAuth routes (`CustomRoutes.add_to_starlette`); a first version covered only the former (Vojtěch Biberle review), pinned by `test_add_to_starlette_guards_root_authorize_route` |
 | The REGISTERED cache's 5-minute TTL is also a revocation-latency window — a deactivated client stays admitted for up to 5 minutes | Low (no live trigger yet — Connection has no revoke UI) | Accepted, documented — Decision §13; revisit when Connection ships a revoke path |
-| A dynamically-approved (Flow B) client's authorize request targeted `/oauth/consent` while omitting `projectless`, which Connection's consent flow did not resolve at the time — the session looped between `/oauth/consent` and `/oauth/project-selector`; found via manual end-to-end testing against a real dev stack | High (feature-breaking, not exploitable) | Superseded — Decision §14 ([DMD-2180](https://linear.app/keboola/issue/DMD-2180)): every registered client now gets `projectless` and `/oauth/consent`, so the split this finding led to was removed |
+| A dynamically-approved (Flow B) client's authorize request targeted `/oauth/consent` while omitting `projectless`, which Connection's consent flow did not resolve at the time — the session looped between `/oauth/consent` and `/oauth/project-selector`; found via manual end-to-end testing against a real dev stack | High (feature-breaking, not exploitable) | Superseded — Decision §14 (DMD-2180): every registered client now gets `projectless` and `/oauth/consent`, so the split this finding led to was removed |
 | Two RFC "Resolution Strategy" sections (§2's sync-hook description, §5's `authorize()` code sketch) described an earlier, narrower design (minimal scheme rejection only; `raise AuthorizeError`) that the final Decisions (§8, §9) superseded, making the RFC internally contradictory | Low (documentation) | Fixed — both sections rewritten to match the shipped behavior |

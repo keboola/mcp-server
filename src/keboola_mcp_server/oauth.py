@@ -71,7 +71,7 @@ _LOOPBACK_HOSTS = frozenset({'localhost', '127.0.0.1', '[::1]'})
 _ALLOWED_CURSOR_HOSTS = frozenset({'anysphere.cursor-retrieval', 'anysphere.cursor-mcp'})
 
 # redirect_uri -> the literal client_id Keboola pre-registered for it in Connection's oauth2_client
-# table (see connection/src/Core/Migrations/Application/Migrations/PreRegisterClaudeAiOAuthClientMigration*.php).
+# table (a migration on the Connection side).
 # Not a trust decision -- it only picks which Connection row to ask about; /oauth/clients/validate
 # is still the sole authority on whether the pair is actually registered and active.
 _WELL_KNOWN_CONNECTION_CLIENT_IDS: dict[str, str] = {
@@ -88,7 +88,7 @@ _REGISTERED_CACHE_TTL_SECONDS = 300  # 5 min: a registered+active client's statu
 
 # Local cap on calls to Connection's POST /oauth/clients/validate, enforced in
 # _check_registration_uncached before any network call. Connection's own per-IP ceiling for this
-# route is 600 calls/60s (connection/config/packages/oauth_client_rate_limit.yaml) -- deliberately
+# route is 600 calls/60s -- deliberately
 # high because its whole legitimate caller base is "the MCP server", seen as a handful of shared
 # egress IPs across every user of the stack. The registration cache above already absorbs the
 # common case (repeat callers hit the cache, not Connection), so the only way to burn through that
@@ -131,14 +131,12 @@ class _ClientRegistration(Enum):
     ERROR = auto()
 
 
-# Loopback hosts whose port the pinned mcp SDK's own league OAuth library already ignores when
-# matching redirect_uris (vendor/league/oauth2-server's RedirectUriValidator: isLoopbackUri() /
-# matchUriExcludingPort() -- 127.0.0.1 and [::1] only, deliberately NOT 'localhost', per RFC 8252
+# Loopback hosts whose port Connection's redirect-URI matching already ignores
+# (127.0.0.1 and [::1] only, deliberately NOT 'localhost', per RFC 8252
 # §7.3's "any port" allowance for native/loopback clients). Mirrored here, not the broader
 # _LOOPBACK_HOSTS shape-check set above, so the derived Connection client_id below is only made
 # port-stable for the hosts where that stability is actually honored end-to-end (Connection's own
-# registry normalizes the same way -- see connection's ClientValidationProcessor/
-# ClientApprovalProcessor, Vojtěch Biberle review, connection#8573-adjacent). 'localhost' still
+# registry normalizes the same way, Vojtěch Biberle review). 'localhost' still
 # gets a fresh client_id (and a fresh approval) per port -- a residual gap shared with league
 # itself, not fixable without a vendor patch.
 _PORT_INSENSITIVE_LOOPBACK_HOSTS = frozenset({'127.0.0.1', '::1'})
@@ -190,7 +188,7 @@ def _sanitize_client_name(name: str) -> str:
     """Strips unprintable characters Connection's pending_mcp_client decoder would otherwise
     reject outright (which would silently drop the whole approval payload -- see
     PendingMcpClientApprovalListener's catch-and-ignore on a malformed payload), and truncates to
-    Connection's 128-byte cap (PHP `strlen()` counts UTF-8 bytes, not characters), without splitting
+    Connection's 128-byte cap (it counts UTF-8 bytes, not characters), without splitting
     a multibyte character."""
     return _strip_unprintable(name).encode()[:128].decode(errors='ignore')
 
@@ -369,8 +367,7 @@ class ConnectionClientRegistry:
             return _ClientRegistration.ERROR
 
         if response.status_code == 200:
-            # Connection's real 200 is always an empty JSON object (`EmptyJsonResponse`,
-            # connection/src/Core/Symfony/Response/EmptyJsonResponse.php) -- checking the body
+            # Connection's real 200 is always an empty JSON object -- checking the body
             # shape, not just the status code, catches a misconfigured intermediary (a health
             # check, an SSO/captive-portal page, a WAF challenge) answering 200 at this exact URL
             # without ever reaching Connection's real endpoint (Copilot review finding).
@@ -407,9 +404,8 @@ class ConnectionClientRegistry:
         still just whatever the *caller* of this server's own `/authorize` claimed (RFC Decisions
         §2-3: the Allow click is a real grant on the approving admin's account, not an inert
         registration side effect). It is unredeemable ONLY because `code_challenge` below is a
-        high-entropy random value with no known preimage, and Connection's league config requires
-        a code challenge for public clients (`require_code_challenge_for_public_clients: true`,
-        `connection/config/packages/league_oauth2_server.yaml`) -- so redeeming it needs a SHA-256
+        high-entropy random value with no known preimage, and Connection requires a code
+        challenge for public clients -- so redeeming it needs a SHA-256
         preimage nobody has. This is load-bearing, not a curiosity: it is what stands between "the
         approval only registers a client" and "the approval hands the caller a live grant".
         """
@@ -434,8 +430,7 @@ class ConnectionClientRegistry:
             response_type='code',
             # MANDATORY, not defensive -- see this method's docstring. secrets.token_urlsafe(32) is
             # a random value presented AS IF it were a SHA-256 digest; no code_verifier can exist
-            # for it, so Connection's PKCE check (AuthCodeGrant::validateCodeChallenge, league/
-            # oauth2-server) can never be satisfied by anyone, including the caller-controlled
+            # for it, so Connection's PKCE check can never be satisfied by anyone, including the caller-controlled
             # redirect_uri that receives the resulting code. Never remove this parameter, and never
             # replace it with a value derived from anything this server or its caller could recompute.
             code_challenge=secrets.token_urlsafe(32),
