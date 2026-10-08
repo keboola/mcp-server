@@ -508,7 +508,7 @@ class _OAuthClientInformationFull(OAuthClientInformationFull):
             LOG.warning(f'[validate_redirect_uri] Rejected scheme in redirect_uri: {stripped_uri}')
             raise InvalidRedirectUriError(f'Invalid redirect_uri: {stripped_uri}')
 
-        LOG.info(f'[validate_redirect_uri] Accepted redirect_uri (pending Connection check): {stripped_uri}]')
+        LOG.info(f'[validate_redirect_uri] Accepted redirect_uri (pending Connection check): {stripped_uri}')
         return redirect_uri
 
     @staticmethod
@@ -589,6 +589,26 @@ class DatabaseUnavailableMiddleware:
             await response(scope, receive, send)
 
 
+# The OAuth routes a redirect to a caller-influenced host must never come out of. Matched without a trailing
+# slash: Starlette answers `/authorize/` with a 307 whose Location is built from the request's Host header.
+_GUARDED_OAUTH_PATHS = frozenset({'/authorize', '/register', '/token', '/revoke'})
+_DEFAULT_PORTS = {'http': 80, 'https': 443}
+
+
+def _origin(url: str) -> tuple[str, str, int] | None:
+    """`(scheme, hostname, effective port)` of an absolute URL, or None for a relative or malformed one."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return None
+    if not parsed.scheme or not host:
+        return None
+    scheme = parsed.scheme.lower()
+    return scheme, host.lower(), port or _DEFAULT_PORTS.get(scheme, 0)
+
+
 class UntrustedAuthorizeRedirectMiddleware:
     """Blocks `/authorize` from ever redirecting to a host this server didn't intend.
 
@@ -606,12 +626,14 @@ class UntrustedAuthorizeRedirectMiddleware:
     Claude review of the same PR.
 
     Every *legitimate* redirect this server's `/authorize` route issues targets only one of two
-    known hosts: Connection's own `server_url` (`_oauth_server_auth_url`, `_oauth_server_authorize_url`,
-    and `ConnectionClientRegistry`'s own `/oauth/authorize`) or this server's own `mcp_server_url`
-    (`_mcp_callback_url`) -- it never redirects straight to the caller-supplied `redirect_uri` (that
-    only happens later, from `/oauth/callback`, after the real grant). So allowlisting the
-    `/authorize` route's outgoing redirect host to exactly those two closes the gap without
-    touching the intentional "any https host" shape check.
+    known origins: Connection's own `server_url` (`_oauth_server_auth_url` and `ConnectionClientRegistry`'s
+    own `/oauth/authorize`) or this server's own `mcp_server_url` (`_mcp_callback_url`) -- it never
+    redirects straight to the caller-supplied `redirect_uri` (that only happens later, from
+    `/oauth/callback`, after the real grant). So allowlisting the outgoing redirect's origin (scheme,
+    host and effective port, not the hostname alone) to exactly those two closes the gap without
+    touching the intentional "any https host" shape check. The same guard covers `/register`, `/token`
+    and `/revoke`, and the trailing-slash form of each: Starlette's slash normalisation answers
+    `/authorize/` with a 307 built from the request's Host header.
 
     Must be the outermost middleware (listed first in `get_middleware()`) so it inspects the final
     response after every inner layer -- including the SDK's own route handler -- has run.
@@ -621,14 +643,14 @@ class UntrustedAuthorizeRedirectMiddleware:
     app, so `CustomRoutes.add_to_starlette()` adds it there too.
     """
 
-    def __init__(self, app: ASGIApp, trusted_hosts: frozenset[str]) -> None:
+    def __init__(self, app: ASGIApp, trusted_origins: frozenset[tuple[str, str, int]]) -> None:
         self._app = app
-        self._trusted_hosts = trusted_hosts
+        self._trusted_origins = trusted_origins
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         # Route-relative path: under the production `/mcp` mount `scope['path']` is `/mcp/authorize`
         # (root_path='/mcp'), which a raw comparison would miss (Vojtěch Biberle review, AI-2883).
-        if scope['type'] != 'http' or get_route_path(scope) != '/authorize':
+        if scope['type'] != 'http' or get_route_path(scope).rstrip('/') not in _GUARDED_OAUTH_PATHS:
             await self._app(scope, receive, send)
             return
 
@@ -643,12 +665,14 @@ class UntrustedAuthorizeRedirectMiddleware:
                 return
             if message['type'] == 'http.response.start' and 300 <= message['status'] < 400:
                 location = Headers(raw=message['headers']).get('location')
-                # A missing or host-less (relative) Location has no hostname, so it is blocked too:
-                # fail closed, since a relative redirect can't be proven to stay on a trusted host.
-                host = urlparse(location).hostname if location else None
-                if host is None or host.lower() not in self._trusted_hosts:
+                # A missing or relative Location has no origin, so it is blocked too: fail closed, since a
+                # relative redirect can't be proven to stay on a trusted origin.
+                origin = _origin(location) if location else None
+                if origin is None or origin not in self._trusted_origins:
                     blocked = True
-                    LOG.warning(f'[authorize] Blocked redirect to untrusted host: {location}')
+                    LOG.warning(
+                        f'[authorize] Blocked redirect to untrusted origin: {_sanitize_for_log(location or "")}'
+                    )
                     response = JSONResponse(
                         {'error': 'invalid_request', 'error_description': 'Invalid authorization request.'},
                         status_code=400,
@@ -701,15 +725,14 @@ class SimpleOAuthProvider(OAuthProvider):
         self._oauth_client_id = client_id
         self._oauth_client_secret = client_secret
         self._oauth_server_auth_url = urljoin(server_url, '/oauth/consent')
-        self._oauth_server_authorize_url = urljoin(server_url, '/oauth/authorize')
         self._oauth_server_token_url = urljoin(server_url, '/oauth/token')
         self._oauth_scope = scope
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
         self._client_registry = ConnectionClientRegistry(server_url)
-        # The only two hosts `/authorize` may ever legitimately redirect to -- see
+        # The only two origins the OAuth routes may ever legitimately redirect to -- see
         # UntrustedAuthorizeRedirectMiddleware's docstring.
-        self.trusted_redirect_hosts = frozenset(
-            h.lower() for h in (urlparse(mcp_server_url).hostname, urlparse(server_url).hostname) if h
+        self.trusted_redirect_origins = frozenset(
+            o for o in (_origin(mcp_server_url), _origin(server_url)) if o is not None
         )
 
     def get_middleware(self) -> list[Middleware]:
@@ -723,7 +746,7 @@ class SimpleOAuthProvider(OAuthProvider):
         dict -- see that middleware's own docstring.
         """
         return [
-            Middleware(UntrustedAuthorizeRedirectMiddleware, trusted_hosts=self.trusted_redirect_hosts),
+            Middleware(UntrustedAuthorizeRedirectMiddleware, trusted_origins=self.trusted_redirect_origins),
             Middleware(DatabaseUnavailableMiddleware),
             *super().get_middleware(),
         ]

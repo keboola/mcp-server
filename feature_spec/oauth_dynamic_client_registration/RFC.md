@@ -427,7 +427,7 @@ approval).
    hardening but isn't required to close AI-3792/AI-3591.
 
 8. **`validate_redirect_uri` (the sync SDK hook) enforces a redirect_uri *shape* allowlist
-   (https any host / cursor any host / http loopback-only, no userinfo, no fragment, ≤2048 chars)
+   (https any host / cursor only the two Anysphere hosts / http loopback-only, no userinfo, no fragment, ≤2048 chars)
    instead of accepting anything but three dangerous schemes.** Added after adversarial review found
    a real open redirect this RFC's first draft introduced (see the security-review addendum below):
    this hook's output is what the mcp SDK's own error-response fallback would redirect to if
