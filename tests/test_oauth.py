@@ -382,7 +382,7 @@ class TestConnectionClientIdentity:
             ('Evil\u200bName', 'EvilName'),  # zero-width space stripped
             ('Evil\u202eName', 'EvilName'),  # bidi override stripped
             ('Evil\x00Name', 'EvilName'),  # control character stripped
-            # Connection's cap is 128 UTF-8 *bytes* (PHP strlen), not characters
+            # Connection's cap is 128 UTF-8 *bytes*, not characters
             ('\u00e9' * 65, '\u00e9' * 64),
             ('\u00e9' * 64, '\u00e9' * 64),  # exactly 128 bytes, kept as is
             ('a' * 127 + '\u00e9', 'a' * 127),  # a multibyte char straddling the cap is dropped, not split

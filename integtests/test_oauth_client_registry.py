@@ -8,7 +8,7 @@ needs no project lock -- just `storage_api_url`, which is also Connection's own 
 `storage_api_url` already points at).
 
 Deliberately narrower than a full Allow/Deny click-through: Connection's own live-stack E2E suite
-(`connection/tests/E2E/Auth/McpClientValidationTest.php`) already covers that interactive path.
+already covers that interactive path.
 What was missing -- and what this closes -- is proof that this server's own `check_registration()`
 maps Connection's *real* response codes correctly, not just a mocked 200/404.
 """
