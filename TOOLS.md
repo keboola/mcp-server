@@ -2390,9 +2390,10 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
 
 Creates a short-lived link that opens a dev-mode data app in your browser without the app's login.
 
-Use it to see or test any data app while it runs in dev mode. The usual case is a python-js **draft**
-deployed with `deploy_data_app(action='deploy', mode='dev')`. An app that is not in dev mode has no
-preview link.
+Use it to see or test a python-js **draft** deployed with `deploy_data_app(action='deploy', mode='dev')`.
+- Only a python-js draft reaches dev mode: a Streamlit app has no managed git repo and its image has no
+  dev mode.
+- An app that is not in dev mode has no preview link.
 
 ## How to use the link
 - Open `url` in a real browser before `link_expires_at` (about 60 seconds after this call): a browser tool,
@@ -2413,7 +2414,8 @@ preview link.
 ## Errors
 - "not running in dev mode": deploy the draft with `deploy_data_app` (mode='dev') first.
 - "is a production app": preview a draft of it instead; never switch a production app to dev mode.
-- "is not in dev mode" on another app type: tell the user; do not change its deploy mode.
+- "is not in dev mode" on another app type (e.g. Streamlit): it has no dev mode; tell the user and do not
+  change its deploy mode.
 - "not configured on this Keboola stack": preview links are not available here; tell the user.
 
 
@@ -2423,7 +2425,7 @@ preview link.
   "additionalProperties": false,
   "properties": {
     "configuration_id": {
-      "description": "Storage configuration ID of a data app running in dev mode, of any type. The usual case is a python-js draft deployed with `deploy_data_app` (mode=\"dev\").",
+      "description": "Storage configuration ID of a python-js draft deployed with `deploy_data_app` (mode=\"dev\"). Only a python-js draft can run in dev mode.",
       "type": "string"
     },
     "project_id": {
