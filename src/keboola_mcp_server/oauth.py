@@ -2,6 +2,7 @@ import asyncio
 import base64
 import dataclasses
 import hashlib
+import hmac
 import json
 import logging
 import math
@@ -159,10 +160,17 @@ def _without_port_for_loopback(redirect_uri: str) -> str:
     return urlunparse(parsed._replace(netloc=host))
 
 
-def _connection_client_id(redirect_uri: str) -> str:
+def _connection_client_id(redirect_uri: str, key: bytes) -> str:
     """
     Maps an AI assistant's own redirect_uri to the client_id used when talking to Connection's
     OAuth client registry.
+
+    The id is an HMAC of the redirect_uri under a key only this deployment holds, so nobody else can compute it.
+    Connection accepts an unsigned `pending_mcp_client` payload from any logged-in user at its public
+    /oauth/authorize, so an id anyone could derive would let a user approve a pair out of band, skipping
+    `OAUTH_DYNAMIC_CLIENT_APPROVAL`. The id only reaches a browser when this server sends the approval redirect
+    (switch on), and the well-known pairs below keep their literal ids because only a Connection migration, not
+    a user, registers them.
 
     Connection's oauth2_client.identifier column (and the pending_mcp_client payload's client_id
     field) are capped at 32 characters, but the mcp SDK mints a 36-character uuid4() as client_id
@@ -179,7 +187,7 @@ def _connection_client_id(redirect_uri: str) -> str:
     """
     if known := _WELL_KNOWN_CONNECTION_CLIENT_IDS.get(redirect_uri):
         return known
-    digest = hashlib.sha256(_without_port_for_loopback(redirect_uri).encode()).hexdigest()[:24]
+    digest = hmac.new(key, _without_port_for_loopback(redirect_uri).encode(), hashlib.sha256).hexdigest()[:24]
     return f'mcp-{digest}'
 
 
@@ -762,6 +770,7 @@ class SimpleOAuthProvider(OAuthProvider):
         jwt_secret: str | None = None,
         validate_rate_limit: int | None = None,
         dynamic_client_approval: bool = False,
+        encryption_key: bytes | None = None,
     ) -> None:
         """
         Creates OAuth provider implementation.
@@ -778,6 +787,9 @@ class SimpleOAuthProvider(OAuthProvider):
             pre-authentication artifacts (authorize-state, authorization code) still use `jwt_secret`
             below; only the long-lived, real-credential-carrying tokens live in the store.
         :param jwt_secret: The secret key for encoding and decoding the pre-auth JWT artifacts.
+        :param encryption_key: The session encryption key; the Connection client ids are keyed with a key derived
+            from it (see `_connection_client_id`), so every replica must get the same one. Without it a
+            process-local key is used, which is fine for local runs and tests only.
         """
         super().__init__(
             base_url=mcp_server_url,
@@ -793,6 +805,10 @@ class SimpleOAuthProvider(OAuthProvider):
         self._oauth_server_token_url = urljoin(server_url, '/oauth/token')
         self._oauth_scope = scope
         self._jwt_secret = jwt_secret or secrets.token_hex(32)
+        # A sub-key, so the AES key itself is never used for anything but encrypting sessions.
+        self._client_id_key = hmac.new(
+            encryption_key or secrets.token_bytes(32), b'keboola-mcp-server/connection-client-id', hashlib.sha256
+        ).digest()
         self._client_registry = ConnectionClientRegistry(server_url, validate_rate_limit=validate_rate_limit)
         # Whether an unregistered client is sent to Connection's approval screen. Off means only clients Connection
         # already knows can log in (see `Config.oauth_dynamic_client_approval`).
@@ -906,7 +922,7 @@ class SimpleOAuthProvider(OAuthProvider):
 
     async def _authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         redirect_uri_str = str(params.redirect_uri)
-        connection_client_id = _connection_client_id(redirect_uri_str)
+        connection_client_id = _connection_client_id(redirect_uri_str, self._client_id_key)
 
         registration = await self._client_registry.check_registration(connection_client_id, redirect_uri_str)
         if registration is _ClientRegistration.ERROR:

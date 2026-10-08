@@ -28,8 +28,10 @@ _PRE_REGISTERED_REDIRECT_URI = 'https://claude.ai/api/mcp/auth_callback'
 @pytest.mark.asyncio
 async def test_check_registration_accepts_the_pre_registered_claude_ai_pair(storage_api_url: str):
     registry = ConnectionClientRegistry(storage_api_url)
-
-    result = await registry.check_registration(_PRE_REGISTERED_CLIENT_ID, _PRE_REGISTERED_REDIRECT_URI)
+    try:
+        result = await registry.check_registration(_PRE_REGISTERED_CLIENT_ID, _PRE_REGISTERED_REDIRECT_URI)
+    finally:
+        await registry.aclose()
 
     assert result is _ClientRegistration.REGISTERED
 
@@ -37,8 +39,10 @@ async def test_check_registration_accepts_the_pre_registered_claude_ai_pair(stor
 @pytest.mark.asyncio
 async def test_check_registration_rejects_an_unregistered_pair(storage_api_url: str):
     registry = ConnectionClientRegistry(storage_api_url)
-
-    # A client_id no migration or approval flow could plausibly have created.
-    result = await registry.check_registration(f'mcp-test-{uuid.uuid4().hex[:16]}', 'https://example.com/callback')
+    try:
+        # A client_id no migration or approval flow could plausibly have created.
+        result = await registry.check_registration(f'mcp-test-{uuid.uuid4().hex[:16]}', 'https://example.com/callback')
+    finally:
+        await registry.aclose()
 
     assert result is _ClientRegistration.NOT_REGISTERED
