@@ -482,9 +482,11 @@ class DataApp(BaseModel):
     def with_image(self, images: list[RuntimeImage] | None) -> 'DataApp':
         """Reports the image a python-js app runs in its deployment info.
 
-        - A no-op for other apps, without deployment info, or when the catalog is unavailable (`None`).
+        - Call it after `with_deployment_info`.
+        - A no-op for other apps, or when the catalog is unavailable (`None`).
         """
-        if self.type == 'python-js' and images is not None and self.deployment_info is not None:
+        assert self.deployment_info is not None, 'with_image needs with_deployment_info first'
+        if self.type == 'python-js' and images is not None:
             self.deployment_info.image, self.deployment_info.image_pinned = _resolve_app_image(
                 self.configuration, images
             )
@@ -2411,17 +2413,18 @@ def _python_js_images(runtimes: Sequence[RuntimeResponse]) -> list[RuntimeImage]
 
     - The catalog can list one tag twice (the default and a "pinned" twin); the default entry wins.
     """
-    python_js = [runtime for runtime in runtimes if runtime.type == 'python-js' and runtime.image_tag]
-    # Defaults sort last, so they overwrite a twin with the same tag.
-    images = {
-        runtime.image_tag: RuntimeImage(
+    images: dict[str, RuntimeImage] = {}
+    for runtime in runtimes:
+        if runtime.type != 'python-js' or not runtime.image_tag:
+            continue
+        if runtime.image_tag in images and not runtime.is_type_default:
+            continue
+        images[runtime.image_tag] = RuntimeImage(
             version=runtime.image_tag,
             description=runtime.description,
             is_default=runtime.is_type_default,
             end_of_life_date=runtime.end_of_life_date,
         )
-        for runtime in sorted(python_js, key=lambda runtime: runtime.is_type_default)
-    }
     return list(images.values())
 
 
@@ -2444,14 +2447,12 @@ async def _validate_image_version(client: KeboolaClient, image_version: str) -> 
 
     - Fails closed when the catalog is unavailable: an unverified tag would only fail at deploy.
     """
-    try:
-        runtimes = await client.data_science_client.list_runtimes()
-    except httpx.HTTPError as exc:
+    images = await _fetch_python_js_images(client)
+    if images is None:
         raise ValueError(
-            f'Could not verify image_version "{image_version}": the platform runtimes catalog is unavailable '
-            f'({exc}). Retry, or leave image_version unset to keep the app\'s current image.'
-        ) from exc
-    images = _python_js_images(runtimes)
+            f'Could not verify image_version "{image_version}": the platform runtimes catalog is unavailable. '
+            "Retry, or leave image_version unset to keep the app's current image."
+        )
     if any(image.version == image_version for image in images):
         return
     offered = '; '.join(
