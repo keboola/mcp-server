@@ -161,11 +161,14 @@ used as the outer `client_id` query param on the pending-approval redirect (Conn
 requires the two to match exactly). It is never shown to, or expected back from, the AI assistant —
 purely an internal Connection-facing identity.
 
-A loopback client's redirect_uri carries an ephemeral port, so it gets a new derived id — and needs
-re-approval — on every run. That's not a regression this RFC introduces: Connection's own doc
-already documents exactly this tradeoff for loopback clients and recommends a fixed port for
-one-time approval. Deriving from `redirect_uri` (not `client_id`) is what makes a *stable-port*
-tool's approval survive it re-registering with a fresh SDK-minted uuid, which is the main point.
+A loopback client's redirect_uri carries an ephemeral port that changes on every run (RFC 8252 §7.3). For
+`127.0.0.1` and `[::1]` the port is therefore stripped before the id is derived, mirroring Connection's own
+redirect-URI matching, which ignores the port for exactly those two hosts: the same tool reconnecting on a new port
+lands on the same derived id and reuses its earlier approval instead of needing a fresh human approval and leaving
+a never-cleaned-up registration behind on every run. `localhost` is deliberately not in that set: Connection
+matches it port-exactly, so a derived id that ignored its port could not be matched back. Deriving from
+`redirect_uri` (not `client_id`) is also what makes a *stable-port* tool's approval survive it re-registering with
+a fresh SDK-minted uuid.
 
 ### 5. `authorize()` — the real trust decision
 
@@ -510,7 +513,8 @@ approval).
     call (single-flight), so a burst cannot fan out past it. And because Connection's own 429 can still
     hit the pre-registered claude.ai pair (it is exempt from the local limiter), that pair alone is served
     from its last known REGISTERED answer for up to an hour when Connection cannot answer (an error or a 429,
-    never a definite "not registered"); no other pair is ever answered from memory. The validate calls share
+    never a definite "not registered"), and after such a failure Connection is not asked again for that pair for
+    15 seconds, so a failing Connection is not called once per request; no other pair is ever answered from memory. The validate calls share
     one pooled HTTP client, closed in the server's lifespan teardown.
 
     **Known trade-off (security-scanner finding, accepted):** the limiter's budget is global per
@@ -532,12 +536,14 @@ approval).
 12. **Who may approve a new client is decided by Connection, and no role restriction is deployed
     there yet.** Connection's dynamic-approval step does not require an elevated role, and once a
     client is approved `check_registration()` returns REGISTERED for every user on that stack (the
-    approval is not scoped to the approver). Before this change, adding a trusted redirect target
-    required a reviewed change to this repo; with it, Connection's approval is the MCP server's trust
-    root. This is not fixable from this repo; it is called out so that whoever reviews this RFC can
-    decide whether it needs to go back to the Connection team before release. Decision §10 means a
-    registered client is not limited to a single project, so the approval gate matters for every
-    registered client.
+    approval is not scoped to the approver). Connection's gap is not new and is not changed by this PR;
+    what this PR changes is that it becomes load-bearing for MCP logins. Before, adding a trusted
+    redirect target required a reviewed change to this repo; now Connection's approval is the MCP
+    server's trust root, so an approved callback receives the consent of every later user of that
+    client, as a project-less (whole-stack) session. This is not fixable from this repo, which is why
+    approval is **off by default** (see the deployment switch below) until Connection has an elevated or
+    per-user approval boundary. Decision §10 means a registered client is not limited to a single project,
+    so the approval gate matters for every registered client.
 
     **Status (2026-09-16): still open.** A project-admin gate on approval was drafted (AI-3936,
     `keboola/connection#8497`), but that PR is closed and unmerged, so no such gate is deployed.
@@ -545,15 +551,18 @@ approval).
     narrow the grant per registration is tracked in AI-4007. Verification before release is tracked
     in AI-4008 (see "Pre-release verification" above).
 
-    **Deployment switch.** `OAUTH_DYNAMIC_CLIENT_APPROVAL` (default on, so behavior is as described
-    above) decides whether a client Connection does not know yet is sent to its approval screen. With
-    it off, such a client is refused on a short page of this server's own origin, and only clients
-    already registered with Connection can log in; a registered client still gets `claudai projectless`
-    either way. It is deployment-level configuration and is never read from a request header. Turning
-    it off stops *new* approvals only: a client approved earlier stays registered in Connection, and
-    this server cannot list or deactivate those (there is no listing endpoint), so cleaning them up is
-    a Connection-side step. The INFO line "Registered client proceeding to consent" shows which
-    callbacks are in use.
+    **Deployment switch.** `OAUTH_DYNAMIC_CLIENT_APPROVAL` decides whether a client Connection does not
+    know yet is sent to its approval screen. It is **off unless set to `true`**: such a client is refused
+    on a short page of this server's own origin, and only clients already registered with Connection can log
+    in; a registered client still gets `claudai projectless` either way. Pre-registering a client in
+    Connection (a migration, as for claude.ai) is the way to onboard a known client without turning it on.
+    Turn it on only for a short, supervised window (for example on a dev stack, to verify the approval
+    flow), with someone who knows the correct redirect URI doing the approving, because for that window any
+    authenticated user of the stack can register a callback. It is deployment-level configuration and is
+    never read from a request header. Turning it off again stops *new* approvals only: a client approved
+    earlier stays registered in Connection, and this server cannot list or deactivate those (there is no
+    listing endpoint), so cleaning them up is a Connection-side step. The INFO line "Registered client
+    proceeding to consent" shows which callbacks are in use.
 
 13. **The REGISTERED cache's 5-minute TTL is also a revocation-latency window (Copilot review
     finding, accepted).** Connection's contract deliberately maps a deactivated client to the same

@@ -298,7 +298,9 @@ class TestUntrustedAuthorizeRedirectMiddleware:
         assert 'attacker.example' not in response.headers.get('location', '')
 
     @pytest.mark.parametrize('prefix', ['', '/mcp'])
-    @pytest.mark.parametrize('path', ['/authorize/', '/register/', '/token/', '/revoke/'])
+    @pytest.mark.parametrize(
+        'path', ['/authorize/', '/register/', '/token/', '/revoke/', '/.well-known/oauth-authorization-server/']
+    )
     def test_blocks_the_slash_redirect_built_from_a_hostile_host_header(self, app, prefix: str, path: str) -> None:
         """Starlette answers `/authorize/` with a 307 whose Location comes from the request's Host header; the
         guard used to match only the exact `/authorize`, so that redirect (root and under the `/mcp` mount) went
@@ -553,7 +555,22 @@ class TestSimpleOAuthProvider:
             scope='scope',
             jwt_secret=JWT_KEY,
             session_store=FakeSessionStore(),
+            dynamic_client_approval=True,  # off by default; these tests exercise the approval flow
         )
+
+    def test_dynamic_client_approval_is_off_unless_enabled(self) -> None:
+        provider = SimpleOAuthProvider(
+            storage_api_url='https://sapi',
+            mcp_server_url='https://mcp',
+            callback_endpoint='/callback',
+            client_id='mcp-server-id',
+            client_secret='mcp-server-secret',
+            server_url='https://oauth',
+            scope='scope',
+            jwt_secret=JWT_KEY,
+            session_store=FakeSessionStore(),
+        )
+        assert provider._dynamic_client_approval is False
 
     @staticmethod
     def authorization_code(
@@ -1222,6 +1239,56 @@ class TestSimpleOAuthProvider:
         assert await registry.check_registration('x', redirect_uri) is _ClientRegistration[expected]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'expected_calls', 'expected'),
+        [
+            # Connection keeps failing: the well-known pair is served from memory and Connection is called once,
+            # not once per request
+            ('https://claude.ai/api/mcp/auth_callback', 1, 'REGISTERED'),
+            # any other pair is never served from memory, and the local limiter, not a pause, bounds its calls
+            ('https://tool.example/cb', 100, 'ERROR'),
+        ],
+    )
+    async def test_failing_connection_is_not_called_once_per_request(
+        self, monkeypatch: pytest.MonkeyPatch, redirect_uri: str, expected_calls: int, expected: str
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import ConnectionClientRegistry, _ClientRegistration
+
+        status = 200
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(status, json={}) if status == 200 else httpx.Response(status)
+
+        monkeypatch.setattr(
+            oauth_module,
+            '_create_http_client',
+            lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        registry = ConnectionClientRegistry('https://connection.example', validate_rate_limit=1000)
+        assert await registry.check_registration('x', redirect_uri) is _ClientRegistration.REGISTERED
+
+        # the cache entry expires and Connection starts answering 429 to every call
+        registry._registration_cache.clear()
+        status = 429
+        calls = 0
+        for _ in range(100):
+            assert await registry.check_registration('x', redirect_uri) is _ClientRegistration[expected]
+
+        assert calls == expected_calls
+
+        # after the pause Connection is asked again, and a recovered answer ends the pause for good
+        if redirect_uri in registry._well_known_error_until:
+            registry._well_known_error_until[redirect_uri] -= oauth_module._WELL_KNOWN_ERROR_BACKOFF_SECONDS
+            status = 200
+            assert await registry.check_registration('x', redirect_uri) is _ClientRegistration.REGISTERED
+            assert calls == expected_calls + 1
+            assert redirect_uri not in registry._well_known_error_until
+
+    @pytest.mark.asyncio
     async def test_registry_reuses_one_pooled_client_and_recreates_it_after_aclose(
         self, monkeypatch: pytest.MonkeyPatch
     ):
@@ -1287,7 +1354,8 @@ class TestSimpleOAuthProvider:
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
         """Caching a transient failure would prolong an outage instead of retrying it -- fail-closed
-        must keep re-checking Connection on every call, not just the first."""
+        must keep re-checking Connection on every call, not just the first. (The well-known pair is the one
+        exception, pausing briefly after a failure; see test_failing_connection_is_not_called_once_per_request.)"""
         from keboola_mcp_server import oauth as oauth_module
         from keboola_mcp_server.oauth import _ClientRegistration
 
@@ -1305,8 +1373,8 @@ class TestSimpleOAuthProvider:
         )
 
         registry = oauth_provider._client_registry
-        first = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
-        second = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+        first = await registry.check_registration('mcp-tool', 'https://tool.example/cb')
+        second = await registry.check_registration('mcp-tool', 'https://tool.example/cb')
 
         assert first is _ClientRegistration.ERROR
         assert second is _ClientRegistration.ERROR
