@@ -697,21 +697,36 @@ It is additive, per "Schema stability" above, and becomes the metastore's defaul
 - **`groups` selector.** A rule selects by exactly one of `principal`, `principals` or `groups` (IdP group
   names or ids, compared exactly as delivered). A rule matches when the identity's email is a listed
   principal or any of its groups is listed.
-- **OR, not a load error (supersedes the duplicate-principal refusal).** Every rule selecting the reading
-  identity applies: RLS conditions combine with OR, CLS visible columns are the union -- across policies on
-  the same table too. A user in two groups is the normal case, not an authoring mistake.
+- **OR within a policy, AND across policies (supersedes the duplicate-principal refusal).** Each policy
+  object is evaluated on its own: every rule of it selecting the reading identity applies (RLS conditions OR,
+  CLS visible columns union); a policy with no selecting rule falls back to its own `default`, else it
+  refuses -- and one refusing policy refuses the read. The per-policy results then combine with AND (RLS)
+  or intersect (CLS, in the first policy's column order; an empty intersection refuses). So a second policy
+  on a table can only narrow what another allows: a permissive `default` or a `{"true": true}` rule in one
+  policy never lifts another policy's restriction (an author who can only write a `targeted` policy cannot
+  override an organization one). A user in two groups of one policy is the normal case, not an error.
 - **`$identity` placeholders.** `value: {"$identity": "email"}` and `values: {"$identity": "groups"}` resolve
   per identity to bound literals through the same builders as authored literals. An identity without an
   email / without groups makes that comparison match nothing (`FALSE`), never `= ''` or `IN ()`. A
   placeholder anywhere else is refused.
-- **`default` and `{"false": true}`.** A policy's `default` condition applies to an identity no rule
-  selects (several policies on one table: their defaults OR). Absent = refuse, as before. The
-  `{"false": true}` sentinel matches no row, so an admin can choose "no rows" over "error".
+- **`default` and `{"false": true}`.** A policy's `default` condition applies to an identified reader with
+  KNOWN groups that none of its rules selects (per policy; the policies then AND, see above). Absent =
+  refuse, as before. The `{"false": true}` sentinel matches no row, so an admin can choose "no rows" over
+  "error".
+- **No email = no identity.** A reader without an email is refused before any rule, group rule or default is
+  looked at -- for RLS and CLS, in queries and metadata views alike. Groups alone never identify a reader.
+- **Unknown groups are not "no groups".** The caller's groups are either known (possibly empty) or unknown
+  (no group source). With unknown groups, group rules never match AND no `default` applies: a default may be
+  meant only for readers outside some group ("interns see EU, everyone else all"), and an unknown-groups
+  caller could be an intern. A `{"$identity": "groups"}` placeholder resolves to "no groups" (`FALSE`).
 - **`dialect` optional, refused per table.** Absent = the workspace backend. A policy whose `dialect` names
   the other backend refuses reads of its own table only; the project's other governed tables keep working
   (supersedes the whole-load refusal).
 - **Groups for MCP callers.** An MCP session has no group source yet (an OAuth login carries no `groups`
-  claim; the `rls-group` object proposed in the *Trusted end-user identity* doc is an open point), so
-  `groups` rules never match an MCP caller today. `rewrite_query` and the rule lookups already take the
-  identity's groups, so a source plugs in without touching the engine.
+  claim; the `rls-group` object proposed in the *Trusted end-user identity* doc is an open point), so its
+  groups are UNKNOWN: `groups` rules never match an MCP caller and no policy `default` applies to it today.
+  `rewrite_query` and the rule lookups take the identity's groups (`None` = unknown), so a source plugs in
+  without touching the engine -- but it must be passed at every call site alike: `query_data`
+  (`tools/sql.py`) and the metadata views (`tools/search.py`, `tools/storage/tools.py`), or a query and a
+  metadata view would resolve the same reader differently.
 
