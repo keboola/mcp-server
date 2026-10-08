@@ -379,6 +379,27 @@ class AppPreviewLinkResponse(BaseModel):
     )
 
 
+class RuntimeResponse(BaseModel):
+    """One entry of the data-science runtimes catalog (`GET /runtimes`)."""
+
+    type: str = Field(description='The app type the runtime serves, e.g. "python-js" or "streamlit".')
+    description: str = Field(description='Human-readable label, e.g. "Python 3.13 + Node.js 24".')
+    is_type_default: bool = Field(
+        validation_alias=AliasChoices('isTypeDefault', 'is_type_default'),
+        description='Whether the platform runs this runtime when a configuration pins none.',
+    )
+    image_tag: str | None = Field(
+        validation_alias=AliasChoices('imageTag', 'image_tag'),
+        default=None,
+        description='The value a data app pins in `runtime.image.version`.',
+    )
+    end_of_life_date: str | None = Field(
+        validation_alias=AliasChoices('endOfLifeDate', 'end_of_life_date'),
+        default=None,
+        description='When the runtime reaches its end of life, or `null` when it has no end date.',
+    )
+
+
 class DataScienceClient(KeboolaServiceClient):
     def __init__(self, raw_client: RawKeboolaClient, branch_id: str | None = None) -> None:
         """
@@ -589,6 +610,14 @@ class DataScienceClient(KeboolaServiceClient):
         :param data_app_id: ID of the data app to delete
         """
         await self.delete(endpoint=f'apps/{data_app_id}')
+
+    async def list_runtimes(self) -> list[RuntimeResponse]:
+        """
+        List the runtimes catalog — the image variants apps, workspaces and transformations can run on.
+        """
+        response = await self.get(endpoint='runtimes')
+        assert isinstance(response, list)
+        return [RuntimeResponse.model_validate(runtime) for runtime in response]
 
     async def list_data_apps(self, limit: int = 100, offset: int = 0) -> list[DataAppResponse]:
         """

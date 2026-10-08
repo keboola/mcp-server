@@ -2552,13 +2552,14 @@ Three scenarios the agent has to distinguish:
    The default branch is generated fresh per draft (`draft-<hex>`) so it can never collide
    with a branch left behind by an earlier draft. Override with `branch=<name>` for a
    descriptive name — if you do, YOU own uniqueness (see step 3).
-3. YOU: `git clone U`; `git checkout -b <branch>` (the repo of a brand-new prod app is empty,
-   so there is no `main` to branch from yet); write source; `git push origin <branch>`.
+3. YOU: `git clone U`. The repo of a brand-new prod app is empty, so push an empty `main` first —
+   the first branch pushed becomes the repo's default, and a draft branch that is the default
+   can never be deleted: `git checkout -b main && git commit --allow-empty -m "init main" &&
+   git push origin main`. The empty `main` carries no app code, so it breaks no rule about
+   pushing to `main`. Then `git checkout -b <branch>`; write source; `git push origin <branch>`.
 4. `deploy_data_app(action='deploy', configuration_id=DRAFT, mode='dev')`
    → preview URL serving the draft's pinned branch as a dev version. Iterate with the user.
-5. Once approved — YOU: `git checkout main && git merge <branch>`. On a brand-new app (step 3
-   above) `main` does not exist yet, so create it from the approved draft instead:
-   `git checkout -b main <branch>`. Then `git push origin main`;
+5. Once approved — YOU: `git checkout main && git merge <branch> && git push origin main`;
    `git push origin --delete <branch>` (branch deletes ARE permitted on managed repos).
 6. `deploy_data_app(action='deploy', configuration_id=PROD)`
    → prod URL now serves the merged `main`.
@@ -2618,7 +2619,7 @@ draft handle.
 - `slug` is optional on create (auto-derived from `name` when omitted; drafts get a unique
   suffix). See "Slug on update" below.
 - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
-  `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or
+  `authentication_type`, `auto_suspend_after_seconds`, `storage`, `image_version` on either a prod app or
   a draft, for changing a prod app's `slug` (see "Slug on update"), and for repointing an
   **external-git** app's `branch` (a draft, or an app bound to an external repository — an
   app on a Keboola-managed git repo is rejected, its branch is owned by the platform). Source code changes go through the git flow above, not this
@@ -2713,7 +2714,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to a generated `draft-<hex>` when unset \u2014 unique per draft, so it can never collide with a branch an earlier draft left behind. Pass a descriptive name like 'add-revenue-filter' when it helps the user; a name you supply may already exist on the repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track origin/main`, or `git checkout -b <branch>` on a brand-new prod app whose repo is still empty) rather than with a bare `git checkout`. Must not be `main` (reserved for the prod app) unless `allow_main_branch=True` (platform view-draft only). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
+      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to a generated `draft-<hex>` when unset \u2014 unique per draft, so it can never collide with a branch an earlier draft left behind. Pass a descriptive name like 'add-revenue-filter' when it helps the user; a name you supply may already exist on the repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track origin/main`; on a brand-new prod app whose repo is still empty, push an empty `main` first \u2014 see Scenario A step 3) rather than with a bare `git checkout`. Must not be `main` (reserved for the prod app) unless `allow_main_branch=True` (platform view-draft only). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
     },
     "allow_main_branch": {
       "default": false,
@@ -2766,6 +2767,18 @@ working; tell the user both.
       ],
       "default": null,
       "description": "Whether the app gets read-only Storage access -- a workspace whose ID the platform injects as the WORKSPACE_ID environment variable, which the generated `query_data` helper needs. Distinct from `storage`, which declares table input/output mappings: this switch decides whether the app can reach Storage at all.\n- **On create**: leave unset (None) for the default, which is Storage access ON. Pass `False` only for an app that must not read Storage.\n- **On update**: leave unset (None) to keep whatever the app has -- an unrelated edit never grants or revokes Storage access. Pass `True` to turn it on (this is how you fix an existing app failing with `missing required env vars: WORKSPACE_ID`, with no UI step), or `False` to turn it off. Redeploy the app afterwards to apply it.\nCheck `data_app.storage_access_enabled` in the response to confirm the result.\nThe workspace is scoped to the **whole project**, not to the tables the app queries -- the app can read every table in the project Storage. Tell the user that when you turn it on, and especially when the app is `no-auth`, where anyone with the URL reaches project data through it. If the app must be limited to particular tables, that is an input/output mapping via `storage`, not this switch.\nOn projects without the `data-apps-storage-workspace` feature this falls back to writing `parameters.dataApp.secrets.WORKSPACE_ID`, which is **deprecated** -- it pins the app to the shared MCP-managed workspace instead of a per-app one. Never write that secret by hand; use this argument, and pass the hint in `change_summary` on to the user."
+    },
+    "image_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Backend image the app runs on (the UI's \"Backend version\"), written to `runtime.image.version`. An image tag from the platform catalog, which names its Python and Node.js versions (e.g. `<release>_python-3.13_node-24`). `get_data_apps(configuration_ids=[...])` lists the valid tags in `available_images` and the app's current one in `deployment_info.image`; an unknown tag is rejected with the list of valid ones.\n- Leave unset (None) to keep what the app has on update; on create the app follows the platform default.\n- Pass \"\" to drop a pin and follow the platform default again.\nRedeploy the app afterwards to apply it."
     },
     "folder": {
       "anyOf": [
