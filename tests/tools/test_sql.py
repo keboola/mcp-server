@@ -1390,8 +1390,10 @@ def _stub_metastore_objects(
     rls_policies = rls_policies or []
     cls_policies = cls_policies or []
 
-    async def _list_objects(object_type: str, **_kwargs) -> list[MetastoreObject]:
-        return rls_policies if object_type == 'rls-policy' else cls_policies if object_type == 'cls-policy' else []
+    async def _list_objects(object_type: str, *, limit: int = 100, offset: int = 0, **_kwargs) -> list[MetastoreObject]:
+        # Paged like the real endpoint: the loader reads until an empty page.
+        items = rls_policies if object_type == 'rls-policy' else cls_policies if object_type == 'cls-policy' else []
+        return items[offset : offset + limit]
 
     keboola_client.metastore_client.list_objects.side_effect = _list_objects
 
@@ -1474,7 +1476,9 @@ class TestQueryDataRowLevelSecurity(_DeployedServer):
             table='in.c-crm.invoices', rules_list=[{'principal': 'a@x.com', 'condition': {'true': True}}]
         )
         stepped.list_objects = AsyncMock(
-            side_effect=lambda object_type, **_: [policy] if object_type == 'rls-policy' else []
+            side_effect=lambda object_type, *, offset=0, **_: (
+                [policy] if object_type == 'rls-policy' and offset == 0 else []
+            )
         )
         keboola_client.has_feature.return_value = True
         keboola_client.step_up_metastore_client = MagicMock(return_value=stepped)

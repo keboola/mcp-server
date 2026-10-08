@@ -13,21 +13,21 @@ from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.rls import ClsRules, RlsRules
 
 # Policies are listed a page at a time: large enough that a project with many policies is not dozens of
-# sequential round trips per query, small enough for the response sizes some Metastore endpoints choke on
-# (the list endpoint itself applies any `limit`). Every page is needed: a policy on a page that is never read
-# leaves its table ungoverned.
+# sequential round trips per query. Every object is needed: a policy that is never read leaves its table
+# ungoverned. So the next offset is the number of objects actually received and only an EMPTY page ends the
+# listing -- a server or proxy that returns fewer than `limit` (a cap) must not read as "no more policies".
 _PAGE_SIZE = 100
 _MAX_PAGES = 1000
 
 
 async def _list_all(metastore: MetastoreClient, object_type: str) -> list[MetastoreObject]:
     objects: list[MetastoreObject] = []
-    for page_number in range(_MAX_PAGES):
-        page = await metastore.list_objects(object_type, limit=_PAGE_SIZE, offset=page_number * _PAGE_SIZE)
-        objects.extend(page)
-        if len(page) < _PAGE_SIZE:
+    for _ in range(_MAX_PAGES):
+        page = await metastore.list_objects(object_type, limit=_PAGE_SIZE, offset=len(objects))
+        if not page:
             return objects
-    raise ValueError(f'RLS: more than {_MAX_PAGES * _PAGE_SIZE} {object_type} objects, refusing to guess')
+        objects.extend(page)
+    raise ValueError(f'RLS: more than {_MAX_PAGES} pages of {object_type} objects, refusing to guess')
 
 
 # Project feature that switches the RLS/CLS mechanism on, one gate for both (see the RFC).
