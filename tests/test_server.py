@@ -749,6 +749,34 @@ def test_add_to_starlette_guards_root_authorize_route(redirect_uri: str, expecte
         assert 'attacker.example' not in response.headers.get('location', '')
 
 
+@pytest.mark.parametrize(
+    ('value', 'expected'),
+    [(None, None), ('', None), ('100', 100), ('1', 1), ('0', ValueError), ('-3', ValueError), ('abc', ValueError)],
+)
+def test_parse_validate_rate_limit(value: str | None, expected: int | type[ValueError] | None) -> None:
+    from keboola_mcp_server.server import _parse_validate_rate_limit
+
+    if expected is ValueError:
+        with pytest.raises(ValueError, match='positive integer'):
+            _parse_validate_rate_limit(value)
+    else:
+        assert _parse_validate_rate_limit(value) == expected
+
+
+@pytest.mark.asyncio
+async def test_lifespan_closes_the_oauth_provider(mocker) -> None:
+    from keboola_mcp_server.server import create_keboola_lifespan
+
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    oauth_provider = mocker.Mock()
+    oauth_provider.aclose = mocker.AsyncMock()
+
+    async with create_keboola_lifespan(server_state, oauth_provider)(mocker.Mock()):
+        oauth_provider.aclose.assert_not_called()
+
+    oauth_provider.aclose.assert_awaited_once()
+
+
 class TestCreateServerOAuthSessionStore:
     """OAuth sessions live in Postgres (oauth_session_persistence RFC) -- create_server() must
     refuse to enable OAuth without a DSN rather than silently falling back to something unrevoked."""

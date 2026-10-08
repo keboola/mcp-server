@@ -79,6 +79,10 @@ class Config:
     Maps the `X-KBC-ProjectId` HTTP header (via the alias) and the `KBC_PROJECT_ID` env var.
     Only consulted when the inbound Storage token is a Keboola programmatic token; the legacy
     project-bound Storage token derives its project from the token itself."""
+    oauth_validate_rate_limit: str | None = None
+    """Calls per minute one server process may make to the OAuth server's client-validation endpoint (a positive
+    integer). Unset means the built-in default. The OAuth server allows a fixed number of such calls per minute per
+    egress IP, shared by every replica, so this times the replica count must stay below that number."""
 
     # Fields a per-request HTTP header may legitimately set (see `replace_by_headers`). Everything
     # else -- jwt_secret, postgres_dsn, session_encryption_key, oauth_client_id/secret,

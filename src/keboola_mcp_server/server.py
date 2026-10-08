@@ -77,8 +77,23 @@ class ServiceInfoApiResp(BaseModel):
     )
 
 
+def _parse_validate_rate_limit(value: str | None) -> int | None:
+    """The `oauth_validate_rate_limit` setting as a positive int; None when unset. A bad value stops startup rather
+    than silently falling back to a limit nobody chose."""
+    if value is None or value == '':
+        return None
+    try:
+        limit = int(value)
+    except ValueError:
+        limit = 0
+    if limit < 1:
+        raise ValueError(f'oauth_validate_rate_limit must be a positive integer, got {value!r}')
+    return limit
+
+
 def create_keboola_lifespan(
     server_state: ServerState,
+    oauth_provider: SimpleOAuthProvider | None = None,
 ) -> Callable[[FastMCP[ServerState]], AbstractAsyncContextManager[ServerState]]:
     @asynccontextmanager
     async def keboola_lifespan(server: FastMCP) -> AsyncIterator[ServerState]:
@@ -103,6 +118,8 @@ def create_keboola_lifespan(
             yield server_state
         finally:
             await server_state.aclose()
+            if oauth_provider is not None:
+                await oauth_provider.aclose()
 
     return keboola_lifespan
 
@@ -292,6 +309,7 @@ def create_server(
             callback_endpoint='/oauth/callback',
             jwt_secret=config.jwt_secret,
             session_store=session_store,
+            validate_rate_limit=_parse_validate_rate_limit(config.oauth_validate_rate_limit),
         )
     else:
         oauth_provider = None
@@ -330,7 +348,7 @@ def create_server(
             'Note: outside the Storage API, some tools may need per-project token support not yet '
             'available on every stack; surface such errors plainly rather than retrying.'
         ),
-        lifespan=create_keboola_lifespan(server_state),
+        lifespan=create_keboola_lifespan(server_state, oauth_provider),
         auth=oauth_provider,
         middleware=[
             LoggingMiddleware(log_level=logging.DEBUG),
