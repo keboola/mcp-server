@@ -12,6 +12,7 @@ from keboola_mcp_server.clients.data_science import (
     CodeDataAppConfig,
     CreatedGitCredentialResponse,
     DataScienceClient,
+    RuntimeResponse,
 )
 
 
@@ -232,6 +233,36 @@ def test_app_git_repo_response_missing_managed_flag_defaults_to_none() -> None:
     """Fail-closed: a git-repo response without `isManagedGitRepo` yields None, not False, so
     callers gating on it (branch repoint) refuse rather than assume "external" on spec drift."""
     assert AppGitRepoResponse.model_validate({'httpsUrl': 'https://x/y.git'}).is_managed_git_repo is None
+
+
+@pytest.mark.asyncio
+async def test_list_runtimes_parses_catalog() -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.get = AsyncMock(  # type: ignore[assignment]
+        return_value=[
+            {
+                'type': 'python-js',
+                'description': 'Python 3.13 + Node.js 24',
+                'isTypeDefault': False,
+                'releaseDate': '2026-09-01T00:00:00+00:00',
+                'endOfLifeDate': None,
+                'imageName': 'keboola/data-app-python-js',
+                'imageTag': '1.7.2_python-3.13_node-24',
+            },
+            {'type': 'python', 'description': 'Python 3.10', 'isTypeDefault': True, 'imageTag': None},
+        ]
+    )
+
+    runtimes = await client.list_runtimes()
+
+    client.get.assert_awaited_once_with(endpoint='runtimes')
+    assert runtimes[0] == RuntimeResponse(
+        type='python-js',
+        description='Python 3.13 + Node.js 24',
+        is_type_default=False,
+        image_tag='1.7.2_python-3.13_node-24',
+    )
+    assert runtimes[1].image_tag is None
 
 
 def test_code_data_app_config_serializes_to_expected_shape() -> None:

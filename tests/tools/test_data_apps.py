@@ -8,7 +8,7 @@ from fastmcp import Context
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
-from keboola_mcp_server.clients.data_science import AppRunResponse, DataAppConfig, DataAppResponse
+from keboola_mcp_server.clients.data_science import AppRunResponse, DataAppConfig, DataAppResponse, RuntimeResponse
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
@@ -23,6 +23,7 @@ from keboola_mcp_server.tools.data_apps import (
     DataAppSlugTooLongError,
     DataAppSummary,
     ModifiedDataAppOutput,
+    RuntimeImage,
     _build_data_app_config,
     _fetch_data_app,
     _fetch_latest_run,
@@ -32,6 +33,7 @@ from keboola_mcp_server.tools.data_apps import (
     _get_secrets,
     _inject_query_to_source_code,
     _prune_empty_storage_objects,
+    _resolve_app_image,
     _update_existing_data_app_config,
     _uses_basic_authentication,
     deploy_data_app,
@@ -1151,6 +1153,24 @@ from keboola_mcp_server.tools.data_apps import (  # noqa: E402
     modify_python_js_data_app,
 )
 
+_NODE_20 = '1.7.2_python-3.11_node-20'
+_NODE_24 = '1.7.2_python-3.13_node-24'
+_RUNTIMES = [
+    # The live catalog lists the default tag twice; the default entry is the one reported.
+    RuntimeResponse(
+        type='python-js', description='Python 3.11 + Node.js 20 (pinned)', is_type_default=False, image_tag=_NODE_20
+    ),
+    RuntimeResponse(type='python-js', description='Python 3.11 + Node.js 20', is_type_default=True, image_tag=_NODE_20),
+    RuntimeResponse(
+        type='python-js', description='Python 3.13 + Node.js 24', is_type_default=False, image_tag=_NODE_24
+    ),
+    RuntimeResponse(type='streamlit', description='Streamlit', is_type_default=True, image_tag='streamlit-1.0'),
+]
+_PYTHON_JS_IMAGES = [
+    RuntimeImage(version=_NODE_20, description='Python 3.11 + Node.js 20', is_default=True),
+    RuntimeImage(version=_NODE_24, description='Python 3.13 + Node.js 24'),
+]
+
 
 def _make_python_js_data_app_response(
     data_app_id: str = 'app-pyjs-1',
@@ -2215,19 +2235,147 @@ async def test_modify_python_js_data_app_storage_validation_rejects_missing_sour
         )
 
 
-def test_update_existing_code_data_app_config_leaves_legacy_image_pin_alone() -> None:
-    """The MCP no longer manages `runtime.image.version` — the platform picks a default for
-    python-js apps. A legacy pin already in the stored config must survive the deepcopy
-    verbatim (we don't overwrite it, even though we also don't set it ourselves)."""
+@pytest.mark.parametrize(
+    ('existing_runtime', 'image_version', 'expected_runtime'),
+    [
+        pytest.param({'image': {'version': 'old'}}, None, {'image': {'version': 'old'}}, id='unset_keeps_pin'),
+        pytest.param(
+            {'workspace': {'enabled': True}},
+            _NODE_24,
+            {'workspace': {'enabled': True}, 'image': {'version': _NODE_24}},
+            id='sets_pin',
+        ),
+        pytest.param({'image': {'version': 'old'}}, '', None, id='empty_drops_pin_and_empty_runtime'),
+        pytest.param(
+            {'image': {'version': 'old'}, 'workspace': {'enabled': True}},
+            '',
+            {'workspace': {'enabled': True}},
+            id='empty_drops_pin_keeps_workspace',
+        ),
+    ],
+)
+def test_update_existing_code_data_app_config_image_version(
+    existing_runtime: JsonDict, image_version: str | None, expected_runtime: JsonDict | None
+) -> None:
     existing = {
-        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}},
-        'runtime': {'image': {'version': 'old'}},
+        'parameters': {'autoSuspendAfterSeconds': 900, 'dataApp': {'slug': 'x'}, 'imageVersion': 'legacy'},
+        'runtime': existing_runtime,
     }
-    new = _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=600)
-    assert new['runtime']['image']['version'] == 'old'
+    new = _update_existing_code_data_app_config(existing, auto_suspend_after_seconds=600, image_version=image_version)
+    assert new.get('runtime') == expected_runtime
+    # Setting or dropping a pin also drops the legacy `parameters.imageVersion` spelling.
+    assert ('imageVersion' in new['parameters']) is (image_version is None)
     assert new['parameters']['autoSuspendAfterSeconds'] == 600
     # original must not be mutated
     assert existing['parameters']['autoSuspendAfterSeconds'] == 900
+
+
+@pytest.mark.parametrize(
+    ('configuration', 'expected_image', 'expected_pinned'),
+    [
+        pytest.param({'runtime': {'image': {'version': _NODE_24}}}, _PYTHON_JS_IMAGES[1], True, id='offered_pin'),
+        pytest.param({'parameters': {'imageVersion': _NODE_24}}, _PYTHON_JS_IMAGES[1], True, id='legacy_pin'),
+        pytest.param(
+            {'runtime': {'image': {'version': 'gone'}}},
+            RuntimeImage(version='gone', description='no longer offered by the platform'),
+            True,
+            id='dropped_pin',
+        ),
+        pytest.param({'parameters': {}}, _PYTHON_JS_IMAGES[0], False, id='no_pin_follows_default'),
+    ],
+)
+def test_resolve_app_image(configuration: JsonDict, expected_image: RuntimeImage, expected_pinned: bool) -> None:
+    assert _resolve_app_image(configuration, _PYTHON_JS_IMAGES) == (expected_image, expected_pinned)
+
+
+@pytest.fixture
+def python_js_image_client(mocker, mcp_context_client: Context, workspace_manager) -> KeboolaClient:
+    """A client whose python-js create and update paths both succeed against `_RUNTIMES`."""
+    keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.has_feature = mocker.AsyncMock(return_value=True)
+    workspace_manager.get_data_app_branch_id = mocker.AsyncMock(return_value='branch-1')
+    keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
+    keboola_client.data_science_client.create_data_app = mocker.AsyncMock(
+        return_value=_make_python_js_data_app_response()
+    )
+    keboola_client.data_science_client.get_app_git_repo = mocker.AsyncMock(
+        return_value=AppGitRepoResponse(https_url='https://managed.repo/org/app.git', is_managed_git_repo=True)
+    )
+    keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
+    mocker.patch(
+        'keboola_mcp_server.tools.data_apps._fetch_data_app',
+        mocker.AsyncMock(return_value=_make_python_js_prod_data_app(configuration_id='cfg-1')),
+    )
+    for helper in ('set_cfg_creation_metadata', 'set_cfg_update_metadata'):
+        mocker.patch(f'keboola_mcp_server.tools.data_apps.{helper}', mocker.AsyncMock())
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    return keboola_client
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_create_pins_image_version(
+    mcp_context_client: Context, python_js_image_client: KeboolaClient
+) -> None:
+    await modify_python_js_data_app(ctx=mcp_context_client, name='My App', description='desc', image_version=_NODE_24)
+
+    configuration = python_js_image_client.data_science_client.create_data_app.await_args.kwargs['configuration']
+    assert configuration.model_dump(by_alias=True, exclude_none=True)['runtime']['image'] == {'version': _NODE_24}
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_update_pins_image_version(
+    mcp_context_client: Context, python_js_image_client: KeboolaClient
+) -> None:
+    result = await modify_python_js_data_app(
+        ctx=mcp_context_client, name='My App', description='desc', configuration_id='cfg-1', image_version=_NODE_24
+    )
+
+    written = python_js_image_client.storage_client.configuration_update.await_args.kwargs['configuration']
+    assert written['runtime']['image'] == {'version': _NODE_24}
+    assert result.change_summary is not None
+    assert f"Backend set to image '{_NODE_24}'" in result.change_summary
+
+
+@pytest.mark.asyncio
+async def test_modify_python_js_data_app_image_version_fails_closed_without_catalog(
+    mcp_context_client: Context, python_js_image_client: KeboolaClient
+) -> None:
+    python_js_image_client.data_science_client.list_runtimes.side_effect = httpx.ConnectError('catalog down')
+
+    with pytest.raises(ValueError, match='runtimes catalog is unavailable'):
+        await modify_python_js_data_app(
+            ctx=mcp_context_client, name='My App', description='desc', configuration_id='cfg-1', image_version=_NODE_24
+        )
+
+    python_js_image_client.storage_client.configuration_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('configuration_id', 'image_version'),
+    [
+        pytest.param('', 'node-24', id='create_unknown_tag'),
+        # A tag of another app type is not a python-js image.
+        pytest.param('cfg-1', 'streamlit-1.0', id='update_other_type_tag'),
+    ],
+)
+async def test_modify_python_js_data_app_rejects_unknown_image_version(
+    mcp_context_client: Context, python_js_image_client: KeboolaClient, configuration_id: str, image_version: str
+) -> None:
+    with pytest.raises(ValueError, match=re.escape(f'Unknown image_version "{image_version}"')) as exc:
+        await modify_python_js_data_app(
+            ctx=mcp_context_client,
+            name='My App',
+            description='desc',
+            configuration_id=configuration_id,
+            image_version=image_version,
+        )
+
+    # The error lists the valid tags, so the agent can retry with one.
+    assert _NODE_20 in str(exc.value) and _NODE_24 in str(exc.value)
+    python_js_image_client.data_science_client.create_data_app.assert_not_awaited()
+    python_js_image_client.storage_client.configuration_update.assert_not_awaited()
 
 
 def test_update_existing_code_data_app_config_keeps_auto_suspend_when_omitted() -> None:
@@ -2462,6 +2610,7 @@ async def test_deploy_data_app_publishes_latest_config_version_and_reports_publi
 ) -> None:
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
     keboola_client.data_science_client = mocker.AsyncMock()
+    keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
     keboola_client.storage_client.configuration_version_latest = mocker.AsyncMock(return_value=5)
 
     def make_app(config_version: str, published_config_version: str) -> DataApp:
@@ -2494,6 +2643,12 @@ async def test_deploy_data_app_publishes_latest_config_version_and_reports_publi
     assert result.deployment_info.version == published_after
     assert result.deployment_info.latest_config_version == latest_after
     assert result.deployment_info.has_unpublished_changes is expected_unpublished
+    # A python-js app reports the image it runs; the unpinned app follows the catalog default.
+    is_python_js = app_type == 'python-js'
+    assert result.deployment_info.image == (_PYTHON_JS_IMAGES[0] if is_python_js else None)
+    assert result.deployment_info.image_pinned is (False if is_python_js else None)
+    # Only a python-js deploy reads the catalog.
+    assert keboola_client.data_science_client.list_runtimes.await_count == (1 if is_python_js else 0)
 
 
 @pytest.mark.parametrize(
@@ -2644,6 +2799,11 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
     assert result.change_summary is not None
     assert 'git checkout -B iter-feat --no-track origin/main' in result.change_summary
     assert 'git rev-list --count iter-feat..origin/main' in result.change_summary
+    # On an empty repo `main` goes first, so the draft branch never becomes the repo's undeletable default.
+    assert (
+        'git checkout -b main && git commit --allow-empty -m "init main" && git push origin main && '
+        'git checkout -b iter-feat' in result.change_summary
+    )
 
     # Credential was minted on the parent, not the new dev twin.
     keboola_client.data_science_client.create_app_git_credential.assert_awaited_once_with(parent_data_app_id)
@@ -3685,6 +3845,7 @@ async def test_get_data_apps_detail_includes_last_run_failure(mocker, mcp_contex
     prod = _make_python_js_prod_data_app(configuration_id=prod_cfg_id, state='stopped')
     keboola_client.storage_client.configuration_list = mocker.AsyncMock(return_value=[])
     keboola_client.data_science_client.list_app_runs = mocker.AsyncMock(return_value=[_make_failed_app_run()])
+    keboola_client.data_science_client.list_runtimes = mocker.AsyncMock(return_value=_RUNTIMES)
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=prod))
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_logs', mocker.AsyncMock(return_value=[]))
 
@@ -3699,6 +3860,9 @@ async def test_get_data_apps_detail_includes_last_run_failure(mocker, mcp_contex
     assert last_run.state == 'failed'
     assert last_run.failure_reason == 'ConfigDecryptionFailed'
     assert last_run.failure_message == 'failed to decrypt key "#API_KEY"'
+    # The image catalog and the image the app runs come with the detail.
+    assert result.available_images == _PYTHON_JS_IMAGES
+    assert detail.deployment_info.image == _PYTHON_JS_IMAGES[0]
 
 
 # ===== Tests for get_data_app_preview_link =====

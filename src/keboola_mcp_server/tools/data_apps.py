@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import logging
 import re
@@ -20,6 +21,7 @@ from keboola_mcp_server.clients.data_science import (
     CodeDataAppConfig,
     DataAppConfig,
     DataAppResponse,
+    RuntimeResponse,
 )
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
@@ -277,6 +279,21 @@ class AppRunInfo(BaseModel):
         )
 
 
+class RuntimeImage(BaseModel):
+    """A backend image a python-js data app can run on, from the platform's runtimes catalog."""
+
+    version: str = Field(description='The image tag, the value `modify_python_js_data_app(image_version=...)` takes.')
+    description: str | None = Field(
+        default=None, description='Human-readable label naming its Python and Node.js versions.'
+    )
+    is_default: bool = Field(
+        default=False, description='Whether the platform runs this image for an app that pins none.'
+    )
+    end_of_life_date: str | None = Field(
+        default=None, description='When the image reaches its end of life, or `null` when it has no end date.'
+    )
+
+
 class DeploymentInfo(BaseModel):
     """Deployment information of a data app."""
 
@@ -308,6 +325,20 @@ class DeploymentInfo(BaseModel):
     )
     logs: list[str] = Field(
         description='The latest 20 log lines reported in the data app deployment.', default_factory=list
+    )
+    image: RuntimeImage | None = Field(
+        default=None,
+        description=(
+            'For python-js apps: the backend image the latest saved configuration selects — the one the '
+            'app runs unless `has_unpublished_changes`. `null` when the runtimes catalog is unavailable.'
+        ),
+    )
+    image_pinned: bool | None = Field(
+        default=None,
+        description=(
+            'For python-js apps: true when the configuration pins `image`, false when the app follows the '
+            'platform default (and moves with it on its next deploy).'
+        ),
     )
     last_run: AppRunInfo | None = Field(
         description=(
@@ -448,6 +479,19 @@ class DataApp(BaseModel):
         )
         return self
 
+    def with_image(self, images: list[RuntimeImage] | None) -> 'DataApp':
+        """Reports the image a python-js app runs in its deployment info.
+
+        - Call it after `with_deployment_info`.
+        - A no-op for other apps, or when the catalog is unavailable (`None`).
+        """
+        assert self.deployment_info is not None, 'with_image needs with_deployment_info first'
+        if self.type == 'python-js' and images is not None:
+            self.deployment_info.image, self.deployment_info.image_pinned = _resolve_app_image(
+                self.configuration, images
+            )
+        return self
+
 
 class ModifiedDataAppOutput(BaseModel):
     """Modified data app output containing the response of the action performed and the data app and links to the web
@@ -493,8 +537,8 @@ class ModifiedPythonJsDataAppOutput(BaseModel):
             'on the **draft create path** — defaults to a freshly generated `draft-<hex>` when the caller does '
             'not pass `branch`. Create it from the current production code — '
             '`git fetch origin && git checkout -B <branch> --no-track origin/main` (on a brand-new prod app the '
-            'repo is still empty and `origin/main` does not exist yet — use `git checkout -b <branch>` there) — '
-            'and push code on this branch before calling `deploy_data_app(mode="dev")`. `--no-track` keeps '
+            'repo is still empty and `origin/main` does not exist yet — push an empty `main` first, as '
+            '`change_summary` spells out) — and push code on this branch before calling `deploy_data_app(mode="dev")`. `--no-track` keeps '
             '`origin/main` from becoming this branch\'s upstream, so a bare `git push` can never target `main`. '
             'A bare `git checkout <branch>` is unsafe: if the branch already exists on the remote it resolves '
             'to that stale tip. None on prod create and on update.'
@@ -577,6 +621,13 @@ class GetDataAppsOutput(BaseModel):
     """Output of the get_data_apps tool. Serves for both DataAppSummary and DataApp outputs."""
 
     data_apps: Sequence[DataAppSummary | DataApp] = Field(description='The data apps in the project.')
+    available_images: list[RuntimeImage] = Field(
+        default_factory=list,
+        description=(
+            'When the details include a python-js app: every backend image the platform offers — the valid '
+            '`image_version` values for `modify_python_js_data_app`.'
+        ),
+    )
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
 
 
@@ -1010,8 +1061,8 @@ async def modify_python_js_data_app(
                 "collide with a branch an earlier draft left behind. Pass a descriptive name like "
                 "'add-revenue-filter' when it helps the user; a name you supply may already exist on the "
                 'repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track '
-                'origin/main`, or `git checkout -b <branch>` on a brand-new prod app whose repo is still '
-                'empty) rather than with a bare `git checkout`. '
+                'origin/main`; on a brand-new prod app whose repo is still empty, push an empty `main` '
+                'first — see Scenario A step 3) rather than with a bare `git checkout`. '
                 'Must not be `main` (reserved for the prod app) unless `allow_main_branch=True` '
                 '(platform view-draft only). Rejected on prod create.\n'
                 '- **On update** (with `configuration_id`): repoints an existing **external-git** app to '
@@ -1101,6 +1152,23 @@ async def modify_python_js_data_app(
             ),
         ),
     ] = None,
+    image_version: Annotated[
+        str | None,
+        Field(
+            description=(
+                'Backend image the app runs on (the UI\'s "Backend version"), written to '
+                '`runtime.image.version`. An image tag from the platform catalog, which names its Python '
+                'and Node.js versions (e.g. `<release>_python-3.13_node-24`). '
+                '`get_data_apps(configuration_ids=[...])` lists the valid tags in `available_images` and '
+                "the app's current one in `deployment_info.image`; an unknown tag is rejected with the "
+                'list of valid ones.\n'
+                '- Leave unset (None) to keep what the app has on update; on create the app follows the '
+                'platform default.\n'
+                '- Pass "" to drop a pin and follow the platform default again.\n'
+                'Redeploy the app afterwards to apply it.'
+            ),
+        ),
+    ] = None,
     folder: Annotated[
         str | None,
         Field(description=folder_field_description('data app', 'data apps')),
@@ -1138,13 +1206,14 @@ async def modify_python_js_data_app(
        The default branch is generated fresh per draft (`draft-<hex>`) so it can never collide
        with a branch left behind by an earlier draft. Override with `branch=<name>` for a
        descriptive name — if you do, YOU own uniqueness (see step 3).
-    3. YOU: `git clone U`; `git checkout -b <branch>` (the repo of a brand-new prod app is empty,
-       so there is no `main` to branch from yet); write source; `git push origin <branch>`.
+    3. YOU: `git clone U`. The repo of a brand-new prod app is empty, so push an empty `main` first —
+       the first branch pushed becomes the repo's default, and a draft branch that is the default
+       can never be deleted: `git checkout -b main && git commit --allow-empty -m "init main" &&
+       git push origin main`. The empty `main` carries no app code, so it breaks no rule about
+       pushing to `main`. Then `git checkout -b <branch>`; write source; `git push origin <branch>`.
     4. `deploy_data_app(action='deploy', configuration_id=DRAFT, mode='dev')`
        → preview URL serving the draft's pinned branch as a dev version. Iterate with the user.
-    5. Once approved — YOU: `git checkout main && git merge <branch>`. On a brand-new app (step 3
-       above) `main` does not exist yet, so create it from the approved draft instead:
-       `git checkout -b main <branch>`. Then `git push origin main`;
+    5. Once approved — YOU: `git checkout main && git merge <branch> && git push origin main`;
        `git push origin --delete <branch>` (branch deletes ARE permitted on managed repos).
     6. `deploy_data_app(action='deploy', configuration_id=PROD)`
        → prod URL now serves the merged `main`.
@@ -1204,7 +1273,7 @@ async def modify_python_js_data_app(
     - `slug` is optional on create (auto-derived from `name` when omitted; drafts get a unique
       suffix). See "Slug on update" below.
     - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
-      `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or
+      `authentication_type`, `auto_suspend_after_seconds`, `storage`, `image_version` on either a prod app or
       a draft, for changing a prod app's `slug` (see "Slug on update"), and for repointing an
       **external-git** app's `branch` (a draft, or an app bound to an external repository — an
       app on a Keboola-managed git repo is rejected, its branch is owned by the platform). Source code changes go through the git flow above, not this
@@ -1265,6 +1334,8 @@ async def modify_python_js_data_app(
     links_manager = await ProjectLinksManager.from_client(client)
 
     validated_storage = _validate_data_app_storage(storage, configuration_id=configuration_id or None)
+    if image_version:
+        await _validate_image_version(client, image_version)
 
     # When the platform-managed workspace feature is off, the data app cannot rely on the
     # platform to inject WORKSPACE_ID; fall back to passing it via parameters.dataApp.secrets.
@@ -1305,6 +1376,7 @@ async def modify_python_js_data_app(
             storage=validated_storage,
             branch=normalized_branch,
             slug=new_slug,
+            image_version=image_version,
         )
         await client.storage_client.configuration_update(
             component_id=DATA_APP_COMPONENT_ID,
@@ -1353,7 +1425,14 @@ async def modify_python_js_data_app(
         change_summary = (
             '\n'.join(
                 note
-                for note in (folder_hint, slug_hint, branch_hint, storage_access_hint, legacy_fallback_hint)
+                for note in (
+                    folder_hint,
+                    slug_hint,
+                    branch_hint,
+                    storage_access_hint,
+                    _image_version_hint(image_version),
+                    legacy_fallback_hint,
+                )
                 if note
             )
             or None
@@ -1452,10 +1531,8 @@ async def modify_python_js_data_app(
                     parent_configuration_id=parent_configuration_id,
                 ),
             ),
-            runtime=(
-                CodeDataAppConfig.Runtime(workspace=CodeDataAppConfig.Runtime.Workspace(enabled=True))
-                if has_storage_workspace and wants_storage_access
-                else None
+            runtime=_new_code_data_app_runtime(
+                workspace_enabled=has_storage_workspace and wants_storage_access, image_version=image_version
             ),
             authorization=authorization_model,
             # An empty (or all-empty) storage block prunes to `{}`; omit it entirely rather than
@@ -1793,15 +1870,16 @@ def _update_existing_code_data_app_config(
     storage: dict[str, Any] | None = None,
     branch: str | None = None,
     slug: str | None = None,
+    image_version: str | None = None,
 ) -> dict[str, Any]:
     """Apply requested updates to the existing python-js data app storage configuration.
 
     `auto_suspend_after_seconds` rewrites `parameters.autoSuspendAfterSeconds` (None leaves it
     untouched, so a rename keeps the app's suspend timeout).
     `slug` rewrites `parameters.dataApp.slug` (None leaves it untouched); `_resolve_slug_update`
-    decides whether it may change. `runtime.image.version` is
-    not touched either — the platform now picks a default for python-js apps, and any legacy
-    `image.version` pin already in the stored config is preserved verbatim via deepcopy.
+    decides whether it may change.
+    `image_version` pins `runtime.image.version`; '' drops the pin (both it and the legacy
+    `parameters.imageVersion`) so the app follows the platform default; None leaves the stored pin as is.
     `authentication_type='default'` preserves the existing `authorization` block (including OIDC
     setups configured outside the MCP); 'no-auth' / 'basic-auth' overwrite it.
     `storage_access` moves the app's read-only Storage access, through whichever mechanism the
@@ -1860,6 +1938,14 @@ def _update_existing_code_data_app_config(
         else:
             # Don't leave an empty `secrets` object behind when the disable emptied it.
             data_app.pop('secrets', None)
+    if image_version is not None:
+        new_config['parameters'].pop('imageVersion', None)
+        if image_version:
+            new_config.setdefault('runtime', {})['image'] = {'version': image_version}
+        elif runtime := new_config.get('runtime'):
+            runtime.pop('image', None)
+            if not runtime:
+                new_config.pop('runtime')
     if storage is not None:
         new_config['storage'] = storage
     _normalize_config_storage(new_config)
@@ -1910,12 +1996,18 @@ async def get_data_apps(
         async def fetch_data_app_detail(configuration_id: str) -> DataApp | str:
             return await _fetch_data_app_details_task(client, links_manager, configuration_id)
 
-        data_app_details = await process_concurrently(configuration_ids, fetch_data_app_detail, max_concurrency=10)
-        found_data_apps: list[DataApp] = [dap for dap in data_app_details if isinstance(dap, DataApp)]
+        data_app_details, images = await asyncio.gather(
+            process_concurrently(configuration_ids, fetch_data_app_detail, max_concurrency=10),
+            _fetch_python_js_images(client),
+        )
+        found_data_apps: list[DataApp] = [
+            dap.with_image(images) for dap in data_app_details if isinstance(dap, DataApp)
+        ]
         not_found_ids: list[str] = [dap for dap in data_app_details if isinstance(dap, str)]
         if not_found_ids:
             LOG.error(f'Could not find Data Apps Configurations for IDs: {not_found_ids}')
-        return GetDataAppsOutput(data_apps=found_data_apps)
+        has_python_js = any(dap.type == 'python-js' for dap in found_data_apps)
+        return GetDataAppsOutput(data_apps=found_data_apps, available_images=images if has_python_js and images else [])
     else:
         # List all data apps in the project
         data_apps: list[DataAppResponse] = await client.data_science_client.list_data_apps(limit=limit, offset=offset)
@@ -2001,10 +2093,12 @@ async def deploy_data_app(
             mode=mode,
         )
         data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
-        data_app = data_app.with_deployment_info(
-            await _fetch_logs(client, data_app.data_app_id),
-            last_run=await _fetch_latest_run(client, data_app.data_app_id),
+        logs, last_run, images = await asyncio.gather(
+            _fetch_logs(client, data_app.data_app_id),
+            _fetch_latest_run(client, data_app.data_app_id),
+            _fetch_app_images(client, data_app),
         )
+        data_app = data_app.with_deployment_info(logs, last_run=last_run).with_image(images)
         links = links_manager.get_data_app_links(
             configuration_id=data_app.configuration_id,
             configuration_name=data_app.name,
@@ -2110,8 +2204,8 @@ async def get_data_app_preview_link(
         str,
         Field(
             description=(
-                'Storage configuration ID of a data app running in dev mode, of any type. The usual case is a '
-                'python-js draft deployed with `deploy_data_app` (mode="dev").'
+                'Storage configuration ID of a python-js draft deployed with `deploy_data_app` (mode="dev"). '
+                'Only a python-js draft can run in dev mode.'
             )
         ),
     ],
@@ -2119,9 +2213,10 @@ async def get_data_app_preview_link(
 ) -> DataAppPreviewLinkOutput:
     """Creates a short-lived link that opens a dev-mode data app in your browser without the app's login.
 
-    Use it to see or test any data app while it runs in dev mode. The usual case is a python-js **draft**
-    deployed with `deploy_data_app(action='deploy', mode='dev')`. An app that is not in dev mode has no
-    preview link.
+    Use it to see or test a python-js **draft** deployed with `deploy_data_app(action='deploy', mode='dev')`.
+    - Only a python-js draft reaches dev mode: a Streamlit app has no managed git repo and its image has no
+      dev mode.
+    - An app that is not in dev mode has no preview link.
 
     ## How to use the link
     - Open `url` in a real browser before `link_expires_at` (about 60 seconds after this call): a browser tool,
@@ -2142,7 +2237,8 @@ async def get_data_app_preview_link(
     ## Errors
     - "not running in dev mode": deploy the draft with `deploy_data_app` (mode='dev') first.
     - "is a production app": preview a draft of it instead; never switch a production app to dev mode.
-    - "is not in dev mode" on another app type: tell the user; do not change its deploy mode.
+    - "is not in dev mode" on another app type (e.g. Streamlit): it has no dev mode; tell the user and do not
+      change its deploy mode.
     - "not configured on this Keboola stack": preview links are not available here; tell the user.
     """
     client = KeboolaClient.from_state(ctx.session.state)
@@ -2310,6 +2406,99 @@ def _update_existing_data_app_config(
     # Writable Tables editor keeps working after a re-save (AI-3135).
     _normalize_config_storage(new_config)
     return new_config
+
+
+def _python_js_images(runtimes: Sequence[RuntimeResponse]) -> list[RuntimeImage]:
+    """The python-js entries of the runtimes catalog, one per image tag.
+
+    - The catalog can list one tag twice (the default and a "pinned" twin); the default entry wins.
+    """
+    images: dict[str, RuntimeImage] = {}
+    for runtime in runtimes:
+        if runtime.type != 'python-js' or not runtime.image_tag:
+            continue
+        if runtime.image_tag in images and not runtime.is_type_default:
+            continue
+        images[runtime.image_tag] = RuntimeImage(
+            version=runtime.image_tag,
+            description=runtime.description,
+            is_default=runtime.is_type_default,
+            end_of_life_date=runtime.end_of_life_date,
+        )
+    return list(images.values())
+
+
+async def _fetch_python_js_images(client: KeboolaClient) -> list[RuntimeImage] | None:
+    """The python-js image catalog for read paths; `None` when it cannot be fetched."""
+    try:
+        return _python_js_images(await client.data_science_client.list_runtimes())
+    except Exception as exc:
+        LOG.warning(f'Could not fetch the runtimes catalog: {exc}')
+        return None
+
+
+async def _fetch_app_images(client: KeboolaClient, data_app: DataApp) -> list[RuntimeImage] | None:
+    """The python-js image catalog for a python-js app; `None` for other apps, without fetching it."""
+    return await _fetch_python_js_images(client) if data_app.type == 'python-js' else None
+
+
+async def _validate_image_version(client: KeboolaClient, image_version: str) -> None:
+    """Raise unless `image_version` is a python-js image the platform catalog offers.
+
+    - Fails closed when the catalog is unavailable: an unverified tag would only fail at deploy.
+    """
+    images = await _fetch_python_js_images(client)
+    if images is None:
+        raise ValueError(
+            f'Could not verify image_version "{image_version}": the platform runtimes catalog is unavailable. '
+            "Retry, or leave image_version unset to keep the app's current image."
+        )
+    if any(image.version == image_version for image in images):
+        return
+    offered = '; '.join(
+        f'`{image.version}` ({image.description}{", default" if image.is_default else ""})' for image in images
+    )
+    raise ValueError(
+        f'Unknown image_version "{image_version}". The platform offers these python-js images: '
+        f'{offered or "none"}. Pass one of them, or "" to follow the platform default.'
+    )
+
+
+def _resolve_app_image(
+    configuration: Mapping[str, Any], images: Sequence[RuntimeImage]
+) -> tuple[RuntimeImage | None, bool]:
+    """The image a python-js app's configuration selects, and whether it pins it.
+
+    1. A pin the catalog offers → that catalog entry.
+    2. A pin the catalog no longer offers → the bare tag, flagged in its description.
+    3. No pin → the catalog default (`None` when the catalog has none).
+    """
+    runtime = configuration.get('runtime') or {}
+    pinned = (runtime.get('image') or {}).get('version') or (configuration.get('parameters') or {}).get('imageVersion')
+    if not pinned:
+        return next((image for image in images if image.is_default), None), False
+    match = next((image for image in images if image.version == pinned), None)
+    return match or RuntimeImage(version=pinned, description='no longer offered by the platform'), True
+
+
+def _new_code_data_app_runtime(
+    *, workspace_enabled: bool, image_version: str | None
+) -> CodeDataAppConfig.Runtime | None:
+    """The `runtime` block of a new python-js app; `None` when it overrides nothing."""
+    if not workspace_enabled and not image_version:
+        return None
+    return CodeDataAppConfig.Runtime(
+        image=CodeDataAppConfig.Runtime.Image(version=image_version) if image_version else None,
+        workspace=CodeDataAppConfig.Runtime.Workspace(enabled=True) if workspace_enabled else None,
+    )
+
+
+def _image_version_hint(image_version: str | None) -> str | None:
+    """The `change_summary` note for an `image_version` update."""
+    if image_version is None:
+        return None
+    target = f"image '{image_version}'" if image_version else 'the platform default image'
+    return f'Backend set to {target}. Redeploy the app (deploy_data_app) to run on it.'
 
 
 async def _fetch_data_app(
@@ -2651,7 +2840,9 @@ def _draft_checkout_hint(draft_branch: str) -> str:
     Surfaced in `modify_python_js_data_app`'s `change_summary` on the draft create path. A bare
     ``git checkout <branch>`` silently resolves to an existing ``origin/<branch>`` when one exists,
     checking out its stale tip instead of branching off ``main`` — the draft then previews (and can
-    promote) outdated code with no error anywhere. ``checkout -B ... origin/main``
+    promote) outdated code with no error anywhere. On an empty repo an empty ``main`` is pushed first:
+    the first branch pushed becomes the repo default, and the repo refuses to delete its default.
+    ``checkout -B ... origin/main``
     states the intended base explicitly, and ``--no-track`` keeps ``origin/main`` from becoming the
     draft branch's upstream (a bare ``git push`` on it would otherwise target ``main``). The
     ``rev-list`` check covers the case where the agent deliberately resumes an existing branch, and
@@ -2665,7 +2856,9 @@ def _draft_checkout_hint(draft_branch: str) -> str:
         f"Draft pinned to branch '{draft_branch}'. Base it on current production explicitly: "
         f'`git fetch origin && git checkout -B {draft_branch} --no-track origin/main` '
         f'(on a brand-new prod app the repo is still empty and `origin/main` does not exist yet — '
-        f'use `git checkout -b {draft_branch}` there). `--no-track` keeps `origin/main` from '
+        f'push an empty `main` first, then branch: `git checkout -b main && git commit --allow-empty '
+        f'-m "init main" && git push origin main && git checkout -b {draft_branch}`; skip it and the '
+        f'draft branch becomes the repo\'s default, which the repo then refuses to delete). `--no-track` keeps `origin/main` from '
         f'becoming this branch\'s upstream, so a bare `git push` can never target `main`. Do NOT '
         f'use a bare `git checkout {draft_branch}`: if that branch already exists on the remote, '
         f'git checks out its stale tip instead of branching from `main`, and the preview will '
