@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import csv
 import logging
+import os
 from collections.abc import Awaitable, Mapping
 from io import StringIO
 from typing import Annotated
@@ -16,9 +17,19 @@ from mcp.types import (
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 
+from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.mcp import get_http_request_or_none
+from keboola_mcp_server.rls import (
+    ClsRules,
+    RlsRules,
+    references_governed_table,
+    rewrite_query,
+)
+from keboola_mcp_server.rls_audit import refusal_code, subject_id
+from keboola_mcp_server.rls_policies import RLS_FEATURE, load_policy_rules
+from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY
 from keboola_mcp_server.workspace import JobSubmittedInfo, QueryResult, SqlSelectData, WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -26,6 +37,16 @@ LOG = logging.getLogger(__name__)
 SQL_TOOLS_TAG = 'sql'
 MAX_ROWS = 10_000
 MAX_CHARS = 50_000
+
+# The project feature gating row-level security (`RLS_FEATURE`, see `rls_policies.py` and
+# feature_spec/rls_query_tool/RFC.md "Project-level opt-in") is off by default: `query_data` doesn't even
+# look up `rls-policy` objects unless it is enabled, so a stray policy in an opted-out project has no
+# effect. Same mechanism as GLOBAL_SEARCH_FEATURE/STORAGE_BRANCHES_FEATURE.
+# Bounds the cost of the sqlglot parse `references_governed_table`/`rewrite_query` do once RLS is
+# enabled for the project -- applies to every query then, not just ones touching a governed table,
+# since the parse itself is what needs bounding.
+RLS_MAX_QUERY_CHARS = 20_000
+
 # How often to check whether the HTTP client has disconnected during a long query.
 # Mirrors the 1 s job-poll cadence in `_Workspace.execute_query`.
 _DISCONNECT_POLL_INTERVAL = 1.0
@@ -234,6 +255,151 @@ def add_sql_tools(mcp: FastMCP) -> None:
     LOG.info('SQL tools added to the MCP server.')
 
 
+# Secret key for the pseudonymous `subject` of the audit line. Without it the line carries no user id at all.
+_RLS_SUBJECT_KEY_ENV = 'KBC_RLS_LOG_SUBJECT_KEY'
+
+
+def _log_rls_outcome(
+    outcome: str,
+    *,
+    project_id: int | None,
+    principal: str | None,
+    tables: list[str] | None = None,
+    code: str | None = None,
+) -> None:
+    """One audit line per RLS-gated `query_data` call. `outcome='ok'` at INFO, else WARNING.
+
+    Carries ids and codes only: no SQL, no refusal text (it can quote the SQL), no free-text query name and no
+    email. The user shows up as a keyed hash (`subject`) when `KBC_RLS_LOG_SUBJECT_KEY` is set, and as
+    `identity=none` when the session has no login identity.
+    """
+    fields = [f'project_id={project_id}']
+    key = os.environ.get(_RLS_SUBJECT_KEY_ENV)
+    if not principal:
+        fields.append('identity=none')
+    elif key:
+        fields.append(f'subject={subject_id(principal, key)}')
+    if tables is not None:
+        fields.append(f'tables={tables}')
+    if code is not None:
+        fields.append(f'refusal_code={code}')
+    line = f'RLS query outcome={outcome} ' + ' '.join(fields)
+    LOG.info(line) if outcome == 'ok' else LOG.warning(line)
+
+
+async def _log_schema_drift(
+    client: KeboolaClient, *, rules: RlsRules, cls_rules: ClsRules, applied_rules: list[str]
+) -> None:
+    """Best-effort, diagnostic-only: warn when a table this call actually filtered has an RLS
+    and/or CLS policy referencing a column the table no longer has -- e.g. a producer
+    renamed/dropped it after the policy was written. Never raises and never affects the query,
+    which has already run its real, fail-closed enforcement in `rewrite_query()` by the time this
+    is called; this only tells an admin their policy silently stopped matching reality. See
+    `feature_spec/rls_query_tool/RFC.md` "Data-contract maturity" -- this is the whole of that gap
+    it closes, nothing more: it does not validate a table's schema against any contract (there
+    isn't one), only that the policy and the table still agree.
+
+    Scoped to `applied_rules` (the tables this specific call actually matched) rather than every
+    governed table in the project, so the added `table_detail()` cost stays bounded by what one
+    query touches, not by how many policies the project has.
+    """
+    # Only the tables this call touched, and off the event loop: compiling every policy's conditions is CPU work.
+    rls_referenced, cls_referenced = await asyncio.to_thread(
+        lambda: (rules.referenced_columns(applied_rules), cls_rules.referenced_columns(applied_rules))
+    )
+    for key in applied_rules:
+        columns = rls_referenced.get(key, set()) | cls_referenced.get(key, set())
+        table_id = rules.table_ids.get(key) or cls_rules.table_ids.get(key)
+        if not columns or not table_id:
+            continue
+        try:
+            detail = await client.storage_client.table_detail(table_id)
+        except Exception as e:
+            LOG.warning(f'RLS: could not check schema drift for table {table_id!r}: {e}', exc_info=True)
+            continue
+        live_columns = detail.get('columns')
+        if not isinstance(live_columns, list):
+            continue
+        missing = columns - {c for c in live_columns if isinstance(c, str)}
+        if missing:
+            LOG.warning(f'RLS: policy for table {table_id!r} references column(s) not on the table: {sorted(missing)}')
+
+
+async def _apply_rls(sql_query: str, *, ctx: Context, workspace_manager: WorkspaceManager) -> tuple[str, list[str]]:
+    """Rewrite `sql_query` for row- and/or column-level security when the project has RLS enabled
+    AND the query touches a table an RLS and/or CLS policy governs; otherwise return it unchanged.
+    See `feature_spec/rls_query_tool/RFC.md` "Two-level opt-in" -- this is deliberately NOT a
+    deployment-wide mode: a project without `RLS_FEATURE`, or a query that touches no governed
+    table, costs nothing beyond the one `has_feature` check and (once enabled) the cheap parse in
+    `references_governed_table`. CLS reuses the same `RLS_FEATURE` flag rather than a second one --
+    see the RFC's "Column-Level Security" section: table-level policy existence is the real
+    granularity, the flag is only ever the one-time "does this project use this mechanism at all"
+    gate, shared by both.
+
+    :raises ValueError: (a `RlsError`, or a plain refusal below) when a governed table has no
+        matching RLS and/or CLS rule for the resolved principal, or this session has no resolvable
+        principal at all. Never silently drops a request to an unfiltered query -- every refusal
+        here means "no data".
+    """
+    client = KeboolaClient.from_state(ctx.session.state)
+    if not await client.has_feature(RLS_FEATURE):
+        return sql_query, []
+    # Bounds the parse below, which now runs for every query once the project has the feature on,
+    # not only ones that turn out to touch a governed table.
+    if len(sql_query) > RLS_MAX_QUERY_CHARS:
+        raise ValueError(f'RLS: query too long ({len(sql_query)} chars, limit {RLS_MAX_QUERY_CHARS})')
+
+    dialect = (await workspace_manager.get_sql_dialect()).lower()
+    rules, cls_rules = await load_policy_rules(client, dialect=dialect)
+    # Same isolation as the rewrite below: the pre-check is a full sqlglot parse too.
+    if (not rules.tables and not cls_rules.tables) or not await asyncio.to_thread(
+        references_governed_table, sql_query, dialect=dialect, rules=rules, cls_rules=cls_rules
+    ):
+        # No RLS or CLS policy applies to this project at all, or none of them name a table this
+        # query touches -- behave exactly like today's unfiltered query_data, no rewrite attempted.
+        return sql_query, []
+
+    # A session without a login identity gets the empty principal: no rule, group rule or policy `default`
+    # ever applies to it, so any governed table is refused ("Access denied") by the rewrite itself, while a
+    # query touching no governed table (`SELECT 1`) still runs.
+    principal = ctx.session.state.get(OAUTH_USER_EMAIL_KEY) or ''
+    # Schema 1.1.0 rules can select by IdP group. An MCP session has no group source yet (an OAuth login
+    # carries no groups claim), so its groups are UNKNOWN (None, not "none"): group rules never match and no
+    # policy `default` applies -- a default may be meant only for readers outside some group. A later source
+    # must be passed here AND to the metadata views (tools/search.py, tools/storage/tools.py) alike.
+    groups: tuple[str, ...] | None = None
+    try:
+        try:
+            # sqlglot parsing/transformation is CPU-bound and holds the GIL only in short bursts,
+            # so the rewrite runs in a worker thread: a pathological (but under-cap) query then
+            # slows down this one session instead of stalling the event loop for every other
+            # in-flight request.
+            rewritten = await asyncio.to_thread(
+                rewrite_query,
+                sql_query,
+                user=principal,
+                groups=groups,
+                dialect=dialect,
+                rules=rules,
+                cls_rules=cls_rules,
+            )
+        except RecursionError as e:
+            # sqlglot's parser recurses per nesting level, so deeply nested input hits Python's
+            # recursion limit -- turn it into an ordinary refusal, not a stack overflow.
+            raise ValueError('RLS: query too deeply nested') from e
+    except ValueError as e:
+        _log_rls_outcome('refused', project_id=rules.project_id, principal=principal, code=refusal_code(e))
+        raise
+    _log_rls_outcome('ok', project_id=rules.project_id, principal=principal, tables=rewritten.applied_rules)
+    try:
+        await _log_schema_drift(client, rules=rules, cls_rules=cls_rules, applied_rules=rewritten.applied_rules)
+    except Exception:
+        # Diagnostic only -- see `_log_schema_drift`'s docstring. Any failure here must never turn
+        # a successful, correctly-filtered query into an error, but it is logged with its traceback.
+        LOG.warning('RLS: the schema-drift check failed', exc_info=True)
+    return rewritten.sql, rewritten.applied_rules
+
+
 @tool_errors()
 async def query_data(
     sql_query: Annotated[str, Field(description='SQL SELECT query to run.')],
@@ -320,6 +486,9 @@ async def query_data(
     * Ensure valid filtering by checking actual data values first
     """
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
+    # Row/column-level security is applied silently: the caller is not told that a policy shaped
+    # the result (the applied tables only go to the server log, see `_log_rls_outcome`).
+    sql_query, _ = await _apply_rls(sql_query, ctx=ctx, workspace_manager=workspace_manager)
 
     progress_token = _client_progress_token(ctx)
 
@@ -355,7 +524,10 @@ async def query_data(
         writer.writerows(data.rows)
 
         return QueryDataOutput(
-            query_name=query_name, csv_data=output.getvalue(), message=result.message, query_ref=query_ref
+            query_name=query_name,
+            csv_data=output.getvalue(),
+            message=result.message,
+            query_ref=query_ref,
         )
 
     else:

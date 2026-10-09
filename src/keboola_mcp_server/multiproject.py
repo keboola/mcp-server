@@ -352,6 +352,9 @@ class MultiProjectMiddleware(fmw.Middleware):
                 'X-KBC-ProjectId': str(project_id),
             },
             readonly=read_only or None,
+            # Without it this client has no "own stack", so every Kubernetes ServiceAccount step-up
+            # (workspace provisioning, RLS/CLS policy reads) is silently skipped for fanned-out calls.
+            own_stack_storage_api_url=server_state.own_stack_storage_api_url,
         )
 
     @staticmethod

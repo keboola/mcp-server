@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Collection, Sequence
 from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
@@ -21,6 +21,8 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import ToonCompactFunctionTool
+from keboola_mcp_server.rls_policies import RLS_FEATURE, load_policy_rules
+from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY
 from keboola_mcp_server.tools.components.utils import get_nested
 from keboola_mcp_server.tools.search_global import _global_textual_search
 from keboola_mcp_server.tools.search_models import (
@@ -38,6 +40,7 @@ from keboola_mcp_server.tools.search_models import (
     SearchType,
 )
 from keboola_mcp_server.tools.storage_helpers import merged_bucket_list, merged_bucket_table_list
+from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 
@@ -95,6 +98,27 @@ def _get_field_value(item: JsonDict, fields: Sequence[str]) -> Any | None:
     return None
 
 
+# table id -> the columns the caller may see, or None when no column-level policy governs the table
+ColumnVisibility = Callable[[str], 'Collection[str] | None']
+
+
+async def _column_visibility(ctx: Context, client: KeboolaClient) -> ColumnVisibility | None:
+    """The caller's column visibility when a column-level policy governs any table, else None.
+
+    A column name or description that matches a search pattern would reveal that a hidden column exists
+    (`get_tables` and `query_data` conceal it), so search has to see only the columns the caller may.
+    """
+    if not await client.has_feature(RLS_FEATURE):
+        return None
+    dialect = (await WorkspaceManager.from_state(ctx.session.state).get_sql_dialect()).lower()
+    _, cls_rules = await load_policy_rules(client, dialect=dialect)
+    if not cls_rules.tables:
+        return None
+    user = ctx.session.state.get(OAUTH_USER_EMAIL_KEY)
+    # groups=None: an MCP session has no group source (see tools/sql.py) -- the same resolution as query_data.
+    return lambda table_id: cls_rules.visible_columns(table_id=table_id, user=user, groups=None)
+
+
 def _check_column_match(table: JsonDict, cfg: SearchSpec) -> list[PatternMatch]:
     """Check if any column name or description matches the patterns."""
     # Check column names (list of strings)
@@ -133,14 +157,16 @@ async def _fetch_buckets(client: KeboolaClient, spec: SearchSpec) -> list[Search
     return hits
 
 
-async def _fetch_tables(client: KeboolaClient, spec: SearchSpec) -> list[SearchHit]:
+async def _fetch_tables(
+    client: KeboolaClient, spec: SearchSpec, column_visibility: ColumnVisibility | None = None
+) -> list[SearchHit]:
     """Fetches and filters tables from all buckets."""
     hits = []
     for bucket in await merged_bucket_list(client):
         if not (bucket_id := bucket.get('id')):
             continue
 
-        tables = await merged_bucket_table_list(client, bucket_id, include=['columns', 'columnMetadata'])
+        tables = await merged_bucket_table_list(client, bucket_id, include=['columns', 'columnMetadata', 'metadata'])
         for table in tables:
             if not (table_id := table.get('id')):
                 continue
@@ -150,6 +176,15 @@ async def _fetch_tables(client: KeboolaClient, spec: SearchSpec) -> list[SearchH
             table_description = get_metadata_property(table.get('metadata', []), MetadataField.DESCRIPTION)
 
             matches = spec.match_texts([table_id, table_name, table_display_name, table_description])
+            # Policies are keyed by the production table id; a development-branch table id carries `c-<branch>-`.
+            branch_id = get_metadata_property(table.get('metadata', []), MetadataField.FAKE_DEVELOPMENT_BRANCH)
+            prod_table_id = table_id.replace(f'c-{branch_id}-', 'c-', 1) if branch_id else table_id
+            if column_visibility is not None and (allowed := column_visibility(prod_table_id)) is not None:
+                table = {
+                    **table,
+                    'columns': [c for c in table.get('columns') or [] if c in allowed],
+                    'columnMetadata': {k: v for k, v in (table.get('columnMetadata') or {}).items() if k in allowed},
+                }
             matches.extend(_check_column_match(table, spec))
             if matches:
                 hits.append(
@@ -485,7 +520,19 @@ async def search(
 
     client = KeboolaClient.from_state(ctx.session.state)
 
-    if search_type == 'textual' and await client.storage_client.is_enabled(GLOBAL_SEARCH_FEATURE):
+    # Only a search that can reach tables needs the (privileged) policy load; searching configurations or
+    # buckets alone must not depend on it.
+    searches_tables = not spec.item_types or 'table' in spec.item_types
+    column_visibility = await _column_visibility(ctx, client) if searches_tables else None
+    enumerate_kwargs: dict[str, Any] = {'column_visibility': column_visibility} if column_visibility else {}
+
+    # The server-side index may match on column names, which a column-level policy conceals, so a project
+    # with such a policy always searches client-side where the hidden columns can be removed first.
+    if (
+        search_type == 'textual'
+        and column_visibility is None
+        and await client.storage_client.is_enabled(GLOBAL_SEARCH_FEATURE)
+    ):
         if mode == 'regex':
             raise ToolError(
                 'Regex patterns are not supported for textual search — it is a tokenized full-text name search. '
@@ -499,15 +546,15 @@ async def search(
             output = await _global_textual_search(client, spec, limit=limit, offset=offset)
         except Exception:
             LOG.warning('Global search failed; falling back to client-side enumeration.', exc_info=True)
-            output = await _enumeration_search(client, spec, limit=limit, offset=offset)
+            output = await _enumeration_search(client, spec, limit=limit, offset=offset, **enumerate_kwargs)
         else:
             if not output.hits and offset == 0:
                 LOG.info('Global search returned no hits; falling back to client-side enumeration.')
-                output = await _enumeration_search(client, spec, limit=limit, offset=offset)
+                output = await _enumeration_search(client, spec, limit=limit, offset=offset, **enumerate_kwargs)
     else:
         # Projects without the global-search feature use the legacy client-side enumeration;
         # config-based search has no server-side equivalent and always runs client-side.
-        output = await _enumeration_search(client, spec, limit=limit, offset=offset)
+        output = await _enumeration_search(client, spec, limit=limit, offset=offset, **enumerate_kwargs)
 
     # Get links for the hits
     links_manager = await ProjectLinksManager.from_client(client)
@@ -525,7 +572,13 @@ async def search(
     return output
 
 
-async def _enumeration_search(client: KeboolaClient, spec: SearchSpec, limit: int, offset: int) -> SearchOutput:
+async def _enumeration_search(
+    client: KeboolaClient,
+    spec: SearchSpec,
+    limit: int,
+    offset: int,
+    column_visibility: ColumnVisibility | None = None,
+) -> SearchOutput:
     """
     Searches by enumerating the project's items client-side. Used for config-based search (which has no
     server-side equivalent) and as the legacy fallback for textual search in projects without the
@@ -542,7 +595,7 @@ async def _enumeration_search(client: KeboolaClient, spec: SearchSpec, limit: in
         tasks.append(_fetch_buckets(client, spec))
 
     if not types_to_fetch or 'table' in types_to_fetch:
-        tasks.append(_fetch_tables(client, spec))
+        tasks.append(_fetch_tables(client, spec, column_visibility))
 
     if not types_to_fetch or types_to_fetch & {
         'configuration',

@@ -627,9 +627,9 @@ class TestSearch:
         )
         keboola_client.storage_client.bucket_table_list.assert_has_calls(
             [
-                call('in.c-test-bucket-a', include=['columns', 'columnMetadata'], branch_id='default'),
-                call('in.c-test-bucket-b', include=['columns', 'columnMetadata'], branch_id='default'),
-                call('in.c-test-bucket-c', include=['columns', 'columnMetadata'], branch_id='default'),
+                call('in.c-test-bucket-a', include=['columns', 'columnMetadata', 'metadata'], branch_id='default'),
+                call('in.c-test-bucket-b', include=['columns', 'columnMetadata', 'metadata'], branch_id='default'),
+                call('in.c-test-bucket-c', include=['columns', 'columnMetadata', 'metadata'], branch_id='default'),
             ]
         )
         keboola_client.storage_client.component_list.assert_called_once_with(None, include=['configuration', 'rows'])
@@ -739,6 +739,142 @@ class TestSearch:
         assert len(result.hits) == expected_count
         if expected_count > 0:
             assert result.hits[0].table_id == expected_first_table_id
+
+    @pytest.fixture
+    def cls_governed(self, mocker: MockerFixture, mcp_context_client: Context) -> KeboolaClient:
+        """A project with the RLS feature on and a column-level policy leaving `member@x.com` only `id`."""
+        from keboola_mcp_server.rls import ClsRules, RlsRules
+        from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY
+        from keboola_mcp_server.workspace import WorkspaceManager
+
+        client = KeboolaClient.from_state(mcp_context_client.session.state)
+        client.has_feature = mocker.AsyncMock(return_value=True)
+        WorkspaceManager.from_state(mcp_context_client.session.state).get_sql_dialect = mocker.AsyncMock(
+            return_value='snowflake'
+        )
+        mocker.patch(
+            'keboola_mcp_server.tools.search.load_policy_rules',
+            new=mocker.AsyncMock(
+                return_value=(
+                    RlsRules(tables={}, dialect='snowflake'),
+                    ClsRules(tables={'in.c-test-bucket.orders': {'member@x.com': ('id',)}}, dialect='snowflake'),
+                )
+            ),
+        )
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'member@x.com'
+        client.storage_client.bucket_list = mocker.AsyncMock(
+            return_value=[{'id': 'in.c-test-bucket', 'name': 'test-bucket', 'created': '2024-01-01T00:00:00Z'}]
+        )
+        client.storage_client.bucket_table_list = mocker.AsyncMock(
+            return_value=[
+                {
+                    'id': 'in.c-test-bucket.orders',
+                    'name': 'orders',
+                    'created': '2024-01-01T00:00:00Z',
+                    'columns': ['id', 'ssn'],
+                    'columnMetadata': {'ssn': [{'key': MetadataField.DESCRIPTION, 'value': 'social security number'}]},
+                },
+            ]
+        )
+        return client
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('pattern', ['ssn', 'social'])
+    async def test_search_does_not_reveal_a_column_a_policy_hides(
+        self, cls_governed: KeboolaClient, mcp_context_client: Context, pattern: str
+    ):
+        """Matching on a hidden column's name or description would betray that it exists."""
+        result = await search(ctx=mcp_context_client, patterns=[pattern], item_types=(cast(SearchItemType, 'table'),))
+
+        assert result.hits == []
+
+    @pytest.mark.asyncio
+    async def test_a_search_that_cannot_reach_tables_never_loads_policies(
+        self, mocker: MockerFixture, cls_governed: KeboolaClient, mcp_context_client: Context
+    ):
+        loader = mocker.patch('keboola_mcp_server.tools.search.load_policy_rules', new=mocker.AsyncMock())
+        cls_governed.storage_client.is_enabled = mocker.AsyncMock(return_value=False)
+
+        await search(ctx=mcp_context_client, patterns=['x'], item_types=(cast(SearchItemType, 'bucket'),))
+
+        loader.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_search_hides_a_policy_hidden_column_in_a_development_branch_table(
+        self, mocker: MockerFixture, cls_governed: KeboolaClient, mcp_context_client: Context
+    ):
+        """The policy is keyed by the production table id, the branch table id carries `c-<branch>-`."""
+        cls_governed.storage_client.bucket_list = mocker.AsyncMock(
+            return_value=[{'id': 'in.c-123-test-bucket', 'name': 'test-bucket', 'created': '2024-01-01T00:00:00Z'}]
+        )
+        cls_governed.storage_client.bucket_table_list = mocker.AsyncMock(
+            return_value=[
+                {
+                    'id': 'in.c-123-test-bucket.orders',
+                    'name': 'orders',
+                    'created': '2024-01-01T00:00:00Z',
+                    'columns': ['id', 'ssn'],
+                    'metadata': [{'key': MetadataField.FAKE_DEVELOPMENT_BRANCH, 'value': '123'}],
+                },
+            ]
+        )
+
+        result = await search(ctx=mcp_context_client, patterns=['ssn'], item_types=(cast(SearchItemType, 'table'),))
+
+        assert result.hits == []
+
+    @pytest.mark.asyncio
+    async def test_search_normalizes_only_the_bucket_prefix_of_a_branch_table_id(
+        self, mocker: MockerFixture, cls_governed: KeboolaClient, mcp_context_client: Context
+    ):
+        """A table NAME that happens to look like the branch marker must not be rewritten too."""
+        from keboola_mcp_server.rls import ClsRules, RlsRules
+
+        mocker.patch(
+            'keboola_mcp_server.tools.search.load_policy_rules',
+            new=mocker.AsyncMock(
+                return_value=(
+                    RlsRules(tables={}, dialect='snowflake'),
+                    ClsRules(tables={'in.c-test-bucket.c-123-secret': {'member@x.com': ('id',)}}, dialect='snowflake'),
+                )
+            ),
+        )
+        cls_governed.storage_client.bucket_list = mocker.AsyncMock(
+            return_value=[{'id': 'in.c-123-test-bucket', 'name': 'test-bucket', 'created': '2024-01-01T00:00:00Z'}]
+        )
+        cls_governed.storage_client.bucket_table_list = mocker.AsyncMock(
+            return_value=[
+                {
+                    'id': 'in.c-123-test-bucket.c-123-secret',
+                    'name': 'c-123-secret',
+                    'created': '2024-01-01T00:00:00Z',
+                    'columns': ['id', 'ssn'],
+                    'metadata': [{'key': MetadataField.FAKE_DEVELOPMENT_BRANCH, 'value': '123'}],
+                },
+            ]
+        )
+
+        result = await search(ctx=mcp_context_client, patterns=['ssn'], item_types=(cast(SearchItemType, 'table'),))
+
+        assert result.hits == []
+
+    @pytest.mark.asyncio
+    async def test_search_still_finds_a_visible_column(self, cls_governed: KeboolaClient, mcp_context_client: Context):
+        result = await search(ctx=mcp_context_client, patterns=['id'], item_types=(cast(SearchItemType, 'table'),))
+
+        assert [h.table_id for h in result.hits] == ['in.c-test-bucket.orders']
+
+    @pytest.mark.asyncio
+    async def test_search_skips_the_global_index_when_a_column_policy_exists(
+        self, mocker: MockerFixture, cls_governed: KeboolaClient, mcp_context_client: Context
+    ):
+        """The server-side index may match column names, so it cannot be used for such a project."""
+        cls_governed.storage_client.is_enabled = mocker.AsyncMock(return_value=True)
+        cls_governed.storage_client.global_search = mocker.AsyncMock()
+
+        await search(ctx=mcp_context_client, patterns=['ssn'], item_types=(cast(SearchItemType, 'table'),))
+
+        cls_governed.storage_client.global_search.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

@@ -814,3 +814,23 @@ class TestClientForProject:
         )
 
         assert client.legacy_storage_token == 'kbc_at_abc'
+
+    @pytest.mark.asyncio
+    async def test_fanned_out_client_knows_the_servers_own_stack(self, tmp_path, monkeypatch) -> None:
+        """Regression: without the own stack, every Kubernetes SA step-up (workspace provisioning,
+        RLS/CLS policy reads) is silently skipped for multi-project sessions -- non-admins then see
+        no RLS policies and query governed tables unfiltered."""
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        token_file = tmp_path / 'sa-token'
+        token_file.write_text('sa-jwt')
+        server_state = ServerState(
+            config=Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_x'),
+            runtime_info=ServerRuntimeInfo(transport='stdio'),
+        )
+
+        client = await MultiProjectMiddleware.client_for_project(
+            server_state, 'https://connection.keboola.com', 'kbc_at_abc', 11, False
+        )
+
+        stepped = client.step_up_metastore_client(str(token_file))
+        assert stepped.raw_client.headers['X-Kubernetes-Authorization'] == 'Bearer sa-jwt'

@@ -119,6 +119,48 @@ X-Read-Only-Mode: true
 
 For detailed documentation, see [developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control](https://developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control).
 
+### Row-Level and Column-Level Security
+
+`query_data` can restrict the rows and columns of a table per the current user, for projects that opt
+in. It is off by default and requires two things before it does anything:
+
+1. **A project-level feature** (`row-level-security`). Without it, `query_data` never even looks up a
+   policy — behavior is unchanged.
+2. **A policy for the specific table**, authored as a Keboola Metastore `rls-policy` (rows) and/or
+   `cls-policy` (columns) object — a declarative condition or column allowlist per user, not
+   hand-written SQL. Organization-scope policies and cross-project grants are reserved for
+   organization admins; the owning project's admin may author `targeted` policies for that project.
+   A table with no policy is always unfiltered; a table with one is fail-closed (no rule for the
+   current user ⇒ the query is refused with a generic "access denied").
+
+The restrictions are applied **silently**: the tool output and descriptions never say that a policy
+shaped the result, and `get_tables` hides what the user cannot query — columns withheld by a
+column-level policy are not listed, and a row-governed table shows no row count or size. Which tables a
+query was restricted by is only written to the server log. Because policies live in the metastore,
+regular members' policies are read with the server's own Kubernetes ServiceAccount (step-up); a
+server where that step-up is unavailable (including a locally run one) refuses the query rather than returning it
+unfiltered.
+
+The identity `query_data` filters by is the caller's own OAuth login (an email) — there is no header
+or tool argument to set it. Column names in a policy are matched exactly (case-sensitively), as
+Storage spells them.
+
+Once a project has any policy, `query_data` runs only what the rewrite can prove it filters: a single `SELECT`
+over Storage-bucket tables (not workspace views or copies) that calls built-in functions by their plain name.
+User-defined functions, quoted function names, `SYSTEM$` and catalog functions, query history and
+`INFORMATION_SCHEMA` are refused. The scalar Snowflake Cortex functions listed in `rls.py` (completion,
+summarisation, translation, sentiment, classification, answer extraction and text embedding) are allowed, since
+they see only rows that are already filtered; Cortex Search and anything that reads a stage are not. A project
+without policies is unaffected.
+
+The server log carries one `RLS query outcome` line per governed call with ids and codes only: the project, the
+governed tables, a refusal code and, when `KBC_RLS_LOG_SUBJECT_KEY` is set, a keyed hash of the user (`subject`).
+It never contains the email, the SQL or the refusal text.
+
+See [`feature_spec/rls_query_tool/RFC.md`](feature_spec/rls_query_tool/RFC.md) for the full design,
+and known limitations (this is a proxy-level control scoped to the MCP server's own tools, not a
+substitute for native warehouse row security).
+
 ---
 
 ## Local MCP Server Setup (Custom or Dev Way)
