@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import csv
 import logging
+import os
 from collections.abc import Awaitable, Mapping
 from io import StringIO
 from typing import Annotated
@@ -24,7 +25,9 @@ from keboola_mcp_server.rls import (
     ClsRules,
     RlsRules,
     references_governed_table,
+    refusal_code,
     rewrite_query,
+    subject_id,
 )
 from keboola_mcp_server.rls_policies import RLS_FEATURE, load_policy_rules
 from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY
@@ -253,15 +256,34 @@ def add_sql_tools(mcp: FastMCP) -> None:
     LOG.info('SQL tools added to the MCP server.')
 
 
+# Secret key for the pseudonymous `subject` of the audit line. Without it the line carries no user id at all.
+_RLS_SUBJECT_KEY_ENV = 'KBC_RLS_LOG_SUBJECT_KEY'
+
+
 def _log_rls_outcome(
-    outcome: str, *, query_name: str, principal: str | None, tables: list[str] | None = None, reason: str | None = None
+    outcome: str,
+    *,
+    project_id: int | None,
+    principal: str | None,
+    tables: list[str] | None = None,
+    refusal_code: str | None = None,
 ) -> None:
-    """One audit line per RLS-gated `query_data` call. `outcome='ok'` at INFO, else WARNING."""
-    fields = [f'principal={principal!r}', f'query_name={query_name!r}']
+    """One audit line per RLS-gated `query_data` call. `outcome='ok'` at INFO, else WARNING.
+
+    Carries ids and codes only: no SQL, no refusal text (it can quote the SQL), no free-text query name and no
+    email. The user shows up as a keyed hash (`subject`) when `KBC_RLS_LOG_SUBJECT_KEY` is set, and as
+    `identity=none` when the session has no login identity.
+    """
+    fields = [f'project_id={project_id}']
+    key = os.environ.get(_RLS_SUBJECT_KEY_ENV)
+    if not principal:
+        fields.append('identity=none')
+    elif key:
+        fields.append(f'subject={subject_id(principal, key.encode())}')
     if tables is not None:
         fields.append(f'tables={tables}')
-    if reason is not None:
-        fields.append(f'reason={reason!r}')
+    if refusal_code is not None:
+        fields.append(f'refusal_code={refusal_code}')
     line = f'RLS query outcome={outcome} ' + ' '.join(fields)
     LOG.info(line) if outcome == 'ok' else LOG.warning(line)
 
@@ -304,9 +326,7 @@ async def _log_schema_drift(
             LOG.warning(f'RLS: policy for table {table_id!r} references column(s) not on the table: {sorted(missing)}')
 
 
-async def _apply_rls(
-    sql_query: str, *, query_name: str, ctx: Context, workspace_manager: WorkspaceManager
-) -> tuple[str, list[str]]:
+async def _apply_rls(sql_query: str, *, ctx: Context, workspace_manager: WorkspaceManager) -> tuple[str, list[str]]:
     """Rewrite `sql_query` for row- and/or column-level security when the project has RLS enabled
     AND the query touches a table an RLS and/or CLS policy governs; otherwise return it unchanged.
     See `feature_spec/rls_query_tool/RFC.md` "Two-level opt-in" -- this is deliberately NOT a
@@ -369,9 +389,9 @@ async def _apply_rls(
             # recursion limit -- turn it into an ordinary refusal, not a stack overflow.
             raise ValueError('RLS: query too deeply nested') from e
     except ValueError as e:
-        _log_rls_outcome('refused', query_name=query_name, principal=principal, reason=str(e))
+        _log_rls_outcome('refused', project_id=rules.project_id, principal=principal, refusal_code=refusal_code(e))
         raise
-    _log_rls_outcome('ok', query_name=query_name, principal=principal, tables=rewritten.applied_rules)
+    _log_rls_outcome('ok', project_id=rules.project_id, principal=principal, tables=rewritten.applied_rules)
     try:
         await _log_schema_drift(client, rules=rules, cls_rules=cls_rules, applied_rules=rewritten.applied_rules)
     except Exception:
@@ -469,7 +489,7 @@ async def query_data(
     workspace_manager = WorkspaceManager.from_state(ctx.session.state)
     # Row/column-level security is applied silently: the caller is not told that a policy shaped
     # the result (the applied tables only go to the server log, see `_log_rls_outcome`).
-    sql_query, _ = await _apply_rls(sql_query, query_name=query_name, ctx=ctx, workspace_manager=workspace_manager)
+    sql_query, _ = await _apply_rls(sql_query, ctx=ctx, workspace_manager=workspace_manager)
 
     progress_token = _client_progress_token(ctx)
 
