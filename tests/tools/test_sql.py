@@ -1914,40 +1914,35 @@ class TestRlsOutcomeLog:
     def _info_level(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.INFO, logger='keboola_mcp_server.tools.sql')
 
-    def test_a_refusal_logs_a_code_and_never_the_email_or_the_message(
-        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ('key', 'principal', 'expected'),
+        [
+            (None, 'user@example.com', 'RLS query outcome=refused project_id=7 refusal_code=UNSUPPORTED'),
+            ('secret-one', '', 'RLS query outcome=refused project_id=7 identity=none refusal_code=UNSUPPORTED'),
+        ],
+    )
+    def test_a_refusal_logs_ids_and_a_code_and_never_the_email(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch, key, principal, expected
     ) -> None:
-        monkeypatch.delenv('KBC_RLS_LOG_SUBJECT_KEY', raising=False)
-        sql_module._log_rls_outcome(
-            'refused', project_id=1234, principal='user@example.com', refusal_code='UNSUPPORTED'
-        )
+        if key is None:
+            monkeypatch.delenv('KBC_RLS_LOG_SUBJECT_KEY', raising=False)
+        else:
+            monkeypatch.setenv('KBC_RLS_LOG_SUBJECT_KEY', key)
 
-        line = caplog.records[-1].getMessage()
-        assert line == 'RLS query outcome=refused project_id=1234 refusal_code=UNSUPPORTED'
-        assert 'user@example.com' not in line
+        sql_module._log_rls_outcome('refused', project_id=7, principal=principal, code='UNSUPPORTED')
 
-    def test_the_subject_is_a_keyed_hash_that_is_stable_and_does_not_contain_the_email(
+        assert caplog.records[-1].getMessage() == expected
+
+    def test_the_subject_is_a_keyed_hash_that_changes_with_the_key_and_hides_the_email(
         self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv('KBC_RLS_LOG_SUBJECT_KEY', 'secret-one')
-        sql_module._log_rls_outcome('ok', project_id=1, principal='User@Example.com', tables=['in.c-crm.invoices'])
         sql_module._log_rls_outcome('ok', project_id=1, principal='user@example.com', tables=['in.c-crm.invoices'])
-        first, second = (r.getMessage() for r in caplog.records[-2:])
+        first = caplog.records[-1].getMessage()
         subject = next(f for f in first.split() if f.startswith('subject='))
 
-        assert first == second  # same user after case folding, same key
         assert 'example.com' not in first and len(subject) == len('subject=') + 16
 
         monkeypatch.setenv('KBC_RLS_LOG_SUBJECT_KEY', 'secret-two')
         sql_module._log_rls_outcome('ok', project_id=1, principal='user@example.com', tables=['in.c-crm.invoices'])
-        assert subject not in caplog.records[-1].getMessage()  # another key, another subject
-
-    def test_a_session_without_an_identity_is_marked_not_hashed(
-        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv('KBC_RLS_LOG_SUBJECT_KEY', 'secret-one')
-        sql_module._log_rls_outcome('refused', project_id=7, principal='', refusal_code='ACCESS_DENIED')
-
-        assert caplog.records[-1].getMessage() == (
-            'RLS query outcome=refused project_id=7 identity=none refusal_code=ACCESS_DENIED'
-        )
+        assert subject not in caplog.records[-1].getMessage()

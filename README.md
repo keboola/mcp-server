@@ -146,11 +146,12 @@ or tool argument to set it. Column names in a policy are matched exactly (case-s
 Storage spells them.
 
 Once a project has any policy, `query_data` runs only what the rewrite can prove it filters: a single `SELECT`
-over Storage-bucket tables (not workspace views or copies) that calls built-in functions. User-defined
-functions, `SYSTEM$` and catalog functions, query history and `INFORMATION_SCHEMA` are refused. The scalar
-Snowflake Cortex functions (`COMPLETE`, `SUMMARIZE`, `TRANSLATE`, `SENTIMENT`, `CLASSIFY_TEXT`,
-`EXTRACT_ANSWER`, `EMBED_TEXT_768`, `EMBED_TEXT_1024`) are allowed, since they see only rows that are already
-filtered; Cortex Search and anything that reads a stage are not. A project without policies is unaffected.
+over Storage-bucket tables (not workspace views or copies) that calls built-in functions by their plain name.
+User-defined functions, quoted function names, `SYSTEM$` and catalog functions, query history and
+`INFORMATION_SCHEMA` are refused. The scalar Snowflake Cortex functions listed in `rls.py` (completion,
+summarisation, translation, sentiment, classification, answer extraction and text embedding) are allowed, since
+they see only rows that are already filtered; Cortex Search and anything that reads a stage are not. A project
+without policies is unaffected.
 
 The server log carries one `RLS query outcome` line per governed call with ids and codes only: the project, the
 governed tables, a refusal code and, when `KBC_RLS_LOG_SUBJECT_KEY` is set, a keyed hash of the user (`subject`).

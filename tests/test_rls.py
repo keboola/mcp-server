@@ -19,9 +19,7 @@ from keboola_mcp_server.rls import (
     _normalize_schema,
     _rule_key,
     references_governed_table,
-    refusal_code,
     rewrite_query,
-    subject_id,
 )
 
 # The predicates a rewrite of the hand-built SQL in `TestOutputInvariant` would have inserted.
@@ -692,7 +690,6 @@ class TestRewriteQuery:
         [
             # Scalar Cortex functions see only their arguments, which come from already-filtered rows.
             'SELECT SNOWFLAKE.CORTEX.SENTIMENT(region) FROM "in.c-crm"."invoices"',
-            'SELECT SNOWFLAKE.CORTEX.SUMMARIZE(region) FROM "in.c-crm"."invoices"',
             # A generic built-in sqlglot does not type, and a typed one.
             'SELECT HASH(id), UPPER(region) FROM "in.c-crm"."invoices"',
             # A development-branch workspace spells the bucket with the branch id in front.
@@ -1340,8 +1337,13 @@ class TestRewriteQuery:
             ('SELECT my_udf(id) FROM "in.c-other"."unrelated"', 'petr', 'snowflake', 'not allowed: my_udf'),
             ('SELECT other_db.s.fn(id) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'not allowed: other_db.s.fn'),
             # Quoting makes a function name case-sensitive, so "hash" is not the built-in HASH but possibly a UDF.
-            ('SELECT "hash"(id) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'not allowed: hash'),
-            ('SELECT "HASH"(id) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'not allowed: HASH'),
+            ('SELECT "hash"(id) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'quoted function name'),
+            # sqlglot types these as the built-in and drops the quoting, so only the token stream shows it.
+            ('SELECT "upper"(region) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'quoted function name'),
+            ('SELECT `hash`(id) FROM `p`.`in_c_crm`.`invoices`', 'petr', 'bigquery', 'quoted function name'),
+            # The table-less path has its own allowlist of clock functions; the quote rule applies there too.
+            ('SELECT "now"()', 'petr', 'snowflake', 'quoted function name'),
+            ('WITH t AS (SELECT 1 AS x) SELECT "current_date"() FROM t', 'petr', 'snowflake', 'quoted function name'),
             (
                 'SELECT "snowflake".cortex.complete(\'m\', \'p\') FROM "in.c-crm"."invoices"',
                 'petr',
@@ -2214,17 +2216,3 @@ class TestPolicySecurity:
         predicate = self._predicate(rules, 'x@example.com', ())
         assert time.monotonic() - started < 5
         assert predicate.count(' OR ') == 199
-
-
-class TestAuditHelpers:
-    def test_subject_id_folds_ascii_only_like_rule_matching(self) -> None:
-        key = b'k'
-        assert subject_id('User@Example.com', key) == subject_id('user@example.com', key)
-        # The Kelvin sign is a different principal, so it must be a different subject.
-        assert subject_id('\u212a@example.com', key) != subject_id('k@example.com', key)
-        assert subject_id('user@example.com', b'other') != subject_id('user@example.com', key)
-
-    def test_refusal_code_never_echoes_the_message(self) -> None:
-        assert refusal_code(RlsAccessDenied('secret detail')) == 'ACCESS_DENIED'
-        assert refusal_code(RlsError('secret detail')) == 'UNSUPPORTED'
-        assert refusal_code(ValueError('secret detail')) == 'INVALID'

@@ -25,10 +25,9 @@ from keboola_mcp_server.rls import (
     ClsRules,
     RlsRules,
     references_governed_table,
-    refusal_code,
     rewrite_query,
-    subject_id,
 )
+from keboola_mcp_server.rls_audit import refusal_code, subject_id
 from keboola_mcp_server.rls_policies import RLS_FEATURE, load_policy_rules
 from keboola_mcp_server.scope import OAUTH_USER_EMAIL_KEY
 from keboola_mcp_server.workspace import JobSubmittedInfo, QueryResult, SqlSelectData, WorkspaceManager
@@ -266,7 +265,7 @@ def _log_rls_outcome(
     project_id: int | None,
     principal: str | None,
     tables: list[str] | None = None,
-    refusal_code: str | None = None,
+    code: str | None = None,
 ) -> None:
     """One audit line per RLS-gated `query_data` call. `outcome='ok'` at INFO, else WARNING.
 
@@ -279,11 +278,11 @@ def _log_rls_outcome(
     if not principal:
         fields.append('identity=none')
     elif key:
-        fields.append(f'subject={subject_id(principal, key.encode())}')
+        fields.append(f'subject={subject_id(principal, key)}')
     if tables is not None:
         fields.append(f'tables={tables}')
-    if refusal_code is not None:
-        fields.append(f'refusal_code={refusal_code}')
+    if code is not None:
+        fields.append(f'refusal_code={code}')
     line = f'RLS query outcome={outcome} ' + ' '.join(fields)
     LOG.info(line) if outcome == 'ok' else LOG.warning(line)
 
@@ -389,7 +388,7 @@ async def _apply_rls(sql_query: str, *, ctx: Context, workspace_manager: Workspa
             # recursion limit -- turn it into an ordinary refusal, not a stack overflow.
             raise ValueError('RLS: query too deeply nested') from e
     except ValueError as e:
-        _log_rls_outcome('refused', project_id=rules.project_id, principal=principal, refusal_code=refusal_code(e))
+        _log_rls_outcome('refused', project_id=rules.project_id, principal=principal, code=refusal_code(e))
         raise
     _log_rls_outcome('ok', project_id=rules.project_id, principal=principal, tables=rewritten.applied_rules)
     try:
