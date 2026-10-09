@@ -152,16 +152,25 @@ _METADATA_FUNC_NAMES = frozenset(
 # `SELECT my_udf() FROM some_ungoverned_table` would otherwise run unfiltered. Everything not listed here
 # and not typed by sqlglot is refused. Extend it only with a built-in that reads nothing but its arguments.
 # (A UDF that shadows one of these names in the workspace schema is not detectable here.)
-_ALLOWED_GENERIC_FUNC_NAMES = frozenset(
-    {
-        'AS_ARRAY', 'AS_DOUBLE', 'AS_INTEGER', 'AS_OBJECT', 'AS_VARCHAR',
-        'HASH', 'HAVERSINE', 'IEEE_DIVIDE', 'IS_DECIMAL', 'IS_INTEGER', 'IS_OBJECT', 'IS_VARCHAR',
-        'OBJECT_DELETE', 'OBJECT_PICK', 'OFFSET', 'ORDINAL', 'SAFE_OFFSET', 'SAFE_ORDINAL',
-        'RATIO_TO_REPORT', 'TO_GEOGRAPHY', 'TO_OBJECT', 'TRUNC',
-        'ST_ASTEXT', 'ST_DISTANCE', 'ST_GEOGFROMTEXT', 'ST_GEOGPOINT', 'ST_MAKEPOINT', 'ST_X', 'ST_Y',
-        'NOW', 'CURRENT_DATE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP',
-    }
-)  # fmt: skip
+# Per dialect, because a name that is a built-in in one warehouse can be a user-defined function in the other.
+_ALLOWED_GENERIC_FUNC_NAMES: Mapping[str, frozenset[str]] = {
+    'snowflake': frozenset(
+        {
+            'AS_ARRAY', 'AS_DOUBLE', 'AS_INTEGER', 'AS_OBJECT', 'AS_VARCHAR',
+            'HASH', 'HAVERSINE', 'IS_DECIMAL', 'IS_INTEGER', 'IS_OBJECT', 'IS_VARCHAR',
+            'OBJECT_DELETE', 'OBJECT_PICK', 'RATIO_TO_REPORT', 'TO_GEOGRAPHY', 'TO_OBJECT', 'TRUNC',
+            'ST_ASTEXT', 'ST_DISTANCE', 'ST_MAKEPOINT', 'ST_X', 'ST_Y',
+            'NOW', 'CURRENT_DATE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP',
+        }
+    ),
+    'bigquery': frozenset(
+        {
+            'IEEE_DIVIDE', 'OFFSET', 'ORDINAL', 'SAFE_OFFSET', 'SAFE_ORDINAL',
+            'ST_ASTEXT', 'ST_DISTANCE', 'ST_GEOGFROMTEXT', 'ST_GEOGPOINT', 'ST_X', 'ST_Y',
+            'NOW', 'CURRENT_DATE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP',
+        }
+    ),
+}  # fmt: skip
 # Snowflake Cortex functions that see only their arguments. The arguments come from rows the rewrite has
 # already filtered, so these cannot widen what the caller reads. Search, Analyst and anything that reads a
 # stage or an indexed copy of a table is not listed and stays refused. (Sending data to an LLM provider is a
@@ -1235,6 +1244,21 @@ def _function_name(node: exp.Expression) -> str:
     return node.sql_name() if isinstance(node, exp.Func) else type(node).__name__
 
 
+def _is_allowed_function(node: exp.Anonymous, name: str, *, dialect: str) -> bool:
+    """Whether a call sqlglot does not type is a known built-in of `dialect`: a scalar Cortex function (Snowflake)
+    by its exact qualified name, or an unqualified generic built-in.
+
+    A quoted name is never allowed. Quoting makes the name case-sensitive, so `"hash"(x)` is not the built-in
+    `HASH` but a function that happens to be called `hash` -- i.e. possibly a user-defined one.
+    """
+    if isinstance(node.this, exp.Identifier):  # sqlglot keeps a quoted function name as an Identifier
+        return False
+    upper = name.upper()
+    if dialect == 'snowflake' and upper in _CORTEX_SCALAR_FUNC_NAMES:
+        return True
+    return upper in _ALLOWED_GENERIC_FUNC_NAMES.get(dialect, frozenset())
+
+
 def _check_functions(tree: exp.Expression, cte_names: set[str], *, dialect: str) -> None:
     """Refuse function calls that RLS cannot reason about; raise `RlsError` if any is present.
 
@@ -1267,7 +1291,7 @@ def _check_functions(tree: exp.Expression, cte_names: set[str], *, dialect: str)
             # type -- including any user-defined function -- is refused.
             for node in tree.find_all(exp.Anonymous):
                 name = _function_name(node)
-                if name.upper() not in _CORTEX_SCALAR_FUNC_NAMES and name.upper() not in _ALLOWED_GENERIC_FUNC_NAMES:
+                if not _is_allowed_function(node, name, dialect=dialect):
                     raise RlsError(f'RLS: function call is not allowed: {name}')
             return
 
