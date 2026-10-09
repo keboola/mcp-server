@@ -10,6 +10,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.stream import ColumnTemplate, OtlpSignal, SourceType, TableColumn
+from keboola_mcp_server.elicitation import UrlActionRequiredError
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, ToolsFilteringMiddleware, ToonCompactFunctionTool
@@ -200,10 +201,10 @@ async def ensure_data_streams_available(client: KeboolaClient, links_manager: Pr
     if await client.has_feature(PROTECTED_DEFAULT_BRANCH_FEATURE):
         raise ToolError('Data Streams are not available in projects with a protected default branch.')
     if not await client.has_feature(DATA_STREAMS_FEATURE):
-        unlock_link = links_manager.get_data_streams_dashboard_link()
-        raise ToolError(
-            'Data Streams are not enabled in this project. Give the user this link to the Data Streams page, '
-            f'where they can request the feature by clicking "Unlock Data Streams": {unlock_link.url}'
+        raise UrlActionRequiredError(
+            f'Data Streams (project feature "{DATA_STREAMS_FEATURE}") are not enabled in this project. '
+            'The user can request them on the Data Streams page by clicking "Unlock Data Streams".',
+            url=links_manager.get_data_streams_dashboard_link().url,
         )
 
 
@@ -281,8 +282,8 @@ async def get_streams(
     `otlp_secret`. Give these only to the user who asked; they authenticate writes into the project.
     Sessions with read-only access get them hidden (`secret_redacted=true`).
 
-    If Data Streams are not enabled in the project, the tool fails with a link to the Data Streams page
-    where the user can request the feature. Always pass that link on to the user.
+    If Data Streams are not enabled in the project, the tool fails with the project feature key and a link to
+    the Data Streams page where the user can request the feature. Tell the user how to request it.
 
     EXAMPLES:
     - source_ids=[] -> all Data Streams with their sinks and endpoints
@@ -361,8 +362,8 @@ async def create_stream(
     Rows appear in the tables in batches, typically within a few minutes.
 
     The returned endpoint embeds a secret: give it only to the user. If Data Streams are not enabled in the
-    project, the tool fails with a link to the Data Streams page where the user can request the feature.
-    Always pass that link on to the user.
+    project, the tool fails with the project feature key and a link to the Data Streams page where the user
+    can request the feature. Tell the user how to request it.
     """
     if source_type == 'otlp' and (table_id or columns):
         raise ToolError('"table_id" and "columns" apply only to HTTP streams; OTLP streams use fixed tables.')

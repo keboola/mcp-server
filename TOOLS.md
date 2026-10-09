@@ -5304,8 +5304,8 @@ Creates a Data Stream: a source with an endpoint receiving events and the sinks 
 Rows appear in the tables in batches, typically within a few minutes.
 
 The returned endpoint embeds a secret: give it only to the user. If Data Streams are not enabled in the
-project, the tool fails with a link to the Data Streams page where the user can request the feature.
-Always pass that link on to the user.
+project, the tool fails with the project feature key and a link to the Data Streams page where the user
+can request the feature. Tell the user how to request it.
 
 
 **Input JSON Schema**:
@@ -5497,8 +5497,8 @@ Each stream includes its `endpoint_url` (with the secret embedded) and, for OTLP
 `otlp_secret`. Give these only to the user who asked; they authenticate writes into the project.
 Sessions with read-only access get them hidden (`secret_redacted=true`).
 
-If Data Streams are not enabled in the project, the tool fails with a link to the Data Streams page
-where the user can request the feature. Always pass that link on to the user.
+If Data Streams are not enabled in the project, the tool fails with the project feature key and a link to
+the Data Streams page where the user can request the feature. Tell the user how to request it.
 
 EXAMPLES:
 - source_ids=[] -> all Data Streams with their sinks and endpoints
