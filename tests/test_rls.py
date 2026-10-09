@@ -1339,6 +1339,24 @@ class TestRewriteQuery:
             ('SELECT my_udf(id) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'not allowed: my_udf'),
             ('SELECT my_udf(id) FROM "in.c-other"."unrelated"', 'petr', 'snowflake', 'not allowed: my_udf'),
             ('SELECT other_db.s.fn(id) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'not allowed: other_db.s.fn'),
+            # Quoting makes a function name case-sensitive, so "hash" is not the built-in HASH but possibly a UDF.
+            ('SELECT "hash"(id) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'not allowed: hash'),
+            ('SELECT "HASH"(id) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'not allowed: HASH'),
+            (
+                'SELECT "snowflake".cortex.complete(\'m\', \'p\') FROM "in.c-crm"."invoices"',
+                'petr',
+                'snowflake',
+                'not allowed',
+            ),
+            # A built-in of one warehouse is not a built-in of the other.
+            ('SELECT OFFSET(id) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'not allowed: OFFSET'),
+            ('SELECT HASH(id) FROM `p`.`in_c_crm`.`invoices`', 'petr', 'bigquery', 'not allowed: HASH'),
+            (
+                "SELECT SNOWFLAKE.CORTEX.SENTIMENT(region) FROM `p`.`in_c_crm`.`invoices`",
+                'petr',
+                'bigquery',
+                'not allowed: SNOWFLAKE.CORTEX.SENTIMENT',
+            ),
             # A workspace view or copy can hide a governed table that no policy key names.
             ('SELECT * FROM "WORKSPACE_123"."v"', 'petr', 'snowflake', 'only storage-bucket tables'),
             (
