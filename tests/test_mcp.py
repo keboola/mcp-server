@@ -3,6 +3,7 @@ import base64
 import dataclasses
 import logging
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -43,6 +44,7 @@ from keboola_mcp_server.scope import (
     resolve_scope_binding_aad,
     resolve_scope_key,
 )
+from keboola_mcp_server.session_store.repository import OAuthSession, SessionStore
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -2306,3 +2308,288 @@ async def test_session_state_project_id_is_stamped_on_log_records(caplog):
     logging.getLogger('keboola_mcp_server.test').warning('something failed')
 
     assert [r.project_id for r in caplog.records if r.getMessage() == 'something failed'] == ['451']
+
+
+class TestProvisionedSessionOnADeployedServer:
+    """A project created by `create_project` where there is no per-user credential file: the
+    credentials live in the session store and the caller holds only the row's handle inside its
+    `scope_token` (remote_agent_provisioning RFC).
+    """
+
+    STACK = 'https://connection.keboola.com'
+
+    @staticmethod
+    def _session(expires_in: float = 3600.0, **overrides):
+        defaults = {
+            'id': 'sess-row-1',
+            'client_id': 'claude-code',
+            'user_email': None,
+            'kbc_access_token': 'kbc_at_provisioned',
+            'kbc_refresh_token': 'kbc_rt_provisioned',
+            'kbc_access_expires_at': datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+            'scope_project_ids': None,
+            'scope_read_only': False,
+            'scope_confirmed': False,
+            'scope_scoped_token': None,
+            'scope_scoped_expires_at': None,
+        }
+        return OAuthSession(**{**defaults, **overrides})
+
+    @staticmethod
+    def _with_lock(store, session) -> None:
+        """Gives a mock store a `lock_session` that yields `session`, as Postgres would."""
+
+        @asynccontextmanager
+        async def _lock(_session_id):
+            yield session
+
+        store.lock_session = _lock
+
+    def _server_state(self, store) -> ServerState:
+        return ServerState(
+            config=Config(storage_api_url=self.STACK),
+            runtime_info=ServerRuntimeInfo(transport='streamable-http'),
+            session_store=store,
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_handle_becomes_this_request_s_credentials(self) -> None:
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.return_value = self._session()
+        scope = SessionScope(project_ids=[4321], confirmed=True, provisioned_session_id='sess-row-1')
+
+        config = await SessionStateMiddleware._resolve_provisioned_session(
+            Config(storage_api_url=self.STACK), scope, self._server_state(store)
+        )
+
+        assert config.storage_token == 'kbc_at_provisioned'
+        assert config.project_id == '4321'
+        store.get_by_id.assert_awaited_once_with('sess-row-1')
+
+    @pytest.mark.asyncio
+    async def test_the_handle_wins_over_the_caller_s_own_credential(self) -> None:
+        # A provisioned project belongs to the stack's agent maintainer, so the caller's own
+        # session cannot reach it -- resolving the handle is the only way their call can work.
+        # Replay by a *different* caller is stopped by scope_token's encryption and aad binding,
+        # not by refusing to use the handle here.
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.return_value = self._session()
+        scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
+
+        config = await SessionStateMiddleware._resolve_provisioned_session(
+            Config(storage_api_url=self.STACK, storage_token='kbc_at_mine'), scope, self._server_state(store)
+        )
+
+        assert config.storage_token == 'kbc_at_provisioned'
+        assert config.project_id == '4321'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'scope',
+        [None, SessionScope(project_ids=[1]), SessionScope(project_ids=[1], scoped_token='kbc_at_x')],
+        ids=['no_scope', 'ordinary_scope', 'scoped_token_scope'],
+    )
+    async def test_untouched_without_a_provisioned_handle(self, scope) -> None:
+        store = AsyncMock(spec=SessionStore)
+        original = Config(storage_api_url=self.STACK)
+
+        config = await SessionStateMiddleware._resolve_provisioned_session(original, scope, self._server_state(store))
+
+        assert config is original
+        store.get_by_id.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_revoked_row_keeps_explaining_itself(self) -> None:
+        # The human claimed the project; the row is gone. Falling back to whatever credential the
+        # request carries would only produce a confusing failure against a project that credential
+        # cannot reach -- on this call and on every later one.
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.return_value = None
+        scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
+
+        with pytest.raises(ValueError, match='has ended') as excinfo:
+            await SessionStateMiddleware._resolve_provisioned_session(
+                Config(storage_api_url=self.STACK, storage_token='kbc_at_mine'),
+                scope,
+                self._server_state(store),
+            )
+
+        assert '4321' in str(excinfo.value)
+        assert 'sign in' in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_row_is_treated_as_transient(self) -> None:
+        # A Postgres blip is not a revocation: leave the request alone rather than telling the user
+        # their project is gone.
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.side_effect = RuntimeError('connection reset')
+        scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
+        original = Config(storage_api_url=self.STACK, storage_token='kbc_at_mine')
+
+        config = await SessionStateMiddleware._resolve_provisioned_session(original, scope, self._server_state(store))
+
+        assert config is original
+
+    @pytest.mark.asyncio
+    async def test_a_near_expiry_token_is_refreshed_server_side_and_persisted(self) -> None:
+        # The caller cannot refresh what it never holds, so the server must.
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.return_value = self._session(expires_in=10)
+        self._with_lock(store, self._session(expires_in=10))
+        scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
+        refreshed = TokenSet(access_token='kbc_at_fresh', refresh_token='kbc_rt_fresh', expires_at=time.time() + 3600)
+
+        with patch('keboola_mcp_server.mcp.refresh_tokens', AsyncMock(return_value=refreshed)):
+            config = await SessionStateMiddleware._resolve_provisioned_session(
+                Config(storage_api_url=self.STACK), scope, self._server_state(store)
+            )
+
+        assert config.storage_token == 'kbc_at_fresh'
+        store.rotate_kbc_tokens.assert_awaited_once()
+        assert store.rotate_kbc_tokens.await_args.kwargs['kbc_access_token'] == 'kbc_at_fresh'
+        assert store.rotate_kbc_tokens.await_args.kwargs['kbc_refresh_token'] == 'kbc_rt_fresh'
+
+    @pytest.mark.asyncio
+    async def test_a_failed_refresh_keeps_the_current_token(self) -> None:
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.return_value = self._session(expires_in=10)
+        self._with_lock(store, self._session(expires_in=10))
+        scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
+
+        with patch('keboola_mcp_server.mcp.refresh_tokens', AsyncMock(side_effect=httpx.ConnectTimeout('down'))):
+            config = await SessionStateMiddleware._resolve_provisioned_session(
+                Config(storage_api_url=self.STACK), scope, self._server_state(store)
+            )
+
+        assert config.storage_token == 'kbc_at_provisioned'
+        store.rotate_kbc_tokens.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_the_loser_of_a_refresh_race_uses_the_winner_s_tokens(self) -> None:
+        # Connection rotates refresh tokens: a second refresh with the same one would spend a token
+        # the winner already invalidated, and its write-back would strand the session. Under the
+        # lock the row already carries fresh credentials, so no second call is made at all.
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.return_value = self._session(expires_in=10)
+        self._with_lock(store, self._session(expires_in=3600, kbc_access_token='kbc_at_winner'))
+        scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
+
+        with patch('keboola_mcp_server.mcp.refresh_tokens', AsyncMock()) as refresh:
+            config = await SessionStateMiddleware._resolve_provisioned_session(
+                Config(storage_api_url=self.STACK), scope, self._server_state(store)
+            )
+
+        assert config.storage_token == 'kbc_at_winner'
+        refresh.assert_not_awaited()
+        store.rotate_kbc_tokens.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_refused_refresh_token_ends_the_session(self) -> None:
+        # Claiming the project revokes the whole Keboola session, so its refresh token dies with
+        # it. Connection's 401 is final: revoke the row and say so, rather than handing back a
+        # dead access token and letting the next call fail without explanation. Same convention
+        # as SimpleOAuthProvider._refresh_kbc_tokens.
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.return_value = self._session(expires_in=10)
+        self._with_lock(store, self._session(expires_in=10))
+        store.revoke_if_kbc_refresh_token.return_value = True
+        scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
+        refused = httpx.HTTPStatusError('401', request=MagicMock(), response=MagicMock(status_code=401))
+
+        with (
+            patch('keboola_mcp_server.mcp.refresh_tokens', AsyncMock(side_effect=refused)),
+            pytest.raises(ValueError, match='has ended'),
+        ):
+            await SessionStateMiddleware._resolve_provisioned_session(
+                Config(storage_api_url=self.STACK), scope, self._server_state(store)
+            )
+
+        store.revoke_if_kbc_refresh_token.assert_awaited_once_with('sess-row-1', 'kbc_rt_provisioned')
+        store.rotate_kbc_tokens.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_5xx_from_the_refresh_endpoint_keeps_the_session(self) -> None:
+        # Not a refusal: Connection could not answer. Keep the token and let the 401 handling deal
+        # with it if it is actually dead.
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.return_value = self._session(expires_in=10)
+        self._with_lock(store, self._session(expires_in=10))
+        scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
+        failed = httpx.HTTPStatusError('503', request=MagicMock(), response=MagicMock(status_code=503))
+
+        with patch('keboola_mcp_server.mcp.refresh_tokens', AsyncMock(side_effect=failed)):
+            config = await SessionStateMiddleware._resolve_provisioned_session(
+                Config(storage_api_url=self.STACK), scope, self._server_state(store)
+            )
+
+        assert config.storage_token == 'kbc_at_provisioned'
+        store.revoke_if_kbc_refresh_token.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_session_revoked_while_waiting_for_the_lock_is_not_refreshed(self) -> None:
+        store = AsyncMock(spec=SessionStore)
+        store.get_by_id.return_value = self._session(expires_in=10)
+        self._with_lock(store, None)
+        scope = SessionScope(project_ids=[4321], provisioned_session_id='sess-row-1')
+
+        with patch('keboola_mcp_server.mcp.refresh_tokens', AsyncMock()) as refresh:
+            await SessionStateMiddleware._resolve_provisioned_session(
+                Config(storage_api_url=self.STACK), scope, self._server_state(store)
+            )
+
+        refresh.assert_not_awaited()
+        store.rotate_kbc_tokens.assert_not_awaited()
+
+
+class TestProvisionedSessionEndsWhenTheProjectIsClaimed:
+    """Claiming the project revokes the agent session on the Connection side. That is the happy
+    ending, so the bare 401 is replaced by an explanation instead of surfacing as a failure.
+    """
+
+    CONFIG = Config(storage_api_url='https://connection.keboola.com', storage_token='kbc_at_provisioned')
+    SCOPE = SessionScope(project_ids=[4321], confirmed=True, provisioned_session_id='sess-row-1')
+
+    @staticmethod
+    def _http_error(status: int) -> httpx.HTTPStatusError:
+        return httpx.HTTPStatusError(str(status), request=MagicMock(), response=MagicMock(status_code=status))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('status', [401, 403])
+    async def test_a_revoked_session_is_ended_with_an_explanation(self, status: int) -> None:
+        store = AsyncMock(spec=SessionStore)
+
+        with (
+            patch('keboola_mcp_server.mcp.introspect_token', AsyncMock(side_effect=self._http_error(status))),
+            pytest.raises(ValueError, match='has ended') as excinfo,
+        ):
+            await SessionStateMiddleware._handle_provisioned_session_unauthorized(self.CONFIG, self.SCOPE, store)
+
+        store.revoke.assert_awaited_once_with('sess-row-1')
+        message = str(excinfo.value)
+        assert 'claimed' in message
+        assert 'sign in' in message
+        assert '4321' in message
+
+    @pytest.mark.asyncio
+    async def test_a_scope_related_401_keeps_the_session(self) -> None:
+        store = AsyncMock(spec=SessionStore)
+
+        with patch('keboola_mcp_server.mcp.introspect_token', AsyncMock(return_value=MagicMock())):
+            await SessionStateMiddleware._handle_provisioned_session_unauthorized(self.CONFIG, self.SCOPE, store)
+
+        store.revoke.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'failure',
+        [httpx.ConnectTimeout('down'), None],
+        ids=['transport_error', 'server_error'],
+    )
+    async def test_an_unverifiable_session_is_kept(self, failure) -> None:
+        store = AsyncMock(spec=SessionStore)
+        side_effect = failure or self._http_error(503)
+
+        with patch('keboola_mcp_server.mcp.introspect_token', AsyncMock(side_effect=side_effect)):
+            await SessionStateMiddleware._handle_provisioned_session_unauthorized(self.CONFIG, self.SCOPE, store)
+
+        store.revoke.assert_not_awaited()
