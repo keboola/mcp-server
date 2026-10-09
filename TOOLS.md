@@ -4742,6 +4742,9 @@ CONSIDERATIONS:
 - This tool confirms the SQL dialect, surfaces semantic constraint violations, and provides post-execution checks.
 - Only proceed to query_data once this tool returns valid=True and violations is empty. If violations are found,
 fix the query first or consider the limitations of this tool.
+- Besides constraint findings, `violations` flags SQL that contradicts the model itself: a join between two
+datasets on keys their relationship does not define (`join_key_mismatch`, error), and an aggregate that matches
+no defined metric (`undefined_metric`, warning).
 - Entries under `semantic_models` carry `scope`/`project_id`/`source_project_id`/
 `target_project_ids` -- see `get_semantic_context`'s CONSIDERATIONS for what they mean. A
 "targeted"/"organization"-scope model does not guarantee the query is actually runnable from
