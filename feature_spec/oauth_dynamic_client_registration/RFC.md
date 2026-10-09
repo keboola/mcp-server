@@ -183,6 +183,20 @@ matches it port-exactly, so a derived id that ignored its port could not be matc
 `redirect_uri` (not `client_id`) is also what makes a *stable-port* tool's approval survive it re-registering with
 a fresh SDK-minted uuid.
 
+**Accepted: loopback clients share one registration per host and path.** Because the port is not part of the id, two
+distinct local applications whose callbacks differ only by port (`http://127.0.0.1:54321/callback` and
+`http://127.0.0.1:9999/callback`) derive the same id: once one is approved, the other is REGISTERED too, without a
+separate approval. This follows from RFC 8252 §7.3 (a loopback callback's port is not part of its identity), and
+Connection's own registry matches these two hosts without the port. A port-sensitive id here would not close it
+either: the pair would simply be approved per port, and the SDK's client id cannot stand in for a stable identity
+because it is a fresh uuid on every `/register`. Keeping the port would make every reconnect of a loopback tool
+(Claude Code, VS Code, Codex, MCP Inspector, ...) a new approval and leave a permanent stack-wide registration row
+per run, which the pre-registered and approve-in-a-window paths cannot absorb. What bounds it: a registered pair
+only lets the callback proceed to Connection's login and consent for the user who is signing in, so the session is
+that user's own and no credential goes to a callback the user did not go through consent for. The residual risk is
+a local process that can bind a loopback port presenting itself as an already-approved loopback client of the
+same path, which already requires code running on the user's machine.
+
 ### 5. `authorize()` — the real trust decision
 
 ```python
@@ -488,8 +502,9 @@ approval).
     `projectless` rather than being held to `claudai` until Connection gates approval. Narrowing the
     grant per registration stays possible later at the Connection level and is not needed now.
     - Every registered client sent to consent is logged at INFO: `[authorize] Registered client
-      proceeding to consent` with `client_id`, `connection_client_id`, the sanitized `redirect_uri`,
-      `pre_registered` and `scope`. A `pre_registered=False` line is a dynamically approved callback
+      proceeding to consent` with `client_id`, the sanitized `redirect_uri`, `pre_registered` and
+      `scope`. The derived `connection_client_id` is deliberately not logged: it is the secret that keeps a user
+      from approving a pair out of band (§4), and the callback plus the MCP client id are enough to correlate. A `pre_registered=False` line is a dynamically approved callback
       receiving a whole-stack session request.
     - Connection exposes no listing of registered clients (`POST /oauth/clients/validate` is
       unauthenticated and answers one pair at a time), so the log is the only record, and it lives
