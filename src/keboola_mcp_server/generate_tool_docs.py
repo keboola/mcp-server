@@ -23,6 +23,7 @@ from keboola_mcp_server.tools.search import SEARCH_TOOLS_TAG
 from keboola_mcp_server.tools.semantic import SEMANTIC_TOOLS_TAG
 from keboola_mcp_server.tools.sql import SQL_TOOLS_TAG
 from keboola_mcp_server.tools.storage import STORAGE_TOOLS_TAG
+from keboola_mcp_server.tools.streams import STREAM_TOOLS_TAG
 
 LOG = logging.getLogger(__name__)
 
@@ -183,6 +184,7 @@ async def generate_docs() -> None:
         tools = await mcp.list_tools(run_middleware=False)
         categories = [
             ToolCategory('Storage Tools', STORAGE_TOOLS_TAG),
+            ToolCategory('Data Stream Tools', STREAM_TOOLS_TAG),
             ToolCategory('SQL Tools', SQL_TOOLS_TAG),
             ToolCategory('Component Tools', COMPONENT_TOOLS_TAG),
             ToolCategory('Flow Tools', FLOW_TOOLS_TAG),
