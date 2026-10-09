@@ -40,6 +40,7 @@ from keboola_mcp_server.tools.search import SEARCH_TOOLS_TAG
 from keboola_mcp_server.tools.semantic import SEMANTIC_TOOLS_TAG
 from keboola_mcp_server.tools.sql import SQL_TOOLS_TAG
 from keboola_mcp_server.tools.storage.tools import STORAGE_TOOLS_TAG
+from keboola_mcp_server.tools.streams import STREAM_TOOLS_TAG
 from keboola_mcp_server.workspace import WorkspaceManager
 
 
@@ -67,6 +68,7 @@ class TestServer:
             'create_project',
             'create_python_js_data_app_git_credential',
             'create_sql_transformation',
+            'create_stream',
             'delete_python_js_data_app_draft',
             'deploy_data_app',
             'docs_query',
@@ -86,6 +88,7 @@ class TestServer:
             'get_semantic_context',
             'get_semantic_schema',
             'get_shared_buckets',
+            'get_streams',
             'get_tables',
             'link_shared_bucket',
             'modify_flow',
@@ -438,6 +441,9 @@ async def test_tool_annotations_and_tags():
         ('get_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
         ('get_tables', True, None, None, {STORAGE_TOOLS_TAG}),
         ('update_descriptions', None, True, None, {STORAGE_TOOLS_TAG}),
+        # streams
+        ('get_streams', True, None, None, {STREAM_TOOLS_TAG}),
+        ('create_stream', None, False, None, {STREAM_TOOLS_TAG}),
         # flows
         ('create_flow', None, False, None, {FLOW_TOOLS_TAG}),
         ('create_conditional_flow', None, False, None, {FLOW_TOOLS_TAG}),
