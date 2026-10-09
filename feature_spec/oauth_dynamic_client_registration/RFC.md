@@ -341,7 +341,7 @@ check that the replacement is not weaker. Results will be recorded here and in t
 4. Approval gating: once AI-3936 or an equivalent is deployed, a minimum-role user must be unable to
    approve a new client.
 5. PKCE and scope: S256 required and `plain` rejected; check what a stolen session can do, and that
-   revoking it and deactivating a client both take effect within the 5-minute cache TTL.
+   revoking it and deactivating a client both take effect within the 5-minute cache TTL (a definite "not registered" always wins; the only exception is the claude.ai pair while Connection errors, see Decision §11).
 6. CI regression: a test over the real `create_server` and CLI composition that fails if any route can
    3xx to an untrusted host.
 
@@ -527,7 +527,7 @@ approval).
     call (single-flight), so a burst cannot fan out past it. And because Connection's own 429 can still
     hit the pre-registered claude.ai pair (it is exempt from the local limiter), that pair alone is served
     from its last known REGISTERED answer for up to an hour when Connection cannot answer (an error or a 429,
-    never a definite "not registered"), and after such a failure Connection is not asked again for that pair for
+    never a definite "not registered"; so an error is the one case that is not fail-closed, and only for this pair, and a deactivation seen by a definite 404 is never undone by it), and after such a failure Connection is not asked again for that pair for
     15 seconds, so a failing Connection is not called once per request; no other pair is ever answered from memory. The validate calls share
     one pooled HTTP client, closed in the server's lifespan teardown.
 
@@ -539,7 +539,7 @@ approval).
     flood continues. This is still a strict improvement over having no local limiter at all: the
     blast radius shrinks from stack-wide (exhausting Connection's real, shared 600/60s-per-IP
     ceiling, which every other replica and every other user depends on) to single-replica, and it
-    remains fail-closed the entire time (no bypass, no false REGISTERED). Properly fixing the
+    remains fail-closed the entire time for every pair but claude.ai (no bypass, no false REGISTERED; claude.ai's one-hour stale answer is the documented exception in Decision §11). Properly fixing the
     unpartitioned-budget gap needs the same missing ingredient Decision §11's parent paragraph
     already deferred for a different reason -- `authorize()` has no access to the caller's IP (the
     mcp SDK's `authorize(client, params)` interface doesn't pass the request through), so a per-IP
@@ -585,7 +585,7 @@ approval).
     What a user can still do is approve a pair under an id of their own choosing in Connection, which does not
     affect this server, and Connection's own gap (above) is unchanged.
 
-    **Rollout: clients the hardcoded list used to accept.** The list this PR removes accepted clients by domain
+    **Rollout: clients the hardcoded list used to accept — a release gate.** The list this PR removes accepted clients by domain
     (besides claude.ai: ChatGPT, Make, Devin, Onyx, n8n instances, Azure API Management's consent host, a few
     customer-specific hosts, and Keboola's own domains). Connection matches a full redirect URI, not a domain, so
     after this ships each of those that is still in use is refused unless it is **registered in Connection first**
@@ -594,6 +594,9 @@ approval).
     the first sign of a missed client is a user seeing the "not registered" page. Before enabling this on a
     stack, list the callbacks actually in use there (the INFO line above, from the previous release) and register
     the ones that matter. ChatGPT cannot be pre-registered as a constant: its callback is per connector.
+    This inventory and the pre-registration plan are an explicit **gate for releasing this change to production**: do not
+    release it before the callbacks in use have been listed and each one that matters is registered (or its approval
+    window is scheduled).
 
 13. **The REGISTERED cache's 5-minute TTL is also a revocation-latency window (Copilot review
     finding, accepted).** Connection's contract deliberately maps a deactivated client to the same

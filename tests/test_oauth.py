@@ -1159,6 +1159,39 @@ class TestSimpleOAuthProvider:
             assert 'pending_mcp_client' not in query
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize('approval_on', [True, False])
+    @pytest.mark.parametrize('registration', ['REGISTERED', 'NOT_REGISTERED', 'ERROR'])
+    async def test_authorize_never_logs_the_derived_connection_client_id(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        registration: str,
+        approval_on: bool,
+    ):
+        """The derived id is the secret that keeps a user from approving the pair out of band, so no log line on
+        any path may carry it (Vojtěch Biberle review)."""
+        from keboola_mcp_server.oauth import _ClientRegistration, _connection_client_id
+
+        redirect_uri = 'https://my.tool/oauth/callback'
+        self._stub_client_registration(monkeypatch, _ClientRegistration[registration])
+        monkeypatch.setattr(oauth_provider, '_dynamic_client_approval', approval_on)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl(redirect_uri),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            await oauth_provider.authorize(client, params)
+
+        assert caplog.records  # the path did log something, so the assertion below is not vacuous
+        assert _connection_client_id(redirect_uri, oauth_provider._client_id_key) not in caplog.text
+
+    @pytest.mark.asyncio
     async def test_an_approval_made_out_of_band_under_the_public_id_does_not_register_the_pair(
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):

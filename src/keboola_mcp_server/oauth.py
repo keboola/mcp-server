@@ -348,7 +348,7 @@ class ConnectionClientRegistry:
         well_known = redirect_uri in _WELL_KNOWN_CONNECTION_CLIENT_IDS
         if well_known and time.monotonic() < self._well_known_error_until.get(redirect_uri, -math.inf):
             # Connection failed to answer a moment ago: answer from memory instead of calling it again.
-            return self._answer_without_connection(connection_client_id, redirect_uri)
+            return self._answer_without_connection(redirect_uri)
 
         result = await self._check_registration_uncached(connection_client_id, redirect_uri)
         now = time.monotonic()
@@ -368,10 +368,10 @@ class ConnectionClientRegistry:
         elif result is _ClientRegistration.ERROR and well_known:
             # Bounded: only the fixed set of well-known pairs ever gets an entry.
             self._well_known_error_until[redirect_uri] = now + _WELL_KNOWN_ERROR_BACKOFF_SECONDS
-            return self._answer_without_connection(connection_client_id, redirect_uri)
+            return self._answer_without_connection(redirect_uri)
         return result
 
-    def _answer_without_connection(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
+    def _answer_without_connection(self, redirect_uri: str) -> _ClientRegistration:
         """
         The answer for a well-known pair while Connection cannot give one (an outage, or its own rate limit used up
         by someone else's flood). A pair Keboola pre-registered itself that was registered a moment ago keeps
@@ -384,7 +384,7 @@ class ConnectionClientRegistry:
         ):
             LOG.warning(
                 f'[check_registration] Connection unavailable; serving the last known registration for '
-                f'connection_client_id={connection_client_id}'
+                f'redirect_uri={_sanitize_for_log(redirect_uri)}'
             )
             return _ClientRegistration.REGISTERED
         return _ClientRegistration.ERROR
@@ -418,7 +418,7 @@ class ConnectionClientRegistry:
         if redirect_uri not in _WELL_KNOWN_CONNECTION_CLIENT_IDS and not self._validate_rate_limiter.try_acquire():
             LOG.warning(
                 f'[check_registration] Local rate limit exceeded, not calling Connection: '
-                f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri)}'
+                f'redirect_uri={_sanitize_for_log(redirect_uri)}'
             )
             return _ClientRegistration.ERROR
 
@@ -444,7 +444,7 @@ class ConnectionClientRegistry:
                 return _ClientRegistration.REGISTERED
             LOG.warning(
                 f'[check_registration] Unexpected 200 body from Connection (expected {{}}): '
-                f'connection_client_id={connection_client_id}, text={response.text[:200]!r}'
+                f'redirect_uri={_sanitize_for_log(redirect_uri)}, text={response.text[:200]!r}'
             )
             return _ClientRegistration.ERROR
         elif response.status_code == 404:
@@ -928,7 +928,7 @@ class SimpleOAuthProvider(OAuthProvider):
         if registration is _ClientRegistration.ERROR:
             LOG.warning(
                 f'[authorize] Could not verify client with Connection: client_id={_sanitize_client_id_for_log(client.client_id)}, '
-                f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}'
+                f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
             # Deliberately NOT `raise AuthorizeError(...)` here: the mcp SDK's own handler catches
             # that and redirects to the *caller-supplied* redirect_uri with the error params
@@ -949,7 +949,7 @@ class SimpleOAuthProvider(OAuthProvider):
         if registration is _ClientRegistration.NOT_REGISTERED and not self._dynamic_client_approval:
             LOG.info(
                 f'[authorize] Unregistered client refused, dynamic client approval is off: client_id={_sanitize_client_id_for_log(client.client_id)}, '
-                f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}'
+                f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
             # Same-origin error page, never the caller's redirect_uri (see the ERROR branch above for why).
             return construct_redirect_uri(
@@ -961,7 +961,7 @@ class SimpleOAuthProvider(OAuthProvider):
         if registration is _ClientRegistration.NOT_REGISTERED:
             LOG.info(
                 f'[authorize] Unregistered client sent to Connection for approval: client_id={_sanitize_client_id_for_log(client.client_id)}, '
-                f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}'
+                f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
             return self._client_registry.pending_approval_url(
                 connection_client_id=connection_client_id,
@@ -974,7 +974,7 @@ class SimpleOAuthProvider(OAuthProvider):
         # line is the record of which callback was sent to consent, and whether it was pre-registered.
         LOG.info(
             f'[authorize] Registered client proceeding to consent: client_id={_sanitize_client_id_for_log(client.client_id)}, '
-            f'connection_client_id={connection_client_id}, redirect_uri={_sanitize_for_log(redirect_uri_str)}, '
+            f'redirect_uri={_sanitize_for_log(redirect_uri_str)}, '
             f'pre_registered={connection_client_id in _WELL_KNOWN_CONNECTION_CLIENT_IDS.values()}, '
             f'scope={_CONNECTION_SCOPE!r}'
         )
