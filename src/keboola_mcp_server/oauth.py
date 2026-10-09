@@ -456,7 +456,7 @@ class ConnectionClientRegistry:
                 return _ClientRegistration.REGISTERED
             LOG.warning(
                 f'[check_registration] Unexpected 200 body from Connection (expected {{}}): '
-                f'redirect_uri={_sanitize_for_log(redirect_uri)}, text={response.text[:200]!r}'
+                f'redirect_uri={_sanitize_for_log(redirect_uri)}, text={_sanitize_for_log(response.text[:200])!r}'
             )
             return _ClientRegistration.ERROR
         elif response.status_code == 404:
@@ -464,7 +464,7 @@ class ConnectionClientRegistry:
         else:
             LOG.warning(
                 f'[check_registration] Unexpected response from Connection: '
-                f'status={response.status_code}, text={response.text[:200]!r}'
+                f'status={response.status_code}, text={_sanitize_for_log(response.text[:200])!r}'
             )
             return _ClientRegistration.ERROR
 
@@ -686,7 +686,7 @@ def _origin(url: str) -> tuple[str, str, int] | None:
     if not parsed.scheme or not host:
         return None
     scheme = parsed.scheme.lower()
-    return scheme, host.lower(), port or _DEFAULT_PORTS.get(scheme, 0)
+    return scheme, host.lower(), port if port is not None else _DEFAULT_PORTS.get(scheme, 0)
 
 
 class UntrustedAuthorizeRedirectMiddleware:
