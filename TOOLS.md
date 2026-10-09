@@ -5492,6 +5492,7 @@ store them in Storage tables in near real time, without any component configurat
 
 Each stream includes its `endpoint_url` (with the secret embedded) and, for OTLP, `otlp_base_url` plus
 `otlp_secret`. Give these only to the user who asked; they authenticate writes into the project.
+Sessions with read-only access get them hidden (`secret_redacted=true`).
 
 If Data Streams are not enabled in the project, the tool fails with a link to the Data Streams page
 where the user can request the feature. Always pass that link on to the user.

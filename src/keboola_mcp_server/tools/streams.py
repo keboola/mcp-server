@@ -12,7 +12,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.stream import ColumnTemplate, OtlpSignal, SourceType, TableColumn
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, ToonCompactFunctionTool
+from keboola_mcp_server.mcp import KeboolaMcpServer, ToolsFilteringMiddleware, ToonCompactFunctionTool
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.scope import ProjectIdArg
 
@@ -159,20 +159,25 @@ class StreamSource(BaseModel):
         ),
     )
     otlp_secret: str | None = Field(default=None, description='OTLP only: the secret for the Bearer header.')
+    secret_redacted: bool = Field(
+        default=False,
+        description='True when `endpoint_url` and `otlp_secret` are hidden because this session has read-only access.',
+    )
     disabled: bool = Field(default=False, description='Whether the source is disabled.')
     sinks: list[StreamSink] = Field(default_factory=list, description='The sinks of the source.')
     links: list[Link] = Field(default_factory=list, description='Links to the source in the Keboola UI.')
 
     @classmethod
-    def from_api(cls, raw: JsonDict, links: list[Link]) -> 'StreamSource':
+    def from_api(cls, raw: JsonDict, links: list[Link], *, include_secret: bool = True) -> 'StreamSource':
         http = cast(JsonDict, raw.get('http') or {})
         otlp = cast(JsonDict, raw.get('otlp') or {})
         return cls.model_validate(
             {
                 **raw,
-                'endpoint_url': http.get('url') or otlp.get('url'),
+                'endpoint_url': (http.get('url') or otlp.get('url')) if include_secret else None,
                 'otlp_base_url': otlp.get('baseUrl'),
-                'otlp_secret': otlp.get('secret'),
+                'otlp_secret': otlp.get('secret') if include_secret else None,
+                'secret_redacted': not include_secret,
                 'disabled': bool(raw.get('disabled')),
                 'sinks': [StreamSink.from_api(cast(JsonDict, s)) for s in cast(list, raw.get('sinks') or [])],
                 'links': links,
@@ -200,6 +205,14 @@ async def ensure_data_streams_available(client: KeboolaClient, links_manager: Pr
             'Data Streams are not enabled in this project. Give the user this link to the Data Streams page, '
             f'where they can request the feature by clicking "Unlock Data Streams": {unlock_link.url}'
         )
+
+
+async def can_write(client: KeboolaClient) -> bool:
+    """Whether the session may write; read-only sessions must not see the stream secrets that authorize writes."""
+    if client.readonly:
+        return False
+    token_info = await client.storage_client.verify_token()
+    return ToolsFilteringMiddleware.get_token_role(token_info).lower() != 'readonly'
 
 
 def http_bucket_id(source_id: str) -> str:
@@ -266,6 +279,7 @@ async def get_streams(
 
     Each stream includes its `endpoint_url` (with the secret embedded) and, for OTLP, `otlp_base_url` plus
     `otlp_secret`. Give these only to the user who asked; they authenticate writes into the project.
+    Sessions with read-only access get them hidden (`secret_redacted=true`).
 
     If Data Streams are not enabled in the project, the tool fails with a link to the Data Streams page
     where the user can request the feature. Always pass that link on to the user.
@@ -285,9 +299,12 @@ async def get_streams(
         if missing := wanted - {cast(str, s.get('sourceId')) for s in raw_sources}:
             raise ToolError(f'Data Streams not found: {", ".join(sorted(missing))}.')
 
+    include_secret = await can_write(client)
     streams = [
         StreamSource.from_api(
-            raw, links_manager.get_data_stream_links(cast(str, raw.get('sourceId')), cast(str, raw.get('name')))
+            raw,
+            links_manager.get_data_stream_links(cast(str, raw.get('sourceId')), cast(str, raw.get('name'))),
+            include_secret=include_secret,
         )
         for raw in raw_sources
     ]

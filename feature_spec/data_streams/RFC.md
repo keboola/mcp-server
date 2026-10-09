@@ -35,9 +35,11 @@ Availability check (both tools, before any Stream API call):
 | `protected-default-branch` feature | `ToolError`: not available with a protected default branch |
 | No `data-streams` feature | `ToolError` with the project's Data Streams page URL (`/admin/projects/<id>/storage/data-streams`) and an instruction to give it to the user, who can click "Unlock Data Streams" |
 
-The returned endpoints carry the source secret (HTTP `url`, OTLP `url`/`secret`). They are returned because
-the user needs them to send data (the UI shows them too). The tool descriptions tell the agent to share
-them only with the user.
+The returned endpoints carry the source secret (HTTP `url`, OTLP `url`/`secret`), which authorizes writes.
+`create_stream` always returns them, since only write-capable sessions can call it. `get_streams` is read-only,
+so it hides them (`secret_redacted=true`) for read-only sessions: read-only server mode or a `readOnly` token
+role. Otherwise read-only access would hand out a write credential. The tool descriptions tell the agent to
+share secrets only with the user.
 
 ## Resolution Strategy
 

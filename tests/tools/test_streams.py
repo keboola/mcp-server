@@ -69,6 +69,8 @@ def streams_client(mcp_context_client: Context, mocker: MockerFixture) -> Kebool
     client.has_feature = mocker.AsyncMock(side_effect=lambda feature: feature == DATA_STREAMS_FEATURE)
     client.stream_client.list_sources.return_value = [HTTP_SOURCE, OTLP_SOURCE]
     client.stream_client.create_source.return_value = {'sourceId': 'new-stream'}
+    client.readonly = False
+    client.storage_client.verify_token.return_value = {'admin': {'role': 'admin'}}
     return client
 
 
@@ -112,9 +114,26 @@ async def test_tools_require_data_streams(
         (('otel',), ['otel']),
     ],
 )
+@pytest.mark.parametrize(
+    ('readonly', 'token_role', 'expect_secret'),
+    [
+        (False, 'admin', True),
+        (True, 'admin', False),
+        (False, 'readOnly', False),
+    ],
+)
 async def test_get_streams(
-    source_ids: tuple[str, ...], expected_ids: list[str], streams_client: KeboolaClient, mcp_context_client: Context
+    source_ids: tuple[str, ...],
+    expected_ids: list[str],
+    readonly: bool,
+    token_role: str,
+    expect_secret: bool,
+    streams_client: KeboolaClient,
+    mcp_context_client: Context,
 ) -> None:
+    streams_client.readonly = readonly
+    streams_client.storage_client.verify_token.return_value = {'admin': {'role': token_role}}
+
     result = await get_streams(ctx=mcp_context_client, source_ids=source_ids)
 
     assert isinstance(result, GetStreamsOutput)
@@ -122,16 +141,18 @@ async def test_get_streams(
     assert result.links[0].url == STREAMS_PAGE_URL
     streams = {s.source_id: s for s in result.streams}
     if http := streams.get('github'):
-        assert http.endpoint_url == HTTP_SOURCE['http']['url']
+        assert http.endpoint_url == (HTTP_SOURCE['http']['url'] if expect_secret else None)
+        assert http.secret_redacted is not expect_secret
         assert http.otlp_base_url is None
         assert http.disabled is False
         assert http.sinks[0].table_id == 'in.c-data-stream-github.events'
         assert http.sinks[0].columns == [TableColumn(name='action', type='path', path='action', raw_string=True)]
         assert http.links[0].url == f'{STREAMS_PAGE_URL}/github'
     otlp = streams['otel']
-    assert otlp.endpoint_url == OTLP_SOURCE['otlp']['url']
+    assert otlp.endpoint_url == (OTLP_SOURCE['otlp']['url'] if expect_secret else None)
     assert otlp.otlp_base_url == OTLP_SOURCE['otlp']['baseUrl']
-    assert otlp.otlp_secret == 'SECRET'
+    assert otlp.otlp_secret == ('SECRET' if expect_secret else None)
+    assert otlp.secret_redacted is not expect_secret
     assert otlp.disabled is True
     assert otlp.sinks[0].allowed_signals == ['logs']
 
