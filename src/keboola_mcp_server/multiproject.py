@@ -19,7 +19,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import build_tracing_headers, deployed_sa_token_path
 from keboola_mcp_server.mcp import ServerState, is_read_only_tool
 from keboola_mcp_server.scope import PROJECT_ID_ARG, SCOPE_KEY, SessionScope
-from keboola_mcp_server.tools.constants import BOOTSTRAP_TOOLS
+from keboola_mcp_server.tools.constants import BOOTSTRAP_TOOLS, MERGE_REQUEST_BRANCH_ONLY_TOOLS
 from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
@@ -32,7 +32,9 @@ _NO_FANOUT_TOOLS = {'get_accessible_projects', 'set_project_scope'}
 # project_id argument to say which -- same single-target resolution/swap as a write tool, just
 # without the write semantics. get_project_info resolves through the active project's
 # WorkspaceManager (workspace id / sql dialect), so it can only ever report one project at a time.
-_SINGLE_TARGET_READ_TOOLS = {'get_project_info'}
+# Merge requests are project-specific ids and the conflict tool is bound to the session branch: neither can be
+# fanned out across projects, so both target one project like a write tool does.
+_SINGLE_TARGET_READ_TOOLS = {'get_project_info', 'get_merge_requests', 'get_merge_request_conflicts'}
 
 # Optional per-call argument injected on fan-out-eligible read tools to restrict a single call to a
 # subset of the scoped projects (consumed and stripped by MultiProjectMiddleware.on_call_tool).
@@ -239,7 +241,12 @@ class MultiProjectMiddleware(fmw.Middleware):
         """
         args = getattr(context.message, 'arguments', None)
         project_id = args.get(PROJECT_ID_ARG) if isinstance(args, dict) else None
-        target = self._resolve_single_target(scope, project_id)
+        if project_id is None and context.message.name in MERGE_REQUEST_BRANCH_ONLY_TOOLS:
+            # Bound to the session branch, which only the active project's client carries: no project_id to pass
+            # (the tools do not declare one), never ambiguous, never fanned out.
+            target = scope.active_project_id
+        else:
+            target = self._resolve_single_target(scope, project_id)
 
         if target is None or (target == scope.active_project_id and _active_client_honors_scope(state, scope)):
             return await call_next(context)

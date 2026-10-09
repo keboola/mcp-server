@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import httpx
 import pytest
+from httpx_retries import RetryTransport
 from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.auth_bridge import StorageTokenExchangeError, StorageTokenResolver
@@ -83,6 +84,21 @@ class TestRawKeboolaClient:
     def raw_client(self) -> RawKeboolaClient:
         """Create a RawKeboolaClient instance for testing."""
         return RawKeboolaClient(base_api_url='https://api.example.com', api_token='test-token')
+
+    @pytest.mark.parametrize(
+        ('retry', 'expected_type'),
+        [
+            pytest.param(True, RetryTransport, id='default_retries'),
+            pytest.param(False, httpx.AsyncHTTPTransport, id='opt_out'),
+        ],
+    )
+    def test_create_transport_retry_opt_out(
+        self, raw_client: RawKeboolaClient, retry: bool, expected_type: type
+    ) -> None:
+        """A call that starts a non-idempotent operation (e.g. a merge job) can opt out of the retry policy."""
+        transport = raw_client._create_transport(retry=retry)
+
+        assert type(transport) is expected_type
 
     def test_raise_for_status_500_with_exception_id(
         self, raw_client: RawKeboolaClient, mock_http_response_500: httpx.Response
@@ -1215,3 +1231,165 @@ class TestStepUpStorageClient:
         stepped = client.step_up_storage_client(str(token_file))
 
         assert stepped.raw_client.readonly is None
+
+
+class TestAsyncStorageClientMergeRequests:
+    @pytest.fixture
+    def storage_client(self, mocker: MockerFixture) -> AsyncStorageClient:
+        raw = mocker.AsyncMock(RawKeboolaClient)
+        return AsyncStorageClient(raw_client=raw, branch_id='123')
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('method', 'kwargs', 'verb', 'expected_call'),
+        [
+            pytest.param('merge_requests_list', {}, 'get', {'endpoint': 'merge-request'}, id='list'),
+            pytest.param(
+                'merge_request_detail',
+                {'merge_request_id': 7},
+                'get',
+                {'endpoint': 'merge-request/7', 'params': None},
+                id='detail',
+            ),
+            pytest.param(
+                'merge_request_detail',
+                {'merge_request_id': 7, 'include_activity_log': True},
+                'get',
+                {'endpoint': 'merge-request/7', 'params': {'include': 'activityLog'}},
+                id='detail_with_activity_log',
+            ),
+            pytest.param(
+                'merge_request_conflicts',
+                {'merge_request_id': 7},
+                'get',
+                {'endpoint': 'merge-request/7/conflicts'},
+                id='conflicts',
+            ),
+            pytest.param(
+                'merge_request_create',
+                {'branch_from_id': '123', 'branch_into_id': 1, 'title': 'T'},
+                'post',
+                {
+                    'endpoint': 'merge-request',
+                    'data': {'branchFromId': 123, 'branchIntoId': 1, 'title': 'T', 'autoMergeStrategy': 'none'},
+                },
+                id='create_minimal',
+            ),
+            pytest.param(
+                'merge_request_create',
+                {
+                    'branch_from_id': 123,
+                    'branch_into_id': 1,
+                    'title': 'T',
+                    'description': 'D',
+                    'reviewer_ids': [5, 6],
+                    'auto_merge_strategy': 'scheduled',
+                    'auto_merge_at': '2026-09-08T10:00:00+00:00',
+                },
+                'post',
+                {
+                    'endpoint': 'merge-request',
+                    'data': {
+                        'branchFromId': 123,
+                        'branchIntoId': 1,
+                        'title': 'T',
+                        'autoMergeStrategy': 'scheduled',
+                        'description': 'D',
+                        'reviewerIds': [5, 6],
+                        'autoMergeAt': '2026-09-08T10:00:00+00:00',
+                    },
+                },
+                id='create_full',
+            ),
+            pytest.param(
+                'merge_request_update',
+                {'merge_request_id': 7, 'payload': {'title': 'New', 'autoMergeStrategy': 'none'}},
+                'put',
+                {'endpoint': 'merge-request/7', 'data': {'title': 'New', 'autoMergeStrategy': 'none'}},
+                id='update',
+            ),
+            pytest.param(
+                'merge_request_request_review',
+                {'merge_request_id': 7},
+                'put',
+                {'endpoint': 'merge-request/7/request-review'},
+                id='request_review',
+            ),
+            pytest.param(
+                'merge_request_approve',
+                {'merge_request_id': 7},
+                'put',
+                {'endpoint': 'merge-request/7/approve'},
+                id='approve',
+            ),
+            pytest.param(
+                'merge_request_request_changes',
+                {'merge_request_id': 7},
+                'put',
+                {'endpoint': 'merge-request/7/request-changes', 'data': None},
+                id='request_changes_no_reason',
+            ),
+            pytest.param(
+                'merge_request_request_changes',
+                {'merge_request_id': 7, 'reason': 'fix it'},
+                'put',
+                {'endpoint': 'merge-request/7/request-changes', 'data': {'reason': 'fix it'}},
+                id='request_changes_with_reason',
+            ),
+            pytest.param(
+                'merge_request_merge',
+                {'merge_request_id': 7},
+                'put',
+                {'endpoint': 'merge-request/7/merge', 'retry': False},
+                id='merge_without_retry',
+            ),
+            pytest.param(
+                'configuration_diff',
+                {'component_id': 'keboola.ex-db', 'configuration_id': '42'},
+                'get',
+                {'endpoint': 'branch/123/components/keboola.ex-db/configs/42/diff'},
+                id='diff_is_branch_scoped',
+            ),
+            pytest.param(
+                'configuration_rebase',
+                {'component_id': 'keboola.ex-db', 'configuration_id': '42', 'version': 9, 'diff': {'name': 'n'}},
+                'post',
+                {
+                    'endpoint': 'branch/123/components/keboola.ex-db/configs/42/rebase',
+                    'data': {'version': 9, 'diff': {'name': 'n'}},
+                },
+                id='rebase_envelope_is_version_and_diff',
+            ),
+            pytest.param(
+                'configuration_rebase',
+                {'component_id': 'keboola.ex-db', 'configuration_id': '42', 'version': 9, 'diff': {}},
+                'post',
+                {
+                    'endpoint': 'branch/123/components/keboola.ex-db/configs/42/rebase',
+                    'data': {'version': 9, 'diff': {}},
+                },
+                id='rebase_delete_tombstone',
+            ),
+        ],
+    )
+    async def test_merge_request_methods(
+        self,
+        storage_client: AsyncStorageClient,
+        method: str,
+        kwargs: dict[str, Any],
+        verb: str,
+        expected_call: dict[str, Any],
+    ):
+        """Every MR method hits the project-level (never branch-prefixed) endpoint with the exact payload;
+        the two conflict-resolution methods are branch-scoped."""
+        raw_verb = getattr(storage_client.raw_client, verb)
+        raw_verb.return_value = {'id': 7}
+
+        result = await getattr(storage_client, method)(**kwargs)
+
+        assert result == {'id': 7}
+        raw_verb.assert_called_once()
+        _, called_kwargs = raw_verb.call_args
+        for key, value in expected_call.items():
+            assert called_kwargs.get(key) == value, f'{key}: {called_kwargs.get(key)!r} != {value!r}'
+        assert not called_kwargs['endpoint'].startswith('branch/') or method.startswith('configuration_')
