@@ -32,6 +32,8 @@ subquery per table -- never two separate rewrite passes. See
 """
 
 import dataclasses
+import hashlib
+import hmac
 import itertools
 import logging
 import re
@@ -77,6 +79,24 @@ _ASCII_LOWER = {ord(c): ord(c) + 32 for c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'}
 
 def _fold_principal(value: str) -> str:
     return value.translate(_ASCII_LOWER)
+
+
+def subject_id(principal: str, key: bytes) -> str:
+    """A keyed, truncated hash of a principal, for logs and audit records.
+
+    It lets one user's events be correlated without writing the address down. It is pseudonymous, not
+    anonymous: anyone holding `key` can recompute it from an email, so the key is a secret and the hash is still
+    personal data. The principal is folded exactly as rule matching folds it, so every service that uses the same
+    key derives the same value for the same user.
+    """
+    return hmac.new(key, _fold_principal(principal).encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def refusal_code(error: Exception) -> str:
+    """A fixed code for why a query was refused, safe to log: never the message, which can quote the SQL."""
+    if isinstance(error, RlsAccessDenied):
+        return 'ACCESS_DENIED'
+    return 'UNSUPPORTED' if isinstance(error, RlsError) else 'INVALID'
 
 
 # An IdP group name or id, compared exactly as delivered (schema 1.1.0 `groups`). Names may contain spaces
@@ -125,6 +145,44 @@ _METADATA_FUNC_NAMES = frozenset(
         'GET_RELATIVE_PATH',
     }
 )
+
+# Calls sqlglot parses as a generic `exp.Anonymous` rather than a typed function node, and that are plain
+# scalar or window built-ins over their own arguments. This is an allowlist on purpose: a user-defined
+# function parses the same way, and a SQL UDF can read a governed table inside its body, so
+# `SELECT my_udf() FROM some_ungoverned_table` would otherwise run unfiltered. Everything not listed here
+# and not typed by sqlglot is refused. Extend it only with a built-in that reads nothing but its arguments.
+# (A UDF that shadows one of these names in the workspace schema is not detectable here.)
+_ALLOWED_GENERIC_FUNC_NAMES = frozenset(
+    {
+        'AS_ARRAY', 'AS_DOUBLE', 'AS_INTEGER', 'AS_OBJECT', 'AS_VARCHAR',
+        'HASH', 'HAVERSINE', 'IEEE_DIVIDE', 'IS_DECIMAL', 'IS_INTEGER', 'IS_OBJECT', 'IS_VARCHAR',
+        'OBJECT_DELETE', 'OBJECT_PICK', 'OFFSET', 'ORDINAL', 'SAFE_OFFSET', 'SAFE_ORDINAL',
+        'RATIO_TO_REPORT', 'TO_GEOGRAPHY', 'TO_OBJECT', 'TRUNC',
+        'ST_ASTEXT', 'ST_DISTANCE', 'ST_GEOGFROMTEXT', 'ST_GEOGPOINT', 'ST_MAKEPOINT', 'ST_X', 'ST_Y',
+        'NOW', 'CURRENT_DATE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP',
+    }
+)  # fmt: skip
+# Snowflake Cortex functions that see only their arguments. The arguments come from rows the rewrite has
+# already filtered, so these cannot widen what the caller reads. Search, Analyst and anything that reads a
+# stage or an indexed copy of a table is not listed and stays refused. (Sending data to an LLM provider is a
+# data-residency question for the app, not a row-level-security one.)
+_CORTEX_SCALAR_FUNC_NAMES = frozenset(
+    {
+        'SNOWFLAKE.CORTEX.COMPLETE',
+        'SNOWFLAKE.CORTEX.SUMMARIZE',
+        'SNOWFLAKE.CORTEX.TRANSLATE',
+        'SNOWFLAKE.CORTEX.SENTIMENT',
+        'SNOWFLAKE.CORTEX.CLASSIFY_TEXT',
+        'SNOWFLAKE.CORTEX.EXTRACT_ANSWER',
+        'SNOWFLAKE.CORTEX.EMBED_TEXT_768',
+        'SNOWFLAKE.CORTEX.EMBED_TEXT_1024',
+    }
+)
+
+# A Storage bucket as the workspace spells its schema: `in.c-crm` on Snowflake, `in_c_crm` on BigQuery (a
+# development-branch prefix is dropped first, see `_BRANCH_PREFIX_RE`). In a project that has policies only
+# these are read: a view or copy in a workspace schema can hide a governed table that no policy key names.
+_BUCKET_SCHEMA_RE = re.compile(r'^(?:in|out)[._]c[-_]', re.IGNORECASE)
 
 # sqlglot underlines the offending token in a parse error with ANSI escapes.
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
@@ -551,6 +609,9 @@ class RlsRules:
     refused: Mapping[str, str] = dataclasses.field(default_factory=dict)
     """Rules key -> why every read of that table is refused, e.g. a policy authored for the other dialect.
     Refusing the one table keeps every other governed table of the project readable."""
+    project_id: int | None = None
+    """The project the policies were loaded for. Only used to label audit log lines, so it costs no extra
+    API call; a direct construction (tests) leaves it unset."""
 
     @classmethod
     def from_metastore(cls, objects: Sequence[Any], *, dialect: str, project_id: int) -> 'RlsRules':
@@ -644,6 +705,7 @@ class RlsRules:
             table_ids=table_ids,
             policies={key: tuple(key_policies) for key, key_policies in policies.items()},
             refused=refused,
+            project_id=project_id,
         )
 
     def _policies(self, key: str) -> tuple[_RlsPolicy, ...]:
@@ -987,6 +1049,11 @@ def _reads_system_metadata(tree: exp.Expression) -> bool:
     return False
 
 
+def _is_bucket_schema(schema: str) -> bool:
+    """Whether a table's schema (dataset) is a Storage bucket, ignoring a development-branch prefix."""
+    return _BUCKET_SCHEMA_RE.match(_BRANCH_PREFIX_RE.sub('', schema)) is not None
+
+
 def _is_wildcard_table(table: exp.Table, *, dialect: str) -> bool:
     """A BigQuery wildcard table (`dataset.prefix*`) expands to every matching table, governed ones included,
     but names none of them -- so no policy key can be derived from it."""
@@ -1171,24 +1238,22 @@ def _function_name(node: exp.Expression) -> str:
 def _check_functions(tree: exp.Expression, cte_names: set[str], *, dialect: str) -> None:
     """Refuse function calls that RLS cannot reason about; raise `RlsError` if any is present.
 
-    Two bans, both allowlist-shaped where it matters:
+    Two rules, both allowlist-shaped:
 
-    * `SYSTEM$...`, anything under `CORTEX` and the catalog/stage metadata functions
-      (`_METADATA_FUNC_NAMES`) are refused wherever they appear. They read metadata,
-      cancel queries or hand text to an LLM -- none of which the row filter constrains, however
-      thoroughly the FROM clause is rewritten.
+    * A call sqlglot does not type (`exp.Anonymous`) is allowed only if it is a scalar Cortex function or a
+      generic built-in on the allowlists above; everything else, user-defined functions included, is refused
+      wherever it appears. `SYSTEM$...` and the catalog/stage metadata functions
+      (`_METADATA_FUNC_NAMES`) are refused by name first. They read metadata or cancel queries -- none of
+      which the row filter constrains, however thoroughly the FROM clause is rewritten.
     * A query with no real table to filter (`SELECT GET_DDL(...)`, or the same thing dressed up with
       a dummy CTE) is not a data query at all: whatever it returns, no predicate shaped it. Only a
       small set of clock functions and pure scalar expressions is allowed there.
     """
     for node in tree.find_all(exp.Anonymous):
         name = _function_name(node)
-        parts = [part.upper() for part in name.split('.')]
-        if (
-            any(part.startswith('SYSTEM$') for part in parts)
-            or 'CORTEX' in name.upper()
-            or parts[-1] in _METADATA_FUNC_NAMES
-        ):
+        upper = name.upper()
+        parts = upper.split('.')
+        if any(part.startswith('SYSTEM$') for part in parts) or parts[-1] in _METADATA_FUNC_NAMES:
             raise RlsError(f'RLS: function call is not allowed: {name}')
 
     # An `exp.Table` naming a CTE in scope is not a real table. Resolution goes through
@@ -1197,7 +1262,14 @@ def _check_functions(tree: exp.Expression, cte_names: set[str], *, dialect: str)
     # counted as a non-table here and reported as a stray function call.
     for table in tree.find_all(exp.Table):
         if not isinstance(table.this, exp.Identifier) or not _is_cte_reference(table, cte_names, dialect=dialect):
-            return  # there is a real table here; the rewrite will filter it
+            # There is a real table here, so the rewrite will filter it. Allowlist: a scalar Cortex function by its
+            # exact qualified name, or an unqualified generic built-in. Every other call that sqlglot does not
+            # type -- including any user-defined function -- is refused.
+            for node in tree.find_all(exp.Anonymous):
+                name = _function_name(node)
+                if name.upper() not in _CORTEX_SCALAR_FUNC_NAMES and name.upper() not in _ALLOWED_GENERIC_FUNC_NAMES:
+                    raise RlsError(f'RLS: function call is not allowed: {name}')
+            return
 
     for node in tree.find_all(exp.Func):
         if isinstance(node, _FROMLESS_ALLOWED_FUNC_TYPES):
@@ -1373,6 +1445,8 @@ def references_governed_table(sql: str, *, dialect: str, rules: RlsRules, cls_ru
                 except RlsError:
                     return True
                 return True
+            if not _is_bucket_schema(table.db):
+                return True  # a workspace object may read a governed table; the strict rewrite refuses it
             if rules.is_governed(table_name=table.name, schema=table.db) or (
                 cls_rules is not None and cls_rules.is_governed(table_name=table.name, schema=table.db)
             ):
@@ -1508,6 +1582,9 @@ def rewrite_query(
             # No schema, so no policy key can be derived -- yet the warehouse may resolve the bare name to a
             # governed table through its current schema. Never pass it through as "ungoverned".
             raise RlsError(f"RLS: table reference must be qualified as <bucket>.<table>: '{node.name}'")
+        if not _is_bucket_schema(node.db):
+            # A workspace view or copy can hide a governed table that no policy key names.
+            raise RlsError(f"RLS: only storage-bucket tables can be queried here, not '{node.db}.{node.name}'")
         schema = node.db
         rls_governed = rules.is_governed(table_name=node.name, schema=schema)
         cls_governed = cls_rules is not None and cls_rules.is_governed(table_name=node.name, schema=schema)

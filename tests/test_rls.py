@@ -19,7 +19,9 @@ from keboola_mcp_server.rls import (
     _normalize_schema,
     _rule_key,
     references_governed_table,
+    refusal_code,
     rewrite_query,
+    subject_id,
 )
 
 # The predicates a rewrite of the hand-built SQL in `TestOutputInvariant` would have inserted.
@@ -521,6 +523,18 @@ class TestIsGovernedAndReferencesGovernedTable:
         with pytest.raises(RlsError, match='not allowed: GET_DDL'):
             rewrite_query(sql, user='petr', dialect='snowflake', rules=rules)
 
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            'SELECT my_udf(id) FROM "in.c-crm"."unrelated"',
+            'SELECT * FROM "WORKSPACE_123"."v"',
+        ],
+    )
+    def test_references_governed_table_true_for_a_udf_or_a_workspace_object(self, rules: RlsRules, sql: str) -> None:
+        """Neither names a governed table, but either can read one without the filter, so both must reach the
+        strict rewrite (which refuses them) instead of running as an ordinary query."""
+        assert references_governed_table(sql, dialect='snowflake', rules=rules) is True
+
     def test_references_governed_table_false_when_nothing_governed_is_touched(self, rules: RlsRules) -> None:
         sql = 'SELECT * FROM "in.c-crm"."unrelated"'
         assert references_governed_table(sql, dialect='snowflake', rules=rules) is False
@@ -672,6 +686,22 @@ class TestRewriteQuery:
     def test_an_unsupported_source_next_to_a_governed_table_is_refused(self, rules: RlsRules, sql: str) -> None:
         with pytest.raises(RlsError, match='unsupported'):
             rewrite_query(sql, user='petr', dialect='snowflake', rules=rules)
+
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            # Scalar Cortex functions see only their arguments, which come from already-filtered rows.
+            'SELECT SNOWFLAKE.CORTEX.SENTIMENT(region) FROM "in.c-crm"."invoices"',
+            'SELECT SNOWFLAKE.CORTEX.SUMMARIZE(region) FROM "in.c-crm"."invoices"',
+            # A generic built-in sqlglot does not type, and a typed one.
+            'SELECT HASH(id), UPPER(region) FROM "in.c-crm"."invoices"',
+            # A development-branch workspace spells the bucket with the branch id in front.
+            'SELECT id FROM "35403_in.c-crm"."invoices"',
+        ],
+    )
+    def test_allowed_functions_and_bucket_sources_are_rewritten(self, rules: RlsRules, sql: str) -> None:
+        result = rewrite_query(sql, user='petr', dialect='snowflake', rules=rules)
+        assert result.applied_rules  # the governed table was wrapped, not passed through
 
     def test_extra_sources_stored_in_from_expressions_are_checked_too(self) -> None:
         """Some sqlglot versions keep the extra comma-separated sources of `FROM a, b` in `From.expressions`
@@ -1294,13 +1324,30 @@ class TestRewriteQuery:
                 'snowflake',
                 'not allowed: SYSTEM',
             ),
-            ("SELECT SNOWFLAKE.CORTEX.COMPLETE('m', 'p')", 'petr', 'snowflake', 'not allowed: SNOWFLAKE.CORTEX'),
+            # A scalar Cortex function reads nothing but its arguments, but without a table there is no data
+            # query to speak of, so the table-less rule still applies.
+            ("SELECT SNOWFLAKE.CORTEX.COMPLETE('m', 'p')", 'petr', 'snowflake', 'without FROM'),
+            # Cortex Search reads its own indexed copy of a table, which no row filter constrains.
             (
-                'SELECT SNOWFLAKE.CORTEX.SENTIMENT(c) FROM "in.c-crm"."invoices"',
+                "SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW('svc', '{}') FROM \"in.c-crm\".\"invoices\"",
                 'petr',
                 'snowflake',
-                'not allowed: SNOWFLAKE.CORTEX',
+                'not allowed: SNOWFLAKE.CORTEX.SEARCH_PREVIEW',
             ),
+            # A user-defined function can read a governed table inside its body, so it is refused whether
+            # the query's own table is governed or not, and whether the call is qualified or not.
+            ('SELECT my_udf(id) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'not allowed: my_udf'),
+            ('SELECT my_udf(id) FROM "in.c-other"."unrelated"', 'petr', 'snowflake', 'not allowed: my_udf'),
+            ('SELECT other_db.s.fn(id) FROM "in.c-crm"."invoices"', 'petr', 'snowflake', 'not allowed: other_db.s.fn'),
+            # A workspace view or copy can hide a governed table that no policy key names.
+            ('SELECT * FROM "WORKSPACE_123"."v"', 'petr', 'snowflake', 'only storage-bucket tables'),
+            (
+                'SELECT * FROM "in.c-crm"."invoices" i JOIN "WORKSPACE_123"."v" v ON i.id = v.id',
+                'petr',
+                'snowflake',
+                'only storage-bucket tables',
+            ),
+            ('SELECT * FROM `my_workspace`.`v`', 'petr', 'bigquery', 'only storage-bucket tables'),
         ],
     )
     def test_rewrite_fails_closed(self, rules: RlsRules, bq_rules: RlsRules, sql, user, dialect, match) -> None:
@@ -2149,3 +2196,17 @@ class TestPolicySecurity:
         predicate = self._predicate(rules, 'x@example.com', ())
         assert time.monotonic() - started < 5
         assert predicate.count(' OR ') == 199
+
+
+class TestAuditHelpers:
+    def test_subject_id_folds_ascii_only_like_rule_matching(self) -> None:
+        key = b'k'
+        assert subject_id('User@Example.com', key) == subject_id('user@example.com', key)
+        # The Kelvin sign is a different principal, so it must be a different subject.
+        assert subject_id('\u212a@example.com', key) != subject_id('k@example.com', key)
+        assert subject_id('user@example.com', b'other') != subject_id('user@example.com', key)
+
+    def test_refusal_code_never_echoes_the_message(self) -> None:
+        assert refusal_code(RlsAccessDenied('secret detail')) == 'ACCESS_DENIED'
+        assert refusal_code(RlsError('secret detail')) == 'UNSUPPORTED'
+        assert refusal_code(ValueError('secret detail')) == 'INVALID'
