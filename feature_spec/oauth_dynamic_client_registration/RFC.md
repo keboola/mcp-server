@@ -600,6 +600,20 @@ approval).
     What a user can still do is approve a pair under an id of their own choosing in Connection, which does not
     affect this server, and Connection's own gap (above) is unchanged.
 
+    **An id handed out during an approval window outlives the window (accepted).** While the switch is on,
+    the redirect to Connection's approval screen carries the keyed client id, and anyone who requests `/authorize`
+    can read it. Connection's `pending_mcp_client` payload is unsigned and has no expiry, so an id harvested in the
+    window can still be sent to Connection after the switch is turned off, and that approves the pair. Turning the
+    switch off therefore stops this server from handing out ids and from sending anyone to the approval screen; it
+    does not retract ids already handed out. This adds nothing the window did not already allow (during it any
+    authenticated user can approve any callback), it only lets that ability outlast it for the URIs someone
+    asked about. Only a signed, expiring approval verified by Connection closes it, which is a Connection-side
+    change (AI-4020, together with the role gate of AI-3936); this server cannot rotate the id per window without
+    losing every earlier approval, because the id is also the registered client's stable identity. Until then the
+    mitigations are operational: keep the switch off except for a short, supervised window, treat what the
+    window exposed as approved, and change the session encryption key (which re-derives every id) if a window
+    must be revoked, at the cost of approving the legitimate dynamic clients again.
+
     **Rollout: clients the hardcoded list used to accept — a release gate.** The list this PR removes accepted clients by domain
     (besides claude.ai: ChatGPT, Make, Devin, Onyx, n8n instances, Azure API Management's consent host, a few
     customer-specific hosts, and Keboola's own domains). Connection matches a full redirect URI, not a domain, so
