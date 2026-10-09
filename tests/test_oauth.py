@@ -325,6 +325,7 @@ class TestUntrustedAuthorizeRedirectMiddleware:
             ('https://mcp.example:443/callback', 302),  # the default port spelled out is the same origin
             ('https://mcp.example:444/callback', 400),  # another port on an allowed host is another origin
             ('http://mcp.example/callback', 400),  # another scheme is another origin
+            ('https://mcp.example:0/callback', 400),  # an explicit port 0 is not the default port
         ],
     )
     def test_compares_the_whole_origin_not_only_the_hostname(
