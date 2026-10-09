@@ -10,38 +10,53 @@ a server can ask the client to open a URL, and the client shows its own consent 
 
 ## Required Behavior
 
-| Client | Single-project call without the feature | Multi-project fan-out |
-|---|---|---|
-| Declares `capabilities.elicitation.url` | JSON-RPC error `-32042` (`URLElicitationRequiredError`), one URL elicitation: the Data Streams page plus a message | Per-project text note with the link (unchanged) |
-| Doesn't declare it | `isError` result with the message and the link (unchanged) | Same |
+A client that declares `capabilities.elicitation.url` is asked to open the Data Streams page during the call. It
+then gets the normal tool error, so the model still says the feature is locked and how to request it.
 
-Clients advertise the capability at initialize or, on protocol 2026-07-28, per request. Both are read through
-`ctx.session.client_capabilities`, so this also works with the stateless HTTP transport.
+| Client / protocol | Single-project call without the feature |
+|---|---|
+| URL-capable, 2026-07-28 | The call returns an `InputRequiredResult` with one URL `elicitation/create` request. The client opens the page after consent and retries with the answer. The retry returns the tool error. |
+| URL-capable, older protocol with a back-channel (stdio, stateful HTTP) | `elicitation/create` URL request during the call, then the tool error |
+| Not URL-capable, or no way to ask | The tool error only; its text contains the link |
+
+Multi-project fan-out is unchanged: the per-project text note carries the link.
+
+### Why not `URLElicitationRequiredError` (-32042)
+
+The first version raised -32042. It's built for steps like an OAuth login: the client opens the URL, waits for
+`notifications/elicitation/complete`, then retries. In Claude Code 2.1.292 this meant two problems:
+- The user was stuck at "Waiting for the server to confirm completion…", because a feature request takes days and
+  there's nothing to confirm.
+- After Cancel, the model only saw "URL elicitation was canceled", not that Data Streams are locked.
 
 ## Resolution Strategy
 
 - `elicitation.py`:
-  - `UrlActionRequiredError(ToolError)` carries `user_message` and `url`. Its text already includes the link, so
-    every non-elicitation path behaves as before.
-  - `UrlElicitationMiddleware` catches it and, for capable clients, re-raises `UrlElicitationRequiredError` with a
-    fresh `elicitationId`.
-- Why a middleware: fastmcp masks every `MCPError` raised inside a tool body into an `isError` result, except the
-  missing-capability code. That would drop `-32042` and its payload. Middleware runs outside that masking.
-- Registered just outside `MultiProjectMiddleware`. Single-project calls propagate the error unchanged. Fan-out
-  keeps collecting per-project failures as text notes, so a URL elicitation can't wipe out the other projects'
-  results.
-- `tools/streams.py` raises `UrlActionRequiredError` for the missing `data-streams` feature.
-- No `notifications/elicitation/complete`: the server can't tell when the feature request is handled.
+  - `UrlActionRequiredError(ToolError)` carries `user_message` and `url`. Its text already includes the link.
+  - `UrlElicitationMiddleware` catches it. For URL-capable clients:
+    - 2026-07-28: it returns an `InputRequiredToolResult` keyed `open_url`. On the retry, `ctx.input_responses`
+      contains `open_url`, so it re-raises the error.
+    - Older protocols: `session.elicit_url(...)` over the back-channel. Any failure, such as no back-channel, is
+      logged, then it re-raises the error.
+- It's a middleware because it must see the error after `tool_errors` and outside `MultiProjectMiddleware`.
+  Single-project calls propagate the error unchanged; fan-out keeps per-project failures as text notes.
+- `tools/streams.py` raises `UrlActionRequiredError` naming the feature key (`data-streams`), so agent hosts like
+  Kai (AI-4019) can map it to their own feature-request flow.
 
 ## Scope
 
 In scope: the middleware, the error type, and the Data Streams unlock.
 
-Out of scope: other "go to the UI" flows (they can raise `UrlActionRequiredError` later), and completion notifications.
+Out of scope: other "go to the UI" flows (they can raise `UrlActionRequiredError` later).
 
 ## Testing / Verification
 
-- Unit: `tests/test_elicitation.py` runs a real in-memory FastMCP server and client. A capable client gets
-  `-32042` with the URL and message. A plain client, or any other tool error, gets an unchanged `isError` result.
-- E2E against Azure NE projects 721 (feature off) and 4905 (on), over stdio and stateless streamable-HTTP, with
-  capable and plain clients (see PR).
+- Unit: `tests/test_elicitation.py` runs a real in-memory FastMCP server and client on 2026-07-28. Covered:
+  - a URL-capable client that accepts or declines: asked once, then gets the tool error
+  - a plain client: no request, tool error
+  - an unrelated tool error: no request
+- E2E, Azure NE project 721 without the feature: stdio and stateless HTTP, URL-capable and plain fastmcp clients.
+  Claude Code 2.1.295 shows:
+  1. "MCP server keboola wants to open a URL" → Open in browser.
+  2. "I'm done, continue".
+  3. Claude answers that Data Streams aren't turned on in project 721 and points to Unlock Data Streams.
