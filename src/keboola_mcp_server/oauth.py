@@ -104,9 +104,9 @@ _VALIDATE_RATE_LIMIT_MAX_CALLS = 100
 _VALIDATE_RATE_LIMIT_WINDOW_SECONDS = 60.0
 # How long the last known REGISTERED answer for a well-known pair may be served when Connection cannot answer.
 _WELL_KNOWN_STALE_GRACE_SECONDS = 3600.0
-# After Connection fails to answer for a well-known pair, it is not asked again for this long: the pair is exempt
-# from the local limiter, so without a pause every sequential request would be one more call into a Connection
-# that is already failing (or rate-limiting this very egress IP).
+# After Connection fails to answer for a well-known pair (or answers "not registered"), it is not asked again for
+# this long: the pair is exempt from the local limiter, so without a pause every sequential request would be one
+# more call into a Connection that is already failing, rate-limiting this very egress IP, or has no such client.
 _WELL_KNOWN_ERROR_BACKOFF_SECONDS = 15.0
 
 
@@ -256,6 +256,10 @@ class ConnectionClientRegistry:
         # redirect_uri -> when a well-known pair was last seen REGISTERED (see `_check_and_cache`).
         self._last_known_registered: dict[str, float] = {}
         self._well_known_error_until: dict[str, float] = {}
+        # redirect_uri -> until when a well-known pair that Connection answered "not registered" for is not asked
+        # about again. The well-known pairs are exempt from the local limiter, so without this a missing or
+        # deactivated pair would cost Connection one call per request.
+        self._well_known_not_registered_until: dict[str, float] = {}
 
         # client_id -> client_name submitted at /register, so a dynamically-registered client's
         # approval screen can show a real name instead of just the derived Connection client_id
@@ -346,9 +350,14 @@ class ConnectionClientRegistry:
 
     async def _check_and_cache(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
         well_known = redirect_uri in _WELL_KNOWN_CONNECTION_CLIENT_IDS
-        if well_known and time.monotonic() < self._well_known_error_until.get(redirect_uri, -math.inf):
-            # Connection failed to answer a moment ago: answer from memory instead of calling it again.
-            return self._answer_without_connection(redirect_uri)
+        if well_known:
+            now = time.monotonic()
+            if now < self._well_known_not_registered_until.get(redirect_uri, -math.inf):
+                # Connection said "not registered" a moment ago: repeat that instead of calling it again.
+                return _ClientRegistration.NOT_REGISTERED
+            if now < self._well_known_error_until.get(redirect_uri, -math.inf):
+                # Connection failed to answer a moment ago: answer from memory instead of calling it again.
+                return self._answer_without_connection(redirect_uri)
 
         result = await self._check_registration_uncached(connection_client_id, redirect_uri)
         now = time.monotonic()
@@ -360,11 +369,14 @@ class ConnectionClientRegistry:
             if well_known:
                 self._last_known_registered[redirect_uri] = now
                 self._well_known_error_until.pop(redirect_uri, None)
+                self._well_known_not_registered_until.pop(redirect_uri, None)
         elif result is _ClientRegistration.NOT_REGISTERED and well_known:
             # A definite "not registered" (deactivated) must outlive a later error: forget the earlier success and
-            # any pause, or the next failure would serve that stale REGISTERED again and undo the deactivation.
+            # any error pause, or the next failure would serve that stale REGISTERED again and undo the deactivation.
             self._last_known_registered.pop(redirect_uri, None)
             self._well_known_error_until.pop(redirect_uri, None)
+            # Bounded like the error pause: only the fixed set of well-known pairs ever gets an entry.
+            self._well_known_not_registered_until[redirect_uri] = now + _WELL_KNOWN_ERROR_BACKOFF_SECONDS
         elif result is _ClientRegistration.ERROR and well_known:
             # Bounded: only the fixed set of well-known pairs ever gets an entry.
             self._well_known_error_until[redirect_uri] = now + _WELL_KNOWN_ERROR_BACKOFF_SECONDS
