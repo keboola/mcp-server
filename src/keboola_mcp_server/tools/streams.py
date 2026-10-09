@@ -10,6 +10,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.stream import ColumnTemplate, OtlpSignal, SourceType, TableColumn
+from keboola_mcp_server.elicitation import UrlActionRequiredError
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, ToolsFilteringMiddleware, ToonCompactFunctionTool
@@ -200,10 +201,10 @@ async def ensure_data_streams_available(client: KeboolaClient, links_manager: Pr
     if await client.has_feature(PROTECTED_DEFAULT_BRANCH_FEATURE):
         raise ToolError('Data Streams are not available in projects with a protected default branch.')
     if not await client.has_feature(DATA_STREAMS_FEATURE):
-        unlock_link = links_manager.get_data_streams_dashboard_link()
-        raise ToolError(
-            'Data Streams are not enabled in this project. Give the user this link to the Data Streams page, '
-            f'where they can request the feature by clicking "Unlock Data Streams": {unlock_link.url}'
+        raise UrlActionRequiredError(
+            'Data Streams are not enabled in this project. '
+            'The user can request them on the Data Streams page by clicking "Unlock Data Streams".',
+            url=links_manager.get_data_streams_dashboard_link().url,
         )
 
 
