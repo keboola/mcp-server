@@ -543,7 +543,7 @@ approval).
     hit the pre-registered claude.ai pair (it is exempt from the local limiter), that pair alone is served
     from its last known REGISTERED answer for up to an hour when Connection cannot answer (an error or a 429,
     never a definite "not registered"; so an error is the one case that is not fail-closed, and only for this pair, and a deactivation seen by a definite 404 is never undone by it), and after such a failure Connection is not asked again for that pair for
-    15 seconds, so a failing Connection is not called once per request; no other pair is ever answered from memory. The validate calls share
+    15 seconds, so a failing Connection is not called once per request, and the same pause follows a definite "not registered" for that pair (a missing, deactivated or not-yet-migrated pre-registration), so repeated requests cannot cost Connection one call each either; the pause is per well-known pair, hence bounded, and the answer during it is "not registered"; no other pair is ever answered from memory. The validate calls share
     one pooled HTTP client, closed in the server's lifespan teardown.
 
     **Known trade-off (security-scanner finding, accepted):** the limiter's budget is global per

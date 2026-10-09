@@ -1043,7 +1043,9 @@ class TestSimpleOAuthProvider:
         self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
     ):
         """NOT_REGISTERED must never be cached: an admin clicking Allow expects the *next* retry
-        to work immediately, not wait out a stale negative cache entry (Copilot review finding)."""
+        to work immediately, not wait out a stale negative cache entry (Copilot review finding). Only a pair that
+        cannot be approved by a user, a well-known one, is paused after a "not registered" answer (see
+        test_failing_connection_is_not_called_once_per_request)."""
         from keboola_mcp_server import oauth as oauth_module
         from keboola_mcp_server.oauth import _ClientRegistration
 
@@ -1061,8 +1063,8 @@ class TestSimpleOAuthProvider:
         )
 
         registry = oauth_provider._client_registry
-        first = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
-        second = await registry.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+        first = await registry.check_registration('mcp-x', 'https://tool.example/cb')
+        second = await registry.check_registration('mcp-x', 'https://tool.example/cb')
 
         assert first is _ClientRegistration.NOT_REGISTERED
         assert second is _ClientRegistration.NOT_REGISTERED
@@ -1330,17 +1332,27 @@ class TestSimpleOAuthProvider:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('redirect_uri', 'expected_calls', 'expected'),
+        ('redirect_uri', 'later_status', 'expected_calls', 'expected', 'pause'),
         [
             # Connection keeps failing: the well-known pair is served from memory and Connection is called once,
             # not once per request
-            ('https://claude.ai/api/mcp/auth_callback', 1, 'REGISTERED'),
-            # any other pair is never served from memory, and the local limiter, not a pause, bounds its calls
-            ('https://tool.example/cb', 100, 'ERROR'),
+            ('https://claude.ai/api/mcp/auth_callback', 429, 1, 'REGISTERED', '_well_known_error_until'),
+            # Connection says the well-known pair is not registered (missing, deactivated, not yet migrated): it is
+            # asked once, not once per request, and the local limiter does not apply to this pair
+            ('https://claude.ai/api/mcp/auth_callback', 404, 1, 'NOT_REGISTERED', '_well_known_not_registered_until'),
+            # any other pair is never answered from memory, and the local limiter, not a pause, bounds its calls
+            ('https://tool.example/cb', 429, 100, 'ERROR', None),
+            ('https://tool.example/cb', 404, 100, 'NOT_REGISTERED', None),
         ],
     )
     async def test_failing_connection_is_not_called_once_per_request(
-        self, monkeypatch: pytest.MonkeyPatch, redirect_uri: str, expected_calls: int, expected: str
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        redirect_uri: str,
+        later_status: int,
+        expected_calls: int,
+        expected: str,
+        pause: str | None,
     ):
         from keboola_mcp_server import oauth as oauth_module
         from keboola_mcp_server.oauth import ConnectionClientRegistry, _ClientRegistration
@@ -1361,9 +1373,9 @@ class TestSimpleOAuthProvider:
         registry = ConnectionClientRegistry('https://connection.example', validate_rate_limit=1000)
         assert await registry.check_registration('x', redirect_uri) is _ClientRegistration.REGISTERED
 
-        # the cache entry expires and Connection starts answering 429 to every call
+        # the cache entry expires and Connection starts answering with an error or "not registered" to every call
         registry._registration_cache.clear()
-        status = 429
+        status = later_status
         calls = 0
         for _ in range(100):
             assert await registry.check_registration('x', redirect_uri) is _ClientRegistration[expected]
@@ -1371,12 +1383,12 @@ class TestSimpleOAuthProvider:
         assert calls == expected_calls
 
         # after the pause Connection is asked again, and a recovered answer ends the pause for good
-        if redirect_uri in registry._well_known_error_until:
-            registry._well_known_error_until[redirect_uri] -= oauth_module._WELL_KNOWN_ERROR_BACKOFF_SECONDS
+        if pause:
+            getattr(registry, pause)[redirect_uri] -= oauth_module._WELL_KNOWN_ERROR_BACKOFF_SECONDS
             status = 200
             assert await registry.check_registration('x', redirect_uri) is _ClientRegistration.REGISTERED
             assert calls == expected_calls + 1
-            assert redirect_uri not in registry._well_known_error_until
+            assert redirect_uri not in getattr(registry, pause)
 
     @pytest.mark.asyncio
     async def test_a_deactivation_is_not_undone_by_a_later_connection_error(self, monkeypatch: pytest.MonkeyPatch):
@@ -1404,6 +1416,7 @@ class TestSimpleOAuthProvider:
         assert await registry.check_registration('x', uri) is _ClientRegistration.NOT_REGISTERED
         assert uri not in registry._last_known_registered
 
+        registry._well_known_not_registered_until.clear()  # the pause after the 404 is over
         status = 500  # and then it fails
         assert await registry.check_registration('x', uri) is _ClientRegistration.ERROR
 
