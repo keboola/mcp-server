@@ -16,6 +16,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools import FunctionTool
 from mcp.types import TextContent
 from pydantic import Field
+from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 
@@ -27,6 +28,7 @@ from keboola_mcp_server.mcp import (
     SessionStateMiddleware,
     _SerializingFunctionTool,
 )
+from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.server import CustomRoutes, create_server
 from keboola_mcp_server.tools.components.tools import COMPONENT_TOOLS_TAG
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
@@ -632,6 +634,149 @@ async def test_oauth_callback_handler_propagates_http_exception(mocker) -> None:
         await routes.oauth_callback_handler(request)
     assert exc.value.status_code == 400
     assert exc.value.detail == 'Invalid state parameter'
+
+
+@pytest.mark.parametrize(
+    ('error', 'expected_text'),
+    [
+        ('temporarily_unavailable', 'temporarily unavailable'),
+        # the user clicked Deny on Connection's consent screen -- not an outage
+        ('access_denied', 'authorization was denied'),
+        # dynamic client approval is switched off and the client is not registered
+        ('unregistered_client', 'not registered with keboola'),
+    ],
+)
+@pytest.mark.asyncio
+async def test_oauth_callback_handler_renders_error_param_without_invoking_callback(
+    mocker, error: str, expected_text: str
+) -> None:
+    """Regression test for the AI-2883 open-redirect fix: SimpleOAuthProvider.authorize() redirects
+    a Connection-check failure to this server's own /oauth/callback with an `error=` param (never to
+    the caller-supplied redirect_uri -- see that method's docstring). This route must render that as
+    a human-readable 400 HTML page (a person's browser lands here, not the MCP client -- Devin review
+    finding, AI-2883) and must NEVER call handle_oauth_callback() for it -- that method expects a
+    real `code`/`state` pair and calling it here would be meaningless at best."""
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    oauth_provider = mocker.Mock()
+    oauth_provider.handle_oauth_callback = mocker.AsyncMock()
+    routes = CustomRoutes(server_state=server_state, oauth_provider=oauth_provider)
+
+    request = Request(
+        {
+            'type': 'http',
+            'headers': [],
+            'query_string': f'error={error}&error_description=Could+not+verify+OAuth+client'.encode(),
+        }
+    )
+    response = await routes.oauth_callback_handler(request)
+
+    assert response.status_code == 400
+    assert response.headers['content-type'].startswith('text/html')
+    body = response.body.decode()
+    # error_description ('Could not verify OAuth client') is deliberately NOT rendered -- see
+    # the next test -- only the fixed generic message is.
+    assert 'Could not verify OAuth client' not in body
+    assert expected_text in body.lower()
+    if error == 'access_denied':
+        assert 'unavailable' not in body.lower()
+    oauth_provider.handle_oauth_callback.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_handler_never_reflects_caller_supplied_error_description(mocker) -> None:
+    """error_description is a caller-controlled query param; anyone can link
+    `/oauth/callback?error=x&error_description=<arbitrary text>` and have it rendered under a
+    trusted "Keboola login temporarily unavailable" heading -- content spoofing, not XSS, so
+    HTML-escaping it wouldn't be enough. It must never appear in the response body at all, escaped
+    or not (Vojtěch Biberle + Devin review, AI-2883)."""
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    oauth_provider = mocker.Mock()
+    oauth_provider.handle_oauth_callback = mocker.AsyncMock()
+    routes = CustomRoutes(server_state=server_state, oauth_provider=oauth_provider)
+
+    request = Request(
+        {
+            'type': 'http',
+            'headers': [],
+            'query_string': b'error=temporarily_unavailable&error_description=%3Cscript%3Ealert(1)%3C%2Fscript%3E',
+        }
+    )
+    response = await routes.oauth_callback_handler(request)
+
+    body = response.body.decode()
+    assert '<script>' not in body
+    assert '&lt;script&gt;' not in body
+    assert 'alert(1)' not in body
+
+
+@pytest.mark.parametrize(
+    ('redirect_uri', 'expected_status'),
+    [
+        # fails SDK validation (no code_challenge) -> SDK would 302 to the caller-supplied URI
+        ('https://attacker.example/cb', 400),
+        ('https://mcp.example/callback', 302),
+    ],
+)
+def test_add_to_starlette_guards_root_authorize_route(redirect_uri: str, expected_status: int) -> None:
+    """Vojtěch Biberle's blocking review finding (AI-2883): the root-level /authorize route is added
+    to the outer Starlette app by add_to_starlette(), bypassing the provider's get_middleware() (which
+    only wraps the mounted /mcp app), so an invalid request could still be redirected off-origin."""
+    from starlette.testclient import TestClient
+
+    from tests.test_oauth import JWT_KEY, FakeSessionStore
+
+    oauth_provider = SimpleOAuthProvider(
+        storage_api_url='https://sapi',
+        mcp_server_url='https://mcp.example',
+        callback_endpoint='/callback',
+        client_id='mcp-server-id',
+        client_secret='mcp-server-secret',
+        server_url='https://oauth.example',
+        scope='scope',
+        jwt_secret=JWT_KEY,
+        session_store=FakeSessionStore(),
+    )
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    app = Starlette()
+    CustomRoutes(server_state=server_state, oauth_provider=oauth_provider).add_to_starlette(app)
+
+    response = TestClient(app, raise_server_exceptions=False).get(
+        '/authorize',
+        params={'client_id': 'x', 'redirect_uri': redirect_uri, 'response_type': 'code'},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == expected_status
+    if expected_status == 400:
+        assert 'attacker.example' not in response.headers.get('location', '')
+
+
+@pytest.mark.parametrize(
+    ('value', 'expected'),
+    [(None, None), ('', None), ('100', 100), ('1', 1), ('0', ValueError), ('-3', ValueError), ('abc', ValueError)],
+)
+def test_parse_validate_rate_limit(value: str | None, expected: int | type[ValueError] | None) -> None:
+    from keboola_mcp_server.server import _parse_validate_rate_limit
+
+    if expected is ValueError:
+        with pytest.raises(ValueError, match='positive integer'):
+            _parse_validate_rate_limit(value)
+    else:
+        assert _parse_validate_rate_limit(value) == expected
+
+
+@pytest.mark.asyncio
+async def test_lifespan_closes_the_oauth_provider(mocker) -> None:
+    from keboola_mcp_server.server import create_keboola_lifespan
+
+    server_state = ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http'))
+    oauth_provider = mocker.Mock()
+    oauth_provider.aclose = mocker.AsyncMock()
+
+    async with create_keboola_lifespan(server_state, oauth_provider)(mocker.Mock()):
+        oauth_provider.aclose.assert_not_called()
+
+    oauth_provider.aclose.assert_awaited_once()
 
 
 class TestCreateServerOAuthSessionStore:

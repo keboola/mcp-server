@@ -13,14 +13,14 @@ from pydantic import AliasChoices, BaseModel, Field
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport, get_env_storage_api_url
 from keboola_mcp_server.errors import ValidationErrorMiddleware
 from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
-from keboola_mcp_server.oauth import SimpleOAuthProvider
+from keboola_mcp_server.oauth import SimpleOAuthProvider, UntrustedAuthorizeRedirectMiddleware
 from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.session_store.crypto import resolve_encryption_key
@@ -77,8 +77,23 @@ class ServiceInfoApiResp(BaseModel):
     )
 
 
+def _parse_validate_rate_limit(value: str | None) -> int | None:
+    """The `oauth_validate_rate_limit` setting as a positive int; None when unset. A bad value stops startup rather
+    than silently falling back to a limit nobody chose."""
+    if value is None or value == '':
+        return None
+    try:
+        limit = int(value)
+    except ValueError:
+        limit = 0
+    if limit < 1:
+        raise ValueError(f'oauth_validate_rate_limit must be a positive integer, got {value!r}')
+    return limit
+
+
 def create_keboola_lifespan(
     server_state: ServerState,
+    oauth_provider: SimpleOAuthProvider | None = None,
 ) -> Callable[[FastMCP[ServerState]], AbstractAsyncContextManager[ServerState]]:
     @asynccontextmanager
     async def keboola_lifespan(server: FastMCP) -> AsyncIterator[ServerState]:
@@ -103,6 +118,8 @@ def create_keboola_lifespan(
             yield server_state
         finally:
             await server_state.aclose()
+            if oauth_provider is not None:
+                await oauth_provider.aclose()
 
     return keboola_lifespan
 
@@ -132,7 +149,55 @@ class CustomRoutes:
         return JSONResponse(resp.model_dump(by_alias=True))
 
     async def oauth_callback_handler(self, request: Request) -> Response:
-        """Handle GitHub OAuth callback."""
+        """Handle the OAuth callback from Connection -- and this server's own same-origin error
+        redirects from `SimpleOAuthProvider.authorize()`'s fail-closed branch (see its docstring):
+        redirecting an error to the *caller-supplied* redirect_uri would be an open redirect now
+        that it's no longer host-restricted, so that branch redirects here (this server's own
+        origin) with `error`/`error_description` instead of `code`/`state`. The AI assistant that
+        started this attempt gets no callback at all in that case and must time out and retry --
+        same shape as Connection's own "Deny gets no callback" behavior.
+        """
+        error = request.query_params.get('error')
+        if error:
+            # strip control/bidi chars so a crafted query param can't forge log lines
+            safe_error = ''.join(ch for ch in error if ch.isprintable())[:200]
+            LOG.warning(f'OAuth authorize failed before reaching Connection: {safe_error}')
+            # A human, not the MCP client, is looking at this response: the browser lands here
+            # because SimpleOAuthProvider.authorize()'s fail-closed branch redirects its own
+            # errors to this server's own origin instead of the caller's redirect_uri (see this
+            # handler's docstring) -- the AI assistant that started the attempt gets no callback
+            # at all and just times out. A bare JSON body reads as a broken page to that person;
+            # a short HTML message tells them what happened and that retrying is the right move
+            # (Devin review finding, AI-2883).
+            #
+            # `error_description` is deliberately NEVER rendered here, escaped or not: it's a
+            # caller-controlled query param, and this is this server's own trusted origin. Anyone
+            # can link `/oauth/callback?error=x&error_description=<arbitrary text>` and have that
+            # text shown under a "Keboola login temporarily unavailable" heading here -- content
+            # spoofing, not XSS (HTML-escaping alone doesn't stop that) (Vojtěch Biberle + Devin
+            # review, AI-2883). `authorize()`'s own fail-closed branch only ever emits two fixed
+            # error_description strings, so a single fixed message loses nothing legitimate.
+            #
+            # A user clicking Deny on Connection's consent screen lands here too (error=access_denied);
+            # that is not an outage, so it gets its own fixed message. Still never anything derived
+            # from the query string.
+            if error == 'access_denied':
+                title = message = 'Authorization was denied. You can close this window.'
+            elif error == 'unregistered_client':
+                title = message = (
+                    'This application is not registered with Keboola. Ask your Keboola administrator to register it.'
+                )
+            else:
+                title = 'Keboola login temporarily unavailable'
+                message = 'Keboola login temporarily unavailable. Please close this window and try connecting again.'
+            return HTMLResponse(
+                status_code=400,
+                content=(
+                    f'<!doctype html><html><head><meta charset="utf-8"><title>{title}</title></head><body>'
+                    f'<p>{message}</p></body></html>'
+                ),
+            )
+
         code = request.query_params.get('code')
         state = request.query_params.get('state')
 
@@ -173,6 +238,11 @@ class CustomRoutes:
             app.add_route('/oauth/callback', self.oauth_callback_handler, methods=['GET'])
             for route in self.oauth_provider.get_routes():
                 app.add_route(route.path, route.endpoint, methods=route.methods)
+            # The provider's own get_middleware() only wraps the mounted /mcp app; these root-level
+            # OAuth routes (incl. /authorize) live on the outer app and need the guard there too.
+            app.add_middleware(
+                UntrustedAuthorizeRedirectMiddleware, trusted_origins=self.oauth_provider.trusted_redirect_origins
+            )
 
 
 def create_server(
@@ -227,9 +297,8 @@ def create_server(
                 'OAuth is configured (oauth_client_id/oauth_client_secret) but no session encryption key is '
                 'set. Set KBC_SESSION_ENCRYPTION_KEY so persisted OAuth sessions survive a process restart.'
             )
-        session_store = PostgresSessionStore(
-            config.postgres_dsn, encryption_key=resolve_encryption_key(config.session_encryption_key)
-        )
+        encryption_key = resolve_encryption_key(config.session_encryption_key)
+        session_store = PostgresSessionStore(config.postgres_dsn, encryption_key=encryption_key)
 
         oauth_provider = SimpleOAuthProvider(
             storage_api_url=config.storage_api_url,
@@ -243,6 +312,9 @@ def create_server(
             callback_endpoint='/oauth/callback',
             jwt_secret=config.jwt_secret,
             session_store=session_store,
+            validate_rate_limit=_parse_validate_rate_limit(config.oauth_validate_rate_limit),
+            dynamic_client_approval=config.oauth_dynamic_client_approval is True,
+            encryption_key=encryption_key,
         )
     else:
         oauth_provider = None
@@ -281,7 +353,7 @@ def create_server(
             'Note: outside the Storage API, some tools may need per-project token support not yet '
             'available on every stack; surface such errors plainly rather than retrying.'
         ),
-        lifespan=create_keboola_lifespan(server_state),
+        lifespan=create_keboola_lifespan(server_state, oauth_provider),
         auth=oauth_provider,
         middleware=[
             LoggingMiddleware(log_level=logging.DEBUG),
