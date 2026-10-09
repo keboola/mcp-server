@@ -78,7 +78,7 @@ def streams_client(mcp_context_client: Context, mocker: MockerFixture) -> Kebool
 @pytest.mark.parametrize(
     ('branch_id', 'features', 'expected_error'),
     [
-        (None, set(), 'Data Streams are not enabled in this project'),
+        (None, set(), r'Data Streams \(project feature "data-streams"\) are not enabled in this project'),
         (None, {DATA_STREAMS_FEATURE, PROTECTED_DEFAULT_BRANCH_FEATURE}, 'protected default branch'),
         ('1234', {DATA_STREAMS_FEATURE}, 'only in the main production branch'),
     ],
