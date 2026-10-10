@@ -15,6 +15,7 @@
 - `LoggingMiddleware`: request/response logging only.
 - `SessionStateMiddleware`: reconstructs per-request runtime state; it builds `KeboolaClient`, `WorkspaceManager` from the server config and HTTP headers
 - `ToolAuthorizationMiddleware`: filters tools based the HTTP headers `X-Allowed-Tools`, `X-Disallowed-Tools`, and `X-Read-Only-Mode`
+- `ToolDeferralMiddleware`: marks tools named in the `X-Deferred-Tools` header with `_meta["anthropic/alwaysLoad"] = false` in `tools/list` (no filtering, no effect on tool calls)
 - `ToolsFilteringMiddleware`: filters tools based on the actual project features and user role.
 - `ValidationErrorMiddleware`: catches Pydantic ValidationError and formats it with explicit field locations.
 

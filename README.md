@@ -117,6 +117,14 @@ Read-only tools are those annotated with `readOnlyHint=True`. These tools only r
 X-Read-Only-Mode: true
 ```
 
+#### Deferred Tool Loading
+
+| Header | Description | Example |
+|--------|-------------|---------|
+| `X-Deferred-Tools` | Comma-separated list of tools to list with `_meta["anthropic/alwaysLoad"] = false` | `run_sync_action,get_flow_schema` |
+
+Claude Code / Claude Agent SDK clients that register the server with `alwaysLoad: true` keep these tools deferred behind tool search instead of loading their definitions up front. The header only changes the `tools/list` metadata — it does not hide or authorize tools. Empty header or unknown tool names = no change.
+
 For detailed documentation, see [developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control](https://developers.keboola.com/integrate/mcp/#tool-authorization-and-access-control).
 
 ---

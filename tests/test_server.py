@@ -333,6 +333,41 @@ async def test_with_session_state_admin_role_tools(mocker, admin_info, expected_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ('headers', 'expected_deferred'),
+    [
+        (None, set()),
+        ({}, set()),
+        ({'X-Deferred-Tools': ''}, set()),
+        ({'X-Deferred-Tools': '  ,  ,  '}, set()),
+        ({'X-Deferred-Tools': 'unknown_tool'}, set()),
+        ({'X-Deferred-Tools': ' run_sync_action , get_jobs, unknown_tool, '}, {'run_sync_action', 'get_jobs'}),
+    ],
+    ids=['no_request', 'no_header', 'empty', 'whitespace_only', 'unknown_only', 'listed_with_unknown'],
+)
+async def test_deferred_tools_header_sets_always_load_meta(mocker, headers, expected_deferred):
+    """X-Deferred-Tools lists the named tools with `_meta["anthropic/alwaysLoad"] = false` and keeps other meta."""
+    mocker.patch('keboola_mcp_server.server.os').environ = {}
+    http_rq = None
+    if headers is not None:
+        http_rq = Request({'type': 'http', 'headers': [(k.lower().encode(), v.encode()) for k, v in headers.items()]})
+    mocker.patch('keboola_mcp_server.authorization.get_http_request_or_none', return_value=http_rq)
+
+    mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+    async with Client(mcp) as client:
+        tools = (await client.list_tools_mcp()).tools
+
+    assert {'run_sync_action', 'get_jobs'} <= {t.name for t in tools}
+    for tool in tools:
+        wire = tool.model_dump(by_alias=True, mode='json', exclude_none=True)
+        assert wire['_meta']['fastmcp']['tags']
+        if tool.name in expected_deferred:
+            assert wire['_meta']['anthropic/alwaysLoad'] is False
+        else:
+            assert 'anthropic/alwaysLoad' not in wire['_meta']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ('os_environ_params', 'expected_params'),
     [
         # no params in os.environ, tokens as in the config
