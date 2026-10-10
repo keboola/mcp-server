@@ -9,6 +9,9 @@ Authorization is configured via HTTP headers:
 - X-Disallowed-Tools: Comma-separated list of tools to exclude (removed from allowed set)
 - X-Read-Only-Mode: Set to "true" for read-only access (only tools with readOnlyHint=True)
 
+Tool loading is shaped (not authorized) via:
+- X-Deferred-Tools: Comma-separated list of tools listed with `_meta["anthropic/alwaysLoad"] = false`
+
 Note: These headers are intended to be injected by infrastructure/proxy layers (e.g., API gateways,
 reverse proxies) rather than set directly by end clients. For direct client access control,
 use Storage API token permissions which provide the security layer.
@@ -26,6 +29,13 @@ from starlette.requests import Request
 from keboola_mcp_server.mcp import get_http_request_or_none, is_read_only_tool
 
 LOG = logging.getLogger(__name__)
+
+ALWAYS_LOAD_META_KEY = 'anthropic/alwaysLoad'
+
+
+def _parse_tool_names(header_value: str | None) -> set[str]:
+    """Parses a comma-separated tool names header; blank entries are dropped."""
+    return {t.strip() for t in (header_value or '').split(',') if t.strip()}
 
 
 class ToolAuthorizationMiddleware(fmw.Middleware):
@@ -69,11 +79,9 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
         read_only_mode = False
 
         # Check X-Allowed-Tools header for explicit tool list
-        if header_tools := http_rq.headers.get('X-Allowed-Tools'):
-            parsed_tools = {t.strip() for t in header_tools.split(',') if t.strip()}
-            if parsed_tools:
-                allowed_tools = parsed_tools
-                LOG.info(f'Tool authorization: X-Allowed-Tools={sorted(allowed_tools)}')
+        if parsed_tools := _parse_tool_names(http_rq.headers.get('X-Allowed-Tools')):
+            allowed_tools = parsed_tools
+            LOG.info(f'Tool authorization: X-Allowed-Tools={sorted(allowed_tools)}')
 
         # Check X-Read-Only-Mode header
         if http_rq.headers.get('X-Read-Only-Mode', '').lower() in ('true', '1', 'yes'):
@@ -81,11 +89,9 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
             LOG.info('Tool authorization: X-Read-Only-Mode=true')
 
         # Check X-Disallowed-Tools header for tools to exclude
-        if header_disallowed := http_rq.headers.get('X-Disallowed-Tools'):
-            parsed_tools = {t.strip() for t in header_disallowed.split(',') if t.strip()}
-            if parsed_tools:
-                disallowed_tools = parsed_tools
-                LOG.info(f'Tool authorization: X-Disallowed-Tools={sorted(disallowed_tools)}')
+        if parsed_tools := _parse_tool_names(http_rq.headers.get('X-Disallowed-Tools')):
+            disallowed_tools = parsed_tools
+            LOG.info(f'Tool authorization: X-Disallowed-Tools={sorted(disallowed_tools)}')
 
         return allowed_tools, disallowed_tools, read_only_mode
 
@@ -159,3 +165,31 @@ class ToolAuthorizationMiddleware(fmw.Middleware):
             )
 
         return await call_next(context)
+
+
+class ToolDeferralMiddleware(fmw.Middleware):
+    """
+    Marks the tools named in the X-Deferred-Tools header as deferred in the tools list.
+
+    - Each named tool is listed with `_meta["anthropic/alwaysLoad"] = false`; other `_meta` keys are kept.
+    - Claude Code / Agent SDK clients that register the server with `alwaysLoad: true` then keep these
+      tools behind tool search instead of loading their definitions into the context up front.
+    - No header, an empty header or unknown tool names leave the tools list unchanged.
+    - Tool calls are not affected; authorization stays with :class:`ToolAuthorizationMiddleware`.
+    """
+
+    async def on_list_tools(
+        self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
+    ) -> list[Tool]:
+        tools = await call_next(context)
+
+        http_rq = get_http_request_or_none()
+        deferred = _parse_tool_names(http_rq.headers.get('X-Deferred-Tools')) if http_rq else set()
+        if not deferred:
+            return tools
+
+        LOG.debug(f'Tool deferral: X-Deferred-Tools={sorted(deferred)}')
+        return [
+            t.model_copy(update={'meta': {**(t.meta or {}), ALWAYS_LOAD_META_KEY: False}}) if t.name in deferred else t
+            for t in tools
+        ]
