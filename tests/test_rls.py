@@ -2228,7 +2228,7 @@ class TestWildcardSelector:
     """Schema 1.1.0 `"*"` selector: every IDENTIFIED reader, honoured only for 1.1.0 objects, never widening."""
 
     TABLE = 'in.c-sales.orders'
-    EU = {'column': 'region', 'op': 'eq', 'value': 'EU'}
+    EU: ClassVar[dict[str, str]] = {'column': 'region', 'op': 'eq', 'value': 'EU'}
     EU_SQL = "\"region\" = 'EU'"
 
     def _rls(self, *rule_lists: list, version: str | None = '1.1.0', default: dict | None = None) -> RlsRules:
