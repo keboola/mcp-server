@@ -126,6 +126,32 @@ async def test_revoke_makes_session_unreachable(store) -> None:
     assert await store.get_by_refresh_token(refresh_token) is None
 
 
+async def test_revoke_if_kbc_refresh_token_only_revokes_the_session_holding_that_token(store) -> None:
+    access_token, _, session = await store.create(
+        client_id='claude.ai',
+        user_email=None,
+        kbc_access_token='kbc_at_x',
+        kbc_refresh_token='kbc_rt_x',
+        kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    await store.rotate_kbc_tokens(
+        session.id,
+        kbc_access_token='kbc_at_y',
+        kbc_refresh_token='kbc_rt_y',
+        kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+
+    # A caller still holding the pre-rotation token must not end the rotated session.
+    assert await store.revoke_if_kbc_refresh_token(session.id, 'kbc_rt_x') is False
+    assert await store.get_by_access_token(access_token) is not None
+
+    assert await store.revoke_if_kbc_refresh_token(session.id, 'kbc_rt_y') is True
+    assert await store.get_by_access_token(access_token) is None
+    # Already revoked, and unknown, sessions report False.
+    assert await store.revoke_if_kbc_refresh_token(session.id, 'kbc_rt_y') is False
+    assert await store.revoke_if_kbc_refresh_token('00000000-0000-0000-0000-000000000000', 'kbc_rt_y') is False
+
+
 async def test_credentials_are_encrypted_at_rest(store) -> None:
     # Read the raw row directly -- the plaintext secret must never appear in storage.
     _, _, session = await store.create(

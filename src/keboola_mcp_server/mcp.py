@@ -124,6 +124,7 @@ DATA_APP_BRANCH_GATED_TOOLS = {
     'get_data_apps',
     'deploy_data_app',
     'delete_python_js_data_app_draft',
+    'get_data_app_preview_link',
 }
 
 

@@ -203,6 +203,39 @@ async def test_get_semantic_context_skips_data_location_by_default(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('object_types', 'semantic_model_ids', 'expected_model_listings'),
+    [
+        # Child types without model ids share one model listing, not one each.
+        ([SemanticObjectType.SEMANTIC_DATASET, SemanticObjectType.SEMANTIC_METRIC], [], 1),
+        ([SemanticObjectType.SEMANTIC_MODEL], [], 1),
+        ([SemanticObjectType.SEMANTIC_DATASET, SemanticObjectType.SEMANTIC_METRIC], ['model-1'], 0),
+    ],
+)
+async def test_get_semantic_context_lists_the_models_once(
+    keboola_client: KeboolaClient,
+    mcp_context_client: Context,
+    mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
+    object_types: list[SemanticObjectType],
+    semantic_model_ids: list[str],
+    expected_model_listings: int,
+) -> None:
+    contexts = await get_semantic_context(
+        mcp_context_client,
+        [SemanticObjectTypeSelection(object_type=object_type) for object_type in object_types],
+        semantic_model_ids=semantic_model_ids,
+    )
+
+    assert all(context.objects for context in contexts)
+    model_listings = [
+        call
+        for call in keboola_client.metastore_client.list_objects.await_args_list
+        if SemanticObjectType(call.args[0]) == SemanticObjectType.SEMANTIC_MODEL
+    ]
+    assert len(model_listings) == expected_model_listings
+
+
+@pytest.mark.asyncio
 async def test_validate_semantic_query_surfaces_unreachable_dataset_location(
     keboola_client: KeboolaClient,
     mcp_context_client: Context,

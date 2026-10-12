@@ -8,7 +8,7 @@
 
 ## Overview
 
-Python-JS data apps are backed by a **git repository**: source code lives in the repo, not in the Storage configuration. The MCP server exposes a small set of primitives — `modify_python_js_data_app`, `deploy_data_app`, `create_python_js_data_app_git_credential`, `get_data_apps`, `delete_python_js_data_app_draft` — that together support a **two-app project model**:
+Python-JS data apps are backed by a **git repository**: source code lives in the repo, not in the Storage configuration. The MCP server exposes a small set of primitives — `modify_python_js_data_app`, `deploy_data_app`, `create_python_js_data_app_git_credential`, `get_data_apps`, `delete_python_js_data_app_draft`, `get_data_app_preview_link` — that together support a **two-app project model**:
 
 - A persistent **prod app** that users actually run. The prod app **owns the only managed git repo** in the project.
 - Zero or more **drafts** parented to that prod app. A draft is a Storage configuration with `parameters.dataApp.isDraft=true` and `parameters.dataApp.parentConfigurationId=<prod cfg id>`; it's an *external-git* app that clones the parent prod's repo at a pinned branch on every deploy. Drafts serve as the LLM's iteration sandbox.
@@ -379,6 +379,13 @@ The response reports the truth:
 - **Behaviour**: calls DSAPI `DELETE /apps/{data_app_id}` (deletes the data-app instance) followed by Storage `DELETE /branch/{branch}/components/keboola.data-apps/configs/{cfg}` (with `skip_trash=False`, so the config goes to trash for the platform-standard 7 days). Stale prod-side credentials are NOT revoked.
 - **Returns**: `{response: 'deleted', configuration_id, data_app_id, parent_configuration_id, links}`. The parent configuration_id is surfaced so the agent can pivot back to the prod app for the next step (e.g. a prod redeploy).
 
+### `get_data_app_preview_link(configuration_id=...)`
+
+- **`configuration_id`** (`str`, required): Storage configuration ID of any data app running in dev mode, usually a python-js **draft** deployed with `deploy_data_app(mode='dev')`.
+- **Behaviour**: calls DSAPI `POST /apps/{data_app_id}/preview-link` (sandboxes-service mints a 60 s signed link). The agent opens `url` in its browser; apps-proxy turns it into a session cookie for that app host only (about 4 h idle, 12 h cap, valid only while the app stays in dev mode). The link works for any app type while the app is in dev mode. After one successful open the session keeps working (it slides while in use); get a new link only when the app shows its login page ("This app is password protected") or looks broken until reloaded, or when the previous `url` was not opened before its `link_expires_at`.
+- **Returns**: `{url, link_expires_at}`. `url` carries the token in its `#t=` fragment and is never logged by the MCP server.
+- **Refusals**: not in dev mode (draft → deploy with `mode='dev'`; prod → preview a draft, never switch prod to dev; other app types → not in dev mode; tell the user, do not change its deploy mode), no URL yet, other-project token (400 today, 403 later), 404 no route (stack without the endpoint yet), 404 deleted app, 503 preview links not configured on the stack.
+
 ### `get_data_apps(configuration_ids=[<prod-cfg>])` — `drafts: [...]`
 
 - For a python-js **prod** app, the detail response includes a `drafts: list[DataAppSummary]` field containing every draft whose `parameters.dataApp.parentConfigurationId == <prod-cfg>`.
@@ -421,6 +428,7 @@ The tool surface maps to the underlying APIs as follows. Confirm field names wit
 | (clone URL lookup) | `GET /apps/{id}/git-repo` | Response: `{sshUrl, httpsUrl, isManagedGitRepo}`. The MCP server uses `httpsUrl` only. |
 | `storage_access` (create default on; update explicit only) | `POST /apps` / Storage config update | `configuration.runtime.workspace.enabled`, or `configuration.parameters.dataApp.secrets.WORKSPACE_ID` on projects without the `data-apps-storage-workspace` feature |
 | `delete_python_js_data_app_draft` | `DELETE /apps/{id}` + `DELETE /branch/{branch}/components/keboola.data-apps/configs/{cfg}` | Two-call sequence: DSAPI delete first, then Storage delete (without `skip_trash`). |
+| `get_data_app_preview_link` | `POST /apps/{id}/preview-link` | No request body. Response: `{url, linkExpiresAt}`. 400 when the app is not in dev mode or has no URL yet; 503 when the stack has no preview signing keys. |
 | `get_data_apps` drafts lookup | `GET /branch/{branch}/components/keboola.data-apps/configs` | One Storage list call per prod detail fetch; results filtered by `configuration.parameters.dataApp.parentConfigurationId`. |
 | `parentConfigurationId` (in draft config) | (none — Storage-only field) | Lives at `configuration.parameters.dataApp.parentConfigurationId`. Create-only, immutable. |
 

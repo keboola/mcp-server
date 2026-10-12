@@ -7,10 +7,12 @@ import pytest
 
 from keboola_mcp_server.clients.data_science import (
     AppGitRepoResponse,
+    AppPreviewLinkResponse,
     AppRunResponse,
     CodeDataAppConfig,
     CreatedGitCredentialResponse,
     DataScienceClient,
+    RuntimeResponse,
 )
 
 
@@ -233,6 +235,36 @@ def test_app_git_repo_response_missing_managed_flag_defaults_to_none() -> None:
     assert AppGitRepoResponse.model_validate({'httpsUrl': 'https://x/y.git'}).is_managed_git_repo is None
 
 
+@pytest.mark.asyncio
+async def test_list_runtimes_parses_catalog() -> None:
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.get = AsyncMock(  # type: ignore[assignment]
+        return_value=[
+            {
+                'type': 'python-js',
+                'description': 'Python 3.13 + Node.js 24',
+                'isTypeDefault': False,
+                'releaseDate': '2026-09-01T00:00:00+00:00',
+                'endOfLifeDate': None,
+                'imageName': 'keboola/data-app-python-js',
+                'imageTag': '1.7.2_python-3.13_node-24',
+            },
+            {'type': 'python', 'description': 'Python 3.10', 'isTypeDefault': True, 'imageTag': None},
+        ]
+    )
+
+    runtimes = await client.list_runtimes()
+
+    client.get.assert_awaited_once_with(endpoint='runtimes')
+    assert runtimes[0] == RuntimeResponse(
+        type='python-js',
+        description='Python 3.13 + Node.js 24',
+        is_type_default=False,
+        image_tag='1.7.2_python-3.13_node-24',
+    )
+    assert runtimes[1].image_tag is None
+
+
 def test_code_data_app_config_serializes_to_expected_shape() -> None:
     """CodeDataAppConfig must match the data-science API payload exactly (aliased keys)."""
     config = _code_app_config()
@@ -291,3 +323,39 @@ async def test_list_app_runs_gets_expected_endpoint_and_parses_failure_reason() 
     assert runs[0].failure_reason.message == 'failed to decrypt key "#API_KEY"'
     assert runs[1].failure_reason is None
     assert runs[1].startup_logs == 'booting\nready'
+
+
+@pytest.mark.asyncio
+async def test_create_app_preview_link_posts_without_body_and_hides_url_in_repr() -> None:
+    token = 'SENTINEL-PREVIEW-TOKEN'
+    url = f'https://my-app-123.hub.example.com/_proxy/preview#t={token}'
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.post = AsyncMock(  # type: ignore[assignment]
+        return_value={'url': url, 'linkExpiresAt': '2026-09-27T10:01:00+00:00'}
+    )
+
+    result = await client.create_app_preview_link('app-123')
+
+    assert isinstance(result, AppPreviewLinkResponse)
+    assert result.url == url
+    assert result.link_expires_at == '2026-09-27T10:01:00+00:00'
+    assert token not in repr(result)
+    assert token not in str(result)
+    client.post.assert_awaited_once_with(endpoint='apps/app-123/preview-link')
+
+
+@pytest.mark.asyncio
+async def test_create_app_preview_link_hides_url_in_validation_error() -> None:
+    token = 'SENTINEL-PREVIEW-TOKEN-' + 'x' * 40 + 'TAIL42'
+    url = f'https://my-app-123.hub.example.com/_proxy/preview#t={token}'
+    client = DataScienceClient.create('https://api.example.com', token=None)
+    client.post = AsyncMock(return_value={'url': url})  # type: ignore[assignment]
+
+    with pytest.raises(ValueError) as exc_info:
+        await client.create_app_preview_link('app-123')
+
+    assert token not in str(exc_info.value)
+    assert token[-6:] not in str(exc_info.value)
+    assert 'linkExpiresAt' in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None

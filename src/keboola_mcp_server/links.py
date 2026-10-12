@@ -35,6 +35,7 @@ class Link(BaseModel):
 
 class ProjectLinksManager:
     FLOW_DOCUMENTATION_URL = 'https://help.keboola.com/flows/'
+    DATA_STREAMS_DOCUMENTATION_URL = 'https://help.keboola.com/storage/data-streams/'
 
     def __init__(self, *, base_url: str, project_id: str, branch_id: str | None):
         self._base_url = base_url
@@ -216,6 +217,22 @@ class ProjectLinksManager:
         if deployment_link:
             links.append(self.get_data_app_deployment_link(deployment_link))
         return links
+
+    # --- Data Streams ---
+    def get_data_streams_dashboard_link(self) -> Link:
+        return Link.dashboard(title='Data Streams in the project', url=self._url('storage/data-streams'))
+
+    def get_data_stream_detail_link(self, source_id: str, source_name: str) -> Link:
+        return Link.detail(title=f'Data Stream: {source_name}', url=self._url(f'storage/data-streams/{source_id}'))
+
+    def get_data_streams_docs_link(self) -> Link:
+        return Link.docs(title='Documentation for Keboola Data Streams', url=self.DATA_STREAMS_DOCUMENTATION_URL)
+
+    def get_data_stream_links(self, source_id: str, source_name: str) -> list[Link]:
+        return [
+            self.get_data_stream_detail_link(source_id, source_name),
+            self.get_data_streams_dashboard_link(),
+        ]
 
     # --- Transformations ---
     def get_transformations_dashboard_link(self) -> Link:

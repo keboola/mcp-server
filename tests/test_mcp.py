@@ -413,6 +413,7 @@ class TestToolsFilteringMiddleware:
             'get_data_apps',
             'deploy_data_app',
             'delete_python_js_data_app_draft',
+            'get_data_app_preview_link',
         ]
         tools = [_tool(name) for name in data_app_tools] + [_tool('other_tool')]
 
@@ -603,6 +604,7 @@ class TestToolsFilteringMiddleware:
         [
             'modify_streamlit_data_app',
             'delete_python_js_data_app_draft',
+            'get_data_app_preview_link',
         ],
     )
     @pytest.mark.parametrize(

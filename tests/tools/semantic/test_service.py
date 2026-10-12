@@ -206,6 +206,185 @@ async def test_validate_semantic_query_with_used_objects_uses_only_provided_scop
     assert 'constraint-exclusion' not in findings_by_id
 
 
+_E2E_MODEL_ID = 'model-e2e'
+_E2E_ORDERS_TABLE_ID = 'out.c-Generate-Sample-Data.orders'
+_E2E_CUSTOMERS_TABLE_ID = 'out.c-Generate-Sample-Data.customers'
+_E2E_ORDERS_FQN = '"KEBOOLA_4905"."out.c-Generate-Sample-Data"."orders"'
+_E2E_CUSTOMERS_FQN = '"KEBOOLA_4905"."out.c-Generate-Sample-Data"."customers"'
+_E2E_RELATIONSHIP = _metastore_object(
+    SemanticObjectType.SEMANTIC_RELATIONSHIP,
+    'relationship-orders-customers',
+    name='orders_to_customers',
+    attributes={
+        'name': 'orders_to_customers',
+        'from': _E2E_ORDERS_TABLE_ID,
+        'to': _E2E_CUSTOMERS_TABLE_ID,
+        'type': 'left',
+        'on': '"orders"."customer_id" = "customers"."customer_id"',
+        'modelUUID': _E2E_MODEL_ID,
+    },
+)
+
+
+def _e2e_model_context() -> dict[SemanticObjectType, SemanticServiceDataTypeGroup]:
+    """The "E2E Tool Test" model AI-4014 was reproduced on: two datasets, one relationship, one metric."""
+    context = _detect_context(
+        datasets=_build_metastore_objects(
+            SemanticObjectType.SEMANTIC_DATASET,
+            [
+                (
+                    'dataset-orders',
+                    'orders',
+                    {
+                        'name': 'orders',
+                        'tableId': _E2E_ORDERS_TABLE_ID,
+                        'fqn': _E2E_ORDERS_FQN,
+                        'modelUUID': _E2E_MODEL_ID,
+                    },
+                ),
+                (
+                    'dataset-customers',
+                    'customers',
+                    {
+                        'name': 'customers',
+                        'tableId': _E2E_CUSTOMERS_TABLE_ID,
+                        'fqn': _E2E_CUSTOMERS_FQN,
+                        'modelUUID': _E2E_MODEL_ID,
+                    },
+                ),
+            ],
+        ),
+        metrics=_build_metastore_objects(
+            SemanticObjectType.SEMANTIC_METRIC,
+            [
+                (
+                    'metric-order-count',
+                    'Order Count',
+                    {
+                        'name': 'Order Count',
+                        'sql': 'COUNT(DISTINCT "orders"."order_id")',
+                        'dataset': _E2E_ORDERS_TABLE_ID,
+                        'modelUUID': _E2E_MODEL_ID,
+                    },
+                )
+            ],
+        ),
+        relationships=[_E2E_RELATIONSHIP],
+    )
+    context[SemanticObjectType.SEMANTIC_MODEL] = _service_group(
+        SemanticObjectType.SEMANTIC_MODEL,
+        _build_metastore_objects(
+            SemanticObjectType.SEMANTIC_MODEL,
+            [(_E2E_MODEL_ID, 'E2E Tool Test', {'name': 'E2E Tool Test', 'sql_dialect': 'Snowflake'})],
+        ),
+    )
+    return context
+
+
+@pytest.mark.parametrize(
+    ('sql_query', 'expected_relationships', 'expected_valid', 'expected_violations', 'expected_matched_relationships'),
+    [
+        # AI-4014: the join key contradicts the only relationship and "revenue" is no defined metric.
+        (
+            (
+                'SELECT "customers"."customer_name", SUM("orders"."quantity") AS "revenue" '
+                f'FROM {_E2E_ORDERS_FQN} AS "orders" '
+                f'JOIN {_E2E_CUSTOMERS_FQN} AS "customers" ON "orders"."product_id" = "customers"."customer_id" '
+                'GROUP BY "customers"."customer_name"'
+            ),
+            [],
+            False,
+            [('join_key_mismatch', 'error'), ('undefined_metric', 'warning')],
+            [],
+        ),
+        # An expected relationship is not reported as matched when the SQL joins on other keys.
+        (
+            (
+                'SELECT "customers"."customer_name", SUM("orders"."quantity") AS "revenue" '
+                f'FROM {_E2E_ORDERS_FQN} AS "orders" '
+                f'JOIN {_E2E_CUSTOMERS_FQN} AS "customers" ON "orders"."product_id" = "customers"."customer_id" '
+                'GROUP BY "customers"."customer_name"'
+            ),
+            [_E2E_RELATIONSHIP],
+            False,
+            [('join_key_mismatch', 'error'), ('undefined_metric', 'warning')],
+            [],
+        ),
+        # The defined metric over a single dataset.
+        (
+            f'SELECT COUNT(DISTINCT "orders"."order_id") AS "order_count" FROM {_E2E_ORDERS_FQN} AS "orders"',
+            [],
+            True,
+            [],
+            [],
+        ),
+        # The defined metric written with another alias, over the defined join with swapped sides and aliases.
+        (
+            (
+                'SELECT c."customer_name", COUNT(DISTINCT o.order_id) '
+                f'FROM {_E2E_ORDERS_FQN} o LEFT JOIN {_E2E_CUSTOMERS_FQN} c ON c."customer_id" = o."customer_id" '
+                'GROUP BY 1'
+            ),
+            [],
+            True,
+            [],
+            ['orders_to_customers'],
+        ),
+        # Both datasets without aggregates or a join predicate between them.
+        (
+            f'SELECT * FROM {_E2E_ORDERS_FQN} WHERE "customer_id" IN (SELECT "customer_id" FROM {_E2E_CUSTOMERS_FQN})',
+            [],
+            True,
+            [],
+            [],
+        ),
+        # An undefined aggregate on its own warns without failing the validation.
+        (
+            f'SELECT SUM("quantity") FROM {_E2E_ORDERS_FQN}',
+            [],
+            True,
+            [('undefined_metric', 'warning')],
+            [],
+        ),
+        # Aggregates are only checked against the model when the SQL uses one of its datasets.
+        (
+            'SELECT SUM(amount) FROM other_db.other_schema.payments',
+            [],
+            True,
+            [],
+            [],
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_validate_semantic_query_checks_sql_against_model(
+    keboola_client: KeboolaClient,
+    sql_query: str,
+    expected_relationships: Sequence[MetastoreObject],
+    expected_valid: bool,
+    expected_violations: list[tuple[str, str]],
+    expected_matched_relationships: list[str],
+) -> None:
+    used_object_groups = (
+        [_service_group(SemanticObjectType.SEMANTIC_RELATIONSHIP, expected_relationships)]
+        if expected_relationships
+        else None
+    )
+
+    result = await validate_semantic_query_with_used_objects(
+        keboola_client,
+        sql_query,
+        [_E2E_MODEL_ID],
+        used_object_groups=used_object_groups,
+        contexts_per_model=[_e2e_model_context()],
+    )
+
+    assert result.valid is expected_valid
+    assert [(finding.status, finding.severity) for finding in result.violations] == expected_violations
+    assert result.matched_relationships == expected_matched_relationships
+    assert result.post_execution_checks == []
+
+
 @pytest.mark.parametrize(
     ('sql_query', 'candidate', 'expected'),
     [
@@ -576,6 +755,52 @@ def test_constraint_is_relevant_edge_cases(
                 SemanticObjectType.SEMANTIC_DATASET: ['dataset-orders', 'dataset-customers'],
             },
         ),
+        # Every ON-clause column appears in the SQL, but the join pairs them differently (AI-4014).
+        (
+            (
+                'SELECT * FROM "DB"."s"."ORDERS" "ORDERS" '
+                'JOIN "DB"."s"."CUSTOMERS" "CUSTOMERS" ON "ORDERS"."PRODUCT_ID" = "CUSTOMERS"."CUSTOMER_ID"'
+            ),
+            [
+                (
+                    'dataset-orders',
+                    'Orders',
+                    {
+                        'name': 'Orders',
+                        'tableId': 'out.c-main.ORDERS',
+                        'fqn': '"DB"."s"."ORDERS"',
+                        'modelUUID': 'model-1',
+                    },
+                ),
+                (
+                    'dataset-customers',
+                    'Customers',
+                    {
+                        'name': 'Customers',
+                        'tableId': 'out.c-main.CUSTOMERS',
+                        'fqn': '"DB"."s"."CUSTOMERS"',
+                        'modelUUID': 'model-1',
+                    },
+                ),
+            ],
+            [],
+            [
+                (
+                    'rel-orders-customers',
+                    'Orders to Customers',
+                    {
+                        'name': 'Orders to Customers',
+                        'from': 'out.c-main.ORDERS',
+                        'to': 'out.c-main.CUSTOMERS',
+                        'on': '"ORDERS"."CUSTOMER_ID" = "CUSTOMERS"."CUSTOMER_ID"',
+                        'modelUUID': 'model-1',
+                    },
+                )
+            ],
+            {
+                SemanticObjectType.SEMANTIC_DATASET: ['dataset-orders', 'dataset-customers'],
+            },
+        ),
     ],
 )
 def test_detect_used_objects_from_context_edge_cases(
@@ -882,6 +1107,34 @@ async def test_search_semantic_context_returns_expected_matches(
     assert [hit.matched_paths for hit in hits] == ([expected_paths] if expected_paths else [])
 
 
+@pytest.mark.asyncio
+async def test_search_semantic_context_without_model_ids_skips_deleted_models(
+    keboola_client: KeboolaClient,
+    mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
+) -> None:
+    mock_semantic_api[SemanticObjectType.SEMANTIC_DATASET].append(
+        _metastore_object(
+            SemanticObjectType.SEMANTIC_DATASET,
+            'dataset-orphan-orders',
+            name='Orphan orders',
+            attributes={'tableId': 'in.c-old.orders', 'modelUUID': 'model-deleted'},
+        )
+    )
+
+    hits = await search_semantic_context(keboola_client, ['orders'], max_results=100)
+
+    hit_ids = [hit.object.id for hit in hits]
+    assert 'dataset-orders' in hit_ids
+    assert 'dataset-orphan-orders' not in hit_ids
+    # Once to resolve the models for every type, once for the semantic-model type itself.
+    model_listings = [
+        call
+        for call in keboola_client.metastore_client.list_objects.await_args_list
+        if SemanticObjectType(call.args[0]) == SemanticObjectType.SEMANTIC_MODEL
+    ]
+    assert len(model_listings) == 2
+
+
 @pytest.mark.parametrize(
     ('patterns', 'max_results', 'message'),
     [
@@ -937,3 +1190,57 @@ async def test_list_semantic_type_objects_carries_scope_metadata_through_the_lis
     assert objects[0].data.meta.scope == 'project'
     assert objects[0].data.meta.project_id == 123
     assert objects[0].data.meta.scope_elevation_requested_at == '2026-01-03T00:00:00Z'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('object_type', 'semantic_model_ids', 'expected_ids', 'expected_requests', 'expected_model_uuids'),
+    [
+        # One model's 2 datasets take 3 one-object pages, not one page per dataset of every model.
+        (SemanticObjectType.SEMANTIC_DATASET, ['model-1'], ['dataset-orders', 'dataset-customers'], 3, {'model-1'}),
+        (
+            SemanticObjectType.SEMANTIC_DATASET,
+            ['model-1', 'model-1'],
+            ['dataset-orders', 'dataset-customers'],
+            3,
+            {'model-1'},
+        ),
+        (
+            SemanticObjectType.SEMANTIC_DATASET,
+            ['model-other'],
+            [f'other-dataset-{i}' for i in range(40)],
+            41,
+            {'model-other'},
+        ),
+        # Without model ids, the listed models stand in for them: one model page, then model-1's datasets.
+        # The 40 datasets of model-other, which the model listing lacks (deleted), are skipped.
+        (SemanticObjectType.SEMANTIC_DATASET, None, ['dataset-orders', 'dataset-customers'], 4, {None, 'model-1'}),
+        # Models themselves are listed unfiltered and narrowed client-side.
+        (SemanticObjectType.SEMANTIC_MODEL, ['model-1'], ['model-1'], 1, {None}),
+    ],
+)
+async def test_list_semantic_type_objects_filters_by_model_server_side(
+    keboola_client: KeboolaClient,
+    mock_semantic_api: dict[SemanticObjectType, list[MetastoreObject]],
+    object_type: SemanticObjectType,
+    semantic_model_ids: list[str] | None,
+    expected_ids: list[str],
+    expected_requests: int,
+    expected_model_uuids: set[str | None],
+) -> None:
+    mock_semantic_api[SemanticObjectType.SEMANTIC_DATASET].extend(
+        _metastore_object(
+            SemanticObjectType.SEMANTIC_DATASET,
+            f'other-dataset-{i}',
+            name=f'Other {i}',
+            attributes={'tableId': f'in.c-other.t{i}', 'modelUUID': 'model-other'},
+        )
+        for i in range(40)
+    )
+
+    objects = await _list_semantic_type_objects(keboola_client, object_type, semantic_model_ids)
+
+    assert sorted(obj.id for obj in objects) == sorted(expected_ids)
+    list_objects = keboola_client.metastore_client.list_objects
+    assert list_objects.await_count == expected_requests
+    assert {call.kwargs['model_uuid'] for call in list_objects.await_args_list} == expected_model_uuids

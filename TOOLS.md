@@ -18,6 +18,10 @@ description, and a list of created table names.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
 name or description.
 
+### Data Stream Tools
+- [create_stream](#create_stream): Creates a Data Stream: a source with an endpoint receiving events and the sinks storing them in tables.
+- [get_streams](#get_streams): Retrieves the Data Streams in the project: sources receiving events and the sinks writing them to tables.
+
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
 
@@ -44,6 +48,7 @@ and push to the app's managed git repo over HTTPS.
 configuration.
 - [deploy_data_app](#deploy_data_app): Deploys/redeploys a data app or stops a running data app in the Keboola environment asynchronously, given the
 action and the configuration ID.
+- [get_data_app_preview_link](#get_data_app_preview_link): Creates a short-lived link that opens a dev-mode data app in your browser without the app's login.
 - [get_data_apps](#get_data_apps): Lists summaries of data apps in the project given the limit and offset or gets details of a data apps by
 providing their configuration IDs.
 - [modify_python_js_data_app](#modify_python_js_data_app): Creates or updates a python-js data app.
@@ -2298,6 +2303,7 @@ branch-delete — is yours. This tool only triggers deploys against existing git
   development `setup.sh` (hot reload) and the data-app proxy enables an auto-auth path so an
   iframe preview can render without a manual login. Only meaningful on **draft** configs
   (python-js apps with `isDraft=true`).
+- To open a dev-mode draft in your own browser, call `get_data_app_preview_link` once the deploy is running.
 - For prod redeploys (including after merging a draft's branch into `main`), use no `mode` —
   the prod app picks up the current `main`.
 - The branch a draft deploys from is pinned in `parameters.dataApp.git.branch` at create time;
@@ -2371,6 +2377,75 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
   },
   "required": [
     "action",
+    "configuration_id"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_data_app_preview_link"></a>
+## get_data_app_preview_link
+**Annotations**: `read-only`
+
+**Tags**: `data-apps`
+
+**Description**:
+
+Creates a short-lived link that opens a dev-mode data app in your browser without the app's login.
+
+Use it to see or test a python-js **draft** deployed with `deploy_data_app(action='deploy', mode='dev')`.
+- Only a python-js draft reaches dev mode: a Streamlit app has no managed git repo and its image has no
+  dev mode.
+- An app that is not in dev mode has no preview link.
+
+## How to use the link
+- Open `url` in a real browser before `link_expires_at` (about 60 seconds after this call): a browser tool,
+  or a headless browser CLI run from your shell. Do not fetch it with an HTTP client or curl: only a browser
+  can turn it into a session.
+- After one successful open, the browser session keeps working and slides while you use the app, so reloads,
+  navigation and later checks of the same app need no new link. Do not call this tool before every check.
+- The session belongs to this one app. It ends without notice: after about 4 hours without requests,
+  12 hours after the link was opened at the latest, or at once when the app leaves dev mode.
+- Call this tool again only when the app shows its login page ("This app is password protected") or looks
+  broken until reloaded, or when you did not open the previous `url` before its `link_expires_at` (the
+  browser then shows "Preview link is invalid or expired").
+- Never type a password into the app's login page, and never ask the user for one.
+- Do not share `url`: do not show it to the user and do not put it into files, commits, messages, or any
+  tool or any command other than the one that opens the browser. Anyone who opens it before it expires gets
+  into the app.
+
+## Errors
+- "not running in dev mode": deploy the draft with `deploy_data_app` (mode='dev') first.
+- "is a production app": preview a draft of it instead; never switch a production app to dev mode.
+- "is not in dev mode" on another app type (e.g. Streamlit): it has no dev mode; tell the user and do not
+  change its deploy mode.
+- "not configured on this Keboola stack": preview links are not available here; tell the user.
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "configuration_id": {
+      "description": "Storage configuration ID of a python-js draft deployed with `deploy_data_app` (mode=\"dev\"). Only a python-js draft can run in dev mode.",
+      "type": "string"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "required": [
     "configuration_id"
   ],
   "type": "object"
@@ -2483,13 +2558,14 @@ Three scenarios the agent has to distinguish:
    The default branch is generated fresh per draft (`draft-<hex>`) so it can never collide
    with a branch left behind by an earlier draft. Override with `branch=<name>` for a
    descriptive name — if you do, YOU own uniqueness (see step 3).
-3. YOU: `git clone U`; `git checkout -b <branch>` (the repo of a brand-new prod app is empty,
-   so there is no `main` to branch from yet); write source; `git push origin <branch>`.
+3. YOU: `git clone U`. The repo of a brand-new prod app is empty, so push an empty `main` first —
+   the first branch pushed becomes the repo's default, and a draft branch that is the default
+   can never be deleted: `git checkout -b main && git commit --allow-empty -m "init main" &&
+   git push origin main`. The empty `main` carries no app code, so it breaks no rule about
+   pushing to `main`. Then `git checkout -b <branch>`; write source; `git push origin <branch>`.
 4. `deploy_data_app(action='deploy', configuration_id=DRAFT, mode='dev')`
    → preview URL serving the draft's pinned branch as a dev version. Iterate with the user.
-5. Once approved — YOU: `git checkout main && git merge <branch>`. On a brand-new app (step 3
-   above) `main` does not exist yet, so create it from the approved draft instead:
-   `git checkout -b main <branch>`. Then `git push origin main`;
+5. Once approved — YOU: `git checkout main && git merge <branch> && git push origin main`;
    `git push origin --delete <branch>` (branch deletes ARE permitted on managed repos).
 6. `deploy_data_app(action='deploy', configuration_id=PROD)`
    → prod URL now serves the merged `main`.
@@ -2549,7 +2625,7 @@ draft handle.
 - `slug` is optional on create (auto-derived from `name` when omitted; drafts get a unique
   suffix). See "Slug on update" below.
 - The **update path** (passing `configuration_id`) is for changing `name`, `description`,
-  `authentication_type`, `auto_suspend_after_seconds`, `storage` on either a prod app or
+  `authentication_type`, `auto_suspend_after_seconds`, `storage`, `image_version` on either a prod app or
   a draft, for changing a prod app's `slug` (see "Slug on update"), and for repointing an
   **external-git** app's `branch` (a draft, or an app bound to an external repository — an
   app on a Keboola-managed git repo is rejected, its branch is owned by the platform). Source code changes go through the git flow above, not this
@@ -2644,7 +2720,7 @@ working; tell the user both.
         }
       ],
       "default": null,
-      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to a generated `draft-<hex>` when unset \u2014 unique per draft, so it can never collide with a branch an earlier draft left behind. Pass a descriptive name like 'add-revenue-filter' when it helps the user; a name you supply may already exist on the repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track origin/main`, or `git checkout -b <branch>` on a brand-new prod app whose repo is still empty) rather than with a bare `git checkout`. Must not be `main` (reserved for the prod app) unless `allow_main_branch=True` (platform view-draft only). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
+      "description": "Git branch of the data app, written to `parameters.dataApp.git.branch`. Two uses:\n- **On draft create** (with `parent_configuration_id`): the branch to pin the new draft to. Defaults to a generated `draft-<hex>` when unset \u2014 unique per draft, so it can never collide with a branch an earlier draft left behind. Pass a descriptive name like 'add-revenue-filter' when it helps the user; a name you supply may already exist on the repo, so branch it off `origin/main` explicitly (`git checkout -B <branch> --no-track origin/main`; on a brand-new prod app whose repo is still empty, push an empty `main` first \u2014 see Scenario A step 3) rather than with a bare `git checkout`. Must not be `main` (reserved for the prod app) unless `allow_main_branch=True` (platform view-draft only). Rejected on prod create.\n- **On update** (with `configuration_id`): repoints an existing **external-git** app to a different branch (e.g. flip a repo-backed app from `main` to a feature branch for testing, then back). Only valid for external-git apps \u2014 a draft, or an app bound to an external repository. Rejected for apps on a Keboola-managed git repo, whose branch is owned by the platform. On update `main` is allowed. Redeploy the app afterwards to serve the new branch."
     },
     "allow_main_branch": {
       "default": false,
@@ -2697,6 +2773,18 @@ working; tell the user both.
       ],
       "default": null,
       "description": "Whether the app gets read-only Storage access -- a workspace whose ID the platform injects as the WORKSPACE_ID environment variable, which the generated `query_data` helper needs. Distinct from `storage`, which declares table input/output mappings: this switch decides whether the app can reach Storage at all.\n- **On create**: leave unset (None) for the default, which is Storage access ON. Pass `False` only for an app that must not read Storage.\n- **On update**: leave unset (None) to keep whatever the app has -- an unrelated edit never grants or revokes Storage access. Pass `True` to turn it on (this is how you fix an existing app failing with `missing required env vars: WORKSPACE_ID`, with no UI step), or `False` to turn it off. Redeploy the app afterwards to apply it.\nCheck `data_app.storage_access_enabled` in the response to confirm the result.\nThe workspace is scoped to the **whole project**, not to the tables the app queries -- the app can read every table in the project Storage. Tell the user that when you turn it on, and especially when the app is `no-auth`, where anyone with the URL reaches project data through it. If the app must be limited to particular tables, that is an input/output mapping via `storage`, not this switch.\nOn projects without the `data-apps-storage-workspace` feature this falls back to writing `parameters.dataApp.secrets.WORKSPACE_ID`, which is **deprecated** -- it pins the app to the shared MCP-managed workspace instead of a per-app one. Never write that secret by hand; use this argument, and pass the hint in `change_summary` on to the user."
+    },
+    "image_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Backend image the app runs on (the UI's \"Backend version\"), written to `runtime.image.version`. An image tag from the platform catalog, which names its Python and Node.js versions (e.g. `<release>_python-3.13_node-24`). `get_data_apps(configuration_ids=[...])` lists the valid tags in `available_images` and the app's current one in `deployment_info.image`; an unknown tag is rejected with the list of valid ones.\n- Leave unset (None) to keep what the app has on update; on create the app follows the platform default.\n- Pass \"\" to drop a pin and follow the platform default again.\nRedeploy the app afterwards to apply it."
     },
     "folder": {
       "anyOf": [
@@ -4657,6 +4745,9 @@ CONSIDERATIONS:
 - This tool confirms the SQL dialect, surfaces semantic constraint violations, and provides post-execution checks.
 - Only proceed to query_data once this tool returns valid=True and violations is empty. If violations are found,
 fix the query first or consider the limitations of this tool.
+- Besides constraint findings, `violations` flags SQL that contradicts the model itself: a join between two
+datasets on keys their relationship does not define (`join_key_mismatch`, error), and an aggregate that matches
+no defined metric (`undefined_metric`, warning).
 - Entries under `semantic_models` carry `scope`/`project_id`/`source_project_id`/
 `target_project_ids` -- see `get_semantic_context`'s CONSIDERATIONS for what they mean. A
 "targeted"/"organization"-scope model does not guarantee the query is actually runnable from
@@ -5190,6 +5281,247 @@ Usage examples (payload uses a list of DescriptionUpdate objects):
   "required": [
     "updates"
   ],
+  "type": "object"
+}
+```
+
+---
+
+# Data Stream Tools
+<a name="create_stream"></a>
+## create_stream
+**Annotations**: 
+
+**Tags**: `streams`
+
+**Description**:
+
+Creates a Data Stream: a source with an endpoint receiving events and the sinks storing them in tables.
+
+- source_type="http": one sink into `table_id` with the given `columns`. Send events as HTTP POST
+  requests (any body, JSON recommended) to the returned `endpoint_url`.
+- source_type="otlp": three sinks storing logs, metrics and traces into the tables
+  "in.c-otlp-<source_id>.logs|metrics|traces". Configure the OpenTelemetry SDK/Collector OTLP/HTTP exporter:
+  OTEL_EXPORTER_OTLP_ENDPOINT=<otlp_base_url> and OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <otlp_secret>".
+
+Rows appear in the tables in batches, typically within a few minutes.
+
+The returned endpoint embeds a secret: give it only to the user. If Data Streams are not enabled in the
+project, the tool fails with the project feature key and a link to the Data Streams page where the user
+can request the feature. Tell the user how to request it.
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "ColumnTemplate": {
+      "properties": {
+        "language": {
+          "const": "jsonnet",
+          "default": "jsonnet",
+          "description": "The template language.",
+          "type": "string"
+        },
+        "content": {
+          "description": "The Jsonnet expression, e.g. \"Body('user.id', null)\".",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
+    "TableColumn": {
+      "description": "One column of the destination table and where its value comes from.",
+      "properties": {
+        "name": {
+          "description": "The column name in the destination table.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Where the value comes from: \"uuid\" (generated id), \"datetime\" (receive time), \"ip\" (sender IP), \"body\" (whole request body), \"headers\" (request headers), \"path\" (a value at `path` in the JSON body), \"template\" (a Jsonnet expression in `template`).",
+          "enum": [
+            "uuid",
+            "datetime",
+            "ip",
+            "body",
+            "headers",
+            "path",
+            "template"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON path in the body, e.g. \"user.id\". Only for \"path\"."
+        },
+        "defaultValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fallback value when `path` does not exist. Only for \"path\"."
+        },
+        "rawString": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Store a string value without JSON quotes. Only for \"path\"."
+        },
+        "template": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColumnTemplate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The template. Only for \"template\"."
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "description": "Human readable name of the stream, max 40 characters.",
+      "maxLength": 40,
+      "type": "string"
+    },
+    "source_type": {
+      "default": "http",
+      "description": "\"http\" for webhooks/HTTP events, \"otlp\" for OpenTelemetry logs, metrics and traces.",
+      "enum": [
+        "http",
+        "otlp"
+      ],
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "description": "Optional description of the stream.",
+      "type": "string"
+    },
+    "table_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "HTTP only: the destination table, e.g. \"in.c-github.events\". It is created if it does not exist. Defaults to \"in.c-data-stream-<source_id>.events\"."
+    },
+    "columns": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/TableColumn"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "HTTP only: the destination table columns. Defaults to id (uuid), datetime, ip, body and headers. Use \"path\" columns to extract fields from a JSON body, e.g. {\"name\": \"user_id\", \"type\": \"path\", \"path\": \"user.id\"}."
+    },
+    "include_raw_otlp_record": {
+      "default": false,
+      "description": "OTLP only: also store the whole raw OTLP record in a \"raw\" column (voluminous).",
+      "type": "boolean"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_streams"></a>
+## get_streams
+**Annotations**: `read-only`
+
+**Tags**: `streams`
+
+**Description**:
+
+Retrieves the Data Streams in the project: sources receiving events and the sinks writing them to tables.
+
+Data Streams receive events over HTTP (webhooks, apps) or OTLP (OpenTelemetry logs/metrics/traces) and
+store them in Storage tables in near real time, without any component configuration.
+
+Each stream includes its `endpoint_url` (with the secret embedded) and, for OTLP, `otlp_base_url` plus
+`otlp_secret`. Give these only to the user who asked; they authenticate writes into the project.
+Sessions with read-only access get them hidden (`secret_redacted=true`).
+
+If Data Streams are not enabled in the project, the tool fails with the project feature key and a link to
+the Data Streams page where the user can request the feature. Tell the user how to request it.
+
+EXAMPLES:
+- source_ids=[] -> all Data Streams with their sinks and endpoints
+- source_ids=["github-webhooks"] -> only that stream
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "source_ids": {
+      "default": [],
+      "description": "IDs of the Data Streams (sources) to retrieve. Empty [] lists all of them.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
   "type": "object"
 }
 ```

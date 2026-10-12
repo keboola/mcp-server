@@ -90,6 +90,14 @@ class SessionStore(Protocol):
 
     async def revoke(self, session_id: str) -> None: ...
 
+    async def revoke_if_kbc_refresh_token(self, session_id: str, kbc_refresh_token: str) -> bool:
+        """Revokes the session only if it still holds this Keboola refresh token, so a concurrent
+        rotation that already replaced it is never killed by a stale caller.
+
+        :return: True if the session was revoked, False if it was rotated, already revoked or gone.
+        """
+        ...
+
 
 class PostgresSessionStore:
     """Schema migrations are NOT applied here -- that's the `keboola-mcp-server migrate` CLI/Job's
@@ -255,3 +263,20 @@ class PostgresSessionStore:
     async def revoke(self, session_id: str) -> None:
         pool = await self._get_pool()
         await pool.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', session_id)
+
+    @guard_db_errors
+    async def revoke_if_kbc_refresh_token(self, session_id: str, kbc_refresh_token: str) -> bool:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn, conn.transaction():
+            # The credential is encrypted with a random nonce, so it can't be compared in SQL:
+            # lock the row, decrypt, compare, then revoke.
+            row = await conn.fetchrow(
+                'SELECT kbc_refresh_token_enc FROM oauth_sessions WHERE id = $1 AND revoked_at IS NULL FOR UPDATE',
+                session_id,
+            )
+            if row is None or crypto.decrypt(row['kbc_refresh_token_enc'], self._key).decode('utf-8') != (
+                kbc_refresh_token
+            ):
+                return False
+            await conn.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', session_id)
+            return True

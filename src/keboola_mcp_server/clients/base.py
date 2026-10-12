@@ -134,6 +134,9 @@ class RawKeboolaClient:
                 elif error_msg := error_data.get('error'):
                     # SAPI error message
                     message_parts.append(f'API error: {error_msg}')
+                    if (detail := error_data.get('message')) and detail != error_msg:
+                        # Stream API puts an error code into "error" and the human readable text into "message"
+                        message_parts.append(f'API error detail: {detail}')
 
                 if exception_id := error_data.get('exceptionId'):
                     message_parts.append(f'Exception ID: {exception_id}')
@@ -146,12 +149,15 @@ class RawKeboolaClient:
                 except Exception:
                     LOG.debug('Failed to read response.text while building the error message.', exc_info=True)
 
-            if response.status_code == HTTPStatus.UNAUTHORIZED:
-                # A 401 here is often a project scope that was never confirmed (or has gone stale),
-                # not an actually-invalid credential -- steer the agent toward the tools that fix
-                # that instead of telling the user to re-authenticate. Harmless to suggest even when
-                # scoping doesn't apply to this session (e.g. a single pinned project): those tools
-                # just say so.
+            if response.status_code == HTTPStatus.UNAUTHORIZED and response.request.headers.get(
+                'Authorization', ''
+            ).startswith('Bearer '):
+                # A 401 on a programmatic (Bearer) session is often a project scope that was never
+                # confirmed (or has gone stale), not an actually-invalid credential -- steer the agent
+                # toward the tools that fix that instead of telling the user to re-authenticate. Not
+                # added to a legacy Storage token (X-StorageAPI-Token): it is bound to one project and
+                # has no scope to fix. Harmless to suggest on a single pinned project: the tools just
+                # say so.
                 message_parts.append(
                     'If this session\'s Keboola project scope may be unset or stale, call '
                     '"get_accessible_projects" to see which project(s) this session can reach, then '
