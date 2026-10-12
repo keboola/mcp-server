@@ -46,7 +46,6 @@ from keboola_mcp_server.mcp import (
     KeboolaMcpServer,
     ToonCompactFunctionTool,
     process_concurrently,
-    unwrap_results,
 )
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.scope import ProjectIdArg
@@ -95,6 +94,7 @@ from keboola_mcp_server.tools.components.utils import (
     update_transformation_parameters,
 )
 from keboola_mcp_server.tools.constants import CONFIG_DIFF_PREVIEW_TAG
+from keboola_mcp_server.tools.lookup import unwrap_lookup_results
 from keboola_mcp_server.tools.validation import (
     validate_processors_configuration,
     validate_root_parameters_configuration,
@@ -252,6 +252,8 @@ async def get_configs(
 
     PARAMETER BEHAVIOR:
     - If configs is provided (non-empty): Returns FULL details ONLY for those configs.
+      Configs that cannot be retrieved are listed in `not_found` (missing) or `errors` (server-side, retryable);
+      the call fails only if none of them can be retrieved.
     - Else if component_ids is provided (non-empty): Lists config summaries for those components.
     - Else: Lists configs based on component_types (all types if empty).
 
@@ -315,8 +317,9 @@ async def get_configs(
             return configuration
 
         results = await process_concurrently(configs, fetch_config_detail)
-        fetched_configs = unwrap_results(results, 'Failed to fetch one or more configurations')
-        return GetConfigsDetailOutput(configs=fetched_configs)
+        config_ids = [f'{spec.component_id}/{spec.configuration_id}' for spec in configs]
+        lookup = unwrap_lookup_results(config_ids, results, 'Failed to fetch the configurations')
+        return GetConfigsDetailOutput(configs=lookup.found, **lookup.failure_fields())
 
     # Case 2: component_ids provided - list summaries by IDs
     if component_ids:
@@ -349,6 +352,9 @@ async def get_components(
     - Configuration JSON schema (required for creating/updating configurations)
     - Links to component dashboard in Keboola UI
 
+    Components that cannot be retrieved are listed in `not_found` (missing) or `errors` (server-side, retryable);
+    the call fails only if none of them can be retrieved.
+
     WHEN TO USE:
     - Before creating a new configuration: fetch the component to get its configuration schema
     - Before updating a configuration: fetch the component to understand valid configuration options
@@ -375,8 +381,10 @@ async def get_components(
         return component
 
     results = await process_concurrently(component_ids, fetch_component_with_links)
-    components = unwrap_results(results, 'Failed to fetch one or more components')
-    return GetComponentsOutput(components=components, links=[links_manager.get_used_components_link()])
+    lookup = unwrap_lookup_results(list(component_ids), results, 'Failed to fetch the components')
+    return GetComponentsOutput(
+        components=lookup.found, links=[links_manager.get_used_components_link()], **lookup.failure_fields()
+    )
 
 
 # ============================================================================

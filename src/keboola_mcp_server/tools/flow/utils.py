@@ -4,8 +4,11 @@ import json
 import logging
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
+from http import HTTPStatus
 from importlib import resources
 from typing import Any
+
+import httpx
 
 from keboola_mcp_server.clients.client import (
     CONDITIONAL_FLOW_COMPONENT_ID,
@@ -15,6 +18,7 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
 )
 from keboola_mcp_server.clients.storage import APIFlowResponse, JsonDict
+from keboola_mcp_server.errors import NotFoundError
 from keboola_mcp_server.mcp import process_concurrently
 from keboola_mcp_server.tools.components.utils import fetch_component
 from keboola_mcp_server.tools.flow.model import (
@@ -220,8 +224,10 @@ async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFl
     :param client: Keboola client instance.
     :param flow_id: The flow configuration ID to resolve.
     :return: Tuple of (APIFlowResponse, flow_type) if found.
-    :raises ValueError: If flow cannot be resolved in any flow type.
+    :raises NotFoundError: If the flow does not exist in any flow type.
+    :raises Exception: The first non-404 failure if the flow was not found and some flow type probe failed otherwise.
     """
+    failure: Exception | None = None
     for flow_type in FLOW_TYPES:
         try:
             raw_flow = await client.storage_client.configuration_detail(
@@ -229,10 +235,15 @@ async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFl
             )
             api_flow = APIFlowResponse.model_validate(raw_flow)
             return api_flow, flow_type
-        except Exception:  # noqa: S112 -- probing each flow type; a miss here is expected, not an error
-            continue
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code != HTTPStatus.NOT_FOUND:
+                failure = failure or e
+        except Exception as e:
+            failure = failure or e
 
-    raise ValueError(f'Flow configuration "{flow_id}" not found')
+    if failure:
+        raise failure
+    raise NotFoundError(f'Flow configuration "{flow_id}" not found')
 
 
 async def get_flows_by_ids(client: KeboolaClient, flow_ids: Sequence[str]) -> list[FlowSummary]:

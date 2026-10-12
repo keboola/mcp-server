@@ -19,8 +19,8 @@ from mcp.types import ClientCapabilities, Implementation, InitializeRequestParam
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, tool_errors
-from keboola_mcp_server.mcp import ServerState
+from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, NotFoundError, tool_errors
+from keboola_mcp_server.mcp import AggregateError, ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
 from keboola_mcp_server.tools.validation import RecoverableValidationError, ValidationContext
@@ -162,10 +162,14 @@ def _http_status_error(status: int) -> httpx.HTTPStatusError:
         (_http_status_error(401), logging.WARNING, 'client'),
         (_http_status_error(404), logging.WARNING, 'client'),
         (jsonschema.ValidationError('bad input'), logging.WARNING, 'client'),
+        (NotFoundError('missing flow'), logging.WARNING, 'client'),
+        (AggregateError('all failed', [_http_status_error(404), NotFoundError('gone')]), logging.WARNING, 'client'),
         # upstream/server faults stay ERROR with the traceback (429/408 are throttling/timeouts, not caller mistakes)
         (_http_status_error(500), logging.ERROR, 'internal'),
         (_http_status_error(429), logging.ERROR, 'internal'),
         (ValueError('boom'), logging.ERROR, 'internal'),
+        (AggregateError('all failed', [_http_status_error(404), _http_status_error(500)]), logging.ERROR, 'internal'),
+        (AggregateError('no details', []), logging.ERROR, 'internal'),
     ],
 )
 async def test_tool_exception_log_level_and_fields(

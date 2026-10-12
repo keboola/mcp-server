@@ -25,7 +25,7 @@ from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
-from keboola_mcp_server.mcp import ToonCompactFunctionTool, process_concurrently, unwrap_results
+from keboola_mcp_server.mcp import ToonCompactFunctionTool, process_concurrently
 from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.utils import (
     build_folder_hint,
@@ -61,6 +61,7 @@ from keboola_mcp_server.tools.flow.utils import (
     resolve_flow_schema,
     validate_flow_structure,
 )
+from keboola_mcp_server.tools.lookup import unwrap_lookup_results
 from keboola_mcp_server.tools.project import get_project_info
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
 
@@ -696,7 +697,9 @@ async def get_flows(
 
     OPTIONS:
     - `flow_ids=[]` → summaries of all flows in the project
-    - `flow_ids=["id1", ...]` → full details (including phases/tasks) for those flows
+    - `flow_ids=["id1", ...]` → full details (including phases/tasks) for those flows; flows that cannot be
+      retrieved are listed in `not_found` (missing) or `errors` (server-side, retryable), and the call fails
+      only if none of them can be retrieved
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -713,11 +716,12 @@ async def get_flows(
             return Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
 
         results = await process_concurrently(flow_ids, fetch_flow_detail)
-        flows = unwrap_results(results, 'Failed to fetch one or more flows')
+        lookup = unwrap_lookup_results(list(flow_ids), results, 'Failed to fetch the flows')
+        flows = lookup.found
 
         LOG.info(f'Retrieved full details for {len(flows)} flows.')
         flows = await fetch_schedules_for_flows(client=client, links_manager=links_manager, list_of_flows=flows)
-        return GetFlowsDetailOutput(flows=flows)
+        return GetFlowsDetailOutput(flows=flows, **lookup.failure_fields())
 
     # Case 2: no flow_ids - list all flows as summaries
     flows = await get_all_flows(client)

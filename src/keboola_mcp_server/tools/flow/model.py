@@ -13,6 +13,7 @@ from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.scheduler_model import SchedulesOutput
+from keboola_mcp_server.tools.lookup import LookupFailure
 
 LOG = logging.getLogger(__name__)
 
@@ -32,6 +33,14 @@ class GetFlowsDetailOutput(BaseModel, frozen=True):
     """Output of get_flows tool when retrieving specific flow_ids."""
 
     flows: list['Flow'] = Field(description='The retrieved flow configurations with full details.')
+    not_found: list[LookupFailure] | None = Field(
+        default=None,
+        description='Requested IDs that do not exist or are not accessible, with reasons. Omitted if none.',
+    )
+    errors: list[LookupFailure] | None = Field(
+        default=None,
+        description='Requested IDs that failed with a server-side error (may be retried), with reasons. Omitted if none.',
+    )
 
 
 GetFlowsOutput = GetFlowsListOutput | GetFlowsDetailOutput

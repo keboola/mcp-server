@@ -13,6 +13,7 @@ from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, ToonCompactFunctionTool, process_concurrently, unwrap_results
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.scope import ProjectIdArg
+from keboola_mcp_server.tools.lookup import LookupFailure, unwrap_lookup_results
 
 LOG = logging.getLogger(__name__)
 
@@ -177,6 +178,14 @@ class GetJobsDetailOutput(BaseModel):
     """Output of get_jobs tool when retrieving specific job_ids."""
 
     jobs: list[JobDetail] = Field(..., description='List of jobs with full details.')
+    not_found: list[LookupFailure] | None = Field(
+        default=None,
+        description='Requested IDs that do not exist or are not accessible, with reasons. Omitted if none.',
+    )
+    errors: list[LookupFailure] | None = Field(
+        default=None,
+        description='Requested IDs that failed with a server-side error (may be retried), with reasons. Omitted if none.',
+    )
 
 
 GetJobsOutput = GetJobsListOutput | GetJobsDetailOutput
@@ -309,6 +318,8 @@ async def get_jobs(
     MODE 1: GET DETAILS FOR SPECIFIC JOBS (job_ids is non-empty)
     - Provide one or more job IDs: job_ids=["12345", "67890"]
     - Returns: FULL details for each job including status, config_data, results, timing, and metadata
+    - Jobs that cannot be retrieved are listed in `not_found` (missing) or `errors` (server-side, retryable);
+      the call fails only if none of them can be retrieved
     - Ignores: All filtering/sorting parameters (status, component_id, config_id, limit, offset, sort_by, sort_order)
     - Use when: You know specific job IDs and need complete information about them
 
@@ -375,7 +386,8 @@ async def get_jobs(
             return JobDetail.model_validate(raw_job | {'links': links})
 
         results = await process_concurrently(job_ids, fetch_job_detail)
-        jobs = unwrap_results(results, 'Failed to fetch one or more jobs')
+        lookup = unwrap_lookup_results([str(job_id) for job_id in job_ids], results, 'Failed to fetch the jobs')
+        jobs = lookup.found
 
         # Fetch logs if requested
         if include_logs:
@@ -400,7 +412,7 @@ async def get_jobs(
             jobs = unwrap_results(log_results, 'Failed to fetch logs for one or more jobs')
 
         LOG.info(f'Retrieved full details for {len(jobs)} jobs.')
-        return GetJobsDetailOutput(jobs=jobs)
+        return GetJobsDetailOutput(jobs=jobs, **lookup.failure_fields())
 
     # Case 2: no job_ids - list jobs as summaries with optional filtering
     _status = [status] if status else None
