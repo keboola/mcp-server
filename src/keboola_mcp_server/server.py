@@ -79,18 +79,18 @@ class ServiceInfoApiResp(BaseModel):
     )
 
 
-def _parse_validate_rate_limit(value: str | None) -> int | None:
-    """The `oauth_validate_rate_limit` setting as a positive int; None when unset. A bad value stops startup rather
-    than silently falling back to a limit nobody chose."""
+def _parse_positive_int(name: str, value: str | None) -> int | None:
+    """A deployment setting that must be a positive integer, None when unset. A bad value stops startup rather than
+    silently falling back to a limit nobody chose."""
     if value is None or value == '':
         return None
     try:
-        limit = int(value)
+        number = int(value)
     except ValueError:
-        limit = 0
-    if limit < 1:
-        raise ValueError(f'oauth_validate_rate_limit must be a positive integer, got {value!r}')
-    return limit
+        number = 0
+    if number < 1:
+        raise ValueError(f'{name} must be a positive integer, got {value!r}')
+    return number
 
 
 def create_keboola_lifespan(
@@ -317,8 +317,11 @@ def create_server(
             callback_endpoint='/oauth/callback',
             jwt_secret=config.jwt_secret,
             session_store=session_store,
-            validate_rate_limit=_parse_validate_rate_limit(config.oauth_validate_rate_limit),
+            validate_rate_limit=_parse_positive_int('oauth_validate_rate_limit', config.oauth_validate_rate_limit),
             dynamic_client_approval=config.oauth_dynamic_client_approval is True,
+            approval_daily_limit=_parse_positive_int(
+                'oauth_dynamic_client_approval_daily_limit', config.oauth_dynamic_client_approval_daily_limit
+            ),
             encryption_key=encryption_key,
         )
     else:

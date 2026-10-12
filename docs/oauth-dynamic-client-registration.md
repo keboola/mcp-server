@@ -30,6 +30,7 @@ Two deployment-level settings (environment or CLI only, never a request header):
 | Setting | Meaning | Default |
 |---|---|---|
 | `OAUTH_DYNAMIC_CLIENT_APPROVAL` | Whether an unregistered client is sent to Connection's approval screen. Only `true` turns it on; unset, empty and `false` all leave it off. | off |
+| `OAUTH_DYNAMIC_CLIENT_APPROVAL_DAILY_LIMIT` | With approval on, how many distinct clients per rolling 24 hours (per server process) may be sent to the approval screen. A positive integer; anything else stops startup. A further new client is refused like an unregistered one and logged at WARNING (`Daily approval budget used up, client refused`); the same client retrying costs nothing. | no cap |
 | `OAUTH_VALIDATE_RATE_LIMIT` | Calls per minute one server process may make to Connection's `/oauth/clients/validate`. A positive integer; anything else stops startup. | 100 |
 
 **Approval window.** Leave `OAUTH_DYNAMIC_CLIENT_APPROVAL` off in normal operation and onboard a known client by
@@ -42,6 +43,14 @@ earlier stay registered in Connection (this server can neither list nor deactiva
 id this server handed out during the window stays usable in Connection's approval flow until the session
 encryption key changes. The only complete fix for that is a signed, expiring approval verified by Connection, which
 is a Connection-side change (AI-4020); see the RFC, Decision 12.
+
+**Leaving approval on.** A stack that keeps `OAUTH_DYNAMIC_CLIENT_APPROVAL=true` should also set
+`OAUTH_DYNAMIC_CLIENT_APPROVAL_DAILY_LIMIT` (the Kubernetes chart sets 2), so a registration stays rare: at most that
+many new clients a day are sent to the approval screen, and an attempt beyond it is a WARNING line that the Datadog
+monitors in `keboola/infrastructure` (`terraform/modules/alerts/mcp-server.tf`) alert on, together with every client
+sent to approval and a flood against the validation limit. The cap is per process (N replicas allow N times as
+many) and bounds only what this server hands out: Connection still lets any authenticated user click Allow, and a pair
+approved earlier stays registered (AI-4020 is the complete fix).
 
 **Sizing the rate limit.** The limit is per process, but Connection's ceiling is 600 calls per 60 seconds per
 egress IP, shared by every replica. Keep `OAUTH_VALIDATE_RATE_LIMIT` times the number of replicas below 600: the

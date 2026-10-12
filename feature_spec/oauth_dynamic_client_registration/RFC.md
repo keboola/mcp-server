@@ -600,6 +600,14 @@ approval).
     What a user can still do is approve a pair under an id of their own choosing in Connection, which does not
     affect this server, and Connection's own gap (above) is unchanged.
 
+    **Daily cap on approvals (AI-4055).** A stack that keeps the switch on bounds how many clients its server sends to the
+    approval screen: `OAUTH_DYNAMIC_CLIENT_APPROVAL_DAILY_LIMIT` is the number of distinct clients per rolling 24 hours,
+    per server process, counted by derived client id (so the same client retrying, as the approval round trip requires,
+    uses nothing, and the map never holds more than the cap). A further new client is refused on our own page like an
+    unregistered one and logged at WARNING `Daily approval budget used up, client refused`, which an operator alert keys
+    on. Unset means no cap, so nothing changes unless it is configured. It also limits the ids handed out (see the next
+    paragraph), but it is not a boundary against Connection's own approval: that stays open to any authenticated user.
+
     **An id handed out during an approval window outlives the window (accepted).** While the switch is on,
     the redirect to Connection's approval screen carries the keyed client id, and anyone who requests `/authorize`
     can read it. Connection's `pending_mcp_client` payload is unsigned and has no expiry, so an id harvested in the

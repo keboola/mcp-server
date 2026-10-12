@@ -100,6 +100,8 @@ _REGISTERED_CACHE_TTL_SECONDS = 300  # 5 min: a registered+active client's statu
 # need for that arithmetic -- tracked in AI-4005.
 _CONNECTION_VALIDATE_LIMIT_PER_WINDOW = 600
 _ASSUMED_MAX_REPLICAS = 5
+# The window of `_ApprovalBudget`: a day.
+_APPROVAL_BUDGET_WINDOW_SECONDS = 24 * 60 * 60.0
 _VALIDATE_RATE_LIMIT_MAX_CALLS = 100
 _VALIDATE_RATE_LIMIT_WINDOW_SECONDS = 60.0
 # How long the last known REGISTERED answer for a well-known pair may be served when Connection cannot answer.
@@ -126,6 +128,29 @@ class _SlidingWindowRateLimiter:
         if len(self._call_times) >= self._max_calls:
             return False
         self._call_times.append(now)
+        return True
+
+
+class _ApprovalBudget:
+    """Caps how many distinct clients per `window_seconds` this process sends to Connection's approval screen
+    (`max_clients`), so a stack with dynamic approval turned on registers a few clients a day at most, not one per
+    caller. The same client asking again inside the window costs nothing: a legitimate retry (the approval round trip
+    is followed by a second login) must not use up the budget. Process-local, like `_SlidingWindowRateLimiter`, so N
+    replicas allow up to N times the cap. The map is bounded by `max_clients`."""
+
+    def __init__(self, max_clients: int, window_seconds: float = _APPROVAL_BUDGET_WINDOW_SECONDS) -> None:
+        self._max_clients = max_clients
+        self._window_seconds = window_seconds
+        self._granted_at: dict[str, float] = {}
+
+    def try_acquire(self, client_key: str) -> bool:
+        now = time.monotonic()
+        self._granted_at = {k: t for k, t in self._granted_at.items() if now - t <= self._window_seconds}
+        if client_key in self._granted_at:
+            return True
+        if len(self._granted_at) >= self._max_clients:
+            return False
+        self._granted_at[client_key] = now
         return True
 
 
@@ -838,6 +863,7 @@ class SimpleOAuthProvider(OAuthProvider):
         jwt_secret: str | None = None,
         validate_rate_limit: int | None = None,
         dynamic_client_approval: bool = False,
+        approval_daily_limit: int | None = None,
         encryption_key: bytes | None = None,
     ) -> None:
         """
@@ -855,6 +881,8 @@ class SimpleOAuthProvider(OAuthProvider):
             pre-authentication artifacts (authorize-state, authorization code) still use `jwt_secret`
             below; only the long-lived, real-credential-carrying tokens live in the store.
         :param jwt_secret: The secret key for encoding and decoding the pre-auth JWT artifacts.
+        :param approval_daily_limit: With `dynamic_client_approval` on, how many distinct clients per day may be sent to
+            Connection's approval screen; None means no cap. See `_ApprovalBudget`.
         :param encryption_key: The session encryption key; the Connection client ids are keyed with a key derived
             from it (see `_connection_client_id`), so every replica must get the same one. Without it a
             process-local key is used, which is fine for local runs and tests only.
@@ -881,6 +909,7 @@ class SimpleOAuthProvider(OAuthProvider):
         # Whether an unregistered client is sent to Connection's approval screen. Off means only clients Connection
         # already knows can log in (see `Config.oauth_dynamic_client_approval`).
         self._dynamic_client_approval = dynamic_client_approval
+        self._approval_budget = _ApprovalBudget(approval_daily_limit) if approval_daily_limit else None
         # The only two origins the OAuth routes may ever legitimately redirect to -- see
         # UntrustedAuthorizeRedirectMiddleware's docstring.
         self.trusted_redirect_origins = frozenset(
@@ -988,6 +1017,18 @@ class SimpleOAuthProvider(OAuthProvider):
                 error_description='Could not complete the authorization request.',
             )
 
+    def _unregistered_client_page(self) -> str:
+        """The same-origin error page for a client that is not registered, never the caller's redirect_uri (see the
+        ERROR branch of `_authorize` for why)."""
+        return construct_redirect_uri(
+            self._mcp_callback_url,
+            error='unregistered_client',
+            error_description='The OAuth client is not registered.',
+        )
+
+    def _approval_budget_allows(self, connection_client_id: str) -> bool:
+        return self._approval_budget is None or self._approval_budget.try_acquire(connection_client_id)
+
     async def _authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         redirect_uri_str = str(params.redirect_uri)
         connection_client_id = _connection_client_id(redirect_uri_str, self._client_id_key)
@@ -1019,12 +1060,18 @@ class SimpleOAuthProvider(OAuthProvider):
                 f'[authorize] Unregistered client refused, dynamic client approval is off: client_id={_sanitize_client_id_for_log(client.client_id)}, '
                 f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
-            # Same-origin error page, never the caller's redirect_uri (see the ERROR branch above for why).
-            return construct_redirect_uri(
-                self._mcp_callback_url,
-                error='unregistered_client',
-                error_description='The OAuth client is not registered.',
+            return self._unregistered_client_page()
+
+        if registration is _ClientRegistration.NOT_REGISTERED and not self._approval_budget_allows(
+            connection_client_id
+        ):
+            # WARNING on purpose: an operator alert keys on this line (more new clients wanting approval than the
+            # daily cap allows is what abuse of the open approval looks like).
+            LOG.warning(
+                f'[authorize] Daily approval budget used up, client refused: client_id={_sanitize_client_id_for_log(client.client_id)}, '
+                f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
+            return self._unregistered_client_page()
 
         # Create and encode the authorization state.
         # We don't store the authentication states that we create here to avoid having to persist them.

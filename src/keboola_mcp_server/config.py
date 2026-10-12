@@ -89,6 +89,11 @@ class Config:
     the OAuth server can log in. Turning it on lets any authenticated user of the stack register a callback that
     every later login of that client then trusts, so it is for short, supervised windows. Deployment-level only:
     never settable from a request header."""
+    oauth_dynamic_client_approval_daily_limit: str | None = None
+    """With dynamic client approval on, how many distinct clients per day (rolling 24 hours, per server process) may be
+    sent to the OAuth server's approval screen (a positive integer); a further new client is refused like an
+    unregistered one and logged at WARNING. Unset means no cap. The same client retrying costs nothing. Deployment-level
+    only: never settable from a request header."""
 
     # Fields a per-request HTTP header may legitimately set (see `replace_by_headers`). Everything
     # else -- jwt_secret, postgres_dsn, session_encryption_key, oauth_client_id/secret,

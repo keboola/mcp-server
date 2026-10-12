@@ -1459,6 +1459,61 @@ class TestSimpleOAuthProvider:
         assert asked and public_id not in asked
         assert parse_qs(url.query)['error'] == ['unregistered_client']  # refused, never sent to consent
 
+    @pytest.mark.asyncio
+    async def test_the_daily_approval_budget_caps_new_clients_but_not_retries(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """With dynamic approval on and a cap of 2, the third distinct unknown client of the day is refused on our own
+        origin and logged at WARNING (the line an alert keys on), while a client already sent to approval can come
+        back -- the approval round trip is followed by a second login -- without using up more of the budget."""
+        from keboola_mcp_server.oauth import _ApprovalBudget, _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
+        monkeypatch.setattr(oauth_provider, '_approval_budget', _ApprovalBudget(2))
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+
+        async def outcome(uri: str) -> str:
+            params = AuthorizationParams(
+                redirect_uri=AnyUrl(uri),
+                redirect_uri_provided_explicitly=True,
+                code_challenge='challenge',
+                state='client-state',
+                scopes=None,
+            )
+            url = urlparse(await oauth_provider.authorize(client, params))
+            return 'approval' if url.path == '/oauth/authorize' else parse_qs(url.query)['error'][0]
+
+        assert await outcome('https://one.example/cb') == 'approval'
+        assert await outcome('https://two.example/cb') == 'approval'
+        assert await outcome('https://three.example/cb') == 'unregistered_client'
+        assert await outcome('https://one.example/cb') == 'approval'  # a retry of a client already sent costs nothing
+
+    @pytest.mark.parametrize(
+        ('elapsed_seconds', 'expected_after'),
+        [
+            (3600.0, False),  # an hour later the window still holds both clients
+            (24 * 3600.0 + 1, True),  # a day later the budget is free again
+        ],
+    )
+    def test_approval_budget_window_slides(
+        self, monkeypatch: pytest.MonkeyPatch, elapsed_seconds: float, expected_after: bool
+    ) -> None:
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ApprovalBudget
+
+        now = [1000.0]
+        monkeypatch.setattr(oauth_module.time, 'monotonic', lambda: now[0])
+        budget = _ApprovalBudget(2)
+        assert budget.try_acquire('a') and budget.try_acquire('b')
+        assert not budget.try_acquire('c')
+
+        now[0] += elapsed_seconds
+
+        assert budget.try_acquire('c') is expected_after
+
+    def test_the_approval_budget_is_off_unless_a_limit_is_given(self, oauth_provider: SimpleOAuthProvider) -> None:
+        assert oauth_provider._approval_budget is None  # no cap by default: behaviour is unchanged unless configured
+
     def test_default_rate_limit_keeps_the_fleet_under_connections_shared_ceiling(self):
         """The limiter is per process but Connection's ceiling is per shared egress IP: the default budget times
         the largest replica count we deploy must stay below it (Vojtěch Biberle review, AI-2883)."""
