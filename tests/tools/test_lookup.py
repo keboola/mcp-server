@@ -1,4 +1,6 @@
+import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -9,12 +11,12 @@ from pytest_mock import MockerFixture
 
 from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.errors import NotFoundError
-from keboola_mcp_server.mcp import AggregateError
+from keboola_mcp_server.mcp import AggregateError, PlainFunctionTool, ToonCompactFunctionTool, _exclude_none_serializer
 from keboola_mcp_server.tools.components.api_models import ComponentAPIResponse
 from keboola_mcp_server.tools.components.model import FullConfigId
-from keboola_mcp_server.tools.components.tools import get_components, get_configs
-from keboola_mcp_server.tools.flow.tools import get_flows
-from keboola_mcp_server.tools.jobs import get_jobs
+from keboola_mcp_server.tools.components.tools import add_component_tools, get_components, get_configs
+from keboola_mcp_server.tools.flow.tools import add_flow_tools, get_flows
+from keboola_mcp_server.tools.jobs import add_job_tools, get_jobs
 from keboola_mcp_server.tools.lookup import LookupFailure, unwrap_lookup_results
 
 COMPONENT_ID = 'keboola.ex-aws-s3'
@@ -37,7 +39,9 @@ def _component(component_id: str) -> dict[str, Any]:
     return {'id': component_id, 'name': f'Component {component_id}', 'type': 'extractor'}
 
 
-async def _run_get_jobs(mocker: MockerFixture, ctx: Context, outcomes: Outcomes) -> tuple[Any, list[str]]:
+async def _run_get_jobs(
+    mocker: MockerFixture, ctx: Context, outcomes: Outcomes, **kwargs: Any
+) -> tuple[Any, list[str]]:
     async def get_job_detail(job_id: str) -> dict[str, Any]:
         _outcome(outcomes, job_id)
         return {'id': job_id, 'status': 'success', 'component': COMPONENT_ID, 'url': f'https://x/{job_id}'}
@@ -45,7 +49,7 @@ async def _run_get_jobs(mocker: MockerFixture, ctx: Context, outcomes: Outcomes)
     KeboolaClient.from_state(ctx.session.state).jobs_queue_client.get_job_detail = mocker.AsyncMock(
         side_effect=get_job_detail
     )
-    result = await get_jobs(ctx=ctx, job_ids=list(outcomes))
+    result = await get_jobs(ctx=ctx, job_ids=list(outcomes), **kwargs)
     return result, [job.id for job in result.jobs]
 
 
@@ -105,6 +109,39 @@ def _failure_id(tool: ToolRunner, item_id: str) -> str:
     return f'{COMPONENT_ID}/{item_id}' if tool is _run_get_configs else item_id
 
 
+_REGISTRATION = {
+    _run_get_jobs: (add_job_tools, 'get_jobs', ToonCompactFunctionTool),
+    _run_get_configs: (add_component_tools, 'get_configs', ToonCompactFunctionTool),
+    _run_get_flows: (add_flow_tools, 'get_flows', ToonCompactFunctionTool),
+    _run_get_components: (add_component_tools, 'get_components', PlainFunctionTool),
+}
+
+
+def _serialize_as_registered(mocker: MockerFixture, tool: ToolRunner, result: Any) -> str:
+    add_tools, name, expected_tool_class = _REGISTRATION[tool]
+    mcp = mocker.Mock()
+    add_tools(mcp)
+    registered = next(call.args[0] for call in mcp.add_tool.call_args_list if call.args[0].name == name)
+    assert type(registered) is expected_tool_class
+    return registered.convert_result(result).content[0].text
+
+
+def _top_level_keys(text: str) -> set[str]:
+    try:
+        return set(json.loads(text))
+    except ValueError:
+        return set(re.findall(r'^(\w+)[\[{:]', text, re.MULTILINE))
+
+
+def _assert_failure_keys(text: str, key: str, expected_ids: list[str] | None) -> None:
+    keys = _top_level_keys(text)
+    if expected_ids is None:
+        assert key not in keys
+    else:
+        assert key in keys
+        assert all(item_id in text for item_id in expected_ids)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     'tool',
@@ -136,6 +173,12 @@ async def test_batch_lookup_partial_results(
     assert [f.id for f in result.errors or []] == [_failure_id(tool, i) for i in expected_errors or []]
     assert result.not_found is None if expected_not_found is None else all(f.reason for f in result.not_found)
     assert result.errors is None if expected_errors is None else all(f.reason for f in result.errors)
+
+    not_found_ids = None if expected_not_found is None else [_failure_id(tool, i) for i in expected_not_found]
+    error_ids = None if expected_errors is None else [_failure_id(tool, i) for i in expected_errors]
+    for text in (_exclude_none_serializer(result), _serialize_as_registered(mocker, tool, result)):
+        _assert_failure_keys(text, 'not_found', not_found_ids)
+        _assert_failure_keys(text, 'errors', error_ids)
 
 
 @pytest.mark.asyncio
@@ -198,3 +241,20 @@ def test_unwrap_lookup_results(
     assert lookup.found == ['ok']
     assert lookup.not_found == expected_not_found
     assert lookup.errors == expected_errors
+
+
+@pytest.mark.asyncio
+async def test_get_jobs_include_logs_with_failed_id(mocker: MockerFixture, mcp_context_client: Context):
+    """Logs are fetched only for the jobs that were found; the failed ID is reported in not_found."""
+    client = KeboolaClient.from_state(mcp_context_client.session.state)
+    client.storage_client.list_events = mocker.AsyncMock(
+        return_value=[{'message': 'Started', 'type': 'info', 'created': '2024-01-01T00:00:01Z'}]
+    )
+
+    result, found = await _run_get_jobs(mocker, mcp_context_client, {'a': None, 'b': 404}, include_logs=True)
+
+    assert found == ['a']
+    assert [event.message for event in result.jobs[0].logs] == ['Started']
+    assert result.not_found == [LookupFailure(id='b', reason='HTTP 404 Not Found')]
+    assert result.errors is None
+    client.storage_client.list_events.assert_awaited_once_with(job_id='a', limit=50)
