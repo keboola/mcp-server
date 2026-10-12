@@ -12,10 +12,12 @@ import pathlib
 import sys
 import time
 import traceback
+from contextlib import asynccontextmanager
 
 import pydantic
 from fastmcp import FastMCP
 from fastmcp.server.http import StarletteWithLifespan
+from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -25,6 +27,7 @@ from keboola_mcp_server.anonymous_entry import ANONYMOUS_MOUNT_PATH, AnonymousEn
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     ForwardSlashMiddleware,
+    LegacySsePathMiddleware,
     install_project_id_log_field,
     is_read_only_tool,
     is_semantic_tool,
@@ -298,6 +301,45 @@ def create_anonymous_app(mcp_server: FastMCP, *, config: Config, stateless_http:
         allowed_origins=fastmcp.settings.http_allowed_origins,
         session_idle_timeout=fastmcp.settings.http_session_idle_timeout,
     )
+
+def build_http_app(
+    mcp_server: FastMCP,
+    custom_routes: CustomRoutes,
+    *,
+    stateless_http: bool,
+    public_url: str | None = None,
+    anonymous_app: StarletteWithLifespan | None = None,
+) -> Starlette:
+    """Builds the Starlette app serving the streamable-HTTP transport on `/mcp` (aliased from the legacy
+    `/sse` path), the unauthenticated endpoint when there is one, and the non-MCP custom routes."""
+    http_app: StarletteWithLifespan = mcp_server.http_app(
+        path='/',
+        transport='streamable-http',
+        stateless_http=stateless_http,
+    )
+    mount_paths: dict[str, StarletteWithLifespan] = {'/mcp': http_app}
+    if anonymous_app:
+        mount_paths[ANONYMOUS_MOUNT_PATH] = anonymous_app
+
+    @asynccontextmanager
+    async def lifespan(_app: Starlette):
+        async with contextlib.AsyncExitStack() as stack:
+            for _inner_app in mount_paths.values():
+                await stack.enter_async_context(_inner_app.lifespan(_app))
+            yield
+
+    app = Starlette(
+        middleware=[
+            Middleware(LegacySsePathMiddleware, public_url=public_url),
+            Middleware(ForwardSlashMiddleware, mount_paths=tuple(mount_paths)),
+        ],
+        lifespan=lifespan,
+        exception_handlers=_exception_handlers,
+    )
+    for path, inner_app in mount_paths.items():
+        app.mount(path, inner_app)
+    custom_routes.add_to_starlette(app)
+    return app
 
 
 def _parse_project_ids(raw: str) -> list[int]:
@@ -651,57 +693,24 @@ async def run_server(args: list[str] | None = None) -> None:
             await keboola_mcp_server.run_async(transport=parsed_args.transport)
         else:
             # 'http-compat' is an alias for 'streamable-http' kept for backwards compatibility.
-            # We use local imports here due to the temporary nature of this code.
-
-            from contextlib import asynccontextmanager
-
             import uvicorn
-            from fastmcp.server.http import StarletteWithLifespan
-            from starlette.applications import Starlette
 
-            mount_paths: dict[str, StarletteWithLifespan] = {}
-            custom_routes: CustomRoutes | None = None
-            transports: list[str] = []
-            mcp_server: FastMCP | None = None
-
-            if parsed_args.transport in ['http-compat', 'streamable-http']:
-                http_runtime_config = ServerRuntimeInfo(
-                    'http-compat/streamable-http', stateless_http=parsed_args.stateless_http
-                )
-                mcp_server, custom_routes = create_server(
-                    config, runtime_info=http_runtime_config, custom_routes_handling='return'
-                )
-                http_app: StarletteWithLifespan = mcp_server.http_app(
-                    path='/',
-                    transport='streamable-http',
-                    stateless_http=parsed_args.stateless_http,
-                )
-                mount_paths['/mcp'] = http_app
-                transports.append('Streamable-HTTP')
-
-                if anonymous_app := create_anonymous_app(
-                    mcp_server, config=config, stateless_http=parsed_args.stateless_http
-                ):
-                    mount_paths[ANONYMOUS_MOUNT_PATH] = anonymous_app
-
-            @asynccontextmanager
-            async def lifespan(_app: Starlette):
-                async with contextlib.AsyncExitStack() as stack:
-                    for _inner_app in mount_paths.values():
-                        await stack.enter_async_context(_inner_app.lifespan(_app))
-                    yield
-
-            app = Starlette(
-                middleware=[Middleware(ForwardSlashMiddleware, mount_paths=tuple(mount_paths))],
-                lifespan=lifespan,
-                exception_handlers=_exception_handlers,
+            http_runtime_config = ServerRuntimeInfo(
+                'http-compat/streamable-http', stateless_http=parsed_args.stateless_http
             )
-            for path, inner_app in mount_paths.items():
-                app.mount(path, inner_app)
+            mcp_server, custom_routes = create_server(
+                config, runtime_info=http_runtime_config, custom_routes_handling='return'
+            )
+            app = build_http_app(
+                mcp_server,
+                custom_routes,
+                stateless_http=parsed_args.stateless_http,
+                public_url=config.mcp_server_url,
+                anonymous_app=create_anonymous_app(
+                    mcp_server, config=config, stateless_http=parsed_args.stateless_http
+                ),
+            )
 
-            custom_routes.add_to_starlette(app)
-
-            assert isinstance(mcp_server, FastMCP)
             _tools = await mcp_server.list_tools(run_middleware=False)
             app.state.mcp_tools_input_schema = {tool.name: tool.parameters for tool in _tools}
             # Used by the /preview/configuration authorization check to enforce X-Read-Only-Mode
@@ -719,8 +728,7 @@ async def run_server(args: list[str] | None = None) -> None:
             )
             server = uvicorn.Server(config)
             LOG.info(
-                f'Starting MCP server with {", ".join(transports)} transport{"s" if len(transports) > 1 else ""}'
-                f' on http://{parsed_args.host}:{parsed_args.port}/'
+                f'Starting MCP server with Streamable-HTTP transport on http://{parsed_args.host}:{parsed_args.port}/'
             )
 
             await server.serve()
