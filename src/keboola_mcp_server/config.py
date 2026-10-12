@@ -90,10 +90,23 @@ class Config:
     every later login of that client then trusts, so it is for short, supervised windows. Deployment-level only:
     never settable from a request header."""
     oauth_dynamic_client_approval_daily_limit: str | None = None
-    """With dynamic client approval on, how many distinct clients per day (rolling 24 hours, per server process) may be
+    """With dynamic client approval on, how many distinct clients per day (a fixed 24-hour window counted across every replica in the shared database; per
+    process and rolling while the database cannot be reached) may be
     sent to the OAuth server's approval screen (a positive integer); a further new client is refused like an
     unregistered one and logged at WARNING. Unset means no cap. The same client retrying costs nothing. Deployment-level
     only: never settable from a request header."""
+    oauth_validate_fleet_rate_limit: str | None = None
+    """Calls per minute, counted across every replica in the shared database, to the OAuth server's client-validation
+    endpoint (a positive integer). Unset means the built-in default (500, below the OAuth server's 600 per minute per
+    egress IP). Only holds while the database counter answers; otherwise `oauth_validate_rate_limit` applies per process."""
+    oauth_authorize_rate_limit_per_ip: str | None = None
+    """`/authorize` requests per minute one caller address may send, counted across every replica in the shared database
+    (a positive integer). Unset means no per-address limit. See `oauth_trusted_proxy_hops` for how the address is read."""
+    oauth_trusted_proxy_hops: str | None = None
+    """How many proxies in front of this server append to `X-Forwarded-For` (a positive integer, default 1): the caller
+    address is the entry that many places from the end of the header; the entries before it are caller-supplied and never
+    used. Set it to match the ingress in front of the server, or the per-address limit will count the proxy instead of the
+    caller."""
 
     # Fields a per-request HTTP header may legitimately set (see `replace_by_headers`). Everything
     # else -- jwt_secret, postgres_dsn, session_encryption_key, oauth_client_id/secret,

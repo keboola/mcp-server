@@ -26,6 +26,7 @@ from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.session_store.crypto import resolve_encryption_key
 from keboola_mcp_server.session_store.kai_scope import PostgresKaiScopeStore
+from keboola_mcp_server.session_store.rate_limit import PostgresRateLimitStore
 from keboola_mcp_server.session_store.repository import PostgresSessionStore
 from keboola_mcp_server.tools.components.tools import add_component_tools
 from keboola_mcp_server.tools.data_apps import add_data_app_tools
@@ -248,6 +249,8 @@ class CustomRoutes:
             app.add_middleware(
                 UntrustedAuthorizeRedirectMiddleware, trusted_origins=self.oauth_provider.trusted_redirect_origins
             )
+            if rate_limit := self.oauth_provider.authorize_rate_limit_middleware():
+                app.add_middleware(rate_limit.cls, **rate_limit.kwargs)
 
 
 def create_server(
@@ -322,6 +325,15 @@ def create_server(
             approval_daily_limit=_parse_positive_int(
                 'oauth_dynamic_client_approval_daily_limit', config.oauth_dynamic_client_approval_daily_limit
             ),
+            # Counters shared by every replica (AI-4005), in the same Postgres as the sessions.
+            rate_limit_store=PostgresRateLimitStore(config.postgres_dsn),
+            validate_fleet_limit=_parse_positive_int(
+                'oauth_validate_fleet_rate_limit', config.oauth_validate_fleet_rate_limit
+            ),
+            authorize_rate_limit_per_ip=_parse_positive_int(
+                'oauth_authorize_rate_limit_per_ip', config.oauth_authorize_rate_limit_per_ip
+            ),
+            trusted_proxy_hops=_parse_positive_int('oauth_trusted_proxy_hops', config.oauth_trusted_proxy_hops) or 1,
             encryption_key=encryption_key,
         )
     else:

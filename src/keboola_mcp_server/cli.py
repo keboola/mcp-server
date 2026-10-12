@@ -472,12 +472,13 @@ async def _run_migrate() -> None:
 
 
 async def _run_gc_sessions() -> None:
-    """Ensures upcoming oauth_sessions partitions exist and drops ones past the retention window,
-    then exits. Reads the DSN from the same env vars the server itself uses, so this can share the
+    """Ensures upcoming oauth_sessions partitions exist and drops ones past the retention window, removes the
+    shared rate-limit counters of windows that are over (AI-4005), then exits. Reads the DSN from the same env vars the server itself uses, so this can share the
     exact same envFrom secret as the deployment (see cli.py's `migrate` command).
     """
     import asyncpg
 
+    from keboola_mcp_server.session_store.rate_limit import purge_expired
     from keboola_mcp_server.session_store.retention import ensure_partitions
 
     config = Config().replace_by(os.environ)
@@ -487,11 +488,13 @@ async def _run_gc_sessions() -> None:
     pool = await asyncpg.create_pool(config.postgres_dsn)
     try:
         result = await ensure_partitions(pool)
+        purged = await purge_expired(pool)
     finally:
         await pool.close()
 
     created, dropped = result['created'], result['dropped']
     print(f"✓ Partitions created: {', '.join(created) or 'none'}; dropped: {', '.join(dropped) or 'none'}")
+    print(f'✓ Expired rate-limit counters removed: {purged}')
 
 
 async def run_server(args: list[str] | None = None) -> None:

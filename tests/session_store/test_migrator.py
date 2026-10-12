@@ -12,7 +12,9 @@ pytestmark = [pytest.mark.asyncio, requires_postgres]
 async def _clean_slate():
     pool = await asyncpg.create_pool(TEST_DSN)
     try:
-        await pool.execute('DROP TABLE IF EXISTS oauth_sessions, kai_sessions, schema_migrations CASCADE')
+        await pool.execute(
+            'DROP TABLE IF EXISTS oauth_sessions, kai_sessions, oauth_rate_buckets, schema_migrations CASCADE'
+        )
     finally:
         await pool.close()
 
@@ -27,6 +29,7 @@ async def test_applies_migrations_once() -> None:
             '0003_default_partition_unique_indexes.sql',
             '0004_kai_sessions.sql',
             '0005_oauth_session_projectless_scope.sql',
+            '0006_oauth_rate_buckets.sql',
         ]
 
         # Re-running is a no-op -- the table already exists, so re-applying the DDL would fail

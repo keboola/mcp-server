@@ -30,7 +30,9 @@ class TestEnsurePartitions:
     async def _clean_slate(self):
         pool = await asyncpg.create_pool(TEST_DSN)
         try:
-            await pool.execute('DROP TABLE IF EXISTS oauth_sessions, kai_sessions, schema_migrations CASCADE')
+            await pool.execute(
+                'DROP TABLE IF EXISTS oauth_sessions, kai_sessions, oauth_rate_buckets, schema_migrations CASCADE'
+            )
             await apply_migrations(pool)
         finally:
             await pool.close()

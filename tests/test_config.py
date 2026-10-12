@@ -173,7 +173,7 @@ class TestConfig:
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
             "jwt_secret=None, postgres_dsn='****', session_encryption_key='****', "
-            'bearer_token=None, conversation_id=None, project_id=None, oauth_validate_rate_limit=None, oauth_dynamic_client_approval=None, oauth_dynamic_client_approval_daily_limit=None)'
+            'bearer_token=None, conversation_id=None, project_id=None, oauth_validate_rate_limit=None, oauth_dynamic_client_approval=None, oauth_dynamic_client_approval_daily_limit=None, oauth_validate_fleet_rate_limit=None, oauth_authorize_rate_limit_per_ip=None, oauth_trusted_proxy_hops=None)'
         )
 
     def test_workspace_id_must_be_numeric(self) -> None:
@@ -225,6 +225,9 @@ class TestReplaceByHeaders:
             {'X-Oauth-Validate-Rate-Limit': '100000'},
             {'X-Oauth-Dynamic-Client-Approval': 'true'},
             {'X-Oauth-Dynamic-Client-Approval-Daily-Limit': '100000'},
+            {'X-Oauth-Validate-Fleet-Rate-Limit': '100000'},
+            {'X-Oauth-Authorize-Rate-Limit-Per-Ip': '100000'},
+            {'X-Oauth-Trusted-Proxy-Hops': '0'},
         ],
         ids=[
             'jwt_secret_bare',
@@ -239,6 +242,9 @@ class TestReplaceByHeaders:
             'oauth_validate_rate_limit',
             'oauth_dynamic_client_approval',
             'oauth_dynamic_client_approval_daily_limit',
+            'oauth_validate_fleet_rate_limit',
+            'oauth_authorize_rate_limit_per_ip',
+            'oauth_trusted_proxy_hops',
         ],
     )
     def test_deployment_level_fields_are_unreachable(self, headers: Mapping[str, str]) -> None:

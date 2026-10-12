@@ -249,6 +249,7 @@ class TestRunGcSessions:
                 'keboola_mcp_server.session_store.retention.ensure_partitions',
                 AsyncMock(return_value={'created': ['oauth_sessions_2026_09'], 'dropped': ['oauth_sessions_2026_06']}),
             ),
+            patch('keboola_mcp_server.session_store.rate_limit.purge_expired', AsyncMock(return_value=7)),
         ):
             await _run_gc_sessions()
 
@@ -257,6 +258,7 @@ class TestRunGcSessions:
         out = capsys.readouterr().out
         assert 'oauth_sessions_2026_09' in out
         assert 'oauth_sessions_2026_06' in out
+        assert 'rate-limit counters removed: 7' in out
 
     @pytest.mark.asyncio
     async def test_reports_none_when_nothing_changed(self, monkeypatch, capsys) -> None:
@@ -269,6 +271,7 @@ class TestRunGcSessions:
                 'keboola_mcp_server.session_store.retention.ensure_partitions',
                 AsyncMock(return_value={'created': [], 'dropped': []}),
             ),
+            patch('keboola_mcp_server.session_store.rate_limit.purge_expired', AsyncMock(return_value=0)),
         ):
             await _run_gc_sessions()
 

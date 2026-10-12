@@ -30,8 +30,11 @@ Two deployment-level settings (environment or CLI only, never a request header):
 | Setting | Meaning | Default |
 |---|---|---|
 | `OAUTH_DYNAMIC_CLIENT_APPROVAL` | Whether an unregistered client is sent to Connection's approval screen. Only `true` turns it on; unset, empty and `false` all leave it off. | off |
-| `OAUTH_DYNAMIC_CLIENT_APPROVAL_DAILY_LIMIT` | With approval on, how many distinct clients per rolling 24 hours (per server process) may be sent to the approval screen. A positive integer; anything else stops startup. A further new client is refused like an unregistered one and logged at WARNING (`Daily approval budget used up, client refused`); the same client retrying costs nothing. | no cap |
-| `OAUTH_VALIDATE_RATE_LIMIT` | Calls per minute one server process may make to Connection's `/oauth/clients/validate`. A positive integer; anything else stops startup. | 100 |
+| `OAUTH_DYNAMIC_CLIENT_APPROVAL_DAILY_LIMIT` | With approval on, how many distinct clients per day (a fixed 24-hour UTC window, counted across every replica in the shared database) may be sent to the approval screen. A positive integer; anything else stops startup. A further new client is refused like an unregistered one and logged at WARNING (`Daily approval budget used up, client refused`); the same client retrying costs nothing. | no cap |
+| `OAUTH_VALIDATE_FLEET_RATE_LIMIT` | Calls per minute, counted across every replica in the shared database, to Connection's `/oauth/clients/validate`. A positive integer. | 500 |
+| `OAUTH_AUTHORIZE_RATE_LIMIT_PER_IP` | `/authorize` requests per minute one caller address may send, across every replica; over it the answer is `429` with `Retry-After`. A positive integer. | no limit |
+| `OAUTH_TRUSTED_PROXY_HOPS` | How many proxies in front of the server append to `X-Forwarded-For`; the caller address is the entry that many places from the end (the ones before it are caller-written and never used). | 1 |
+| `OAUTH_VALIDATE_RATE_LIMIT` | Calls per minute one server process may make to Connection's `/oauth/clients/validate`; applies only while the shared database counter cannot answer. A positive integer; anything else stops startup. | 100 |
 
 **Approval window.** Leave `OAUTH_DYNAMIC_CLIENT_APPROVAL` off in normal operation and onboard a known client by
 pre-registering it in Connection (a migration, as for claude.ai, plus an entry in
@@ -48,11 +51,20 @@ is a Connection-side change (AI-4020); see the RFC, Decision 12.
 `OAUTH_DYNAMIC_CLIENT_APPROVAL_DAILY_LIMIT` (the Kubernetes chart sets 2), so a registration stays rare: at most that
 many new clients a day are sent to the approval screen, and an attempt beyond it is a WARNING line that the Datadog
 monitors in `keboola/infrastructure` (`terraform/modules/alerts/mcp-server.tf`) alert on, together with every client
-sent to approval and a flood against the validation limit. The cap is per process (N replicas allow N times as
-many) and bounds only what this server hands out: Connection still lets any authenticated user click Allow, and a pair
+sent to approval and a flood against the validation limit. The cap is counted across replicas in the shared database (per process only while the database cannot be reached) and bounds only what this server hands out: Connection still lets any authenticated user click Allow, and a pair
 approved earlier stays registered (AI-4020 is the complete fix).
 
-**Sizing the rate limit.** The limit is per process, but Connection's ceiling is 600 calls per 60 seconds per
+**Shared limits (AI-4005).** The call budget towards Connection, the daily cap on new clients and the per-address
+limit on `/authorize` are counted in one small table (`oauth_rate_buckets`, migration 0006) in the same Postgres as the
+sessions, with one atomic upsert per check, so they hold across every replica and need no extra service. If the database
+cannot answer (it is down, or the migration has not run yet) the call budget and the daily cap fall back to the
+per-process limiters below, and the per-address limit lets the request through, since a database outage fails logins
+anyway. `gc-sessions` removes the counters of windows that are over. The per-address limit is off unless
+`OAUTH_AUTHORIZE_RATE_LIMIT_PER_IP` is set; set `OAUTH_TRUSTED_PROXY_HOPS` to the number of proxies in front of the server
+first, or the limit counts the proxy instead of the caller. Windows are fixed (a caller can send up to twice the limit
+across a window boundary).
+
+**Sizing the rate limit.** Without the shared counter the limit is per process, but Connection's ceiling is 600 calls per 60 seconds per
 egress IP, shared by every replica. Keep `OAUTH_VALIDATE_RATE_LIMIT` times the number of replicas below 600: the
 default of 100 is for up to 5 replicas, so lower it when running more (for example 60 for 9 replicas). Cached
 answers, single-flight, and the pause after an error or a "not registered" for the pre-registered claude.ai pair

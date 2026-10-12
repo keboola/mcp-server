@@ -536,7 +536,9 @@ approval).
     `_check_registration_uncached` checks this budget *before* making the HTTP call at all, returning
     `ERROR` locally (no network call, still fail-closed) once it's spent. It is still a per-process,
     best-effort bound, not a perfectly fair cross-replica one — a limiter shared across the fleet would
-    remove the replica arithmetic; tracked as AI-4005, not blocking this PR.
+    remove the replica arithmetic. That is now done (AI-4005): while the shared store answers, the budget is
+    counted across every replica in Postgres (`OAUTH_VALIDATE_FLEET_RATE_LIMIT`, default 500 per minute) and this
+    per-process budget is the fallback when it cannot.
 
     Two things around the limiter. Concurrent cache misses for the same `redirect_uri` share one in-flight
     call (single-flight), so a burst cannot fan out past it. And because Connection's own 429 can still
@@ -560,7 +562,11 @@ approval).
     mcp SDK's `authorize(client, params)` interface doesn't pass the request through), so a per-IP
     sub-limit needs a new ASGI middleware ahead of the route (like the existing
     `DatabaseUnavailableMiddleware`), not a change inside `check_registration()`. Tracked as AI-4005
-    (fleet-wide, per-caller limiter) alongside the cross-replica-fairness gap above, not blocking this PR.
+    (fleet-wide, per-caller limiter) alongside the cross-replica-fairness gap above. Done in AI-4005: an
+    `AuthorizeRateLimitMiddleware` ahead of `/authorize` counts requests per caller address in the shared store
+    (`OAUTH_AUTHORIZE_RATE_LIMIT_PER_IP`, off unless set), reading the address from `X-Forwarded-For` the entry
+    `OAUTH_TRUSTED_PROXY_HOPS` places from the end (the entries before it are caller-written), and answers `429`.
+    It does not partition the validate budget by caller: it bounds how fast one address can spend it.
 
 12. **Who may approve a new client is decided by Connection, and no role restriction is deployed
     there yet.** Connection's dynamic-approval step does not require an elevated role, and once a
@@ -601,8 +607,9 @@ approval).
     affect this server, and Connection's own gap (above) is unchanged.
 
     **Daily cap on approvals (AI-4055).** A stack that keeps the switch on bounds how many clients its server sends to the
-    approval screen: `OAUTH_DYNAMIC_CLIENT_APPROVAL_DAILY_LIMIT` is the number of distinct clients per rolling 24 hours,
-    per server process, counted by derived client id (so the same client retrying, as the approval round trip requires,
+    approval screen: `OAUTH_DYNAMIC_CLIENT_APPROVAL_DAILY_LIMIT` is the number of distinct clients per fixed 24-hour
+    window, across every replica in the shared database (per process, rolling, while it cannot be reached), counted by
+    derived client id (so the same client retrying, as the approval round trip requires,
     uses nothing, and the map never holds more than the cap). A further new client is refused on our own page like an
     unregistered one and logged at WARNING `Daily approval budget used up, client refused`, which an operator alert keys
     on. Unset means no cap, so nothing changes unless it is configured. It also limits the ids handed out (see the next
