@@ -2,7 +2,6 @@ import asyncio
 import base64
 import dataclasses
 import hashlib
-import hmac
 import json
 import logging
 import secrets
@@ -907,6 +906,17 @@ class TestSimpleOAuthProvider:
         assert _sign_mcp_client_id('secret', 'a', 'b') == _sign_mcp_client_id('secret', 'a', 'b')
         assert _sign_mcp_client_id('secret', 'a', 'b') != _sign_mcp_client_id('other', 'a', 'b')
 
+    def test_mcp_client_signature_known_answer(self) -> None:
+        """The signature Connection recomputes (PHP, same inputs, same message layout) must stay byte-for-byte the same:
+        HMAC-SHA256 over `<len(id)>:<id>:<state>` keyed with the broker's client secret, as lowercase hex. A fixed vector
+        pins that contract without re-implementing it here."""
+        from keboola_mcp_server.oauth import _sign_mcp_client_id
+
+        assert (
+            _sign_mcp_client_id('broker-secret', 'mcp-0123456789abcdef01234567', 'state.jwt.value')
+            == '6f21b75053aecb737a45bddc7093e67bc0bda5b9e0d093873d6cc01430ab359b'
+        )
+
     def test_approval_client_name_keeps_the_end_of_a_very_long_host(self):
         """The final labels of a hostname are what identify the destination, so a host too long to fit
         loses its start, never its end (Copilot review, AI-3995)."""
@@ -977,7 +987,7 @@ class TestSimpleOAuthProvider:
         A registered client is sent straight on to /oauth/consent with a normal state; anything else
         fails closed. The Connection code is never exchanged."""
         from keboola_mcp_server import oauth as oauth_module
-        from keboola_mcp_server.oauth import _ClientRegistration, _connection_client_id
+        from keboola_mcp_server.oauth import _ClientRegistration, _connection_client_id, _sign_mcp_client_id
 
         self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
@@ -1021,12 +1031,9 @@ class TestSimpleOAuthProvider:
             _connection_client_id('https://my.tool/oauth/callback', oauth_provider._client_id_key)
         ]
         # ... and authenticated, bound to this very flow's state (Connection recomputes it with the broker secret)
-        expected_sig = hmac.new(
-            oauth_provider._oauth_client_secret.encode(),
-            f'{len(query["mcp_client_id"][0].encode())}:{query["mcp_client_id"][0]}:{query["state"][0]}'.encode(),
-            'sha256',
-        ).hexdigest()
-        assert query['mcp_client_sig'] == [expected_sig]
+        assert query['mcp_client_sig'] == [
+            _sign_mcp_client_id(oauth_provider._oauth_client_secret, query['mcp_client_id'][0], query['state'][0])
+        ]
         state = oauth_provider._decode(query['state'][0])
         assert 'pending' not in state
         assert state['redirect_uri'] == 'https://my.tool/oauth/callback'
