@@ -68,12 +68,15 @@ def _policy_object(
     rules_list: list,
     source_project_id: int | None = 1,
     target_project_ids: tuple | None = None,
+    schema_version: str | None = None,
 ) -> MetastoreObject:
     return MetastoreObject(
         type='rls-policy',
         id=obj_id,
         attributes={'table': table, 'dialect': dialect, 'rules': rules_list},
-        meta=MetaObjectMeta(source_project_id=source_project_id, target_project_ids=target_project_ids),
+        meta=MetaObjectMeta(
+            source_project_id=source_project_id, target_project_ids=target_project_ids, schema_version=schema_version
+        ),
     )
 
 
@@ -85,12 +88,15 @@ def _cls_policy_object(
     rules_list: list,
     source_project_id: int | None = 1,
     target_project_ids: tuple | None = None,
+    schema_version: str | None = None,
 ) -> MetastoreObject:
     return MetastoreObject(
         type='cls-policy',
         id=obj_id,
         attributes={'table': table, 'dialect': dialect, 'rules': rules_list},
-        meta=MetaObjectMeta(source_project_id=source_project_id, target_project_ids=target_project_ids),
+        meta=MetaObjectMeta(
+            source_project_id=source_project_id, target_project_ids=target_project_ids, schema_version=schema_version
+        ),
     )
 
 
@@ -2216,3 +2222,126 @@ class TestPolicySecurity:
         predicate = self._predicate(rules, 'x@example.com', ())
         assert time.monotonic() - started < 5
         assert predicate.count(' OR ') == 199
+
+
+class TestWildcardSelector:
+    """Schema 1.1.0 `"*"` selector: every IDENTIFIED reader, honoured only for 1.1.0 objects, never widening."""
+
+    TABLE = 'in.c-sales.orders'
+    EU = {'column': 'region', 'op': 'eq', 'value': 'EU'}
+    EU_SQL = "\"region\" = 'EU'"
+
+    def _rls(self, *rule_lists: list, version: str | None = '1.1.0', default: dict | None = None) -> RlsRules:
+        objects = []
+        for index, rules_list in enumerate(rule_lists):
+            obj = _policy_object(obj_id=f'p{index}', table=self.TABLE, rules_list=rules_list, schema_version=version)
+            if default is not None:
+                obj.attributes['default'] = default
+            objects.append(obj)
+        return RlsRules.from_metastore(objects, dialect='snowflake', project_id=1)
+
+    def _cls(self, *rule_lists: list, version: str | None = '1.1.0') -> ClsRules:
+        objects = [
+            _cls_policy_object(obj_id=f'c{index}', table=self.TABLE, rules_list=rules_list, schema_version=version)
+            for index, rules_list in enumerate(rule_lists)
+        ]
+        return ClsRules.from_metastore(objects, dialect='snowflake', project_id=1)
+
+    def _predicate(self, rules: RlsRules, user: str, groups: tuple | None = None) -> str:
+        return rules.predicate_for(table_name='orders', schema='in.c-sales', user=user, groups=groups)[1]
+
+    @pytest.mark.parametrize('selector', [{'principal': '*'}, {'principals': ['*']}, {'groups': ['*']}])
+    @pytest.mark.parametrize('groups', [None, (), ('anything',)])
+    def test_rls_wildcard_matches_every_identified_reader(self, selector: dict, groups: tuple | None) -> None:
+        rules = self._rls([{**selector, 'condition': self.EU}])
+        assert self._predicate(rules, 'anyone@example.com', groups) == self.EU_SQL
+
+    @pytest.mark.parametrize('selector', [{'principal': '*'}, {'principals': ['*']}, {'groups': ['*']}])
+    def test_rls_wildcard_never_matches_an_anonymous_reader(self, selector: dict) -> None:
+        rules = self._rls([{**selector, 'condition': {'true': True}}])
+        for groups in (None, (), ('g',)):
+            with pytest.raises(RlsAccessDenied):
+                self._predicate(rules, '', groups)
+
+    @pytest.mark.parametrize('version', ['1.0.0', None, '9.9.9'])
+    @pytest.mark.parametrize('selector', [{'principal': '*'}, {'principals': ['*']}])
+    def test_wildcard_is_a_literal_that_matches_nobody_outside_a_version_that_defines_it(
+        self, selector: dict, version: str | None
+    ) -> None:
+        rules = self._rls([{**selector, 'condition': {'true': True}}], version=version)
+        for user, groups in (('anyone@example.com', None), ('anyone@example.com', ()), ('anyone@example.com', ('*',))):
+            with pytest.raises(RlsAccessDenied):
+                self._predicate(rules, user, groups)
+        cls = self._cls([{**selector, 'visible_columns': ['id']}], version=version)
+        with pytest.raises(RlsAccessDenied):
+            cls.columns_for(table_name='orders', schema='in.c-sales', user='anyone@example.com')
+
+    @pytest.mark.parametrize('field', ['principals', 'groups'])
+    def test_wildcard_mixed_with_other_entries_is_refused(self, field: str) -> None:
+        with pytest.raises(RlsError, match="mixes '\\*'"):
+            self._rls([{field: ['*', 'a@example.com'], 'condition': {'true': True}}])
+        with pytest.raises(RlsError, match="mixes '\\*'"):
+            self._cls([{field: ['a@example.com', '*'], 'visible_columns': ['id']}])
+
+    def test_wildcard_rule_ors_with_the_readers_own_rules_and_keeps_group_rules_withheld_when_unknown(self) -> None:
+        rules = self._rls(
+            [
+                {'principal': '*', 'condition': self.EU},
+                {'principal': 'a@example.com', 'condition': {'column': 'region', 'op': 'eq', 'value': 'US'}},
+                {'groups': ['g'], 'condition': {'column': 'region', 'op': 'eq', 'value': 'DE'}},
+            ]
+        )
+        assert self._predicate(rules, 'x@example.com', None) == self.EU_SQL
+        assert self._predicate(rules, 'x@example.com', ('g',)) == f"{self.EU_SQL} OR \"region\" = 'DE'"
+        assert self._predicate(rules, 'a@example.com', None) == f"\"region\" = 'US' OR {self.EU_SQL}"
+
+    def test_wildcard_group_rule_does_not_withhold_the_policy_default(self) -> None:
+        """Only a real group rule makes unknown groups withhold the default; a wildcard is not one."""
+        default = {'column': 'public', 'op': 'eq', 'value': True}
+        wildcard_only = self._rls(
+            [{'principal': 'a@example.com', 'condition': self.EU}, {'groups': ['*'], 'condition': {'false': True}}],
+            default=default,
+        )
+        assert self._predicate(wildcard_only, 'x@example.com', None) == 'FALSE'  # the wildcard rule matched
+        no_match = self._rls([{'principal': 'a@example.com', 'condition': self.EU}], default=default)
+        assert self._predicate(no_match, 'x@example.com', None) == '"public" = TRUE'
+
+    def test_wildcard_with_an_identity_placeholder_compiles_per_reader(self) -> None:
+        rules = self._rls(
+            [{'principals': ['*'], 'condition': {'column': 'owner', 'op': 'eq', 'value': {'$identity': 'email'}}}]
+        )
+        assert self._predicate(rules, 'x@example.com') == "\"owner\" = 'x@example.com'"
+
+    def test_wildcard_cannot_widen_another_policy_on_the_same_table(self) -> None:
+        restrictive = [{'principal': 'x@example.com', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}]
+        wildcard = [{'principal': '*', 'condition': {'true': True}}]
+        rules = self._rls(restrictive, wildcard)
+        assert self._predicate(rules, 'x@example.com') == "\"country\" = 'CZ' AND TRUE"
+        with pytest.raises(RlsAccessDenied):  # the restrictive policy has no rule for y; the wildcard cannot help
+            self._predicate(rules, 'y@example.com')
+
+    def test_cls_wildcard_unions_with_the_readers_own_rules_and_intersects_across_policies(self) -> None:
+        cls = self._cls(
+            [
+                {'principal': '*', 'visible_columns': ['id', 'region']},
+                {'principals': ['a@example.com'], 'visible_columns': ['amount']},
+            ],
+            [{'groups': ['*'], 'visible_columns': ['id', 'amount']}],
+        )
+        assert cls.columns_for(table_name='orders', schema='in.c-sales', user='x@example.com') == (
+            self.TABLE,
+            ('id',),
+        )
+        assert cls.columns_for(table_name='orders', schema='in.c-sales', user='a@example.com', groups=None) == (
+            self.TABLE,
+            ('amount', 'id'),  # the first policy's order: the reader's own rule, then the wildcard's
+        )
+        assert cls.visible_columns(table_id=self.TABLE, user='x@example.com', groups=None) == ('id',)
+        assert 'amount' in cls.referenced_columns()[next(iter(cls.tables))]
+
+    def test_cls_wildcard_never_matches_an_anonymous_reader(self) -> None:
+        cls = self._cls([{'principal': '*', 'visible_columns': ['id']}])
+        with pytest.raises(RlsAccessDenied):
+            cls.columns_for(table_name='orders', schema='in.c-sales', user='')
+        assert cls.visible_columns(table_id=self.TABLE, user='', groups=('g',)) == ()
+        assert cls.visible_columns(table_id=self.TABLE, user=None) == ()

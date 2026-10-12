@@ -23,6 +23,8 @@ rule selecting the reading identity applies and their conditions combine with OR
 columns are the union); `{"$identity": "email"}` / `{"$identity": "groups"}` resolve to bound literals
 per identity; a policy's `default` condition applies to an identity no rule selects, and the
 `{"false": true}` sentinel matches no row.
+The `"*"` selector (`principal`, `principals` or `groups`, the only entry of its list) selects every identified
+reader, never an anonymous one, and is honoured only for objects stored at a schema version that defines it.
 
 Column-level security (CLS) is a sibling mechanism, `ClsRules`, backed by `cls-policy` metastore
 objects: an allowlist of visible columns per principal instead of a row predicate. `rewrite_query()`
@@ -223,10 +225,28 @@ def _applies_to_project(obj: Any, *, label: str, obj_id: str) -> bool:
     return True
 
 
-def _rule_selector(rule: Mapping[str, Any], *, label: str, obj_id: str) -> tuple[list[str], list[str]]:
-    """`(principals, groups)` a rule applies to: exactly one of `principal` / `principals` / `groups` (the
-    schema's `oneOf`; `groups` is new in 1.1.0). Two or none is rejected -- silently preferring one would apply
-    a different access rule than the author wrote. Principals come back case-folded."""
+# The selector that matches every IDENTIFIED reader (schema 1.1.0): `principal: "*"`, `principals: ["*"]` or
+# `groups: ["*"]`. It never matches a reader with no identity, and it is honoured only for objects stored at a
+# schema version that defines it -- in a 1.0.0 object "*" is a literal principal no email can equal, and it must
+# keep matching nobody rather than silently open a table. A newer version has to be added here on purpose; until
+# then its wildcard rules match nobody (fail closed).
+_WILDCARD = '*'
+_WILDCARD_SCHEMA_VERSIONS = ('1.1.0',)
+
+
+def _wildcard_enabled(obj: Any) -> bool:
+    """Whether the stored object's schema version defines the `"*"` selector. An unknown version is not enabled."""
+    return getattr(getattr(obj, 'meta', None), 'schema_version', None) in _WILDCARD_SCHEMA_VERSIONS
+
+
+def _rule_selector(
+    rule: Mapping[str, Any], *, label: str, obj_id: str, wildcard_ok: bool = False
+) -> tuple[list[str], list[str], bool]:
+    """`(principals, groups, wildcard)` a rule applies to: exactly one of `principal` / `principals` / `groups`
+    (the schema's `oneOf`; `groups` is new in 1.1.0). Two or none is rejected -- silently preferring one would
+    apply a different access rule than the author wrote. Principals come back case-folded. With `wildcard_ok`, a
+    list that is exactly `["*"]` (or `principal: "*"`) comes back as `([], [], True)`; `"*"` mixed with other
+    entries is refused (the schema forbids it, and guessing would widen or narrow what the author wrote)."""
     present = [field for field in ('principal', 'principals', 'groups') if rule.get(field) is not None]
     if len(present) != 1:
         raise RlsError(
@@ -238,15 +258,19 @@ def _rule_selector(rule: Mapping[str, Any], *, label: str, obj_id: str) -> tuple
     names = [value] if field == 'principal' else value
     if not isinstance(names, Sequence) or isinstance(names, (str, bytes)) or not names:
         raise RlsError(f"{label}: metastore object '{obj_id}' has an invalid '{field}': {rule!r}")
+    if wildcard_ok and _WILDCARD in names:
+        if len(names) != 1:
+            raise RlsError(f"{label}: metastore object '{obj_id}' mixes '*' with other entries in '{field}': {rule!r}")
+        return [], [], True
     if field == 'groups':
         for group in names:
             if not isinstance(group, str) or not _GROUP_RE.fullmatch(group):
                 raise RlsError(f"{label}: metastore object '{obj_id}' has an invalid group {group!r}")
-        return [], list(names)
+        return [], list(names), False
     for name in names:
         if not isinstance(name, str) or not _PRINCIPAL_RE.fullmatch(name):
             raise RlsError(f"{label}: metastore object '{obj_id}' has an invalid principal {name!r}")
-    return [fold_principal(name) for name in names], []
+    return [fold_principal(name) for name in names], [], False
 
 
 def _selects(
@@ -498,6 +522,8 @@ class _Rule:
     groups: frozenset[str]
     condition: Mapping[str, Any]
     compiled: exp.Condition | None = None
+    wildcard: bool = False
+    """The rule selects every identified reader (`"*"`), whatever its groups."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -521,6 +547,8 @@ class _ClsPolicy:
 
     principals: Mapping[str, tuple[str, ...]] = dataclasses.field(default_factory=dict)
     group_rules: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = ()
+    wildcard_columns: tuple[str, ...] = ()
+    """Union of the visible columns of the `"*"` rules; they select every identified reader."""
 
 
 def _policy_table_key(data: Mapping[str, Any], *, label: str, obj_id: str, dialect: str) -> tuple[str, str]:
@@ -645,21 +673,22 @@ class RlsRules:
             rules_raw = data.get('rules')
             if not isinstance(rules_raw, Sequence) or isinstance(rules_raw, (str, bytes)) or not rules_raw:
                 raise RlsError(f"RLS: metastore object '{obj_id}' has no rules")
+            wildcard_ok = _wildcard_enabled(obj)
             principal_conditions: dict[str, list[exp.Condition]] = {}
             rules: list[_Rule] = []
             for rule in rules_raw:
                 if not isinstance(rule, Mapping):
                     raise RlsError(f"RLS: metastore object '{obj_id}' has an invalid rule entry: {rule!r}")
-                principals, groups = _rule_selector(rule, label='RLS', obj_id=obj_id)
+                principals, groups, wildcard = _rule_selector(rule, label='RLS', obj_id=obj_id, wildcard_ok=wildcard_ok)
                 condition = rule.get('condition')
                 if _uses_identity(condition):
                     # Compiled per identity; validated here so a malformed rule is refused at load.
                     _compile_primitive(condition, dialect=dialect, identity=_VALIDATION_IDENTITY)
-                    rules.append(_Rule(frozenset(principals), frozenset(groups), condition))
+                    rules.append(_Rule(frozenset(principals), frozenset(groups), condition, wildcard=wildcard))
                     continue
                 compiled = _compile_primitive(condition, dialect=dialect)
-                if groups:
-                    rules.append(_Rule(frozenset(), frozenset(groups), condition, compiled))
+                if groups or wildcard:
+                    rules.append(_Rule(frozenset(), frozenset(groups), condition, compiled, wildcard=wildcard))
                     continue
                 for user_key in principals:
                     # Schema 1.1.0: every rule of the policy matching one identity applies, combined with OR.
@@ -806,7 +835,7 @@ class RlsRules:
             if folded in policy.principals:
                 conditions.append(policy.principals[folded])
             for rule in policy.rules:
-                if _selects(rule.principals, rule.groups, folded_user=folded, user_groups=groups):
+                if rule.wildcard or _selects(rule.principals, rule.groups, folded_user=folded, user_groups=groups):
                     conditions.append(
                         rule.compiled
                         if rule.compiled is not None
@@ -894,10 +923,12 @@ class ClsRules:
 
             policy_principals: dict[str, tuple[str, ...]] = {}
             policy_group_rules: list[tuple[frozenset[str], tuple[str, ...]]] = []
+            policy_wildcard: tuple[str, ...] = ()
+            wildcard_ok = _wildcard_enabled(obj)
             for rule in rules_raw:
                 if not isinstance(rule, Mapping):
                     raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid rule entry: {rule!r}")
-                principals, groups = _rule_selector(rule, label='CLS', obj_id=obj_id)
+                principals, groups, wildcard = _rule_selector(rule, label='CLS', obj_id=obj_id, wildcard_ok=wildcard_ok)
                 columns_raw = rule.get('visible_columns')
                 if not isinstance(columns_raw, Sequence) or isinstance(columns_raw, (str, bytes)) or not columns_raw:
                     raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid 'visible_columns': {rule!r}")
@@ -906,6 +937,8 @@ class ClsRules:
                     if not isinstance(col, str) or not _RULE_KEY_RE.fullmatch(col):
                         raise RlsError(f"CLS: metastore object '{obj_id}' has an invalid column name {col!r}")
                     columns.append(col)
+                if wildcard:
+                    policy_wildcard = tuple(dict.fromkeys((*policy_wildcard, *columns)))
                 if groups:
                     policy_group_rules.append((frozenset(groups), tuple(columns)))
                 for user_key in principals:
@@ -913,7 +946,11 @@ class ClsRules:
                     policy_principals[user_key] = tuple(dict.fromkeys((*policy_principals.get(user_key, ()), *columns)))
                     users[user_key] = tuple(dict.fromkeys((*users.get(user_key, ()), *columns)))
             policies.setdefault(key, []).append(
-                _ClsPolicy(principals=policy_principals, group_rules=tuple(policy_group_rules))
+                _ClsPolicy(
+                    principals=policy_principals,
+                    group_rules=tuple(policy_group_rules),
+                    wildcard_columns=policy_wildcard,
+                )
             )
 
         LOG.info(
@@ -940,7 +977,11 @@ class ClsRules:
             key: {
                 col
                 for policy in self._policies(key)
-                for columns in (*policy.principals.values(), *(cols for _, cols in policy.group_rules))
+                for columns in (
+                    *policy.principals.values(),
+                    *(cols for _, cols in policy.group_rules),
+                    policy.wildcard_columns,
+                )
                 for col in columns
             }
             for key in (self.tables if keys is None else [k for k in keys if k in self.tables])
@@ -965,6 +1006,8 @@ class ClsRules:
         result: tuple[str, ...] | None = None
         for policy in self._policies(key):
             matched: list[tuple[str, ...]] = [policy.principals[folded]] if folded in policy.principals else []
+            if policy.wildcard_columns:
+                matched.append(policy.wildcard_columns)
             if groups is not None:
                 matched += [
                     columns for rule_groups, columns in policy.group_rules if not rule_groups.isdisjoint(groups)
