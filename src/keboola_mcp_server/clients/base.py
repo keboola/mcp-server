@@ -134,6 +134,9 @@ class RawKeboolaClient:
                 elif error_msg := error_data.get('error'):
                     # SAPI error message
                     message_parts.append(f'API error: {error_msg}')
+                    if (detail := error_data.get('message')) and detail != error_msg:
+                        # Stream API puts an error code into "error" and the human readable text into "message"
+                        message_parts.append(f'API error detail: {detail}')
 
                 if exception_id := error_data.get('exceptionId'):
                     message_parts.append(f'Exception ID: {exception_id}')

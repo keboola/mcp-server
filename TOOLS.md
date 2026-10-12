@@ -18,6 +18,10 @@ description, and a list of created table names.
 - [update_sql_transformation](#update_sql_transformation): Updates an existing SQL transformation configuration by modifying its SQL code, storage mappings,
 name or description.
 
+### Data Stream Tools
+- [create_stream](#create_stream): Creates a Data Stream: a source with an endpoint receiving events and the sinks storing them in tables.
+- [get_streams](#get_streams): Retrieves the Data Streams in the project: sources receiving events and the sinks writing them to tables.
+
 ### Documentation Tools
 - [docs_query](#docs_query): Answers a question using the Keboola documentation as a source.
 
@@ -5274,6 +5278,247 @@ Usage examples (payload uses a list of DescriptionUpdate objects):
   "required": [
     "updates"
   ],
+  "type": "object"
+}
+```
+
+---
+
+# Data Stream Tools
+<a name="create_stream"></a>
+## create_stream
+**Annotations**: 
+
+**Tags**: `streams`
+
+**Description**:
+
+Creates a Data Stream: a source with an endpoint receiving events and the sinks storing them in tables.
+
+- source_type="http": one sink into `table_id` with the given `columns`. Send events as HTTP POST
+  requests (any body, JSON recommended) to the returned `endpoint_url`.
+- source_type="otlp": three sinks storing logs, metrics and traces into the tables
+  "in.c-otlp-<source_id>.logs|metrics|traces". Configure the OpenTelemetry SDK/Collector OTLP/HTTP exporter:
+  OTEL_EXPORTER_OTLP_ENDPOINT=<otlp_base_url> and OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <otlp_secret>".
+
+Rows appear in the tables in batches, typically within a few minutes.
+
+The returned endpoint embeds a secret: give it only to the user. If Data Streams are not enabled in the
+project, the tool fails with a link to the Data Streams page where the user can request the feature.
+Always pass that link on to the user.
+
+
+**Input JSON Schema**:
+```json
+{
+  "$defs": {
+    "ColumnTemplate": {
+      "properties": {
+        "language": {
+          "const": "jsonnet",
+          "default": "jsonnet",
+          "description": "The template language.",
+          "type": "string"
+        },
+        "content": {
+          "description": "The Jsonnet expression, e.g. \"Body('user.id', null)\".",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
+    "TableColumn": {
+      "description": "One column of the destination table and where its value comes from.",
+      "properties": {
+        "name": {
+          "description": "The column name in the destination table.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Where the value comes from: \"uuid\" (generated id), \"datetime\" (receive time), \"ip\" (sender IP), \"body\" (whole request body), \"headers\" (request headers), \"path\" (a value at `path` in the JSON body), \"template\" (a Jsonnet expression in `template`).",
+          "enum": [
+            "uuid",
+            "datetime",
+            "ip",
+            "body",
+            "headers",
+            "path",
+            "template"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON path in the body, e.g. \"user.id\". Only for \"path\"."
+        },
+        "defaultValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fallback value when `path` does not exist. Only for \"path\"."
+        },
+        "rawString": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Store a string value without JSON quotes. Only for \"path\"."
+        },
+        "template": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColumnTemplate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The template. Only for \"template\"."
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "description": "Human readable name of the stream, max 40 characters.",
+      "maxLength": 40,
+      "type": "string"
+    },
+    "source_type": {
+      "default": "http",
+      "description": "\"http\" for webhooks/HTTP events, \"otlp\" for OpenTelemetry logs, metrics and traces.",
+      "enum": [
+        "http",
+        "otlp"
+      ],
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "description": "Optional description of the stream.",
+      "type": "string"
+    },
+    "table_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "HTTP only: the destination table, e.g. \"in.c-github.events\". It is created if it does not exist. Defaults to \"in.c-data-stream-<source_id>.events\"."
+    },
+    "columns": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/TableColumn"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "HTTP only: the destination table columns. Defaults to id (uuid), datetime, ip, body and headers. Use \"path\" columns to extract fields from a JSON body, e.g. {\"name\": \"user_id\", \"type\": \"path\", \"path\": \"user.id\"}."
+    },
+    "include_raw_otlp_record": {
+      "default": false,
+      "description": "OTLP only: also store the whole raw OTLP record in a \"raw\" column (voluminous).",
+      "type": "boolean"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Target Keboola project id for this write. Required when the session is scoped to 2+ projects; optional (defaults to the single scoped project) otherwise."
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "type": "object"
+}
+```
+
+---
+<a name="get_streams"></a>
+## get_streams
+**Annotations**: `read-only`
+
+**Tags**: `streams`
+
+**Description**:
+
+Retrieves the Data Streams in the project: sources receiving events and the sinks writing them to tables.
+
+Data Streams receive events over HTTP (webhooks, apps) or OTLP (OpenTelemetry logs/metrics/traces) and
+store them in Storage tables in near real time, without any component configuration.
+
+Each stream includes its `endpoint_url` (with the secret embedded) and, for OTLP, `otlp_base_url` plus
+`otlp_secret`. Give these only to the user who asked; they authenticate writes into the project.
+Sessions with read-only access get them hidden (`secret_redacted=true`).
+
+If Data Streams are not enabled in the project, the tool fails with a link to the Data Streams page
+where the user can request the feature. Always pass that link on to the user.
+
+EXAMPLES:
+- source_ids=[] -> all Data Streams with their sinks and endpoints
+- source_ids=["github-webhooks"] -> only that stream
+
+
+**Input JSON Schema**:
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "source_ids": {
+      "default": [],
+      "description": "IDs of the Data Streams (sources) to retrieve. Empty [] lists all of them.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
   "type": "object"
 }
 ```
