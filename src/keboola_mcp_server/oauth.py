@@ -882,12 +882,17 @@ class UntrustedAuthorizeRedirectMiddleware:
 _AUTHORIZE_RATE_LIMIT_WINDOW_SECONDS = 60
 
 
-def _caller_address(scope: Scope, trusted_hops: int) -> str:
-    """The caller's address as the nearest proxy we trust saw it, normalised, or 'unknown' when there is none.
+def _caller_address(scope: Scope, trusted_hops: int) -> str | None:
+    """The caller's address as the nearest proxy we trust saw it, or None when there is none to count.
 
     Behind `trusted_hops` proxies that each append the address they received the connection from, the caller is the entry
     that many places from the END of `X-Forwarded-For`: everything before it was written by the caller or by hops
-    nobody vouches for, so it is never used. Without that header the connection's own peer address is the best there is."""
+    nobody vouches for, so it is never used. Without that header the connection's own peer address is the best there is.
+
+    The result is the key of a counter, so it is normalised to what one caller controls: an IPv4-mapped IPv6 address is
+    the IPv4 one, and an IPv6 address is its /64 (a single subscriber is routinely given a whole /64, so counting the
+    full address would let one caller dodge the limit by rotating through it). An address that cannot be told is None,
+    never a shared catch-all key that one caller could fill for everybody else."""
     entries = [e.strip() for e in Headers(scope=scope).get('x-forwarded-for', '').split(',') if e.strip()]
     candidate: str | None = None
     if trusted_hops > 0 and len(entries) >= trusted_hops:
@@ -895,9 +900,14 @@ def _caller_address(scope: Scope, trusted_hops: int) -> str:
     elif scope.get('client'):
         candidate = scope['client'][0]
     try:
-        return str(ipaddress.ip_address(candidate or ''))
+        address = ipaddress.ip_address(candidate or '')
     except ValueError:
-        return 'unknown'
+        return None
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.ip_network(f'{address}/64', strict=False))
+    return str(address)
 
 
 class AuthorizeRateLimitMiddleware:
@@ -921,6 +931,9 @@ class AuthorizeRateLimitMiddleware:
             return
 
         address = _caller_address(scope, self._trusted_hops)
+        if address is None:  # nothing to tell the caller apart by: not counted, rather than pooled with everybody else
+            await self._app(scope, receive, send)
+            return
         try:
             hits = await self._store.hit(f'authorize:{address}', _AUTHORIZE_RATE_LIMIT_WINDOW_SECONDS)
         except Exception as e:

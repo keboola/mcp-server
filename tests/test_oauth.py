@@ -2613,12 +2613,19 @@ class TestSharedRateLimits:
         ('a, 3.3.3.3, 4.4.4.4', 2, None, '3.3.3.3'),  # two trusted hops: the caller is the second entry from the end
         ('', 1, ('5.5.5.5', 1), '5.5.5.5'),  # no header: the connection's own peer
         ('1.1.1.1', 2, ('6.6.6.6', 1), '6.6.6.6'),  # fewer entries than hops: do not trust a header we cannot place
-        ('not-an-address', 1, None, 'unknown'),
-        ('2001:0db8:0:0:0:0:0:1', 1, None, '2001:db8::1'),  # normalised, so one caller has one key
-        ('', 1, None, 'unknown'),
+        ('not-an-address', 1, None, None),  # not pooled into a shared key
+        ('', 1, None, None),
+        (
+            '2001:0db8:0:0:0:0:0:1',
+            1,
+            None,
+            '2001:db8::/64',
+        ),  # an IPv6 caller is its /64, so rotating inside it gains nothing
+        ('2001:db8:0:0:aaaa:bbbb:cccc:dddd', 1, None, '2001:db8::/64'),
+        ('::ffff:7.7.7.7', 1, None, '7.7.7.7'),  # an IPv4 caller reaching us over IPv6 is still that IPv4 address
     ],
 )
-def test_caller_address(forwarded_for: str, hops: int, client: tuple[str, int] | None, expected: str) -> None:
+def test_caller_address(forwarded_for: str, hops: int, client: tuple[str, int] | None, expected: str | None) -> None:
     from keboola_mcp_server.oauth import _caller_address
 
     scope = {'type': 'http', 'headers': [(b'x-forwarded-for', forwarded_for.encode())] if forwarded_for else []}
@@ -2676,6 +2683,25 @@ class TestAuthorizeRateLimitMiddleware:
 
         assert [client.get('/other', headers={'X-Forwarded-For': '1.1.1.1'}).status_code for _ in range(5)] == [200] * 5
         assert store.counts == {}
+
+    def test_a_caller_with_no_address_is_not_counted_instead_of_pooled(self) -> None:
+        """No readable address (here: no header and a peer that is not an IP) must not mean one shared bucket that a single
+        caller could fill for everybody else."""
+        store = FakeRateLimitStore()
+        client = self._client(store)
+
+        assert [client.get('/authorize').status_code for _ in range(5)] == [200] * 5
+        assert store.counts == {}
+
+    def test_an_ipv6_caller_cannot_dodge_the_limit_by_rotating_inside_its_prefix(self) -> None:
+        client = self._client(FakeRateLimitStore())
+
+        statuses = [
+            client.get('/authorize', headers={'X-Forwarded-For': f'2001:db8:0:0:{i:x}::1'}).status_code
+            for i in range(3)
+        ]
+
+        assert statuses == [200, 200, 429]  # one /64, one counter
 
     def test_a_store_that_cannot_answer_lets_the_request_through(self) -> None:
         client = self._client(FakeRateLimitStore(fail=True))
