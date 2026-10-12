@@ -1,6 +1,7 @@
 import inspect
 import json
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping
 from functools import wraps
@@ -21,6 +22,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE, SECRET_KEY_PREFIX, is_encrypted_value
 from keboola_mcp_server.clients.storage import StorageEventType
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, get_http_request_or_none
@@ -80,6 +82,130 @@ class _JsonWrapper(BaseModel):
         return json.dumps(f'[value truncated, original length: {encoded_bytes} bytes]')
 
 
+# Keys of path-based update operations (e.g. `update_config`'s `parameter_updates`) that carry the value
+# written to the `path`. They are masked when the `path` points at a secret ('#'-prefixed) key.
+_PATH_UPDATE_VALUE_KEYS = frozenset({'value', 'search_for', 'replace_with'})
+# A '#' at the start of a path segment: `#password`, `db.#token`, `db['#token']`, `db["#token"]`.
+_SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[]\s*['"]?)#''')
+# `#key: value`, `#key=value`, `'#key': 'value'` fragments as rendered by str(), repr() or YAML.
+_SECRET_KEY_FRAGMENT = re.compile(r'''(['"]?#[^\s'":=,{}\[\]]+['"]?\s*[:=]\s*)('[^']*'|"[^"]*"|[^\s,}\]]+)''')
+# Pydantic's str(ValidationError) echoes the invalid input: `[type=..., input_value=..., input_type=...]`.
+_PYDANTIC_INPUT_VALUE = re.compile(r'input_value=.*?(?=, input_type=|\]$)', re.MULTILINE)
+_MAX_CAUSE_DEPTH = 5
+
+
+def _is_secret_path(path: Any) -> bool:
+    return isinstance(path, str) and bool(_SECRET_PATH_SEGMENT.search(path))
+
+
+def _collect_leaves(value: Any, found: set[str]) -> None:
+    if isinstance(value, dict):
+        for item in value.values():
+            _collect_leaves(item, found)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_leaves(item, found)
+    elif isinstance(value, str):
+        if value:
+            found.add(value)
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        found.add(str(value))
+
+
+def _redact_value(value: Any, found: set[str]) -> Any:
+    """
+    Returns a redacted copy of a JSON-compatible value and adds every masked plaintext value to `found`.
+
+    Applies the same rule as `redact_secrets` (plaintext values of '#' keys are masked, 'KBC::' ciphers kept),
+    and additionally masks the value of path-based updates targeting a '#' key and descends into strings
+    holding a JSON object or array.
+    """
+    if isinstance(value, dict):
+        secret_path = _is_secret_path(value.get('path'))
+        redacted: dict[Any, Any] = {}
+        for key, item in value.items():
+            is_secret_key = isinstance(key, str) and key.startswith(SECRET_KEY_PREFIX)
+            if (is_secret_key or (secret_path and key in _PATH_UPDATE_VALUE_KEYS)) and not is_encrypted_value(item):
+                _collect_leaves(item, found)
+                redacted[key] = REDACTED_SECRET_VALUE
+            else:
+                redacted[key] = _redact_value(item, found)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_value(item, found) for item in value]
+    if isinstance(value, str) and value.lstrip()[:1] in ('{', '['):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return value
+        if isinstance(parsed, (dict, list)):
+            return json.dumps(_redact_value(parsed, found), ensure_ascii=False)
+    return value
+
+
+def _redact_arguments(arguments: Mapping[str, Any]) -> tuple[list[dict[str, str]], set[str]]:
+    """
+    Serializes tool arguments for the Storage event with secrets masked.
+
+    Pydantic models are dumped to plain JSON data first, so the actual arguments are never mutated.
+    If redaction fails, only the argument names are reported, never their raw values.
+    """
+    found: set[str] = set()
+    try:
+        encoded = [
+            {
+                'key': name,
+                'value': _JsonWrapper.encode_truncated(
+                    _redact_value(_JsonWrapper(data=value).model_dump(mode='json')['data'], found)
+                ),
+            }
+            for name, value in arguments.items()
+        ]
+    except Exception as e:
+        LOG.warning(f'Failed to redact tool arguments, reporting argument names only: {type(e).__name__}')
+        return [{'key': name, 'value': json.dumps('[redaction failed]')} for name in arguments], found
+    return encoded, found
+
+
+def _find_cause(exception: BaseException, exc_type: type[BaseException] | tuple) -> BaseException | None:
+    current: BaseException | None = exception
+    for _ in range(_MAX_CAUSE_DEPTH):
+        if current is None:
+            return None
+        if isinstance(current, exc_type):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _safe_exception_summary(exception: BaseException, secrets: set[str]) -> str:
+    """
+    Describes a failed tool call without echoing the tool's input.
+
+    Validation errors are summarized from their structured details (location, message, type) only,
+    because their text echoes the invalid input (pydantic `input_value`, jsonschema instance).
+    In all cases the plaintext secret values found in the arguments, `#key: value` fragments
+    and pydantic `input_value`s are then masked in the resulting text.
+    """
+    if pydantic_error := _find_cause(exception, ValidationError):
+        pydantic_error = cast(ValidationError, pydantic_error)
+        errors = '; '.join(
+            f'{err.get("msg")} ({err.get("type")}) at {".".join(str(loc) for loc in err.get("loc", ()))}'
+            for err in pydantic_error.errors(include_url=False, include_input=False, include_context=False)
+        )
+        text = f'{pydantic_error.title} validation failed: {errors}'
+    elif schema_error := _find_cause(exception, jsonschema.ValidationError):
+        schema_error = cast(jsonschema.ValidationError, schema_error)
+        text = f'Schema validation failed at {schema_error.json_path}: "{schema_error.validator}" constraint violated'
+    else:
+        text = str(exception)
+
+    for secret in sorted(secrets, key=len, reverse=True):
+        text = text.replace(secret, REDACTED_SECRET_VALUE)
+    text = _PYDANTIC_INPUT_VALUE.sub(f'input_value={REDACTED_SECRET_VALUE}', text)
+    return _SECRET_KEY_FRAGMENT.sub(rf'\g<1>{REDACTED_SECRET_VALUE}', text)
+
+
 async def _trigger_event(
     func: Callable, args: tuple, kwargs: dict, exception: Exception | None, execution_time: float
 ) -> None:
@@ -112,6 +238,14 @@ async def _trigger_event(
     if not user_agent:
         user_agent = ''
 
+    arguments, secrets = _redact_arguments(
+        {
+            param_name: param_value
+            for param_name, param_value in bound_args.arguments.items()
+            if param_name not in [ctx_param_name, 'self', 'cls']
+        }
+    )
+
     # See # https://github.com/keboola/event-schema/blob/main/schema/ext.keboola.mcp-server-tool.json
     # for the JSON schema describing the 'keboola.mcp-server-tool' component's event params.
     event_params: dict[str, Any] = {
@@ -126,15 +260,12 @@ async def _trigger_event(
         },
         'tool': {
             'name': tool_name,
-            'arguments': [
-                {'key': param_name, 'value': _JsonWrapper.encode_truncated(param_value)}
-                for param_name, param_value in bound_args.arguments.items()
-                if param_name not in [ctx_param_name, 'self', 'cls']
-            ],
+            'arguments': arguments,
         },
     }
     if exception:
-        message = f'MCP tool "{tool_name}" call failed. {type(exception).__name__}: {exception}'
+        summary = _safe_exception_summary(exception, secrets)
+        message = f'MCP tool "{tool_name}" call failed. {type(exception).__name__}: {summary}'
         event_type: StorageEventType = 'error'
     else:
         message = f'MCP tool "{tool_name}" call succeeded.'

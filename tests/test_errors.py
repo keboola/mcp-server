@@ -1,8 +1,10 @@
+import copy
 import json
 import logging
 import uuid
 from collections.abc import Sequence
 from importlib.metadata import distribution
+from typing import Any
 from unittest.mock import ANY
 
 import httpx
@@ -22,6 +24,7 @@ from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, tool_errors
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
+from keboola_mcp_server.tools.components.model import ConfigParamReplace, ConfigParamSet
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
 from keboola_mcp_server.tools.validation import RecoverableValidationError, ValidationContext
 
@@ -393,13 +396,13 @@ class TestPydanticValidationErrors:
             assert len(lines) > 0, 'Empty log message'
             assert lines[0] == 'MCP tool "foo" call failed.'
 
-            # check the message in the submitted SAPI event
+            # check the message in the submitted SAPI event: a summary without the echoed input
             post_mock.assert_called_once()
             _, kwargs = post_mock.call_args
-            lines = str(kwargs.get('data', {}).get('message') or '').splitlines()
-            assert len(lines) > 0, 'Empty error message'
-            assert lines[0] == 'MCP tool "foo" call failed. ToolError: Found 1 validation error(s) for TableColumnInfo'
-            assert expected_error_details == yaml.safe_load('\n'.join(lines[1:]))
+            assert kwargs.get('data', {}).get('message') == (
+                'MCP tool "foo" call failed. ToolError: '
+                'TableColumnInfo validation failed: Field required (missing) at quotedName'
+            )
 
     @staticmethod
     @tool_errors()
@@ -599,3 +602,147 @@ async def test_event_step_up_header_only_for_own_stack(
     trigger_event.assert_awaited_once()
     storage_client = trigger_event.await_args.args[0]
     assert ('X-Kubernetes-Authorization' in storage_client.raw_client.headers) is expect_step_up_header
+
+
+CANARY = 'canary-s3cr3t-ai4029'
+FAKE_CIPHER = 'KBC::ProjectSecure::fake-cipher-value'
+
+
+def _raise(exc: Exception):
+    raise exc
+
+
+def _raise_pydantic_error():
+    pydantic.TypeAdapter(dict[str, int]).validate_python({'#password': CANARY})
+
+
+def _raise_jsonschema_error():
+    jsonschema.validate({'#password': CANARY}, {'properties': {'#password': {'type': 'integer'}}})
+
+
+@pytest.fixture
+def storage_event_post(monkeypatch, mocker, empty_context: Context):
+    """A real storage client with a mocked HTTP POST, so the `[trigger_event]` log line is emitted as well."""
+    monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+    empty_context.session.state[KeboolaClient.STATE_KEY] = KeboolaClient(
+        storage_api_url='https://connection.keboola.com', legacy_storage_token='fake-token'
+    )
+    return mocker.patch.object(AsyncStorageClient, 'post', autospec=True, return_value={'id': '1'})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('parameters', 'parameter_updates', 'failure', 'preserved'),
+    [
+        pytest.param(
+            {
+                'db': {'host': 'db.example.com', '#password': CANARY, 'hosts': [{'#token': CANARY}]},
+                '#api_key': FAKE_CIPHER,
+            },
+            None,
+            None,
+            ['db.example.com', FAKE_CIPHER, '[REDACTED]'],
+            id='create_config_nested_secrets',
+        ),
+        pytest.param(
+            json.dumps({'user': 'alice', 'db': {'#password': CANARY, '#token': FAKE_CIPHER}}),
+            None,
+            None,
+            ['alice', FAKE_CIPHER, '[REDACTED]'],
+            id='create_config_json_string',
+        ),
+        pytest.param(
+            None,
+            [
+                ConfigParamSet(op='set', path='db.#token', value=CANARY),
+                ConfigParamSet(op='set', path='#password', value={'nested': CANARY}),
+                ConfigParamSet(op='set', path='db', value={'#password': CANARY, 'host': 'db.example.com'}),
+                ConfigParamSet(op='set', path='#api_key', value=FAKE_CIPHER),
+                ConfigParamSet(op='set', path='db.user', value='alice'),
+            ],
+            None,
+            ['db.example.com', 'alice', FAKE_CIPHER, 'db.#token', '[REDACTED]'],
+            id='update_config_set',
+        ),
+        pytest.param(
+            None,
+            [
+                ConfigParamReplace(op='str_replace', path="db['#token']", search_for=CANARY, replace_with='new'),
+                ConfigParamReplace(op='str_replace', path='db["#token"]', search_for='old', replace_with=CANARY),
+                ConfigParamReplace(op='str_replace', path='db.query', search_for='alice', replace_with='bob'),
+            ],
+            None,
+            ['alice', 'bob', '[REDACTED]'],
+            id='update_config_str_replace',
+        ),
+        pytest.param(
+            None,
+            [ConfigParamReplace(op='str_replace', path='#password', search_for=CANARY, replace_with='new')],
+            lambda: _raise(ValueError(f'Search string "{CANARY}" not found in path "#password"')),
+            ['ValueError: Search string "[REDACTED]"'],
+            id='failure_echoing_secret_value',
+        ),
+        pytest.param(
+            {'user': 'alice', '#password': CANARY},
+            None,
+            lambda: _raise(RuntimeError(f"Connection refused for {{'#pwd': '{CANARY}x'}} and #token={CANARY}y")),
+            ['alice', 'RuntimeError: Connection refused', '#token=[REDACTED]'],
+            id='failure_echoing_secret_fragment',
+        ),
+        pytest.param(
+            None,
+            None,
+            _raise_pydantic_error,
+            ['parse string as an integer (int_parsing) at #password'],
+            id='failure_pydantic_validation',
+        ),
+        pytest.param(
+            None,
+            None,
+            _raise_jsonschema_error,
+            ['"type" constraint violated'],
+            id='failure_jsonschema_validation',
+        ),
+    ],
+)
+async def test_secrets_are_redacted_in_event(
+    parameters, parameter_updates, failure, preserved, storage_event_post, caplog, empty_context: Context
+):
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: Any = None, parameter_updates: Any = None) -> str:
+        if failure:
+            failure()
+        return 'ok'
+
+    original = copy.deepcopy((parameters, parameter_updates))
+    with caplog.at_level(logging.INFO, logger='keboola_mcp_server.clients.storage'):
+        if failure:
+            with pytest.raises((ToolError, ValueError, RuntimeError)):
+                await config_tool(empty_context, parameters=parameters, parameter_updates=parameter_updates)
+        else:
+            await config_tool(empty_context, parameters=parameters, parameter_updates=parameter_updates)
+
+    assert (parameters, parameter_updates) == original
+    storage_event_post.assert_awaited_once()
+    payload = json.dumps(storage_event_post.await_args.kwargs['data'], ensure_ascii=False)
+    log_lines = [r.getMessage() for r in caplog.records if '[trigger_event]' in r.getMessage()]
+    assert len(log_lines) == 1
+    assert CANARY not in payload
+    assert CANARY not in log_lines[0]
+    for value in preserved:
+        assert value in log_lines[0]
+
+
+@pytest.mark.asyncio
+async def test_redaction_failure_reports_argument_names_only(mocker, storage_event_post, empty_context: Context):
+    mocker.patch('keboola_mcp_server.errors._redact_value', side_effect=RuntimeError('boom'))
+
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: Any = None) -> str:
+        return 'ok'
+
+    await config_tool(empty_context, parameters={'#password': CANARY})
+
+    data = storage_event_post.await_args.kwargs['data']
+    assert data['params']['tool']['arguments'] == [{'key': 'parameters', 'value': '"[redaction failed]"'}]
+    assert CANARY not in json.dumps(data)
