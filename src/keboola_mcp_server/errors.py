@@ -92,6 +92,11 @@ _SECRET_KEY_FRAGMENT = re.compile(r'''(['"]?#[^\s'":=,{}\[\]]+['"]?\s*[:=]\s*)('
 # Pydantic's str(ValidationError) echoes the invalid input: `[type=..., input_value=..., input_type=...]`.
 _PYDANTIC_INPUT_VALUE = re.compile(r'input_value=.*?(?=, input_type=|\]$)', re.MULTILINE)
 _MAX_CAUSE_DEPTH = 5
+# Shorter secret values are not replaced everywhere in exception text, as that would corrupt unrelated
+# substrings such as HTTP status codes or IDs; the `#key: value` fragment masking still covers them.
+_MIN_REPLACED_SECRET_LEN = 6
+# jsonschema validators whose `validator_value` comes from the schema and is safe to report.
+_REPORTED_SCHEMA_VALIDATORS = frozenset({'required', 'enum', 'type'})
 
 
 def _is_secret_path(path: Any) -> bool:
@@ -105,11 +110,16 @@ def _collect_leaves(value: Any, found: set[str]) -> None:
     elif isinstance(value, list):
         for item in value:
             _collect_leaves(item, found)
-    elif isinstance(value, str):
-        if value:
-            found.add(value)
-    elif isinstance(value, (int, float)) and not isinstance(value, bool):
-        found.add(str(value))
+    elif isinstance(value, str) and len(value) >= _MIN_REPLACED_SECRET_LEN:
+        found.add(value)
+
+
+def _mask_secret_fragments(text: str, found: set[str]) -> str:
+    def mask(match: re.Match) -> str:
+        _collect_leaves(match.group(2).strip('\'"'), found)
+        return f'{match.group(1)}{REDACTED_SECRET_VALUE}'
+
+    return _SECRET_KEY_FRAGMENT.sub(mask, text)
 
 
 def _redact_value(value: Any, found: set[str]) -> Any:
@@ -118,7 +128,8 @@ def _redact_value(value: Any, found: set[str]) -> Any:
 
     Applies the same rule as `redact_secrets` (plaintext values of '#' keys are masked, 'KBC::' ciphers kept),
     and additionally masks the value of path-based updates targeting a '#' key and descends into strings
-    holding a JSON object or array.
+    holding a JSON object or array. Other strings (Python literals, invalid or code-fenced JSON, YAML,
+    .env text) get their `#key: value` / `#key=value` fragments masked.
     """
     if isinstance(value, dict):
         secret_path = _is_secret_path(value.get('path'))
@@ -133,13 +144,15 @@ def _redact_value(value: Any, found: set[str]) -> Any:
         return redacted
     if isinstance(value, list):
         return [_redact_value(item, found) for item in value]
-    if isinstance(value, str) and value.lstrip()[:1] in ('{', '['):
-        try:
-            parsed = json.loads(value)
-        except ValueError:
-            return value
-        if isinstance(parsed, (dict, list)):
-            return json.dumps(_redact_value(parsed, found), ensure_ascii=False)
+    if isinstance(value, str):
+        if value.lstrip()[:1] in ('{', '['):
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, (dict, list)):
+                return json.dumps(_redact_value(parsed, found), ensure_ascii=False)
+        return _mask_secret_fragments(value, found)
     return value
 
 
@@ -197,13 +210,15 @@ def _safe_exception_summary(exception: BaseException, secrets: set[str]) -> str:
     elif schema_error := _find_cause(exception, jsonschema.ValidationError):
         schema_error = cast(jsonschema.ValidationError, schema_error)
         text = f'Schema validation failed at {schema_error.json_path}: "{schema_error.validator}" constraint violated'
+        if schema_error.validator in _REPORTED_SCHEMA_VALIDATORS:
+            text += f' (schema: {json.dumps(schema_error.validator_value, ensure_ascii=False, default=str)})'
     else:
         text = str(exception)
 
     for secret in sorted(secrets, key=len, reverse=True):
         text = text.replace(secret, REDACTED_SECRET_VALUE)
     text = _PYDANTIC_INPUT_VALUE.sub(f'input_value={REDACTED_SECRET_VALUE}', text)
-    return _SECRET_KEY_FRAGMENT.sub(rf'\g<1>{REDACTED_SECRET_VALUE}', text)
+    return _mask_secret_fragments(text, set())
 
 
 async def _trigger_event(
