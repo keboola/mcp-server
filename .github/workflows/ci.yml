@@ -82,6 +82,13 @@ jobs:
         run: |
           uv build --wheel --no-sources
 
+      # `uvx keboola_mcp_server` resolves with uv's default pre-release policy, which skips any release
+      # whose dependencies need a pre-release (see AI-4034). Fail if the built wheel would not resolve that way.
+      - name: Check wheel resolves without pre-releases
+        if: matrix.python-version == '3.12'
+        run: |
+          ls dist/keboola_mcp_server-*.whl | uv pip compile --python-version 3.12 --no-cache --prerelease disallow -
+
       - name: Get package version
         id: get_package_version
         if: matrix.python-version == '3.10'
