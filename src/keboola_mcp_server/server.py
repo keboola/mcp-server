@@ -15,7 +15,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
-from keboola_mcp_server.authorization import ToolAuthorizationMiddleware
+from keboola_mcp_server.authorization import ToolAuthorizationMiddleware, ToolDeferralMiddleware
 from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport, get_env_storage_api_url
 from keboola_mcp_server.elicitation import UrlElicitationMiddleware
 from keboola_mcp_server.errors import ValidationErrorMiddleware
@@ -289,6 +289,7 @@ def create_server(
             LoggingMiddleware(log_level=logging.DEBUG),
             SessionStateMiddleware(),
             ToolAuthorizationMiddleware(),
+            ToolDeferralMiddleware(),
             # Outside MultiProjectMiddleware: a single-project call's UrlActionRequiredError reaches it as is,
             # while a multi-project fan-out keeps per-project failures (incl. their links) as text notes.
             UrlElicitationMiddleware(),
