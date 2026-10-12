@@ -21,6 +21,7 @@ from keboola_mcp_server.clients.jobs_queue import JobsQueueClient
 from keboola_mcp_server.clients.metastore import MetastoreClient
 from keboola_mcp_server.clients.scheduler import SchedulerClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient, JsonDict
+from keboola_mcp_server.clients.stream import StreamClient
 from keboola_mcp_server.clients.sync_actions import SyncActionsClient
 from keboola_mcp_server.config import deployed_sa_token_path, is_same_stack
 
@@ -273,6 +274,7 @@ class KeboolaClient:
         data_science_api_url = urlunparse(('https', f'data-science.{self._hostname_suffix}', '', '', '', ''))
         encryption_api_url = urlunparse(('https', f'encryption.{self._hostname_suffix}', '', '', '', ''))
         scheduler_api_url = urlunparse(('https', f'scheduler.{self._hostname_suffix}', '', '', '', ''))
+        stream_api_url = urlunparse(('https', f'stream.{self._hostname_suffix}', '', '', '', ''))
         sync_actions_api_url = urlunparse(('https', f'sync-actions.{self._hostname_suffix}', '', '', '', ''))
 
         # Initialize clients for individual services
@@ -336,6 +338,9 @@ class KeboolaClient:
         )
         self._scheduler_client = SchedulerClient.create(
             root_url=scheduler_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
+        )
+        self._stream_client = StreamClient.create(
+            root_url=stream_api_url, token=bearer_or_sapi_token, headers=self._headers, readonly=readonly
         )
         self._sync_actions_client = SyncActionsClient.create(
             root_url=sync_actions_api_url,
@@ -495,6 +500,10 @@ class KeboolaClient:
     @property
     def scheduler_client(self) -> 'SchedulerClient':
         return self._scheduler_client
+
+    @property
+    def stream_client(self) -> 'StreamClient':
+        return self._stream_client
 
     @property
     def sync_actions_client(self) -> 'SyncActionsClient':
