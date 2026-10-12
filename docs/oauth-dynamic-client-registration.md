@@ -16,7 +16,7 @@ for the full design.
   by default, see [Operating it](#operating-it)); otherwise an unregistered pair is refused on this server's own
   `/oauth/callback?error=unregistered_client` page. With it on, `/authorize` redirects instead to Connection's own
   `/oauth/authorize` carrying a `pending_mcp_client` payload. A logged-in Keboola user sees an
-  approval screen (client name + redirect URI) and must click **Allow** once. After that, the same
+  approval screen (client name + redirect URI) and must click **Allow** once; the approval is registered against this server's own `/oauth/callback` (the client's real redirect target is shown in the name), and the browser then continues straight to the consent screen, so the client never receives a code from the approval itself (AI-3995, needs Connection's `return_to_client_after_approval`). After that, the same
   `(client_id, redirect_uri)` pair is Flow A on every subsequent connection.
 
 Every client — regardless of flow — must first call `/register` (RFC 7591) to obtain an MCP-side
