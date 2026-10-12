@@ -1024,7 +1024,7 @@ class TestSimpleOAuthProvider:
         expected_sig = hmac.new(
             oauth_provider._oauth_client_secret.encode(),
             f'{len(query["mcp_client_id"][0].encode())}:{query["mcp_client_id"][0]}:{query["state"][0]}'.encode(),
-            hashlib.sha256,
+            'sha256',
         ).hexdigest()
         assert query['mcp_client_sig'] == [expected_sig]
         state = oauth_provider._decode(query['state'][0])
