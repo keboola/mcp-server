@@ -173,7 +173,7 @@ class TestConfig:
             'oauth_client_id=None, oauth_client_secret=None, '
             'oauth_server_url=None, oauth_scope=None, mcp_server_url=None, '
             "jwt_secret=None, postgres_dsn='****', session_encryption_key='****', "
-            'bearer_token=None, conversation_id=None, project_id=None)'
+            'bearer_token=None, conversation_id=None, project_id=None, oauth_validate_rate_limit=None, oauth_dynamic_client_approval=None)'
         )
 
     def test_workspace_id_must_be_numeric(self) -> None:
@@ -222,6 +222,8 @@ class TestReplaceByHeaders:
             {'X-Oauth-Client-Secret': 'evil'},
             {'X-Oauth-Server-Url': 'https://evil.example'},
             {'X-Mcp-Server-Url': 'https://evil.example'},
+            {'X-Oauth-Validate-Rate-Limit': '100000'},
+            {'X-Oauth-Dynamic-Client-Approval': 'true'},
         ],
         ids=[
             'jwt_secret_bare',
@@ -233,6 +235,8 @@ class TestReplaceByHeaders:
             'oauth_client_secret',
             'oauth_server_url',
             'mcp_server_url',
+            'oauth_validate_rate_limit',
+            'oauth_dynamic_client_approval',
         ],
     )
     def test_deployment_level_fields_are_unreachable(self, headers: Mapping[str, str]) -> None:
