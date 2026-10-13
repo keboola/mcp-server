@@ -30,7 +30,7 @@ Two deployment-level settings (environment or CLI only, never a request header):
 | Setting | Meaning | Default |
 |---|---|---|
 | `OAUTH_DYNAMIC_CLIENT_APPROVAL` | Whether an unregistered client is sent to Connection's approval screen. Only `true` turns it on; unset, empty and `false` all leave it off. | off |
-| `OAUTH_DYNAMIC_CLIENT_APPROVAL_DAILY_LIMIT` | With approval on, how many distinct clients per day (a fixed 24-hour UTC window, counted across every replica in the shared database) may be sent to the approval screen. A positive integer; anything else stops startup. A further new client is refused like an unregistered one and logged at WARNING (`Daily approval budget used up, client refused`); the same client retrying costs nothing. | no cap |
+| `OAUTH_DYNAMIC_CLIENT_APPROVAL_DAILY_LIMIT` | With approval on, how many distinct clients per day (a fixed 24-hour UTC window, counted across every replica in the shared database) may be sent to the approval screen. A positive integer; anything else stops startup. A further new client is refused with a page that names the next 00:00 UTC reset (`error=approval_limit_reached`) and logged at WARNING (`Daily approval budget used up, client refused`); the same client retrying costs nothing. | no cap |
 | `OAUTH_VALIDATE_FLEET_RATE_LIMIT` | Calls per minute, counted across every replica in the shared database, to Connection's `/oauth/clients/validate`. A positive integer. | 500 |
 | `OAUTH_AUTHORIZE_RATE_LIMIT_PER_IP` | `/authorize` requests per minute one caller address may send, across every replica; over it the answer is `429` with `Retry-After`. A positive integer. | no limit |
 | `OAUTH_TRUSTED_PROXY_HOPS` | How many proxies in front of the server append to `X-Forwarded-For`; the caller address is the entry that many places from the end (the ones before it are caller-written and never used). | 1 |
@@ -101,10 +101,9 @@ Requires VPN access to the target stack and a Keboola login on Connection for th
 **Allow** on the approval screen).
 
 **Loopback clients.** The Connection-facing client id is derived from `redirect_uri`. The port is ignored for
-`127.0.0.1` and `[::1]` (RFC 8252 §7.3; Connection matches those two hosts the same way), so a tool that binds a new
-ephemeral port on every run keeps one approval. `localhost` is **not** normalised: use a fixed port with it, or a
-fresh port looks like a brand-new client and needs approval every time. Two different local apps whose callbacks
-differ only by the port of one of the two normalised hosts share one registration (RFC, section 4).
+`localhost`, `127.0.0.1` and `[::1]` (RFC 8252 §7.3), so a tool that binds a new ephemeral port on every run keeps
+one approval. Two different local apps whose callbacks differ only by the port of one of these hosts share one
+registration (RFC, section 4). `localhost` and `127.0.0.1` are still separate approvals.
 
 This walkthrough needs `OAUTH_DYNAMIC_CLIENT_APPROVAL=true` on the target stack for the first run (step 4 shows the
 refusal page otherwise).
@@ -208,5 +207,5 @@ dynamic client registration against the server's discovery document — no Keboo
    pending approval screen, which exists only while the stack's operators have turned approval on; every later
    connection from the same `redirect_uri` is frictionless (Flow A).
 
-If your client's redirect URI is a loopback URL, `127.0.0.1` and `[::1]` keep their approval across ports and
-`localhost` needs a fixed port — see the note above.
+If your client's redirect URI is a loopback URL (`localhost`, `127.0.0.1` or `[::1]`), its approval is kept across
+ports: a client that reconnects on a new port does not need a new approval.

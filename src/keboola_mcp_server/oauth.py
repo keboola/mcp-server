@@ -171,15 +171,14 @@ class _ClientRegistration(Enum):
     ERROR = auto()
 
 
-# Loopback hosts whose port Connection's redirect-URI matching already ignores
-# (127.0.0.1 and [::1] only, deliberately NOT 'localhost', per RFC 8252
-# §7.3's "any port" allowance for native/loopback clients). Mirrored here, not the broader
-# _LOOPBACK_HOSTS shape-check set above, so the derived Connection client_id below is only made
-# port-stable for the hosts where that stability is actually honored end-to-end (Connection's own
-# registry normalizes the same way, Vojtěch Biberle review). 'localhost' still
-# gets a fresh client_id (and a fresh approval) per port -- a residual gap shared with league
-# itself, not fixable without a vendor patch.
-_PORT_INSENSITIVE_LOOPBACK_HOSTS = frozenset({'127.0.0.1', '::1'})
+# Loopback hosts whose port does not take part in the derived Connection client_id (RFC 8252 §7.3's
+# "any port" allowance for native/loopback clients). 'localhost' is included although Connection's own
+# redirect-URI matching (LoopbackRedirectUri) and league still compare it port-exactly: a dynamically approved
+# client is registered in Connection against this server's own callback URL, never the client's, so the client's
+# port is not compared there. Only a client approved before AI-3995 (registered against its own redirect_uri)
+# or a pre-registered one is, and neither is derived from this set. Claude Code sends
+# http://localhost:<random port>/callback, so without 'localhost' every re-auth burned an approval.
+_PORT_INSENSITIVE_LOOPBACK_HOSTS = frozenset({'localhost', '127.0.0.1', '::1'})
 
 
 def _without_port_for_loopback(redirect_uri: str) -> str:
@@ -211,7 +210,7 @@ def _connection_client_id(redirect_uri: str, key: bytes) -> str:
     reconnecting (same callback URL) lands on the same Connection identity and reuses an earlier
     approval, even though the SDK hands it a fresh uuid on every /register call.
 
-    The port is stripped first for 127.0.0.1/[::1] (see _without_port_for_loopback) -- a loopback
+    The port is stripped first for localhost/127.0.0.1/[::1] (see _without_port_for_loopback) -- a loopback
     tool's ephemeral port changes on every reconnect (RFC 8252 §7.3; examples: Claude Code, VS
     Code, MCP Inspector, Codex, Gemini CLI), and without this every reconnect would derive a new
     id, need a fresh human approval, and leave behind a permanent, never-cleaned-up
@@ -1287,7 +1286,11 @@ class SimpleOAuthProvider(OAuthProvider):
                 f'[authorize] Daily approval budget used up, client refused: client_id={_sanitize_client_id_for_log(client.client_id)}, '
                 f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
-            return self._unregistered_client_page()
+            return construct_redirect_uri(
+                self._mcp_callback_url,
+                error='approval_limit_reached',
+                error_description='The daily limit of new OAuth clients was reached.',
+            )
 
         # Create and encode the authorization state.
         # We don't store the authentication states that we create here to avoid having to persist them.

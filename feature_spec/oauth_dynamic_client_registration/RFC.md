@@ -175,19 +175,19 @@ pre-registered by a migration cannot use a derived id (the migration cannot comp
 `_WELL_KNOWN_CONNECTION_CLIENT_IDS` with the migration's literal identifier.
 
 A loopback client's redirect_uri carries an ephemeral port that changes on every run (RFC 8252 §7.3). For
-`127.0.0.1` and `[::1]` the port is therefore stripped before the id is derived, mirroring Connection's own
-redirect-URI matching, which ignores the port for exactly those two hosts: the same tool reconnecting on a new port
-lands on the same derived id and reuses its earlier approval instead of needing a fresh human approval and leaving
-a never-cleaned-up registration behind on every run. `localhost` is deliberately not in that set: Connection
-matches it port-exactly, so a derived id that ignored its port could not be matched back. Deriving from
+`localhost`, `127.0.0.1` and `[::1]` the port is therefore stripped before the id is derived: the same tool
+reconnecting on a new port lands on the same derived id and reuses its earlier approval instead of needing a fresh
+human approval and leaving a never-cleaned-up registration behind on every run. Connection's own redirect-URI
+matching ignores the port only for `127.0.0.1` and `[::1]`, but that does not matter for `localhost`: a dynamically
+approved client is registered in Connection against this server's own callback (Decision 15), so the client's port is
+never compared there. Deriving from
 `redirect_uri` (not `client_id`) is also what makes a *stable-port* tool's approval survive it re-registering with
 a fresh SDK-minted uuid.
 
 **Accepted: loopback clients share one registration per host and path.** Because the port is not part of the id, two
-distinct local applications whose callbacks differ only by port (`http://127.0.0.1:54321/callback` and
-`http://127.0.0.1:9999/callback`) derive the same id: once one is approved, the other is REGISTERED too, without a
-separate approval. This follows from RFC 8252 §7.3 (a loopback callback's port is not part of its identity), and
-Connection's own registry matches these two hosts without the port. A port-sensitive id here would not close it
+distinct local applications whose callbacks differ only by port (`http://localhost:54321/callback` and
+`http://localhost:9999/callback`) derive the same id: once one is approved, the other is REGISTERED too, without a
+separate approval. This follows from RFC 8252 §7.3 (a loopback callback's port is not part of its identity). A port-sensitive id here would not close it
 either: the pair would simply be approved per port, and the SDK's client id cannot stand in for a stable identity
 because it is a fresh uuid on every `/register`. Keeping the port would make every reconnect of a loopback tool
 (Claude Code, VS Code, Codex, MCP Inspector, ...) a new approval and leave a permanent stack-wide registration row
@@ -324,10 +324,8 @@ functions, per project convention):
 - `_connection_client_id`: two loopback URIs (127.0.0.1 or [::1]) differing only by port derive the
   *same* id (RFC 8252 §7.3 — a loopback tool's ephemeral port changes on every reconnect; without
   this every reconnect needed a fresh human approval and left behind a permanent, never-cleaned-up
-  Connection registry row); the same case for `localhost` still derives different ids — a
-  documented residual, since the pinned mcp SDK's own league OAuth library doesn't ignore the port
-  for `localhost` either, so normalizing it here alone wouldn't help end-to-end (Vojtěch Biberle
-  review, AI-2883; matching fix on Connection's own registry in a companion connection PR).
+  Connection registry row); `localhost` is stripped too (AI-4055): the client's own port is never compared in
+  Connection for a dynamically approved client, which is registered against this server's callback.
 - `exchange_authorization_code` → `_auto_confirm_project_scope`: the existing single/multi-project
   cases above use a `claudai projectless` token; a further case covers a session persisted as
   `claudai`-only (`oauth_projectless=False`, the shape a Flow B session had before Decision §10) and
