@@ -722,6 +722,8 @@ async def test_oauth_callback_handler_accepts_a_missing_code_but_not_a_missing_s
         ('access_denied', 'authorization was denied'),
         # dynamic client approval is switched off and the client is not registered
         ('unregistered_client', 'not registered with keboola'),
+        # the daily budget of new clients is used up: the page names the next 00:00 UTC reset
+        ('approval_limit_reached', 'try again after 20'),
     ],
 )
 @pytest.mark.asyncio
@@ -757,6 +759,8 @@ async def test_oauth_callback_handler_renders_error_param_without_invoking_callb
     assert expected_text in body.lower()
     if error == 'access_denied':
         assert 'unavailable' not in body.lower()
+    if error == 'approval_limit_reached':
+        assert '00:00 utc' in body.lower()
     oauth_provider.handle_oauth_callback.assert_not_called()
 
 

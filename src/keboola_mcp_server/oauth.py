@@ -1287,7 +1287,11 @@ class SimpleOAuthProvider(OAuthProvider):
                 f'[authorize] Daily approval budget used up, client refused: client_id={_sanitize_client_id_for_log(client.client_id)}, '
                 f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
-            return self._unregistered_client_page()
+            return construct_redirect_uri(
+                self._mcp_callback_url,
+                error='approval_limit_reached',
+                error_description='The daily limit of new OAuth clients was reached.',
+            )
 
         # Create and encode the authorization state.
         # We don't store the authentication states that we create here to avoid having to persist them.

@@ -5,6 +5,7 @@ import logging
 import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastmcp import FastMCP
@@ -189,6 +190,18 @@ class CustomRoutes:
             elif error == 'unregistered_client':
                 title = message = (
                     'This application is not registered with Keboola. Ask your Keboola administrator to register it.'
+                )
+            elif error == 'approval_limit_reached':
+                # The shared counter uses fixed UTC-day windows (see PostgresRateLimitStore.claim), so the budget
+                # resets at the next 00:00 UTC. The page computes it itself, nothing comes from the query string.
+                # ponytail: the process-local fallback (Postgres down) is a rolling window, so this can be off then.
+                reset = (datetime.now(timezone.utc) + timedelta(days=1)).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                title = 'Too many new applications today'
+                message = (
+                    'Too many new applications were registered with Keboola today. '
+                    f'Please try again after {reset:%Y-%m-%d %H:%M} UTC.'
                 )
             else:
                 title = 'Keboola login temporarily unavailable'

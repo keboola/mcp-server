@@ -1486,7 +1486,7 @@ class TestSimpleOAuthProvider:
 
         assert await outcome('https://one.example/cb') == 'approval'
         assert await outcome('https://two.example/cb') == 'approval'
-        assert await outcome('https://three.example/cb') == 'unregistered_client'
+        assert await outcome('https://three.example/cb') == 'approval_limit_reached'
         assert await outcome('https://one.example/cb') == 'approval'  # a retry of a client already sent costs nothing
 
     @pytest.mark.parametrize(
@@ -2573,7 +2573,7 @@ class TestSharedRateLimits:
         replica_a, replica_b = replica(), replica()
 
         assert await outcome(replica_a, 'https://one.example/cb') == 'approval'
-        assert await outcome(replica_b, 'https://two.example/cb') == 'unregistered_client'
+        assert await outcome(replica_b, 'https://two.example/cb') == 'approval_limit_reached'
         assert await outcome(replica_b, 'https://one.example/cb') == 'approval'
 
     @pytest.mark.asyncio
