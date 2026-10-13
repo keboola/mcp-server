@@ -2601,12 +2601,12 @@ The previous sandbox is gone. You have PROD's `configuration_id` but no working 
 draft handle.
 
 1. `get_data_apps(configuration_ids=[PROD])` → returns PROD's detail including `drafts: [...]`.
-   Pick the draft the user means (ask if multiple and unclear). Each entry exposes its
-   `configuration_id`, slug, and pinned branch.
+   Pick the draft the user means (ask if multiple and unclear). Each entry carries its
+   `configuration_id` and `git_branch`.
 2. `create_python_js_data_app_git_credential(configuration_id=PROD)`
    → fresh `git_clone_url U` (the previous one was minted in a wiped sandbox and is lost).
    Drafts have no managed repo of their own — always mint against PROD.
-3. YOU: `git clone U`; `git checkout <draft's pinned branch>`. Here you DO want the existing
+3. YOU: `git clone U`; `git checkout <draft's git_branch>`. Here you DO want the existing
    branch — but confirm it is current before you build on it:
    `git rev-list --count <branch>..origin/main` must print 0, otherwise `git merge origin/main`
    first. Resume work; `git push`.

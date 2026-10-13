@@ -2689,6 +2689,26 @@ def test_data_app_from_api_responses_keeps_published_and_latest_versions_apart()
     assert data_app.published_config_version == '3'
 
 
+@pytest.mark.parametrize(
+    ('configuration', 'expected'),
+    [
+        pytest.param({'parameters': {'dataApp': {'git': {'branch': 'draft-6cf279'}}}}, 'draft-6cf279', id='branch'),
+        pytest.param({'parameters': {'dataApp': {'slug': 'app'}}}, None, id='no_git_block'),
+        pytest.param({'parameters': {'dataApp': {'git': {'branch': ''}}}}, None, id='empty_branch'),
+        pytest.param({'parameters': {'dataApp': {'git': 'corrupted'}}}, None, id='git_not_mapping'),
+    ],
+)
+def test_data_app_from_api_responses_reads_git_branch(configuration: dict, expected: str | None) -> None:
+    api_configuration = ConfigurationAPIResponse.model_validate(
+        {'componentId': DATA_APP_COMPONENT_ID, 'id': 'cfg-123', 'name': 'app', 'version': 5}
+        | {'configuration': configuration}
+    )
+
+    data_app = DataApp.from_api_responses(_make_data_app_response(), api_configuration)
+
+    assert data_app.git_branch == expected
+
+
 # ===== Tests for modify_python_js_data_app draft create path =====
 
 
@@ -3443,6 +3463,7 @@ def _make_python_js_draft_data_app(
         },
         state=state,
         repo_url=None,
+        git_branch=branch,
     )
 
 
@@ -3518,6 +3539,7 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
             configuration_id=cfg_id,
             data_app_id=f'app-{cfg_id}',
             parent_configuration_id=prod_cfg_id,
+            branch=f'branch-{cfg_id}',
         )
         for cfg_id in draft_cfg_ids
     }
@@ -3549,8 +3571,9 @@ async def test_get_data_apps_detail_for_prod_lists_drafts(
     assert len(result.data_apps) == 1
     detail = result.data_apps[0]
     assert isinstance(detail, DataApp)
-    returned_draft_ids = sorted(d.configuration_id for d in detail.drafts)
-    assert returned_draft_ids == sorted(draft_cfg_ids)
+    assert {d.configuration_id: d.git_branch for d in detail.drafts} == {
+        cfg_id: f'branch-{cfg_id}' for cfg_id in draft_cfg_ids
+    }
     # All drafts fetched successfully, so nothing was omitted.
     assert detail.drafts_unavailable == 0
 

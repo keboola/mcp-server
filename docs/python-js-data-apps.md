@@ -13,7 +13,7 @@ Python-JS data apps are backed by a **git repository**: source code lives in the
 - A persistent **prod app** that users actually run. The prod app **owns the only managed git repo** in the project.
 - Zero or more **drafts** parented to that prod app. A draft is a Storage configuration with `parameters.dataApp.isDraft=true` and `parameters.dataApp.parentConfigurationId=<prod cfg id>`; it's an *external-git* app that clones the parent prod's repo at a pinned branch on every deploy. Drafts serve as the LLM's iteration sandbox.
 
-Drafts are surfaced in the Keboola UI under their parent prod app. They are also discoverable via `get_data_apps`: detail responses for a python-js **prod** app carry a `drafts: [...]` array. Cleanup is explicit — the agent calls `delete_python_js_data_app_draft` once the draft's branch has been promoted to `main`.
+Drafts are surfaced in the Keboola UI under their parent prod app. They are also discoverable via `get_data_apps`: detail responses for a python-js **prod** app carry a `drafts: [...]` array, each entry with the `git_branch` it deploys. Cleanup is explicit — the agent calls `delete_python_js_data_app_draft` once the draft's branch has been promoted to `main`.
 
 **MCP never invokes git.** All git operations (clone, branch, commit, push, merge, branch-delete) are owned by the agent. MCP owns: credentials minting, configs, deploys, draft lifecycle (create + delete).
 
