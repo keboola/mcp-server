@@ -2709,3 +2709,47 @@ class TestAuthorizeRateLimitMiddleware:
         assert [client.get('/authorize', headers={'X-Forwarded-For': '1.1.1.1'}).status_code for _ in range(5)] == [
             200
         ] * 5
+
+
+class TestAuthorizationServerMetadata:
+    """The metadata documents advertise `none` first as a token endpoint auth method (AI-3797): this server's clients are
+    public ones, and a client that picks its method from the document would otherwise register with a secret."""
+
+    @pytest.fixture
+    def client(self):
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
+        provider = SimpleOAuthProvider(
+            storage_api_url='https://sapi',
+            mcp_server_url='https://mcp.example',
+            callback_endpoint='/callback',
+            client_id='mcp-server-id',
+            client_secret='mcp-server-secret',
+            server_url='https://oauth.example',
+            scope='scope',
+            jwt_secret=JWT_KEY,
+            session_store=FakeSessionStore(),
+        )
+        return TestClient(Starlette(routes=provider.get_routes()))
+
+    def test_public_clients_are_advertised_first(self, client) -> None:
+        response = client.get('/.well-known/oauth-authorization-server')
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body['token_endpoint_auth_methods_supported'] == ['none', 'client_secret_post', 'client_secret_basic']
+        assert int(response.headers['content-length']) == len(
+            response.content
+        )  # the patched body is what was announced
+        assert body['code_challenge_methods_supported'] == ['S256']  # the rest of the document is untouched
+        assert body['issuer'].rstrip('/') == 'https://mcp.example'
+
+    def test_a_preflight_answer_is_left_alone(self, client) -> None:
+        response = client.options(
+            '/.well-known/oauth-authorization-server',
+            headers={'Origin': 'https://app.example', 'Access-Control-Request-Method': 'GET'},
+        )
+
+        assert response.status_code == 200
+        assert response.headers['access-control-allow-origin'] == '*'
