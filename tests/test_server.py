@@ -833,14 +833,14 @@ def test_add_to_starlette_guards_root_authorize_route(redirect_uri: str, expecte
     ('value', 'expected'),
     [(None, None), ('', None), ('100', 100), ('1', 1), ('0', ValueError), ('-3', ValueError), ('abc', ValueError)],
 )
-def test_parse_validate_rate_limit(value: str | None, expected: int | type[ValueError] | None) -> None:
-    from keboola_mcp_server.server import _parse_validate_rate_limit
+def test_parse_positive_int(value: str | None, expected: int | type[ValueError] | None) -> None:
+    from keboola_mcp_server.server import _parse_positive_int
 
     if expected is ValueError:
-        with pytest.raises(ValueError, match='positive integer'):
-            _parse_validate_rate_limit(value)
+        with pytest.raises(ValueError, match='my_setting must be a positive integer'):
+            _parse_positive_int('my_setting', value)
     else:
-        assert _parse_validate_rate_limit(value) == expected
+        assert _parse_positive_int('my_setting', value) == expected
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,7 @@ from keboola_mcp_server.preview import preview_config_diff
 from keboola_mcp_server.prompts.add_prompts import add_keboola_prompts
 from keboola_mcp_server.session_store.crypto import resolve_encryption_key
 from keboola_mcp_server.session_store.kai_scope import PostgresKaiScopeStore
+from keboola_mcp_server.session_store.rate_limit import PostgresRateLimitStore
 from keboola_mcp_server.session_store.repository import PostgresSessionStore
 from keboola_mcp_server.tools.components.tools import add_component_tools
 from keboola_mcp_server.tools.data_apps import add_data_app_tools
@@ -79,18 +80,18 @@ class ServiceInfoApiResp(BaseModel):
     )
 
 
-def _parse_validate_rate_limit(value: str | None) -> int | None:
-    """The `oauth_validate_rate_limit` setting as a positive int; None when unset. A bad value stops startup rather
-    than silently falling back to a limit nobody chose."""
+def _parse_positive_int(name: str, value: str | None) -> int | None:
+    """A deployment setting that must be a positive integer, None when unset. A bad value stops startup rather than
+    silently falling back to a limit nobody chose."""
     if value is None or value == '':
         return None
     try:
-        limit = int(value)
+        number = int(value)
     except ValueError:
-        limit = 0
-    if limit < 1:
-        raise ValueError(f'oauth_validate_rate_limit must be a positive integer, got {value!r}')
-    return limit
+        number = 0
+    if number < 1:
+        raise ValueError(f'{name} must be a positive integer, got {value!r}')
+    return number
 
 
 def create_keboola_lifespan(
@@ -248,6 +249,8 @@ class CustomRoutes:
             app.add_middleware(
                 UntrustedAuthorizeRedirectMiddleware, trusted_origins=self.oauth_provider.trusted_redirect_origins
             )
+            if rate_limit := self.oauth_provider.authorize_rate_limit_middleware():
+                app.add_middleware(rate_limit.cls, **rate_limit.kwargs)
 
 
 def create_server(
@@ -317,8 +320,20 @@ def create_server(
             callback_endpoint='/oauth/callback',
             jwt_secret=config.jwt_secret,
             session_store=session_store,
-            validate_rate_limit=_parse_validate_rate_limit(config.oauth_validate_rate_limit),
+            validate_rate_limit=_parse_positive_int('oauth_validate_rate_limit', config.oauth_validate_rate_limit),
             dynamic_client_approval=config.oauth_dynamic_client_approval is True,
+            approval_daily_limit=_parse_positive_int(
+                'oauth_dynamic_client_approval_daily_limit', config.oauth_dynamic_client_approval_daily_limit
+            ),
+            # Counters shared by every replica (AI-4005), in the same Postgres as the sessions.
+            rate_limit_store=PostgresRateLimitStore(config.postgres_dsn),
+            validate_fleet_limit=_parse_positive_int(
+                'oauth_validate_fleet_rate_limit', config.oauth_validate_fleet_rate_limit
+            ),
+            authorize_rate_limit_per_ip=_parse_positive_int(
+                'oauth_authorize_rate_limit_per_ip', config.oauth_authorize_rate_limit_per_ip
+            ),
+            trusted_proxy_hops=_parse_positive_int('oauth_trusted_proxy_hops', config.oauth_trusted_proxy_hops) or 1,
             encryption_key=encryption_key,
         )
     else:

@@ -3,6 +3,7 @@ import base64
 import dataclasses
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import math
@@ -48,6 +49,7 @@ from keboola_mcp_server.clients.auth_bridge import OAuthSessionExchanger, OAuthT
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.jwt_utils import decode_jwt, encode_jwt
 from keboola_mcp_server.session_store import DatabaseUnavailableError
+from keboola_mcp_server.session_store.rate_limit import RateLimitStore
 from keboola_mcp_server.session_store.repository import SessionStore
 
 
@@ -93,15 +95,22 @@ _REGISTERED_CACHE_TTL_SECONDS = 300  # 5 min: a registered+active client's statu
 # absorbs the common case (repeat callers hit the cache, not Connection), so the only way to burn through the
 # budget is a caller sending a distinct, never-cached redirect_uri on every request (Copilot review finding).
 #
-# The limiter is per process, so the bound that matters is the fleet's: the per-process cap times the largest
-# replica count we deploy must stay below Connection's ceiling, or enough replicas together can exhaust it.
-# Hence the default (100 x 5 = 500 < 600); a deployment with more replicas must lower it with
-# `OAUTH_VALIDATE_RATE_LIMIT` rather than rely on this default. A limiter shared across replicas would remove the
-# need for that arithmetic -- tracked in AI-4005.
+# This process-local limiter is the fallback: while the shared store answers, the budget is counted across every
+# replica (`_VALIDATE_FLEET_LIMIT_PER_MINUTE`, AI-4005) and no replica arithmetic is needed. Without the store the bound
+# that matters is still the fleet's: the per-process cap times the largest replica count we deploy must stay below
+# Connection's ceiling, hence the default (100 x 5 = 500 < 600); a deployment with more replicas must lower it with
+# `OAUTH_VALIDATE_RATE_LIMIT` rather than rely on this default.
 _CONNECTION_VALIDATE_LIMIT_PER_WINDOW = 600
 _ASSUMED_MAX_REPLICAS = 5
+# The window of `_ApprovalBudget`: a day.
+_APPROVAL_BUDGET_WINDOW_SECONDS = 24 * 60 * 60.0
+_APPROVAL_BUDGET_WINDOW_SECONDS_INT = int(_APPROVAL_BUDGET_WINDOW_SECONDS)
 _VALIDATE_RATE_LIMIT_MAX_CALLS = 100
 _VALIDATE_RATE_LIMIT_WINDOW_SECONDS = 60.0
+# The same call budget counted across every replica through the shared store (AI-4005): Connection's ceiling is per
+# egress IP, so this is the number that matters; the per-process limit above only holds when the store is unreachable.
+# Below Connection's 600 per minute with room for its other callers.
+_VALIDATE_FLEET_LIMIT_PER_MINUTE = 500
 # How long the last known REGISTERED answer for a well-known pair may be served when Connection cannot answer.
 _WELL_KNOWN_STALE_GRACE_SECONDS = 3600.0
 # After Connection fails to answer for a well-known pair (or answers "not registered"), it is not asked again for
@@ -126,6 +135,29 @@ class _SlidingWindowRateLimiter:
         if len(self._call_times) >= self._max_calls:
             return False
         self._call_times.append(now)
+        return True
+
+
+class _ApprovalBudget:
+    """Caps how many distinct clients per `window_seconds` this process sends to Connection's approval screen
+    (`max_clients`), so a stack with dynamic approval turned on registers a few clients a day at most, not one per
+    caller. The same client asking again inside the window costs nothing: a legitimate retry (the approval round trip
+    is followed by a second login) must not use up the budget. Process-local, like `_SlidingWindowRateLimiter`, so N
+    replicas allow up to N times the cap. The map is bounded by `max_clients`."""
+
+    def __init__(self, max_clients: int, window_seconds: float = _APPROVAL_BUDGET_WINDOW_SECONDS) -> None:
+        self._max_clients = max_clients
+        self._window_seconds = window_seconds
+        self._granted_at: dict[str, float] = {}
+
+    def try_acquire(self, client_key: str) -> bool:
+        now = time.monotonic()
+        self._granted_at = {k: t for k, t in self._granted_at.items() if now - t <= self._window_seconds}
+        if client_key in self._granted_at:
+            return True
+        if len(self._granted_at) >= self._max_clients:
+            return False
+        self._granted_at[client_key] = now
         return True
 
 
@@ -289,7 +321,14 @@ class ConnectionClientRegistry:
     (feature_spec/oauth_dynamic_client_registration/RFC.md) for the full design.
     """
 
-    def __init__(self, server_url: str, *, validate_rate_limit: int | None = None) -> None:
+    def __init__(
+        self,
+        server_url: str,
+        *,
+        validate_rate_limit: int | None = None,
+        rate_limit_store: RateLimitStore | None = None,
+        validate_fleet_limit: int | None = None,
+    ) -> None:
         self._validate_url = urljoin(server_url, '/oauth/clients/validate')
         self._authorize_url = urljoin(server_url, '/oauth/authorize')
         # One pooled client for every validate call (created on first use, closed by `aclose()` from the server's
@@ -343,6 +382,10 @@ class ConnectionClientRegistry:
         self._validate_rate_limiter = _SlidingWindowRateLimiter(
             validate_rate_limit or _VALIDATE_RATE_LIMIT_MAX_CALLS, _VALIDATE_RATE_LIMIT_WINDOW_SECONDS
         )
+        # The call budget shared by every replica, when there is a store to count it in (AI-4005); the per-process
+        # limiter above is what holds without one, or while the store cannot be reached.
+        self._rate_limit_store = rate_limit_store
+        self._validate_fleet_limit = validate_fleet_limit or _VALIDATE_FLEET_LIMIT_PER_MINUTE
 
     def remember_client_name(self, client_id: str | None, client_name: str | None) -> None:
         if not client_id:
@@ -448,6 +491,19 @@ class ConnectionClientRegistry:
             return _ClientRegistration.REGISTERED
         return _ClientRegistration.ERROR
 
+    async def _validate_budget_allows(self) -> bool:
+        """Whether one more call to Connection's validate endpoint fits the budget: the fleet-wide one when the shared
+        store answers, else this process's own. A store that cannot answer (the database is down, or the migration that
+        creates its table has not run yet) must not take logins down with it, so it falls back to the process limiter."""
+        if self._rate_limit_store is not None:
+            try:
+                hits = await self._rate_limit_store.hit('validate', int(_VALIDATE_RATE_LIMIT_WINDOW_SECONDS))
+            except Exception as e:
+                LOG.warning(f'[check_registration] Shared rate limit unavailable, using the local one: {e!r}')
+            else:
+                return hits <= self._validate_fleet_limit
+        return self._validate_rate_limiter.try_acquire()
+
     def _get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
             # Explicit, tighter settings for this call, passed to the factory itself rather than overridden
@@ -474,7 +530,7 @@ class ConnectionClientRegistry:
         # own 5-minute REGISTERED cache entry expires it gets ERROR'd out right along with the
         # attacker's traffic -- turning a limiter meant to protect Connection into the easier target
         # (Devin review finding, AI-2883).
-        if redirect_uri not in _WELL_KNOWN_CONNECTION_CLIENT_IDS and not self._validate_rate_limiter.try_acquire():
+        if redirect_uri not in _WELL_KNOWN_CONNECTION_CLIENT_IDS and not await self._validate_budget_allows():
             LOG.warning(
                 f'[check_registration] Local rate limit exceeded, not calling Connection: '
                 f'redirect_uri={_sanitize_for_log(redirect_uri)}'
@@ -823,6 +879,82 @@ class UntrustedAuthorizeRedirectMiddleware:
         await self._app(scope, receive, guarded_send)
 
 
+_AUTHORIZE_RATE_LIMIT_WINDOW_SECONDS = 60
+
+
+def _caller_address(scope: Scope, trusted_hops: int) -> str | None:
+    """The caller's address as the nearest proxy we trust saw it, or None when there is none to count.
+
+    Behind `trusted_hops` proxies that each append the address they received the connection from, the caller is the entry
+    that many places from the END of `X-Forwarded-For`: everything before it was written by the caller or by hops
+    nobody vouches for, so it is never used. Without that header the connection's own peer address is the best there is.
+
+    The result is the key of a counter, so it is normalised to what one caller controls: an IPv4-mapped IPv6 address is
+    the IPv4 one, and an IPv6 address is its /64 (a single subscriber is routinely given a whole /64, so counting the
+    full address would let one caller dodge the limit by rotating through it). An address that cannot be told is None,
+    never a shared catch-all key that one caller could fill for everybody else."""
+    entries = [e.strip() for e in Headers(scope=scope).get('x-forwarded-for', '').split(',') if e.strip()]
+    candidate: str | None = None
+    if trusted_hops > 0 and len(entries) >= trusted_hops:
+        candidate = entries[-trusted_hops]
+    elif scope.get('client'):
+        candidate = scope['client'][0]
+    try:
+        address = ipaddress.ip_address(candidate or '')
+    except ValueError:
+        return None
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.ip_network(f'{address}/64', strict=False))
+    return str(address)
+
+
+class AuthorizeRateLimitMiddleware:
+    """Limits `/authorize` requests per caller address, across every replica (AI-4005).
+
+    Every `/authorize` of an unknown client costs a call to Connection's unauthenticated validate endpoint, whose ceiling
+    is shared by the whole stack, so one caller sending a fresh redirect_uri on every request could otherwise keep the
+    stack-wide budget at capacity and lock every other uncached client out. The SDK's `authorize()` never sees the
+    caller's address, hence a middleware ahead of the route. The count lives in the shared store so it holds across
+    replicas; a store that cannot answer lets the request through (the database being down fails logins anyway)."""
+
+    def __init__(self, app: ASGIApp, store: RateLimitStore, limit_per_minute: int, trusted_hops: int) -> None:
+        self._app = app
+        self._store = store
+        self._limit = limit_per_minute
+        self._trusted_hops = trusted_hops
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope['type'] != 'http' or get_route_path(scope).rstrip('/') != '/authorize':
+            await self._app(scope, receive, send)
+            return
+
+        address = _caller_address(scope, self._trusted_hops)
+        if address is None:  # nothing to tell the caller apart by: not counted, rather than pooled with everybody else
+            await self._app(scope, receive, send)
+            return
+        try:
+            hits = await self._store.hit(f'authorize:{address}', _AUTHORIZE_RATE_LIMIT_WINDOW_SECONDS)
+        except Exception as e:
+            LOG.warning(f'[authorize] Per-address rate limit unavailable, letting the request through: {e!r}')
+            await self._app(scope, receive, send)
+            return
+        if hits > self._limit:
+            LOG.warning(f'[authorize] Per-address rate limit reached: address={address}, limit={self._limit}/min')
+            response = JSONResponse(
+                {
+                    'error': 'temporarily_unavailable',
+                    'error_description': 'Too many authorization requests from this address. Try again in a minute.',
+                },
+                status_code=429,
+                headers={'Retry-After': str(_AUTHORIZE_RATE_LIMIT_WINDOW_SECONDS)},
+            )
+            await response(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
+
+
 class SimpleOAuthProvider(OAuthProvider):
     def __init__(
         self,
@@ -838,6 +970,11 @@ class SimpleOAuthProvider(OAuthProvider):
         jwt_secret: str | None = None,
         validate_rate_limit: int | None = None,
         dynamic_client_approval: bool = False,
+        approval_daily_limit: int | None = None,
+        rate_limit_store: RateLimitStore | None = None,
+        validate_fleet_limit: int | None = None,
+        authorize_rate_limit_per_ip: int | None = None,
+        trusted_proxy_hops: int = 1,
         encryption_key: bytes | None = None,
     ) -> None:
         """
@@ -855,6 +992,17 @@ class SimpleOAuthProvider(OAuthProvider):
             pre-authentication artifacts (authorize-state, authorization code) still use `jwt_secret`
             below; only the long-lived, real-credential-carrying tokens live in the store.
         :param jwt_secret: The secret key for encoding and decoding the pre-auth JWT artifacts.
+        :param approval_daily_limit: With `dynamic_client_approval` on, how many distinct clients per day may be sent to
+            Connection's approval screen; None means no cap. See `_ApprovalBudget`.
+        :param rate_limit_store: Postgres-backed counters shared by every replica (AI-4005): the call budget for
+            Connection's validate endpoint, the daily cap on new clients, and the per-address limit on `/authorize`.
+            Without one (or while it cannot be reached) each of them is counted per process.
+        :param validate_fleet_limit: Calls per minute, across every replica, to Connection's validate endpoint; None means
+            the built-in default.
+        :param authorize_rate_limit_per_ip: `/authorize` requests per minute allowed from one caller address, across
+            every replica; None means no such limit.
+        :param trusted_proxy_hops: How many proxies in front of this server append to `X-Forwarded-For`; the caller
+            address is the entry that many places from the end (the ones before it are caller-supplied).
         :param encryption_key: The session encryption key; the Connection client ids are keyed with a key derived
             from it (see `_connection_client_id`), so every replica must get the same one. Without it a
             process-local key is used, which is fine for local runs and tests only.
@@ -877,10 +1025,20 @@ class SimpleOAuthProvider(OAuthProvider):
         self._client_id_key = hmac.new(
             encryption_key or secrets.token_bytes(32), b'keboola-mcp-server/connection-client-id', hashlib.sha256
         ).digest()
-        self._client_registry = ConnectionClientRegistry(server_url, validate_rate_limit=validate_rate_limit)
+        self._client_registry = ConnectionClientRegistry(
+            server_url,
+            validate_rate_limit=validate_rate_limit,
+            rate_limit_store=rate_limit_store,
+            validate_fleet_limit=validate_fleet_limit,
+        )
+        self._rate_limit_store = rate_limit_store
+        self._authorize_rate_limit_per_ip = authorize_rate_limit_per_ip
+        self._trusted_proxy_hops = trusted_proxy_hops
         # Whether an unregistered client is sent to Connection's approval screen. Off means only clients Connection
         # already knows can log in (see `Config.oauth_dynamic_client_approval`).
         self._dynamic_client_approval = dynamic_client_approval
+        self._approval_daily_limit = approval_daily_limit
+        self._approval_budget = _ApprovalBudget(approval_daily_limit) if approval_daily_limit else None
         # The only two origins the OAuth routes may ever legitimately redirect to -- see
         # UntrustedAuthorizeRedirectMiddleware's docstring.
         self.trusted_redirect_origins = frozenset(
@@ -890,6 +1048,20 @@ class SimpleOAuthProvider(OAuthProvider):
     async def aclose(self) -> None:
         """Releases what the provider holds open (the pooled client of the client registry)."""
         await self._client_registry.aclose()
+        if self._rate_limit_store is not None:
+            await self._rate_limit_store.close()
+
+    def authorize_rate_limit_middleware(self) -> Middleware | None:
+        """The per-address limit on `/authorize`, or None when it is not configured or there is no shared store to
+        count it in."""
+        if self._rate_limit_store is None or not self._authorize_rate_limit_per_ip:
+            return None
+        return Middleware(
+            AuthorizeRateLimitMiddleware,
+            store=self._rate_limit_store,
+            limit_per_minute=self._authorize_rate_limit_per_ip,
+            trusted_hops=self._trusted_proxy_hops,
+        )
 
     def get_middleware(self) -> list[Middleware]:
         """Prepends `UntrustedAuthorizeRedirectMiddleware` and `DatabaseUnavailableMiddleware`
@@ -903,6 +1075,7 @@ class SimpleOAuthProvider(OAuthProvider):
         """
         return [
             Middleware(UntrustedAuthorizeRedirectMiddleware, trusted_origins=self.trusted_redirect_origins),
+            *([limit] if (limit := self.authorize_rate_limit_middleware()) else []),
             Middleware(DatabaseUnavailableMiddleware),
             *super().get_middleware(),
         ]
@@ -988,6 +1161,29 @@ class SimpleOAuthProvider(OAuthProvider):
                 error_description='Could not complete the authorization request.',
             )
 
+    def _unregistered_client_page(self) -> str:
+        """The same-origin error page for a client that is not registered, never the caller's redirect_uri (see the
+        ERROR branch of `_authorize` for why)."""
+        return construct_redirect_uri(
+            self._mcp_callback_url,
+            error='unregistered_client',
+            error_description='The OAuth client is not registered.',
+        )
+
+    async def _approval_budget_allows(self, connection_client_id: str) -> bool:
+        """Whether this client may be sent to the approval screen: counted across every replica when the shared store
+        answers, else in this process (see `_ApprovalBudget`)."""
+        if self._approval_daily_limit is None:
+            return True
+        if self._rate_limit_store is not None:
+            try:
+                return await self._rate_limit_store.claim(
+                    'approval', connection_client_id, _APPROVAL_BUDGET_WINDOW_SECONDS_INT, self._approval_daily_limit
+                )
+            except Exception as e:
+                LOG.warning(f'[authorize] Shared approval budget unavailable, using the local one: {e!r}')
+        return self._approval_budget is None or self._approval_budget.try_acquire(connection_client_id)
+
     async def _authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         redirect_uri_str = str(params.redirect_uri)
         connection_client_id = _connection_client_id(redirect_uri_str, self._client_id_key)
@@ -1019,12 +1215,18 @@ class SimpleOAuthProvider(OAuthProvider):
                 f'[authorize] Unregistered client refused, dynamic client approval is off: client_id={_sanitize_client_id_for_log(client.client_id)}, '
                 f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
-            # Same-origin error page, never the caller's redirect_uri (see the ERROR branch above for why).
-            return construct_redirect_uri(
-                self._mcp_callback_url,
-                error='unregistered_client',
-                error_description='The OAuth client is not registered.',
+            return self._unregistered_client_page()
+
+        if registration is _ClientRegistration.NOT_REGISTERED and not await self._approval_budget_allows(
+            connection_client_id
+        ):
+            # WARNING on purpose: an operator alert keys on this line (more new clients wanting approval than the
+            # daily cap allows is what abuse of the open approval looks like).
+            LOG.warning(
+                f'[authorize] Daily approval budget used up, client refused: client_id={_sanitize_client_id_for_log(client.client_id)}, '
+                f'redirect_uri={_sanitize_for_log(redirect_uri_str)}'
             )
+            return self._unregistered_client_page()
 
         # Create and encode the authorization state.
         # We don't store the authentication states that we create here to avoid having to persist them.

@@ -1459,6 +1459,62 @@ class TestSimpleOAuthProvider:
         assert asked and public_id not in asked
         assert parse_qs(url.query)['error'] == ['unregistered_client']  # refused, never sent to consent
 
+    @pytest.mark.asyncio
+    async def test_the_daily_approval_budget_caps_new_clients_but_not_retries(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        """With dynamic approval on and a cap of 2, the third distinct unknown client of the day is refused on our own
+        origin and logged at WARNING (the line an alert keys on), while a client already sent to approval can come
+        back -- the approval round trip is followed by a second login -- without using up more of the budget."""
+        from keboola_mcp_server.oauth import _ApprovalBudget, _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
+        monkeypatch.setattr(oauth_provider, '_approval_daily_limit', 2)
+        monkeypatch.setattr(oauth_provider, '_approval_budget', _ApprovalBudget(2))
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+
+        async def outcome(uri: str) -> str:
+            params = AuthorizationParams(
+                redirect_uri=AnyUrl(uri),
+                redirect_uri_provided_explicitly=True,
+                code_challenge='challenge',
+                state='client-state',
+                scopes=None,
+            )
+            url = urlparse(await oauth_provider.authorize(client, params))
+            return 'approval' if url.path == '/oauth/authorize' else parse_qs(url.query)['error'][0]
+
+        assert await outcome('https://one.example/cb') == 'approval'
+        assert await outcome('https://two.example/cb') == 'approval'
+        assert await outcome('https://three.example/cb') == 'unregistered_client'
+        assert await outcome('https://one.example/cb') == 'approval'  # a retry of a client already sent costs nothing
+
+    @pytest.mark.parametrize(
+        ('elapsed_seconds', 'expected_after'),
+        [
+            (3600.0, False),  # an hour later the window still holds both clients
+            (24 * 3600.0 + 1, True),  # a day later the budget is free again
+        ],
+    )
+    def test_approval_budget_window_slides(
+        self, monkeypatch: pytest.MonkeyPatch, elapsed_seconds: float, expected_after: bool
+    ) -> None:
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ApprovalBudget
+
+        now = [1000.0]
+        monkeypatch.setattr(oauth_module.time, 'monotonic', lambda: now[0])
+        budget = _ApprovalBudget(2)
+        assert budget.try_acquire('a') and budget.try_acquire('b')
+        assert not budget.try_acquire('c')
+
+        now[0] += elapsed_seconds
+
+        assert budget.try_acquire('c') is expected_after
+
+    def test_the_approval_budget_is_off_unless_a_limit_is_given(self, oauth_provider: SimpleOAuthProvider) -> None:
+        assert oauth_provider._approval_budget is None  # no cap by default: behaviour is unchanged unless configured
+
     def test_default_rate_limit_keeps_the_fleet_under_connections_shared_ceiling(self):
         """The limiter is per process but Connection's ceiling is per shared egress IP: the default budget times
         the largest replica count we deploy must stay below it (Vojtěch Biberle review, AI-2883)."""
@@ -2372,3 +2428,284 @@ class TestSimpleOAuthProvider:
     @pytest.mark.asyncio
     async def test_revoke_token_unknown_token_is_a_noop(self, oauth_provider: SimpleOAuthProvider) -> None:
         await oauth_provider.revoke_token('never-issued')  # must not raise
+
+
+class FakeRateLimitStore:
+    """In-memory `RateLimitStore`: what the Postgres one does across replicas, for exercising the callers in isolation."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.counts: dict[str, int] = {}
+        self.claims: dict[str, set[str]] = {}
+        self.fail = fail
+        self.closed = False
+
+    async def hit(self, bucket: str, window_seconds: int) -> int:
+        if self.fail:
+            raise RuntimeError('database is down')
+        self.counts[bucket] = self.counts.get(bucket, 0) + 1
+        return self.counts[bucket]
+
+    async def claim(self, prefix: str, key: str, window_seconds: int, max_keys: int) -> bool:
+        if self.fail:
+            raise RuntimeError('database is down')
+        keys = self.claims.setdefault(prefix, set())
+        if key in keys:
+            return True
+        if len(keys) >= max_keys:
+            return False
+        keys.add(key)
+        return True
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _validate_transport(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Connection answers 200 to every validate call; the list counts the calls that reached it."""
+    from keboola_mcp_server import oauth as oauth_module
+
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(
+        oauth_module, '_create_http_client', lambda **_kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    return calls
+
+
+class TestSharedRateLimits:
+    """AI-4005: the limits that must hold across every replica are counted in the shared store, and degrade to the
+    per-process ones when it cannot answer."""
+
+    @pytest.mark.asyncio
+    async def test_validate_budget_is_shared_between_replicas_and_the_well_known_pair_is_exempt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from keboola_mcp_server.oauth import ConnectionClientRegistry, _ClientRegistration
+
+        calls = _validate_transport(monkeypatch)
+        store = FakeRateLimitStore()
+        replica_a = ConnectionClientRegistry(
+            'https://connection.example', rate_limit_store=store, validate_fleet_limit=3
+        )
+        replica_b = ConnectionClientRegistry(
+            'https://connection.example', rate_limit_store=store, validate_fleet_limit=3
+        )
+
+        results = [
+            await replica_a.check_registration('x', 'https://one.example/cb'),
+            await replica_a.check_registration('x', 'https://two.example/cb'),
+            await replica_b.check_registration('x', 'https://three.example/cb'),
+            await replica_b.check_registration('x', 'https://four.example/cb'),  # the fourth call of the fleet
+        ]
+        well_known = await replica_b.check_registration('claude-ai', 'https://claude.ai/api/mcp/auth_callback')
+
+        assert results == [_ClientRegistration.REGISTERED] * 3 + [_ClientRegistration.ERROR]
+        assert well_known is _ClientRegistration.REGISTERED  # exempt, as with the process limiter
+        assert len(calls) == 4  # three distinct clients plus claude.ai; the fourth never reached Connection
+
+    def test_the_fleet_budget_stays_under_connections_shared_ceiling(self) -> None:
+        from keboola_mcp_server import oauth as oauth_module
+
+        assert oauth_module._VALIDATE_FLEET_LIMIT_PER_MINUTE < oauth_module._CONNECTION_VALIDATE_LIMIT_PER_WINDOW
+
+    @pytest.mark.asyncio
+    async def test_validate_budget_falls_back_to_the_process_limiter_when_the_store_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from keboola_mcp_server.oauth import ConnectionClientRegistry, _ClientRegistration
+
+        _validate_transport(monkeypatch)
+        registry = ConnectionClientRegistry(
+            'https://connection.example', validate_rate_limit=1, rate_limit_store=FakeRateLimitStore(fail=True)
+        )
+
+        first = await registry.check_registration('x', 'https://one.example/cb')
+        second = await registry.check_registration('x', 'https://two.example/cb')
+
+        assert (first, second) == (_ClientRegistration.REGISTERED, _ClientRegistration.ERROR)
+
+    @pytest.mark.asyncio
+    async def test_the_approval_cap_is_shared_between_replicas(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Two replicas with a cap of one: the second replica refuses a new client the first one has not seen, and still
+        lets the client the first one sent to approval come back."""
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        async def not_registered(self, connection_client_id: str, redirect_uri: str):
+            return _ClientRegistration.NOT_REGISTERED
+
+        monkeypatch.setattr(oauth_module.ConnectionClientRegistry, 'check_registration', not_registered)
+        store = FakeRateLimitStore()
+
+        def replica() -> SimpleOAuthProvider:
+            return SimpleOAuthProvider(
+                storage_api_url='https://sapi',
+                mcp_server_url='https://mcp',
+                callback_endpoint='/callback',
+                client_id='mcp-server-id',
+                client_secret='mcp-server-secret',
+                server_url='https://oauth',
+                scope='scope',
+                jwt_secret=JWT_KEY,
+                session_store=FakeSessionStore(),
+                dynamic_client_approval=True,
+                approval_daily_limit=1,
+                rate_limit_store=store,
+                encryption_key=b'k' * 32,
+            )
+
+        async def outcome(provider: SimpleOAuthProvider, uri: str) -> str:
+            client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+            params = AuthorizationParams(
+                redirect_uri=AnyUrl(uri),
+                redirect_uri_provided_explicitly=True,
+                code_challenge='challenge',
+                state='client-state',
+                scopes=None,
+            )
+            url = urlparse(await provider.authorize(client, params))
+            return 'approval' if url.path == '/oauth/authorize' else parse_qs(url.query)['error'][0]
+
+        replica_a, replica_b = replica(), replica()
+
+        assert await outcome(replica_a, 'https://one.example/cb') == 'approval'
+        assert await outcome(replica_b, 'https://two.example/cb') == 'unregistered_client'
+        assert await outcome(replica_b, 'https://one.example/cb') == 'approval'
+
+    @pytest.mark.asyncio
+    async def test_aclose_closes_the_store_and_the_middleware_needs_both_a_store_and_a_limit(self) -> None:
+        store = FakeRateLimitStore()
+
+        def provider(**extra: Any) -> SimpleOAuthProvider:
+            return SimpleOAuthProvider(
+                storage_api_url='https://sapi',
+                mcp_server_url='https://mcp',
+                callback_endpoint='/callback',
+                client_id='mcp-server-id',
+                client_secret='mcp-server-secret',
+                server_url='https://oauth',
+                scope='scope',
+                jwt_secret=JWT_KEY,
+                session_store=FakeSessionStore(),
+                **extra,
+            )
+
+        assert provider().authorize_rate_limit_middleware() is None
+        assert provider(rate_limit_store=store).authorize_rate_limit_middleware() is None  # no limit configured
+        assert provider(authorize_rate_limit_per_ip=5).authorize_rate_limit_middleware() is None  # no store to count in
+        configured = provider(rate_limit_store=store, authorize_rate_limit_per_ip=5)
+        assert configured.authorize_rate_limit_middleware() is not None
+
+        await configured.aclose()
+
+        assert store.closed
+
+
+@pytest.mark.parametrize(
+    ('forwarded_for', 'hops', 'client', 'expected'),
+    [
+        ('1.1.1.1', 1, None, '1.1.1.1'),
+        ('spoofed, 2.2.2.2', 1, ('9.9.9.9', 1), '2.2.2.2'),  # what the caller wrote before the proxy is never used
+        ('a, 3.3.3.3, 4.4.4.4', 2, None, '3.3.3.3'),  # two trusted hops: the caller is the second entry from the end
+        ('', 1, ('5.5.5.5', 1), '5.5.5.5'),  # no header: the connection's own peer
+        ('1.1.1.1', 2, ('6.6.6.6', 1), '6.6.6.6'),  # fewer entries than hops: do not trust a header we cannot place
+        ('not-an-address', 1, None, None),  # not pooled into a shared key
+        ('', 1, None, None),
+        (
+            '2001:0db8:0:0:0:0:0:1',
+            1,
+            None,
+            '2001:db8::/64',
+        ),  # an IPv6 caller is its /64, so rotating inside it gains nothing
+        ('2001:db8:0:0:aaaa:bbbb:cccc:dddd', 1, None, '2001:db8::/64'),
+        ('::ffff:7.7.7.7', 1, None, '7.7.7.7'),  # an IPv4 caller reaching us over IPv6 is still that IPv4 address
+    ],
+)
+def test_caller_address(forwarded_for: str, hops: int, client: tuple[str, int] | None, expected: str | None) -> None:
+    from keboola_mcp_server.oauth import _caller_address
+
+    scope = {'type': 'http', 'headers': [(b'x-forwarded-for', forwarded_for.encode())] if forwarded_for else []}
+    if client:
+        scope['client'] = client
+
+    assert _caller_address(scope, hops) == expected
+
+
+class TestAuthorizeRateLimitMiddleware:
+    @staticmethod
+    def _client(store: FakeRateLimitStore, limit: int = 2):
+        from starlette.applications import Starlette
+        from starlette.middleware import Middleware
+        from starlette.responses import PlainTextResponse
+        from starlette.routing import Route
+        from starlette.testclient import TestClient
+
+        from keboola_mcp_server.oauth import AuthorizeRateLimitMiddleware
+
+        async def ok(request):
+            return PlainTextResponse('ok')
+
+        app = Starlette(
+            routes=[Route('/authorize', ok), Route('/other', ok)],
+            middleware=[Middleware(AuthorizeRateLimitMiddleware, store=store, limit_per_minute=limit, trusted_hops=1)],
+        )
+        return TestClient(app)
+
+    def test_limits_one_address_and_keeps_the_others_apart(self) -> None:
+        client = self._client(FakeRateLimitStore())
+
+        statuses = [client.get('/authorize', headers={'X-Forwarded-For': '1.1.1.1'}).status_code for _ in range(3)]
+        other = client.get('/authorize', headers={'X-Forwarded-For': '2.2.2.2'})
+        limited = client.get('/authorize', headers={'X-Forwarded-For': '1.1.1.1'})
+
+        assert statuses == [200, 200, 429]
+        assert other.status_code == 200
+        assert limited.status_code == 429
+        assert limited.headers['retry-after'] == '60'
+        assert limited.json()['error'] == 'temporarily_unavailable'
+
+    def test_a_caller_cannot_dodge_the_limit_by_writing_the_header_itself(self) -> None:
+        client = self._client(FakeRateLimitStore())
+
+        statuses = [
+            client.get('/authorize', headers={'X-Forwarded-For': f'spoof-{i}, 3.3.3.3'}).status_code for i in range(3)
+        ]
+
+        assert statuses == [200, 200, 429]  # the proxy-appended entry is the same every time
+
+    def test_other_paths_are_not_counted(self) -> None:
+        store = FakeRateLimitStore()
+        client = self._client(store)
+
+        assert [client.get('/other', headers={'X-Forwarded-For': '1.1.1.1'}).status_code for _ in range(5)] == [200] * 5
+        assert store.counts == {}
+
+    def test_a_caller_with_no_address_is_not_counted_instead_of_pooled(self) -> None:
+        """No readable address (here: no header and a peer that is not an IP) must not mean one shared bucket that a single
+        caller could fill for everybody else."""
+        store = FakeRateLimitStore()
+        client = self._client(store)
+
+        assert [client.get('/authorize').status_code for _ in range(5)] == [200] * 5
+        assert store.counts == {}
+
+    def test_an_ipv6_caller_cannot_dodge_the_limit_by_rotating_inside_its_prefix(self) -> None:
+        client = self._client(FakeRateLimitStore())
+
+        statuses = [
+            client.get('/authorize', headers={'X-Forwarded-For': f'2001:db8:0:0:{i:x}::1'}).status_code
+            for i in range(3)
+        ]
+
+        assert statuses == [200, 200, 429]  # one /64, one counter
+
+    def test_a_store_that_cannot_answer_lets_the_request_through(self) -> None:
+        client = self._client(FakeRateLimitStore(fail=True))
+
+        assert [client.get('/authorize', headers={'X-Forwarded-For': '1.1.1.1'}).status_code for _ in range(5)] == [
+            200
+        ] * 5
