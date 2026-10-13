@@ -732,3 +732,34 @@ It is additive, per "Schema stability" above, and becomes the metastore's defaul
   (`tools/sql.py`) and the metadata views (`tools/search.py`, `tools/storage/tools.py`), or a query and a
   metadata view would resolve the same reader differently.
 
+
+## v6 Amendment: relationship to Query Service enforcement (2026-10-13)
+
+Design only; nothing in this amendment changes the code of this PR. Companion documents: the Query Service RFC
+(go-monorepo PR #616), the Connection design (connection PR #8812), the policy schema 1.1.0 (go-monorepo PR #617)
+and the `policy-binding` metastore schema (go-monorepo PR #620). It supersedes earlier text where they conflict.
+
+- **Direction.** For governed workspaces the Query Service (QS) enforces the policies on every query that passes
+  through it, so correctness no longer depends on this server's rewrite. The metastore stays the single policy
+  store. The in-process rewrite here stays until QS is the proven single enforcement point, then is removed.
+- **Governed workspace.** A workspace with the new Connection login type `governed`: deny-all until a policy grants a
+  table, and nobody but QS can obtain its credentials. Existing workspaces are not changed or deleted. The first
+  version targets Data App end users without a Storage token; MCP is the second consumer.
+- **What this server will change (a later PR, blocked on the Connection login type and on QS enforcement mode).**
+  In a project with the `row-level-security` feature (still read through `client.has_feature`; Connection does not check
+  it, it is only a signal) it creates its shared workspace with login type `governed` when none exists, and prefers a
+  governed workspace on rediscovery instead of the first read-only one (today it also accepts a caller-supplied
+  `workspace_id`; that is accepted for original SQL only if the workspace is governed). It sends original SQL with
+  `X-KBC-Client-Rewrite: none` only to a governed workspace and only after a capabilities check; otherwise it rewrites
+  itself and sends `applied`; on a 409 `RLS_CLIENT_REWRITE_REQUIRED` it rewrites and retries; `KBC_RLS_ENFORCEMENT =
+  mcp | auto | qs` is the final cutover and the emergency switch. QS refuses a governed workspace's request that declares
+  neither, so a governed workspace is never read unfiltered.
+- **Grouping for MCP users is a gap, not a given.** The wish is that MCP users who do not go through the UI or Kai
+  (read-only or any other role of a project) can be restricted by group. Today an MCP caller's groups are UNKNOWN (see
+  v5), so `groups` rules never match it. A source is open: the server already reads the token's project role
+  (`get_token_role()`), which could feed a group-like selector, or an IdP group could be delivered with the identity.
+  Not decided.
+- **What a governed workspace does not protect.** Whoever holds a broad Storage token can still read the data through a
+  preview, an export or a new workspace; protecting against that needs a restricted token and finer permissions, a
+  separate effort. The pilot's remark above that per-end-user database access is out of scope stays true for workspaces
+  that are not governed.

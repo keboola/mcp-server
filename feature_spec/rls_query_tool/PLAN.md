@@ -328,6 +328,13 @@ DONE and unaffected; these are additive. Phase numbers below match the RFC's "Ro
 - Metastore: go-monorepo registers both 1.1.0 schemas as the default version, and the SA read path's
   `?principal=` narrowing keeps `groups` rules (separate PR there).
 
+## Task 12 -- governed workspace and handshake (NOT STARTED, blocked)
+
+See RFC v6 Amendment. Blocked on the Connection login type `governed` (connection PR #8812) and on QS enforcement
+mode (go-monorepo PR #616, PR-2b). Create the shared workspace with login type `governed` in a feature project and prefer
+a governed one on rediscovery; the `X-KBC-Client-Rewrite` handshake and `KBC_RLS_ENFORCEMENT`; decide the group source
+for MCP callers. No code in this PR.
+
 ## Phase 3-6
 
 No task breakdown yet — each is a separate RFC amendment (or its own RFC, for Phase 6) once its
