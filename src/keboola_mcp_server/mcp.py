@@ -11,7 +11,6 @@ import logging
 import textwrap
 from collections.abc import Awaitable, Callable, Iterable
 from contextvars import ContextVar
-from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from typing import Any, TypeVar, cast
 from unittest.mock import MagicMock
@@ -33,13 +32,11 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import (
-    REFRESH_SKEW_SECONDS,
     exchange_scoped_token,
     forget_rejected_access_token,
     get_access_token,
     introspect_token,
     load_tokens,
-    refresh_tokens,
 )
 from keboola_mcp_server.clients.auth_bridge import (
     StorageTokenExchangeError,
@@ -57,17 +54,25 @@ from keboola_mcp_server.config import (
     is_same_stack,
 )
 from keboola_mcp_server.oauth import ProxyAccessToken
+from keboola_mcp_server.provisioned_session import (
+    handle_unauthorized as handle_provisioned_session_unauthorized,
+)
+from keboola_mcp_server.provisioned_session import (
+    resolve_session as resolve_provisioned_session,
+)
 from keboola_mcp_server.scope import (
     OAUTH_SESSION_ID_KEY,
     SCOPE_KEY,
     SCOPE_TOKEN_ARG,
+    ScopeTokenUnreadable,
     SessionScope,
     persist_scope,
+    resolve_provisioned_binding_aad,
     resolve_scope_binding_aad,
     resolve_scope_key,
 )
 from keboola_mcp_server.session_store.kai_scope import KaiScopeStore
-from keboola_mcp_server.session_store.repository import OAuthSession, SessionStore
+from keboola_mcp_server.session_store.repository import SessionStore
 from keboola_mcp_server.tools.constants import (
     BOOTSTRAP_TOOLS,
     MODIFY_FLOW_TOOL_NAME,
@@ -129,14 +134,6 @@ DATA_APP_BRANCH_GATED_TOOLS = {
     'delete_python_js_data_app_draft',
     'get_data_app_preview_link',
 }
-
-
-class ProvisionedSessionEnded(Exception):
-    """A session created by `create_project` is over: Connection refused its refresh token, or the
-    row is gone. Its own type, not a `ValueError`, because the refresh path has to tell this apart
-    from the ordinary `ValueError`s raised inside it -- `json.JSONDecodeError` from a proxy's
-    non-JSON 200, `float()` in `parse_token_response`, `datetime.fromtimestamp` -- which are
-    transient and must not end a live session."""
 
 
 def _is_unauthorized(error: BaseException) -> bool:
@@ -368,7 +365,7 @@ class SessionStateMiddleware(fmw.Middleware):
             # ctx.session.state, which is rebuilt empty on every request under this server's default
             # stateless-HTTP transport. With no scope and no preset project, auto-lease ALL accessible
             # projects (multi-project mode) so read tools fan out across everything — but never on /list.
-            scope = self._read_scope_from_request(context, config)
+            scope = self._read_scope_from_request(context, config, self._read_oauth_session_id(http_rq))
             # OAuth-authenticated sessions don't need scope_token at all: the opaque OAuth access
             # token is already resent on every call and resolves through the Postgres session store
             # (load_access_token), so a confirmed scope persisted there (via set_project_scope ->
@@ -410,7 +407,7 @@ class SessionStateMiddleware(fmw.Middleware):
             # the row's handle inside `scope_token`. Resolve it into a usable token before anything
             # else needs one. Done for /list too: unlike the login-store paths above this is a cheap
             # Postgres read, and without it a listing for such a session has no credentials at all.
-            config = await self._resolve_provisioned_session(config, scope, server_state)
+            config = await resolve_provisioned_session(config, scope, server_state.session_store)
             if not is_list:
                 scoped_token_before = scope.scoped_token if scope is not None else None
                 config, scope = await self._resolve_local_tokens(config, scope)
@@ -469,131 +466,6 @@ class SessionStateMiddleware(fmw.Middleware):
             # ctx.session.state = {}
             pass
 
-    @staticmethod
-    def _provisioned_session_ended(project_id: int | None) -> ProvisionedSessionEnded:
-        """The one explanation a caller gets once their provisioned session is gone.
-
-        Shared by both places that discover it -- the 401 that first reveals the revocation, and
-        every later request whose handle no longer resolves -- so the answer does not degrade into
-        an unexplained failure after the first one.
-        """
-        return ProvisionedSessionEnded(
-            f'The temporary session that created project {project_id} has ended. This normally means the '
-            'project has been claimed and now belongs to a real Keboola account -- stop resending the '
-            'scope_token from "create_project" and sign in to this server with that account to keep '
-            'working in the project.'
-        )
-
-    @classmethod
-    async def _resolve_provisioned_session(
-        cls, config: Config, scope: 'SessionScope | None', server_state: ServerState
-    ) -> Config:
-        """Turns a provisioned session's handle (``SessionScope.provisioned_session_id``) into the
-        access token for this request, refreshing it server-side when it nears expiry.
-
-        This is the deployed server's equivalent of the local credential file: the Keboola tokens
-        never leave the server, so the caller cannot refresh them and must not be asked to.
-
-        The handle takes precedence over whatever credential the request otherwise carries. That is
-        not a weakening: a provisioned project belongs to the stack's agent maintainer, so a
-        caller's own session cannot reach it at all, and resolving the handle is the only way the
-        call they asked for can work. Replay by someone else is prevented where it has to be --
-        `scope_token` is encrypted and bound to the caller it was minted for (`to_token`'s ``aad``),
-        so a different caller cannot even decrypt it.
-
-        A *gone* row ends the request with the "this session has ended" explanation rather than
-        letting it fall back to the caller's own credential: the scope still points at a project
-        that credential cannot reach, so the fallback can only produce a confusing failure -- and
-        after the claim has revoked the row, it would produce one on every single later call.
-        A row that merely cannot be *read* right now (a Postgres blip) is different: that is
-        transient, so the config is left untouched and the request takes its chances.
-        """
-        store = server_state.session_store
-        if store is None or scope is None or scope.provisioned_session_id is None:
-            return config
-        try:
-            session = await store.get_by_id(scope.provisioned_session_id)
-        except Exception as e:
-            LOG.warning(f'Could not load the provisioned session: {e}', exc_info=True)
-            return config
-        if session is None:
-            # Revoked (the human claimed the project) or expired out of the store.
-            LOG.info('The provisioned session referenced by this scope_token no longer exists.')
-            raise cls._provisioned_session_ended(scope.active_project_id)
-
-        access_token = session.kbc_access_token
-        if session.kbc_access_expires_at <= datetime.now(timezone.utc) + timedelta(seconds=REFRESH_SKEW_SECONDS):
-            access_token = await cls._refresh_provisioned_session(config, session, store, scope.active_project_id)
-        project_id = str(scope.active_project_id) if scope.active_project_id is not None else config.project_id
-        return dataclasses.replace(config, storage_token=access_token, project_id=project_id)
-
-    @classmethod
-    async def _refresh_provisioned_session(
-        cls,
-        config: Config,
-        session: OAuthSession,
-        store: SessionStore,
-        project_id: int | None,
-        *,
-        force: bool = False,
-    ) -> str:
-        """Exchanges the session's refresh token for a fresh pair and persists the rotation.
-
-        Serialized across every worker and replica by a lock on the session row, because Connection
-        rotates the refresh token: two requests refreshing the same session concurrently would have
-        one of them spend a token the other has already invalidated, and a late write-back could
-        persist that dead pair and strand the session for good. The lock re-reads the row, so the
-        loser of the race finds the winner's fresh credentials and makes no second call at all --
-        the same double-checked pattern `get_access_token` uses for the local credential file.
-
-        A refresh Connection *refuses* (401) is final, and for a provisioned session it has one
-        likely cause: the human claimed the project, which revokes the whole Keboola session. The
-        row is revoked (compare-and-swap, so a concurrent rotation is never killed) and the caller
-        gets the same "this session has ended" explanation as every other way of discovering it --
-        the convention `SimpleOAuthProvider._refresh_kbc_tokens` established for OAuth sessions.
-
-        Any other failure is transient, so the current token is returned: it may still have minutes
-        left, and the 401 handling deals with it properly if it does not.
-
-        ``force`` refreshes even when the stored token still looks fresh -- used by the 401 handler,
-        where whether the refresh token is still accepted *is* the question being asked.
-        """
-        try:
-            async with store.lock_session(session.id) as locked:
-                current = locked.session
-                if current is None:
-                    raise cls._provisioned_session_ended(project_id)  # revoked while we waited
-                if not force and current.kbc_access_expires_at > datetime.now(timezone.utc) + timedelta(
-                    seconds=REFRESH_SKEW_SECONDS
-                ):
-                    return current.kbc_access_token  # another worker refreshed it while we waited
-                try:
-                    refreshed = await refresh_tokens(
-                        cast(str, config.storage_api_url), refresh_token=current.kbc_refresh_token
-                    )
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code != HTTPStatus.UNAUTHORIZED:
-                        raise
-                    await locked.revoke()
-                    LOG.info(
-                        'Connection refused the provisioned session\'s refresh token (401); '
-                        f'session revoked: session_id={current.id}'
-                    )
-                    raise cls._provisioned_session_ended(project_id) from e
-                # On the locked connection, so a write that fails still fails *here*, while the old
-                # refresh token is already spent -- never swallowed into "transient, carry on".
-                await locked.rotate_kbc_tokens(
-                    kbc_access_token=refreshed.access_token,
-                    kbc_refresh_token=refreshed.refresh_token,
-                    kbc_access_expires_at=datetime.fromtimestamp(refreshed.expires_at, tz=timezone.utc),
-                )
-                return refreshed.access_token
-        except ProvisionedSessionEnded:
-            raise  # the session is over -- say so rather than handing back a dead token
-        except Exception as e:
-            LOG.warning(f'Could not refresh the provisioned session: {e}', exc_info=True)
-            return session.kbc_access_token
-
     @classmethod
     async def _handle_unauthorized(
         cls,
@@ -630,7 +502,7 @@ class SessionStateMiddleware(fmw.Middleware):
             and server_state is not None
             and server_state.session_store is not None
         ):
-            await cls._handle_provisioned_session_unauthorized(config, scope, server_state.session_store)
+            await handle_provisioned_session_unauthorized(config, scope, server_state.session_store)
             return
         if not cls._is_local_programmatic(config):
             return
@@ -652,39 +524,6 @@ class SessionStateMiddleware(fmw.Middleware):
             return
         if await forget_rejected_access_token(storage_api_url, access_token):
             LOG.info(f'The stored session for {storage_api_url} was rejected by Connection; dropped it.')
-
-    @classmethod
-    async def _handle_provisioned_session_unauthorized(
-        cls, config: Config, scope: 'SessionScope', store: SessionStore
-    ) -> None:
-        """Decides whether a 401 on a provisioned session means the session is over.
-
-        The expected cause is the happy one: the human opened the confirm link and claimed the
-        project, which revokes the agent session that created it. Then the caller should be told
-        that, not handed a bare 401.
-
-        The authority is the **refresh token**, not the access token. An access token can 401 for
-        reasons that leave the session perfectly alive -- most obviously it simply expired after an
-        idle hour, or an earlier refresh hit a Connection blip and this request carried the stale
-        token on purpose. Revoking on that evidence would destroy the only handle to an unclaimed
-        project over a transient failure. So this re-reads the row and tries a refresh: Connection
-        refusing it is proof (and revokes, inside the lock), a refresh that succeeds says the
-        session was merely stale and the original error stands, and anything else is transient.
-        """
-        try:
-            session = await store.get_by_id(cast(str, scope.provisioned_session_id))
-        except Exception as e:
-            LOG.warning(f'Could not load the provisioned session while handling a 401: {e}', exc_info=True)
-            return
-        if session is None:
-            raise cls._provisioned_session_ended(scope.active_project_id)
-
-        refreshed = await cls._refresh_provisioned_session(config, session, store, scope.active_project_id, force=True)
-        if refreshed != session.kbc_access_token:
-            LOG.info(
-                'The provisioned session was refreshed while handling a 401; the credential is still valid: '
-                f'session_id={session.id}'
-            )
 
     async def on_list_tools(
         self,
@@ -834,14 +673,23 @@ class SessionStateMiddleware(fmw.Middleware):
         return config
 
     @classmethod
-    def _read_scope_from_request(cls, context: fmw.MiddlewareContext[Any], config: Config) -> 'SessionScope | None':
+    def _read_scope_from_request(
+        cls, context: fmw.MiddlewareContext[Any], config: Config, oauth_session_id: str | None = None
+    ) -> 'SessionScope | None':
         """Decodes the ``scope_token`` tool-call argument (if any) back into a SessionScope.
 
         Pops the argument so it never reaches the tool function, matching how
-        MultiProjectMiddleware.on_call_tool consumes _PROJECT_FILTER_ARG. Absent, malformed, or
-        expired tokens are treated as "no scope yet" rather than an error -- the ask-first gate in
-        MultiProjectMiddleware then steers the caller back through get_accessible_projects /
-        set_project_scope.
+        MultiProjectMiddleware.on_call_tool consumes _PROJECT_FILTER_ARG. *No* scope_token means
+        "no scope yet" -- the ask-first gate in MultiProjectMiddleware then steers the caller back
+        through get_accessible_projects / set_project_scope. One that is present but unreadable is
+        an error instead (`ScopeTokenUnreadable`): silently continuing would run the call under a
+        different scope than the caller believes it is in -- see that exception.
+
+        A token can carry either of two bindings, so both are tried: `set_project_scope` binds to
+        the caller's presented credential, while a provisioned project's handle binds to the OAuth
+        session id, which (unlike that credential) does not rotate underneath it. Trying both is not
+        a weakening -- each candidate is a key the caller already demonstrably holds, and a token
+        sealed for anyone else decrypts under neither.
         """
         # context.message always exists (a required MiddlewareContext field); only whether it HAS
         # .arguments varies by request type (a ListToolsRequest has none, a CallToolRequestParams
@@ -852,13 +700,29 @@ class SessionStateMiddleware(fmw.Middleware):
         token = args.pop(SCOPE_TOKEN_ARG, None)
         if not token:
             return None
-        try:
-            return SessionScope.from_token(
-                token, resolve_scope_key(config), aad=resolve_scope_binding_aad(config.storage_token)
-            )
-        except Exception:
-            LOG.warning('Ignoring invalid or expired scope_token.', exc_info=True)
-            return None
+        key = resolve_scope_key(config)
+        candidates: list[bytes | None] = []
+        for aad in (
+            resolve_scope_binding_aad(config.storage_token),
+            resolve_provisioned_binding_aad(oauth_session_id),
+            None,  # minted for a caller that held no credential to bind to
+        ):
+            if aad not in candidates:
+                candidates.append(aad)
+        for aad in candidates:
+            try:
+                return SessionScope.from_token(token, key, aad=aad)
+            except Exception as e:
+                # Expected for every candidate but the right one; only all of them failing is news.
+                last_error = e
+        LOG.warning(f'Received a scope_token that cannot be read under any binding for this session: {last_error}')
+        raise ScopeTokenUnreadable(
+            'The "scope_token" sent with this call cannot be read: it was issued for a different session, '
+            'or by a server that no longer has the key it was sealed with. Stop resending it. If it came '
+            'from "set_project_scope", call "get_accessible_projects" and "set_project_scope" again to pick '
+            'a project; if it came from "create_project", that temporary session cannot be reached from '
+            'this one any more and the project has to be claimed through its confirm_url.'
+        )
 
     @staticmethod
     def _oauth_access_token(http_rq: Request | None) -> ProxyAccessToken | None:

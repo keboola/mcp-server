@@ -31,6 +31,40 @@ def _hash_token(token: str) -> bytes:
     return hashlib.sha256(token.encode('utf-8')).digest()
 
 
+async def _rotate_kbc_tokens(
+    conn: asyncpg.Connection | asyncpg.Pool,
+    session_id: str,
+    *,
+    kbc_access_token: str,
+    kbc_refresh_token: str,
+    kbc_access_expires_at: datetime,
+    key: bytes,
+) -> None:
+    """The credential-rotation UPDATE, in one place.
+
+    Takes whatever can execute it -- a pooled connection held under `lock_session`, or the pool
+    itself -- so `PostgresSessionStore.rotate_kbc_tokens` and `LockedSession.rotate_kbc_tokens`
+    cannot drift apart the next time a column is added here.
+    """
+    await conn.execute(
+        """
+        UPDATE oauth_sessions
+        SET kbc_access_token_enc = $2, kbc_refresh_token_enc = $3, kbc_access_expires_at = $4,
+            updated_at = now()
+        WHERE id = $1
+        """,
+        session_id,
+        crypto.encrypt(kbc_access_token.encode('utf-8'), key),
+        crypto.encrypt(kbc_refresh_token.encode('utf-8'), key),
+        kbc_access_expires_at,
+    )
+
+
+async def _revoke(conn: asyncpg.Connection | asyncpg.Pool, session_id: str) -> None:
+    """The revocation UPDATE, in one place -- see `_rotate_kbc_tokens`."""
+    await conn.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', session_id)
+
+
 @dataclasses.dataclass(frozen=True)
 class OAuthSession:
     id: str
@@ -66,24 +100,20 @@ class LockedSession:
         self, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
     ) -> None:
         assert self.session is not None, 'Cannot rotate the credentials of a session that is gone.'
-        await self._conn.execute(
-            """
-            UPDATE oauth_sessions
-            SET kbc_access_token_enc = $2, kbc_refresh_token_enc = $3, kbc_access_expires_at = $4,
-                updated_at = now()
-            WHERE id = $1
-            """,
+        await _rotate_kbc_tokens(
+            self._conn,
             self.session.id,
-            crypto.encrypt(kbc_access_token.encode('utf-8'), self._key),
-            crypto.encrypt(kbc_refresh_token.encode('utf-8'), self._key),
-            kbc_access_expires_at,
+            kbc_access_token=kbc_access_token,
+            kbc_refresh_token=kbc_refresh_token,
+            kbc_access_expires_at=kbc_access_expires_at,
+            key=self._key,
         )
 
     async def revoke(self) -> None:
         """Ends the session. No compare-and-swap needed: the lock already makes this the only
         worker that could have rotated the credentials since they were read."""
         assert self.session is not None, 'Cannot revoke a session that is gone.'
-        await self._conn.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', self.session.id)
+        await _revoke(self._conn, self.session.id)
 
 
 class SessionStore(Protocol):
@@ -295,17 +325,13 @@ class PostgresSessionStore:
         self, session_id: str, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
     ) -> None:
         pool = await self._get_pool()
-        await pool.execute(
-            """
-            UPDATE oauth_sessions
-            SET kbc_access_token_enc = $2, kbc_refresh_token_enc = $3, kbc_access_expires_at = $4,
-                updated_at = now()
-            WHERE id = $1
-            """,
+        await _rotate_kbc_tokens(
+            pool,
             session_id,
-            crypto.encrypt(kbc_access_token.encode('utf-8'), self._key),
-            crypto.encrypt(kbc_refresh_token.encode('utf-8'), self._key),
-            kbc_access_expires_at,
+            kbc_access_token=kbc_access_token,
+            kbc_refresh_token=kbc_refresh_token,
+            kbc_access_expires_at=kbc_access_expires_at,
+            key=self._key,
         )
 
     @guard_db_errors
@@ -355,7 +381,7 @@ class PostgresSessionStore:
     @guard_db_errors
     async def revoke(self, session_id: str) -> None:
         pool = await self._get_pool()
-        await pool.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', session_id)
+        await _revoke(pool, session_id)
 
     @guard_db_errors
     async def revoke_if_kbc_refresh_token(self, session_id: str, kbc_refresh_token: str) -> bool:
@@ -371,5 +397,5 @@ class PostgresSessionStore:
                 kbc_refresh_token
             ):
                 return False
-            await conn.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', session_id)
+            await _revoke(conn, session_id)
             return True

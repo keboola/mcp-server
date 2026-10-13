@@ -85,9 +85,26 @@ credential.
 A provisioned project belongs to the stack's agent maintainer, so the caller's own session cannot
 reach it at all — resolving the handle is the only way the call they asked for can work. The
 protection against someone *else* replaying the handle is where it belongs: `scope_token` is
-encrypted and bound (`to_token`'s `aad`) to the credential the caller presented when it was minted,
-so a different caller cannot decrypt it. A caller with no credential at all gets an unbound handle,
-which is the only shape available to a session that has no identity yet.
+encrypted and bound (`to_token`'s `aad`) to the caller it was minted for, so a different caller
+cannot decrypt it.
+
+What it binds *to* has to be stable for as long as the project is unclaimed — the ~2 h of PAYG
+credits this feature exists to give the agent. `set_project_scope` binds to the caller's presented
+Keboola credential, which is wrong here: on the deployed server that credential is rotated roughly
+hourly (`load_access_token`), so the handle would become undecryptable at the first rotation,
+silently stranding an unclaimed project and tempting the agent into provisioning a second one. A
+provisioned handle therefore binds to the **OAuth session id**
+(`resolve_provisioned_binding_aad`) — stable for the session's whole life, and just as unavailable
+to a different caller. A session with no OAuth row (a programmatic token, whose credential this
+server never rotates) binds to that credential as before, and a caller with no credential at all
+gets an unbound handle, the only shape available to a session that has no identity yet.
+
+Both bindings are tried when reading a `scope_token` back, since a token does not say which kind it
+is. That is not a weakening: each candidate is a key the caller already demonstrably holds, and a
+token sealed for anyone else decrypts under neither. A `scope_token` that is **present but
+unreadable** is an error (`ScopeTokenUnreadable`), not "no scope" — silently continuing would run
+the call under a different scope than the caller believes it is in, and for a provisioned project
+the handle is the only pointer that exists.
 
 ### How the session is recognised on the next request
 
@@ -168,11 +185,12 @@ Shipped in this increment:
   (`SessionStore.create`, AES-256-GCM at rest) and returns only the row's handle, inside the
   encrypted `scope_token` every tool already accepts. `SessionScope.provisioned_session_id` carries
   it; `SessionStore.get_by_id` was added to resolve it.
-* `SessionStateMiddleware._resolve_provisioned_session` turns the handle into the request's token,
-  refreshing server-side and persisting the rotation (`rotate_kbc_tokens`) when it nears expiry.
-* `_handle_provisioned_session_unauthorized` ends the session when the claim revokes it: introspect
-  to be sure, `revoke()` the row, and replace the 401 with the "the project is now yours, sign in"
-  message. Every later request whose handle no longer resolves gets the *same* message rather than
+* `provisioned_session.resolve_session` turns the handle into the request's token, refreshing
+  server-side and persisting the rotation (`rotate_kbc_tokens`) when it nears expiry. The whole
+  credential lifecycle lives in `provisioned_session.py` rather than in `SessionStateMiddleware`:
+  none of it reads middleware state, it is all a function of `(config, scope, store)`.
+* `provisioned_session.handle_unauthorized` ends the session when the claim revokes it: `revoke()`
+  the row and replace the 401 with the "the project is now yours, sign in" message. Every later request whose handle no longer resolves gets the *same* message rather than
   an unexplained failure -- a revoked row is a dead end, not a reason to fall back to the caller's
   own credential against a project it cannot reach.
 * **The refresh token is the authority, not the access token.** A refresh Connection *refuses*
@@ -184,9 +202,18 @@ Shipped in this increment:
   access-token 401 would destroy the only handle to an unclaimed project over a blip.
 * Writes during a refresh go through the handle `lock_session` yields, on the connection the lock
   is already held on. Acquiring a second pooled connection there would deadlock the pool once as
-  many refreshes overlap as the pool is wide -- every holder and waiter occupies one -- and it also
-  kept a failed write out of the caller's reach, swallowed as "transient" after Connection had
-  already spent the old refresh token.
+  many refreshes overlap as the pool is wide -- every holder and waiter occupies one.
+* **The two ordinary endings inside the lock are reported, not raised.** `revoke()` writes on the
+  locked connection, so raising out of the `async with` unwinds through the transaction and rolls
+  that write back: the session would log "revoked" and then keep answering `get_by_id` forever,
+  spending another refresh call on a dead token every request. `_refresh_locked` returns an outcome
+  and the caller raises once the transaction has committed.
+* **A failure after a successful refresh is not transient.** The old refresh token is spent by
+  then, so only the new pair is valid: swallowing a failed write as "transient" and returning the
+  superseded access token would leave the stored pair dead, and the next refresh would 401 and be
+  read as the claim -- ending a session that is alive. The write is retried on a fresh connection
+  (`_persist_outside_lock`) and, failing that, raised. Only failures *before* the refresh spends
+  anything (the lock, the row read, a transport error) return the stored token.
 * The refresh is serialized across workers and replicas by `SessionStore.lock_session()`
   (a transaction-scoped Postgres advisory lock) and re-reads the row under it: Connection rotates
   refresh tokens, so two concurrent refreshes would have one spend a token the other already

@@ -88,6 +88,41 @@ def resolve_scope_binding_aad(storage_token: str | None) -> bytes | None:
     return hashlib.sha256(strip_bearer(storage_token).encode('utf-8')).digest()
 
 
+class ScopeTokenUnreadable(ValueError):
+    """A ``scope_token`` was sent but could not be decrypted under any binding this request can
+    offer.
+
+    Raised rather than silently treated as "no scope": the caller believes it is working inside the
+    scope that token names, and the fallbacks below it (the persisted OAuth scope, the auto-leased
+    default) resolve to a *different* project -- so a write tool would quietly run against the
+    caller's own project instead of the one they think they are in. For a provisioned project the
+    handle is the only pointer that exists, so losing it silently also strands an unclaimed project
+    (see the remote_agent_provisioning RFC).
+    """
+
+
+def resolve_provisioned_binding_aad(oauth_session_id: str | None) -> bytes | None:
+    """Binds a provisioned project's handle to the OAuth session it was minted for.
+
+    Deliberately *not* `resolve_scope_binding_aad`: that binds to the caller's current Keboola
+    access token, which the deployed server rotates roughly hourly (`load_access_token`), while this
+    handle has to stay readable for as long as the project is unclaimed -- the ~2 h of PAYG credits
+    the feature exists to give an agent. Binding to the rotating credential makes the handle
+    undecryptable at the first rotation, which silently strands the project and tempts the agent
+    into provisioning a second one. The OAuth session id is stable for the session's whole life and
+    is just as unavailable to a different caller, so it binds exactly as tightly.
+
+    A no-op (returns None) on a local server, and for a caller with no OAuth session at all -- the
+    newcomer this feature exists for holds no credential to bind to. See `resolve_scope_binding_aad`
+    for why a local server needs no binding.
+    """
+    if not deployed_sa_token_path() or not oauth_session_id:
+        return None
+    # Domain-separated from `resolve_scope_binding_aad`'s digest so the two bindings can never
+    # collide on a value that happens to appear in both roles.
+    return hashlib.sha256(f'oauth-session:{oauth_session_id}'.encode()).digest()
+
+
 @dataclasses.dataclass(frozen=True)
 class SessionScope:
     """In-conversation multi-project scope (PSGO-261 increment 2).

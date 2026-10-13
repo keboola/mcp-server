@@ -35,6 +35,7 @@ from keboola_mcp_server.scope import (
     ProjectIdArg,
     SessionScope,
     persist_scope,
+    resolve_provisioned_binding_aad,
     resolve_scope_binding_aad,
     resolve_scope_key,
 )
@@ -835,19 +836,25 @@ async def create_project(
             confirmed=True,
             provisioned_session_id=session.id,
         )
-        # Bound to the credential this caller presented, exactly as `set_project_scope` binds its
-        # own token: a handle minted while serving one caller cannot be replayed by another who
-        # obtains the opaque string. A caller with no credential at all (the newcomer this feature
-        # exists for) has nothing to bind to, and gets an unbound handle.
-        caller_bearer = (
-            KeboolaClient.from_state(ctx.session.state).bearer_token
-            if KeboolaClient.STATE_KEY in ctx.session.state
-            else None
-        )
-        scope_token = scope.to_token(
-            resolve_scope_key(ServerState.from_context(ctx).config),
-            aad=resolve_scope_binding_aad(caller_bearer),
-        )
+        # Bound to the caller it was minted for, so a handle obtained some other way (a leaked
+        # transcript) cannot be replayed by anyone else. Which binding depends on what this caller
+        # has that is *stable*: an OAuth session is identified by its session id, while its Keboola
+        # access token is rotated roughly hourly underneath it and would make the handle
+        # undecryptable long before the project is claimed (see `resolve_provisioned_binding_aad`).
+        # A session without one -- a programmatic token, whose credential this server never rotates
+        # -- binds to that credential as `set_project_scope` does. The newcomer this feature exists
+        # for holds neither, and gets an unbound handle.
+        oauth_session_id = ctx.session.state.get(OAUTH_SESSION_ID_KEY)
+        if oauth_session_id:
+            aad = resolve_provisioned_binding_aad(cast(str, oauth_session_id))
+        else:
+            caller_bearer = (
+                KeboolaClient.from_state(ctx.session.state).bearer_token
+                if KeboolaClient.STATE_KEY in ctx.session.state
+                else None
+            )
+            aad = resolve_scope_binding_aad(caller_bearer)
+        scope_token = scope.to_token(resolve_scope_key(ServerState.from_context(ctx).config), aad=aad)
         ctx.session.state[SCOPE_KEY] = scope
     else:
         # Local: the per-user credential file. `_maybe_use_stored_session` reads it on the next
