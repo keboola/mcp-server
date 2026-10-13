@@ -210,13 +210,16 @@ async def test_get_merge_requests_detail(mcp_context_client: Context, storage: A
             ],
         ),
         _mr_raw('approved', mr_id=43),
+        _mr_raw(
+            'published', mr_id=44, branch_from=None, merge={'mergedAt': 't', 'mergerId': 10, 'mergerName': 'Alice'}
+        ),
     ]
     storage.merge_request_conflicts.side_effect = [[_conflict_raw()], []]
 
-    result = await get_merge_requests(mcp_context_client, merge_request_ids=[42, 43])
+    result = await get_merge_requests(mcp_context_client, merge_request_ids=[42, 43, 44])
 
     assert isinstance(result, MergeRequestsDetailOutput)
-    first, second = result.merge_requests
+    first, second, third = result.merge_requests
     assert first.reviewers[0].status == 'pending'  # null -> pending
     assert [c.configuration_id for c in first.changed_configurations] == ['cfg-1']
     assert first.activity_log is not None and [e.admin_name for e in first.activity_log] == ['Alice', None]
@@ -226,8 +229,11 @@ async def test_get_merge_requests_detail(mcp_context_client: Context, storage: A
     assert first.status.conflicts is not None and first.status.conflicts[0].configuration_id == 'cfg-1'
     assert second.status.mergeable is True
     assert 'merge it' in second.status.next_step
-    # detail = 2 + 2N requests, activity log requested
-    assert _n_calls(storage) == 2 + 2 * 2
+    # a published merge request is never asked for /conflicts (its source branch is gone; the backend answers 500)
+    assert third.status.conflicts == [] and third.status.mergeable is False
+    assert storage.merge_request_conflicts.await_count == 2
+    # detail = 2 + N details + conflicts for the two open ones, activity log requested
+    assert _n_calls(storage) == 2 + 3 + 2
     storage.merge_request_detail.assert_has_awaits(
         [call(42, include_activity_log=True), call(43, include_activity_log=True)], any_order=True
     )
@@ -300,7 +306,10 @@ async def test_detail_on_production_session_hands_off_by_branch_name(
 
 @pytest.mark.asyncio
 async def test_create_merge_request_from_session_branch(mcp_context_client: Context, storage: AsyncMock) -> None:
-    storage.merge_request_create.return_value = _mr_raw()
+    storage.merge_request_create.return_value = _mr_raw()  # the create response carries no changeLog
+    storage.merge_request_detail.return_value = _mr_raw(
+        changeLog={'configurations': [{'componentId': 'keboola.ex-db', 'configurationId': 'cfg-9', 'isDeleted': False}]}
+    )
 
     result = await create_merge_request(mcp_context_client, title='Add reporting', reviewer_ids=[20])
 
@@ -317,7 +326,8 @@ async def test_create_merge_request_from_session_branch(mcp_context_client: Cont
     assert result.activity_log is None
     assert result.status.mergeable is True
     assert 'merge it' in result.status.next_step
-    assert _n_calls(storage) == 4  # POST + /conflicts + branches_list + verify_token
+    assert [c.configuration_id for c in result.changed_configurations] == ['cfg-9']  # from the re-read detail
+    assert _n_calls(storage) == 5  # POST + GET detail + /conflicts + branches_list + verify_token
 
 
 @pytest.mark.asyncio
@@ -381,15 +391,19 @@ async def test_create_merge_request_passes_other_400s_through(mcp_context_client
 
 @pytest.mark.asyncio
 async def test_update_merge_request_sends_only_supplied_keys(mcp_context_client: Context, storage: AsyncMock) -> None:
-    storage.merge_request_update.return_value = _mr_raw()
+    storage.merge_request_update.return_value = _mr_raw()  # the update response carries no changeLog
+    storage.merge_request_detail.return_value = _mr_raw(
+        changeLog={'configurations': [{'componentId': 'keboola.ex-db', 'configurationId': 'cfg-9', 'isDeleted': False}]}
+    )
 
     result = await update_merge_request(mcp_context_client, merge_request_id=42, title='New', auto_merge='none')
 
     storage.merge_request_update.assert_awaited_once_with(42, {'title': 'New', 'autoMergeStrategy': 'none'})
     assert result.id == 42 and result.activity_log is None
+    assert [c.configuration_id for c in result.changed_configurations] == ['cfg-9']  # from the re-read detail
     assert (
-        _n_calls(storage) == 4
-    )  # PUT + /conflicts + verify_token + branches_list (names/links); 3 with the token cache
+        _n_calls(storage) == 5
+    )  # PUT + GET detail + /conflicts + verify_token + branches_list (names/links); 4 with the token cache
 
 
 @pytest.mark.asyncio
@@ -429,12 +443,31 @@ async def test_update_merge_request_requires_a_change(mcp_context_client: Contex
         pytest.param(create_merge_request, {'title': 'T'}, 'merge_request_create', id='create'),
     ],
 )
-async def test_backend_403_maps_to_role_message(
-    mcp_context_client: Context, storage: AsyncMock, tool: Any, kwargs: dict[str, Any], method: str
+@pytest.mark.parametrize(
+    ('status', 'error', 'expected'),
+    [
+        pytest.param(403, 'Forbidden', 'The backend refused it: Forbidden.*project role', id='403_role'),
+        pytest.param(
+            422,
+            'Operation cannot be performed due: The marking does not enable the transition.',
+            'The backend refused it: .*marking does not enable the transition.*not in a state that allows this action',
+            id='422_state_machine',
+        ),
+    ],
+)
+async def test_backend_403_and_422_map_to_clear_messages(
+    mcp_context_client: Context,
+    storage: AsyncMock,
+    tool: Any,
+    kwargs: dict[str, Any],
+    method: str,
+    status: int,
+    error: str,
+    expected: str,
 ) -> None:
-    getattr(storage, method).side_effect = _http_error(403, {'error': 'Forbidden'})
+    getattr(storage, method).side_effect = _http_error(status, {'error': error})
 
-    with pytest.raises(ToolError, match='The backend refused it: Forbidden.*project role'):
+    with pytest.raises(ToolError, match=expected):
         await tool(mcp_context_client, **kwargs)
 
 

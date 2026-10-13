@@ -84,6 +84,10 @@ ROLE_DENIED_MESSAGE = (
     'Your project role may not permit this merge-request action (a project admin with role "admin" or "share" can '
     'do it), or the merge request is no longer open.'
 )
+STATE_TRANSITION_DENIED_MESSAGE = (
+    'The merge request is not in a state that allows this action. Read its status with get_merge_requests and '
+    'follow allowed_actions / next_step.'
+)
 
 
 def add_merge_request_tools(mcp: KeboolaMcpServer) -> None:
@@ -213,15 +217,23 @@ def _error_message(exc: httpx.HTTPStatusError) -> str:
 
 @asynccontextmanager
 async def _mapped_write_errors() -> AsyncIterator[None]:
-    """Every MR write maps the backend's 403 onto one clear message (with the backend's text); other statuses pass."""
+    """
+    Every MR write maps the backend's 403 (role) and 422 (state machine) onto one clear message carrying the
+    backend's text; other statuses pass through unchanged.
+    """
     try:
         yield
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 403:
+        status = exc.response.status_code
+        if status in (403, 422):
             body = _error_body(exc)
             error = body.get('error') or body.get('message')
             detail = f'The backend refused it: {error} ' if error else ''
-            raise ToolError(f'{detail}{ROLE_DENIED_MESSAGE}') from exc
+            if status == 403:
+                raise ToolError(f'{detail}{ROLE_DENIED_MESSAGE}') from exc
+            # 422 "The marking does not enable the transition": the action is not allowed from the merge
+            # request's current state (e.g. approving an already approved one).
+            raise ToolError(f'{detail}{STATE_TRANSITION_DENIED_MESSAGE}') from exc
         raise
 
 
@@ -258,9 +270,19 @@ def _build_detail(
     )
 
 
+async def _live_conflicts(c: _MrContext, mr: Mapping[str, Any]) -> list[ConflictRef]:
+    """
+    The merge request's live conflict list; `[]` once it is published or canceled. The backend's `/conflicts`
+    endpoint compares the source branch with production, and a merged branch no longer exists (the call fails
+    with 500), so a terminal merge request is never asked for conflicts.
+    """
+    if mr.get('state') in TERMINAL_STATES:
+        return []
+    return _parse_conflicts(await c.client.storage_client.merge_request_conflicts(mr['id']))
+
+
 async def _detail_with_conflicts(c: _MrContext, mr: Mapping[str, Any]) -> MergeRequestDetail:
-    conflicts = _parse_conflicts(await c.client.storage_client.merge_request_conflicts(mr['id']))
-    return _build_detail(c, mr, conflicts=conflicts, with_activity_log=False)
+    return _build_detail(c, mr, conflicts=await _live_conflicts(c, mr), with_activity_log=False)
 
 
 def _open_branch_mrs(rows: Sequence[Mapping[str, Any]], branch_id: Any) -> list[JsonDict]:
@@ -427,11 +449,8 @@ async def get_merge_requests(
     if merge_request_ids:
 
         async def _one(mr_id: int) -> MergeRequestDetail:
-            mr, conflicts_raw = await asyncio.gather(
-                c.client.storage_client.merge_request_detail(mr_id, include_activity_log=True),
-                c.client.storage_client.merge_request_conflicts(mr_id),
-            )
-            return _build_detail(c, mr, conflicts=_parse_conflicts(conflicts_raw), with_activity_log=True)
+            mr = await c.client.storage_client.merge_request_detail(mr_id, include_activity_log=True)
+            return _build_detail(c, mr, conflicts=await _live_conflicts(c, mr), with_activity_log=True)
 
         results = await process_concurrently(list(dict.fromkeys(merge_request_ids)), _one)
         return MergeRequestsDetailOutput(merge_requests=unwrap_results(results, 'Failed to get merge requests'))
@@ -553,6 +572,8 @@ async def update_merge_request(
     c = await _load(ctx)
     async with _mapped_write_errors():
         mr = await c.client.storage_client.merge_request_update(merge_request_id, payload)
+    # The update response carries no changeLog; the detail does (changed_configurations).
+    mr = await c.client.storage_client.merge_request_detail(mr['id'])
     return await _detail_with_conflicts(c, mr)
 
 
@@ -619,6 +640,9 @@ async def create_merge_request(
             if match is None:
                 raise
             duplicate_of, duplicate_exc = int(match.group(1)), exc
+        else:
+            # The create response carries no changeLog; the detail does (changed_configurations).
+            mr = await c.client.storage_client.merge_request_detail(mr['id'])
     if duplicate_of is not None:
         # Outside the except block so a failure of this lookup does not hide the backend's original error.
         assert duplicate_exc is not None
