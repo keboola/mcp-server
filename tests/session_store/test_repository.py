@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+import asyncpg
 import pytest
 
 from tests.session_store.conftest import requires_postgres
@@ -192,3 +193,86 @@ async def test_credentials_are_encrypted_at_rest(store) -> None:
     )
     raw = await store._pool.fetchrow('SELECT kbc_access_token_enc FROM oauth_sessions WHERE id = $1', session.id)
     assert b'kbc_at_should_not_appear_in_plaintext' not in raw['kbc_access_token_enc']
+
+
+async def test_a_revoke_inside_the_lock_is_committed(store) -> None:
+    """The regression: `_refresh_locked` used to raise out of the `async with` right after calling
+    `LockedSession.revoke`, so the UPDATE unwound through `conn.transaction().__aexit__` and rolled
+    back -- the session logged "revoked" and then kept answering `get_by_id` forever, spending
+    another refresh call on a dead token every request. Only a real transaction shows this; the
+    mocked `lock_session` in `tests/test_provisioned_session.py` has none.
+    """
+    access_token, _, session = await store.create(
+        client_id='claude.ai',
+        user_email=None,
+        kbc_access_token='kbc_at_x',
+        kbc_refresh_token='kbc_rt_x',
+        kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+
+    async with store.lock_session(session.id) as locked:
+        assert locked.session is not None
+        await locked.revoke()
+
+    assert await store.get_by_id(session.id) is None
+    assert await store.get_by_access_token(access_token) is None
+
+
+async def test_a_rotation_inside_the_lock_is_committed(store) -> None:
+    """The same commit guarantee for the write the happy path makes -- losing it would spend the
+    refresh token for nothing."""
+    _, _, session = await store.create(
+        client_id='claude.ai',
+        user_email=None,
+        kbc_access_token='kbc_at_old',
+        kbc_refresh_token='kbc_rt_old',
+        kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=2)
+
+    async with store.lock_session(session.id) as locked:
+        await locked.rotate_kbc_tokens(
+            kbc_access_token='kbc_at_new', kbc_refresh_token='kbc_rt_new', kbc_access_expires_at=expires_at
+        )
+
+    stored = await store.get_by_id(session.id)
+    assert stored is not None
+    assert stored.kbc_access_token == 'kbc_at_new'
+    assert stored.kbc_refresh_token == 'kbc_rt_new'
+
+
+async def test_a_failed_write_inside_the_lock_leaves_the_row_untouched(store) -> None:
+    """Why `_RotationWriteFailed` has to unwind rather than return: the failed statement poisons
+    the surrounding transaction, so nothing written in it can be committed afterwards and the
+    rotation has to be retried on a fresh connection."""
+    _, _, session = await store.create(
+        client_id='claude.ai',
+        user_email=None,
+        kbc_access_token='kbc_at_old',
+        kbc_refresh_token='kbc_rt_old',
+        kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+
+    with pytest.raises(asyncpg.PostgresError):
+        async with store.lock_session(session.id) as locked:
+            await locked.rotate_kbc_tokens(
+                kbc_access_token='kbc_at_new',
+                kbc_refresh_token='kbc_rt_new',
+                kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
+            )
+            await locked._conn.execute('SELECT * FROM a_table_that_does_not_exist')
+
+    stored = await store.get_by_id(session.id)
+    assert stored is not None
+    assert stored.kbc_access_token == 'kbc_at_old'
+
+    # ... and the retry on a fresh connection, which is what `_persist_outside_lock` does, works.
+    await store.rotate_kbc_tokens(
+        session.id,
+        kbc_access_token='kbc_at_new',
+        kbc_refresh_token='kbc_rt_new',
+        kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
+    )
+    stored = await store.get_by_id(session.id)
+    assert stored is not None
+    assert stored.kbc_access_token == 'kbc_at_new'

@@ -88,6 +88,48 @@ def resolve_scope_binding_aad(storage_token: str | None) -> bytes | None:
     return hashlib.sha256(strip_bearer(storage_token).encode('utf-8')).digest()
 
 
+class ScopeTokenUnreadable(ValueError):
+    """A ``scope_token`` was sent but could not be decrypted under any binding this request can
+    offer.
+
+    Raised rather than silently treated as "no scope": the caller believes it is working inside the
+    scope that token names, and the fallbacks below it (the persisted OAuth scope, the auto-leased
+    default) resolve to a *different* project -- so a write tool would quietly run against the
+    caller's own project instead of the one they think they are in. For a provisioned project the
+    handle is the only pointer that exists, so losing it silently also strands an unclaimed project
+    (see the remote_agent_provisioning RFC).
+    """
+
+
+def resolve_provisioned_binding_aad(oauth_session_id: str | None) -> bytes | None:
+    """Binds a provisioned project's handle to the OAuth session it was minted for.
+
+    Deliberately *not* `resolve_scope_binding_aad`: that binds to the caller's current Keboola
+    access token, which the deployed server rotates roughly hourly (`load_access_token`), while this
+    handle has to stay readable for as long as the project is unclaimed -- the ~2 h of PAYG credits
+    the feature exists to give an agent. Binding to the rotating credential makes the handle
+    undecryptable at the first rotation, which silently strands the project and tempts the agent
+    into provisioning a second one. The OAuth session id is stable for the session's whole life and
+    is just as unavailable to a different caller, so it binds exactly as tightly.
+
+    A no-op (returns None) on a local server, and for a caller with no OAuth session at all -- the
+    newcomer this feature exists for holds no credential to bind to. See `resolve_scope_binding_aad`
+    for why a local server needs no binding.
+
+    Unlike that function this does not hash, because here hashing would protect nothing. AAD is
+    never transmitted (`crypto.encrypt`): it is bound into the auth tag and must be re-supplied by
+    whoever decrypts, so the value never leaves the server and a digest of it is exactly as
+    guessable as the id itself -- which is not a secret in the first place. The security is the AES
+    key, not the label. `resolve_scope_binding_aad` hashes because its input *is* a live credential
+    and keeping that out of a second buffer is worth something; an opaque session id is not.
+    """
+    if not deployed_sa_token_path() or not oauth_session_id:
+        return None
+    # The prefix domain-separates this from any other binding, so the two can never collide on a
+    # value that happens to appear in both roles.
+    return f'oauth-session:{oauth_session_id}'.encode()
+
+
 @dataclasses.dataclass(frozen=True)
 class SessionScope:
     """In-conversation multi-project scope (PSGO-261 increment 2).
@@ -104,6 +146,16 @@ class SessionScope:
     confirmed: bool = False
     """True once the user has explicitly chosen a scope via ``set_project_scope``. The default
     auto-leased scope is unconfirmed, which gates data tools until the user decides."""
+    provisioned_session_id: str | None = None
+    """The session-store row holding the credentials of a project provisioned by ``create_project``
+    on a server with no local credential file (the deployed one) -- see the remote_agent_provisioning
+    RFC.
+
+    Only the row id travels in the ``scope_token``, never the Keboola tokens themselves: those stay
+    encrypted in Postgres, are refreshed server-side, and are revoked outright when the human claims
+    the project. So the worst a leaked ``scope_token`` yields is a handle that the claim (or an
+    explicit revoke) has already turned into nothing -- unlike ``scoped_token`` above, which is a
+    live credential and the reason this whole value is encrypted rather than signed."""
 
     @property
     def active_project_id(self) -> int | None:

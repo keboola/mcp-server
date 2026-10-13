@@ -8,6 +8,8 @@ import asyncio
 import dataclasses
 import hashlib
 import secrets
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime
 from typing import Protocol
 
@@ -27,6 +29,40 @@ def generate_opaque_token() -> str:
 
 def _hash_token(token: str) -> bytes:
     return hashlib.sha256(token.encode('utf-8')).digest()
+
+
+async def _rotate_kbc_tokens(
+    conn: asyncpg.Connection | asyncpg.Pool,
+    session_id: str,
+    *,
+    kbc_access_token: str,
+    kbc_refresh_token: str,
+    kbc_access_expires_at: datetime,
+    key: bytes,
+) -> None:
+    """The credential-rotation UPDATE, in one place.
+
+    Takes whatever can execute it -- a pooled connection held under `lock_session`, or the pool
+    itself -- so `PostgresSessionStore.rotate_kbc_tokens` and `LockedSession.rotate_kbc_tokens`
+    cannot drift apart the next time a column is added here.
+    """
+    await conn.execute(
+        """
+        UPDATE oauth_sessions
+        SET kbc_access_token_enc = $2, kbc_refresh_token_enc = $3, kbc_access_expires_at = $4,
+            updated_at = now()
+        WHERE id = $1
+        """,
+        session_id,
+        crypto.encrypt(kbc_access_token.encode('utf-8'), key),
+        crypto.encrypt(kbc_refresh_token.encode('utf-8'), key),
+        kbc_access_expires_at,
+    )
+
+
+async def _revoke(conn: asyncpg.Connection | asyncpg.Pool, session_id: str) -> None:
+    """The revocation UPDATE, in one place -- see `_rotate_kbc_tokens`."""
+    await conn.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', session_id)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,6 +86,36 @@ class OAuthSession:
     oauth_projectless: bool
 
 
+class LockedSession:
+    """A session held under `SessionStore.lock_session`, with the writes that belong inside that
+    lock. Every statement runs on the locked connection -- see `lock_session` on why a second one
+    must not be acquired here."""
+
+    def __init__(self, conn: asyncpg.Connection, session: OAuthSession | None, key: bytes) -> None:
+        self.session = session
+        self._conn = conn
+        self._key = key
+
+    async def rotate_kbc_tokens(
+        self, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
+    ) -> None:
+        assert self.session is not None, 'Cannot rotate the credentials of a session that is gone.'
+        await _rotate_kbc_tokens(
+            self._conn,
+            self.session.id,
+            kbc_access_token=kbc_access_token,
+            kbc_refresh_token=kbc_refresh_token,
+            kbc_access_expires_at=kbc_access_expires_at,
+            key=self._key,
+        )
+
+    async def revoke(self) -> None:
+        """Ends the session. No compare-and-swap needed: the lock already makes this the only
+        worker that could have rotated the credentials since they were read."""
+        assert self.session is not None, 'Cannot revoke a session that is gone.'
+        await _revoke(self._conn, self.session.id)
+
+
 class SessionStore(Protocol):
     async def create(
         self,
@@ -69,6 +135,30 @@ class SessionStore(Protocol):
         ...
 
     async def get_by_refresh_token(self, refresh_token: str) -> OAuthSession | None: ...
+
+    async def get_by_id(self, session_id: str) -> OAuthSession | None:
+        """Looks a session up by its row id rather than by a token the caller presented.
+
+        Used by a provisioned (agent) session, whose caller holds only the row's handle inside its
+        `scope_token` and never a token of its own -- see the remote_agent_provisioning RFC.
+        """
+        ...
+
+    def lock_session(self, session_id: str) -> AbstractAsyncContextManager['LockedSession']:
+        """Serializes work on one session across every worker and replica, yielding a handle whose
+        `session` is the row as it is *after* the lock was taken (None if it is gone).
+
+        For credential refresh: Connection rotates refresh tokens, so two concurrent refreshes of
+        the same session would have one spend a token the other already invalidated, and a late
+        write-back could persist that dead pair. Re-reading under the lock lets the loser of the
+        race use the winner's fresh credentials instead of refreshing again.
+
+        Writes go through the handle, on the connection the lock is already held on. Taking a
+        second pooled connection while holding this one would deadlock the pool: every holder and
+        waiter occupies a connection, so once as many refreshes overlap as the pool is wide, nobody
+        can acquire the second one and every session lookup on the replica stalls behind them.
+        """
+        ...
 
     async def rotate_kbc_tokens(
         self, session_id: str, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
@@ -208,21 +298,40 @@ class PostgresSessionStore:
         return self._to_session(row) if row is not None else None
 
     @guard_db_errors
+    async def get_by_id(self, session_id: str) -> OAuthSession | None:
+        pool = await self._get_pool()
+        row = await pool.fetchrow(
+            'UPDATE oauth_sessions SET last_used_at = now() WHERE id = $1 AND revoked_at IS NULL RETURNING *',
+            session_id,
+        )
+        return self._to_session(row) if row is not None else None
+
+    @asynccontextmanager
+    async def _lock_session(self, session_id: str) -> AsyncIterator[LockedSession]:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn, conn.transaction():
+            # A transaction-scoped advisory lock: released on commit, so a crashed worker cannot
+            # wedge the session. It does not block reads or writes of the row itself -- it only
+            # serializes the holders of this same lock, which is exactly the refresh path.
+            await conn.execute('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', session_id)
+            row = await conn.fetchrow('SELECT * FROM oauth_sessions WHERE id = $1 AND revoked_at IS NULL', session_id)
+            yield LockedSession(conn, self._to_session(row) if row is not None else None, self._key)
+
+    def lock_session(self, session_id: str) -> AbstractAsyncContextManager[LockedSession]:
+        return self._lock_session(session_id)
+
+    @guard_db_errors
     async def rotate_kbc_tokens(
         self, session_id: str, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
     ) -> None:
         pool = await self._get_pool()
-        await pool.execute(
-            """
-            UPDATE oauth_sessions
-            SET kbc_access_token_enc = $2, kbc_refresh_token_enc = $3, kbc_access_expires_at = $4,
-                updated_at = now()
-            WHERE id = $1
-            """,
+        await _rotate_kbc_tokens(
+            pool,
             session_id,
-            crypto.encrypt(kbc_access_token.encode('utf-8'), self._key),
-            crypto.encrypt(kbc_refresh_token.encode('utf-8'), self._key),
-            kbc_access_expires_at,
+            kbc_access_token=kbc_access_token,
+            kbc_refresh_token=kbc_refresh_token,
+            kbc_access_expires_at=kbc_access_expires_at,
+            key=self._key,
         )
 
     @guard_db_errors
@@ -272,7 +381,7 @@ class PostgresSessionStore:
     @guard_db_errors
     async def revoke(self, session_id: str) -> None:
         pool = await self._get_pool()
-        await pool.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', session_id)
+        await _revoke(pool, session_id)
 
     @guard_db_errors
     async def revoke_if_kbc_refresh_token(self, session_id: str, kbc_refresh_token: str) -> bool:
@@ -288,5 +397,5 @@ class PostgresSessionStore:
                 kbc_refresh_token
             ):
                 return False
-            await conn.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', session_id)
+            await _revoke(conn, session_id)
             return True

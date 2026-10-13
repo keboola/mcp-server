@@ -54,12 +54,20 @@ from keboola_mcp_server.config import (
     is_same_stack,
 )
 from keboola_mcp_server.oauth import ProxyAccessToken
+from keboola_mcp_server.provisioned_session import (
+    handle_unauthorized as handle_provisioned_session_unauthorized,
+)
+from keboola_mcp_server.provisioned_session import (
+    resolve_session as resolve_provisioned_session,
+)
 from keboola_mcp_server.scope import (
     OAUTH_SESSION_ID_KEY,
     SCOPE_KEY,
     SCOPE_TOKEN_ARG,
+    ScopeTokenUnreadable,
     SessionScope,
     persist_scope,
+    resolve_provisioned_binding_aad,
     resolve_scope_binding_aad,
     resolve_scope_key,
 )
@@ -318,6 +326,8 @@ class SessionStateMiddleware(fmw.Middleware):
         assert isinstance(ctx, Context), f'Expecting Context, got {type(ctx)}.'
 
         config: Config | None = None
+        scope: SessionScope | None = None
+        server_state: ServerState | None = None
         if not isinstance(ctx.session, MagicMock):
             server_state = ServerState.from_context(ctx)
             config = server_state.config
@@ -355,7 +365,7 @@ class SessionStateMiddleware(fmw.Middleware):
             # ctx.session.state, which is rebuilt empty on every request under this server's default
             # stateless-HTTP transport. With no scope and no preset project, auto-lease ALL accessible
             # projects (multi-project mode) so read tools fan out across everything — but never on /list.
-            scope = self._read_scope_from_request(context, config)
+            scope = self._read_scope_from_request(context, config, self._read_oauth_session_id(http_rq))
             # OAuth-authenticated sessions don't need scope_token at all: the opaque OAuth access
             # token is already resent on every call and resolves through the Postgres session store
             # (load_access_token), so a confirmed scope persisted there (via set_project_scope ->
@@ -392,6 +402,12 @@ class SessionStateMiddleware(fmw.Middleware):
                 scope = await self._read_persisted_login_scope(config)
             if scope is None and not config.project_id and not is_list:
                 scope = await self._autolease_default_scope(config)
+            # A project provisioned by `create_project` on this (deployed) server keeps its
+            # credentials in the session store, not in the caller's hands -- the caller only echoes
+            # the row's handle inside `scope_token`. Resolve it into a usable token before anything
+            # else needs one. Done for /list too: unlike the login-store paths above this is a cheap
+            # Postgres read, and without it a listing for such a session has no credentials at all.
+            config = await resolve_provisioned_session(config, scope, server_state.session_store)
             if not is_list:
                 scoped_token_before = scope.scoped_token if scope is not None else None
                 config, scope = await self._resolve_local_tokens(config, scope)
@@ -443,7 +459,7 @@ class SessionStateMiddleware(fmw.Middleware):
             return await call_next(context)
         except Exception as e:
             if config is not None and _is_unauthorized(e):
-                await self._handle_unauthorized(config)
+                await self._handle_unauthorized(config, scope, server_state)
             raise
         finally:
             # NOTE: This line is commented following a bug related to session state clearance in Claude client
@@ -451,7 +467,12 @@ class SessionStateMiddleware(fmw.Middleware):
             pass
 
     @classmethod
-    async def _handle_unauthorized(cls, config: Config) -> None:
+    async def _handle_unauthorized(
+        cls,
+        config: Config,
+        scope: 'SessionScope | None' = None,
+        server_state: ServerState | None = None,
+    ) -> None:
         """Drops a locally stored session whose credential Connection no longer accepts.
 
         An expired session already self-heals: the refresh fails and `get_access_token` forgets it.
@@ -475,6 +496,14 @@ class SessionStateMiddleware(fmw.Middleware):
           `forget_rejected_access_token`, which compares under the credential-store locks, so a
           concurrent refresh or a fresh `login` is never thrown away.
         """
+        if (
+            scope is not None
+            and scope.provisioned_session_id is not None
+            and server_state is not None
+            and server_state.session_store is not None
+        ):
+            await handle_provisioned_session_unauthorized(config, scope, server_state.session_store)
+            return
         if not cls._is_local_programmatic(config):
             return
         storage_api_url = cast(str, config.storage_api_url)
@@ -644,14 +673,23 @@ class SessionStateMiddleware(fmw.Middleware):
         return config
 
     @classmethod
-    def _read_scope_from_request(cls, context: fmw.MiddlewareContext[Any], config: Config) -> 'SessionScope | None':
+    def _read_scope_from_request(
+        cls, context: fmw.MiddlewareContext[Any], config: Config, oauth_session_id: str | None = None
+    ) -> 'SessionScope | None':
         """Decodes the ``scope_token`` tool-call argument (if any) back into a SessionScope.
 
         Pops the argument so it never reaches the tool function, matching how
-        MultiProjectMiddleware.on_call_tool consumes _PROJECT_FILTER_ARG. Absent, malformed, or
-        expired tokens are treated as "no scope yet" rather than an error -- the ask-first gate in
-        MultiProjectMiddleware then steers the caller back through get_accessible_projects /
-        set_project_scope.
+        MultiProjectMiddleware.on_call_tool consumes _PROJECT_FILTER_ARG. *No* scope_token means
+        "no scope yet" -- the ask-first gate in MultiProjectMiddleware then steers the caller back
+        through get_accessible_projects / set_project_scope. One that is present but unreadable is
+        an error instead (`ScopeTokenUnreadable`): silently continuing would run the call under a
+        different scope than the caller believes it is in -- see that exception.
+
+        A token can carry either of two bindings, so both are tried: `set_project_scope` binds to
+        the caller's presented credential, while a provisioned project's handle binds to the OAuth
+        session id, which (unlike that credential) does not rotate underneath it. Trying both is not
+        a weakening -- each candidate is a key the caller already demonstrably holds, and a token
+        sealed for anyone else decrypts under neither.
         """
         # context.message always exists (a required MiddlewareContext field); only whether it HAS
         # .arguments varies by request type (a ListToolsRequest has none, a CallToolRequestParams
@@ -662,13 +700,29 @@ class SessionStateMiddleware(fmw.Middleware):
         token = args.pop(SCOPE_TOKEN_ARG, None)
         if not token:
             return None
-        try:
-            return SessionScope.from_token(
-                token, resolve_scope_key(config), aad=resolve_scope_binding_aad(config.storage_token)
-            )
-        except Exception:
-            LOG.warning('Ignoring invalid or expired scope_token.', exc_info=True)
-            return None
+        key = resolve_scope_key(config)
+        candidates: list[bytes | None] = []
+        for aad in (
+            resolve_scope_binding_aad(config.storage_token),
+            resolve_provisioned_binding_aad(oauth_session_id),
+            None,  # minted for a caller that held no credential to bind to
+        ):
+            if aad not in candidates:
+                candidates.append(aad)
+        for aad in candidates:
+            try:
+                return SessionScope.from_token(token, key, aad=aad)
+            except Exception as e:
+                # Expected for every candidate but the right one; only all of them failing is news.
+                last_error = e
+        LOG.warning(f'Received a scope_token that cannot be read under any binding for this session: {last_error}')
+        raise ScopeTokenUnreadable(
+            'The "scope_token" sent with this call cannot be read: it was issued for a different session, '
+            'or by a server that no longer has the key it was sealed with. Stop resending it. If it came '
+            'from "set_project_scope", call "get_accessible_projects" and "set_project_scope" again to pick '
+            'a project; if it came from "create_project", that temporary session cannot be reached from '
+            'this one any more and the project has to be claimed through its confirm_url.'
+        )
 
     @staticmethod
     def _oauth_access_token(http_rq: Request | None) -> ProxyAccessToken | None:

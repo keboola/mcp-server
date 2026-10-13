@@ -39,7 +39,9 @@ from keboola_mcp_server.mcp import (
 from keboola_mcp_server.scope import (
     SCOPE_KEY,
     SCOPE_TOKEN_ARG,
+    ScopeTokenUnreadable,
     SessionScope,
+    resolve_provisioned_binding_aad,
     resolve_scope_binding_aad,
     resolve_scope_key,
 )
@@ -1862,26 +1864,42 @@ class TestScopeToken:
 
     @pytest.mark.parametrize(
         'arguments',
-        [{}, {'scope_token': None}, {'scope_token': ''}, {'scope_token': 'not-a-valid-token'}],
-        ids=['missing', 'none', 'empty', 'malformed'],
+        [{}, {'scope_token': None}, {'scope_token': ''}],
+        ids=['missing', 'none', 'empty'],
     )
-    def test_read_scope_from_request_returns_none_when_absent_or_invalid(self, arguments: dict) -> None:
+    def test_read_scope_from_request_returns_none_when_absent(self, arguments: dict) -> None:
         config = Config(session_encryption_key=_b64_key(b'\x05'))
         context = self._call_tool_context(dict(arguments))
         assert SessionStateMiddleware._read_scope_from_request(context, config) is None
+
+    @pytest.mark.parametrize(
+        'token',
+        ['not-a-valid-token', 'AAAA'],
+        ids=['malformed', 'truncated'],
+    )
+    def test_a_scope_token_that_cannot_be_read_is_an_error(self, token: str) -> None:
+        # Not "no scope": the caller believes it is working inside the scope that token names, and
+        # the fallbacks below it resolve to a *different* project -- so a write tool would quietly
+        # run against the caller's own project. For a provisioned project the handle is the only
+        # pointer there is, so losing it silently also strands an unclaimed project.
+        config = Config(session_encryption_key=_b64_key(b'\x05'))
+        context = self._call_tool_context({'scope_token': token})
+        with pytest.raises(ScopeTokenUnreadable, match='Stop resending it'):
+            SessionStateMiddleware._read_scope_from_request(context, config)
 
     def test_read_scope_from_request_ignores_non_call_tool_requests(self) -> None:
         # tools/list (and other non-call requests) have a .message, just not one with .arguments.
         context = SimpleNamespace(message=SimpleNamespace(), method='tools/list', fastmcp_context=None)
         assert SessionStateMiddleware._read_scope_from_request(context, Config()) is None
 
-    def test_wrong_key_falls_back_to_no_scope_via_read_scope_from_request(self) -> None:
-        # A token minted with a different key (e.g. a replica whose fallback key differs) must
-        # degrade to "no scope" rather than raise -- the ask-first gate then re-prompts the caller.
+    def test_wrong_key_is_reported_rather_than_silently_dropped(self) -> None:
+        # A token minted with a different key (e.g. a replica whose fallback key differs) is
+        # unreadable, not absent -- say so, so the caller stops resending it and re-scopes.
         token = SessionScope(project_ids=[11], confirmed=True).to_token(self.KEY_A)
         context = self._call_tool_context({'scope_token': token})
         config = Config(session_encryption_key=base64.b64encode(self.KEY_B).decode())
-        assert SessionStateMiddleware._read_scope_from_request(context, config) is None
+        with pytest.raises(ScopeTokenUnreadable):
+            SessionStateMiddleware._read_scope_from_request(context, config)
 
     def test_resolve_scope_binding_aad_is_none_locally(self, monkeypatch) -> None:
         # A local `login` session already grants the whole stack to its one user -- no cross-caller
@@ -1917,10 +1935,10 @@ class TestScopeToken:
         with pytest.raises(Exception, match='.+'):
             SessionScope.from_token(token, self.KEY_A, aad=b'caller-b-token')
 
-    def test_replayed_scope_token_from_another_caller_falls_back_to_no_scope(self, monkeypatch) -> None:
+    def test_replayed_scope_token_from_another_caller_is_refused(self, monkeypatch) -> None:
         # End-to-end: on a deployed server, a scope_token minted for caller A's storage token,
-        # replayed by caller B (a different storage token), must degrade to "no scope" via
-        # _read_scope_from_request -- not silently grant B caller A's scoped access.
+        # replayed by caller B (a different storage token), must not grant B caller A's scoped
+        # access -- B holds neither of the keys it could have been sealed under.
         monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
         key = _b64_key(b'\x06')
         config_a = Config(session_encryption_key=key, storage_token='kbc_at_caller_a')
@@ -1929,11 +1947,54 @@ class TestScopeToken:
 
         context = self._call_tool_context({'scope_token': token})
         config_b = Config(session_encryption_key=key, storage_token='kbc_at_caller_b')
-        assert SessionStateMiddleware._read_scope_from_request(context, config_b) is None
+        with pytest.raises(ScopeTokenUnreadable):
+            SessionStateMiddleware._read_scope_from_request(context, config_b, 'oauth-session-b')
 
         # The legitimate caller (same storage token the scope was minted for) still works.
         context = self._call_tool_context({'scope_token': token})
         assert SessionStateMiddleware._read_scope_from_request(context, config_a) == scope
+
+    def test_a_provisioned_handle_survives_the_callers_access_token_rotating(self, monkeypatch) -> None:
+        # The regression this guards: the handle used to be sealed with the caller's *current*
+        # Keboola access token, which the deployed server rotates roughly hourly -- so the first
+        # rotation made it undecryptable and silently stranded an unclaimed project well inside the
+        # ~2 h of PAYG credits the feature exists to give the agent (and calling create_project
+        # again just orphaned it with a second project).
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        key = _b64_key(b'\x07')
+        scope = SessionScope(project_ids=[4321], confirmed=True, provisioned_session_id='sess-row-1')
+        token = scope.to_token(base64.b64decode(key), aad=resolve_provisioned_binding_aad('oauth-session-1'))
+
+        # An hour later: same OAuth session, a rotated Keboola access token underneath it.
+        context = self._call_tool_context({'scope_token': token})
+        config = Config(session_encryption_key=key, storage_token='kbc_at_rotated')
+        assert SessionStateMiddleware._read_scope_from_request(context, config, 'oauth-session-1') == scope
+
+    def test_a_provisioned_handle_is_still_bound_to_its_own_oauth_session(self, monkeypatch) -> None:
+        # Binding to a stable value must not mean binding to nothing: another OAuth session that
+        # obtained the opaque string still cannot read it.
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        key = _b64_key(b'\x08')
+        scope = SessionScope(project_ids=[4321], confirmed=True, provisioned_session_id='sess-row-1')
+        token = scope.to_token(base64.b64decode(key), aad=resolve_provisioned_binding_aad('oauth-session-1'))
+
+        context = self._call_tool_context({'scope_token': token})
+        config = Config(session_encryption_key=key, storage_token='kbc_at_other')
+        with pytest.raises(ScopeTokenUnreadable):
+            SessionStateMiddleware._read_scope_from_request(context, config, 'oauth-session-2')
+
+    def test_resolve_provisioned_binding_aad_is_none_locally_and_without_a_session(self, monkeypatch) -> None:
+        monkeypatch.setenv('KBC_KUBERNETES_TOKEN_PATH', '/var/run/secrets/token')
+        assert resolve_provisioned_binding_aad(None) is None
+        aad = resolve_provisioned_binding_aad('oauth-session-1')
+        assert aad is not None
+        assert resolve_provisioned_binding_aad('oauth-session-1') == aad  # stable across requests
+        assert aad != resolve_provisioned_binding_aad('oauth-session-2')
+        # Domain-separated: the two bindings cannot collide on a value that appears in both roles.
+        assert aad != resolve_scope_binding_aad('oauth-session-1')
+
+        monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+        assert resolve_provisioned_binding_aad('oauth-session-1') is None
 
     @staticmethod
     def _http_rq_with_oauth_user(**access_token_kwargs) -> SimpleNamespace:

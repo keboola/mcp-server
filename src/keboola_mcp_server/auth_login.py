@@ -51,7 +51,10 @@ _PROVISION_PATH = 'manage/programmatic-projects'
 _EXCHANGE_PATH = 'v1/auth/pat/exchange'
 _SUDO_PATH = 'v1/auth/sudo'
 _PAT_PATH = 'v1/auth/pat'
-_REFRESH_SKEW_SECONDS = 60
+# How long before a token's expiry it is already treated as expiring, so a refresh happens
+# before a call can fail on it. Public: the session-store refresh path in `mcp.py` applies the
+# same window to credentials it holds on the caller's behalf.
+REFRESH_SKEW_SECONDS = 60
 # Max time to wait for the browser to hit the loopback /callback. Generous enough for SSO/MFA, but
 # bounded so a closed tab or blocked browser can't hang `login` (and stdio auto-login) forever.
 _LOGIN_CALLBACK_TIMEOUT_SECONDS = 300
@@ -115,7 +118,7 @@ class TokenSet:
 
     @property
     def is_near_expiry(self) -> bool:
-        return time.time() >= (self.expires_at - _REFRESH_SKEW_SECONDS)
+        return time.time() >= (self.expires_at - REFRESH_SKEW_SECONDS)
 
 
 def parse_token_response(body: dict, *, now: float | None = None) -> TokenSet:
@@ -163,7 +166,7 @@ class ScopedToken:
 
     @property
     def is_near_expiry(self) -> bool:
-        return time.time() >= (self.expires_at - _REFRESH_SKEW_SECONDS)
+        return time.time() >= (self.expires_at - REFRESH_SKEW_SECONDS)
 
 
 async def introspect_token(
