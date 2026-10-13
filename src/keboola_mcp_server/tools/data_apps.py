@@ -223,6 +223,10 @@ class DataAppSummary(BaseModel):
             'to authenticate.'
         ),
     )
+    git_branch: str | None = Field(
+        default=None,
+        description='The git branch the app deploys. Not set by the inventory listing (`get_data_apps` without IDs).',
+    )
 
     @classmethod
     def from_api_response(cls, api_response: DataAppResponse) -> 'DataAppSummary':
@@ -401,6 +405,7 @@ class DataApp(BaseModel):
             'data-science `.../git-repo` endpoint.'
         ),
     )
+    git_branch: str | None = Field(default=None, description='The git branch the app deploys.')
     configuration: dict[str, Any] = Field(
         description='The nested configuration object containing parameters, storage and authorization'
     )
@@ -452,6 +457,7 @@ class DataApp(BaseModel):
             description=api_configuration.description,
             folder=get_metadata_property(api_configuration.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
             configuration=api_configuration.configuration,
+            git_branch=_config_git_branch(api_configuration.configuration),
             deployment_info=None,
             links=[],
         )
@@ -1249,12 +1255,12 @@ async def modify_python_js_data_app(
     draft handle.
 
     1. `get_data_apps(configuration_ids=[PROD])` → returns PROD's detail including `drafts: [...]`.
-       Pick the draft the user means (ask if multiple and unclear). Each entry exposes its
-       `configuration_id`, slug, and pinned branch.
+       Pick the draft the user means (ask if multiple and unclear). Each entry carries its
+       `configuration_id` and `git_branch`.
     2. `create_python_js_data_app_git_credential(configuration_id=PROD)`
        → fresh `git_clone_url U` (the previous one was minted in a wiped sandbox and is lost).
        Drafts have no managed repo of their own — always mint against PROD.
-    3. YOU: `git clone U`; `git checkout <draft's pinned branch>`. Here you DO want the existing
+    3. YOU: `git clone U`; `git checkout <draft's git_branch>`. Here you DO want the existing
        branch — but confirm it is current before you build on it:
        `git rev-list --count <branch>..origin/main` must print 0, otherwise `git merge origin/main`
        first. Resume work; `git push`.
@@ -1593,6 +1599,7 @@ async def modify_python_js_data_app(
         data_app_summary = DataAppSummary.from_api_response(data_app_resp)
         data_app_summary.repo_url = repo_url
         data_app_summary.storage_access_enabled = wants_storage_access
+        data_app_summary.git_branch = draft_branch
         # On the draft create path, spell out the safe checkout. `git checkout <branch>` alone is
         # the trap: when the branch already exists on the remote (an agent-supplied
         # descriptive name reused across sessions — the generated default cannot collide), git
@@ -2782,6 +2789,13 @@ def _config_slug(configuration: Mapping[str, Any]) -> str | None:
     """The `parameters.dataApp.slug` of a stored data-app configuration, or None when it has none."""
     slug = _data_app_block(configuration).get('slug')
     return slug if isinstance(slug, str) and slug else None
+
+
+def _config_git_branch(configuration: Mapping[str, Any]) -> str | None:
+    """The `parameters.dataApp.git.branch` of a stored data-app configuration, or None when it has none."""
+    git = _data_app_block(configuration).get('git')
+    branch = git.get('branch') if isinstance(git, Mapping) else None
+    return branch if isinstance(branch, str) and branch else None
 
 
 def _resolve_slug_update(data_app: 'DataApp', *, name: str, explicit_slug: str | None) -> str | None:
