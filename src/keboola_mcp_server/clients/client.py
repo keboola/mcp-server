@@ -202,7 +202,10 @@ class KeboolaClient:
 
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
-                    message = f'Branch "{branch_id}" not found'
+                    message = (
+                        f'Branch "{branch_id}" not found. It may have been deleted (a development branch is removed '
+                        'after its merge request is merged); start a new session on the production branch.'
+                    )
                     LOG.error(f'{message}: {exc.response.text}')
                     raise httpx.HTTPStatusError(message, request=exc.request, response=exc.response) from exc
                 else:
