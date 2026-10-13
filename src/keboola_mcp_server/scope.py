@@ -115,12 +115,19 @@ def resolve_provisioned_binding_aad(oauth_session_id: str | None) -> bytes | Non
     A no-op (returns None) on a local server, and for a caller with no OAuth session at all -- the
     newcomer this feature exists for holds no credential to bind to. See `resolve_scope_binding_aad`
     for why a local server needs no binding.
+
+    Unlike that function this does not hash, because here hashing would protect nothing. AAD is
+    never transmitted (`crypto.encrypt`): it is bound into the auth tag and must be re-supplied by
+    whoever decrypts, so the value never leaves the server and a digest of it is exactly as
+    guessable as the id itself -- which is not a secret in the first place. The security is the AES
+    key, not the label. `resolve_scope_binding_aad` hashes because its input *is* a live credential
+    and keeping that out of a second buffer is worth something; an opaque session id is not.
     """
     if not deployed_sa_token_path() or not oauth_session_id:
         return None
-    # Domain-separated from `resolve_scope_binding_aad`'s digest so the two bindings can never
-    # collide on a value that happens to appear in both roles.
-    return hashlib.sha256(f'oauth-session:{oauth_session_id}'.encode()).digest()
+    # The prefix domain-separates this from any other binding, so the two can never collide on a
+    # value that happens to appear in both roles.
+    return f'oauth-session:{oauth_session_id}'.encode()
 
 
 @dataclasses.dataclass(frozen=True)
