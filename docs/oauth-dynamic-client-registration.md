@@ -101,10 +101,9 @@ Requires VPN access to the target stack and a Keboola login on Connection for th
 **Allow** on the approval screen).
 
 **Loopback clients.** The Connection-facing client id is derived from `redirect_uri`. The port is ignored for
-`127.0.0.1` and `[::1]` (RFC 8252 §7.3; Connection matches those two hosts the same way), so a tool that binds a new
-ephemeral port on every run keeps one approval. `localhost` is **not** normalised: use a fixed port with it, or a
-fresh port looks like a brand-new client and needs approval every time. Two different local apps whose callbacks
-differ only by the port of one of the two normalised hosts share one registration (RFC, section 4).
+`localhost`, `127.0.0.1` and `[::1]` (RFC 8252 §7.3), so a tool that binds a new ephemeral port on every run keeps
+one approval. Two different local apps whose callbacks differ only by the port of one of these hosts share one
+registration (RFC, section 4). `localhost` and `127.0.0.1` are still separate approvals.
 
 This walkthrough needs `OAUTH_DYNAMIC_CLIENT_APPROVAL=true` on the target stack for the first run (step 4 shows the
 refusal page otherwise).
@@ -208,5 +207,5 @@ dynamic client registration against the server's discovery document — no Keboo
    pending approval screen, which exists only while the stack's operators have turned approval on; every later
    connection from the same `redirect_uri` is frictionless (Flow A).
 
-If your client's redirect URI is a loopback URL, `127.0.0.1` and `[::1]` keep their approval across ports and
-`localhost` needs a fixed port — see the note above.
+If your client's redirect URI is a loopback URL (`localhost`, `127.0.0.1` or `[::1]`), its approval is kept across
+ports: a client that reconnects on a new port does not need a new approval.

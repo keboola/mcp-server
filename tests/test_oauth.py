@@ -415,14 +415,15 @@ class TestConnectionClientIdentity:
 
     @pytest.mark.parametrize(
         'host',
-        ['127.0.0.1', '[::1]'],
+        ['localhost', '127.0.0.1', '[::1]'],
     )
     def test_loopback_client_id_is_stable_across_ephemeral_ports(self, host: str) -> None:
         """A loopback tool (Claude Code, VS Code, MCP Inspector, Codex, Gemini CLI, ...) reconnects
         with a new ephemeral port every time (RFC 8252 §7.3); the derived id must not change, or
         every reconnect needs a fresh human approval and leaves behind a permanent, never-cleaned-up
-        oauth2_client row on every stack (Vojtěch Biberle review, AI-2883). Mirrors what Connection's
-        own registry now also normalizes for these two hosts. The flip side, accepted in the RFC (section 4): two
+        oauth2_client row on every stack (Vojtěch Biberle review, AI-2883). A dynamically approved client
+        is registered in Connection against this server's own callback, so the port never reaches Connection's own
+        matching, which is why 'localhost' is included too. The flip side, accepted in the RFC (section 4): two
         distinct local apps whose callbacks differ only by port share one registration, which this test pins."""
         from keboola_mcp_server.oauth import _connection_client_id
 
@@ -430,17 +431,6 @@ class TestConnectionClientIdentity:
         second = _connection_client_id(f'http://{host}:9999/callback', _KEY)
 
         assert first == second
-
-    def test_localhost_client_id_still_varies_by_port(self) -> None:
-        """Documents the residual gap: unlike 127.0.0.1/[::1], the pinned mcp SDK's own league
-        OAuth library does not ignore the port for 'localhost' either, so normalizing it here alone
-        wouldn't actually help -- not fixable without a vendor patch."""
-        from keboola_mcp_server.oauth import _connection_client_id
-
-        first = _connection_client_id('http://localhost:54321/callback', _KEY)
-        second = _connection_client_id('http://localhost:9999/callback', _KEY)
-
-        assert first != second
 
     @pytest.mark.parametrize(
         ('name', 'expected'),
