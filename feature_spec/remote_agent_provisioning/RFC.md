@@ -175,10 +175,18 @@ Shipped in this increment:
   message. Every later request whose handle no longer resolves gets the *same* message rather than
   an unexplained failure -- a revoked row is a dead end, not a reason to fall back to the caller's
   own credential against a project it cannot reach.
-* A refresh Connection **refuses** (401) ends the session the way AI-4009 established for OAuth
-  sessions: `revoke_if_kbc_refresh_token` (compare-and-swap, so a concurrent rotation is never
-  killed) and the same "this session has ended" message. For a provisioned session the likely cause
-  is precisely the claim, which revokes the whole Keboola session and its refresh token with it.
+* **The refresh token is the authority, not the access token.** A refresh Connection *refuses*
+  (401) ends the session -- the likely cause is precisely the claim, which revokes the whole Keboola
+  session and its refresh token with it -- and the revoke happens inside the lock, so no
+  compare-and-swap is needed. A 401 on an *access* token proves nothing: it expires after an idle
+  hour, and an earlier refresh may have hit a Connection blip. So the 401 handler does not revoke;
+  it re-reads the row and forces a refresh, and only a refusal ends the session. Revoking on an
+  access-token 401 would destroy the only handle to an unclaimed project over a blip.
+* Writes during a refresh go through the handle `lock_session` yields, on the connection the lock
+  is already held on. Acquiring a second pooled connection there would deadlock the pool once as
+  many refreshes overlap as the pool is wide -- every holder and waiter occupies one -- and it also
+  kept a failed write out of the caller's reach, swallowed as "transient" after Connection had
+  already spent the old refresh token.
 * The refresh is serialized across workers and replicas by `SessionStore.lock_session()`
   (a transaction-scoped Postgres advisory lock) and re-reads the row under it: Connection rotates
   refresh tokens, so two concurrent refreshes would have one spend a token the other already

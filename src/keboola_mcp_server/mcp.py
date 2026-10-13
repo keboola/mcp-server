@@ -33,7 +33,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import (
-    _REFRESH_SKEW_SECONDS,
+    REFRESH_SKEW_SECONDS,
     exchange_scoped_token,
     forget_rejected_access_token,
     get_access_token,
@@ -129,6 +129,14 @@ DATA_APP_BRANCH_GATED_TOOLS = {
     'delete_python_js_data_app_draft',
     'get_data_app_preview_link',
 }
+
+
+class ProvisionedSessionEnded(Exception):
+    """A session created by `create_project` is over: Connection refused its refresh token, or the
+    row is gone. Its own type, not a `ValueError`, because the refresh path has to tell this apart
+    from the ordinary `ValueError`s raised inside it -- `json.JSONDecodeError` from a proxy's
+    non-JSON 200, `float()` in `parse_token_response`, `datetime.fromtimestamp` -- which are
+    transient and must not end a live session."""
 
 
 def _is_unauthorized(error: BaseException) -> bool:
@@ -462,14 +470,14 @@ class SessionStateMiddleware(fmw.Middleware):
             pass
 
     @staticmethod
-    def _provisioned_session_ended(project_id: int | None) -> ValueError:
+    def _provisioned_session_ended(project_id: int | None) -> ProvisionedSessionEnded:
         """The one explanation a caller gets once their provisioned session is gone.
 
         Shared by both places that discover it -- the 401 that first reveals the revocation, and
         every later request whose handle no longer resolves -- so the answer does not degrade into
         an unexplained failure after the first one.
         """
-        return ValueError(
+        return ProvisionedSessionEnded(
             f'The temporary session that created project {project_id} has ended. This normally means the '
             'project has been claimed and now belongs to a real Keboola account -- stop resending the '
             'scope_token from "create_project" and sign in to this server with that account to keep '
@@ -514,14 +522,20 @@ class SessionStateMiddleware(fmw.Middleware):
             raise cls._provisioned_session_ended(scope.active_project_id)
 
         access_token = session.kbc_access_token
-        if session.kbc_access_expires_at <= datetime.now(timezone.utc) + timedelta(seconds=_REFRESH_SKEW_SECONDS):
+        if session.kbc_access_expires_at <= datetime.now(timezone.utc) + timedelta(seconds=REFRESH_SKEW_SECONDS):
             access_token = await cls._refresh_provisioned_session(config, session, store, scope.active_project_id)
         project_id = str(scope.active_project_id) if scope.active_project_id is not None else config.project_id
         return dataclasses.replace(config, storage_token=access_token, project_id=project_id)
 
     @classmethod
     async def _refresh_provisioned_session(
-        cls, config: Config, session: OAuthSession, store: SessionStore, project_id: int | None
+        cls,
+        config: Config,
+        session: OAuthSession,
+        store: SessionStore,
+        project_id: int | None,
+        *,
+        force: bool = False,
     ) -> str:
         """Exchanges the session's refresh token for a fresh pair and persists the rotation.
 
@@ -540,13 +554,17 @@ class SessionStateMiddleware(fmw.Middleware):
 
         Any other failure is transient, so the current token is returned: it may still have minutes
         left, and the 401 handling deals with it properly if it does not.
+
+        ``force`` refreshes even when the stored token still looks fresh -- used by the 401 handler,
+        where whether the refresh token is still accepted *is* the question being asked.
         """
         try:
-            async with store.lock_session(session.id) as current:
+            async with store.lock_session(session.id) as locked:
+                current = locked.session
                 if current is None:
-                    return session.kbc_access_token  # revoked while we waited; the 401 path explains it
-                if current.kbc_access_expires_at > datetime.now(timezone.utc) + timedelta(
-                    seconds=_REFRESH_SKEW_SECONDS
+                    raise cls._provisioned_session_ended(project_id)  # revoked while we waited
+                if not force and current.kbc_access_expires_at > datetime.now(timezone.utc) + timedelta(
+                    seconds=REFRESH_SKEW_SECONDS
                 ):
                     return current.kbc_access_token  # another worker refreshed it while we waited
                 try:
@@ -556,21 +574,22 @@ class SessionStateMiddleware(fmw.Middleware):
                 except httpx.HTTPStatusError as e:
                     if e.response.status_code != HTTPStatus.UNAUTHORIZED:
                         raise
-                    if await store.revoke_if_kbc_refresh_token(current.id, current.kbc_refresh_token):
-                        LOG.info(
-                            'Connection refused the provisioned session\'s refresh token (401); '
-                            f'session revoked: session_id={current.id}'
-                        )
+                    await locked.revoke()
+                    LOG.info(
+                        'Connection refused the provisioned session\'s refresh token (401); '
+                        f'session revoked: session_id={current.id}'
+                    )
                     raise cls._provisioned_session_ended(project_id) from e
-                await store.rotate_kbc_tokens(
-                    current.id,
+                # On the locked connection, so a write that fails still fails *here*, while the old
+                # refresh token is already spent -- never swallowed into "transient, carry on".
+                await locked.rotate_kbc_tokens(
                     kbc_access_token=refreshed.access_token,
                     kbc_refresh_token=refreshed.refresh_token,
                     kbc_access_expires_at=datetime.fromtimestamp(refreshed.expires_at, tz=timezone.utc),
                 )
                 return refreshed.access_token
-        except ValueError:
-            raise  # the session has ended -- say so rather than handing back a dead token
+        except ProvisionedSessionEnded:
+            raise  # the session is over -- say so rather than handing back a dead token
         except Exception as e:
             LOG.warning(f'Could not refresh the provisioned session: {e}', exc_info=True)
             return session.kbc_access_token
@@ -634,39 +653,38 @@ class SessionStateMiddleware(fmw.Middleware):
         if await forget_rejected_access_token(storage_api_url, access_token):
             LOG.info(f'The stored session for {storage_api_url} was rejected by Connection; dropped it.')
 
-    @staticmethod
+    @classmethod
     async def _handle_provisioned_session_unauthorized(
-        config: Config, scope: 'SessionScope', store: SessionStore
+        cls, config: Config, scope: 'SessionScope', store: SessionStore
     ) -> None:
-        """Ends a provisioned session that Connection no longer accepts.
+        """Decides whether a 401 on a provisioned session means the session is over.
 
         The expected cause is the happy one: the human opened the confirm link and claimed the
-        project, which revokes the agent session that created it. The session has done its job and
-        the user now signs in as themselves -- so this replaces the bare 401 with that explanation
-        rather than letting it surface as a failure.
+        project, which revokes the agent session that created it. Then the caller should be told
+        that, not handed a bare 401.
 
-        Same discipline as the local path: a 401 alone is not proof, so the credential is re-checked
-        with `introspect_token` and the row is revoked only when that fails with an authentication
-        error. A transient failure leaves the session alone and the original error stands.
+        The authority is the **refresh token**, not the access token. An access token can 401 for
+        reasons that leave the session perfectly alive -- most obviously it simply expired after an
+        idle hour, or an earlier refresh hit a Connection blip and this request carried the stale
+        token on purpose. Revoking on that evidence would destroy the only handle to an unclaimed
+        project over a transient failure. So this re-reads the row and tries a refresh: Connection
+        refusing it is proof (and revokes, inside the lock), a refresh that succeeds says the
+        session was merely stale and the original error stands, and anything else is transient.
         """
         try:
-            await introspect_token(
-                cast(str, config.storage_api_url), subject_token=strip_bearer(cast(str, config.storage_token))
-            )
-            return  # the credential is fine; this 401 was about something else
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code not in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-                LOG.warning(f'Could not verify the provisioned session; keeping it: {e}')
-                return
+            session = await store.get_by_id(cast(str, scope.provisioned_session_id))
         except Exception as e:
-            LOG.warning(f'Could not verify the provisioned session; keeping it: {e}')
+            LOG.warning(f'Could not load the provisioned session while handling a 401: {e}', exc_info=True)
             return
+        if session is None:
+            raise cls._provisioned_session_ended(scope.active_project_id)
 
-        try:
-            await store.revoke(cast(str, scope.provisioned_session_id))
-        except Exception as e:
-            LOG.warning(f'Could not revoke the provisioned session row: {e}', exc_info=True)
-        raise SessionStateMiddleware._provisioned_session_ended(scope.active_project_id)
+        refreshed = await cls._refresh_provisioned_session(config, session, store, scope.active_project_id, force=True)
+        if refreshed != session.kbc_access_token:
+            LOG.info(
+                'The provisioned session was refreshed while handling a 401; the credential is still valid: '
+                f'session_id={session.id}'
+            )
 
     async def on_list_tools(
         self,

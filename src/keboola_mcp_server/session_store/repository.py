@@ -52,6 +52,40 @@ class OAuthSession:
     oauth_projectless: bool
 
 
+class LockedSession:
+    """A session held under `SessionStore.lock_session`, with the writes that belong inside that
+    lock. Every statement runs on the locked connection -- see `lock_session` on why a second one
+    must not be acquired here."""
+
+    def __init__(self, conn: asyncpg.Connection, session: OAuthSession | None, key: bytes) -> None:
+        self.session = session
+        self._conn = conn
+        self._key = key
+
+    async def rotate_kbc_tokens(
+        self, *, kbc_access_token: str, kbc_refresh_token: str, kbc_access_expires_at: datetime
+    ) -> None:
+        assert self.session is not None, 'Cannot rotate the credentials of a session that is gone.'
+        await self._conn.execute(
+            """
+            UPDATE oauth_sessions
+            SET kbc_access_token_enc = $2, kbc_refresh_token_enc = $3, kbc_access_expires_at = $4,
+                updated_at = now()
+            WHERE id = $1
+            """,
+            self.session.id,
+            crypto.encrypt(kbc_access_token.encode('utf-8'), self._key),
+            crypto.encrypt(kbc_refresh_token.encode('utf-8'), self._key),
+            kbc_access_expires_at,
+        )
+
+    async def revoke(self) -> None:
+        """Ends the session. No compare-and-swap needed: the lock already makes this the only
+        worker that could have rotated the credentials since they were read."""
+        assert self.session is not None, 'Cannot revoke a session that is gone.'
+        await self._conn.execute('UPDATE oauth_sessions SET revoked_at = now() WHERE id = $1', self.session.id)
+
+
 class SessionStore(Protocol):
     async def create(
         self,
@@ -80,14 +114,19 @@ class SessionStore(Protocol):
         """
         ...
 
-    def lock_session(self, session_id: str) -> AbstractAsyncContextManager[OAuthSession | None]:
-        """Serializes work on one session across every worker and replica, yielding the row as it
-        is *after* the lock was taken (None if it is gone).
+    def lock_session(self, session_id: str) -> AbstractAsyncContextManager['LockedSession']:
+        """Serializes work on one session across every worker and replica, yielding a handle whose
+        `session` is the row as it is *after* the lock was taken (None if it is gone).
 
         For credential refresh: Connection rotates refresh tokens, so two concurrent refreshes of
         the same session would have one spend a token the other already invalidated, and a late
         write-back could persist that dead pair. Re-reading under the lock lets the loser of the
         race use the winner's fresh credentials instead of refreshing again.
+
+        Writes go through the handle, on the connection the lock is already held on. Taking a
+        second pooled connection while holding this one would deadlock the pool: every holder and
+        waiter occupies a connection, so once as many refreshes overlap as the pool is wide, nobody
+        can acquire the second one and every session lookup on the replica stalls behind them.
         """
         ...
 
@@ -238,7 +277,7 @@ class PostgresSessionStore:
         return self._to_session(row) if row is not None else None
 
     @asynccontextmanager
-    async def _lock_session(self, session_id: str) -> AsyncIterator[OAuthSession | None]:
+    async def _lock_session(self, session_id: str) -> AsyncIterator[LockedSession]:
         pool = await self._get_pool()
         async with pool.acquire() as conn, conn.transaction():
             # A transaction-scoped advisory lock: released on commit, so a crashed worker cannot
@@ -246,9 +285,9 @@ class PostgresSessionStore:
             # serializes the holders of this same lock, which is exactly the refresh path.
             await conn.execute('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', session_id)
             row = await conn.fetchrow('SELECT * FROM oauth_sessions WHERE id = $1 AND revoked_at IS NULL', session_id)
-            yield self._to_session(row) if row is not None else None
+            yield LockedSession(conn, self._to_session(row) if row is not None else None, self._key)
 
-    def lock_session(self, session_id: str) -> AbstractAsyncContextManager[OAuthSession | None]:
+    def lock_session(self, session_id: str) -> AbstractAsyncContextManager[LockedSession]:
         return self._lock_session(session_id)
 
     @guard_db_errors
