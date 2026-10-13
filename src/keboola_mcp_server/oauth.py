@@ -35,7 +35,7 @@ from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
-from starlette.routing import get_route_path
+from starlette.routing import Route, get_route_path
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.auth_login import (
@@ -955,6 +955,58 @@ class AuthorizeRateLimitMiddleware:
         await self._app(scope, receive, send)
 
 
+_METADATA_PATH_PREFIXES = ('/.well-known/oauth-authorization-server', '/.well-known/openid-configuration')
+
+
+class _AdvertisePublicClients:
+    """Wraps an authorization-server metadata endpoint so that it also advertises `none` as a token endpoint
+    authentication method, first.
+
+    The MCP SDK hardcodes `["client_secret_post", "client_secret_basic"]`, but this server's clients are public ones
+    (PKCE, no secret) and its token endpoint accepts them: a client that picks its `token_endpoint_auth_method` from
+    this document (Open WebUI does) would otherwise register as a confidential client. The SDK bakes the metadata into
+    the handler when it builds the route, so the document is patched on its way out instead. An object, not a function:
+    Starlette would treat a function endpoint as a request handler rather than an ASGI app."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope['type'] != 'http':
+            await self._app(scope, receive, send)
+            return
+
+        start: dict | None = None
+        body = b''
+
+        async def capture(message: dict) -> None:
+            nonlocal start, body
+            if message['type'] == 'http.response.start':
+                start = message  # held back: the length header has to match the patched body
+                return
+            if message['type'] != 'http.response.body':
+                await send(message)
+                return
+            body += message.get('body', b'')
+            if message.get('more_body'):
+                return
+            assert start is not None
+            try:
+                metadata = json.loads(body)
+                methods = metadata.get('token_endpoint_auth_methods_supported')
+                if start['status'] == 200 and isinstance(methods, list) and 'none' not in methods:
+                    metadata['token_endpoint_auth_methods_supported'] = ['none', *methods]
+                    body = json.dumps(metadata).encode()
+            except ValueError:
+                pass  # not JSON (an error page, a preflight answer): forwarded as it is
+            headers = [(k, v) for k, v in start['headers'] if k.lower() != b'content-length']
+            headers.append((b'content-length', str(len(body)).encode()))
+            await send({**start, 'headers': headers})
+            await send({'type': 'http.response.body', 'body': body})
+
+        await self._app(scope, receive, capture)
+
+
 class SimpleOAuthProvider(OAuthProvider):
     def __init__(
         self,
@@ -1062,6 +1114,15 @@ class SimpleOAuthProvider(OAuthProvider):
             limit_per_minute=self._authorize_rate_limit_per_ip,
             trusted_hops=self._trusted_proxy_hops,
         )
+
+    def get_routes(self, mcp_path: str | None = None) -> list[Route]:
+        """The SDK's routes, with the authorization-server metadata documents also advertising public clients."""
+        return [
+            Route(route.path, endpoint=_AdvertisePublicClients(route.endpoint), methods=route.methods)
+            if isinstance(route, Route) and route.path.startswith(_METADATA_PATH_PREFIXES)
+            else route
+            for route in super().get_routes(mcp_path)
+        ]
 
     def get_middleware(self) -> list[Middleware]:
         """Prepends `UntrustedAuthorizeRedirectMiddleware` and `DatabaseUnavailableMiddleware`

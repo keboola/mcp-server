@@ -91,6 +91,10 @@ connector and cannot be pre-registered as a constant.
 | Token exchange | POST | `/token` |
 | Internal callback (Connection → this server) | GET | `/oauth/callback` |
 
+The AS metadata advertises `none` first in `token_endpoint_auth_methods_supported` (then `client_secret_post` and
+`client_secret_basic`): the clients here are public ones (PKCE, no client secret) and the token endpoint accepts them, so a
+client that picks its authentication method from that document, such as Open WebUI, registers without a secret.
+
 ## Registering and testing a new dynamic client end-to-end
 
 Requires VPN access to the target stack and a Keboola login on Connection for that stack (to click
