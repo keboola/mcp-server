@@ -24,7 +24,8 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE, is_secret_key
+from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE as _MASK
+from keboola_mcp_server.clients.encryption import is_secret_key
 from keboola_mcp_server.clients.storage import StorageEventType
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, get_http_request_or_none
@@ -251,7 +252,7 @@ def _mask_secret_fragments(text: str, found: set[str]) -> str:
             continue
         value_end = _fragment_value_end(text, match.end())
         _collect_fragment_leaves(text[match.end() : value_end], found)
-        parts.extend((text[cursor : match.end()], REDACTED_SECRET_VALUE))
+        parts.extend((text[cursor : match.end()], _MASK))
         cursor = value_end
     parts.append(text[cursor:])
     return ''.join(parts)
@@ -259,11 +260,11 @@ def _mask_secret_fragments(text: str, found: set[str]) -> str:
 
 def _mask_known_secret(text: str, secret: str) -> str:
     if len(secret) >= _MIN_REPLACED_SECRET_LEN:
-        return text.replace(secret, REDACTED_SECRET_VALUE)
+        return text.replace(secret, _MASK)
     quoted = re.compile(rf'(?P<quote>[\'"]){re.escape(secret)}(?P=quote)')
-    text = quoted.sub(lambda m: f'{m["quote"]}{REDACTED_SECRET_VALUE}{m["quote"]}', text)
+    text = quoted.sub(lambda m: f'{m["quote"]}{_MASK}{m["quote"]}', text)
     if len(secret) >= _MIN_WORD_REPLACED_SECRET_LEN and not secret.isdigit():
-        text = re.sub(rf'(?<!\w){re.escape(secret)}(?!\w)', REDACTED_SECRET_VALUE, text)
+        text = re.sub(rf'(?<!\w){re.escape(secret)}(?!\w)', _MASK, text)
     return text
 
 
@@ -289,7 +290,7 @@ def _redact_value(value: Any, found: set[str]) -> Any:
             masked_key = is_secret_key(key)
             if masked_key or (secret_path and key in _PATH_UPDATE_VALUE_KEYS):
                 _collect_leaves(item, found)
-                redacted[key] = REDACTED_SECRET_VALUE
+                redacted[key] = _MASK
             else:
                 redacted[key] = _redact_value(item, found)
         return redacted
@@ -300,7 +301,7 @@ def _redact_value(value: Any, found: set[str]) -> Any:
             return json.dumps(_redact_value(parsed, found), ensure_ascii=False)
         if _SECRET_MARKER.search(value):
             _collect_opaque_tokens(value, found)
-            return REDACTED_SECRET_VALUE
+            return _MASK
     return value
 
 
@@ -382,7 +383,7 @@ def _safe_exception_summary(exception: BaseException, secrets: set[str]) -> str:
         text = str(exception)
 
     text = _mask_known_secrets(text, secrets)
-    text = _PYDANTIC_INPUT_VALUE.sub(f'input_value={REDACTED_SECRET_VALUE}', text)
+    text = _PYDANTIC_INPUT_VALUE.sub(f'input_value={_MASK}', text)
     return _mask_secret_fragments(text, set())
 
 
