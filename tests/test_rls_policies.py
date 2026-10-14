@@ -22,12 +22,11 @@ def _policy(index: int) -> MetastoreObject:
     )
 
 
-def _client(pages_by_type: dict[str, list[list[MetastoreObject]]]) -> MagicMock:
-    """A client whose metastore serves `pages_by_type[object_type]` one page per call."""
-    served = {object_type: iter(pages) for object_type, pages in pages_by_type.items()}
+def _client(listings: dict[str, list[MetastoreObject]]) -> MagicMock:
+    """A client whose metastore serves `listings[object_type]` by `limit`/`offset`, like the real one."""
 
     async def list_objects(object_type: str, *, limit: int | None = None, offset: int | None = None):
-        return next(served[object_type])
+        return listings[object_type][offset : offset + limit]
 
     metastore = MagicMock()
     metastore.list_objects = AsyncMock(side_effect=list_objects)
@@ -44,9 +43,7 @@ def _deployed(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_every_page_is_loaded_so_no_policy_is_missed() -> None:
-    first = [_policy(i) for i in range(_PAGE_SIZE)]
-    second = [_policy(i) for i in range(_PAGE_SIZE, _PAGE_SIZE + 3)]
-    client = _client({'rls-policy': [first, second, []], 'cls-policy': [[]]})
+    client = _client({'rls-policy': [_policy(i) for i in range(_PAGE_SIZE + 3)], 'cls-policy': []})
 
     rules, _ = await load_policy_rules(client, dialect='snowflake')
 
@@ -55,19 +52,16 @@ async def test_every_page_is_loaded_so_no_policy_is_missed() -> None:
     assert len(rules.tables) == _PAGE_SIZE + 3
     metastore = client.step_up_metastore_client.return_value
     rls_calls = [c for c in metastore.list_objects.await_args_list if c.args[0] == 'rls-policy']
-    # The next offset is what was received; only the empty page ends the listing.
-    assert [(c.kwargs['limit'], c.kwargs['offset']) for c in rls_calls] == [
-        (_PAGE_SIZE, 0),
-        (_PAGE_SIZE, _PAGE_SIZE),
-        (_PAGE_SIZE, _PAGE_SIZE + 3),
-    ]
+    # The next offset is what was received; only the empty page ends the listing. A listing of several pages
+    # is read a second time to verify it did not change meanwhile.
+    one_pass = [(_PAGE_SIZE, 0), (_PAGE_SIZE, _PAGE_SIZE), (_PAGE_SIZE, _PAGE_SIZE + 3)]
+    assert [(c.kwargs['limit'], c.kwargs['offset']) for c in rls_calls] == one_pass * 2
 
 
 @pytest.mark.asyncio
 async def test_a_full_last_page_is_followed_by_one_more_request() -> None:
     """Exactly one full page can mean there is more: only an empty page ends the listing."""
-    full = [_policy(i) for i in range(_PAGE_SIZE)]
-    client = _client({'rls-policy': [full, []], 'cls-policy': [[]]})
+    client = _client({'rls-policy': [_policy(i) for i in range(_PAGE_SIZE)], 'cls-policy': []})
 
     rules, _ = await load_policy_rules(client, dialect='snowflake')
 
@@ -78,12 +72,54 @@ async def test_a_full_last_page_is_followed_by_one_more_request() -> None:
 
 @pytest.mark.asyncio
 async def test_a_short_page_is_followed_by_one_more_request() -> None:
-    client = _client({'rls-policy': [[_policy(0)], []], 'cls-policy': [[]]})
+    client = _client({'rls-policy': [_policy(0)], 'cls-policy': []})
 
     await load_policy_rules(client, dialect='snowflake')
 
-    # rls-policy: the short page and the empty one; cls-policy: the empty one.
+    # rls-policy: the short page and the empty one; cls-policy: the empty one. One page needs no verification.
     assert client.step_up_metastore_client.return_value.list_objects.await_count == 3
+
+
+def _shifting_client(stored: list[MetastoreObject], *, shifts: int) -> MagicMock:
+    """A client whose first `shifts` listings lose their first object right after page 0 was served -- an
+    admin deleting a policy that is already behind the reader's offset."""
+    client = _client({'rls-policy': stored, 'cls-policy': []})
+    metastore = client.step_up_metastore_client.return_value
+    serve = metastore.list_objects.side_effect
+    state = {'left': shifts}
+
+    async def list_objects(object_type: str, *, limit: int | None = None, offset: int | None = None):
+        page = await serve(object_type, limit=limit, offset=offset)
+        if object_type == 'rls-policy' and offset == 0 and state['left'] > 0:
+            state['left'] -= 1
+            del stored[0]
+        return page
+
+    metastore.list_objects = AsyncMock(side_effect=list_objects)
+    return client
+
+
+@pytest.mark.asyncio
+async def test_a_listing_that_shifts_between_pages_is_read_again_so_no_policy_is_skipped() -> None:
+    """Deleting a policy on page 0 moves the first object of page 1 to an offset already read: a single pass
+    never fetches it, so its table would look ungoverned."""
+    stored = [_policy(i) for i in range(_PAGE_SIZE + 50)]
+    client = _shifting_client(stored, shifts=1)
+
+    rules, _ = await load_policy_rules(client, dialect='snowflake')
+
+    # The very policy a single pass skips (the first one of page 1) is governed, and so is the rest.
+    assert f'in.c-crm.t{_PAGE_SIZE}' in rules.tables
+    assert set(rules.tables) == {f'in.c-crm.t{i}' for i in range(1, _PAGE_SIZE + 50)}
+
+
+@pytest.mark.asyncio
+async def test_a_listing_that_never_settles_is_refused() -> None:
+    stored = [_policy(i) for i in range(_PAGE_SIZE + 50)]
+    client = _shifting_client(stored, shifts=100)
+
+    with pytest.raises(ValueError, match='kept changing'):
+        await load_policy_rules(client, dialect='snowflake')
 
 
 @pytest.mark.asyncio

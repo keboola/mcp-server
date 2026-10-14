@@ -18,16 +18,34 @@ from keboola_mcp_server.rls import ClsRules, RlsRules
 # listing -- a server or proxy that returns fewer than `limit` (a cap) must not read as "no more policies".
 _PAGE_SIZE = 100
 _MAX_PAGES = 1000
+# The metastore pages by offset and returns no total or cursor, so a listing that changes between two page
+# requests (a policy deleted or re-scoped on an earlier page) shifts the later objects across the page boundary
+# and one is never fetched -- its table would look ungoverned. A listing that took more than one request is
+# therefore read twice and only accepted when both reads agree; otherwise it is read again, and refused after
+# `_MAX_LISTING_ATTEMPTS` unstable reads. A listing of one page is a single atomic response and needs no check.
+_MAX_LISTING_ATTEMPTS = 3
+
+
+async def _read_pages(metastore: MetastoreClient, object_type: str) -> tuple[list[MetastoreObject], int]:
+    """One pass over the listing: `(objects, number of non-empty pages)`."""
+    objects: list[MetastoreObject] = []
+    for pages in range(_MAX_PAGES):
+        page = await metastore.list_objects(object_type, limit=_PAGE_SIZE, offset=len(objects))
+        if not page:
+            return objects, pages
+        objects.extend(page)
+    raise ValueError(f'RLS: more than {_MAX_PAGES} pages of {object_type} objects, refusing to guess')
 
 
 async def _list_all(metastore: MetastoreClient, object_type: str) -> list[MetastoreObject]:
-    objects: list[MetastoreObject] = []
-    for _ in range(_MAX_PAGES):
-        page = await metastore.list_objects(object_type, limit=_PAGE_SIZE, offset=len(objects))
-        if not page:
+    for _ in range(_MAX_LISTING_ATTEMPTS):
+        objects, pages = await _read_pages(metastore, object_type)
+        if pages <= 1:
             return objects
-        objects.extend(page)
-    raise ValueError(f'RLS: more than {_MAX_PAGES} pages of {object_type} objects, refusing to guess')
+        verification, _ = await _read_pages(metastore, object_type)
+        if verification == objects:
+            return objects
+    raise ValueError(f'RLS: the {object_type} listing kept changing while it was read, so the query is refused')
 
 
 # Project feature that switches the RLS/CLS mechanism on, one gate for both (see the RFC).
