@@ -107,6 +107,15 @@ class Config:
     address is the entry that many places from the end of the header; the entries before it are caller-supplied and never
     used. Set it to match the ingress in front of the server, or the per-address limit will count the proxy instead of the
     caller."""
+    allow_anonymous_provisioning: bool | None = None
+    """Whether this deployment also serves the unauthenticated entry point (`/mcp-anonymous`), where a
+    caller with no Keboola account at all can call `create_project` and then work in the project that
+    created, until they claim it (`anonymous_entry.py`). Off unless set to true (also when unset).
+
+    Deployment-level only: never settable from a request header -- a caller who could turn this on per
+    request would be choosing to be served by the path that accepts no credentials. Enable it only on a
+    deployment meant for newcomers (the public `mcp-server` chart), never on the In Platform Agent
+    (`mcp-server-agent`), whose callers always arrive with an identity already."""
 
     # Fields a per-request HTTP header may legitimately set (see `replace_by_headers`). Everything
     # else -- jwt_secret, postgres_dsn, session_encryption_key, oauth_client_id/secret,

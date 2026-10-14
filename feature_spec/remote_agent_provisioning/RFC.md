@@ -128,28 +128,66 @@ session does. Requirement 3 holds: the model sees an opaque handle, never `kbc_a
 ### Letting an unauthenticated caller in
 
 Needed only for the newcomer with no Keboola account — the case the feature exists for. Two candidate
-mechanisms, to be chosen against fastmcp 4.0.3 (now pinned):
+mechanisms were considered:
 
 * **(a) Optional auth + per-tool gate.** A request with no credentials yields an "anonymous" principal
   instead of a 401; a middleware rejects every tool except `create_project` for such a session. One
-  URL, same endpoint everyone else uses. Touches the auth path, so it needs the careful review.
-* **(b) A second, unauthenticated FastMCP app** on a distinct path exposing only `create_project`. No
-  auth internals touched, but the newcomer must add a second server URL and then switch.
+  URL, same endpoint everyone else uses.
+* **(b) A second, unauthenticated FastMCP app** on a distinct path. No auth internals touched, but the
+  newcomer uses a different server URL.
 
-**API check done (fastmcp 4.0.3): (a) has no clean seam.** With `auth` set, `create_streamable_http_app`
-wraps the whole MCP route in `RequireAuthMiddleware`, which rejects an unauthenticated request at the
-ASGI layer — before any JSON-RPC body is parsed, so the tool name is not knowable there and no
-per-tool exception is possible. Allowing anonymous access would mean rebuilding fastmcp's route table
-ourselves to drop that wrapper and re-enforcing authentication in our own MCP middleware: invasive,
-fragile across upgrades, and a mistake there exposes *every* tool unauthenticated on a public,
-multi-tenant endpoint.
+**(b), and not only because (a) is awkward to build.** The decisive argument is the protocol, not
+fastmcp: an MCP client discovers that a server wants OAuth by being refused — it calls the endpoint
+with no credentials, gets a 401 with `WWW-Authenticate`, and only then runs the authorization flow.
+An endpoint that answered that same unauthenticated call with a working anonymous session would never
+hand out that 401, so no client would ever log in and every user of the stack — account or not —
+would silently end up anonymous. One URL cannot be both things.
 
-So (b) — a second FastMCP app on its own path, with no auth, exposing only `create_project` — is the
-safe shape, at the cost of the newcomer using a different URL first. **Not implemented**: it is a
-product decision (a second URL in the docs and the onboarding flow), not a detail, and the
-authenticated path below is independently useful. Gate whichever is chosen on a deployment setting
-(`KBC_ALLOW_ANONYMOUS_PROVISIONING`, default off), enabled in kbc-stacks only for the public
-`mcp-server` chart, never `mcp-server-agent`.
+(a) is also the riskier build. With `auth` set, `create_streamable_http_app` wraps the whole MCP route
+in `RequireAuthMiddleware`, which rejects an unauthenticated request at the ASGI layer, before any
+JSON-RPC body is parsed — so the tool name is not knowable there and no per-tool exception is
+possible. Doing it anyway would mean rebuilding fastmcp's route table to drop that wrapper and
+re-enforcing authentication in our own MCP middleware: invasive, fragile across upgrades, and a
+mistake there exposes *every* tool unauthenticated on a public, multi-tenant endpoint.
+
+**What is built** (`anonymous_entry.py`, `cli.create_anonymous_app`): the *same* `FastMCP` server
+exposed a second time on `/mcp-anonymous` via fastmcp's own `create_streamable_http_app(..., auth=None)`.
+Same tools, same middleware chain, same session store, one Postgres pool — FastMCP's lifespan is
+reference-counted, so mounting one server twice still starts it once. The only difference between the
+two endpoints is transport-level authentication, which is the only difference there should be.
+
+It exposes the whole tool set rather than `create_project` alone, because the point of the feature is
+what happens *after* provisioning: the agent builds in the project during the PAYG window, and it has
+no account to switch to the authenticated URL with. An endpoint offering only `create_project` would
+hand the newcomer a project and then no way to use it.
+
+What keeps that from being "every tool, unauthenticated" is that such a request gets **no credential
+it did not provision for itself**:
+
+* **Nothing the caller sends counts.** A request carrying a credential in any spelling is refused at
+  the ASGI layer (400), not silently downgraded — a client that believes it is authenticated must find
+  out, rather than quietly provisioning throwaway projects under an anonymous session. The check asks
+  `Config.replace_by_headers` what a credential is instead of listing header names, so it cannot drift.
+* **Nothing the server holds counts either.** `strip_credentials` clears `storage_token`,
+  `bearer_token` and `project_id` from the request's config, and every "find this session a
+  credential" path in `SessionStateMiddleware` — the stored-login fallback, the persisted login scope,
+  the auto-lease — is skipped. A `KBC_STORAGE_TOKEN` in the pod's environment is the operator's
+  credential, and serving it to a stranger is precisely what must not happen.
+* So the only token such a request can ever act under is the one `resolve_session` returns for a
+  provisioned session whose handle the caller already holds. A belt-and-braces check after that call
+  fails the request if a credential appeared any other way.
+
+Everything else is a bootstrap session with no client, which answers by saying how to get one. That
+answer now also survives the trip over HTTP: a bare `ValueError` raised from `ToolsFilteringMiddleware`
+reached an HTTP caller as "Internal server error", so it is converted to a `ToolError` — on this
+endpoint that is the *default* state of a first call, not an edge case.
+
+Gated on `KBC_ALLOW_ANONYMOUS_PROVISIONING` (default off), to be enabled in kbc-stacks only for the
+public `mcp-server` chart, never `mcp-server-agent` — whose callers always arrive with an identity
+already. The setting is deployment-level: it is not header-eligible, so no request can ask to be
+served by the path that accepts no credentials. With no authentication configured at all the endpoint
+is not served either, and says why: `/mcp` already takes anyone, so a second path that *additionally*
+refuses credentials would only be a worse version of the one they have.
 
 An **authenticated** remote caller needs none of this: they already reach the tool. Dropping the
 `deployed_sa_token_path()` guard (decision 1) is all that is required there, and Connection answers
@@ -223,7 +261,19 @@ Shipped in this increment:
   process-wide and shared by every caller on the replica, so writing a provisioned session there
   would hand it to all of them.
 
-Not implemented: the anonymous entry path (see above).
+Shipped in the second increment -- **the anonymous entry path** (`anonymous_entry.py`,
+`cli.create_anonymous_app`), the reason the rest of this exists:
+
+* `/mcp-anonymous` serves the same `FastMCP` server with `auth=None`, behind
+  `KBC_ALLOW_ANONYMOUS_PROVISIONING` (default off, never settable from a header). A second URL
+  because `/mcp` has to keep answering an unauthenticated call with a 401 -- that refusal is how
+  every MCP client discovers it should run OAuth.
+* A request there is refused if it carries a credential, and stripped of every credential the server
+  would otherwise lend it; the only token it can act under is the provisioned session's, resolved
+  from the handle it holds. Verified both ways in `tests/test_anonymous_entry.py`, including over
+  the real ASGI stack with both endpoints mounted.
+* A bootstrap session's "call create_project to get a credential" now survives the trip over HTTP as
+  a `ToolError` instead of arriving as "Internal server error".
 
 ## Scope
 
@@ -245,9 +295,11 @@ Out of scope:
   not a Keboola token; near-expiry refresh rotates the row; a revoked session produces the claim
   message and revokes the row; the local store-collision refusal still fires and no longer claims to
   be about deployment.
-* Integration over the real middleware chain (as `TestBootstrapServerEndToEnd` does): anonymous
-  request → `create_project` → a second request carrying the handle builds a client bound to the new
-  project; every other tool stays unreachable anonymously.
+* Integration over the real middleware chain and both mounted endpoints
+  (`TestANewcomerWithNoAccount`): a client with nothing to authenticate with lists tools, calls
+  `create_project`, and a second request carrying the handle is signed in to the new project; a
+  request without the handle gets a bootstrap session and is told how to get a credential; a request
+  *with* a credential is refused; and `/mcp` still answers an unauthenticated call with a 401.
 * Manual E2E on canary-orion (feature confirmed on): connect with no account, provision, run a data
   tool **before** claiming, then claim in the browser and confirm the session ends with the right
   message.

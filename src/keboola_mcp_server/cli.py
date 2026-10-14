@@ -15,11 +15,13 @@ import traceback
 
 import pydantic
 from fastmcp import FastMCP
+from fastmcp.server.http import StarletteWithLifespan
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from keboola_mcp_server.anonymous_entry import ANONYMOUS_MOUNT_PATH, AnonymousEntryMiddleware
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     ForwardSlashMiddleware,
@@ -241,6 +243,61 @@ _exception_handlers = {
     DatabaseUnavailableError: _database_unavailable_handler,
     Exception: _catch_all_handler,
 }
+
+
+def create_anonymous_app(mcp_server: FastMCP, *, config: Config, stateless_http: bool) -> StarletteWithLifespan | None:
+    """Builds the unauthenticated endpoint, or returns None when this deployment does not serve one.
+
+    The same `FastMCP` server, exposed a second time with no authentication in front of it: same
+    tools, same middleware chain, same session store and the same single Postgres pool. Only the
+    transport-level authentication differs, which is exactly the difference that matters -- and
+    FastMCP's lifespan is reference-counted, so mounting one server twice still starts it once.
+
+    What keeps this from being "every tool, unauthenticated" is `AnonymousEntryMiddleware` plus the
+    handling it switches on in `SessionStateMiddleware`: a request arriving here is refused if it
+    carries a credential, and is stripped of every credential the server could otherwise lend it. A
+    caller therefore reaches exactly two things -- `create_project`, which needs no credential, and
+    afterwards the project that call provisioned, via the handle it returned. Every other tool is a
+    bootstrap session with no client, which answers by saying how to get one.
+
+    :param config: The server's own configuration; `allow_anonymous_provisioning` decides whether
+        this endpoint exists at all (`KBC_ALLOW_ANONYMOUS_PROVISIONING`, off unless set).
+    """
+    if not config.allow_anonymous_provisioning:
+        return None
+
+    import fastmcp
+    from fastmcp.server.http import create_streamable_http_app
+
+    if mcp_server.auth is None:
+        # Nothing to be anonymous *next to*: /mcp already takes anyone. Mounting a second path that
+        # additionally refuses credentials would only give callers a worse version of the endpoint
+        # they already have, so say so rather than quietly serving it.
+        LOG.warning(
+            f'Not serving the anonymous endpoint "{ANONYMOUS_MOUNT_PATH}": this server has no authentication '
+            'configured, so "/mcp" is already reachable without credentials.'
+        )
+        return None
+
+    LOG.info(
+        f'Serving the anonymous provisioning endpoint on "{ANONYMOUS_MOUNT_PATH}". It accepts no credentials: '
+        'a caller there can create a project and then work in that project, and nothing else.'
+    )
+    # Mirrors what `FastMCP.http_app()` passes, field for field, so the two endpoints cannot drift
+    # apart in anything except the one thing they are meant to differ in: `auth`.
+    return create_streamable_http_app(
+        server=mcp_server,
+        streamable_http_path='/',
+        auth=None,
+        json_response=fastmcp.settings.json_response,
+        stateless_http=stateless_http,
+        debug=fastmcp.settings.debug,
+        middleware=[Middleware(AnonymousEntryMiddleware)],
+        host_origin_protection=fastmcp.settings.http_host_origin_protection,
+        allowed_hosts=fastmcp.settings.http_allowed_hosts,
+        allowed_origins=fastmcp.settings.http_allowed_origins,
+        session_idle_timeout=fastmcp.settings.http_session_idle_timeout,
+    )
 
 
 def _parse_project_ids(raw: str) -> list[int]:
@@ -622,6 +679,11 @@ async def run_server(args: list[str] | None = None) -> None:
                 mount_paths['/mcp'] = http_app
                 transports.append('Streamable-HTTP')
 
+                if anonymous_app := create_anonymous_app(
+                    mcp_server, config=config, stateless_http=parsed_args.stateless_http
+                ):
+                    mount_paths[ANONYMOUS_MOUNT_PATH] = anonymous_app
+
             @asynccontextmanager
             async def lifespan(_app: Starlette):
                 async with contextlib.AsyncExitStack() as stack:
@@ -630,7 +692,7 @@ async def run_server(args: list[str] | None = None) -> None:
                     yield
 
             app = Starlette(
-                middleware=[Middleware(ForwardSlashMiddleware)],
+                middleware=[Middleware(ForwardSlashMiddleware, mount_paths=tuple(mount_paths))],
                 lifespan=lifespan,
                 exception_handlers=_exception_handlers,
             )

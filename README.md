@@ -170,6 +170,15 @@ You can also start the server with only `KBC_STORAGE_API_URL` and no credentials
 
 This needs a stack with agent provisioning enabled; elsewhere the tool reports that it is not available.
 
+The same thing is possible without running a server at all, on a **remotely hosted** MCP server whose
+operator has enabled it (`KBC_ALLOW_ANONYMOUS_PROVISIONING`): such a deployment also serves
+`https://mcp.<stack>/mcp-anonymous`, which accepts no credentials. Point your client there with no
+authentication, call `create_project`, and keep working in the project that call created — the server
+holds its credentials for you and the tool hands back an opaque `scope_token` to resend on later
+calls. It is a separate URL because the ordinary `/mcp` endpoint has to keep refusing unauthenticated
+requests: that refusal is how MCP clients know to start the OAuth login. Once you claim the project,
+switch to `/mcp` and sign in with the account that now owns it.
+
 #### Authenticating without a browser
 
 For containers or CI where a browser login isn't possible, provide a Keboola [access or personal access token](https://help.keboola.com/management/project/tokens/) directly — set `KBC_STORAGE_TOKEN` (env var) or send the `X-StorageAPI-Token` header — together with `KBC_PROJECT_ID` (or the `X-KBC-ProjectId` header) to select the project. On HTTP transports these can be supplied per request as headers, so each request carries its own credentials.
