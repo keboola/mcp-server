@@ -339,10 +339,10 @@ async def _resolve_branch_mr(c: _MrContext, merge_request_id: int | None) -> Jso
     return mr
 
 
-def _validate_auto_merge(strategy: str | None, at: str | None, *, require_pairing: bool) -> None:
+def _validate_auto_merge(strategy: str | None, at: str | None) -> None:
     if strategy == 'scheduled' and not at:
         raise ToolError("auto_merge='scheduled' requires auto_merge_at (ISO-8601 date-time).")
-    if require_pairing and at is not None and strategy != 'scheduled':
+    if at is not None and strategy != 'scheduled':
         raise ToolError("auto_merge_at is only meaningful with auto_merge='scheduled'.")
 
 
@@ -552,7 +552,7 @@ async def update_merge_request(
     """
     # The backend applies auto-merge settings only when a strategy is sent; a lone `auto_merge_at` would be silently
     # ignored while the tool reported success, so the pairing is enforced here (as the kbagent CLI does).
-    _validate_auto_merge(auto_merge, auto_merge_at, require_pairing=True)
+    _validate_auto_merge(auto_merge, auto_merge_at)
     payload: JsonDict = {}
     if title is not None:
         payload['title'] = title
@@ -617,7 +617,7 @@ async def create_merge_request(
     create_merge_request → merge_merge_request (no review step). Returns the merge request with its status;
     follow `next_step`.
     """
-    _validate_auto_merge(auto_merge, auto_merge_at, require_pairing=True)
+    _validate_auto_merge(auto_merge, auto_merge_at)
     c = await _load(ctx)
     session_branch = c.session_branch
     if session_branch is None:
