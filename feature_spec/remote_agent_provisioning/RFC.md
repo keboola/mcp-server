@@ -99,6 +99,13 @@ to a different caller. A session with no OAuth row (a programmatic token, whose 
 server never rotates) binds to that credential as before, and a caller with no credential at all
 gets an unbound handle, the only shape available to a session that has no identity yet.
 
+On the anonymous endpoint that last case is not an edge case but the normal one: the caller has no
+identity to bind to, by definition. The handle is therefore only as protected as the string itself
+-- it stays an AES-256-GCM value only this server's key can open, so it is opaque to everyone else,
+but whoever holds the string can use it. That is the same property the `confirm_url` has, and it is
+the floor for an unauthenticated flow: there is nothing else about the caller to tie it to. It
+expires with the session, which the claim revokes.
+
 Both bindings are tried when reading a `scope_token` back, since a token does not say which kind it
 is. That is not a weakening: each candidate is a key the caller already demonstrably holds, and a
 token sealed for anyone else decrypts under neither. A `scope_token` that is **present but
