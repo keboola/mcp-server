@@ -1679,6 +1679,31 @@ class TestQueryDataRowLevelSecurity(_DeployedServer):
         assert 'WHERE "country" = \'CZ\'' in rewritten_sql
 
     @pytest.mark.asyncio
+    async def test_flag_on_development_branch_bucket_copy_of_a_governed_table_is_filtered(
+        self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
+    ) -> None:
+        """`in.c-<branchId>-crm` is the branch copy of governed `in.c-crm`: it must not run unfiltered."""
+        keboola_client.has_feature.return_value = True
+        _stub_metastore_objects(
+            keboola_client,
+            rls_policies=[
+                self._policy(
+                    table='in.c-crm.invoices',
+                    rules_list=[{'principal': 'petr', 'condition': {'column': 'country', 'op': 'eq', 'value': 'CZ'}}],
+                )
+            ],
+        )
+        workspace_manager.get_sql_dialect.return_value = 'snowflake'
+        mcp_context_client.session.state[OAUTH_USER_EMAIL_KEY] = 'petr'
+        workspace_manager.execute_query.return_value = self._ok_result([{'id': 1}])
+        keboola_client.storage_client.table_detail.return_value = {'columns': ['id', 'country']}
+
+        await query_data('SELECT * FROM "in.c-123-crm"."invoices"', 'q', mcp_context_client)
+
+        rewritten_sql = workspace_manager.execute_query.await_args.args[0]
+        assert 'WHERE "country" = \'CZ\'' in rewritten_sql
+
+    @pytest.mark.asyncio
     async def test_flag_on_join_filters_only_the_governed_table(
         self, mcp_context_client: Context, keboola_client: KeboolaClient, workspace_manager: WorkspaceManager
     ) -> None:

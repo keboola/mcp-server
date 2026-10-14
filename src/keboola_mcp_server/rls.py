@@ -376,27 +376,56 @@ def _normalize_schema(schema: str, dialect: str) -> str:
 # `<branchId>_` in front of a Keboola stage (`in`/`out`) in the physical schema of a branch workspace.
 _BRANCH_PREFIX_RE = re.compile(r'^\d+_(?=(?:in|out)[._])')
 
+# `c-<branchId>-` in a development-branch BUCKET name (`in.c-123-crm`, dataset `in_c_123_crm` on BigQuery): the
+# branch copy of production bucket `in.c-crm`. Same folding as `search` / `TableDetail.prod_id` do with a known
+# branch id, but without one: the copies of every branch live in the one project database and any session can
+# name them, so a copy of ANOTHER branch must find the policy too.
+_BRANCH_BUCKET_RE = {
+    'snowflake': re.compile(r'^((?:in|out)\.c-)\d+-', re.IGNORECASE),
+    'bigquery': re.compile(r'^((?:in|out)_c_)\d+_', re.IGNORECASE),
+}
+
 
 def _rule_key(schema: str, table: str, dialect: str) -> str:
     """The rules-file key a `<schema>.<table>` reference is looked up under.
 
-    Case handling follows the backend's own object-name resolution, so a rule matches exactly the
-    table the engine would read:
+    Keys are compared case-insensitively on EVERY backend. Snowflake folds unquoted names and the
+    workspace hands out fully-qualified names quoted in the storage case, so `"IN.C-CRM"."INVOICES"`
+    and `"in.c-crm"."invoices"` name the same table there. BigQuery dataset and table names are
+    case-SENSITIVE (`in_c_crm.Invoices` is a different table from `in_c_crm.invoices`, unless the
+    dataset was created case-insensitive), but a table nobody wrote a policy for must not be what
+    decides the outcome: were the keys case-sensitive, `in_c_crm.INVOICES` would find no rule and be
+    treated as ungoverned, i.e. run unfiltered. Folding can only over-protect -- a differently-cased
+    table is filtered by the policy of its namesake -- and over-protection fails closed.
 
-    * Snowflake folds unquoted names and the workspace hands out fully-qualified names quoted in the
-      storage case, so keys are compared case-insensitively -- `"IN.C-CRM"."INVOICES"` and
-      `"in.c-crm"."invoices"` name the same table there.
-    * BigQuery dataset and table names are case-SENSITIVE: `in_c_crm.Invoices` is a different table
-      from `in_c_crm.invoices`, so a rule for one must not cover the other. Keys keep their case and
-      a mismatch simply finds no rule -- which is a refusal.
+    Two spellings of a development branch are dropped, so the table is governed by the policy of its
+    production table instead of silently being read unfiltered:
 
-    A development-branch workspace spells the schema with the branch id in front (`35403_out.c-model`,
-    `35403_out_c_model` on BigQuery) while the policy and the Storage table id stay `out.c-model`. The
-    prefix is dropped on both sides, so a branch query is governed by the same policy as production
-    instead of silently reading the table unfiltered.
+    * a development-branch workspace puts the branch id in front of the schema (`35403_out.c-model`,
+      `35403_out_c_model` on BigQuery) while the policy and the Storage table id stay `out.c-model`;
+    * a development-branch bucket carries it inside the bucket name (`in.c-123-crm`, `in_c_123_crm`),
+      see `_BRANCH_BUCKET_RE`. A production bucket that really is named `c-<digits>-...` folds the same
+      way, which again only over-protects.
     """
-    key = f'{_BRANCH_PREFIX_RE.sub("", schema)}.{table}'
-    return key if dialect == 'bigquery' else key.lower()
+    return _production_name(schema, table, dialect).lower()
+
+
+def _production_name(schema: str, table: str, dialect: str) -> str:
+    """`<schema>.<table>` with the development-branch spellings dropped, case kept (see `_rule_key`)."""
+    schema = _BRANCH_PREFIX_RE.sub('', schema)
+    if bucket_re := _BRANCH_BUCKET_RE.get(dialect):
+        schema = bucket_re.sub(r'\1', schema)
+    return f'{schema}.{table}'
+
+
+def _qualifier_key(schema: str, table: str, dialect: str) -> str:
+    """Identity of a table for matching a column qualifier (`schema.table.col`) to the table it names.
+
+    Unlike `_rule_key` this keeps BigQuery's case: there `in_c_crm.Invoices.id` names a DIFFERENT relation than
+    the filtered `in_c_crm.invoices`, so it is left alone (the engine rejects it) instead of being rebound.
+    """
+    name = _production_name(schema, table, dialect)
+    return name if dialect == 'bigquery' else name.lower()
 
 
 # Comparison ops a `condition` primitive's `column`/`op`/`value` shape may use -- each maps to the
@@ -601,11 +630,9 @@ class RlsRules:
 
     `dialect` is the workspace backend the predicates were compiled for; it is not a default but a
     pin, and `rewrite_query()` refuses to run these rules against any other backend. It also decides
-    two things about the keys, each following that backend's own name resolution: how the bucket part
-    is spelled (BigQuery datasets take neither dots nor hyphens, so bucket `in.c-crm` is dataset
-    `in_c_crm` -- normalised at load, see `_normalize_schema`) and whether case matters (it does on
-    BigQuery, where table and dataset names are case-sensitive; it does not on Snowflake -- see
-    `_rule_key`).
+    how the bucket part of a key is spelled (BigQuery datasets take neither dots nor hyphens, so bucket
+    `in.c-crm` is dataset `in_c_crm` -- normalised at load, see `_normalize_schema`). Keys are compared
+    case-insensitively and with a development branch's id dropped on both backends, see `_rule_key`.
     """
 
     tables: Mapping[str, Mapping[str, str]]
@@ -1676,7 +1703,7 @@ def rewrite_query(
         # alias is case-sensitive, breaking those other references.
         alias_node = node.args.get('alias')
         if alias_node is None:
-            unaliased.add(_rule_key(node.db, node.name, dialect))
+            unaliased.add(_qualifier_key(node.db, node.name, dialect))
             # Two different governed tables with the same bare name (`in.a.orders`, `in.b.orders`) would
             # both be wrapped as `orders`: duplicate derived-table aliases, and qualifiers that can no
             # longer tell them apart. The same table repeated (self-join, UNION) is fine.
@@ -1713,7 +1740,7 @@ def rewrite_query(
     rewritten_tree = tree.transform(_transform, copy=True)
     for column in rewritten_tree.find_all(exp.Column):
         qualifier_schema = column.args.get('db')
-        if qualifier_schema is not None and _rule_key(qualifier_schema.name, column.table, dialect) in unaliased:
+        if qualifier_schema is not None and _qualifier_key(qualifier_schema.name, column.table, dialect) in unaliased:
             column.set('db', None)
             column.set('catalog', None)
     rewritten_sql = rewritten_tree.sql(dialect=dialect)

@@ -1518,8 +1518,63 @@ class TestDialectIdentifierSemantics:
 
         assert out.applied_rules == ['in.c-crm.invoices']
 
-    def test_bigquery_rule_keys_keep_their_case(self, bq_rules: RlsRules) -> None:
+    def test_bigquery_rule_keys_are_normalised_bucket_names(self, bq_rules: RlsRules) -> None:
         assert sorted(bq_rules.tables) == ['in_c_crm.invoices', 'in_c_crm.orders', 'in_c_sales.orders']
+
+    @pytest.mark.parametrize(
+        'sql',
+        [
+            'SELECT * FROM `in_c_crm`.`INVOICES`',
+            'SELECT * FROM in_c_crm.Invoices',
+            'SELECT * FROM `proj`.`IN_C_CRM`.`invoices`',
+        ],
+    )
+    def test_bigquery_name_differing_only_in_case_is_governed_not_passed_through(
+        self, bq_rules: RlsRules, sql: str
+    ) -> None:
+        """A case-distinct BigQuery name is never read as "no policy": it is filtered by its namesake's rule."""
+        assert references_governed_table(sql, dialect='bigquery', rules=bq_rules) is True
+        out = rewrite_query(sql, user='petr', dialect='bigquery', rules=bq_rules)
+        assert out.applied_rules == ['in_c_crm.invoices']
+        assert "WHERE country = 'CZ'" in out.sql
+
+    @pytest.mark.parametrize(
+        ('dialect', 'sql'),
+        [
+            # a development-branch bucket carries the branch id inside the bucket name
+            ('snowflake', 'SELECT * FROM "in.c-123-crm"."invoices"'),
+            ('snowflake', 'SELECT * FROM "IN.C-123-CRM"."INVOICES"'),
+            ('snowflake', 'SELECT * FROM OTHER_DB."in.c-98765-crm"."invoices"'),
+            # ... also in a branch workspace, where the physical schema has the branch id in front as well
+            ('snowflake', 'SELECT * FROM "35403_in.c-123-crm"."invoices"'),
+            ('bigquery', 'SELECT * FROM `in_c_123_crm`.`invoices`'),
+            ('bigquery', 'SELECT * FROM `proj`.`in_c_98765_crm`.`invoices`'),
+            ('bigquery', 'SELECT * FROM `35403_in_c_123_crm`.`invoices`'),
+        ],
+    )
+    def test_development_branch_bucket_copy_of_a_governed_table_is_governed(
+        self, rules: RlsRules, bq_rules: RlsRules, dialect: str, sql: str
+    ) -> None:
+        """`in.c-<branchId>-crm` is the branch copy of `in.c-crm`: naming it must not skip the policy."""
+        r = bq_rules if dialect == 'bigquery' else rules
+        assert references_governed_table(sql, dialect=dialect, rules=r) is True
+        out = rewrite_query(sql, user='petr', dialect=dialect, rules=r)
+        assert out.applied_rules == ['in.c-crm.invoices' if dialect == 'snowflake' else 'in_c_crm.invoices']
+        assert "WHERE country = 'CZ'" in out.sql
+
+    def test_development_branch_bucket_copy_without_a_rule_for_the_principal_is_refused(self, rules: RlsRules) -> None:
+        with pytest.raises(RlsError, match='Access denied'):
+            rewrite_query('SELECT * FROM "in.c-123-crm"."invoices"', user='nobody', dialect='snowflake', rules=rules)
+
+    def test_a_bucket_named_like_a_branch_copy_of_a_governed_bucket_is_governed_too(self, rules: RlsRules) -> None:
+        """Fail closed: `in.c-2024-sales` cannot be told from a branch copy of `in.c-sales`, so it is filtered."""
+        sql = 'SELECT * FROM "in.c-2024-sales"."orders"'
+        assert references_governed_table(sql, dialect='snowflake', rules=rules) is True
+
+    def test_branch_bucket_ids_are_governed_for_metadata_views(self, rules: RlsRules) -> None:
+        assert rules.governs_table_id('in.c-123-crm.invoices') is True
+        assert rules.governs_bucket_id('in.c-123-crm') is True
+        assert rules.is_governed(table_name='invoices', schema='in.c-123-crm') is True
 
 
 class TestDisclosure:
