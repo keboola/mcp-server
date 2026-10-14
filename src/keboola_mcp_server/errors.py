@@ -20,6 +20,7 @@ from mcp import types as mt
 from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import StorageEventType
 from keboola_mcp_server.config import deployed_sa_token_path
@@ -57,7 +58,7 @@ def _is_caller_error(exc: BaseException) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
         return 400 <= status < 500 and status not in _UPSTREAM_4XX
-    return isinstance(exc, (jsonschema.ValidationError, NotFoundError))
+    return isinstance(exc, (jsonschema.ValidationError, NotFoundError, InvalidArgumentError))
 
 
 class _JsonWrapper(BaseModel):

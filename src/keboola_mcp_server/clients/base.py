@@ -57,6 +57,10 @@ def read_service_account_jwt(path: str) -> str:
     return jwt
 
 
+class InvalidArgumentError(ValueError):
+    """An argument was rejected locally, before any request was made."""
+
+
 class RawKeboolaClient:
     """
     Raw async client for Keboola services.

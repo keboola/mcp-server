@@ -16,6 +16,7 @@ from fastmcp.server.context import FastMCPRequestContext
 from fastmcp.tools import FunctionTool
 from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
@@ -163,6 +164,7 @@ def _http_status_error(status: int) -> httpx.HTTPStatusError:
         (_http_status_error(404), logging.WARNING, 'client'),
         (jsonschema.ValidationError('bad input'), logging.WARNING, 'client'),
         (NotFoundError('missing flow'), logging.WARNING, 'client'),
+        (InvalidArgumentError("Invalid configuration_id ''."), logging.WARNING, 'client'),
         (AggregateError('all failed', [_http_status_error(404), NotFoundError('gone')]), logging.WARNING, 'client'),
         # upstream/server faults stay ERROR with the traceback (429/408 are throttling/timeouts, not caller mistakes)
         (_http_status_error(500), logging.ERROR, 'internal'),

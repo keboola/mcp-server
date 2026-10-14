@@ -9,6 +9,7 @@ import pytest
 from fastmcp import Context
 from pytest_mock import MockerFixture
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import ORCHESTRATOR_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.errors import NotFoundError
 from keboola_mcp_server.mcp import AggregateError, PlainFunctionTool, ToonCompactFunctionTool, _exclude_none_serializer
@@ -236,10 +237,21 @@ async def test_batch_lookup_all_failed(
             [LookupFailure(id='3', reason='Flow "3" not found')],
             [LookupFailure(id='2', reason='HTTP 500 Internal Server Error')],
         ),
+        (
+            ['ok', InvalidArgumentError("Invalid configuration_id ''.")],
+            [LookupFailure(id='2', reason="Invalid configuration_id ''.")],
+            [],
+        ),
         (['ok', _http_error(429)], [], [LookupFailure(id='2', reason='HTTP 429 Too Many Requests')]),
         (['ok', RuntimeError('x' * 300)], [], [LookupFailure(id='2', reason='x' * 197 + '...')]),
     ],
-    ids=['404_with_api_error', 'mixed_5xx_not_found_error', '429_is_retryable', 'long_reason_truncated'],
+    ids=[
+        '404_with_api_error',
+        'mixed_5xx_not_found_error',
+        'empty_id_is_caller_error',
+        '429_is_retryable',
+        'long_reason_truncated',
+    ],
 )
 def test_unwrap_lookup_results(
     results: list[Any], expected_not_found: list[LookupFailure], expected_errors: list[LookupFailure]
