@@ -28,15 +28,19 @@ from keboola_mcp_server import server as server_module
 from keboola_mcp_server.anonymous_entry import (
     ANONYMOUS_ENTRY_SCOPE_KEY,
     ANONYMOUS_MOUNT_PATH,
+    AnonymousCredentialLeak,
     AnonymousEntryMiddleware,
     carries_a_credential,
+    credential_unchanged,
     is_anonymous_entry,
+    only_provisioned_credential,
     strip_credentials,
 )
 from keboola_mcp_server.auth_login import ProvisionedProject, TokenSet
 from keboola_mcp_server.cli import create_anonymous_app
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import ForwardSlashMiddleware, SessionStateMiddleware, ToolsFilteringMiddleware
+from keboola_mcp_server.scope import SessionScope
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.session_store.repository import OAuthSession
 
@@ -177,6 +181,65 @@ class TestTheDoor:
         assert '/mcp' in body
         # The refusal must not quote back what it refused.
         assert 'kbc_at_mine' not in body
+
+
+class TestTheCredentialInvariant:
+    """`only_provisioned_credential` / `credential_unchanged`: the two checks that bracket the one
+    place an anonymous request is allowed to acquire a token."""
+
+    def test_the_provisioned_credential_is_the_one_it_may_hold(self) -> None:
+        config = Config(storage_api_url=STACK, storage_token='kbc_at_provisioned')
+        assert only_provisioned_credential(config, 'sess-1') == 'kbc_at_provisioned'
+
+    def test_no_credential_at_all_is_fine(self) -> None:
+        assert only_provisioned_credential(Config(storage_api_url=STACK), None) is None
+
+    def test_a_credential_without_a_handle_fails_the_request(self) -> None:
+        config = Config(storage_api_url=STACK, storage_token='somebody-elses-token')
+        with pytest.raises(AnonymousCredentialLeak, match='without holding a provisioned'):
+            only_provisioned_credential(config, None)
+
+    def test_swapping_the_credential_afterwards_fails_the_request(self) -> None:
+        # What `_resolve_local_tokens` used to do on a non-deployed server: read the provisioned
+        # `kbc_at_` token as an ordinary local session and refresh it from the host's own login.
+        config = Config(storage_api_url=STACK, storage_token='the-operators-own-token')
+        with pytest.raises(AnonymousCredentialLeak, match='replaced after'):
+            credential_unchanged(config, 'kbc_at_provisioned')
+
+    def test_keeping_it_passes(self) -> None:
+        credential_unchanged(Config(storage_api_url=STACK, storage_token='kbc_at_p'), 'kbc_at_p')
+
+
+class TestTheLocalLoginIsNeverBorrowed:
+    """A provisioned `kbc_at_` token on a non-deployed server looks exactly like an ordinary local
+    programmatic session, so `_resolve_local_tokens` would refresh it from the host's login store --
+    handing the operator's identity to an unauthenticated caller on any dev machine with the flag
+    on. The `anonymous` flag is what tells those two apart."""
+
+    @pytest.mark.asyncio
+    async def test_an_anonymous_session_does_not_reach_the_login_store(self, monkeypatch) -> None:
+        get_access_token = AsyncMock(return_value='the-operators-own-token')
+        monkeypatch.setattr('keboola_mcp_server.mcp.get_access_token', get_access_token)
+        config = Config(storage_api_url=STACK, storage_token='kbc_at_provisioned')
+        scope = SessionScope(project_ids=[4321], confirmed=True, provisioned_session_id='sess-1')
+
+        resolved, _ = await SessionStateMiddleware._resolve_local_tokens(config, scope, anonymous=True)
+
+        assert resolved.storage_token == 'kbc_at_provisioned'
+        get_access_token.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_an_ordinary_local_session_still_does(self, monkeypatch) -> None:
+        # The guard must be about *who is asking*, not about the token's shape -- a local session
+        # with the same kind of token still gets its login refreshed.
+        get_access_token = AsyncMock(return_value='kbc_at_refreshed')
+        monkeypatch.setattr('keboola_mcp_server.mcp.get_access_token', get_access_token)
+        config = Config(storage_api_url=STACK, storage_token='kbc_at_local')
+
+        resolved, _ = await SessionStateMiddleware._resolve_local_tokens(config, None)
+
+        assert resolved.storage_token == 'kbc_at_refreshed'
+        get_access_token.assert_awaited_once()
 
 
 class TestWhetherTheEndpointIsServedAtAll:
@@ -445,6 +508,12 @@ class TestANewcomerWithNoAccount:
             'get_token_info',
             AsyncMock(side_effect=RuntimeError('no Keboola in this test')),
         )
+        # A host that is itself logged in: on a non-deployed server the provisioned `kbc_at_` token
+        # reads as an ordinary local programmatic session, so this is what `_resolve_local_tokens`
+        # would otherwise swap it for -- the operator's identity, handed to an anonymous caller.
+        monkeypatch.setattr(
+            'keboola_mcp_server.mcp.get_access_token', AsyncMock(return_value='the-operators-own-token')
+        )
         captured.clear()
         async with self._connected(app) as client:
             with contextlib.suppress(Exception):
@@ -454,6 +523,7 @@ class TestANewcomerWithNoAccount:
         assert signed_in, 'the handle did not resolve into the provisioned credential'
         assert signed_in[0].storage_token == 'kbc_at_provisioned_secret'
         assert signed_in[0].project_id == str(self.PROJECT_ID)
+        assert all(c.storage_token != 'the-operators-own-token' for c in captured)
 
     @pytest.mark.asyncio
     async def test_without_the_handle_a_later_call_gets_nothing(self, app: Starlette) -> None:

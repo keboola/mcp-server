@@ -79,6 +79,48 @@ def strip_credentials(config: Config) -> Config:
     return dataclasses.replace(config, storage_token=None, bearer_token=None, project_id=None)
 
 
+class AnonymousCredentialLeak(RuntimeError):
+    """An anonymous request ended up holding a credential that is not its own provisioned session's.
+
+    Fails the request. By construction this cannot happen -- the request arrives with nothing and
+    `resolve_session` is the one thing that can hand it a token -- so reaching here means some path
+    through `SessionStateMiddleware` started lending credentials to sessions that asked for none,
+    and the one endpoint where that is unrecoverable is this one.
+    """
+
+
+def only_provisioned_credential(config: Config, provisioned_session_id: str | None) -> str | None:
+    """The single credential an anonymous request may hold: the one `resolve_session` returned for
+    the provisioned session whose handle the caller sent. Returns it, to be re-checked later with
+    `credential_unchanged`.
+
+    :raises AnonymousCredentialLeak: when the request holds a credential and no provisioned handle.
+    """
+    if config.storage_token and not provisioned_session_id:
+        raise AnonymousCredentialLeak(
+            'A request on the anonymous endpoint acquired a credential without holding a provisioned '
+            'session handle. Refusing to serve it.'
+        )
+    return config.storage_token
+
+
+def credential_unchanged(config: Config, expected: str | None) -> None:
+    """Re-checks that nothing *after* the handle was resolved swapped the credential for another.
+
+    Needed because the paths that run after it do not all know who they are serving:
+    `_resolve_local_tokens` sees a provisioned `kbc_at_` token on a non-deployed server, reads it as
+    an ordinary local programmatic session, and refreshes it from the host's own login store -- which
+    on a dev machine with the flag on would hand the anonymous caller the operator's identity.
+
+    :raises AnonymousCredentialLeak: when the credential is no longer the provisioned one.
+    """
+    if config.storage_token != expected:
+        raise AnonymousCredentialLeak(
+            'The credential of a request on the anonymous endpoint was replaced after its provisioned '
+            'session was resolved. Refusing to serve it.'
+        )
+
+
 class AnonymousEntryMiddleware:
     """Marks every request on the anonymous endpoint, and refuses the ones carrying a credential.
 

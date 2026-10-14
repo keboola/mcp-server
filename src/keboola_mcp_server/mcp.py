@@ -31,7 +31,12 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from keboola_mcp_server.anonymous_entry import is_anonymous_entry, strip_credentials
+from keboola_mcp_server.anonymous_entry import (
+    credential_unchanged,
+    is_anonymous_entry,
+    only_provisioned_credential,
+    strip_credentials,
+)
 from keboola_mcp_server.auth_login import (
     exchange_scoped_token,
     forget_rejected_access_token,
@@ -423,20 +428,19 @@ class SessionStateMiddleware(fmw.Middleware):
             # else needs one. Done for /list too: unlike the login-store paths above this is a cheap
             # Postgres read, and without it a listing for such a session has no credentials at all.
             config = await resolve_provisioned_session(config, scope, server_state.session_store)
-            if anonymous and config.storage_token and (scope is None or scope.provisioned_session_id is None):
-                # Belt and braces for the one endpoint where a mistake is not recoverable: by
-                # construction the only line above that can put a token into an anonymous request's
-                # config is the `resolve_provisioned_session` call right here, and only for a session
-                # whose handle the caller already holds. If that ever stops being true, this is where
-                # it is caught -- failing the request rather than serving somebody else's credential
-                # to an unauthenticated caller.
-                raise RuntimeError(
-                    'A request on the anonymous endpoint acquired a credential that does not belong to a '
-                    'provisioned session. Refusing to serve it.'
-                )
+            # Belt and braces for the one endpoint where a mistake is not recoverable: the call above
+            # is the only thing that can put a token into an anonymous request's config, and only for
+            # a session whose handle the caller already holds. Checked here and again after the
+            # token-resolution block below, which does not know who it is serving -- see
+            # `credential_unchanged`.
+            anonymous_credential = (
+                only_provisioned_credential(config, scope.provisioned_session_id if scope else None)
+                if anonymous
+                else None
+            )
             if not is_list:
                 scoped_token_before = scope.scoped_token if scope is not None else None
-                config, scope = await self._resolve_local_tokens(config, scope)
+                config, scope = await self._resolve_local_tokens(config, scope, anonymous=anonymous)
                 # _resolve_local_tokens re-mints a near-expiry scoped_token for OAuth/deployed
                 # sessions too (not just local ones) -- persist the refresh to the OAuth session row
                 # immediately, so it's not silently re-attempted (and re-written) on every single
@@ -448,6 +452,9 @@ class SessionStateMiddleware(fmw.Middleware):
                     and server_state.session_store is not None
                 ):
                     await persist_scope(server_state.session_store, oauth_session_id, scope)
+
+            if anonymous:
+                credential_unchanged(config, anonymous_credential)
 
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
@@ -934,7 +941,7 @@ class SessionStateMiddleware(fmw.Middleware):
 
     @classmethod
     async def _resolve_local_tokens(
-        cls, config: Config, scope: 'SessionScope | None'
+        cls, config: Config, scope: 'SessionScope | None', *, anonymous: bool = False
     ) -> 'tuple[Config, SessionScope | None]':
         """
         For local (non-deployed) programmatic-token sessions, keep tokens fresh during usage.
@@ -958,7 +965,15 @@ class SessionStateMiddleware(fmw.Middleware):
         token back to the OAuth session row afterward, so this happens at most once per expiry, not
         every request).
         """
-        if not cls._is_local_programmatic(config):
+        # An anonymous request is never a local programmatic session, whatever its token looks
+        # like: it has no login of its own to be kept fresh from. Without this it would take the
+        # local branch below -- a provisioned `kbc_at_` token on a non-deployed server reads exactly
+        # like one -- and `get_access_token` would replace it with whatever the *host* is logged in
+        # as, handing an unauthenticated caller the operator's identity on any dev machine running
+        # with `KBC_ALLOW_ANONYMOUS_PROVISIONING`. The branch it takes instead only narrows the
+        # config to the scope's own project and re-mints a near-expiry scoped token, both of which
+        # are the caller's own.
+        if anonymous or not cls._is_local_programmatic(config):
             if scope and scope.project_ids:
                 # Always the scope's own active project, never a caller-supplied X-KBC-ProjectId --
                 # project_id is header-eligible (Config._HEADER_ELIGIBLE_FIELDS), and once a scope is
