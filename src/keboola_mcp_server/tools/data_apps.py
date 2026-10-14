@@ -2797,8 +2797,8 @@ def _config_slug(configuration: Mapping[str, Any]) -> str | None:
 def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
     """A draft's address, `https://<slug>-<app id>.hub.<stack>`; None for a prod app or without a slug.
 
-    - The data-science API reports no URL until the app's first run.
-    - Drafts only: a draft's slug never changes, while a prod app's can until its first deploy.
+    - The data-science API reports no URL until the app's first run; the formula is the operator's.
+    - Drafts only: their slug never changes, while a prod app's explicit slug is editable at any time.
     """
     slug = _config_slug(configuration)
     if not slug or not _is_draft_config(configuration):
