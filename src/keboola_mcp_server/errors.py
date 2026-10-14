@@ -684,6 +684,8 @@ def tool_errors(
                 except Exception as e:
                     # Event logging is best-effort telemetry — never fail the tool because of it.
                     # The tool result (success or failure) is already determined before this point.
+                    # The tool's own exception is the context of this one; keep it out of the traceback.
+                    e.__suppress_context__ = True
                     LOG.warning(f'Failed to trigger tool event for "{func.__name__}" tool: {e}', exc_info=True)
 
         return cast(F, wrapped)

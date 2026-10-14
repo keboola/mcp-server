@@ -1332,3 +1332,21 @@ def test_redaction_gives_up_on_too_many_known_secrets():
     assert time.perf_counter() - started < 2
     assert not redacted.complete
     assert {argument['value'] for argument in redacted.arguments} == {'"[redaction failed]"'}
+
+
+@pytest.mark.asyncio
+async def test_event_post_failure_does_not_log_the_tool_exception_text(
+    storage_event_post, caplog, empty_context: Context
+):
+    storage_event_post.side_effect = RuntimeError('storage down')
+
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: Any = None) -> str:
+        raise RuntimeError(f'Rejected credential {CANARY}')
+
+    with pytest.raises(RuntimeError):
+        await config_tool(empty_context, parameters={'#password': CANARY})
+
+    formatter = logging.Formatter()
+    assert [r for r in caplog.records if 'Failed to trigger tool event' in r.getMessage()]
+    assert [r.getMessage() for r in caplog.records if CANARY in formatter.format(r)] == []
