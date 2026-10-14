@@ -758,17 +758,20 @@ class TestFetchDataAppValidation:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('service_url', 'slug', 'expected_url'),
+        ('service_url', 'slug', 'is_draft', 'expected_url'),
         [
             pytest.param(
                 'https://served-app-123.hub.test.keboola.com',
                 'my-app',
+                True,
                 'https://served-app-123.hub.test.keboola.com',
                 id='service_url_wins',
             ),
-            # Before its first run the service reports no URL, but the address is already fixed.
-            pytest.param(None, 'my-app', 'https://my-app-app-123.hub.test.keboola.com', id='never_run_with_slug'),
-            pytest.param(None, None, None, id='never_run_without_slug'),
+            # Before its first run the service reports no URL; a draft's slug never changes.
+            pytest.param(None, 'my-app', True, 'https://my-app-app-123.hub.test.keboola.com', id='never_run_draft'),
+            # A prod app's slug can still move until its first deploy.
+            pytest.param(None, 'my-app', False, None, id='never_run_prod'),
+            pytest.param(None, None, True, None, id='never_run_without_slug'),
         ],
     )
     async def test_fetch_data_app_reports_the_app_url_before_its_first_run(
@@ -777,11 +780,12 @@ class TestFetchDataAppValidation:
         keboola_client: KeboolaClient,
         service_url: str | None,
         slug: str | None,
+        is_draft: bool,
         expected_url: str | None,
     ) -> None:
         data_app_response = _make_data_app_response().model_copy(update={'url': service_url})
         keboola_client.data_science_client.get_data_app = mocker.AsyncMock(return_value=data_app_response)
-        data_app_block = {'slug': slug} if slug else {}
+        data_app_block = ({'slug': slug} if slug else {}) | ({'isDraft': True} if is_draft else {})
         keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
             return_value={
                 'id': 'cfg-123',
