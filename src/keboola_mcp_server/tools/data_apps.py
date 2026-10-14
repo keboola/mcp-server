@@ -384,7 +384,7 @@ class DataApp(BaseModel):
         description='The state the data app was last asked to reach.', default=None, exclude=True
     )
     deployment_url: str | None = Field(
-        description='The URL the data app serves on, known before its first run.', default=None
+        description='The URL the data app serves on; a draft reports it before its first run.', default=None
     )
     auto_suspend_after_seconds: int | None = Field(
         description='The number of seconds after which the running data app is automatically suspended.',
@@ -2795,13 +2795,15 @@ def _config_slug(configuration: Mapping[str, Any]) -> str | None:
 
 
 def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
-    """The address the app serves on, `https://<slug>-<app id>.hub.<stack>`, or None without a slug.
+    """A draft's address, `https://<slug>-<app id>.hub.<stack>`; None for a prod app or without a slug.
 
     - The data-science API reports no URL until the app's first run.
-    - Derived from the stored slug and app id, so it moves when a not-yet-deployed app's slug changes.
+    - Drafts only: a draft's slug never changes, while a prod app's can until its first deploy.
     """
     slug = _config_slug(configuration)
-    return f'https://{slug}-{data_app_id}.hub.{client.hostname_suffix}' if slug else None
+    if not slug or not _is_draft_config(configuration):
+        return None
+    return f'https://{slug}-{data_app_id}.hub.{client.hostname_suffix}'
 
 
 def _config_git_branch(configuration: Mapping[str, Any]) -> str | None:
