@@ -179,10 +179,14 @@ def _decode_json(raw: str) -> Any:
 
 
 def _has_duplicate_keys(tree: ast.AST) -> bool:
+    """True if a dictionary literal repeats an evaluated key; keys that cannot be evaluated count as repeated."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Dict):
-            keys = [ast.dump(key) for key in node.keys if key is not None]
-            if len(keys) != len(set(keys)):
+            try:
+                keys = [ast.literal_eval(key) for key in node.keys if key is not None]
+                if len(keys) != len(set(keys)):
+                    return True
+            except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
                 return True
     return False
 
@@ -381,6 +385,8 @@ def _scrub_known_values(value: Any, known: set[str]) -> Any:
     if isinstance(value, str):
         if value in known:
             return REDACTED_SECRET_VALUE
+        if (parsed := _parse_container(value)) is not None:
+            return json.dumps(_scrub_known_values(parsed, known), ensure_ascii=False)
         return _mask_known_values(value, known) if len(value) <= MAX_ARG_VALUE_LEN else value
     if isinstance(value, (bool, int, float)) and any(
         len(variant) >= _MIN_SCALAR_SCRUBBED_LEN and variant in known for variant in _scalar_variants(value)
