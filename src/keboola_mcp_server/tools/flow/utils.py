@@ -18,7 +18,7 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
 )
 from keboola_mcp_server.clients.storage import APIFlowResponse, JsonDict
-from keboola_mcp_server.errors import NotFoundError
+from keboola_mcp_server.errors import NotFoundError, _is_caller_error
 from keboola_mcp_server.mcp import process_concurrently
 from keboola_mcp_server.tools.components.utils import fetch_component
 from keboola_mcp_server.tools.flow.model import (
@@ -225,9 +225,10 @@ async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFl
     :param flow_id: The flow configuration ID to resolve.
     :return: Tuple of (APIFlowResponse, flow_type) if found.
     :raises NotFoundError: If the flow does not exist in any flow type.
-    :raises Exception: The first non-404 failure if the flow was not found and some flow type probe failed otherwise.
+    :raises Exception: If the flow was not found and some flow type probe failed otherwise: the first server-side
+        failure, else the first failure.
     """
-    failure: Exception | None = None
+    failures: list[Exception] = []
     for flow_type in FLOW_TYPES:
         try:
             raw_flow = await client.storage_client.configuration_detail(
@@ -237,12 +238,12 @@ async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFl
             return api_flow, flow_type
         except httpx.HTTPStatusError as e:
             if e.response.status_code != HTTPStatus.NOT_FOUND:
-                failure = failure or e
+                failures.append(e)
         except Exception as e:
-            failure = failure or e
+            failures.append(e)
 
-    if failure:
-        raise failure
+    if failures:
+        raise next((f for f in failures if not _is_caller_error(f)), failures[0])
     raise NotFoundError(f'Flow configuration "{flow_id}" not found')
 
 
