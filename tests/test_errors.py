@@ -963,6 +963,20 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             id='secret_used_as_dictionary_key',
         ),
         pytest.param(
+            {'#credentials': {CANARY: True}, 'echo': CANARY},
+            None,
+            None,
+            ['echo'],
+            id='secret_used_as_key_inside_secret_object',
+        ),
+        pytest.param(
+            {'#credentials': f'#PASSWORD={CANARY}', 'dsn': f'postgresql://alice:{CANARY}@db/app'},
+            None,
+            lambda: _raise(RuntimeError(f'Rejected {CANARY}')),
+            ['postgresql://alice:[REDACTED]@db/app', 'RuntimeError: Rejected [REDACTED]'],
+            id='opaque_text_under_secret_key',
+        ),
+        pytest.param(
             f"{{'#credentials': {{'password': '{CANARY}'}}}}",
             None,
             lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),

@@ -131,15 +131,16 @@ def _scalar_variants(value: bool | float) -> set[str]:
 
 def _collect_leaves(value: Any, found: set[str]) -> None:
     if isinstance(value, dict):
-        for item in value.values():
-            _collect_leaves(item, found)
-        for _, item in getattr(value, 'shadowed', ()):
+        for key, item in [*getattr(value, 'shadowed', ()), *value.items()]:
+            _collect_leaves(key, found)
             _collect_leaves(item, found)
     elif isinstance(value, list):
         for item in value:
             _collect_leaves(item, found)
     elif isinstance(value, str) and value:
         found.update(_secret_variants(value))
+        if _SECRET_MARKER.search(value):
+            _collect_opaque_tokens(value, found)
         if isinstance(decoded := _parse_container(value), (dict, list)):
             _collect_leaves(decoded, found)
     elif isinstance(value, (bool, int, float)):
