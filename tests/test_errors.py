@@ -1015,6 +1015,20 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             id='failure_exception_only_spaced_key',
         ),
         pytest.param(
+            f'GET /callback?id=1#access_token={CANARY}',
+            None,
+            None,
+            ['[REDACTED]'],
+            id='string_secret_in_url_fragment',
+        ),
+        pytest.param(
+            None,
+            None,
+            lambda: _raise(RuntimeError(f'Redirected to /callback?id=1#access_token={CANARY}')),
+            ['RuntimeError: [details omitted: the message shows a secret key]'],
+            id='failure_exception_only_url_fragment',
+        ),
+        pytest.param(
             f"{{'#credentials': {{'password': '{CANARY}'}}}}",
             None,
             lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
