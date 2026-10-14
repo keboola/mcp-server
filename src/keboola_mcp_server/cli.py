@@ -302,6 +302,7 @@ def create_anonymous_app(mcp_server: FastMCP, *, config: Config, stateless_http:
         session_idle_timeout=fastmcp.settings.http_session_idle_timeout,
     )
 
+
 def build_http_app(
     mcp_server: FastMCP,
     custom_routes: CustomRoutes,
