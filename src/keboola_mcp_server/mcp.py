@@ -9,7 +9,7 @@ import asyncio
 import dataclasses
 import logging
 import textwrap
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextvars import ContextVar
 from http import HTTPStatus
 from typing import Any, TypeVar, cast
@@ -31,6 +31,12 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from keboola_mcp_server.anonymous_entry import (
+    credential_unchanged,
+    is_anonymous_entry,
+    only_provisioned_credential,
+    strip_credentials,
+)
 from keboola_mcp_server.auth_login import (
     exchange_scoped_token,
     forget_rejected_access_token,
@@ -253,15 +259,23 @@ class ServerState:
 
 
 class ForwardSlashMiddleware:
-    def __init__(self, app: ASGIApp):
+    """Lets a client address a mounted app without the trailing slash it is mounted at.
+
+    :param mount_paths: The paths to fix up. Defaults to the streamable-HTTP endpoint alone; the
+        unauthenticated one (`ANONYMOUS_MOUNT_PATH`) is added when that endpoint is served, since a
+        newcomer pasting that URL into a client will leave the slash off exactly as often.
+    """
+
+    def __init__(self, app: ASGIApp, mount_paths: Sequence[str] = ('/mcp',)):
         self._app = app
+        self._mount_paths = frozenset(mount_paths)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         LOG.debug(f'ForwardSlashMiddleware: scope={scope}')
 
         if scope['type'] == 'http':
             path = scope['path']
-            if path in ['/mcp']:
+            if path in self._mount_paths:
                 scope = dict(scope)
                 scope['path'] = f'{path}/'
 
@@ -343,6 +357,11 @@ class SessionStateMiddleware(fmw.Middleware):
 
             if http_rq := get_http_request_or_none():
                 config = self.apply_request_config(http_rq, config, own_stack_storage_api_url=own_stack_storage_api_url)
+            # Whether this request came in on the unauthenticated endpoint. Every "find this session
+            # a credential" path below is skipped for one, because each of them would lend it an
+            # identity belonging to somebody else: the operator's own token, or the local user's
+            # login. See `anonymous_entry`.
+            anonymous = is_anonymous_entry(http_rq)
 
             # Capability-discovery requests (tools/list, prompts/list, resources/list) MUST be fast: a
             # client fetches all three on connect, so any Connection AUTH round-trip here (token
@@ -358,7 +377,8 @@ class SessionStateMiddleware(fmw.Middleware):
             # PKCE session. For non-list requests keep it fresh (refresh + persist rotation); for /list
             # read it without a network refresh. No-op when a token is provided or on the deployed
             # server (KBC_KUBERNETES_TOKEN_PATH set).
-            config = await self._maybe_use_stored_session(config, refresh=not is_list)
+            if not anonymous:
+                config = await self._maybe_use_stored_session(config, refresh=not is_list)
 
             # In-conversation multi-project scope is carried by the caller as the `scope_token` tool
             # argument (see SessionScope.to_token/from_token) rather than read back from
@@ -398,9 +418,9 @@ class SessionStateMiddleware(fmw.Middleware):
             # no ask-first gate needed. Only a credential predating this choice (or a token
             # supplied directly, never run through `login`) falls through to the old
             # auto-lease-then-ask-first default below.
-            if scope is None and not config.project_id and not is_list:
+            if scope is None and not config.project_id and not is_list and not anonymous:
                 scope = await self._read_persisted_login_scope(config)
-            if scope is None and not config.project_id and not is_list:
+            if scope is None and not config.project_id and not is_list and not anonymous:
                 scope = await self._autolease_default_scope(config)
             # A project provisioned by `create_project` on this (deployed) server keeps its
             # credentials in the session store, not in the caller's hands -- the caller only echoes
@@ -408,9 +428,19 @@ class SessionStateMiddleware(fmw.Middleware):
             # else needs one. Done for /list too: unlike the login-store paths above this is a cheap
             # Postgres read, and without it a listing for such a session has no credentials at all.
             config = await resolve_provisioned_session(config, scope, server_state.session_store)
+            # Belt and braces for the one endpoint where a mistake is not recoverable: the call above
+            # is the only thing that can put a token into an anonymous request's config, and only for
+            # a session whose handle the caller already holds. Checked here and again after the
+            # token-resolution block below, which does not know who it is serving -- see
+            # `credential_unchanged`.
+            anonymous_credential = (
+                only_provisioned_credential(config, scope.provisioned_session_id if scope else None)
+                if anonymous
+                else None
+            )
             if not is_list:
                 scoped_token_before = scope.scoped_token if scope is not None else None
-                config, scope = await self._resolve_local_tokens(config, scope)
+                config, scope = await self._resolve_local_tokens(config, scope, anonymous=anonymous)
                 # _resolve_local_tokens re-mints a near-expiry scoped_token for OAuth/deployed
                 # sessions too (not just local ones) -- persist the refresh to the OAuth session row
                 # immediately, so it's not silently re-attempted (and re-written) on every single
@@ -422,6 +452,9 @@ class SessionStateMiddleware(fmw.Middleware):
                     and server_state.session_store is not None
                 ):
                     await persist_scope(server_state.session_store, oauth_session_id, scope)
+
+            if anonymous:
+                credential_unchanged(config, anonymous_credential)
 
             # TODO: We could probably get rid of the 'state' attribute set on ctx.session and just
             #  pass KeboolaClient and WorkspaceManager instances to a tool as extra parameters.
@@ -670,6 +703,17 @@ class SessionStateMiddleware(fmw.Middleware):
             # detects it downstream and the full PSGO-261 multi-project machinery applies unchanged.
             config = dataclasses.replace(config, storage_token=user.access_token.kbc_access_token)
 
+        if is_anonymous_entry(http_rq):
+            # The unauthenticated endpoint serves exactly one shape of caller: one who has no
+            # credential of their own (see `anonymous_entry`). The caller's own headers were already
+            # refused at the ASGI layer; what is dropped here is everything the *server* would
+            # otherwise lend them -- a `KBC_STORAGE_TOKEN` in the pod's environment, a project pin --
+            # so that no request on this path can act under an identity it did not provision for
+            # itself. From here the only token it can ever acquire is `resolve_provisioned_session`'s,
+            # for a session whose handle it already holds. Last in this method on purpose: whatever
+            # is added above, the anonymous endpoint ends up with nothing.
+            config = strip_credentials(config)
+
         return config
 
     @classmethod
@@ -897,7 +941,7 @@ class SessionStateMiddleware(fmw.Middleware):
 
     @classmethod
     async def _resolve_local_tokens(
-        cls, config: Config, scope: 'SessionScope | None'
+        cls, config: Config, scope: 'SessionScope | None', *, anonymous: bool = False
     ) -> 'tuple[Config, SessionScope | None]':
         """
         For local (non-deployed) programmatic-token sessions, keep tokens fresh during usage.
@@ -921,7 +965,15 @@ class SessionStateMiddleware(fmw.Middleware):
         token back to the OAuth session row afterward, so this happens at most once per expiry, not
         every request).
         """
-        if not cls._is_local_programmatic(config):
+        # An anonymous request is never a local programmatic session, whatever its token looks
+        # like: it has no login of its own to be kept fresh from. Without this it would take the
+        # local branch below -- a provisioned `kbc_at_` token on a non-deployed server reads exactly
+        # like one -- and `get_access_token` would replace it with whatever the *host* is logged in
+        # as, handing an unauthenticated caller the operator's identity on any dev machine running
+        # with `KBC_ALLOW_ANONYMOUS_PROVISIONING`. The branch it takes instead only narrows the
+        # config to the scope's own project and re-mints a near-expiry scoped token, both of which
+        # are the caller's own.
+        if anonymous or not cls._is_local_programmatic(config):
             if scope and scope.project_ids:
                 # Always the scope's own active project, never a caller-supplied X-KBC-ProjectId --
                 # project_id is header-eligible (Config._HEADER_ELIGIBLE_FIELDS), and once a scope is
@@ -1290,7 +1342,19 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         if tool.name in BOOTSTRAP_TOOLS:
             return await call_next(context)
 
-        token_info = await self.get_token_info(context.fastmcp_context)
+        try:
+            token_info = await self.get_token_info(context.fastmcp_context)
+        except ValueError as e:
+            if KeboolaClient.STATE_KEY in context.fastmcp_context.session.state:
+                raise
+            # A bootstrap session has no credential at all -- the normal state of a caller on the
+            # anonymous endpoint before `create_project`, and of any session that has not signed in
+            # yet. There is no project whose features could gate this call; what the caller needs is
+            # the one sentence `KeboolaClient.from_state` raises, saying how to get a credential.
+            # It has to leave as a `ToolError`: a bare `ValueError` raised from a middleware is not
+            # a tool result, so an HTTP client is handed "Internal server error" instead of the
+            # explanation -- which is exactly backwards for the one audience that needs it most.
+            raise ToolError(str(e)) from e
 
         has_semantic_models = False
         if is_semantic_tool(tool):
