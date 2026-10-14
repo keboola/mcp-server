@@ -143,12 +143,12 @@ def _decode_fragment(raw: str) -> Any | None:
 
 def _collect_fragment_leaves(raw: str, found: set[str]) -> None:
     """Collects the secret leaves of a rendered value; every token of it when the format is not understood."""
-    _collect_leaves(raw, found)
+    _collect_leaves(raw.strip('\'"'), found)
     decoded = _decode_fragment(raw)
-    if isinstance(decoded, (dict, list)):
-        _collect_leaves(decoded, found)
-    else:
+    if decoded is None:
         found.update(_TOKEN.findall(raw))
+    else:
+        _collect_leaves(decoded, found)
 
 
 def _quoted_end(text: str, start: int) -> int:
@@ -204,7 +204,7 @@ def _mask_secret_fragments(text: str, found: set[str]) -> str:
         if match.start() < cursor:
             continue
         value_end = _fragment_value_end(text, match.end())
-        _collect_fragment_leaves(text[match.end() : value_end].strip('\'"'), found)
+        _collect_fragment_leaves(text[match.end() : value_end], found)
         parts.extend((text[cursor : match.end()], REDACTED_SECRET_VALUE))
         cursor = value_end
     parts.append(text[cursor:])

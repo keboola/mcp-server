@@ -773,6 +773,13 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             id='failure_echoing_leaf_of_json_container',
         ),
         pytest.param(
+            '```json\n' + json.dumps({'user': 'alice', '#password': f'café-{CANARY}'}) + '\n```',
+            None,
+            lambda: _raise(RuntimeError(f'Authentication failed using café-{CANARY}')),
+            ['alice', 'RuntimeError: Authentication failed using [REDACTED]'],
+            id='failure_echoing_unicode_escaped_scalar',
+        ),
+        pytest.param(
             f"{{'#credentials': {{'password': '{CANARY}'}}}}",
             None,
             lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
