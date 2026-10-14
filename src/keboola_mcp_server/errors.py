@@ -110,6 +110,7 @@ _MAX_CAUSE_DEPTH = 5
 _MIN_REPLACED_SECRET_LEN = 6
 _MIN_WORD_REPLACED_SECRET_LEN = 3
 _MIN_SCALAR_SCRUBBED_LEN = 4
+_MAX_KNOWN_SECRETS = 1024
 _CREDENTIAL_WORDS = r'credentials?|passwords?|passwd|passphrase|secret|token|pin|code|key'
 # jsonschema validators whose `validator_value` comes from the schema and is safe to report.
 _EXCEPTION_TEXT_OMITTED = '[details omitted: the message shows a secret key]'
@@ -245,6 +246,8 @@ def _collect_opaque_tokens(text: str, found: set[str]) -> None:
             found.update(_secret_variants(value))
     for token in _TOKEN.findall(text):
         found.update(_secret_variants(token))
+        if len(found) > _MAX_KNOWN_SECRETS:
+            raise _RedactionIncomplete
     for quoted in _DOUBLE_QUOTED.findall(text):
         try:
             decoded = json.loads(quoted)
@@ -255,23 +258,51 @@ def _collect_opaque_tokens(text: str, found: set[str]) -> None:
             found.update(_secret_variants(token))
 
 
-def _mask_known_value(text: str, secret: str) -> str:
-    if len(secret) >= _MIN_REPLACED_SECRET_LEN:
-        return text.replace(secret, REDACTED_SECRET_VALUE)
-    quoted = re.compile(rf'(?P<quote>[\'"]){re.escape(secret)}(?P=quote)')
-    text = quoted.sub(lambda m: f'{m["quote"]}{REDACTED_SECRET_VALUE}{m["quote"]}', text)
+def _short_secret_patterns(secret: str) -> list[tuple[re.Pattern, Callable[[re.Match], str]]]:
+    patterns: list[tuple[re.Pattern, Callable[[re.Match], str]]] = [
+        (
+            re.compile(rf'(?P<quote>[\'"]){re.escape(secret)}(?P=quote)'),
+            lambda m: f'{m["quote"]}{REDACTED_SECRET_VALUE}{m["quote"]}',
+        )
+    ]
     if len(secret) >= _MIN_WORD_REPLACED_SECRET_LEN and not secret.isdigit():
-        text = re.sub(rf'(?<!\w){re.escape(secret)}(?!\w)', REDACTED_SECRET_VALUE, text)
-    after_credential_word = re.compile(
-        rf'(?P<context>\b(?:{_CREDENTIAL_WORDS})\b\W{{0,3}}(?:(?:is|was)\W{{1,3}})?){re.escape(secret)}(?!\w)',
-        re.IGNORECASE,
+        patterns.append((re.compile(rf'(?<!\w){re.escape(secret)}(?!\w)'), lambda _: REDACTED_SECRET_VALUE))
+    patterns.append(
+        (
+            re.compile(
+                rf'(?P<context>\b(?i:{_CREDENTIAL_WORDS})\b\W{{0,3}}(?:(?i:is|was)\W{{1,3}})?){re.escape(secret)}(?!\w)'
+            ),
+            lambda m: f'{m["context"]}{REDACTED_SECRET_VALUE}',
+        )
     )
-    return after_credential_word.sub(lambda m: f'{m["context"]}{REDACTED_SECRET_VALUE}', text)
+    return patterns
 
 
-def _mask_known_values(text: str, secrets: set[str]) -> str:
-    for secret in sorted(secrets, key=len, reverse=True):
-        text = _mask_known_value(text, secret)
+def _value_masker(secret: str) -> Callable[[str], str]:
+    """A function masking one known secret in a text; the patterns of a short secret are compiled when first needed."""
+    if len(secret) >= _MIN_REPLACED_SECRET_LEN:
+        return lambda text: text.replace(secret, REDACTED_SECRET_VALUE)
+    patterns: list[tuple[re.Pattern, Callable[[re.Match], str]]] = []
+
+    def mask(text: str) -> str:
+        if secret not in text:
+            return text
+        if not patterns:
+            patterns.extend(_short_secret_patterns(secret))
+        for pattern, replacement in patterns:
+            text = pattern.sub(replacement, text)
+        return text
+
+    return mask
+
+
+def _value_maskers(secrets: set[str]) -> list[Callable[[str], str]]:
+    return [_value_masker(secret) for secret in sorted(secrets, key=len, reverse=True)]
+
+
+def _mask_known_values(text: str, maskers: list[Callable[[str], str]]) -> str:
+    for mask in maskers:
+        text = mask(text)
     return text
 
 
@@ -313,18 +344,22 @@ class _RedactedCall(NamedTuple):
     complete: bool
 
 
-def _scrub_known_values(value: Any, known: set[str]) -> Any:
+def _scrub_known_values(value: Any, known: set[str], maskers: list[Callable[[str], str]] | None = None) -> Any:
     """Masks the known secret values in a JSON-compatible value: exact matches first, then occurrences in strings."""
+    maskers = _value_maskers(known) if maskers is None else maskers
     if isinstance(value, dict):
-        return {_scrub_known_values(key, known): _scrub_known_values(item, known) for key, item in value.items()}
+        return {
+            _scrub_known_values(key, known, maskers): _scrub_known_values(item, known, maskers)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [_scrub_known_values(item, known) for item in value]
+        return [_scrub_known_values(item, known, maskers) for item in value]
     if isinstance(value, str):
         if value in known:
             return REDACTED_SECRET_VALUE
         if (parsed := _parse_container(value)) is not None:
-            return json.dumps(_scrub_known_values(parsed, known), ensure_ascii=False)
-        return _mask_known_values(value, known) if len(value) <= MAX_ARG_VALUE_LEN else value
+            return json.dumps(_scrub_known_values(parsed, known, maskers), ensure_ascii=False)
+        return _mask_known_values(value, maskers) if len(value) <= MAX_ARG_VALUE_LEN else value
     if isinstance(value, (bool, int, float)) and any(
         len(variant) >= _MIN_SCALAR_SCRUBBED_LEN and variant in known for variant in _scalar_variants(value)
     ):
@@ -349,8 +384,11 @@ def _redact_arguments(arguments: Mapping[str, Any]) -> _RedactedCall:
             name: _redact_value(_JsonWrapper(data=value).model_dump(mode='json')['data'], found)
             for name, value in arguments.items()
         }
+        if len(found) > _MAX_KNOWN_SECRETS:
+            raise _RedactionIncomplete
+        maskers = _value_maskers(found)
         encoded = [
-            {'key': name, 'value': _JsonWrapper.encode_truncated(_scrub_known_values(value, found))}
+            {'key': name, 'value': _JsonWrapper.encode_truncated(_scrub_known_values(value, found, maskers))}
             for name, value in redacted_values.items()
         ]
     except Exception as e:
@@ -409,7 +447,7 @@ def _safe_exception_summary(exception: BaseException, secrets: set[str]) -> str:
 
     if _SECRET_MARKER.search(text):
         return _EXCEPTION_TEXT_OMITTED
-    text = _mask_known_values(text, secrets)
+    text = _mask_known_values(text, _value_maskers(secrets))
     return _PYDANTIC_INPUT_VALUE.sub(f'input_value={REDACTED_SECRET_VALUE}', text)
 
 

@@ -1274,3 +1274,26 @@ def test_secret_marker_scan_is_linear(text: str):
     _SECRET_MARKER.search(text)
 
     assert time.perf_counter() - started < 0.5
+
+
+def _words(count: int) -> str:
+    return ' '.join(''.join(chr(97 + (index // 26**place) % 26) for place in range(4)) for index in range(count))
+
+
+def test_redaction_of_many_known_secrets_is_bounded():
+    arguments = {'opaque': '#PASSWORD=x\n' + _words(900)} | {f'arg{i}': _words(150) for i in range(40)}
+    started = time.perf_counter()
+    redacted = _redact_arguments(arguments)
+
+    assert time.perf_counter() - started < 2
+    assert redacted.complete
+
+
+def test_redaction_gives_up_on_too_many_known_secrets():
+    arguments = {'opaque': '#PASSWORD=x\n' + _words(3000)} | {f'arg{i}': _words(150) for i in range(40)}
+    started = time.perf_counter()
+    redacted = _redact_arguments(arguments)
+
+    assert time.perf_counter() - started < 2
+    assert not redacted.complete
+    assert {argument['value'] for argument in redacted.arguments} == {'"[redaction failed]"'}
