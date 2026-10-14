@@ -615,6 +615,10 @@ def _raise(exc: Exception):
     raise exc
 
 
+def _originating_failure():
+    raise RuntimeError(f'Rejected credential {CANARY}')
+
+
 def _raise_pydantic_error():
     pydantic.TypeAdapter(dict[str, int]).validate_python({'#password': CANARY})
 
@@ -850,6 +854,44 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             id='failure_echoing_secret_of_duplicate_json_key',
         ),
         pytest.param(
+            None,
+            [
+                ConfigParamSet(op='set', path="db['user', '#password']", value=CANARY),
+                ConfigParamReplace(op='str_replace', path="db['host', '#token']", search_for=CANARY, replace_with='x'),
+            ],
+            None,
+            ['[REDACTED]'],
+            id='update_config_union_path_selector',
+        ),
+        pytest.param(
+            '#PASSWORD=password',
+            None,
+            lambda: _raise(RuntimeError('Rejected credential "password"')),
+            ['RuntimeError: Rejected credential "[REDACTED]"'],
+            id='failure_echoing_env_credential',
+        ),
+        pytest.param(
+            '"#password": pass',
+            None,
+            lambda: _raise(RuntimeError('Rejected credential "pass"')),
+            ['RuntimeError: Rejected credential "[REDACTED]"'],
+            id='failure_echoing_short_alphabetic_yaml_credential',
+        ),
+        pytest.param(
+            str({'user': 'alice', 'items': ({'#password': CANARY},)}),
+            None,
+            None,
+            ['alice', '[REDACTED]'],
+            id='string_python_literal_tuple_container',
+        ),
+        pytest.param(
+            str({'#credentials': (CANARY, 'other')}),
+            None,
+            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
+            ['RuntimeError: Authentication failed using [REDACTED]'],
+            id='failure_echoing_leaf_of_tuple_under_secret_key',
+        ),
+        pytest.param(
             f"{{'#credentials': {{'password': '{CANARY}'}}}}",
             None,
             lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
@@ -996,17 +1038,18 @@ async def test_redaction_failure_omits_exception_text(mocker, storage_event_post
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('failure', 'expected_level'),
+    ('failure', 'expected_level', 'recovery'),
     [
-        (_raise_jsonschema_error, logging.WARNING),
-        (lambda: _raise(RuntimeError(f'Rejected credential {CANARY}')), logging.ERROR),
+        (_raise_jsonschema_error, logging.WARNING, None),
+        (lambda: _raise(RuntimeError(f'Rejected credential {CANARY}')), logging.ERROR, None),
+        (_originating_failure, logging.ERROR, 'Retry later.'),
     ],
-    ids=['caller_error_warning', 'internal_error_traceback'],
+    ids=['caller_error_warning', 'internal_error_traceback', 'wrapped_internal_error_keeps_originating_frame'],
 )
 async def test_failure_log_lines_do_not_contain_secrets(
-    failure, expected_level, storage_event_post, caplog, empty_context: Context
+    failure, expected_level, recovery, storage_event_post, caplog, empty_context: Context
 ):
-    @tool_errors()
+    @tool_errors(default_recovery=recovery)
     async def config_tool(_ctx: Context, parameters: Any = None) -> str:
         failure()
         return 'ok'
@@ -1022,3 +1065,5 @@ async def test_failure_log_lines_do_not_contain_secrets(
     if records[0].exc_info:
         assert 'RuntimeError' in formatter.format(records[0])
         assert 'config_tool' in formatter.format(records[0])
+    if failure is _originating_failure:
+        assert 'in _originating_failure' in formatter.format(records[0])

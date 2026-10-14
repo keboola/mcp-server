@@ -24,8 +24,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE as _MASK
-from keboola_mcp_server.clients.encryption import is_secret_key
+from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE, is_secret_key
 from keboola_mcp_server.clients.storage import StorageEventType
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, get_http_request_or_none
@@ -88,8 +87,8 @@ class _JsonWrapper(BaseModel):
 # Keys of path-based update operations (e.g. `update_config`'s `parameter_updates`) that carry the value
 # written to the `path`. They are masked when the `path` points at a secret ('#'-prefixed) key.
 _PATH_UPDATE_VALUE_KEYS = frozenset({'value', 'search_for', 'replace_with'})
-# A '#' at the start of a path segment: `#password`, `"#password"`, `db.#token`, `db['#token']`, `db["#token"]`.
-_SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[])\s*['"]?#''')
+# A '#' at the start of a path segment: `#password`, `"#password"`, `db.#token`, `db['#token']`, `db['a', '#token']`.
+_SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[,])\s*['"]?#''')
 # The `#key:` / `#key=` / `'#key': ` prefix of a fragment as rendered by str(), repr(), JSON, YAML or .env text.
 _SECRET_KEY_FRAGMENT = re.compile(r'''['"]?#[^\s'":=,{}\[\]]+['"]?\s*[:=]\s*''')
 # Evidence that a string holds a secret key it could not be parsed for: a quoted `'#key': ` (spaces allowed),
@@ -99,10 +98,9 @@ _SECRET_MARKER = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _CODE_FENCE = re.compile(r'^\s*```[\w-]*\s*\n(?P<body>.*?)\n?\s*```\s*$', re.DOTALL)
-_MIN_OPAQUE_TOKEN_LEN = 6
 _CLOSING_BRACKETS = {'{': '}', '[': ']'}
 _UNQUOTED_VALUE_END = re.compile(r'[\n,}\]]')
-_TOKEN = re.compile(r'''[^\s'",:{}\[\]]+''')
+_TOKEN = re.compile(r'''[^\s'",:={}\[\]]+''')
 # Pydantic's str(ValidationError) echoes the invalid input: `[type=..., input_value=..., input_type=...]`.
 _PYDANTIC_INPUT_VALUE = re.compile(r'input_value=.*?(?=, input_type=|\]$)', re.MULTILINE)
 _MAX_CAUSE_DEPTH = 5
@@ -161,8 +159,28 @@ def _decode_json(raw: str) -> Any:
     return json.loads(raw, object_pairs_hook=_ShadowingDict)
 
 
+def _decode_literal(raw: str) -> Any:
+    return _to_json_compatible(ast.literal_eval(raw))
+
+
+def _to_json_compatible(value: Any) -> Any:
+    """Turns a decoded Python literal into plain JSON data, so that redaction sees every container and leaf."""
+    if isinstance(value, dict):
+        return {
+            (key if isinstance(key, (str, int, float, bool)) or key is None else str(key)): _to_json_compatible(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_to_json_compatible(item) for item in value]
+    if isinstance(value, bytes):
+        return value.decode('utf-8', 'replace')
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
 def _decode_fragment(raw: str) -> Any | None:
-    for decode in (_decode_json, ast.literal_eval):
+    for decode in (_decode_json, _decode_literal):
         try:
             return decode(raw)
         except (ValueError, SyntaxError, MemoryError, RecursionError):
@@ -185,7 +203,7 @@ def _parse_container(text: str) -> dict | list | None:
 def _collect_opaque_tokens(text: str, found: set[str]) -> None:
     """Collects the whole text and every token that could be part of a secret, for text that cannot be parsed."""
     found.update(_secret_variants(text))
-    found.update(token for token in _TOKEN.findall(text) if len(token) >= _MIN_OPAQUE_TOKEN_LEN or not token.isalpha())
+    found.update(_TOKEN.findall(text))
 
 
 def _collect_fragment_leaves(raw: str, found: set[str]) -> None:
@@ -244,7 +262,7 @@ def _fragment_value_end(text: str, start: int) -> int:
     return end.start() if end else len(text)
 
 
-def _mask_secret_fragments(text: str, found: set[str]) -> str:
+def _mask_key_fragments(text: str, found: set[str]) -> str:
     parts: list[str] = []
     cursor = 0
     for match in _SECRET_KEY_FRAGMENT.finditer(text):
@@ -252,25 +270,25 @@ def _mask_secret_fragments(text: str, found: set[str]) -> str:
             continue
         value_end = _fragment_value_end(text, match.end())
         _collect_fragment_leaves(text[match.end() : value_end], found)
-        parts.extend((text[cursor : match.end()], _MASK))
+        parts.extend((text[cursor : match.end()], REDACTED_SECRET_VALUE))
         cursor = value_end
     parts.append(text[cursor:])
     return ''.join(parts)
 
 
-def _mask_known_secret(text: str, secret: str) -> str:
+def _mask_known_value(text: str, secret: str) -> str:
     if len(secret) >= _MIN_REPLACED_SECRET_LEN:
-        return text.replace(secret, _MASK)
+        return text.replace(secret, REDACTED_SECRET_VALUE)
     quoted = re.compile(rf'(?P<quote>[\'"]){re.escape(secret)}(?P=quote)')
-    text = quoted.sub(lambda m: f'{m["quote"]}{_MASK}{m["quote"]}', text)
+    text = quoted.sub(lambda m: f'{m["quote"]}{REDACTED_SECRET_VALUE}{m["quote"]}', text)
     if len(secret) >= _MIN_WORD_REPLACED_SECRET_LEN and not secret.isdigit():
-        text = re.sub(rf'(?<!\w){re.escape(secret)}(?!\w)', _MASK, text)
+        text = re.sub(rf'(?<!\w){re.escape(secret)}(?!\w)', REDACTED_SECRET_VALUE, text)
     return text
 
 
-def _mask_known_secrets(text: str, secrets: set[str]) -> str:
+def _mask_known_values(text: str, secrets: set[str]) -> str:
     for secret in sorted(secrets, key=len, reverse=True):
-        text = _mask_known_secret(text, secret)
+        text = _mask_known_value(text, secret)
     return text
 
 
@@ -290,7 +308,7 @@ def _redact_value(value: Any, found: set[str]) -> Any:
             masked_key = is_secret_key(key)
             if masked_key or (secret_path and key in _PATH_UPDATE_VALUE_KEYS):
                 _collect_leaves(item, found)
-                redacted[key] = _MASK
+                redacted[key] = REDACTED_SECRET_VALUE
             else:
                 redacted[key] = _redact_value(item, found)
         return redacted
@@ -301,7 +319,7 @@ def _redact_value(value: Any, found: set[str]) -> Any:
             return json.dumps(_redact_value(parsed, found), ensure_ascii=False)
         if _SECRET_MARKER.search(value):
             _collect_opaque_tokens(value, found)
-            return _MASK
+            return REDACTED_SECRET_VALUE
     return value
 
 
@@ -382,9 +400,9 @@ def _safe_exception_summary(exception: BaseException, secrets: set[str]) -> str:
     else:
         text = str(exception)
 
-    text = _mask_known_secrets(text, secrets)
-    text = _PYDANTIC_INPUT_VALUE.sub(f'input_value={_MASK}', text)
-    return _mask_secret_fragments(text, set())
+    text = _mask_known_values(text, secrets)
+    text = _PYDANTIC_INPUT_VALUE.sub(f'input_value={REDACTED_SECRET_VALUE}', text)
+    return _mask_key_fragments(text, set())
 
 
 def _redact_call(func: Callable, args: tuple, kwargs: dict) -> _RedactedCall:
@@ -409,10 +427,19 @@ def _failure_summary(exception: BaseException, redacted: _RedactedCall) -> str:
     return _safe_exception_summary(exception, redacted.secrets) if redacted.complete else _REDACTION_FAILED_SUMMARY
 
 
-def _sanitized_exc_info(exception: BaseException, summary: str) -> tuple[type, BaseException, Any]:
-    """The `exc_info` of the exception with its traceback frames but only the already redacted text."""
+def _sanitized_exception(exception: BaseException, redacted: _RedactedCall, depth: int = 0) -> BaseException:
+    """A copy of the exception chain that keeps every traceback but carries only redacted text."""
     sanitized_type = type(type(exception).__name__, (Exception,), {'__module__': type(exception).__module__})
-    return sanitized_type, sanitized_type(summary), exception.__traceback__
+    sanitized = sanitized_type(_failure_summary(exception, redacted)).with_traceback(exception.__traceback__)
+    cause = exception.__cause__ or (None if exception.__suppress_context__ else exception.__context__)
+    if cause is not None and depth < _MAX_CAUSE_DEPTH:
+        sanitized.__cause__ = _sanitized_exception(cause, redacted, depth + 1)
+    return sanitized
+
+
+def _sanitized_exc_info(exception: BaseException, redacted: _RedactedCall) -> tuple[type, BaseException, Any]:
+    sanitized = _sanitized_exception(exception, redacted)
+    return type(sanitized), sanitized, sanitized.__traceback__
 
 
 async def _trigger_event(
@@ -575,7 +602,7 @@ def tool_errors(
                     else:
                         LOG.error(
                             f'MCP tool "{func.__name__}" call failed.',
-                            exc_info=_sanitized_exc_info(e, summary),
+                            exc_info=_sanitized_exc_info(e, redacted),
                             extra=extra,
                         )
                     exception = e
