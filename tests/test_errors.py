@@ -609,6 +609,7 @@ FAKE_CIPHER = 'KBC::ProjectSecure::fake-cipher-value'
 SHORT_CANARY = 'p4ss'
 ENUM_CANARY = 'enum-canary-choice'
 NUMERIC_CANARY = '987654321'
+MIXED_QUOTES_SECRET = f'a\'b"{CANARY}'
 
 
 def _raise(exc: Exception):
@@ -939,6 +940,27 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             None,
             ['[REDACTED]'],
             id='secret_scalars_repeated_exactly',
+        ),
+        pytest.param(
+            {'#password': MIXED_QUOTES_SECRET},
+            None,
+            lambda: _raise(RuntimeError(f'Rejected credential {MIXED_QUOTES_SECRET!r}')),
+            ['RuntimeError: Rejected credential'],
+            id='failure_echoing_python_repr_of_mixed_quote_secret',
+        ),
+        pytest.param(
+            {'#code': 'ab', '#pin': 1234},
+            None,
+            lambda: _raise(RuntimeError('Rejected credential ab; Rejected pin 1234 for config 7777')),
+            ['Rejected credential [REDACTED]', 'Rejected pin [REDACTED]', 'config 7777'],
+            id='failure_echoing_unquoted_short_credentials',
+        ),
+        pytest.param(
+            {'#password': CANARY, 'lookup': {CANARY: True}},
+            None,
+            None,
+            ['lookup'],
+            id='secret_used_as_dictionary_key',
         ),
         pytest.param(
             f"{{'#credentials': {{'password': '{CANARY}'}}}}",
