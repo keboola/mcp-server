@@ -606,6 +606,8 @@ async def test_event_step_up_header_only_for_own_stack(
 
 CANARY = 'canary-s3cr3t-ai4029'
 FAKE_CIPHER = 'KBC::ProjectSecure::fake-cipher-value'
+SHORT_CANARY = 'p4ss'
+ENUM_CANARY = 'enum-canary-choice'
 
 
 def _raise(exc: Exception):
@@ -618,6 +620,10 @@ def _raise_pydantic_error():
 
 def _raise_jsonschema_error():
     jsonschema.validate({'#password': CANARY}, {'properties': {'#password': {'type': 'integer'}}})
+
+
+def _raise_jsonschema_secret_enum_error():
+    jsonschema.validate({'#password': 'bad'}, {'properties': {'#password': {'enum': [ENUM_CANARY, 'other']}}})
 
 
 @pytest.fixture
@@ -641,14 +647,14 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             },
             None,
             None,
-            ['db.example.com', FAKE_CIPHER, '[REDACTED]'],
+            ['db.example.com', '[REDACTED]'],
             id='create_config_nested_secrets',
         ),
         pytest.param(
             json.dumps({'user': 'alice', 'db': {'#password': CANARY, '#token': FAKE_CIPHER}}),
             None,
             None,
-            ['alice', FAKE_CIPHER, '[REDACTED]'],
+            ['alice', '[REDACTED]'],
             id='create_config_json_string',
         ),
         pytest.param(
@@ -696,8 +702,60 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
                 ConfigParamSet(op='set', path='db.user', value='alice'),
             ],
             None,
-            ['db.example.com', 'alice', FAKE_CIPHER, 'db.#token', '[REDACTED]'],
+            ['db.example.com', 'alice', 'db.#token', '[REDACTED]'],
             id='update_config_set',
+        ),
+        pytest.param(
+            {'#password': f'KBC::{CANARY}'},
+            None,
+            None,
+            ['[REDACTED]'],
+            id='plaintext_with_cipher_prefix',
+        ),
+        pytest.param(
+            None,
+            [
+                ConfigParamSet(op='set', path='"#password"', value=CANARY),
+                ConfigParamReplace(op='str_replace', path="'#token'", search_for=CANARY, replace_with='new'),
+            ],
+            None,
+            ['[REDACTED]'],
+            id='update_config_quoted_root_path',
+        ),
+        pytest.param(
+            '```json\n{"user": "alice", "#password": "x\\"' + CANARY + '"}\n```',
+            None,
+            None,
+            ['alice', '[REDACTED]'],
+            id='string_code_fenced_json_escaped_quote',
+        ),
+        pytest.param(
+            f'user: alice\n#password: |\n  {CANARY}\n',
+            None,
+            None,
+            ['user: alice', '#password: [REDACTED]'],
+            id='string_yaml_block_scalar',
+        ),
+        pytest.param(
+            f"{{'user': 'alice', '#db': {{'user': 'u', 'pw': ['{CANARY}']}}, 'port': 1}}",
+            None,
+            None,
+            ['alice', '[REDACTED]', 'port'],
+            id='string_python_literal_secret_container',
+        ),
+        pytest.param(
+            json.dumps({'#password': 'a"b' + CANARY}),
+            None,
+            lambda: _raise(RuntimeError(f'Bad value {json.dumps("a" + chr(34) + "b" + CANARY)} for #password')),
+            ['RuntimeError: Bad value "[REDACTED]" for #password'],
+            id='failure_echoing_json_escaped_secret',
+        ),
+        pytest.param(
+            None,
+            [ConfigParamReplace(op='str_replace', path='#password', search_for=SHORT_CANARY, replace_with='new')],
+            lambda: _raise(ValueError(f'Search string "{SHORT_CANARY}" not found in path "#password"')),
+            ['ValueError: Search string "[REDACTED]" not found'],
+            id='failure_echoing_short_secret_value',
         ),
         pytest.param(
             None,
@@ -745,6 +803,13 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             ['"type" constraint violated (schema: "integer")'],
             id='failure_jsonschema_validation',
         ),
+        pytest.param(
+            None,
+            None,
+            _raise_jsonschema_secret_enum_error,
+            ['"enum" constraint violated'],
+            id='failure_jsonschema_secret_enum_not_reported',
+        ),
     ],
 )
 async def test_secrets_are_redacted_in_event(
@@ -769,22 +834,30 @@ async def test_secrets_are_redacted_in_event(
     payload = json.dumps(storage_event_post.await_args.kwargs['data'], ensure_ascii=False)
     log_lines = [r.getMessage() for r in caplog.records if '[trigger_event]' in r.getMessage()]
     assert len(log_lines) == 1
-    assert CANARY not in payload
-    assert CANARY not in log_lines[0]
+    for secret in (CANARY, SHORT_CANARY, FAKE_CIPHER, ENUM_CANARY):
+        assert secret not in payload
+        assert secret not in log_lines[0]
     for value in preserved:
         assert value in log_lines[0]
 
 
 @pytest.mark.asyncio
-async def test_redaction_failure_reports_argument_names_only(mocker, storage_event_post, empty_context: Context):
+async def test_redaction_failure_reports_argument_names_only(
+    mocker, storage_event_post, caplog, empty_context: Context
+):
     mocker.patch('keboola_mcp_server.errors._redact_value', side_effect=RuntimeError('boom'))
 
     @tool_errors()
     async def config_tool(_ctx: Context, parameters: Any = None) -> str:
         return 'ok'
 
-    await config_tool(empty_context, parameters={'#password': CANARY})
+    with caplog.at_level(logging.WARNING, logger='keboola_mcp_server.errors'):
+        await config_tool(empty_context, parameters={'#password': CANARY})
 
+    warning = next(r.getMessage() for r in caplog.records if 'Failed to redact' in r.getMessage())
+    assert 'RuntimeError' in warning
+    assert '_redact_arguments' in warning
+    assert 'boom' not in warning
     data = storage_event_post.await_args.kwargs['data']
     assert data['params']['tool']['arguments'] == [{'key': 'parameters', 'value': '"[redaction failed]"'}]
     assert CANARY not in json.dumps(data)

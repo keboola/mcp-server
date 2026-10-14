@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+import traceback
 from collections.abc import Callable, Mapping
 from functools import wraps
 from http import HTTPStatus
@@ -22,7 +23,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE, SECRET_KEY_PREFIX, is_encrypted_value
+from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE, SECRET_KEY_PREFIX
 from keboola_mcp_server.clients.storage import StorageEventType
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, get_http_request_or_none
@@ -85,22 +86,30 @@ class _JsonWrapper(BaseModel):
 # Keys of path-based update operations (e.g. `update_config`'s `parameter_updates`) that carry the value
 # written to the `path`. They are masked when the `path` points at a secret ('#'-prefixed) key.
 _PATH_UPDATE_VALUE_KEYS = frozenset({'value', 'search_for', 'replace_with'})
-# A '#' at the start of a path segment: `#password`, `db.#token`, `db['#token']`, `db["#token"]`.
-_SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[]\s*['"]?)#''')
-# `#key: value`, `#key=value`, `'#key': 'value'` fragments as rendered by str(), repr() or YAML.
-_SECRET_KEY_FRAGMENT = re.compile(r'''(['"]?#[^\s'":=,{}\[\]]+['"]?\s*[:=]\s*)('[^']*'|"[^"]*"|[^\s,}\]]+)''')
+# A '#' at the start of a path segment: `#password`, `"#password"`, `db.#token`, `db['#token']`, `db["#token"]`.
+_SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[])\s*['"]?#''')
+# The `#key:` / `#key=` / `'#key': ` prefix of a fragment as rendered by str(), repr(), JSON, YAML or .env text.
+_SECRET_KEY_FRAGMENT = re.compile(r'''['"]?#[^\s'":=,{}\[\]]+['"]?\s*[:=]\s*''')
+_CLOSING_BRACKETS = {'{': '}', '[': ']'}
+_UNQUOTED_VALUE_END = re.compile(r'[\s,}\]]')
 # Pydantic's str(ValidationError) echoes the invalid input: `[type=..., input_value=..., input_type=...]`.
 _PYDANTIC_INPUT_VALUE = re.compile(r'input_value=.*?(?=, input_type=|\]$)', re.MULTILINE)
 _MAX_CAUSE_DEPTH = 5
-# Shorter secret values are not replaced everywhere in exception text, as that would corrupt unrelated
-# substrings such as HTTP status codes or IDs; the `#key: value` fragment masking still covers them.
+# Shorter secret values are replaced in exception text only where they stand alone (quoted, or as a whole
+# non-numeric word), as replacing them everywhere would corrupt unrelated substrings such as HTTP status
+# codes or IDs.
 _MIN_REPLACED_SECRET_LEN = 6
+_MIN_WORD_REPLACED_SECRET_LEN = 3
 # jsonschema validators whose `validator_value` comes from the schema and is safe to report.
 _REPORTED_SCHEMA_VALIDATORS = frozenset({'required', 'enum', 'type'})
 
 
 def _is_secret_path(path: Any) -> bool:
     return isinstance(path, str) and bool(_SECRET_PATH_SEGMENT.search(path))
+
+
+def _secret_variants(secret: str) -> set[str]:
+    return {secret, json.dumps(secret, ensure_ascii=False)[1:-1], json.dumps(secret)[1:-1]}
 
 
 def _collect_leaves(value: Any, found: set[str]) -> None:
@@ -110,23 +119,91 @@ def _collect_leaves(value: Any, found: set[str]) -> None:
     elif isinstance(value, list):
         for item in value:
             _collect_leaves(item, found)
-    elif isinstance(value, str) and len(value) >= _MIN_REPLACED_SECRET_LEN:
-        found.add(value)
+    elif isinstance(value, str) and value:
+        found.update(_secret_variants(value))
+
+
+def _quoted_end(text: str, start: int) -> int:
+    quote = text[start]
+    index = start + 1
+    while index < len(text):
+        if text[index] == '\\':
+            index += 2
+        elif text[index] == quote:
+            return index + 1
+        else:
+            index += 1
+    return len(text)
+
+
+def _bracketed_end(text: str, start: int) -> int:
+    depth = 0
+    index = start
+    while index < len(text):
+        char = text[index]
+        if char in ('"', "'"):
+            index = _quoted_end(text, index)
+            continue
+        if char in _CLOSING_BRACKETS:
+            depth += 1
+        elif char in _CLOSING_BRACKETS.values():
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return len(text)
+
+
+def _fragment_value_end(text: str, start: int) -> int:
+    """The end of the value that starts at `start`; everything up to the end when its extent is unclear."""
+    if start >= len(text):
+        return len(text)
+    first = text[start]
+    if first in ('"', "'"):
+        return _quoted_end(text, start)
+    if first in _CLOSING_BRACKETS:
+        return _bracketed_end(text, start)
+    if first in ('|', '>'):
+        return len(text)
+    end = _UNQUOTED_VALUE_END.search(text, start)
+    return end.start() if end else len(text)
 
 
 def _mask_secret_fragments(text: str, found: set[str]) -> str:
-    def mask(match: re.Match) -> str:
-        _collect_leaves(match.group(2).strip('\'"'), found)
-        return f'{match.group(1)}{REDACTED_SECRET_VALUE}'
+    parts: list[str] = []
+    cursor = 0
+    for match in _SECRET_KEY_FRAGMENT.finditer(text):
+        if match.start() < cursor:
+            continue
+        value_end = _fragment_value_end(text, match.end())
+        _collect_leaves(text[match.end() : value_end].strip('\'"'), found)
+        parts.extend((text[cursor : match.end()], REDACTED_SECRET_VALUE))
+        cursor = value_end
+    parts.append(text[cursor:])
+    return ''.join(parts)
 
-    return _SECRET_KEY_FRAGMENT.sub(mask, text)
+
+def _mask_known_secret(text: str, secret: str) -> str:
+    if len(secret) >= _MIN_REPLACED_SECRET_LEN:
+        return text.replace(secret, REDACTED_SECRET_VALUE)
+    quoted = re.compile(rf'(?P<quote>[\'"]){re.escape(secret)}(?P=quote)')
+    text = quoted.sub(lambda m: f'{m["quote"]}{REDACTED_SECRET_VALUE}{m["quote"]}', text)
+    if len(secret) >= _MIN_WORD_REPLACED_SECRET_LEN and not secret.isdigit():
+        text = re.sub(rf'(?<!\w){re.escape(secret)}(?!\w)', REDACTED_SECRET_VALUE, text)
+    return text
+
+
+def _mask_known_secrets(text: str, secrets: set[str]) -> str:
+    for secret in sorted(secrets, key=len, reverse=True):
+        text = _mask_known_secret(text, secret)
+    return text
 
 
 def _redact_value(value: Any, found: set[str]) -> Any:
     """
     Returns a redacted copy of a JSON-compatible value and adds every masked plaintext value to `found`.
 
-    Applies the same rule as `redact_secrets` (plaintext values of '#' keys are masked, 'KBC::' ciphers kept),
+    Masks every value of a '#' key, whatever it looks like, since a 'KBC::' prefix is no proof of encryption,
     and additionally masks the value of path-based updates targeting a '#' key and descends into strings
     holding a JSON object or array. Other strings (Python literals, invalid or code-fenced JSON, YAML,
     .env text) get their `#key: value` / `#key=value` fragments masked.
@@ -136,7 +213,7 @@ def _redact_value(value: Any, found: set[str]) -> Any:
         redacted: dict[Any, Any] = {}
         for key, item in value.items():
             is_secret_key = isinstance(key, str) and key.startswith(SECRET_KEY_PREFIX)
-            if (is_secret_key or (secret_path and key in _PATH_UPDATE_VALUE_KEYS)) and not is_encrypted_value(item):
+            if is_secret_key or (secret_path and key in _PATH_UPDATE_VALUE_KEYS):
                 _collect_leaves(item, found)
                 redacted[key] = REDACTED_SECRET_VALUE
             else:
@@ -175,9 +252,18 @@ def _redact_arguments(arguments: Mapping[str, Any]) -> tuple[list[dict[str, str]
             for name, value in arguments.items()
         ]
     except Exception as e:
-        LOG.warning(f'Failed to redact tool arguments, reporting argument names only: {type(e).__name__}')
+        LOG.warning(
+            f'Failed to redact tool arguments, reporting argument names only: {type(e).__name__}\n'
+            f'{"".join(traceback.format_tb(e.__traceback__))}'
+        )
         return [{'key': name, 'value': json.dumps('[redaction failed]')} for name in arguments], found
     return encoded, found
+
+
+def _is_secret_enum(error: jsonschema.ValidationError) -> bool:
+    return error.validator == 'enum' and any(
+        isinstance(part, str) and part.startswith(SECRET_KEY_PREFIX) for part in error.absolute_path
+    )
 
 
 def _find_cause(exception: BaseException, exc_type: type[BaseException] | tuple) -> BaseException | None:
@@ -210,13 +296,14 @@ def _safe_exception_summary(exception: BaseException, secrets: set[str]) -> str:
     elif schema_error := _find_cause(exception, jsonschema.ValidationError):
         schema_error = cast(jsonschema.ValidationError, schema_error)
         text = f'Schema validation failed at {schema_error.json_path}: "{schema_error.validator}" constraint violated'
-        if schema_error.validator in _REPORTED_SCHEMA_VALIDATORS:
+        if schema_error.validator in _REPORTED_SCHEMA_VALIDATORS and not _is_secret_enum(schema_error):
             text += f' (schema: {json.dumps(schema_error.validator_value, ensure_ascii=False, default=str)})'
+        if validation_context := getattr(schema_error, 'validation_context', None):
+            text += f' [{validation_context}]'
     else:
         text = str(exception)
 
-    for secret in sorted(secrets, key=len, reverse=True):
-        text = text.replace(secret, REDACTED_SECRET_VALUE)
+    text = _mask_known_secrets(text, secrets)
     text = _PYDANTIC_INPUT_VALUE.sub(f'input_value={REDACTED_SECRET_VALUE}', text)
     return _mask_secret_fragments(text, set())
 
