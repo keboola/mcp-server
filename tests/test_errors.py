@@ -892,6 +892,27 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             id='failure_echoing_leaf_of_tuple_under_secret_key',
         ),
         pytest.param(
+            {'#password': CANARY, 'dsn': f'postgresql://alice:{CANARY}@db/app'},
+            None,
+            None,
+            ['postgresql://alice:[REDACTED]@db/app'],
+            id='secret_repeated_in_sibling_field',
+        ),
+        pytest.param(
+            {'dsn': f'postgresql://alice:{CANARY}@db/app', '#password': CANARY},
+            None,
+            None,
+            ['postgresql://alice:[REDACTED]@db/app'],
+            id='secret_repeated_in_sibling_field_before_the_secret',
+        ),
+        pytest.param(
+            {'#password': CANARY},
+            [ConfigParamSet(op='set', path='db.dsn', value=f'postgresql://alice:{CANARY}@db/app')],
+            None,
+            ['postgresql://alice:[REDACTED]@db/app'],
+            id='secret_repeated_in_another_argument',
+        ),
+        pytest.param(
             f"{{'#credentials': {{'password': '{CANARY}'}}}}",
             None,
             lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
