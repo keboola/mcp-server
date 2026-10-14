@@ -91,6 +91,14 @@ _PATH_UPDATE_VALUE_KEYS = frozenset({'value', 'search_for', 'replace_with'})
 _SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[])\s*['"]?#''')
 # The `#key:` / `#key=` / `'#key': ` prefix of a fragment as rendered by str(), repr(), JSON, YAML or .env text.
 _SECRET_KEY_FRAGMENT = re.compile(r'''['"]?#[^\s'":=,{}\[\]]+['"]?\s*[:=]\s*''')
+# Evidence that a string holds a secret key it could not be parsed for: a quoted `'#key': ` (spaces allowed),
+# an unquoted `#key:` / `#key=`, or a key whose '#' is escaped (`\\u0023`, `\\x23`, `%23`, `&#35;`).
+_SECRET_MARKER = re.compile(
+    r'''['"]#[^'"\n]*['"]\s*[:=]|(?:^|[\s{,\[(])#[^\s'":=,{}\[\]]+\s*[:=]|\\u0023|\\x23|%23|&#0*35;|&#x0*23;''',
+    re.IGNORECASE | re.MULTILINE,
+)
+_CODE_FENCE = re.compile(r'^\s*```[\w-]*\s*\n(?P<body>.*?)\n?\s*```\s*$', re.DOTALL)
+_MIN_OPAQUE_TOKEN_LEN = 6
 _CLOSING_BRACKETS = {'{': '}', '[': ']'}
 _UNQUOTED_VALUE_END = re.compile(r'[\n,}\]]')
 _TOKEN = re.compile(r'''[^\s'",:{}\[\]]+''')
@@ -128,6 +136,8 @@ def _collect_leaves(value: Any, found: set[str]) -> None:
             _collect_leaves(item, found)
     elif isinstance(value, str) and value:
         found.update(_secret_variants(value))
+        if isinstance(decoded := _parse_container(value), (dict, list)):
+            _collect_leaves(decoded, found)
     elif isinstance(value, (bool, int, float)):
         found.update(_scalar_variants(value))
 
@@ -139,6 +149,22 @@ def _decode_fragment(raw: str) -> Any | None:
         except (ValueError, SyntaxError, MemoryError, RecursionError):
             continue
     return None
+
+
+def _parse_container(text: str) -> dict | list | None:
+    """The object or array held by a JSON, Python literal or code-fenced JSON string, else None."""
+    if fenced := _CODE_FENCE.match(text):
+        text = fenced.group('body')
+    if text.lstrip()[:1] not in ('{', '['):
+        return None
+    decoded = _decode_fragment(text)
+    return decoded if isinstance(decoded, (dict, list)) else None
+
+
+def _collect_opaque_tokens(text: str, found: set[str]) -> None:
+    """Collects the whole text and every token that could be part of a secret, for text that cannot be parsed."""
+    found.update(_secret_variants(text))
+    found.update(token for token in _TOKEN.findall(text) if len(token) >= _MIN_OPAQUE_TOKEN_LEN or not token.isalpha())
 
 
 def _collect_fragment_leaves(raw: str, found: set[str]) -> None:
@@ -233,8 +259,8 @@ def _redact_value(value: Any, found: set[str]) -> Any:
 
     Masks every value of a '#' key, whatever it looks like, since a 'KBC::' prefix is no proof of encryption,
     and additionally masks the value of path-based updates targeting a '#' key and descends into strings
-    holding a JSON object or array. Other strings (Python literals, invalid or code-fenced JSON, YAML,
-    .env text) get their `#key: value` / `#key=value` fragments masked.
+    holding a JSON object, a Python literal or code-fenced JSON. Any other string that shows a secret key (YAML,
+    .env text, invalid JSON) is masked as a whole, as the extent of its secret values cannot be told.
     """
     if isinstance(value, dict):
         secret_path = _is_secret_path(value.get('path'))
@@ -250,14 +276,11 @@ def _redact_value(value: Any, found: set[str]) -> Any:
     if isinstance(value, list):
         return [_redact_value(item, found) for item in value]
     if isinstance(value, str):
-        if value.lstrip()[:1] in ('{', '['):
-            try:
-                parsed = json.loads(value)
-            except ValueError:
-                parsed = None
-            if isinstance(parsed, (dict, list)):
-                return json.dumps(_redact_value(parsed, found), ensure_ascii=False)
-        return _mask_secret_fragments(value, found)
+        if (parsed := _parse_container(value)) is not None:
+            return json.dumps(_redact_value(parsed, found), ensure_ascii=False)
+        if _SECRET_MARKER.search(value):
+            _collect_opaque_tokens(value, found)
+            return REDACTED_SECRET_VALUE
     return value
 
 
