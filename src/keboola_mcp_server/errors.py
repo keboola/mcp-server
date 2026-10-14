@@ -488,7 +488,13 @@ def _redact_call(func: Callable, args: tuple, kwargs: dict) -> _RedactedCall:
 
 
 def _failure_summary(exception: BaseException, redacted: _RedactedCall) -> str:
-    return _safe_exception_summary(exception, redacted.secrets) if redacted.complete else _REDACTION_FAILED_SUMMARY
+    """The redacted description of a failure; it never raises, so it cannot replace the failure it describes."""
+    if not redacted.complete:
+        return _REDACTION_FAILED_SUMMARY
+    try:
+        return _safe_exception_summary(exception, redacted.secrets)
+    except Exception:
+        return _REDACTION_FAILED_SUMMARY
 
 
 def _sanitized_exception(exception: BaseException, redacted: _RedactedCall, depth: int = 0) -> BaseException:
