@@ -757,6 +757,46 @@ class TestFetchDataAppValidation:
         assert result.component_id == DATA_APP_COMPONENT_ID
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('service_url', 'slug', 'expected_url'),
+        [
+            pytest.param(
+                'https://served-app-123.hub.test.keboola.com',
+                'my-app',
+                'https://served-app-123.hub.test.keboola.com',
+                id='service_url_wins',
+            ),
+            # Before its first run the service reports no URL, but the address is already fixed.
+            pytest.param(None, 'my-app', 'https://my-app-app-123.hub.test.keboola.com', id='never_run_with_slug'),
+            pytest.param(None, None, None, id='never_run_without_slug'),
+        ],
+    )
+    async def test_fetch_data_app_reports_the_app_url_before_its_first_run(
+        self,
+        mocker,
+        keboola_client: KeboolaClient,
+        service_url: str | None,
+        slug: str | None,
+        expected_url: str | None,
+    ) -> None:
+        data_app_response = _make_data_app_response().model_copy(update={'url': service_url})
+        keboola_client.data_science_client.get_data_app = mocker.AsyncMock(return_value=data_app_response)
+        data_app_block = {'slug': slug} if slug else {}
+        keboola_client.storage_client.configuration_detail = mocker.AsyncMock(
+            return_value={
+                'id': 'cfg-123',
+                'name': 'test-app',
+                'description': 'test',
+                'configuration': {'parameters': {'id': 'app-123', 'dataApp': data_app_block}},
+                'version': 1,
+            }
+        )
+
+        result = await _fetch_data_app(keboola_client, data_app_id='app-123', configuration_id=None)
+
+        assert result.deployment_url == expected_url
+
+    @pytest.mark.asyncio
     async def test_fetch_data_app_requires_either_id(self, keboola_client: KeboolaClient) -> None:
         """When neither data_app_id nor configuration_id is provided, raises ValueError."""
         with pytest.raises(ValueError, match='Either data_app_id or configuration_id must be provided'):

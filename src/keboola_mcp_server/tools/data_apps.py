@@ -383,7 +383,9 @@ class DataApp(BaseModel):
     desired_state: str | None = Field(
         description='The state the data app was last asked to reach.', default=None, exclude=True
     )
-    deployment_url: str | None = Field(description='The URL of the running data app.', default=None)
+    deployment_url: str | None = Field(
+        description='The URL the data app serves on, known before its first run.', default=None
+    )
     auto_suspend_after_seconds: int | None = Field(
         description='The number of seconds after which the running data app is automatically suspended.',
         default=None,
@@ -2565,6 +2567,7 @@ async def _build_data_app_with_repo(
 ) -> DataApp:
     """Build a `DataApp` and, for python-js apps, attach the managed git repo URL."""
     data_app = DataApp.from_api_responses(data_app_science, api_config)
+    data_app.deployment_url = data_app.deployment_url or _app_url(client, data_app_science.id, api_config.configuration)
     if data_app_science.type == 'python-js':
         try:
             repo_resp = await client.data_science_client.get_app_git_repo(data_app_science.id)
@@ -2789,6 +2792,15 @@ def _config_slug(configuration: Mapping[str, Any]) -> str | None:
     """The `parameters.dataApp.slug` of a stored data-app configuration, or None when it has none."""
     slug = _data_app_block(configuration).get('slug')
     return slug if isinstance(slug, str) and slug else None
+
+
+def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
+    """The address the app serves on, `https://<slug>-<app id>.hub.<stack>`, or None without a slug.
+
+    - The data-science API reports no URL until the app's first run; this address is fixed from creation.
+    """
+    slug = _config_slug(configuration)
+    return f'https://{slug}-{data_app_id}.hub.{client.hostname_suffix}' if slug else None
 
 
 def _config_git_branch(configuration: Mapping[str, Any]) -> str | None:
