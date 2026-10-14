@@ -93,7 +93,7 @@ _SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[,])\s*['"]?#''')
 # an unquoted `#key:` / `#key=`, or a key whose '#' is escaped (`\\u0023`, `\\x23`, `%23`, `&#35;`).
 _SECRET_KEY_PREFIX = re.compile(r'''(?:"#(?:\\.|[^"\\\n])*"|'#(?:\\.|[^'\\\n])*'|#[^\s#'":=,{}\[\]]*)\s*[:=]\s*''')
 _SECRET_MARKER = re.compile(
-    rf'{_SECRET_KEY_PREFIX.pattern}|\\u0023|\\x23|%23|&#0*35;|&#x0*23;',
+    rf'{_SECRET_KEY_PREFIX.pattern}|\\+["\x27]#|\\u0023|\\x23|%23|&#0*35;|&#x0*23;',
     re.IGNORECASE | re.MULTILINE,
 )
 # Selectors that can reach a secret key without naming it: `db.*`, `db."*"`, `$..x`, `a[?(@.b)]`.
@@ -111,6 +111,8 @@ _MIN_REPLACED_SECRET_LEN = 6
 _MIN_WORD_REPLACED_SECRET_LEN = 3
 _MIN_SCALAR_SCRUBBED_LEN = 4
 _MAX_KNOWN_SECRETS = 1024
+_MAX_DECODE_DEPTH = 3
+_CONTAINER_SYNTAX = re.compile(r'''["':]''')
 _CREDENTIAL_WORDS = r'credentials?|passwords?|passwd|passphrase|secret|token|pin|code|key'
 # jsonschema validators whose `validator_value` comes from the schema and is safe to report.
 _EXCEPTION_TEXT_OMITTED = '[details omitted: the message shows a secret key]'
@@ -130,6 +132,11 @@ def _scalar_variants(value: bool | float) -> set[str]:
     return {str(value), json.dumps(value)}
 
 
+def _looks_like_container(value: str) -> bool:
+    """True for a string that starts like a JSON object or array, shows its syntax and is not a redaction mask."""
+    return value != REDACTED_SECRET_VALUE and value.lstrip()[:1] in ('{', '[') and bool(_CONTAINER_SYNTAX.search(value))
+
+
 def _collect_leaves(value: Any, found: set[str]) -> None:
     if isinstance(value, dict):
         for key, item in [*getattr(value, 'shadowed', ()), *value.items()]:
@@ -144,6 +151,8 @@ def _collect_leaves(value: Any, found: set[str]) -> None:
             _collect_opaque_tokens(value, found)
         if isinstance(decoded := _parse_container(value), (dict, list)):
             _collect_leaves(decoded, found)
+        elif _looks_like_container(value):
+            raise _RedactionIncomplete
     elif isinstance(value, (bool, int, float)):
         found.update(_scalar_variants(value))
 
@@ -224,12 +233,18 @@ def _decode_fragment(raw: str) -> Any | None:
     return None
 
 
-def _parse_container(text: str) -> dict | list | None:
+def _parse_container(text: str, depth: int = 0) -> dict | list | None:
     """The object or array held by a JSON, Python literal or code-fenced JSON string, else None."""
     if len(text) > MAX_ARG_VALUE_LEN:
         return None
     if fenced := _CODE_FENCE.match(text):
         text = fenced.group('body')
+    if text.lstrip()[:1] == '"' and depth < _MAX_DECODE_DEPTH:
+        try:
+            unwrapped = json.loads(text)
+        except ValueError:
+            return None
+        return _parse_container(unwrapped, depth + 1) if isinstance(unwrapped, str) else None
     if text.lstrip()[:1] not in ('{', '['):
         return None
     decoded = _decode_fragment(text)
@@ -270,7 +285,7 @@ def _short_secret_patterns(secret: str) -> list[tuple[re.Pattern, Callable[[re.M
     patterns.append(
         (
             re.compile(
-                rf'(?P<context>\b(?i:{_CREDENTIAL_WORDS})\b\W{{0,3}}(?:(?i:is|was)\W{{1,3}})?){re.escape(secret)}(?!\w)'
+                rf'(?P<context>\b(?i:{_CREDENTIAL_WORDS})\b\W{{0,3}}(?:(?i:is|was)\W{{1,3}})?)(?i:{re.escape(secret)})(?!\w)'
             ),
             lambda m: f'{m["context"]}{REDACTED_SECRET_VALUE}',
         )
@@ -278,14 +293,16 @@ def _short_secret_patterns(secret: str) -> list[tuple[re.Pattern, Callable[[re.M
     return patterns
 
 
-def _value_masker(secret: str) -> Callable[[str], str]:
+def _value_masker(secret: str) -> Callable[[str, str], str]:
     """A function masking one known secret in a text; the patterns of a short secret are compiled when first needed."""
     if len(secret) >= _MIN_REPLACED_SECRET_LEN:
-        return lambda text: text.replace(secret, REDACTED_SECRET_VALUE)
+        return lambda text, _lowered: text.replace(secret, REDACTED_SECRET_VALUE)
     patterns: list[tuple[re.Pattern, Callable[[re.Match], str]]] = []
 
-    def mask(text: str) -> str:
-        if secret not in text:
+    lowered_secret = secret.lower()
+
+    def mask(text: str, lowered: str) -> str:
+        if secret not in text and lowered_secret not in lowered:
             return text
         if not patterns:
             patterns.extend(_short_secret_patterns(secret))
@@ -296,13 +313,14 @@ def _value_masker(secret: str) -> Callable[[str], str]:
     return mask
 
 
-def _value_maskers(secrets: set[str]) -> list[Callable[[str], str]]:
+def _value_maskers(secrets: set[str]) -> list[Callable[[str, str], str]]:
     return [_value_masker(secret) for secret in sorted(secrets, key=len, reverse=True)]
 
 
-def _mask_known_values(text: str, maskers: list[Callable[[str], str]]) -> str:
+def _mask_known_values(text: str, maskers: list[Callable[[str, str], str]]) -> str:
+    lowered = text.lower()
     for mask in maskers:
-        text = mask(text)
+        text = mask(text, lowered)
     return text
 
 
@@ -344,7 +362,7 @@ class _RedactedCall(NamedTuple):
     complete: bool
 
 
-def _scrub_known_values(value: Any, known: set[str], maskers: list[Callable[[str], str]] | None = None) -> Any:
+def _scrub_known_values(value: Any, known: set[str], maskers: list[Callable[[str, str], str]] | None = None) -> Any:
     """Masks the known secret values in a JSON-compatible value: exact matches first, then occurrences in strings."""
     maskers = _value_maskers(known) if maskers is None else maskers
     if isinstance(value, dict):
