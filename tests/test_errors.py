@@ -608,6 +608,7 @@ CANARY = 'canary-s3cr3t-ai4029'
 FAKE_CIPHER = 'KBC::ProjectSecure::fake-cipher-value'
 SHORT_CANARY = 'p4ss'
 ENUM_CANARY = 'enum-canary-choice'
+NUMERIC_CANARY = '987654321'
 
 
 def _raise(exc: Exception):
@@ -751,6 +752,41 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             id='failure_echoing_json_escaped_secret',
         ),
         pytest.param(
+            {'user': 'alice', '#pin': int(NUMERIC_CANARY), '#enabled': True},
+            None,
+            lambda: _raise(RuntimeError(f'Rejected credential "{NUMERIC_CANARY}" with flag "True"')),
+            ['alice', 'RuntimeError: Rejected credential "[REDACTED]" with flag "[REDACTED]"'],
+            id='failure_echoing_numeric_and_boolean_secrets',
+        ),
+        pytest.param(
+            f'user: alice\n"#password": prefix {CANARY}-suffix\nhost: db.example.com\n',
+            None,
+            None,
+            ['user: alice', 'host: db.example.com', '[REDACTED]'],
+            id='string_yaml_multiword_scalar',
+        ),
+        pytest.param(
+            '```json\n{"#credentials": {"password": "' + CANARY + '"}}\n```',
+            None,
+            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
+            ['RuntimeError: Authentication failed using [REDACTED]'],
+            id='failure_echoing_leaf_of_json_container',
+        ),
+        pytest.param(
+            f"{{'#credentials': {{'password': '{CANARY}'}}}}",
+            None,
+            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
+            ['RuntimeError: Authentication failed using [REDACTED]'],
+            id='failure_echoing_leaf_of_python_container',
+        ),
+        pytest.param(
+            f'#creds: {{password: {CANARY}',
+            None,
+            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
+            ['RuntimeError: Authentication failed using [REDACTED]'],
+            id='failure_echoing_leaf_of_unparsable_container',
+        ),
+        pytest.param(
             None,
             [ConfigParamReplace(op='str_replace', path='#password', search_for=SHORT_CANARY, replace_with='new')],
             lambda: _raise(ValueError(f'Search string "{SHORT_CANARY}" not found in path "#password"')),
@@ -834,7 +870,7 @@ async def test_secrets_are_redacted_in_event(
     payload = json.dumps(storage_event_post.await_args.kwargs['data'], ensure_ascii=False)
     log_lines = [r.getMessage() for r in caplog.records if '[trigger_event]' in r.getMessage()]
     assert len(log_lines) == 1
-    for secret in (CANARY, SHORT_CANARY, FAKE_CIPHER, ENUM_CANARY):
+    for secret in (CANARY, SHORT_CANARY, FAKE_CIPHER, ENUM_CANARY, NUMERIC_CANARY):
         assert secret not in payload
         assert secret not in log_lines[0]
     for value in preserved:
@@ -860,4 +896,22 @@ async def test_redaction_failure_reports_argument_names_only(
     assert 'boom' not in warning
     data = storage_event_post.await_args.kwargs['data']
     assert data['params']['tool']['arguments'] == [{'key': 'parameters', 'value': '"[redaction failed]"'}]
+    assert CANARY not in json.dumps(data)
+
+
+@pytest.mark.asyncio
+async def test_redaction_failure_omits_exception_text(mocker, storage_event_post, empty_context: Context):
+    mocker.patch('keboola_mcp_server.errors._redact_value', side_effect=RuntimeError('boom'))
+
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: Any = None) -> str:
+        raise RuntimeError(f'Rejected credential {CANARY}')
+
+    with pytest.raises(RuntimeError):
+        await config_tool(empty_context, parameters={'#password': CANARY})
+
+    data = storage_event_post.await_args.kwargs['data']
+    assert data['message'] == (
+        'MCP tool "config_tool" call failed. RuntimeError: [details omitted: argument redaction failed]'
+    )
     assert CANARY not in json.dumps(data)

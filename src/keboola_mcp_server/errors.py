@@ -1,3 +1,4 @@
+import ast
 import inspect
 import json
 import logging
@@ -91,7 +92,8 @@ _SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[])\s*['"]?#''')
 # The `#key:` / `#key=` / `'#key': ` prefix of a fragment as rendered by str(), repr(), JSON, YAML or .env text.
 _SECRET_KEY_FRAGMENT = re.compile(r'''['"]?#[^\s'":=,{}\[\]]+['"]?\s*[:=]\s*''')
 _CLOSING_BRACKETS = {'{': '}', '[': ']'}
-_UNQUOTED_VALUE_END = re.compile(r'[\s,}\]]')
+_UNQUOTED_VALUE_END = re.compile(r'[\n,}\]]')
+_TOKEN = re.compile(r'''[^\s'",:{}\[\]]+''')
 # Pydantic's str(ValidationError) echoes the invalid input: `[type=..., input_value=..., input_type=...]`.
 _PYDANTIC_INPUT_VALUE = re.compile(r'input_value=.*?(?=, input_type=|\]$)', re.MULTILINE)
 _MAX_CAUSE_DEPTH = 5
@@ -101,6 +103,7 @@ _MAX_CAUSE_DEPTH = 5
 _MIN_REPLACED_SECRET_LEN = 6
 _MIN_WORD_REPLACED_SECRET_LEN = 3
 # jsonschema validators whose `validator_value` comes from the schema and is safe to report.
+_REDACTION_FAILED_SUMMARY = '[details omitted: argument redaction failed]'
 _REPORTED_SCHEMA_VALIDATORS = frozenset({'required', 'enum', 'type'})
 
 
@@ -112,6 +115,10 @@ def _secret_variants(secret: str) -> set[str]:
     return {secret, json.dumps(secret, ensure_ascii=False)[1:-1], json.dumps(secret)[1:-1]}
 
 
+def _scalar_variants(value: bool | float) -> set[str]:
+    return {str(value), json.dumps(value)}
+
+
 def _collect_leaves(value: Any, found: set[str]) -> None:
     if isinstance(value, dict):
         for item in value.values():
@@ -121,6 +128,27 @@ def _collect_leaves(value: Any, found: set[str]) -> None:
             _collect_leaves(item, found)
     elif isinstance(value, str) and value:
         found.update(_secret_variants(value))
+    elif isinstance(value, (bool, int, float)):
+        found.update(_scalar_variants(value))
+
+
+def _decode_fragment(raw: str) -> Any | None:
+    for decode in (json.loads, ast.literal_eval):
+        try:
+            return decode(raw)
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
+            continue
+    return None
+
+
+def _collect_fragment_leaves(raw: str, found: set[str]) -> None:
+    """Collects the secret leaves of a rendered value; every token of it when the format is not understood."""
+    _collect_leaves(raw, found)
+    decoded = _decode_fragment(raw)
+    if isinstance(decoded, (dict, list)):
+        _collect_leaves(decoded, found)
+    else:
+        found.update(_TOKEN.findall(raw))
 
 
 def _quoted_end(text: str, start: int) -> int:
@@ -176,7 +204,7 @@ def _mask_secret_fragments(text: str, found: set[str]) -> str:
         if match.start() < cursor:
             continue
         value_end = _fragment_value_end(text, match.end())
-        _collect_leaves(text[match.end() : value_end].strip('\'"'), found)
+        _collect_fragment_leaves(text[match.end() : value_end].strip('\'"'), found)
         parts.extend((text[cursor : match.end()], REDACTED_SECRET_VALUE))
         cursor = value_end
     parts.append(text[cursor:])
@@ -233,12 +261,13 @@ def _redact_value(value: Any, found: set[str]) -> Any:
     return value
 
 
-def _redact_arguments(arguments: Mapping[str, Any]) -> tuple[list[dict[str, str]], set[str]]:
+def _redact_arguments(arguments: Mapping[str, Any]) -> tuple[list[dict[str, str]], set[str], bool]:
     """
     Serializes tool arguments for the Storage event with secrets masked.
 
     Pydantic models are dumped to plain JSON data first, so the actual arguments are never mutated.
-    If redaction fails, only the argument names are reported, never their raw values.
+    If redaction fails, only the argument names are reported, never their raw values, and the returned
+    secrets are incomplete, which the third item (`False`) tells the caller.
     """
     found: set[str] = set()
     try:
@@ -256,8 +285,8 @@ def _redact_arguments(arguments: Mapping[str, Any]) -> tuple[list[dict[str, str]
             f'Failed to redact tool arguments, reporting argument names only: {type(e).__name__}\n'
             f'{"".join(traceback.format_tb(e.__traceback__))}'
         )
-        return [{'key': name, 'value': json.dumps('[redaction failed]')} for name in arguments], found
-    return encoded, found
+        return [{'key': name, 'value': json.dumps('[redaction failed]')} for name in arguments], found, False
+    return encoded, found, True
 
 
 def _is_secret_enum(error: jsonschema.ValidationError) -> bool:
@@ -340,7 +369,7 @@ async def _trigger_event(
     if not user_agent:
         user_agent = ''
 
-    arguments, secrets = _redact_arguments(
+    arguments, secrets, redaction_complete = _redact_arguments(
         {
             param_name: param_value
             for param_name, param_value in bound_args.arguments.items()
@@ -366,7 +395,7 @@ async def _trigger_event(
         },
     }
     if exception:
-        summary = _safe_exception_summary(exception, secrets)
+        summary = _safe_exception_summary(exception, secrets) if redaction_complete else _REDACTION_FAILED_SUMMARY
         message = f'MCP tool "{tool_name}" call failed. {type(exception).__name__}: {summary}'
         event_type: StorageEventType = 'error'
     else:
