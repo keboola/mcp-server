@@ -59,7 +59,7 @@ jobs:
           uv run tox
 
       - name: Publish test results
-        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2  # v3.0.0
+        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a  # v3.2.0
         # don't fail the job if the Checks API call flakes — the tests themselves already ran
         continue-on-error: true
         # run this step even if a previous step failed, but only for push events or pull requests from the same repo
@@ -151,7 +151,7 @@ jobs:
           echo "Dependencies installed successfully - setup is working correctly"
 
       - name: Publish integration test results
-        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2  # v3.0.0
+        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a  # v3.2.0
         # don't fail the job if the Checks API call flakes — the tests themselves already ran
         continue-on-error: true
         # publish results only when actual tests were run (same repository)
