@@ -1350,3 +1350,37 @@ async def test_event_post_failure_does_not_log_the_tool_exception_text(
     formatter = logging.Formatter()
     assert [r for r in caplog.records if 'Failed to trigger tool event' in r.getMessage()]
     assert [r.getMessage() for r in caplog.records if CANARY in formatter.format(r)] == []
+
+
+_HOSTILE_ARGUMENT_LENGTH = MAX_ARG_VALUE_LEN - 5
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        '[' * _HOSTILE_ARGUMENT_LENGTH,
+        '(' * _HOSTILE_ARGUMENT_LENGTH,
+        '[' + '-' * (_HOSTILE_ARGUMENT_LENGTH - 10) + '1]',
+        '[' + 'not ' * 2400 + '1]',
+        '[' + '9' * (_HOSTILE_ARGUMENT_LENGTH - 10) + ']',
+        '[' + '1+' * 4900 + '1]',
+        "{'a':" * 1900 + '1' + '}' * 1900,
+        '[' * 4000 + ']' * 4000,
+    ],
+    ids=[
+        'deep_list',
+        'deep_parentheses',
+        'unary_chain',
+        'not_chain',
+        'huge_integer',
+        'binary_operator_chain',
+        'deep_dictionary',
+        'deep_closed_list',
+    ],
+)
+def test_hostile_literal_arguments_are_redacted_quickly_without_error(text: str):
+    started = time.perf_counter()
+    redacted = _redact_arguments({'payload': text})
+
+    assert time.perf_counter() - started < 1
+    assert redacted.complete
