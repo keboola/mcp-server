@@ -708,24 +708,125 @@ async def test_merge_not_ready_on_approved_says_wait(mcp_context_client: Context
     assert 'Ready: merge it' not in result.next_step
 
 
+_NOT_READY_IN_MERGE = _http_error(
+    409, {'code': 'storage.mergeRequests.notReadyToMerge', 'error': 'Cannot merge, branch is in "in_merge" state.'}
+)
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('merge_error', 'expected_warning'),
+    [
+        pytest.param(_NOT_READY_IN_MERGE, 'A merge is already running', id='not_ready_409'),
+        pytest.param(
+            httpx.ReadTimeout('timed out'), 'The merge call failed (ReadTimeout: timed out)', id='read_timeout'
+        ),
+        pytest.param(httpx.ReadError('connection reset'), 'The merge call failed (ReadError', id='read_error'),
+        pytest.param(_http_error(502), 'The merge call failed (HTTPStatusError: HTTP 502)', id='bad_gateway_502'),
+        pytest.param(_http_error(504), 'The merge call failed (HTTPStatusError: HTTP 504)', id='gateway_timeout_504'),
+    ],
+)
 async def test_merge_not_ready_while_a_merge_is_running_is_not_a_refusal(
-    mcp_context_client: Context, storage: AsyncMock
+    mcp_context_client: Context, storage: AsyncMock, merge_error: Exception, expected_warning: str
 ) -> None:
-    """A timed-out first attempt (or auto-merge) already started the job: the 409 must not read as 'nothing changed'."""
+    """
+    A timed-out first attempt (or auto-merge) already started the job, or this very call started it and then lost
+    the response: neither the 409 nor the lost response may read as 'nothing changed' or as a bare error.
+    """
     storage.merge_request_detail.side_effect = [_mr_raw('approved'), _mr_raw('in_merge')]
-    storage.merge_request_merge.side_effect = _http_error(
-        409, {'code': 'storage.mergeRequests.notReadyToMerge', 'error': 'Cannot merge, branch is in "in_merge" state.'}
-    )
+    storage.merge_request_merge.side_effect = merge_error
 
     result = await merge_merge_request(mcp_context_client, merge_request_id=42)
 
     assert result.refusal is None
     assert result.merged is False
     assert result.state == 'in_merge'
-    assert 'A merge is already running' in result.warnings[0]
+    assert expected_warning in result.warnings[0]
+    assert storage.merge_request_merge.await_count == 1  # the merge PUT is never retried
     assert 'Do not edit this branch' in result.next_step and 'do not start a second merge' in result.next_step
     assert result.status is not None and result.status.next_step == result.next_step
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('merge_error', 'reread', 'expected_fragment'),
+    [
+        pytest.param(
+            httpx.ReadTimeout('timed out'),
+            _mr_raw('approved'),
+            "The merge call failed (ReadTimeout: timed out) and merge request 42 is in state 'approved'; it could not "
+            'be confirmed whether the merge started.',
+            id='lost_response_mr_not_in_merge',
+        ),
+        pytest.param(
+            _http_error(502),
+            httpx.ReadError('connection reset'),
+            'The merge call failed (HTTPStatusError: HTTP 502) and merge request 42 could not be re-read '
+            '(ReadError: connection reset); the merge may have started.',
+            id='lost_response_and_reread_fails',
+        ),
+        pytest.param(
+            _NOT_READY_IN_MERGE,
+            httpx.ReadTimeout('timed out'),
+            'The backend refused the merge as not ready (Cannot merge, branch is in "in_merge" state.) and merge '
+            'request 42 could not be re-read (ReadTimeout: timed out); the merge may have started.',
+            id='not_ready_and_reread_fails',
+        ),
+    ],
+)
+async def test_merge_with_unknown_outcome_is_never_a_bare_error(
+    mcp_context_client: Context, storage: AsyncMock, merge_error: Exception, reread: Any, expected_fragment: str
+) -> None:
+    """When the merge may have started but the MR does not show it, the agent is told to check, not to retry."""
+    storage.merge_request_detail.side_effect = [_mr_raw('approved'), reread]
+    storage.merge_request_merge.side_effect = merge_error
+
+    with pytest.raises(ToolError) as exc_info:
+        await merge_merge_request(mcp_context_client, merge_request_id=42)
+
+    assert expected_fragment in str(exc_info.value)
+    assert 'Check get_merge_requests before merging again and do not edit the branch meanwhile.' in str(exc_info.value)
+    assert storage.merge_request_merge.await_count == 1
+    storage.job_detail.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_merge_lost_response_after_the_merge_finished_reports_the_merge(
+    mcp_context_client: Context, storage: AsyncMock
+) -> None:
+    storage.merge_request_detail.side_effect = [_mr_raw('approved'), _mr_raw('published', branch_from=None)]
+    storage.merge_request_merge.side_effect = httpx.ReadTimeout('timed out')
+
+    result = await merge_merge_request(mcp_context_client, merge_request_id=42)
+
+    assert result.merged is True
+    assert result.state == 'published'
+    assert result.job_id is None
+    assert result.source_branch_deleting is True
+    assert 'The merge call failed (ReadTimeout: timed out)' in result.warnings[0]
+    assert 'source branch is being deleted' in result.next_step
+    assert storage.merge_request_merge.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'merge_error',
+    [
+        pytest.param(httpx.ConnectError('connection refused'), id='connect_error'),
+        pytest.param(httpx.ConnectTimeout('connect timed out'), id='connect_timeout_is_not_a_lost_response'),
+    ],
+)
+async def test_merge_request_never_sent_is_reraised(
+    mcp_context_client: Context, storage: AsyncMock, merge_error: Exception
+) -> None:
+    """A connection-phase failure never reached the backend: nothing started, the error passes through unchanged."""
+    storage.merge_request_merge.side_effect = merge_error
+
+    with pytest.raises(type(merge_error)):
+        await merge_merge_request(mcp_context_client, merge_request_id=42)
+
+    assert storage.merge_request_detail.await_count == 1  # only the pre-merge read, no outcome re-read
+    assert storage.merge_request_merge.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -784,29 +885,75 @@ async def test_merge_success_awaits_job_and_hands_off(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('job', 'expected_message'),
+    ('job', 'reread', 'expected_message', 'expected_state'),
     [
-        pytest.param({'id': 988, 'status': 'error', 'error': {'message': 'boom'}}, 'boom', id='error_with_message'),
-        pytest.param({'id': 988, 'status': 'cancelled'}, "ended with status 'cancelled'", id='cancelled_is_terminal'),
-        pytest.param({'id': 988, 'status': 'terminated', 'error': 'killed'}, 'killed', id='terminated_string_error'),
+        pytest.param(
+            {'id': 988, 'status': 'error', 'error': {'message': 'boom'}},
+            _mr_raw('approved'),
+            'boom',
+            'approved',
+            id='error_with_message',
+        ),
+        pytest.param(
+            {'id': 988, 'status': 'cancelled'},
+            _mr_raw('development'),
+            "ended with status 'cancelled'",
+            'development',
+            id='cancelled_is_terminal_and_the_reread_state_wins',
+        ),
+        pytest.param(
+            {'id': 988, 'status': 'terminated', 'error': 'killed'},
+            httpx.ReadTimeout('timed out'),
+            'killed',
+            'approved',
+            id='terminated_reread_fails_falls_back_to_approved',
+        ),
     ],
 )
 async def test_merge_job_failure_rolls_back_to_approved(
-    mcp_context_client: Context, storage: AsyncMock, monkeypatch, job: dict, expected_message: str
+    mcp_context_client: Context,
+    storage: AsyncMock,
+    monkeypatch,
+    job: dict,
+    reread: Any,
+    expected_message: str,
+    expected_state: str,
 ) -> None:
     monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
-    storage.merge_request_detail.return_value = _mr_raw('approved')
+    storage.merge_request_detail.side_effect = [_mr_raw('approved'), reread]
     storage.merge_request_merge.return_value = {'id': '988'}
     storage.job_detail.return_value = job
 
     result = await merge_merge_request(mcp_context_client, merge_request_id=42)
 
     assert result.merged is False
-    assert result.state == 'approved'
+    assert result.state == expected_state
+    assert result.status is not None and result.status.state == expected_state
     assert result.refusal is None
     assert result.refusal_message is not None and expected_message in result.refusal_message
     assert expected_message in result.next_step
+    assert f'the merge request is now in `{expected_state}`' in result.next_step
     assert storage.job_detail.await_count == 1  # terminal on the first poll, no spinning
+    assert storage.merge_request_detail.await_count == 2  # the pre-merge read + the outcome re-read
+
+
+@pytest.mark.asyncio
+async def test_merge_job_non_success_with_a_merged_mr_reports_the_merge(
+    mcp_context_client: Context, storage: AsyncMock, monkeypatch
+) -> None:
+    """The re-read MR, not the job status, decides: a published merge request is reported as merged."""
+    monkeypatch.setattr(mr_tools, '_next_poll_interval', lambda _elapsed: 0.0)
+    storage.merge_request_detail.side_effect = [_mr_raw('approved'), _mr_raw('published', branch_from=None)]
+    storage.merge_request_merge.return_value = {'id': '988'}
+    storage.job_detail.return_value = {'id': 988, 'status': 'warning'}
+
+    result = await merge_merge_request(mcp_context_client, merge_request_id=42)
+
+    assert result.merged is True
+    assert result.state == 'published'
+    assert result.job_id == '988'
+    assert result.source_branch_deleting is True
+    assert "ended with status 'warning'" in result.warnings[0]
 
 
 @pytest.mark.asyncio

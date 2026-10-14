@@ -714,6 +714,78 @@ def _refused_merge(
     )
 
 
+def _merge_running(
+    c: _MrContext, mr: Mapping[str, Any], *, session: SessionContext, branch_name: str | None, warning: str
+) -> MergeResult:
+    """The result for a merge that is running (the re-read MR is `in_merge`): not a refusal, never merge again."""
+    status = build_status(mr, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name)
+    return MergeResult(
+        merge_request_id=int(mr['id']),
+        merged=False,
+        state='in_merge',
+        job_id=None,
+        refusal=None,
+        refusal_message=None,
+        conflicts=None,
+        status=status,
+        source_branch_deleting=False,
+        warnings=[warning],
+        next_step=status.next_step,
+    )
+
+
+def _merge_succeeded(
+    c: _MrContext,
+    mr: Mapping[str, Any],
+    *,
+    session: SessionContext,
+    branch_name: str | None,
+    job_id: str | None,
+    warnings: list[str],
+) -> MergeResult:
+    """The result for a finished merge; `mr` is the payload read before the merge (its viewer and branch)."""
+    viewer = build_status(mr, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name).viewer
+    return MergeResult(
+        merge_request_id=int(mr['id']),
+        merged=True,
+        state='published',
+        job_id=job_id,
+        refusal=None,
+        refusal_message=None,
+        conflicts=None,
+        status=None,
+        source_branch_deleting=True,
+        warnings=warnings,
+        next_step=build_next_step(
+            state='published',
+            derived_state='merged',
+            merge_blockers=['state'],
+            conflicts=None,
+            allowed_actions=[],
+            viewer=viewer,
+            pending=[],
+            session=session,
+            branch_from_name=branch_name,
+        ),
+    )
+
+
+async def _reread_after_merge_call(
+    c: _MrContext, mr_id: int, *, failure: str, cause: BaseException | None = None
+) -> JsonDict:
+    """
+    Re-reads the MR after a merge call that may have started the merge. A failed re-read is reported as "may have
+    started" (chained to `cause`, the merge call's own error, when given), never as a bare transport error.
+    """
+    try:
+        return await c.client.storage_client.merge_request_detail(mr_id)
+    except httpx.HTTPError as exc:
+        raise ToolError(
+            f'{failure} and merge request {mr_id} could not be re-read ({type(exc).__name__}: {exc}); the merge may '
+            'have started. Check get_merge_requests before merging again and do not edit the branch meanwhile.'
+        ) from (cause if cause is not None else exc)
+
+
 @tool_errors()
 async def merge_merge_request(
     ctx: Context,
@@ -748,23 +820,61 @@ async def merge_merge_request(
     refusal: LastRefusal | None = None
     message = ''
     conflicts: list[ConflictRef] | None = None
+    # A failure after the request was sent (read/write error, 5xx): the merge may have started, so the outcome is
+    # read back from the MR instead of being reported as a bare error (the PUT is never retried).
+    unconfirmed: httpx.HTTPError | None = None
     async with _mapped_write_errors():
         try:
             job = await c.client.storage_client.merge_request_merge(mr_id)
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
+            raise  # the request was never sent: nothing started
+        except httpx.TransportError as exc:
+            unconfirmed = exc
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code != 409:
+            if exc.response.status_code >= 500:
+                unconfirmed = exc
+            elif exc.response.status_code != 409:
                 raise
-            body = _error_body(exc)
-            code = body.get('code')
-            message = str(body.get('error') or body.get('message') or exc)
-            if code == MERGE_NOT_READY_CODE:
-                refusal = 'not_ready'
-            elif code == MERGE_CONFLICT_CODE or code is None:
-                refusal = 'conflicts'
-                params = body.get('params')
-                conflicts = _parse_conflicts(params.get('errors') if isinstance(params, Mapping) else None)
             else:
-                raise
+                body = _error_body(exc)
+                code = body.get('code')
+                message = str(body.get('error') or body.get('message') or exc)
+                if code == MERGE_NOT_READY_CODE:
+                    refusal = 'not_ready'
+                elif code == MERGE_CONFLICT_CODE or code is None:
+                    refusal = 'conflicts'
+                    params = body.get('params')
+                    conflicts = _parse_conflicts(params.get('errors') if isinstance(params, Mapping) else None)
+                else:
+                    raise
+    if unconfirmed is not None:
+        error = f'{type(unconfirmed).__name__}: {unconfirmed}'
+        current = await _reread_after_merge_call(
+            c, mr_id, failure=f'The merge call failed ({error})', cause=unconfirmed
+        )
+        state = current.get('state')
+        if state == 'in_merge':
+            return _merge_running(
+                c,
+                current,
+                session=session,
+                branch_name=branch_name,
+                warning=f'The merge call failed ({error}), but the merge request is in_merge: the merge is running.',
+            )
+        if state == 'published':
+            return _merge_succeeded(
+                c,
+                mr,
+                session=session,
+                branch_name=branch_name,
+                job_id=None,
+                warnings=[f'The merge call failed ({error}), but the merge request is already merged.'],
+            )
+        raise ToolError(
+            f"The merge call failed ({error}) and merge request {mr_id} is in state '{state}'; it could not be "
+            'confirmed whether the merge started. Check get_merge_requests before merging again and do not edit '
+            'the branch meanwhile.'
+        ) from unconfirmed
     if refusal == 'conflicts' and not conflicts:
         # No usable `params.errors` (older stack, proxy body): consult the live list. Empty → the 409 was not a
         # conflict after all; report it as "not ready" rather than sending the agent to an empty conflict list.
@@ -774,23 +884,16 @@ async def merge_merge_request(
     if refusal == 'not_ready':
         # "Not ready" may mean a merge is already running (an earlier attempt that timed out client-side, or the
         # auto-merge scheduler): re-read the MR and report the running merge instead of a refusal.
-        current = await c.client.storage_client.merge_request_detail(mr_id)
+        current = await _reread_after_merge_call(
+            c, mr_id, failure=f'The backend refused the merge as not ready ({message})'
+        )
         if current.get('state') == 'in_merge':
-            status = build_status(
-                current, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name
-            )
-            return MergeResult(
-                merge_request_id=mr_id,
-                merged=False,
-                state='in_merge',
-                job_id=None,
-                refusal=None,
-                refusal_message=None,
-                conflicts=None,
-                status=status,
-                source_branch_deleting=False,
-                warnings=[f'A merge is already running for this merge request; the backend said: {message}'],
-                next_step=status.next_step,
+            return _merge_running(
+                c,
+                current,
+                session=session,
+                branch_name=branch_name,
+                warning=f'A merge is already running for this merge request; the backend said: {message}',
             )
     if refusal is not None:
         return _refused_merge(c, mr, refusal=refusal, message=message, conflicts=conflicts)
@@ -823,41 +926,28 @@ async def merge_merge_request(
             ),
         )
     if str(final.get('status')) == 'success':
-        viewer = build_status(
-            mr, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name
-        ).viewer
-        return MergeResult(
-            merge_request_id=mr_id,
-            merged=True,
-            state='published',
-            job_id=job_id,
-            refusal=None,
-            refusal_message=None,
-            conflicts=None,
-            status=None,
-            source_branch_deleting=True,
-            warnings=[],
-            next_step=build_next_step(
-                state='published',
-                derived_state='merged',
-                merge_blockers=['state'],
-                conflicts=None,
-                allowed_actions=[],
-                viewer=viewer,
-                pending=[],
-                session=session,
-                branch_from_name=branch_name,
-            ),
-        )
-    rolled_back = _with_state(mr, 'approved')  # the backend rolls a failed merge back to `approved`
-    status = build_status(
-        rolled_back, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name
-    )
+        return _merge_succeeded(c, mr, session=session, branch_name=branch_name, job_id=job_id, warnings=[])
     error = _job_error_message(final)
+    try:
+        after = await c.client.storage_client.merge_request_detail(mr_id)
+    except httpx.HTTPError as exc:
+        LOG.warning(f'Could not re-read merge request {mr_id} after the failed merge job {job_id}: {exc!r}')
+        after = _with_state(mr, 'approved')  # the backend rolls a failed merge back to `approved`
+    if after.get('state') == 'published':
+        # The job did not report success, but the merge request is merged: report what happened, not the job status.
+        return _merge_succeeded(
+            c,
+            mr,
+            session=session,
+            branch_name=branch_name,
+            job_id=job_id,
+            warnings=[f'The merge job reported a failure ({error}), but the merge request is merged.'],
+        )
+    status = build_status(after, conflicts=None, admin_id=c.admin_id, session=session, branch_from_name=branch_name)
     return MergeResult(
         merge_request_id=mr_id,
         merged=False,
-        state='approved',
+        state=status.state,
         job_id=job_id,
         refusal=None,
         refusal_message=error,
@@ -865,7 +955,7 @@ async def merge_merge_request(
         status=status,
         source_branch_deleting=False,
         warnings=[],
-        next_step=f'The merge job failed ({error}); the merge request is back in `approved`. {status.next_step}',
+        next_step=f'The merge job failed ({error}); the merge request is now in `{status.state}`. {status.next_step}',
     )
 
 
