@@ -2797,7 +2797,8 @@ def _config_slug(configuration: Mapping[str, Any]) -> str | None:
 def _app_url(client: KeboolaClient, data_app_id: str, configuration: Mapping[str, Any]) -> str | None:
     """The address the app serves on, `https://<slug>-<app id>.hub.<stack>`, or None without a slug.
 
-    - The data-science API reports no URL until the app's first run; this address is fixed from creation.
+    - The data-science API reports no URL until the app's first run.
+    - Derived from the stored slug and app id, so it moves when a not-yet-deployed app's slug changes.
     """
     slug = _config_slug(configuration)
     return f'https://{slug}-{data_app_id}.hub.{client.hostname_suffix}' if slug else None
