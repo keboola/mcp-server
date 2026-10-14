@@ -8,7 +8,7 @@ import traceback
 from collections.abc import Callable, Mapping
 from functools import wraps
 from http import HTTPStatus
-from typing import Any, TypeVar, cast
+from typing import Any, NamedTuple, TypeVar, cast
 
 import httpx
 import jsonschema
@@ -91,6 +91,14 @@ _PATH_UPDATE_VALUE_KEYS = frozenset({'value', 'search_for', 'replace_with'})
 _SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[])\s*['"]?#''')
 # The `#key:` / `#key=` / `'#key': ` prefix of a fragment as rendered by str(), repr(), JSON, YAML or .env text.
 _SECRET_KEY_FRAGMENT = re.compile(r'''['"]?#[^\s'":=,{}\[\]]+['"]?\s*[:=]\s*''')
+# Evidence that a string holds a secret key it could not be parsed for: a quoted `'#key': ` (spaces allowed),
+# an unquoted `#key:` / `#key=`, or a key whose '#' is escaped (`\\u0023`, `\\x23`, `%23`, `&#35;`).
+_SECRET_MARKER = re.compile(
+    r'''['"]#[^'"\n]*['"]\s*[:=]|(?:^|[\s{,\[(])#[^\s'":=,{}\[\]]+\s*[:=]|\\u0023|\\x23|%23|&#0*35;|&#x0*23;''',
+    re.IGNORECASE | re.MULTILINE,
+)
+_CODE_FENCE = re.compile(r'^\s*```[\w-]*\s*\n(?P<body>.*?)\n?\s*```\s*$', re.DOTALL)
+_MIN_OPAQUE_TOKEN_LEN = 6
 _CLOSING_BRACKETS = {'{': '}', '[': ']'}
 _UNQUOTED_VALUE_END = re.compile(r'[\n,}\]]')
 _TOKEN = re.compile(r'''[^\s'",:{}\[\]]+''')
@@ -123,22 +131,60 @@ def _collect_leaves(value: Any, found: set[str]) -> None:
     if isinstance(value, dict):
         for item in value.values():
             _collect_leaves(item, found)
+        for _, item in getattr(value, 'shadowed', ()):
+            _collect_leaves(item, found)
     elif isinstance(value, list):
         for item in value:
             _collect_leaves(item, found)
     elif isinstance(value, str) and value:
         found.update(_secret_variants(value))
+        if isinstance(decoded := _parse_container(value), (dict, list)):
+            _collect_leaves(decoded, found)
     elif isinstance(value, (bool, int, float)):
         found.update(_scalar_variants(value))
 
 
+class _ShadowingDict(dict):
+    """A dict decoded from JSON that remembers the values of duplicate keys it replaced."""
+
+    def __init__(self, pairs: list[tuple[Any, Any]]):
+        super().__init__()
+        self.shadowed: list[tuple[Any, Any]] = []
+        for key, item in pairs:
+            if key in self:
+                self.shadowed.append((key, self[key]))
+            self[key] = item
+
+
+def _decode_json(raw: str) -> Any:
+    return json.loads(raw, object_pairs_hook=_ShadowingDict)
+
+
 def _decode_fragment(raw: str) -> Any | None:
-    for decode in (json.loads, ast.literal_eval):
+    for decode in (_decode_json, ast.literal_eval):
         try:
             return decode(raw)
         except (ValueError, SyntaxError, MemoryError, RecursionError):
             continue
     return None
+
+
+def _parse_container(text: str) -> dict | list | None:
+    """The object or array held by a JSON, Python literal or code-fenced JSON string, else None."""
+    if len(text) > MAX_ARG_VALUE_LEN:
+        return None
+    if fenced := _CODE_FENCE.match(text):
+        text = fenced.group('body')
+    if text.lstrip()[:1] not in ('{', '['):
+        return None
+    decoded = _decode_fragment(text)
+    return decoded if isinstance(decoded, (dict, list)) else None
+
+
+def _collect_opaque_tokens(text: str, found: set[str]) -> None:
+    """Collects the whole text and every token that could be part of a secret, for text that cannot be parsed."""
+    found.update(_secret_variants(text))
+    found.update(token for token in _TOKEN.findall(text) if len(token) >= _MIN_OPAQUE_TOKEN_LEN or not token.isalpha())
 
 
 def _collect_fragment_leaves(raw: str, found: set[str]) -> None:
@@ -233,13 +279,13 @@ def _redact_value(value: Any, found: set[str]) -> Any:
 
     Masks every value of a '#' key, whatever it looks like, since a 'KBC::' prefix is no proof of encryption,
     and additionally masks the value of path-based updates targeting a '#' key and descends into strings
-    holding a JSON object or array. Other strings (Python literals, invalid or code-fenced JSON, YAML,
-    .env text) get their `#key: value` / `#key=value` fragments masked.
+    holding a JSON object, a Python literal or code-fenced JSON. Any other string that shows a secret key (YAML,
+    .env text, invalid JSON) is masked as a whole, as the extent of its secret values cannot be told.
     """
     if isinstance(value, dict):
         secret_path = _is_secret_path(value.get('path'))
         redacted: dict[Any, Any] = {}
-        for key, item in value.items():
+        for key, item in [*getattr(value, 'shadowed', ()), *value.items()]:
             masked_key = is_secret_key(key)
             if masked_key or (secret_path and key in _PATH_UPDATE_VALUE_KEYS):
                 _collect_leaves(item, found)
@@ -250,18 +296,21 @@ def _redact_value(value: Any, found: set[str]) -> Any:
     if isinstance(value, list):
         return [_redact_value(item, found) for item in value]
     if isinstance(value, str):
-        if value.lstrip()[:1] in ('{', '['):
-            try:
-                parsed = json.loads(value)
-            except ValueError:
-                parsed = None
-            if isinstance(parsed, (dict, list)):
-                return json.dumps(_redact_value(parsed, found), ensure_ascii=False)
-        return _mask_secret_fragments(value, found)
+        if (parsed := _parse_container(value)) is not None:
+            return json.dumps(_redact_value(parsed, found), ensure_ascii=False)
+        if _SECRET_MARKER.search(value):
+            _collect_opaque_tokens(value, found)
+            return REDACTED_SECRET_VALUE
     return value
 
 
-def _redact_arguments(arguments: Mapping[str, Any]) -> tuple[list[dict[str, str]], set[str], bool]:
+class _RedactedCall(NamedTuple):
+    arguments: list[dict[str, str]]
+    secrets: set[str]
+    complete: bool
+
+
+def _redact_arguments(arguments: Mapping[str, Any]) -> _RedactedCall:
     """
     Serializes tool arguments for the Storage event with secrets masked.
 
@@ -285,8 +334,10 @@ def _redact_arguments(arguments: Mapping[str, Any]) -> tuple[list[dict[str, str]
             f'Failed to redact tool arguments, reporting argument names only: {type(e).__name__}\n'
             f'{"".join(traceback.format_tb(e.__traceback__))}'
         )
-        return [{'key': name, 'value': json.dumps('[redaction failed]')} for name in arguments], found, False
-    return encoded, found, True
+        return _RedactedCall(
+            [{'key': name, 'value': json.dumps('[redaction failed]')} for name in arguments], found, False
+        )
+    return _RedactedCall(encoded, found, True)
 
 
 def _is_secret_enum(error: jsonschema.ValidationError) -> bool:
@@ -335,8 +386,41 @@ def _safe_exception_summary(exception: BaseException, secrets: set[str]) -> str:
     return _mask_secret_fragments(text, set())
 
 
+def _redact_call(func: Callable, args: tuple, kwargs: dict) -> _RedactedCall:
+    """Redacts the arguments of a tool call; reports no arguments and an incomplete secret set if that is impossible."""
+    try:
+        ctx_param_name = find_kwarg_by_type(func, Context)
+        bound_args = inspect.signature(func).bind(*args, **kwargs)
+        bound_args.apply_defaults()
+        return _redact_arguments(
+            {
+                param_name: param_value
+                for param_name, param_value in bound_args.arguments.items()
+                if param_name not in [ctx_param_name, 'self', 'cls']
+            }
+        )
+    except Exception as e:
+        LOG.warning(f'Failed to redact tool call, details of its failure will be omitted: {type(e).__name__}')
+        return _RedactedCall([], set(), False)
+
+
+def _failure_summary(exception: BaseException, redacted: _RedactedCall) -> str:
+    return _safe_exception_summary(exception, redacted.secrets) if redacted.complete else _REDACTION_FAILED_SUMMARY
+
+
+def _sanitized_exc_info(exception: BaseException, summary: str) -> tuple[type, BaseException, Any]:
+    """The `exc_info` of the exception with its traceback frames but only the already redacted text."""
+    sanitized_type = type(type(exception).__name__, (Exception,), {'__module__': type(exception).__module__})
+    return sanitized_type, sanitized_type(summary), exception.__traceback__
+
+
 async def _trigger_event(
-    func: Callable, args: tuple, kwargs: dict, exception: Exception | None, execution_time: float
+    func: Callable,
+    args: tuple,
+    kwargs: dict,
+    exception: Exception | None,
+    execution_time: float,
+    redacted: _RedactedCall | None = None,
 ) -> None:
     # TODO: This is not always correct. In general tool functions can be registered
     #  in the MCP server under different names.
@@ -367,13 +451,7 @@ async def _trigger_event(
     if not user_agent:
         user_agent = ''
 
-    arguments, secrets, redaction_complete = _redact_arguments(
-        {
-            param_name: param_value
-            for param_name, param_value in bound_args.arguments.items()
-            if param_name not in [ctx_param_name, 'self', 'cls']
-        }
-    )
+    redacted = redacted or _redact_call(func, args, kwargs)
 
     # See # https://github.com/keboola/event-schema/blob/main/schema/ext.keboola.mcp-server-tool.json
     # for the JSON schema describing the 'keboola.mcp-server-tool' component's event params.
@@ -389,11 +467,11 @@ async def _trigger_event(
         },
         'tool': {
             'name': tool_name,
-            'arguments': arguments,
+            'arguments': redacted.arguments,
         },
     }
     if exception:
-        summary = _safe_exception_summary(exception, secrets) if redaction_complete else _REDACTION_FAILED_SUMMARY
+        summary = _failure_summary(exception, redacted)
         message = f'MCP tool "{tool_name}" call failed. {type(exception).__name__}: {summary}'
         event_type: StorageEventType = 'error'
     else:
@@ -449,6 +527,7 @@ def tool_errors(
         @wraps(func)
         async def wrapped(*args, **kwargs):
             exception: Exception | None = None
+            redacted: _RedactedCall | None = None
             start = time.perf_counter()
 
             try:
@@ -486,17 +565,24 @@ def tool_errors(
                     else:
                         raise
                 except Exception as e:
+                    redacted = _redact_call(func, args, kwargs)
+                    summary = _failure_summary(e, redacted)
                     if caller_fault:
                         # Routine (expired token, missing object, bad input): no traceback, not an ERROR.
-                        LOG.warning(f'MCP tool "{func.__name__}" call failed: {str(e).splitlines()[0]}', extra=extra)
+                        first_line = next(iter(summary.splitlines()), type(e).__name__)
+                        LOG.warning(f'MCP tool "{func.__name__}" call failed: {first_line}', extra=extra)
                     else:
-                        LOG.exception(f'MCP tool "{func.__name__}" call failed.', extra=extra)
+                        LOG.error(
+                            f'MCP tool "{func.__name__}" call failed.',
+                            exc_info=_sanitized_exc_info(e, summary),
+                            extra=extra,
+                        )
                     exception = e
                     raise
 
             finally:
                 try:
-                    await _trigger_event(func, args, kwargs, exception, time.perf_counter() - start)
+                    await _trigger_event(func, args, kwargs, exception, time.perf_counter() - start, redacted)
                 except Exception as e:
                     # Event logging is best-effort telemetry — never fail the tool because of it.
                     # The tool result (success or failure) is already determined before this point.
