@@ -92,7 +92,7 @@ _SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[,])\s*['"]?#''')
 # Evidence that a string holds a secret key it could not be parsed for: a quoted `'#key': ` (spaces allowed),
 # an unquoted `#key:` / `#key=`, or a key whose '#' is escaped (`\\u0023`, `\\x23`, `%23`, `&#35;`).
 _SECRET_MARKER = re.compile(
-    r'''['"]#[^'"\n]*['"]\s*[:=]|(?:^|[\s{,\[(])#[^\s'":=,{}\[\]]+\s*[:=]|\\u0023|\\x23|%23|&#0*35;|&#x0*23;''',
+    r'''['"]#[^'"\n]*['"]\s*[:=]|#[^\s'":=,{}\[\]]+\s*[:=]|\\u0023|\\x23|%23|&#0*35;|&#x0*23;''',
     re.IGNORECASE | re.MULTILINE,
 )
 _CODE_FENCE = re.compile(r'^\s*```[\w-]*\s*\n(?P<body>.*?)\n?\s*```\s*$', re.DOTALL)
