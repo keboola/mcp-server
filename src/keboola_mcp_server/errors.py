@@ -89,8 +89,6 @@ class _JsonWrapper(BaseModel):
 _PATH_UPDATE_VALUE_KEYS = frozenset({'value', 'search_for', 'replace_with'})
 # A '#' at the start of a path segment: `#password`, `"#password"`, `db.#token`, `db['#token']`, `db['a', '#token']`.
 _SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[,])\s*['"]?#''')
-# The `#key:` / `#key=` / `'#key': ` prefix of a fragment as rendered by str(), repr(), JSON, YAML or .env text.
-_SECRET_KEY_FRAGMENT = re.compile(r'''['"]?#[^\s'":=,{}\[\]]+['"]?\s*[:=]\s*''')
 # Evidence that a string holds a secret key it could not be parsed for: a quoted `'#key': ` (spaces allowed),
 # an unquoted `#key:` / `#key=`, or a key whose '#' is escaped (`\\u0023`, `\\x23`, `%23`, `&#35;`).
 _SECRET_MARKER = re.compile(
@@ -98,8 +96,6 @@ _SECRET_MARKER = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _CODE_FENCE = re.compile(r'^\s*```[\w-]*\s*\n(?P<body>.*?)\n?\s*```\s*$', re.DOTALL)
-_CLOSING_BRACKETS = {'{': '}', '[': ']'}
-_UNQUOTED_VALUE_END = re.compile(r'[\n,}\]]')
 _DOUBLE_QUOTED = re.compile(r'"(?:\\.|[^"\\\n])*"')
 _TOKEN = re.compile(r'''[^\s'",:={}\[\]]+''')
 # Pydantic's str(ValidationError) echoes the invalid input: `[type=..., input_value=..., input_type=...]`.
@@ -113,6 +109,7 @@ _MIN_WORD_REPLACED_SECRET_LEN = 3
 _MIN_SCALAR_SCRUBBED_LEN = 4
 _CREDENTIAL_WORDS = r'credentials?|passwords?|passwd|passphrase|secret|token|pin|code|key'
 # jsonschema validators whose `validator_value` comes from the schema and is safe to report.
+_EXCEPTION_TEXT_OMITTED = '[details omitted: the message shows a secret key]'
 _REDACTION_FAILED_SUMMARY = '[details omitted: argument redaction failed]'
 _REPORTED_SCHEMA_VALIDATORS = frozenset({'required', 'enum', 'type'})
 
@@ -246,76 +243,6 @@ def _collect_opaque_tokens(text: str, found: set[str]) -> None:
             continue
         found.update(_secret_variants(decoded))
         found.update(_TOKEN.findall(decoded))
-
-
-def _collect_fragment_leaves(raw: str, found: set[str]) -> None:
-    """Collects the secret leaves of a rendered value; every token of it when the format is not understood."""
-    _collect_leaves(raw.strip('\'"'), found)
-    decoded = _decode_fragment(raw)
-    if decoded is None:
-        found.update(_TOKEN.findall(raw))
-    else:
-        _collect_leaves(decoded, found)
-
-
-def _quoted_end(text: str, start: int) -> int:
-    quote = text[start]
-    index = start + 1
-    while index < len(text):
-        if text[index] == '\\':
-            index += 2
-        elif text[index] == quote:
-            return index + 1
-        else:
-            index += 1
-    return len(text)
-
-
-def _bracketed_end(text: str, start: int) -> int:
-    depth = 0
-    index = start
-    while index < len(text):
-        char = text[index]
-        if char in ('"', "'"):
-            index = _quoted_end(text, index)
-            continue
-        if char in _CLOSING_BRACKETS:
-            depth += 1
-        elif char in _CLOSING_BRACKETS.values():
-            depth -= 1
-            if depth == 0:
-                return index + 1
-        index += 1
-    return len(text)
-
-
-def _fragment_value_end(text: str, start: int) -> int:
-    """The end of the value that starts at `start`; everything up to the end when its extent is unclear."""
-    if start >= len(text):
-        return len(text)
-    first = text[start]
-    if first in ('"', "'"):
-        return _quoted_end(text, start)
-    if first in _CLOSING_BRACKETS:
-        return _bracketed_end(text, start)
-    if first in ('|', '>'):
-        return len(text)
-    end = _UNQUOTED_VALUE_END.search(text, start)
-    return end.start() if end else len(text)
-
-
-def _mask_key_fragments(text: str, found: set[str]) -> str:
-    parts: list[str] = []
-    cursor = 0
-    for match in _SECRET_KEY_FRAGMENT.finditer(text):
-        if match.start() < cursor:
-            continue
-        value_end = _fragment_value_end(text, match.end())
-        _collect_fragment_leaves(text[match.end() : value_end], found)
-        parts.extend((text[cursor : match.end()], REDACTED_SECRET_VALUE))
-        cursor = value_end
-    parts.append(text[cursor:])
-    return ''.join(parts)
 
 
 def _mask_known_value(text: str, secret: str) -> str:
@@ -472,7 +399,7 @@ def _safe_exception_summary(exception: BaseException, secrets: set[str]) -> str:
 
     text = _mask_known_values(text, secrets)
     text = _PYDANTIC_INPUT_VALUE.sub(f'input_value={REDACTED_SECRET_VALUE}', text)
-    return _mask_key_fragments(text, set())
+    return _EXCEPTION_TEXT_OMITTED if _SECRET_MARKER.search(text) else text
 
 
 def _redact_call(func: Callable, args: tuple, kwargs: dict) -> _RedactedCall:
@@ -510,6 +437,14 @@ def _sanitized_exception(exception: BaseException, redacted: _RedactedCall, dept
 def _sanitized_exc_info(exception: BaseException, redacted: _RedactedCall) -> tuple[type, BaseException, Any]:
     sanitized = _sanitized_exception(exception, redacted)
     return type(sanitized), sanitized, sanitized.__traceback__
+
+
+def sanitized_failure(
+    exception: BaseException, arguments: Mapping[str, Any] | None
+) -> tuple[str, tuple[type, BaseException, Any]]:
+    """The redacted summary and `exc_info` of a failed tool call, for logs outside of `tool_errors`."""
+    redacted = _redact_arguments(arguments or {})
+    return _failure_summary(exception, redacted), _sanitized_exc_info(exception, redacted)
 
 
 async def _trigger_event(
