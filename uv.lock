@@ -1342,7 +1342,7 @@ requires-dist = [
     { name = "requests", marker = "extra == 'integtests'", specifier = "~=2.34" },
     { name = "ruff", marker = "extra == 'codestyle'", specifier = "~=0.16" },
     { name = "sqlglot", specifier = "~=30.18" },
-    { name = "toon-format", specifier = "~=0.9.0b1" },
+    { name = "toon-format", specifier = ">=0.9,<1.2" },
     { name = "tox", marker = "extra == 'dev'", specifier = "~=4.35" },
 ]
 provides-extras = ["codestyle", "tests", "integtests", "dev"]
@@ -2486,11 +2486,11 @@ wheels = [
 
 [[package]]
 name = "toon-format"
-version = "0.9.0b1"
+version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fa/15/d23d6d3e36aa4ec96dd5692bc7715fe17015b669e8f0d1c5c7fa906a3ceb/toon_format-0.9.0b1.tar.gz", hash = "sha256:8f391dd6ad9677c78366bd8eb6762d064a2183f67b9b7da1f348fdb6ee8738e7", size = 87398, upload-time = "2025-11-08T19:22:53.059Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/38/4e7ab42e063558b5efb5a2fe798b6f28b14865efa52049a364efe2c957ec/toon_format-1.1.0.tar.gz", hash = "sha256:adef326cec9d162a6e512a004761aa6a60713c83471ca8874a3ea07a4f27ba3b", size = 20550, upload-time = "2026-10-06T11:58:44.338Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/f3/27ab1d982bb81bf9ac5be70b4c774996eb8562b93c77e93c253c22be951f/toon_format-0.9.0b1-py3-none-any.whl", hash = "sha256:efeee919501f91137f017f7bed34789c067f76178111aa872a49bc8653dce3be", size = 36173, upload-time = "2025-11-08T19:22:51.523Z" },
+    { url = "https://files.pythonhosted.org/packages/07/f7/b2b3d79f578c3359f15591db1ab988b42a7ab7b3954e100ad4ebc1b1f793/toon_format-1.1.0-py3-none-any.whl", hash = "sha256:ffeac67f2990986c07e03df69c89ef6aab4d638c04a4ddba41daeae3bee55eb7", size = 23329, upload-time = "2026-10-06T11:58:43.181Z" },
 ]
 
 [[package]]
