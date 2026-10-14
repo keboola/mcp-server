@@ -144,11 +144,11 @@ def test_exclude_none_serializer(data, expected):
         # Empty dict
         ({}, ''),
         # Empty list
-        ([], '[0]:'),
+        ([], '[]'),
         # Empty tuple
-        ((), '[0]:'),
+        ((), '[]'),
         # Empty set
-        (set(), '[0]:'),
+        (set(), '[]'),
         # Datetime
         (
             datetime(2025, 1, 1),
