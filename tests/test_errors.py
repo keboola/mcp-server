@@ -21,7 +21,7 @@ from mcp.types import ClientCapabilities, Implementation, InitializeRequestParam
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, tool_errors
+from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, _redact_arguments, tool_errors
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import ConfigParamReplace, ConfigParamSet
@@ -977,6 +977,30 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             id='opaque_text_under_secret_key',
         ),
         pytest.param(
+            f"{{u'#password': 'first-{CANARY}', '#password': 'second'}}",
+            None,
+            lambda: _raise(RuntimeError(f'Rejected first-{CANARY}')),
+            ['RuntimeError: Rejected [REDACTED]'],
+            id='failure_echoing_secret_of_equivalent_literal_keys',
+        ),
+        pytest.param(
+            {'#pin': int(NUMERIC_CANARY), 'echo': json.dumps({'again': int(NUMERIC_CANARY)})},
+            None,
+            None,
+            ['echo'],
+            id='secret_number_repeated_in_serialized_container',
+        ),
+        pytest.param(
+            {
+                '#password': MIXED_QUOTES_SECRET,
+                'echo': json.dumps({'nested': json.dumps({'password': MIXED_QUOTES_SECRET})}),
+            },
+            None,
+            None,
+            ['echo'],
+            id='secret_repeated_in_nested_serialized_containers',
+        ),
+        pytest.param(
             f"{{'#credentials': {{'password': '{CANARY}'}}}}",
             None,
             lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
@@ -1152,3 +1176,11 @@ async def test_failure_log_lines_do_not_contain_secrets(
         assert 'config_tool' in formatter.format(records[0])
     if failure is _originating_failure:
         assert 'in _originating_failure' in formatter.format(records[0])
+
+
+def test_short_secret_number_repeated_in_serialized_container_is_masked():
+    redacted = _redact_arguments({'parameters': json.dumps({'#pin': 1234, 'echo': 1234, 'port': 80})})
+
+    value = redacted.arguments[0]['value']
+    assert '1234' not in value
+    assert '"port\\": 80' in value
