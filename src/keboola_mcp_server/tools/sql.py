@@ -38,10 +38,6 @@ SQL_TOOLS_TAG = 'sql'
 MAX_ROWS = 10_000
 MAX_CHARS = 50_000
 
-# The project feature gating row-level security (`RLS_FEATURE`, see `rls_policies.py` and
-# feature_spec/rls_query_tool/RFC.md "Project-level opt-in") is off by default: `query_data` doesn't even
-# look up `rls-policy` objects unless it is enabled, so a stray policy in an opted-out project has no
-# effect. Same mechanism as GLOBAL_SEARCH_FEATURE/STORAGE_BRANCHES_FEATURE.
 # Bounds the cost of the sqlglot parse `references_governed_table`/`rewrite_query` do once RLS is
 # enabled for the project -- applies to every query then, not just ones touching a governed table,
 # since the parse itself is what needs bounding.
@@ -342,6 +338,8 @@ async def _apply_rls(sql_query: str, *, ctx: Context, workspace_manager: Workspa
         here means "no data".
     """
     client = KeboolaClient.from_state(ctx.session.state)
+    # Off by default (see "Project-level opt-in" in the RFC): without the feature no policy is even looked up,
+    # so a stray one in an opted-out project has no effect.
     if not await client.has_feature(RLS_FEATURE):
         return sql_query, []
     # Bounds the parse below, which now runs for every query once the project has the feature on,
