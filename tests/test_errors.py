@@ -1001,6 +1001,20 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             id='secret_repeated_in_nested_serialized_containers',
         ),
         pytest.param(
+            None,
+            None,
+            lambda: _raise(RuntimeError(f'Upstream rejected #PASSWORD=prefix,{CANARY}')),
+            ['RuntimeError: [details omitted: the message shows a secret key]'],
+            id='failure_exception_only_env_fragment',
+        ),
+        pytest.param(
+            None,
+            None,
+            lambda: _raise(RuntimeError(f'Upstream rejected "#api key": "{CANARY}"')),
+            ['RuntimeError: [details omitted: the message shows a secret key]'],
+            id='failure_exception_only_spaced_key',
+        ),
+        pytest.param(
             f"{{'#credentials': {{'password': '{CANARY}'}}}}",
             None,
             lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
@@ -1043,7 +1057,7 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             {'user': 'alice', '#password': CANARY},
             None,
             lambda: _raise(RuntimeError(f"Connection refused for {{'#pwd': '{CANARY}x'}} and #token={CANARY}y")),
-            ['alice', 'RuntimeError: Connection refused', '#token=[REDACTED]'],
+            ['alice', 'RuntimeError: [details omitted: the message shows a secret key]'],
             id='failure_echoing_secret_fragment',
         ),
         pytest.param(
