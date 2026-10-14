@@ -95,6 +95,8 @@ _SECRET_MARKER = re.compile(
     r'''['"]#[^'"\n]*['"]\s*[:=]|#[^\s'":=,{}\[\]]+\s*[:=]|\\u0023|\\x23|%23|&#0*35;|&#x0*23;''',
     re.IGNORECASE | re.MULTILINE,
 )
+# Selectors that can reach a secret key without naming it: `db.*`, `db."*"`, `$..x`, `a[?(@.b)]`.
+_BROAD_PATH_SELECTOR = re.compile(r'''\*|\.\.|\[\?''')
 _CODE_FENCE = re.compile(r'^\s*```[\w-]*\s*\n(?P<body>.*?)\n?\s*```\s*$', re.DOTALL)
 _DOUBLE_QUOTED = re.compile(r'"(?:\\.|[^"\\\n])*"')
 _TOKEN = re.compile(r'''[^\s'",:={}\[\]]+''')
@@ -115,7 +117,7 @@ _REPORTED_SCHEMA_VALIDATORS = frozenset({'required', 'enum', 'type'})
 
 
 def _is_secret_path(path: Any) -> bool:
-    return isinstance(path, str) and bool(_SECRET_PATH_SEGMENT.search(path))
+    return isinstance(path, str) and bool(_SECRET_PATH_SEGMENT.search(path) or _BROAD_PATH_SELECTOR.search(path))
 
 
 def _secret_variants(secret: str) -> set[str]:
@@ -235,14 +237,16 @@ def _parse_container(text: str) -> dict | list | None:
 def _collect_opaque_tokens(text: str, found: set[str]) -> None:
     """Collects the whole text and every token that could be part of a secret, for text that cannot be parsed."""
     found.update(_secret_variants(text))
-    found.update(_TOKEN.findall(text))
+    for token in _TOKEN.findall(text):
+        found.update(_secret_variants(token))
     for quoted in _DOUBLE_QUOTED.findall(text):
         try:
             decoded = json.loads(quoted)
-        except ValueError:
-            continue
+        except ValueError as e:
+            raise _RedactionIncomplete from e
         found.update(_secret_variants(decoded))
-        found.update(_TOKEN.findall(decoded))
+        for token in _TOKEN.findall(decoded):
+            found.update(_secret_variants(token))
 
 
 def _mask_known_value(text: str, secret: str) -> str:
@@ -397,9 +401,10 @@ def _safe_exception_summary(exception: BaseException, secrets: set[str]) -> str:
     else:
         text = str(exception)
 
+    if _SECRET_MARKER.search(text):
+        return _EXCEPTION_TEXT_OMITTED
     text = _mask_known_values(text, secrets)
-    text = _PYDANTIC_INPUT_VALUE.sub(f'input_value={REDACTED_SECRET_VALUE}', text)
-    return _EXCEPTION_TEXT_OMITTED if _SECRET_MARKER.search(text) else text
+    return _PYDANTIC_INPUT_VALUE.sub(f'input_value={REDACTED_SECRET_VALUE}', text)
 
 
 def _redact_call(func: Callable, args: tuple, kwargs: dict) -> _RedactedCall:

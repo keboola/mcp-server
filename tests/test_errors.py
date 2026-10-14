@@ -1029,6 +1029,37 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             id='failure_exception_only_url_fragment',
         ),
         pytest.param(
+            None,
+            [
+                ConfigParamSet(op='set', path='db.*', value=CANARY),
+                ConfigParamReplace(op='str_replace', path='db."*"', search_for=CANARY, replace_with='x'),
+            ],
+            None,
+            ['[REDACTED]'],
+            id='update_config_wildcard_selector',
+        ),
+        pytest.param(
+            '#password: "caf\\xE9-' + CANARY + '"',
+            None,
+            lambda: _raise(RuntimeError(f'Rejected café-{CANARY}')),
+            ['RuntimeError: [details omitted: argument redaction failed]'],
+            id='failure_with_undecodable_escape_in_yaml_credential',
+        ),
+        pytest.param(
+            {'#x': f'#PASSWORD=a\\b-{CANARY}', 'dsn': f'a\\\\b-{CANARY}'},
+            None,
+            None,
+            ['[REDACTED]'],
+            id='opaque_token_repeated_in_python_repr_form',
+        ),
+        pytest.param(
+            '#PASSWORD=input-credential',
+            None,
+            lambda: _raise(RuntimeError(f'Upstream #PASSWORD={CANARY}')),
+            ['RuntimeError: [details omitted: the message shows a secret key]'],
+            id='failure_exception_only_credential_differing_from_argument',
+        ),
+        pytest.param(
             f"{{'#credentials': {{'password': '{CANARY}'}}}}",
             None,
             lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
