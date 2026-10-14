@@ -1,6 +1,7 @@
 import copy
 import json
 import logging
+import time
 import uuid
 from collections.abc import Sequence
 from importlib.metadata import distribution
@@ -21,7 +22,7 @@ from mcp.types import ClientCapabilities, Implementation, InitializeRequestParam
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, _redact_arguments, tool_errors
+from keboola_mcp_server.errors import _SECRET_MARKER, MAX_ARG_VALUE_LEN, _redact_arguments, tool_errors
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.components.model import ConfigParamReplace, ConfigParamSet
@@ -609,6 +610,7 @@ FAKE_CIPHER = 'KBC::ProjectSecure::fake-cipher-value'
 SHORT_CANARY = 'p4ss'
 ENUM_CANARY = 'enum-canary-choice'
 NUMERIC_CANARY = '987654321'
+DELIMITED_TAIL = 'b2:c3,d4'
 MIXED_QUOTES_SECRET = f'a\'b"{CANARY}'
 
 
@@ -1060,6 +1062,27 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
             id='failure_exception_only_credential_differing_from_argument',
         ),
         pytest.param(
+            f'"#vendor\'s_api_key": {CANARY}',
+            None,
+            None,
+            ['[REDACTED]'],
+            id='string_quoted_key_containing_an_apostrophe',
+        ),
+        pytest.param(
+            '"#key\\"x": ' + CANARY,
+            None,
+            None,
+            ['[REDACTED]'],
+            id='string_quoted_key_containing_an_escaped_quote',
+        ),
+        pytest.param(
+            {'env': f'#PASSWORD={CANARY}={DELIMITED_TAIL}', 'echo': f'{CANARY}={DELIMITED_TAIL}'},
+            None,
+            lambda: _raise(RuntimeError(f'Rejected {CANARY}={DELIMITED_TAIL}')),
+            ['RuntimeError: Rejected [REDACTED]'],
+            id='opaque_credential_with_delimiters_repeated',
+        ),
+        pytest.param(
             f"{{'#credentials': {{'password': '{CANARY}'}}}}",
             None,
             lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
@@ -1157,7 +1180,7 @@ async def test_secrets_are_redacted_in_event(
     payload = json.dumps(storage_event_post.await_args.kwargs['data'], ensure_ascii=False)
     log_lines = [r.getMessage() for r in caplog.records if '[trigger_event]' in r.getMessage()]
     assert len(log_lines) == 1
-    for secret in (CANARY, SHORT_CANARY, FAKE_CIPHER, ENUM_CANARY, NUMERIC_CANARY):
+    for secret in (CANARY, SHORT_CANARY, FAKE_CIPHER, ENUM_CANARY, NUMERIC_CANARY, DELIMITED_TAIL):
         assert secret not in payload
         assert secret not in log_lines[0]
     for value in preserved:
@@ -1243,3 +1266,11 @@ def test_short_secret_number_repeated_in_serialized_container_is_masked():
     value = redacted.arguments[0]['value']
     assert '1234' not in value
     assert '"port\\": 80' in value
+
+
+@pytest.mark.parametrize('text', ['#' * 20_000, '#' * 20_000 + ':', '"#' * 10_000, "'#" * 10_000, '#a' * 10_000])
+def test_secret_marker_scan_is_linear(text: str):
+    started = time.perf_counter()
+    _SECRET_MARKER.search(text)
+
+    assert time.perf_counter() - started < 0.5

@@ -91,8 +91,9 @@ _PATH_UPDATE_VALUE_KEYS = frozenset({'value', 'search_for', 'replace_with'})
 _SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[,])\s*['"]?#''')
 # Evidence that a string holds a secret key it could not be parsed for: a quoted `'#key': ` (spaces allowed),
 # an unquoted `#key:` / `#key=`, or a key whose '#' is escaped (`\\u0023`, `\\x23`, `%23`, `&#35;`).
+_SECRET_KEY_PREFIX = re.compile(r'''(?:"#(?:\\.|[^"\\\n])*"|'#(?:\\.|[^'\\\n])*'|#[^\s#'":=,{}\[\]]*)\s*[:=]\s*''')
 _SECRET_MARKER = re.compile(
-    r'''['"]#[^'"\n]*['"]\s*[:=]|#[^\s'":=,{}\[\]]+\s*[:=]|\\u0023|\\x23|%23|&#0*35;|&#x0*23;''',
+    rf'{_SECRET_KEY_PREFIX.pattern}|\\u0023|\\x23|%23|&#0*35;|&#x0*23;',
     re.IGNORECASE | re.MULTILINE,
 )
 # Selectors that can reach a secret key without naming it: `db.*`, `db."*"`, `$..x`, `a[?(@.b)]`.
@@ -237,6 +238,11 @@ def _parse_container(text: str) -> dict | list | None:
 def _collect_opaque_tokens(text: str, found: set[str]) -> None:
     """Collects the whole text and every token that could be part of a secret, for text that cannot be parsed."""
     found.update(_secret_variants(text))
+    for match in _SECRET_KEY_PREFIX.finditer(text):
+        line_end = text.find('\n', match.end())
+        value = text[match.end() : len(text) if line_end < 0 else line_end].strip().strip('\'"')
+        if value:
+            found.update(_secret_variants(value))
     for token in _TOKEN.findall(text):
         found.update(_secret_variants(token))
     for quoted in _DOUBLE_QUOTED.findall(text):
