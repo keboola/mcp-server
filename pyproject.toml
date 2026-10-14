@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keboola-mcp-server"
-version = "1.96.0"
+version = "1.96.1"
 description = "MCP server for interacting with Keboola Connection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Keboola", email = "devel@keboola.com" }]
 dependencies = [
-    "fastmcp == 4.0.10",
-    "mcp == 2.2.0",
+    "fastmcp == 4.0.11",
+    "mcp == 2.3.0",
     "httpx ~= 0.28",
     "httpx-retries~=0.5",
     "jsonpath-ng ~= 1.8",
@@ -20,10 +20,10 @@ dependencies = [
     "pyjwt ~= 2.13",
     "json-log-formatter ~= 1.1",
     "cryptography ~= 50.0",
-    "asyncpg ~= 0.31",
+    "asyncpg ~= 0.32",
     "pydantic ~= 2.13.0",
     "sqlglot ~= 30.18",
-    "toon-format ~= 0.9.0b1",
+    "toon-format ~= 1.1",
     "pyyaml ~= 6.0",
 ]
 [project.optional-dependencies]
