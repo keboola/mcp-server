@@ -111,6 +111,7 @@ _MAX_CAUSE_DEPTH = 5
 _MIN_REPLACED_SECRET_LEN = 6
 _MIN_WORD_REPLACED_SECRET_LEN = 3
 _MIN_SCALAR_SCRUBBED_LEN = 4
+_CREDENTIAL_WORDS = r'credentials?|passwords?|passwd|passphrase|secret|token|pin|code|key'
 # jsonschema validators whose `validator_value` comes from the schema and is safe to report.
 _REDACTION_FAILED_SUMMARY = '[details omitted: argument redaction failed]'
 _REPORTED_SCHEMA_VALIDATORS = frozenset({'required', 'enum', 'type'})
@@ -121,7 +122,7 @@ def _is_secret_path(path: Any) -> bool:
 
 
 def _secret_variants(secret: str) -> set[str]:
-    return {secret, json.dumps(secret, ensure_ascii=False)[1:-1], json.dumps(secret)[1:-1]}
+    return {secret, json.dumps(secret, ensure_ascii=False)[1:-1], json.dumps(secret)[1:-1], repr(secret)[1:-1]}
 
 
 def _scalar_variants(value: bool | float) -> set[str]:
@@ -319,7 +320,11 @@ def _mask_known_value(text: str, secret: str) -> str:
     text = quoted.sub(lambda m: f'{m["quote"]}{REDACTED_SECRET_VALUE}{m["quote"]}', text)
     if len(secret) >= _MIN_WORD_REPLACED_SECRET_LEN and not secret.isdigit():
         text = re.sub(rf'(?<!\w){re.escape(secret)}(?!\w)', REDACTED_SECRET_VALUE, text)
-    return text
+    after_credential_word = re.compile(
+        rf'(?P<context>\b(?:{_CREDENTIAL_WORDS})\b\W{{0,3}}(?:(?:is|was)\W{{1,3}})?){re.escape(secret)}(?!\w)',
+        re.IGNORECASE,
+    )
+    return after_credential_word.sub(lambda m: f'{m["context"]}{REDACTED_SECRET_VALUE}', text)
 
 
 def _mask_known_values(text: str, secrets: set[str]) -> str:
@@ -369,7 +374,7 @@ class _RedactedCall(NamedTuple):
 def _scrub_known_values(value: Any, known: set[str]) -> Any:
     """Masks the known secret values in a JSON-compatible value: exact matches first, then occurrences in strings."""
     if isinstance(value, dict):
-        return {key: _scrub_known_values(item, known) for key, item in value.items()}
+        return {_scrub_known_values(key, known): _scrub_known_values(item, known) for key, item in value.items()}
     if isinstance(value, list):
         return [_scrub_known_values(item, known) for item in value]
     if isinstance(value, str):
