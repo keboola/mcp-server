@@ -646,6 +646,33 @@ class TestMultiProjectMiddleware:
         assert 'project 22' in formatted
 
     @pytest.mark.asyncio
+    async def test_fan_out_keeps_other_projects_when_the_failure_summary_breaks(self) -> None:
+        scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_s', confirmed=True)
+        context, state = self._ctx(scope, 'get_tables', read_only=True, arguments={'parameters': {'#password': 'x'}})
+
+        async def call_next(_):
+            if state[KeboolaClient.STATE_KEY] == 'client-22':
+                raise RuntimeError('boom-22')
+            return self._result('rows')
+
+        with (
+            patch('keboola_mcp_server.errors._safe_exception_summary', side_effect=RuntimeError('summary broke')),
+            patch.object(
+                MultiProjectMiddleware,
+                'client_for_project',
+                AsyncMock(side_effect=lambda _ss, _url, _token, pid, _ro: f'client-{pid}'),
+            ),
+            patch.object(
+                WorkspaceManager,
+                'create',
+                AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
+            ),
+        ):
+            result = await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        assert result.structured_content == {'rows': ['rows']}
+
+    @pytest.mark.asyncio
     async def test_fan_out_all_failed_raises_aggregate(self) -> None:
         scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_s', confirmed=True)
         context, _ = self._ctx(scope, 'get_tables', read_only=True)

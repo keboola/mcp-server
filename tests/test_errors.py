@@ -1384,3 +1384,21 @@ def test_hostile_literal_arguments_are_redacted_quickly_without_error(text: str)
 
     assert time.perf_counter() - started < 1
     assert redacted.complete
+
+
+class _UnprintableError(Exception):
+    def __str__(self) -> str:
+        raise RuntimeError('str failed')
+
+
+@pytest.mark.asyncio
+async def test_failure_with_unprintable_exception_is_still_raised_unchanged(storage_event_post, empty_context: Context):
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: Any = None) -> str:
+        raise _UnprintableError()
+
+    with pytest.raises(_UnprintableError):
+        await config_tool(empty_context, parameters={'#password': CANARY})
+
+    message = storage_event_post.await_args.kwargs['data']['message']
+    assert '[details omitted: argument redaction failed]' in message
