@@ -329,9 +329,23 @@ class _RedactedCall(NamedTuple):
     complete: bool
 
 
+def _scrub_known_values(value: Any, known: set[str]) -> Any:
+    """Masks every occurrence of the known secret values in the strings of a JSON-compatible value."""
+    if isinstance(value, dict):
+        return {key: _scrub_known_values(item, known) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scrub_known_values(item, known) for item in value]
+    if isinstance(value, str) and len(value) <= MAX_ARG_VALUE_LEN:
+        return _mask_known_values(value, known)
+    return value
+
+
 def _redact_arguments(arguments: Mapping[str, Any]) -> _RedactedCall:
     """
     Serializes tool arguments for the Storage event with secrets masked.
+
+    The secrets of all the arguments are collected first and then masked wherever else they occur, in the
+    same argument or in another one, whichever comes first.
 
     Pydantic models are dumped to plain JSON data first, so the actual arguments are never mutated.
     If redaction fails, only the argument names are reported, never their raw values, and the returned
@@ -339,14 +353,13 @@ def _redact_arguments(arguments: Mapping[str, Any]) -> _RedactedCall:
     """
     found: set[str] = set()
     try:
-        encoded = [
-            {
-                'key': name,
-                'value': _JsonWrapper.encode_truncated(
-                    _redact_value(_JsonWrapper(data=value).model_dump(mode='json')['data'], found)
-                ),
-            }
+        redacted_values = {
+            name: _redact_value(_JsonWrapper(data=value).model_dump(mode='json')['data'], found)
             for name, value in arguments.items()
+        }
+        encoded = [
+            {'key': name, 'value': _JsonWrapper.encode_truncated(_scrub_known_values(value, found))}
+            for name, value in redacted_values.items()
         ]
     except Exception as e:
         LOG.warning(
