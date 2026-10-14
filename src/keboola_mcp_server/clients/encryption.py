@@ -13,6 +13,11 @@ ENCRYPTED_VALUE_PREFIX = 'KBC::'
 REDACTED_SECRET_VALUE = '[REDACTED]'
 
 
+def is_secret_key(key: Any) -> bool:
+    """Checks if the key marks its value as a secret, i.e. it starts with the '#' secret prefix."""
+    return isinstance(key, str) and key.startswith(SECRET_KEY_PREFIX)
+
+
 def is_encrypted_value(value: Any) -> bool:
     """Checks if the value is a cipher created by the encryption service."""
     return isinstance(value, str) and value.startswith(ENCRYPTED_VALUE_PREFIX)
@@ -25,7 +30,7 @@ def iter_secret_items(value: Any) -> Iterator[tuple[str, Any]]:
     """
     if isinstance(value, dict):
         for key, item in value.items():
-            if isinstance(key, str) and key.startswith(SECRET_KEY_PREFIX):
+            if is_secret_key(key):
                 yield key, item
             else:
                 yield from iter_secret_items(item)
@@ -46,11 +51,7 @@ def redact_secrets(value: Any, *, mask: str = REDACTED_SECRET_VALUE) -> Any:
     """
     if isinstance(value, dict):
         return {
-            key: (
-                mask
-                if isinstance(key, str) and key.startswith(SECRET_KEY_PREFIX) and not is_encrypted_value(item)
-                else redact_secrets(item, mask=mask)
-            )
+            key: (mask if is_secret_key(key) and not is_encrypted_value(item) else redact_secrets(item, mask=mask))
             for key, item in value.items()
         }
     elif isinstance(value, list):

@@ -24,7 +24,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
 from keboola_mcp_server.clients.client import KeboolaClient
-from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE, SECRET_KEY_PREFIX
+from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE, is_secret_key
 from keboola_mcp_server.clients.storage import StorageEventType
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, get_http_request_or_none
@@ -240,8 +240,8 @@ def _redact_value(value: Any, found: set[str]) -> Any:
         secret_path = _is_secret_path(value.get('path'))
         redacted: dict[Any, Any] = {}
         for key, item in value.items():
-            is_secret_key = isinstance(key, str) and key.startswith(SECRET_KEY_PREFIX)
-            if is_secret_key or (secret_path and key in _PATH_UPDATE_VALUE_KEYS):
+            masked_key = is_secret_key(key)
+            if masked_key or (secret_path and key in _PATH_UPDATE_VALUE_KEYS):
                 _collect_leaves(item, found)
                 redacted[key] = REDACTED_SECRET_VALUE
             else:
@@ -290,9 +290,7 @@ def _redact_arguments(arguments: Mapping[str, Any]) -> tuple[list[dict[str, str]
 
 
 def _is_secret_enum(error: jsonschema.ValidationError) -> bool:
-    return error.validator == 'enum' and any(
-        isinstance(part, str) and part.startswith(SECRET_KEY_PREFIX) for part in error.absolute_path
-    )
+    return error.validator == 'enum' and any(is_secret_key(part) for part in error.absolute_path)
 
 
 def _find_cause(exception: BaseException, exc_type: type[BaseException] | tuple) -> BaseException | None:
