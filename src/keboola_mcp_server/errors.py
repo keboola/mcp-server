@@ -100,6 +100,7 @@ _SECRET_MARKER = re.compile(
 _CODE_FENCE = re.compile(r'^\s*```[\w-]*\s*\n(?P<body>.*?)\n?\s*```\s*$', re.DOTALL)
 _CLOSING_BRACKETS = {'{': '}', '[': ']'}
 _UNQUOTED_VALUE_END = re.compile(r'[\n,}\]]')
+_DOUBLE_QUOTED = re.compile(r'"(?:\\.|[^"\\\n])*"')
 _TOKEN = re.compile(r'''[^\s'",:={}\[\]]+''')
 # Pydantic's str(ValidationError) echoes the invalid input: `[type=..., input_value=..., input_type=...]`.
 _PYDANTIC_INPUT_VALUE = re.compile(r'input_value=.*?(?=, input_type=|\]$)', re.MULTILINE)
@@ -109,6 +110,7 @@ _MAX_CAUSE_DEPTH = 5
 # codes or IDs.
 _MIN_REPLACED_SECRET_LEN = 6
 _MIN_WORD_REPLACED_SECRET_LEN = 3
+_MIN_SCALAR_SCRUBBED_LEN = 4
 # jsonschema validators whose `validator_value` comes from the schema and is safe to report.
 _REDACTION_FAILED_SUMMARY = '[details omitted: argument redaction failed]'
 _REPORTED_SCHEMA_VALIDATORS = frozenset({'required', 'enum', 'type'})
@@ -143,6 +145,21 @@ def _collect_leaves(value: Any, found: set[str]) -> None:
         found.update(_scalar_variants(value))
 
 
+class _RedactionIncomplete(Exception):
+    """A secret value that cannot be examined within the resource limits."""
+
+
+def _ensure_examinable(value: Any) -> None:
+    if isinstance(value, dict):
+        for item in value.values():
+            _ensure_examinable(item)
+    elif isinstance(value, list):
+        for item in value:
+            _ensure_examinable(item)
+    elif isinstance(value, str) and len(value) > MAX_ARG_VALUE_LEN:
+        raise _RedactionIncomplete
+
+
 class _ShadowingDict(dict):
     """A dict decoded from JSON that remembers the values of duplicate keys it replaced."""
 
@@ -159,8 +176,20 @@ def _decode_json(raw: str) -> Any:
     return json.loads(raw, object_pairs_hook=_ShadowingDict)
 
 
+def _has_duplicate_keys(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            keys = [ast.dump(key) for key in node.keys if key is not None]
+            if len(keys) != len(set(keys)):
+                return True
+    return False
+
+
 def _decode_literal(raw: str) -> Any:
-    return _to_json_compatible(ast.literal_eval(raw))
+    tree = ast.parse(raw.strip(), mode='eval')
+    if _has_duplicate_keys(tree):
+        raise ValueError('The literal repeats a dictionary key, which would hide a value from redaction.')
+    return _to_json_compatible(ast.literal_eval(tree))
 
 
 def _to_json_compatible(value: Any) -> Any:
@@ -204,6 +233,13 @@ def _collect_opaque_tokens(text: str, found: set[str]) -> None:
     """Collects the whole text and every token that could be part of a secret, for text that cannot be parsed."""
     found.update(_secret_variants(text))
     found.update(_TOKEN.findall(text))
+    for quoted in _DOUBLE_QUOTED.findall(text):
+        try:
+            decoded = json.loads(quoted)
+        except ValueError:
+            continue
+        found.update(_secret_variants(decoded))
+        found.update(_TOKEN.findall(decoded))
 
 
 def _collect_fragment_leaves(raw: str, found: set[str]) -> None:
@@ -307,6 +343,7 @@ def _redact_value(value: Any, found: set[str]) -> Any:
         for key, item in [*getattr(value, 'shadowed', ()), *value.items()]:
             is_secret_key = isinstance(key, str) and key.startswith(SECRET_KEY_PREFIX)
             if is_secret_key or (secret_path and key in _PATH_UPDATE_VALUE_KEYS):
+                _ensure_examinable(item)
                 _collect_leaves(item, found)
                 redacted[key] = REDACTED_SECRET_VALUE
             else:
@@ -330,13 +367,19 @@ class _RedactedCall(NamedTuple):
 
 
 def _scrub_known_values(value: Any, known: set[str]) -> Any:
-    """Masks every occurrence of the known secret values in the strings of a JSON-compatible value."""
+    """Masks the known secret values in a JSON-compatible value: exact matches first, then occurrences in strings."""
     if isinstance(value, dict):
         return {key: _scrub_known_values(item, known) for key, item in value.items()}
     if isinstance(value, list):
         return [_scrub_known_values(item, known) for item in value]
-    if isinstance(value, str) and len(value) <= MAX_ARG_VALUE_LEN:
-        return _mask_known_values(value, known)
+    if isinstance(value, str):
+        if value in known:
+            return REDACTED_SECRET_VALUE
+        return _mask_known_values(value, known) if len(value) <= MAX_ARG_VALUE_LEN else value
+    if isinstance(value, (bool, int, float)) and any(
+        len(variant) >= _MIN_SCALAR_SCRUBBED_LEN and variant in known for variant in _scalar_variants(value)
+    ):
+        return REDACTED_SECRET_VALUE
     return value
 
 
