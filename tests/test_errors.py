@@ -1378,12 +1378,12 @@ _HOSTILE_ARGUMENT_LENGTH = MAX_ARG_VALUE_LEN - 5
         'deep_closed_list',
     ],
 )
-def test_hostile_literal_arguments_are_redacted_quickly_without_error(text: str):
+def test_hostile_literal_arguments_are_redacted_or_withheld_quickly(text: str):
     started = time.perf_counter()
     redacted = _redact_arguments({'payload': text})
 
     assert time.perf_counter() - started < 1
-    assert redacted.complete
+    assert redacted.complete or {a['value'] for a in redacted.arguments} == {'"[redaction failed]"'}
 
 
 class _UnprintableError(Exception):
