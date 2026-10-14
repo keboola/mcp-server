@@ -1,5 +1,6 @@
 """Partial results for batch ID lookups: return what was found and report what was not."""
 
+import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -10,6 +11,8 @@ from pydantic import BaseModel, Field
 
 from keboola_mcp_server.errors import _is_caller_error
 from keboola_mcp_server.mcp import AggregateError
+
+LOG = logging.getLogger(__name__)
 
 R = TypeVar('R')
 
@@ -67,16 +70,24 @@ def unwrap_lookup_results(
     not_found: list[LookupFailure] = []
     errors: list[LookupFailure] = []
     exceptions: list[BaseException] = []
+    internal_failures: list[tuple[str, BaseException]] = []
 
     for item_id, result in zip(ids, results, strict=True):
         if isinstance(result, BaseException):
             exceptions.append(result)
             failure = LookupFailure(id=item_id, reason=_short_reason(result))
-            (not_found if _is_caller_error(result) else errors).append(failure)
+            if _is_caller_error(result):
+                not_found.append(failure)
+            else:
+                errors.append(failure)
+                internal_failures.append((item_id, result))
         else:
             found.append(result)
 
     if exceptions and not found:
         raise AggregateError(message, exceptions)
+
+    for item_id, exc in internal_failures:
+        LOG.error(f'Lookup of {item_id} failed: {exc}', exc_info=exc)
 
     return LookupResults(found=found, not_found=not_found, errors=errors)

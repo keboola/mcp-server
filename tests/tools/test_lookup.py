@@ -70,7 +70,9 @@ async def _run_get_configs(mocker: MockerFixture, ctx: Context, outcomes: Outcom
     return result, [config.configuration_root.configuration_id for config in result.configs]
 
 
-async def _run_get_flows(mocker: MockerFixture, ctx: Context, outcomes: Outcomes) -> tuple[Any, list[str]]:
+async def _run_get_flows(
+    mocker: MockerFixture, ctx: Context, outcomes: Outcomes, schedule_outcomes: Outcomes | None = None
+) -> tuple[Any, list[str]]:
     async def configuration_detail(component_id: str, configuration_id: str) -> dict[str, Any]:
         _outcome(outcomes, configuration_id)
         return {
@@ -87,7 +89,13 @@ async def _run_get_flows(mocker: MockerFixture, ctx: Context, outcomes: Outcomes
 
     client = KeboolaClient.from_state(ctx.session.state)
     client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=configuration_detail)
-    client.scheduler_client.list_schedules_by_config_id = mocker.AsyncMock(return_value=[])
+
+    async def list_schedules_by_config_id(component_id: str, configuration_id: str) -> list[dict[str, Any]]:
+        if schedule_outcomes:
+            _outcome(schedule_outcomes, configuration_id)
+        return []
+
+    client.scheduler_client.list_schedules_by_config_id = mocker.AsyncMock(side_effect=list_schedules_by_config_id)
     result = await get_flows(ctx=ctx, flow_ids=list(outcomes))
     return result, [flow.configuration_id for flow in result.flows]
 
@@ -258,3 +266,52 @@ async def test_get_jobs_include_logs_with_failed_id(mocker: MockerFixture, mcp_c
     assert result.not_found == [LookupFailure(id='b', reason='HTTP 404 Not Found')]
     assert result.errors is None
     client.storage_client.list_events.assert_awaited_once_with(job_id='a', limit=50)
+
+
+@pytest.mark.asyncio
+async def test_get_flows_schedule_failure_is_reported_per_flow(mocker: MockerFixture, mcp_context_client: Context):
+    """A failing schedule request for one flow must not discard the flows that were retrieved completely."""
+    result, found = await _run_get_flows(
+        mocker, mcp_context_client, {'a': None, 'b': None}, schedule_outcomes={'a': None, 'b': 503}
+    )
+
+    assert found == ['a']
+    assert result.not_found is None
+    assert [f.id for f in result.errors] == ['b']
+
+
+@pytest.mark.asyncio
+async def test_get_jobs_log_failure_is_reported_per_job(mocker: MockerFixture, mcp_context_client: Context):
+    """A failing log request for one job must not discard the jobs that were retrieved completely."""
+    client = KeboolaClient.from_state(mcp_context_client.session.state)
+
+    async def list_events(job_id: str, limit: int) -> list[dict[str, Any]]:
+        _outcome({'a': None, 'b': 503}, job_id)
+        return [{'message': 'Started', 'type': 'info', 'created': '2024-01-01T00:00:01Z'}]
+
+    client.storage_client.list_events = mocker.AsyncMock(side_effect=list_events)
+
+    result, found = await _run_get_jobs(mocker, mcp_context_client, {'a': None, 'b': None}, include_logs=True)
+
+    assert found == ['a']
+    assert [event.message for event in result.jobs[0].logs] == ['Started']
+    assert result.not_found is None
+    assert [f.id for f in result.errors] == ['b']
+
+
+@pytest.mark.parametrize(
+    ('results', 'expected_logged_ids'),
+    [
+        (['ok', _http_error(404)], []),
+        (['ok', _http_error(503), RuntimeError('boom')], ['2', '3']),
+    ],
+    ids=['caller_error_not_logged', 'internal_errors_logged_with_traceback'],
+)
+def test_unwrap_lookup_results_logs_internal_failures(
+    results: list[Any], expected_logged_ids: list[str], caplog: pytest.LogCaptureFixture
+):
+    unwrap_lookup_results([str(i) for i in range(1, len(results) + 1)], results)
+
+    records = [r for r in caplog.records if r.name == 'keboola_mcp_server.tools.lookup']
+    assert [r.getMessage().split()[2] for r in records] == expected_logged_ids
+    assert all(r.levelno == logging.ERROR and r.exc_info and r.exc_info[1] for r in records)

@@ -713,14 +713,15 @@ async def get_flows(
             links = links_manager.get_flow_links(
                 api_flow.configuration_id, flow_name=api_flow.name, flow_type=found_type
             )
-            return Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
+            flow = Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
+            await fetch_schedules_for_flows(client=client, links_manager=links_manager, list_of_flows=[flow])
+            return flow
 
         results = await process_concurrently(flow_ids, fetch_flow_detail)
         lookup = unwrap_lookup_results(list(flow_ids), results, 'Failed to fetch the flows')
         flows = lookup.found
 
         LOG.info(f'Retrieved full details for {len(flows)} flows.')
-        flows = await fetch_schedules_for_flows(client=client, links_manager=links_manager, list_of_flows=flows)
         return GetFlowsDetailOutput(flows=flows, **lookup.failure_fields())
 
     # Case 2: no flow_ids - list all flows as summaries

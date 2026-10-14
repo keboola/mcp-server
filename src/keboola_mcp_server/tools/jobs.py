@@ -10,7 +10,7 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, ToonCompactFunctionTool, process_concurrently, unwrap_results
+from keboola_mcp_server.mcp import KeboolaMcpServer, ToonCompactFunctionTool, process_concurrently
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.lookup import LookupFailure, unwrap_lookup_results
@@ -379,37 +379,31 @@ async def get_jobs(
     # Case 1: job_ids provided - return full details for those jobs
     if job_ids:
 
+        async def fetch_logs(job: JobDetail) -> None:
+            if not job.id:
+                return
+            raw_events = await client.storage_client.list_events(
+                job_id=job.id,
+                limit=log_tail_lines,
+            )
+            if log_event_types:
+                type_set = set(log_event_types)
+                raw_events = [e for e in raw_events if e.get('type') in type_set]
+            raw_events.reverse()
+            job.logs = [JobLogEvent.model_validate(e) for e in raw_events]
+
         async def fetch_job_detail(job_id: str) -> JobDetail:
             raw_job = await client.jobs_queue_client.get_job_detail(job_id)
             links = links_manager.get_job_links(job_id)
             LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
-            return JobDetail.model_validate(raw_job | {'links': links})
+            job = JobDetail.model_validate(raw_job | {'links': links})
+            if include_logs:
+                await fetch_logs(job)
+            return job
 
         results = await process_concurrently(job_ids, fetch_job_detail)
         lookup = unwrap_lookup_results([str(job_id) for job_id in job_ids], results, 'Failed to fetch the jobs')
         jobs = lookup.found
-
-        # Fetch logs if requested
-        if include_logs:
-
-            async def fetch_logs_for_job(job: JobDetail) -> JobDetail:
-                if not job.id:
-                    return job
-                raw_events = await client.storage_client.list_events(
-                    job_id=job.id,
-                    limit=log_tail_lines,
-                )
-                # Filter by event type client-side if requested
-                if log_event_types:
-                    type_set = set(log_event_types)
-                    raw_events = [e for e in raw_events if e.get('type') in type_set]
-                # Events come newest-first from API; reverse to chronological order
-                raw_events.reverse()
-                job.logs = [JobLogEvent.model_validate(e) for e in raw_events]
-                return job
-
-            log_results = await process_concurrently(jobs, fetch_logs_for_job)
-            jobs = unwrap_results(log_results, 'Failed to fetch logs for one or more jobs')
 
         LOG.info(f'Retrieved full details for {len(jobs)} jobs.')
         return GetJobsDetailOutput(jobs=jobs, **lookup.failure_fields())
