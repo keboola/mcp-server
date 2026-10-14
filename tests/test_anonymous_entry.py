@@ -526,6 +526,32 @@ class TestANewcomerWithNoAccount:
         assert all(c.storage_token != 'the-operators-own-token' for c in captured)
 
     @pytest.mark.asyncio
+    async def test_a_claimed_project_says_so_instead_of_internal_server_error(
+        self, app: Starlette, store: _StoreForOneProvisionedSession
+    ) -> None:
+        """Found on canary-orion. Claiming the project revokes the session, which is the normal end
+        of its life and the one thing requirement 5 of the RFC asks to be said plainly. The session
+        did end exactly as designed -- and the caller still saw "Internal server error", because
+        `ProvisionedSessionEnded` raised from a middleware is not a tool result."""
+        async with self._connected(app) as client:
+            created = (await client.call_tool('create_project', {'name': 'claimed'})).structured_content
+        scope_token = created['scope_token']
+
+        # What the claim does, server-side: the row is gone.
+        store.sessions.clear()
+
+        async with self._connected(app) as client:
+            with pytest.raises(ToolError) as excinfo:
+                await client.call_tool('get_project_info', {'scope_token': scope_token})
+
+        message = str(excinfo.value)
+        assert 'Internal server error' not in message
+        assert 'has ended' in message
+        assert 'claimed' in message
+        assert 'sign in to this server with that account' in message
+        assert str(created['project_id']) in message
+
+    @pytest.mark.asyncio
     async def test_without_the_handle_a_later_call_gets_nothing(self, app: Starlette) -> None:
         """The handle is the only thing that signs an anonymous session in. A caller that never had
         one -- or a second caller who found the URL -- reaches a bootstrap session, which is told how
