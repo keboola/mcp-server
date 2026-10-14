@@ -109,7 +109,8 @@ class RawKeboolaClient:
             turn a started operation into a misleading "already running" error.
         """
         if not retry:
-            return httpx.AsyncHTTPTransport()
+            # httpcore retries only connection establishment, never a sent request: safe for a non-idempotent PUT.
+            return httpx.AsyncHTTPTransport(retries=2)
         return RetryTransport(retry=self._retry)
 
     @staticmethod
