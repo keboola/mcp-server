@@ -61,6 +61,10 @@ from keboola_mcp_server.config import (
 )
 from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.provisioned_session import (
+    ProvisionedSessionEnded,
+    ProvisionedSessionRotationLost,
+)
+from keboola_mcp_server.provisioned_session import (
     handle_unauthorized as handle_provisioned_session_unauthorized,
 )
 from keboola_mcp_server.provisioned_session import (
@@ -300,6 +304,18 @@ def get_http_request_or_none() -> Request | None:
         return None
 
 
+#: Exceptions this middleware raises whose message *is* the answer the caller needs, rather than a
+#: failure to be reported as one. They have to leave as `ToolError`, because anything else raised
+#: from a middleware is not a tool result: FastMCP masks it and the caller is handed "Internal
+#: server error" instead of the explanation -- which is precisely backwards for these three.
+#:
+#: Found on canary-orion: claiming a provisioned project did end the session exactly as designed
+#: (Connection refused the refresh token, the row was revoked, `session_ended` was raised with the
+#: right text) and the caller still saw only "Internal server error" -- the one outcome requirement
+#: 5 of the RFC exists to prevent.
+_CALLER_FACING_ERRORS = (ProvisionedSessionEnded, ProvisionedSessionRotationLost, ScopeTokenUnreadable)
+
+
 class SessionStateMiddleware(fmw.Middleware):
     """
     FastMCP middleware that manages session state in the Context parameter.
@@ -317,6 +333,24 @@ class SessionStateMiddleware(fmw.Middleware):
     """
 
     async def on_request(
+        self,
+        context: fmw.MiddlewareContext[mt.Request[Any, Any]],
+        call_next: fmw.CallNext[mt.Request[Any, Any], Any],
+    ) -> Any:
+        """Sets up the session state (see `_on_request`), turning the few failures that are really
+        *answers* into ones the caller can read.
+
+        See `_CALLER_FACING_ERRORS`: their messages are written for whoever made the call -- the
+        project was claimed, the scope_token cannot be read, the refreshed credentials could not be
+        stored -- and each tells them what to do next. Raised from a middleware they would reach an
+        HTTP caller as "Internal server error" instead.
+        """
+        try:
+            return await self._on_request(context, call_next)
+        except _CALLER_FACING_ERRORS as e:
+            raise ToolError(str(e)) from e
+
+    async def _on_request(
         self,
         context: fmw.MiddlewareContext[mt.Request[Any, Any]],
         call_next: fmw.CallNext[mt.Request[Any, Any], Any],
