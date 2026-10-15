@@ -27,10 +27,10 @@ _SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[,])\s*["\x27]?#''')
 # Selectors that can reach a secret key without naming it: `db.*`, `db."*"`, `$..x`, `a[?(@.b)]`.
 _BROAD_PATH_SELECTOR = re.compile(r'''\*|\.\.|\[\?''')
 # Text showing a secret key: a quoted `"#key":` (spaces and escapes allowed), an unquoted `#key:` or `#key=`
-# (a key starts with a letter or underscore, so `#1:` is not one),
+# (a purely numeric key such as `#1:` is not one),
 # an escaped quote followed by '#', or an escaped '#'. Every alternative is matched in linear time.
 _SECRET_MARKER = re.compile(
-    r'''"#(?:\\.|[^"\\\n])*"\s*[:=]|\x27#(?:\\.|[^\x27\\\n])*\x27\s*[:=]|#[A-Za-z_][^\s#\x27":=,{}\[\]]*\s*[:=]'''
+    r'''"#(?:\\.|[^"\\\n])*"\s*[:=]|\x27#(?:\\.|[^\x27\\\n])*\x27\s*[:=]|#(?!\d+\s*[:=])[^\s#\x27":=,{}\[\]]*\s*[:=]'''
     r'''|\\["\x27]#|\\u0023|\\x23|%23|&#0*35;|&#x0*23;''',
     re.IGNORECASE,
 )
