@@ -5,6 +5,7 @@ from httpx import ConnectError, HTTPStatusError, Request, Response
 
 from keboola_mcp_server.clients.client import CONDITIONAL_FLOW_COMPONENT_ID, ORCHESTRATOR_COMPONENT_ID
 from keboola_mcp_server.clients.storage import APIFlowResponse
+from keboola_mcp_server.errors import NotFoundError
 from keboola_mcp_server.tools.flow.model import Flow
 from keboola_mcp_server.tools.flow.utils import (
     _check_legacy_circular_dependencies,
@@ -12,6 +13,7 @@ from keboola_mcp_server.tools.flow.utils import (
     ensure_legacy_phase_ids,
     ensure_legacy_task_ids,
     get_flow_configuration,
+    resolve_flow_by_id,
     resolve_flow_schema,
     validate_flow_structure,
 )
@@ -777,3 +779,35 @@ class TestConditionalFlowVariablesRoundTrip:
         var_task = next(t for t in flow.configuration.tasks if t.id == 'set_var')
         assert var_task.task.source.value == _JMESPATH_VALUE
         assert flow.configuration.phases[0].next[0].condition.operands[0].value == _JMESPATH_VALUE
+
+
+def _status_error(status: int) -> HTTPStatusError:
+    request = Request('GET', 'https://connection.test.keboola.com/v2/storage/x')
+    return HTTPStatusError('error', request=request, response=Response(status, request=request))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('probe_failures', 'expected'),
+    [
+        ([_status_error(404), _status_error(404)], NotFoundError),
+        ([_status_error(403), _status_error(503)], 503),
+        ([_status_error(503), _status_error(403)], 503),
+        ([_status_error(404), _status_error(403)], 403),
+        ([_status_error(403), _status_error(404)], 403),
+    ],
+    ids=['both_404', '403_then_503', '503_then_403', '404_then_403', '403_then_404'],
+)
+async def test_resolve_flow_by_id_reports_server_failure_over_caller_failure(
+    probe_failures: list[Exception], expected: type[Exception] | int, mocker: Any
+):
+    client = mocker.Mock()
+    client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=probe_failures)
+
+    with pytest.raises(Exception) as exc_info:
+        await resolve_flow_by_id(client, 'flow-1')
+
+    if isinstance(expected, int):
+        assert exc_info.value.response.status_code == expected
+    else:
+        assert isinstance(exc_info.value, expected)

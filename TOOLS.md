@@ -599,6 +599,9 @@ RETURNS FOR EACH COMPONENT:
 - Configuration JSON schema (required for creating/updating configurations)
 - Links to component dashboard in Keboola UI
 
+Components that cannot be retrieved are listed in `not_found` (missing) or `errors` (server-side, retryable);
+the call fails only if none of them can be retrieved.
+
 WHEN TO USE:
 - Before creating a new configuration: fetch the component to get its configuration schema
 - Before updating a configuration: fetch the component to understand valid configuration options
@@ -693,6 +696,8 @@ Returns a list of components, each containing:
 
 PARAMETER BEHAVIOR:
 - If configs is provided (non-empty): Returns FULL details ONLY for those configs.
+  Configs that cannot be retrieved are listed in `not_found` (missing) or `errors` (server-side, retryable);
+  the call fails only if none of them can be retrieved.
 - Else if component_ids is provided (non-empty): Lists config summaries for those components.
 - Else: Lists configs based on component_types (all types if empty).
 
@@ -3235,7 +3240,10 @@ WHEN NOT TO USE:
 
 OPTIONS:
 - `flow_ids=[]` → summaries of all flows in the project
-- `flow_ids=["id1", ...]` → full details (including phases/tasks) for those flows
+- `flow_ids=["id1", ...]` → full details (including phases/tasks) for those flows; flows that cannot be
+  retrieved are listed in `not_found` (missing) or `errors` (server-side, retryable), and the call fails
+  only if none of them can be retrieved; a flow whose schedules cannot be read is still returned, with
+  `schedules` unset and `schedules_error` saying why (so it is not the same as a flow with no schedules)
 
 
 **Input JSON Schema**:
@@ -3648,6 +3656,8 @@ TWO MODES OF OPERATION (controlled by job_ids parameter):
 MODE 1: GET DETAILS FOR SPECIFIC JOBS (job_ids is non-empty)
 - Provide one or more job IDs: job_ids=["12345", "67890"]
 - Returns: FULL details for each job including status, config_data, results, timing, and metadata
+- Jobs that cannot be retrieved are listed in `not_found` (missing) or `errors` (server-side, retryable);
+  the call fails only if none of them can be retrieved
 - Ignores: All filtering/sorting parameters (status, component_id, config_id, limit, offset, sort_by, sort_order)
 - Use when: You know specific job IDs and need complete information about them
 
@@ -3695,6 +3705,7 @@ LOG RETRIEVAL (only in MODE 1):
 - Use log_tail_lines to control how many recent log events to return (default 50, max 500)
 - Use log_event_types to filter by event type: ["error"] for just errors, ["error", "warn"] for errors and warnings
 - If a job has no runId (e.g., not yet started), logs will be None
+- If the log events cannot be read, the job is still returned: logs will be None and logs_error says why
 
 EXAMPLES WITH LOGS:
 - job_ids=["12345"], include_logs=True → job details + last 50 log events
