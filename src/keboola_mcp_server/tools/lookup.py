@@ -3,7 +3,6 @@
 import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from http import HTTPStatus
 from typing import Generic, TypeVar
 
 import httpx
@@ -28,11 +27,7 @@ class LookupFailure(BaseModel, frozen=True):
 
 def short_reason(exc: BaseException) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-        try:
-            reason = f'HTTP {status} {HTTPStatus(status).phrase}'
-        except ValueError:
-            reason = f'HTTP {status}'
+        reason = f'HTTP {exc.response.status_code} {exc.response.reason_phrase}'.rstrip()
         api_error = next((line for line in str(exc).splitlines() if line.startswith('API error: ')), None)
         if api_error:
             reason = f'{reason}: {api_error.removeprefix("API error: ")}'

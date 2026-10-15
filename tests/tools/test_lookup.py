@@ -281,10 +281,15 @@ async def test_get_jobs_include_logs_with_failed_id(mocker: MockerFixture, mcp_c
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('status', [403, 404, 503], ids=['forbidden', 'not_found', 'server_error'])
+@pytest.mark.parametrize(
+    ('status', 'expected_reason'),
+    [(403, 'HTTP 403 Forbidden'), (404, 'HTTP 404 Not Found'), (503, 'HTTP 503 Service Unavailable')],
+    ids=['forbidden', 'not_found', 'server_error'],
+)
 @pytest.mark.parametrize('flow_ids', [['a', 'b'], ['b']], ids=['two_flows', 'only_flow'])
-async def test_get_flows_schedule_failure_keeps_the_flow_without_schedules(
+async def test_get_flows_schedule_failure_keeps_the_flow_and_says_why(
     status: int,
+    expected_reason: str,
     flow_ids: list[str],
     mocker: MockerFixture,
     mcp_context_client: Context,
@@ -298,8 +303,10 @@ async def test_get_flows_schedule_failure_keeps_the_flow_without_schedules(
     assert found == flow_ids
     flows = {flow.configuration_id: flow for flow in result.flows}
     assert flows['b'].schedules is None
+    assert flows['b'].schedules_error == expected_reason
     if 'a' in flows:
         assert flows['a'].schedules is not None
+        assert flows['a'].schedules_error is None
     assert result.not_found is None
     assert result.errors is None
     record = next(r for r in caplog.records if 'Failed to fetch the schedules of flow b' in r.getMessage())

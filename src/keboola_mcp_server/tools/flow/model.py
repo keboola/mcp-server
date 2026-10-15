@@ -457,6 +457,10 @@ class Flow(BaseModel):
     created: str | None = Field(None, description='Creation timestamp')
     updated: str | None = Field(None, description='Last update timestamp')
     schedules: SchedulesOutput | None = Field(default=None, description='List of schedules for this flow')
+    schedules_error: str | None = Field(
+        default=None,
+        description='Why the schedules could not be read, in which case `schedules` is unset; omitted otherwise.',
+    )
     links: list[Link] = Field(default_factory=list, description='MCP-specific links for UI navigation')
 
     @classmethod

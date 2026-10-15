@@ -61,7 +61,7 @@ from keboola_mcp_server.tools.flow.utils import (
     resolve_flow_schema,
     validate_flow_structure,
 )
-from keboola_mcp_server.tools.lookup import unwrap_lookup_results
+from keboola_mcp_server.tools.lookup import short_reason, unwrap_lookup_results
 from keboola_mcp_server.tools.project import get_project_info
 from keboola_mcp_server.tools.validation import validate_flow_configuration_against_schema
 
@@ -699,7 +699,8 @@ async def get_flows(
     - `flow_ids=[]` → summaries of all flows in the project
     - `flow_ids=["id1", ...]` → full details (including phases/tasks) for those flows; flows that cannot be
       retrieved are listed in `not_found` (missing) or `errors` (server-side, retryable), and the call fails
-      only if none of them can be retrieved
+      only if none of them can be retrieved; a flow whose schedules cannot be read is still returned, with
+      `schedules` unset and `schedules_error` saying why (so it is not the same as a flow with no schedules)
     """
     client = KeboolaClient.from_state(ctx.session.state)
     links_manager = await ProjectLinksManager.from_client(client)
@@ -716,10 +717,11 @@ async def get_flows(
             flow = Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
             try:
                 await fetch_schedules_for_flows(client=client, links_manager=links_manager, list_of_flows=[flow])
-            except Exception:
+            except Exception as e:
                 LOG.warning(
                     f'Failed to fetch the schedules of flow {flow_id}; returning it without them.', exc_info=True
                 )
+                flow.schedules_error = short_reason(e)
             return flow
 
         results = await process_concurrently(flow_ids, fetch_flow_detail)

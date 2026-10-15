@@ -3242,7 +3242,8 @@ OPTIONS:
 - `flow_ids=[]` → summaries of all flows in the project
 - `flow_ids=["id1", ...]` → full details (including phases/tasks) for those flows; flows that cannot be
   retrieved are listed in `not_found` (missing) or `errors` (server-side, retryable), and the call fails
-  only if none of them can be retrieved
+  only if none of them can be retrieved; a flow whose schedules cannot be read is still returned, with
+  `schedules` unset and `schedules_error` saying why (so it is not the same as a flow with no schedules)
 
 
 **Input JSON Schema**:
