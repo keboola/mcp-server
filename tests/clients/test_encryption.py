@@ -6,9 +6,18 @@ from keboola_mcp_server.clients.encryption import (
     REDACTED_SECRET_VALUE,
     contains_plaintext_secrets,
     is_encrypted_value,
+    is_secret_key,
     iter_secret_items,
     redact_secrets,
 )
+
+
+@pytest.mark.parametrize(
+    ('key', 'expected'),
+    [('#password', True), ('#', True), ('password', False), ('a#b', False), ('', False), (1, False), (None, False)],
+)
+def test_is_secret_key(key: Any, expected: bool) -> None:
+    assert is_secret_key(key) == expected
 
 
 @pytest.mark.parametrize(

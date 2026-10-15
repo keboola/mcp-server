@@ -11,7 +11,7 @@ import json
 import re
 from typing import Any, NamedTuple
 
-from keboola_mcp_server.clients.encryption import SECRET_KEY_PREFIX
+from keboola_mcp_server.clients.encryption import is_secret_key
 
 # Strings longer than this are not examined at all, which counts as carrying a secret.
 MAX_EXAMINED_LEN = 1_000_000
@@ -66,7 +66,7 @@ def _string_shows_secret(text: str, depth: int) -> bool:
 
 def _contains_secret(value: Any, depth: int) -> bool:
     if isinstance(value, dict):
-        if any(isinstance(key, str) and key.startswith(SECRET_KEY_PREFIX) for key in value):
+        if any(is_secret_key(key) for key in value):
             return True
         if _is_secret_path(value.get('path')) and _PATH_UPDATE_VALUE_KEYS.intersection(value):
             return True
