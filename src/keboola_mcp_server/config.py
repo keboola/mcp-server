@@ -274,6 +274,24 @@ class Config:
         return f'Config({joined_params})'
 
 
+def resolve_mcp_server_url(config: Config, env: Mapping[str, str] | None = None) -> str | None:
+    """
+    Returns the public URL of this MCP server: the configured one (the `Config` field or its environment
+    override), else the one derived from 'HOSTNAME_SUFFIX'. `create_server()` and `run_server()` both
+    use it, so the URL in OAuth metadata and the one named by the legacy `/sse` 410 cannot differ.
+
+    :param config: The server's configuration before the environment is merged into it.
+    :param env: The environment mapping to read from; defaults to `os.environ`.
+    :return: The public URL, or None when neither is configured.
+    """
+    env = os.environ if env is None else env
+    if mcp_server_url := config.replace_by(env).mcp_server_url:
+        return mcp_server_url
+    if hostname_suffix := env.get('HOSTNAME_SUFFIX'):
+        return f'https://mcp.{hostname_suffix}'
+    return None
+
+
 def get_env_storage_api_url(env: Mapping[str, str] | None = None) -> str | None:
     """
     Returns the Storage API URL of this server's own Keboola stack as described by the process

@@ -24,7 +24,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from keboola_mcp_server.anonymous_entry import ANONYMOUS_MOUNT_PATH, AnonymousEntryMiddleware
-from keboola_mcp_server.config import Config, ServerRuntimeInfo
+from keboola_mcp_server.config import Config, ServerRuntimeInfo, resolve_mcp_server_url
 from keboola_mcp_server.mcp import (
     ForwardSlashMiddleware,
     LegacySsePathMiddleware,
@@ -341,6 +341,23 @@ def build_http_app(
         app.mount(path, inner_app)
     custom_routes.add_to_starlette(app)
     return app
+
+
+def create_http_app(config: Config, *, stateless_http: bool) -> tuple[FastMCP, Starlette]:
+    """Creates the server and the Starlette app serving it over the streamable-HTTP transport.
+
+    This is the whole HTTP wiring of `run_server`, in one place so that it can also be exercised as it is run.
+    """
+    runtime_info = ServerRuntimeInfo('http-compat/streamable-http', stateless_http=stateless_http)
+    mcp_server, custom_routes = create_server(config, runtime_info=runtime_info, custom_routes_handling='return')
+    app = build_http_app(
+        mcp_server,
+        custom_routes,
+        stateless_http=stateless_http,
+        public_url=resolve_mcp_server_url(config),
+        anonymous_app=create_anonymous_app(mcp_server, config=config, stateless_http=stateless_http),
+    )
+    return mcp_server, app
 
 
 def _parse_project_ids(raw: str) -> list[int]:
@@ -696,21 +713,7 @@ async def run_server(args: list[str] | None = None) -> None:
             # 'http-compat' is an alias for 'streamable-http' kept for backwards compatibility.
             import uvicorn
 
-            http_runtime_config = ServerRuntimeInfo(
-                'http-compat/streamable-http', stateless_http=parsed_args.stateless_http
-            )
-            mcp_server, custom_routes = create_server(
-                config, runtime_info=http_runtime_config, custom_routes_handling='return'
-            )
-            app = build_http_app(
-                mcp_server,
-                custom_routes,
-                stateless_http=parsed_args.stateless_http,
-                public_url=config.mcp_server_url,
-                anonymous_app=create_anonymous_app(
-                    mcp_server, config=config, stateless_http=parsed_args.stateless_http
-                ),
-            )
+            mcp_server, app = create_http_app(config, stateless_http=parsed_args.stateless_http)
 
             _tools = await mcp_server.list_tools(run_middleware=False)
             app.state.mcp_tools_input_schema = {tool.name: tool.parameters for tool in _tools}

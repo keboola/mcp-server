@@ -14,11 +14,10 @@ from keboola_mcp_server.cli import (
     _run_login,
     _run_logout,
     _run_migrate,
-    build_http_app,
+    create_http_app,
     parse_args,
 )
-from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.server import create_server
+from keboola_mcp_server.config import Config
 from keboola_mcp_server.session_store import DatabaseUnavailableError
 
 STACK = 'https://connection.keboola.com'
@@ -469,12 +468,7 @@ STREAMABLE_HTTP_HEADERS = {'Accept': 'application/json, text/event-stream', 'Con
 
 
 def _http_client(config: Config, *, stateless_http: bool = True) -> TestClient:
-    mcp_server, custom_routes = create_server(
-        config,
-        runtime_info=ServerRuntimeInfo('http-compat/streamable-http', stateless_http=stateless_http),
-        custom_routes_handling='return',
-    )
-    app = build_http_app(mcp_server, custom_routes, stateless_http=stateless_http, public_url=config.mcp_server_url)
+    _, app = create_http_app(config, stateless_http=stateless_http)
     return TestClient(app)
 
 
@@ -491,14 +485,28 @@ class TestLegacySsePath:
 
     @pytest.mark.parametrize('path', ['/sse', '/sse/'])
     @pytest.mark.parametrize(
-        ('mcp_server_url', 'expected_mcp_url'),
+        ('mcp_server_url', 'env', 'expected_mcp_url'),
         [
-            (None, 'http://testserver/mcp'),
-            ('https://mcp.keboola.com/', 'https://mcp.keboola.com/mcp'),
+            (None, {}, 'http://testserver/mcp'),
+            ('https://mcp.keboola.com/', {}, 'https://mcp.keboola.com/mcp'),
+            (None, {'HOSTNAME_SUFFIX': 'keboola.com'}, 'https://mcp.keboola.com/mcp'),
+            (None, {'KBC_MCP_SERVER_URL': 'https://mcp.example.com'}, 'https://mcp.example.com/mcp'),
         ],
-        ids=['request_url', 'public_url'],
+        ids=['request_url', 'public_url', 'hostname_suffix', 'environment_url'],
     )
-    def test_legacy_sse_handshake_is_gone(self, path: str, mcp_server_url: str | None, expected_mcp_url: str) -> None:
+    def test_legacy_sse_handshake_is_gone(
+        self,
+        path: str,
+        mcp_server_url: str | None,
+        env: dict[str, str],
+        expected_mcp_url: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        for name in ('HOSTNAME_SUFFIX', 'KBC_MCP_SERVER_URL'):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+
         with _http_client(Config(storage_api_url=STACK, mcp_server_url=mcp_server_url)) as client:
             response = client.get(path, headers={'Accept': 'text/event-stream'})
 

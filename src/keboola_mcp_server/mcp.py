@@ -297,9 +297,15 @@ class LegacySsePathMiddleware:
 
     Requests to `/sse` and `/sse/` are routed to the streamable-HTTP endpoint (`/mcp/`), so clients
     that POST `initialize` first keep working with the same auth and middleware. A legacy SSE client
-    opening its event stream (GET without `Mcp-Session-Id` and `MCP-Protocol-Version`, which every
-    streamable-HTTP client sends after `initialize`) gets `410 Gone` naming the new URL instead of a
-    standalone stream that never delivers an `endpoint` event.
+    opening its event stream (a GET on `/sse` carrying neither `Mcp-Session-Id` nor `MCP-Protocol-Version`)
+    gets `410 Gone` naming the new URL instead of a standalone stream that never delivers an `endpoint`
+    event.
+
+    Legacy SSE clients cannot be told apart from others by their headers, so this is a trade-off: a
+    streamable-HTTP client that sends neither header also gets the 410. That is possible with the default
+    stateless mode (no session id) and a 2025-03-26-era client, as `MCP-Protocol-Version` was only mandated
+    in 2025-06-18. Its optional GET stream on `/sse` is answered with 410, where `/mcp` answers 405 (the
+    spec's "no GET stream" signal); its POSTs are unaffected.
     """
 
     def __init__(self, app: ASGIApp, public_url: str | None = None):
