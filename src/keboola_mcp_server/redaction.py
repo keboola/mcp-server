@@ -22,10 +22,9 @@ _MAX_DECODE_DEPTH = 3
 # Keys of path-based update operations (e.g. `update_config`'s `parameter_updates`) that carry the value
 # written to the `path`.
 _PATH_UPDATE_VALUE_KEYS = frozenset({'value', 'search_for', 'replace_with'})
-# A '#' at the start of a path segment: `#password`, `"#password"`, `db.#token`, `db['a', '#token']`.
-_SECRET_PATH_SEGMENT = re.compile(r'''(?:^|[.\[,])\s*["\x27]?#''')
-# Selectors that can reach a secret key without naming it: `db.*`, `db."*"`, `$..x`, `a[?(@.b)]`.
-_BROAD_PATH_SELECTOR = re.compile(r'''\*|\.\.|\[\?''')
+# A path of plain names and numeric indexes (`db.user`, `items[0].name`). Any other path can reach a `#` field
+# in ways that are hard to rule out (`#password`, `\\#password`, `'x'|'#password'`, `db.*`, `$..x`).
+_PLAIN_PATH = re.compile(r'[\w$-]+(?:\.[\w$-]+|\[\d+\])*')
 # Text showing a secret key: a quoted `"#key":` (spaces and escapes allowed), an unquoted `#key:` or `#key=`
 # (a purely numeric key such as `#1:` is not one),
 # an escaped quote followed by '#', or an escaped '#'. Every alternative is matched in linear time.
@@ -46,9 +45,7 @@ class ExceptionText(NamedTuple):
 
 
 def _is_secret_path(path: Any) -> bool:
-    return isinstance(path, str) and (
-        len(path) > _MAX_DECODED_LEN or bool(_SECRET_PATH_SEGMENT.search(path) or _BROAD_PATH_SELECTOR.search(path))
-    )
+    return isinstance(path, str) and not _PLAIN_PATH.fullmatch(path)
 
 
 def _string_shows_secret(text: str, depth: int) -> bool:

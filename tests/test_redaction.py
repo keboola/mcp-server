@@ -11,8 +11,7 @@ from keboola_mcp_server.redaction import (
     contains_secret,
     exception_text,
 )
-
-CANARY = 'canary-s3cr3t-ai4029'
+from tests.conftest import CANARY
 
 
 @pytest.mark.parametrize(
@@ -35,6 +34,9 @@ CANARY = 'canary-s3cr3t-ai4029'
         {'op': 'set', 'path': 'db.*', 'value': CANARY},
         {'op': 'set', 'path': 'db."*"', 'value': CANARY},
         {'op': 'set', 'path': '$..password', 'value': CANARY},
+        {'op': 'set', 'path': '\\#password', 'value': CANARY},
+        {'op': 'set', 'path': 'a.\\#token', 'value': CANARY},
+        {'op': 'set', 'path': "'x'|'#password'", 'value': CANARY},
         {'op': 'set', 'path': 'db[?(@.a)]', 'value': CANARY},
         json.dumps({'user': 'alice', '#password': CANARY}),
         json.dumps(json.dumps({'#password': CANARY})),

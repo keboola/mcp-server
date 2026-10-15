@@ -11,17 +11,11 @@ from fastmcp.tools import FunctionTool
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.errors import SanitizedLoggingMiddleware, tool_errors
 from keboola_mcp_server.server import create_server
-
-CANARY = 'canary-s3cr3t-ai4029'
-
-
-def _formatted_logs(caplog: pytest.LogCaptureFixture) -> str:
-    formatter = logging.Formatter()
-    return '\n'.join(formatter.format(record) for record in caplog.records)
+from tests.conftest import CANARY, formatted_logs
 
 
 class TestFailingCallsThroughFastMcp:
-    """The same failures as above, through a real server with its middleware, checking every logger."""
+    """Failing tool calls through a real server with its middleware, checking every logger."""
 
     @pytest.fixture
     def mcp_server(self, mocker) -> FastMCP:
@@ -81,7 +75,7 @@ class TestFailingCallsThroughFastMcp:
                 await client.call_tool('validated', arguments={'parameters': {'#pw': CANARY}})
 
         assert any('validated' in r.getMessage() for r in caplog.records)
-        assert CANARY not in _formatted_logs(caplog)
+        assert CANARY not in formatted_logs(caplog)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -136,7 +130,7 @@ class TestFailingCallsThroughFastMcp:
 
         assert expected_client_text in str(excinfo.value)
         assert {r.name for r in caplog.records} >= {'keboola_mcp_server.errors', 'fastmcp.middleware.logging'}
-        assert CANARY not in _formatted_logs(caplog)
+        assert CANARY not in formatted_logs(caplog)
 
     @pytest.mark.asyncio
     async def test_failure_without_a_secret_is_logged_as_it_is(self, caplog, mcp_server: FastMCP):
@@ -146,7 +140,7 @@ class TestFailingCallsThroughFastMcp:
             with pytest.raises(ToolError):
                 await client.call_tool('fail_plainly', arguments={'name': 'db'})
 
-        assert 'HTTP 503 for config 7' in _formatted_logs(caplog)
+        assert 'HTTP 503 for config 7' in formatted_logs(caplog)
 
 
 def test_logging_middleware_override_still_matches_fastmcp():

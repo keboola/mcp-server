@@ -24,6 +24,7 @@ from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
 from keboola_mcp_server.tools.validation import RecoverableValidationError, ValidationContext
+from tests.conftest import CANARY, formatted_logs
 
 PYDANTIC_DOCS_VERSION = '.'.join(pydantic.__version__.split('.')[:2])
 
@@ -601,9 +602,6 @@ async def test_event_step_up_header_only_for_own_stack(
     assert ('X-Kubernetes-Authorization' in storage_client.raw_client.headers) is expect_step_up_header
 
 
-CANARY = 'canary-s3cr3t-ai4029'
-
-
 @pytest.fixture
 def storage_event_post(monkeypatch, mocker, empty_context: Context):
     """A real storage client with a mocked HTTP POST, so the `[trigger_event]` log line is emitted as well."""
@@ -620,11 +618,6 @@ def _originating_failure():
 
 def _raise_jsonschema_error():
     jsonschema.validate({'#password': CANARY}, {'properties': {'#password': {'type': 'integer'}}})
-
-
-def _formatted_logs(caplog: pytest.LogCaptureFixture) -> str:
-    formatter = logging.Formatter()
-    return '\n'.join(formatter.format(record) for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -695,7 +688,7 @@ async def test_event_of_a_call_is_reported_without_what_could_be_a_secret(
     assert expected_message in data['message']
     assert data['params']['tool']['arguments'] == [{'key': 'parameters', 'value': expected_value}]
     assert CANARY not in json.dumps(data)
-    assert CANARY not in _formatted_logs(caplog)
+    assert CANARY not in formatted_logs(caplog)
 
 
 def _raise_runtime_error(message: str):
@@ -724,7 +717,7 @@ async def test_failure_logs_of_a_call_with_a_secret_do_not_show_it(
 
     records = [r for r in caplog.records if r.name == 'keboola_mcp_server.errors']
     assert [r.levelno for r in records] == [expected_level]
-    assert CANARY not in _formatted_logs(caplog)
+    assert CANARY not in formatted_logs(caplog)
     if failure is _originating_failure:
         assert 'in _originating_failure' in logging.Formatter().format(records[0])
 
@@ -837,7 +830,7 @@ async def test_event_post_failure_does_not_log_the_tool_exception_text(
         await config_tool(empty_context, parameters={'#password': CANARY})
 
     assert [r for r in caplog.records if 'Failed to trigger tool event' in r.getMessage()]
-    assert CANARY not in _formatted_logs(caplog)
+    assert CANARY not in formatted_logs(caplog)
 
 
 class _UnprintableError(Exception):
