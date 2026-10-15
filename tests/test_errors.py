@@ -1,3 +1,4 @@
+import inspect
 import json
 import logging
 import uuid
@@ -13,13 +14,14 @@ import yaml
 from fastmcp import Client, Context, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.context import FastMCPRequestContext
+from fastmcp.server.middleware.logging import LoggingMiddleware
 from fastmcp.tools import FunctionTool
 from mcp.types import ClientCapabilities, Implementation, InitializeRequestParams
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, RedactedToolError, tool_errors
+from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, RedactedToolError, SanitizedLoggingMiddleware, tool_errors
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
@@ -953,3 +955,14 @@ class TestFailingCallsThroughFastMcp:
                 await client.call_tool('fail_plainly', arguments={'name': 'db'})
 
         assert 'HTTP 503 for config 7' in _formatted_logs(caplog)
+
+
+def test_logging_middleware_override_still_matches_fastmcp():
+    """`SanitizedLoggingMiddleware` replaces a private FastMCP method; a FastMCP upgrade must not silently bypass it."""
+    parent_method = getattr(LoggingMiddleware, '_create_error_message', None)
+
+    assert parent_method is not None, 'FastMCP no longer has LoggingMiddleware._create_error_message'
+    assert SanitizedLoggingMiddleware._create_error_message is not parent_method
+    assert list(inspect.signature(SanitizedLoggingMiddleware._create_error_message).parameters) == list(
+        inspect.signature(parent_method).parameters
+    )
