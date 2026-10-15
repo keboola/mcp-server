@@ -16,6 +16,7 @@ from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.server import middleware as fmw
 from fastmcp.server.middleware import CallNext, MiddlewareContext
 from fastmcp.server.middleware.logging import LoggingMiddleware
+from fastmcp.utilities.exceptions import get_http_status_code, is_timeout_error
 from fastmcp.utilities.types import find_kwarg_by_type
 from mcp import types as mt
 from pydantic import BaseModel, ValidationError
@@ -93,13 +94,31 @@ class RedactedToolError(ToolError):
 
 
 class SanitizedLoggingMiddleware(LoggingMiddleware):
-    """FastMCP's request logging, but a failed request is logged with the `log_text` of its error when it has one."""
+    """
+    FastMCP's request logging, but a failed request is logged with only the text of its error that is fit for logs:
+    its `log_text` when it has one, else the omission note when the request carries a secret or the message shows a
+    secret key. The second case covers errors that never reach `tool_errors`, such as argument validation failures.
+    """
 
     def _create_error_message(self, context: MiddlewareContext[Any], start_time: float, error: Exception):
         message = super()._create_error_message(context, start_time, error)
-        if (log_text := getattr(error, 'log_text', None)) is not None:
+        log_text = getattr(error, 'log_text', None)
+        if log_text is None:
+            arguments = getattr(context.message, 'arguments', None)
+            shown = exception_text(error, contains_secret(arguments or {}))
+            log_text = shown.text if shown.omitted else None
+        if log_text is not None:
             message['error'] = log_text
         return message
+
+
+def _client_text(exception: BaseException, tool_name: str, text: str) -> str:
+    """The text FastMCP gives the caller for a plain exception: its retry hints for a 429 and a timeout, else the message."""
+    if get_http_status_code(exception) == 429:
+        return 'Rate limited by upstream API, please retry later'
+    if is_timeout_error(exception):
+        return 'Upstream request timed out, please retry'
+    return f'Error calling tool {tool_name!r}: {text}'
 
 
 def _plain_text(exception: BaseException) -> str:
@@ -320,9 +339,9 @@ def tool_errors(
                         # FastMCP logs a plain exception with its message and traceback, but a `ToolError` without
                         # them. The caller still gets the text it would have got: the real one when only the call
                         # carries a secret, the omission note when the message itself shows a secret key.
-                        client_text = _plain_text(e) if carries_secret else original_text.text
+                        shown_text = _plain_text(e) if carries_secret else original_text.text
                         raise RedactedToolError(
-                            f'Error calling tool {func.__name__!r}: {client_text}', log_text=original_text.text
+                            _client_text(e, func.__name__, shown_text), log_text=original_text.text
                         ) from e
                     raise
                 except Exception as e:
