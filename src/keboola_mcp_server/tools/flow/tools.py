@@ -49,7 +49,7 @@ from keboola_mcp_server.tools.flow.model import (
 )
 from keboola_mcp_server.tools.flow.scheduler import (
     compute_schedulers_preview,
-    fetch_schedules_for_flows,
+    fetch_schedules_for_flow,
     process_schedule_request,
 )
 from keboola_mcp_server.tools.flow.scheduler_model import ScheduleRequest
@@ -716,7 +716,7 @@ async def get_flows(
             )
             flow = Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
             try:
-                await fetch_schedules_for_flows(client=client, links_manager=links_manager, list_of_flows=[flow])
+                flow.schedules = await fetch_schedules_for_flow(client=client, links_manager=links_manager, flow=flow)
             except Exception as e:
                 LOG.warning(
                     f'Failed to fetch the schedules of flow {flow_id}; returning it without them.', exc_info=True
@@ -725,7 +725,7 @@ async def get_flows(
             return flow
 
         results = await process_concurrently(flow_ids, fetch_flow_detail)
-        lookup = unwrap_lookup_results(list(flow_ids), results, 'Failed to fetch the flows')
+        lookup = unwrap_lookup_results(list(flow_ids), results, 'get_flows', 'Failed to fetch the flows')
         flows = lookup.found
 
         LOG.info(f'Retrieved full details for {len(flows)} flows.')

@@ -404,7 +404,9 @@ async def get_jobs(
             return job
 
         results = await process_concurrently(job_ids, fetch_job_detail)
-        lookup = unwrap_lookup_results([str(job_id) for job_id in job_ids], results, 'Failed to fetch the jobs')
+        lookup = unwrap_lookup_results(
+            [str(job_id) for job_id in job_ids], results, 'get_jobs', 'Failed to fetch the jobs'
+        )
         jobs = lookup.found
 
         LOG.info(f'Retrieved full details for {len(jobs)} jobs.')

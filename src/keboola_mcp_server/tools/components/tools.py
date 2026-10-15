@@ -318,7 +318,7 @@ async def get_configs(
 
         results = await process_concurrently(configs, fetch_config_detail)
         config_ids = [f'{spec.component_id}/{spec.configuration_id}' for spec in configs]
-        lookup = unwrap_lookup_results(config_ids, results, 'Failed to fetch the configurations')
+        lookup = unwrap_lookup_results(config_ids, results, 'get_configs', 'Failed to fetch the configurations')
         return GetConfigsDetailOutput(configs=lookup.found, **lookup.failure_fields())
 
     # Case 2: component_ids provided - list summaries by IDs
@@ -381,7 +381,7 @@ async def get_components(
         return component
 
     results = await process_concurrently(component_ids, fetch_component_with_links)
-    lookup = unwrap_lookup_results(list(component_ids), results, 'Failed to fetch the components')
+    lookup = unwrap_lookup_results(list(component_ids), results, 'get_components', 'Failed to fetch the components')
     return GetComponentsOutput(
         components=lookup.found, links=[links_manager.get_used_components_link()], **lookup.failure_fields()
     )

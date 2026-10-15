@@ -61,7 +61,10 @@ class LookupResults(Generic[R]):
 
 
 def unwrap_lookup_results(
-    ids: Sequence[str], results: Iterable[R | BaseException], message: str = 'Failed to fetch all requested items'
+    ids: Sequence[str],
+    results: Iterable[R | BaseException],
+    tool_name: str,
+    message: str = 'Failed to fetch all requested items',
 ) -> LookupResults[R]:
     """
     Split the results of a batch ID lookup into found items and failures.
@@ -70,6 +73,7 @@ def unwrap_lookup_results(
 
     :param ids: The requested IDs, in the same order as ``results``.
     :param results: Results or exceptions from ``process_concurrently``.
+    :param tool_name: The tool doing the lookup, attached to the logs of internal failures.
     :param message: Message for the ``AggregateError`` raised when every lookup failed.
     :return: The found items and the IDs that could not be retrieved, with reasons.
     :raises AggregateError: If every lookup failed.
@@ -96,6 +100,10 @@ def unwrap_lookup_results(
         raise AggregateError(message, exceptions)
 
     for item_id, exc in internal_failures:
-        LOG.error(f'Lookup of {item_id} failed: {exc}', exc_info=exc)
+        LOG.error(
+            f'MCP tool "{tool_name}" lookup of {item_id} failed: {exc}',
+            exc_info=exc,
+            extra={'tool_name': tool_name, 'error_type': type(exc).__name__, 'error_category': 'internal'},
+        )
 
     return LookupResults(found=found, not_found=not_found, errors=errors)

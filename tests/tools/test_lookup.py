@@ -256,7 +256,7 @@ async def test_batch_lookup_all_failed(
 def test_unwrap_lookup_results(
     results: list[Any], expected_not_found: list[LookupFailure], expected_errors: list[LookupFailure]
 ):
-    lookup = unwrap_lookup_results([str(i) for i in range(1, len(results) + 1)], results)
+    lookup = unwrap_lookup_results([str(i) for i in range(1, len(results) + 1)], results, 'get_things')
 
     assert lookup.found == ['ok']
     assert lookup.not_found == expected_not_found
@@ -363,8 +363,10 @@ async def test_get_jobs_log_failure_keeps_the_job_and_says_why(
 def test_unwrap_lookup_results_logs_internal_failures(
     results: list[Any], expected_logged_ids: list[str], caplog: pytest.LogCaptureFixture
 ):
-    unwrap_lookup_results([str(i) for i in range(1, len(results) + 1)], results)
+    unwrap_lookup_results([str(i) for i in range(1, len(results) + 1)], results, 'get_things')
 
     records = [r for r in caplog.records if r.name == 'keboola_mcp_server.tools.lookup']
-    assert [r.getMessage().split()[2] for r in records] == expected_logged_ids
+    assert [r.getMessage().split()[5] for r in records] == expected_logged_ids
     assert all(r.levelno == logging.ERROR and r.exc_info and r.exc_info[1] for r in records)
+    assert all('"get_things"' in r.getMessage() and r.tool_name == 'get_things' for r in records)
+    assert all(r.error_category == 'internal' and r.error_type == type(r.exc_info[1]).__name__ for r in records)
