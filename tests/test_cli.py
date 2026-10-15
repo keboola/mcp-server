@@ -1,7 +1,9 @@
+import base64
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from starlette.testclient import TestClient
 
 from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import TokenSet
@@ -12,6 +14,7 @@ from keboola_mcp_server.cli import (
     _run_login,
     _run_logout,
     _run_migrate,
+    create_http_app,
     parse_args,
 )
 from keboola_mcp_server.config import Config
@@ -453,3 +456,96 @@ class TestRunLogout:
 def test_parse_args_workspace_id(args: list[str], expected: str | None) -> None:
     parsed = parse_args(args)
     assert parsed.workspace_id == expected
+
+
+INITIALIZE_REQUEST = {
+    'jsonrpc': '2.0',
+    'id': 1,
+    'method': 'initialize',
+    'params': {'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 'test', 'version': '1'}},
+}
+STREAMABLE_HTTP_HEADERS = {'Accept': 'application/json, text/event-stream', 'Content-Type': 'application/json'}
+
+
+def _http_client(config: Config, *, stateless_http: bool = True) -> TestClient:
+    _, app = create_http_app(config, stateless_http=stateless_http)
+    return TestClient(app)
+
+
+class TestLegacySsePath:
+    @pytest.mark.parametrize('path', ['/mcp', '/mcp/', '/sse', '/sse/'])
+    @pytest.mark.parametrize('stateless_http', [True, False], ids=['stateless', 'stateful'])
+    def test_initialize(self, path: str, stateless_http: bool) -> None:
+        with _http_client(Config(storage_api_url=STACK), stateless_http=stateless_http) as client:
+            response = client.post(path, json=INITIALIZE_REQUEST, headers=STREAMABLE_HTTP_HEADERS)
+
+        assert response.status_code == 200
+        assert '"protocolVersion":"2025-06-18"' in response.text
+        assert ('mcp-session-id' in response.headers) is not stateless_http
+
+    @pytest.mark.parametrize('path', ['/sse', '/sse/'])
+    @pytest.mark.parametrize(
+        ('mcp_server_url', 'env', 'expected_mcp_url'),
+        [
+            (None, {}, 'http://testserver/mcp'),
+            ('https://mcp.keboola.com/', {}, 'https://mcp.keboola.com/mcp'),
+            (None, {'HOSTNAME_SUFFIX': 'keboola.com'}, 'https://mcp.keboola.com/mcp'),
+            (None, {'KBC_MCP_SERVER_URL': 'https://mcp.example.com'}, 'https://mcp.example.com/mcp'),
+        ],
+        ids=['request_url', 'public_url', 'hostname_suffix', 'environment_url'],
+    )
+    def test_legacy_sse_handshake_is_gone(
+        self,
+        path: str,
+        mcp_server_url: str | None,
+        env: dict[str, str],
+        expected_mcp_url: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        for name in ('HOSTNAME_SUFFIX', 'KBC_MCP_SERVER_URL'):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+
+        with _http_client(Config(storage_api_url=STACK, mcp_server_url=mcp_server_url)) as client:
+            response = client.get(path, headers={'Accept': 'text/event-stream'})
+
+        assert response.status_code == 410
+        assert response.json()['error'] == 'sse_transport_removed'
+        assert response.json()['mcp_url'] == expected_mcp_url
+        assert expected_mcp_url in response.json()['message']
+
+    @pytest.mark.parametrize(
+        ('method', 'headers', 'expected_status'),
+        [
+            ('GET', {'Accept': 'text/event-stream', 'mcp-session-id': 'unknown'}, 404),
+            ('GET', {'Accept': 'text/event-stream', 'mcp-protocol-version': '2025-06-18'}, 400),
+            ('DELETE', {'mcp-session-id': 'unknown'}, 404),
+        ],
+        ids=['get_with_session', 'get_with_protocol_version', 'delete_with_session'],
+    )
+    def test_streamable_http_requests_are_forwarded(self, method: str, headers: dict[str, str], expected_status: int):
+        with _http_client(Config(storage_api_url=STACK), stateless_http=False) as client:
+            responses = [client.request(method, path, headers=headers) for path in ('/mcp', '/sse')]
+
+        assert [r.status_code for r in responses] == [expected_status, expected_status]
+        assert responses[0].json() == responses[1].json()
+
+    @pytest.mark.parametrize('path', ['/mcp', '/sse', '/sse/'])
+    def test_oauth_challenge(self, path: str) -> None:
+        config = Config(
+            storage_api_url=STACK,
+            oauth_client_id='client-id',
+            oauth_client_secret='client-secret',
+            oauth_server_url=STACK,
+            mcp_server_url='https://mcp.keboola.com',
+            postgres_dsn='postgresql://user:pass@localhost:1/db',
+            session_encryption_key=base64.b64encode(b'0' * 32).decode(),
+        )
+        with _http_client(config) as client:
+            response = client.post(path, json=INITIALIZE_REQUEST, headers=STREAMABLE_HTTP_HEADERS)
+
+        assert response.status_code == 401
+        assert response.headers['www-authenticate'] == (
+            'Bearer resource_metadata="https://mcp.keboola.com/.well-known/oauth-protected-resource"'
+        )

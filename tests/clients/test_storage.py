@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pytest_mock import MockerFixture
 
-from keboola_mcp_server.clients.base import JsonDict, RawKeboolaClient
+from keboola_mcp_server.clients.base import InvalidArgumentError, JsonDict, RawKeboolaClient
 from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE, EncryptionClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 
@@ -234,6 +234,27 @@ class TestSearchEndpoints:
     async def test_component_configurations_search_requires_filter(self, raw_client: RawKeboolaClient) -> None:
         client = AsyncStorageClient(raw_client=raw_client)
         assert await client.component_configurations_search() == []
+        raw_client.get.assert_not_called()
+
+
+class TestEmptyIds:
+    @pytest.mark.parametrize(
+        ('method', 'kwargs'),
+        [
+            ('configuration_detail', {'component_id': '', 'configuration_id': 'c1'}),
+            ('configuration_detail', {'component_id': 'keboola.ex-test', 'configuration_id': ''}),
+            ('configuration_list', {'component_id': ''}),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_empty_id_raises_invalid_argument_before_any_request(
+        self, raw_client: RawKeboolaClient, method: str, kwargs: dict[str, str]
+    ) -> None:
+        client = AsyncStorageClient(raw_client=raw_client, branch_id='123')
+
+        with pytest.raises(InvalidArgumentError, match='Invalid'):
+            await getattr(client, method)(**kwargs)
+
         raw_client.get.assert_not_called()
 
 

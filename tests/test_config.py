@@ -3,7 +3,13 @@ from collections.abc import Mapping
 
 import pytest
 
-from keboola_mcp_server.config import Config, ServerRuntimeInfo, get_env_storage_api_url, is_same_stack
+from keboola_mcp_server.config import (
+    Config,
+    ServerRuntimeInfo,
+    get_env_storage_api_url,
+    is_same_stack,
+    resolve_mcp_server_url,
+)
 
 
 class TestConfig:
@@ -310,6 +316,34 @@ class TestEnvStorageApiUrl:
     )
     def test_get_env_storage_api_url(self, env: Mapping[str, str], expected: str | None) -> None:
         assert get_env_storage_api_url(env) == expected
+
+    @pytest.mark.parametrize(
+        ('config_url', 'env', 'expected'),
+        [
+            (None, {}, None),
+            ('https://mcp.example.com', {}, 'https://mcp.example.com'),
+            (None, {'HOSTNAME_SUFFIX': 'keboola.com'}, 'https://mcp.keboola.com'),
+            (None, {'KBC_MCP_SERVER_URL': 'https://mcp.override.com'}, 'https://mcp.override.com'),
+            ('https://mcp.example.com', {'HOSTNAME_SUFFIX': 'keboola.com'}, 'https://mcp.example.com'),
+            ('https://mcp.example.com', {'KBC_MCP_SERVER_URL': 'https://mcp.override.com'}, 'https://mcp.override.com'),
+            (
+                None,
+                {'KBC_MCP_SERVER_URL': 'https://mcp.override.com', 'HOSTNAME_SUFFIX': 'keboola.com'},
+                'https://mcp.override.com',
+            ),
+        ],
+        ids=[
+            'nothing',
+            'config',
+            'hostname_suffix',
+            'environment',
+            'config_over_hostname_suffix',
+            'environment_over_config',
+            'environment_over_hostname_suffix',
+        ],
+    )
+    def test_resolve_mcp_server_url(self, config_url: str | None, env: Mapping[str, str], expected: str | None) -> None:
+        assert resolve_mcp_server_url(Config(mcp_server_url=config_url), env) == expected
 
 
 class TestIsSameStack:

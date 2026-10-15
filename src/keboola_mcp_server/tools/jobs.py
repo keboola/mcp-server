@@ -10,9 +10,10 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
-from keboola_mcp_server.mcp import KeboolaMcpServer, ToonCompactFunctionTool, process_concurrently, unwrap_results
+from keboola_mcp_server.mcp import KeboolaMcpServer, ToonCompactFunctionTool, process_concurrently
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.scope import ProjectIdArg
+from keboola_mcp_server.tools.lookup import PartialLookupOutput, short_reason, unwrap_lookup_results
 
 LOG = logging.getLogger(__name__)
 
@@ -146,6 +147,10 @@ class JobDetail(JobListItem):
         description='Execution log events for the job, populated when include_logs=True.',
         default=None,
     )
+    logs_error: str | None = Field(
+        description='Why the log events could not be read when include_logs=True; omitted otherwise.',
+        default=None,
+    )
 
     @field_validator('result', 'config_data', mode='before')
     @classmethod
@@ -173,7 +178,7 @@ class GetJobsListOutput(BaseModel):
     links: list[Link] = Field(..., description='Links relevant to the jobs listing.')
 
 
-class GetJobsDetailOutput(BaseModel):
+class GetJobsDetailOutput(PartialLookupOutput):
     """Output of get_jobs tool when retrieving specific job_ids."""
 
     jobs: list[JobDetail] = Field(..., description='List of jobs with full details.')
@@ -309,6 +314,8 @@ async def get_jobs(
     MODE 1: GET DETAILS FOR SPECIFIC JOBS (job_ids is non-empty)
     - Provide one or more job IDs: job_ids=["12345", "67890"]
     - Returns: FULL details for each job including status, config_data, results, timing, and metadata
+    - Jobs that cannot be retrieved are listed in `not_found` (missing) or `errors` (server-side, retryable);
+      the call fails only if none of them can be retrieved
     - Ignores: All filtering/sorting parameters (status, component_id, config_id, limit, offset, sort_by, sort_order)
     - Use when: You know specific job IDs and need complete information about them
 
@@ -356,6 +363,7 @@ async def get_jobs(
     - Use log_tail_lines to control how many recent log events to return (default 50, max 500)
     - Use log_event_types to filter by event type: ["error"] for just errors, ["error", "warn"] for errors and warnings
     - If a job has no runId (e.g., not yet started), logs will be None
+    - If the log events cannot be read, the job is still returned: logs will be None and logs_error says why
 
     EXAMPLES WITH LOGS:
     - job_ids=["12345"], include_logs=True → job details + last 50 log events
@@ -368,39 +376,41 @@ async def get_jobs(
     # Case 1: job_ids provided - return full details for those jobs
     if job_ids:
 
+        async def fetch_logs(job: JobDetail) -> None:
+            if not job.id:
+                return
+            raw_events = await client.storage_client.list_events(
+                job_id=job.id,
+                limit=log_tail_lines,
+            )
+            if log_event_types:
+                type_set = set(log_event_types)
+                raw_events = [e for e in raw_events if e.get('type') in type_set]
+            raw_events.reverse()
+            job.logs = [JobLogEvent.model_validate(e) for e in raw_events]
+
         async def fetch_job_detail(job_id: str) -> JobDetail:
             raw_job = await client.jobs_queue_client.get_job_detail(job_id)
             links = links_manager.get_job_links(job_id)
             LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
-            return JobDetail.model_validate(raw_job | {'links': links})
+            job = JobDetail.model_validate(raw_job | {'links': links})
+            if include_logs:
+                try:
+                    await fetch_logs(job)
+                except Exception as e:
+                    LOG.warning(f'Failed to fetch logs for job {job_id}: {e}', exc_info=True)
+                    job.logs = None
+                    job.logs_error = short_reason(e)
+            return job
 
         results = await process_concurrently(job_ids, fetch_job_detail)
-        jobs = unwrap_results(results, 'Failed to fetch one or more jobs')
-
-        # Fetch logs if requested
-        if include_logs:
-
-            async def fetch_logs_for_job(job: JobDetail) -> JobDetail:
-                if not job.id:
-                    return job
-                raw_events = await client.storage_client.list_events(
-                    job_id=job.id,
-                    limit=log_tail_lines,
-                )
-                # Filter by event type client-side if requested
-                if log_event_types:
-                    type_set = set(log_event_types)
-                    raw_events = [e for e in raw_events if e.get('type') in type_set]
-                # Events come newest-first from API; reverse to chronological order
-                raw_events.reverse()
-                job.logs = [JobLogEvent.model_validate(e) for e in raw_events]
-                return job
-
-            log_results = await process_concurrently(jobs, fetch_logs_for_job)
-            jobs = unwrap_results(log_results, 'Failed to fetch logs for one or more jobs')
+        lookup = unwrap_lookup_results(
+            [str(job_id) for job_id in job_ids], results, 'get_jobs', 'Failed to fetch the jobs'
+        )
+        jobs = lookup.found
 
         LOG.info(f'Retrieved full details for {len(jobs)} jobs.')
-        return GetJobsDetailOutput(jobs=jobs)
+        return GetJobsDetailOutput(jobs=jobs, **lookup.failure_fields())
 
     # Case 2: no job_ids - list jobs as summaries with optional filtering
     _status = [status] if status else None

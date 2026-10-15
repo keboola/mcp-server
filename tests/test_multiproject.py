@@ -1,3 +1,4 @@
+import logging
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -603,6 +604,46 @@ class TestMultiProjectMiddleware:
         assert result.structured_content == {'rows': ['rows']}
         texts = [c.text for c in result.content]
         assert any('project 22 failed' in t and 'project_ids=[22]' in t for t in texts)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'failure',
+        [RuntimeError('boom canary-s3cr3t-ai4029'), ToolError('boom canary-s3cr3t-ai4029')],
+        ids=['internal_error', 'tool_error'],
+    )
+    async def test_fan_out_failure_log_does_not_contain_secrets(
+        self, failure: Exception, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        scope = SessionScope(project_ids=[11, 22], scoped_token='kbc_at_s', confirmed=True)
+        context, state = self._ctx(
+            scope, 'get_tables', read_only=True, arguments={'parameters': {'#password': 'canary-s3cr3t-ai4029'}}
+        )
+
+        async def call_next(_):
+            if state[KeboolaClient.STATE_KEY] == 'client-22':
+                raise failure
+            return self._result('rows')
+
+        with (
+            patch.object(
+                MultiProjectMiddleware,
+                'client_for_project',
+                AsyncMock(side_effect=lambda _ss, _url, _token, pid, _ro: f'client-{pid}'),
+            ),
+            patch.object(
+                WorkspaceManager,
+                'create',
+                AsyncMock(side_effect=lambda client, _schema, kubernetes_token_path=None: f'wsm-{client}'),
+            ),
+        ):
+            await MultiProjectMiddleware().on_call_tool(context, call_next)
+
+        records = [r for r in caplog.records if 'Fan-out call failed' in r.getMessage()]
+        assert len(records) == 1
+        formatted = logging.Formatter().format(records[0])
+        assert 'canary-s3cr3t-ai4029' not in formatted
+        assert type(failure).__name__ in formatted
+        assert 'project 22' in formatted
 
     @pytest.mark.asyncio
     async def test_fan_out_all_failed_raises_aggregate(self) -> None:
