@@ -17,6 +17,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import build_tracing_headers, deployed_sa_token_path
+from keboola_mcp_server.errors import sanitized_failure
 from keboola_mcp_server.mcp import ServerState, is_read_only_tool
 from keboola_mcp_server.scope import PROJECT_ID_ARG, SCOPE_KEY, SessionScope
 from keboola_mcp_server.tools.constants import BOOTSTRAP_TOOLS
@@ -183,10 +184,10 @@ class MultiProjectMiddleware(fmw.Middleware):
                     # every project.
                     if isinstance(e.__cause__, FastMCPValidationError):
                         raise
-                    LOG.warning(f'Fan-out call failed for project {project_id}: {e}', exc_info=True)
+                    self._log_failed_project(project_id, e, context.message.arguments)
                     errors.append((project_id, str(e)))
                 except Exception as e:
-                    LOG.warning(f'Fan-out call failed for project {project_id}: {e}', exc_info=True)
+                    self._log_failed_project(project_id, e, context.message.arguments)
                     errors.append((project_id, str(e)))
         finally:
             state[KeboolaClient.STATE_KEY] = original_client
@@ -198,6 +199,11 @@ class MultiProjectMiddleware(fmw.Middleware):
             raise ToolError(f'The tool failed for all {len(errors)} scoped project(s): {detail}')
 
         return self._merge(results, errors)
+
+    @staticmethod
+    def _log_failed_project(project_id: int, exception: Exception, arguments: Any) -> None:
+        summary, exc_info = sanitized_failure(exception, arguments)
+        LOG.warning(f'Fan-out call failed for project {project_id}: {summary}', exc_info=exc_info)
 
     @staticmethod
     def _resolve_single_target(scope: SessionScope, project_id: Any) -> int | None:
