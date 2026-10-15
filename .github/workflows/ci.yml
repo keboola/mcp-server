@@ -82,6 +82,14 @@ jobs:
         run: |
           uv build --wheel --no-sources
 
+      # Fail if the built wheel needs any pre-release (stricter than uv's default policy, which still lets an
+      # older release with a pre-release dependency install, see AI-4034). `--no-config` resolves like `uvx`
+      # does, without the repo's `exclude-newer` cooldown, so a just-published dependency does not fail this.
+      - name: Check wheel resolves without pre-releases
+        if: matrix.python-version == '3.12'
+        run: |
+          ls dist/keboola_mcp_server-*.whl | uv pip compile --no-config --python-version 3.12 --no-cache --prerelease disallow -
+
       - name: Get package version
         id: get_package_version
         if: matrix.python-version == '3.10'

@@ -21,7 +21,6 @@ from fastmcp.client import Client, StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from starlette.applications import Starlette
 from starlette.datastructures import Headers
-from starlette.middleware import Middleware
 from starlette.requests import Request
 
 from keboola_mcp_server import server as server_module
@@ -37,9 +36,9 @@ from keboola_mcp_server.anonymous_entry import (
     strip_credentials,
 )
 from keboola_mcp_server.auth_login import ProvisionedProject, TokenSet
-from keboola_mcp_server.cli import create_anonymous_app
+from keboola_mcp_server.cli import create_anonymous_app, create_http_app
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ForwardSlashMiddleware, SessionStateMiddleware, ToolsFilteringMiddleware
+from keboola_mcp_server.mcp import SessionStateMiddleware, ToolsFilteringMiddleware
 from keboola_mcp_server.scope import SessionScope
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.session_store.repository import OAuthSession
@@ -379,34 +378,9 @@ class TestANewcomerWithNoAccount:
             jwt_secret=ENCRYPTION_KEY,
             allow_anonymous_provisioning=True,
         )
-        mcp_server, custom_routes = create_server(
-            config,
-            runtime_info=ServerRuntimeInfo('http-compat/streamable-http', stateless_http=True),
-            custom_routes_handling='return',
-        )
+        mcp_server, app = create_http_app(config, stateless_http=True)
         assert isinstance(mcp_server, FastMCP)
 
-        mounts = {
-            '/mcp': mcp_server.http_app(path='/', transport='streamable-http', stateless_http=True),
-            ANONYMOUS_MOUNT_PATH: create_anonymous_app(mcp_server, config=config, stateless_http=True),
-        }
-        assert mounts[ANONYMOUS_MOUNT_PATH] is not None
-
-        from contextlib import asynccontextmanager
-
-        @asynccontextmanager
-        async def lifespan(_app):
-            import contextlib as _contextlib
-
-            async with _contextlib.AsyncExitStack() as stack:
-                for inner in mounts.values():
-                    await stack.enter_async_context(inner.lifespan(_app))
-                yield
-
-        app = Starlette(middleware=[Middleware(ForwardSlashMiddleware, mount_paths=tuple(mounts))], lifespan=lifespan)
-        for path, inner in mounts.items():
-            app.mount(path, inner)
-        custom_routes.add_to_starlette(app)
         return app
 
     @staticmethod

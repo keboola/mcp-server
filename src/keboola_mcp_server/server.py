@@ -16,7 +16,13 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from keboola_mcp_server.authorization import ToolAuthorizationMiddleware, ToolDeferralMiddleware
-from keboola_mcp_server.config import Config, ServerRuntimeInfo, Transport, get_env_storage_api_url
+from keboola_mcp_server.config import (
+    Config,
+    ServerRuntimeInfo,
+    Transport,
+    get_env_storage_api_url,
+    resolve_mcp_server_url,
+)
 from keboola_mcp_server.elicitation import UrlElicitationMiddleware
 from keboola_mcp_server.errors import SanitizedLoggingMiddleware, ValidationErrorMiddleware
 from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
@@ -295,8 +301,8 @@ def create_server(
         # fall back to HOSTNAME_SUFFIX if no URLs are specified for the OAUth server or the MCP server itself
         if not config.oauth_server_url and hostname_suffix:
             config = dataclasses.replace(config, oauth_server_url=f'https://connection.{hostname_suffix}')
-        if not config.mcp_server_url and hostname_suffix:
-            config = dataclasses.replace(config, mcp_server_url=f'https://mcp.{hostname_suffix}')
+        if not config.mcp_server_url and (mcp_server_url := resolve_mcp_server_url(config)):
+            config = dataclasses.replace(config, mcp_server_url=mcp_server_url)
         if not config.oauth_scope:
             config = dataclasses.replace(config, oauth_scope='email')
 

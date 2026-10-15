@@ -6,7 +6,7 @@ from typing import Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
-from keboola_mcp_server.clients.base import JsonDict, KeboolaServiceClient, RawKeboolaClient
+from keboola_mcp_server.clients.base import InvalidArgumentError, JsonDict, KeboolaServiceClient, RawKeboolaClient
 from keboola_mcp_server.clients.encryption import (
     REDACTED_SECRET_VALUE,
     EncryptionClient,
@@ -646,9 +646,9 @@ class AsyncStorageClient(KeboolaServiceClient):
         :raises ValueError: If the component_id or configuration_id is invalid.
         """
         if not isinstance(component_id, str) or component_id == '':
-            raise ValueError(f"Invalid component_id '{component_id}'.")
+            raise InvalidArgumentError(f"Invalid component_id '{component_id}'.")
         if not isinstance(configuration_id, str) or configuration_id == '':
-            raise ValueError(f"Invalid configuration_id '{configuration_id}'.")
+            raise InvalidArgumentError(f"Invalid configuration_id '{configuration_id}'.")
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs/{configuration_id}'
 
         return cast(JsonDict, await self.get(endpoint=endpoint))
@@ -662,7 +662,7 @@ class AsyncStorageClient(KeboolaServiceClient):
         :raises ValueError: If the component_id is invalid.
         """
         if not isinstance(component_id, str) or component_id == '':
-            raise ValueError(f"Invalid component_id '{component_id}'.")
+            raise InvalidArgumentError(f"Invalid component_id '{component_id}'.")
         endpoint = f'branch/{self._branch_id}/components/{component_id}/configs'
 
         return cast(list[JsonDict], await self.get(endpoint=endpoint))

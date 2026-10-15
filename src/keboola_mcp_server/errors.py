@@ -22,11 +22,12 @@ from mcp import types as mt
 from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
+from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE
 from keboola_mcp_server.clients.storage import StorageEventType
 from keboola_mcp_server.config import deployed_sa_token_path
-from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState, get_http_request_or_none
+from keboola_mcp_server.mcp import CONVERSATION_ID, AggregateError, ServerState, get_http_request_or_none
 from keboola_mcp_server.redaction import ExceptionText, contains_secret, exception_text
 
 LOG = logging.getLogger(__name__)
@@ -45,17 +46,24 @@ _UPSTREAM_4XX = (HTTPStatus.REQUEST_TIMEOUT, HTTPStatus.TOO_MANY_REQUESTS)
 _MAX_CAUSE_DEPTH = 5
 
 
-def _is_caller_error(exc: BaseException) -> bool:
+class NotFoundError(ValueError):
+    """The requested object does not exist."""
+
+
+def is_caller_error(exc: BaseException) -> bool:
     """
     True if the tool failed because of the caller's input/credentials rather than a server-side fault.
 
+    An ``AggregateError`` is a caller error only if every aggregated exception is one.
     A pydantic ``ValidationError`` raised inside a tool is deliberately NOT a caller error: the tool's
     arguments are validated before ``tool_errors`` runs, so it means our own models rejected data.
     """
+    if isinstance(exc, AggregateError):
+        return bool(exc.exceptions) and all(is_caller_error(e) for e in exc.exceptions)
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
         return 400 <= status < 500 and status not in _UPSTREAM_4XX
-    return isinstance(exc, jsonschema.ValidationError)
+    return isinstance(exc, (jsonschema.ValidationError, NotFoundError, InvalidArgumentError))
 
 
 class _JsonWrapper(BaseModel):
@@ -318,7 +326,7 @@ def tool_errors(
                 elif recovery_msg:
                     error_msg = f'{e}\nRecovery: {recovery_msg}'
 
-                caller_fault = _is_caller_error(e)
+                caller_fault = is_caller_error(e)
                 original_text = exception_text(e, carries_secret)
                 extra = {
                     'tool_name': func.__name__,

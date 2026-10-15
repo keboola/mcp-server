@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from pydantic_core import to_json
 from starlette.applications import Starlette
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.anonymous_entry import (
@@ -284,6 +285,70 @@ class ForwardSlashMiddleware:
                 scope['path'] = f'{path}/'
 
         await self._app(scope, receive, send)
+
+
+LEGACY_SSE_PATHS = frozenset({'/sse', '/sse/'})
+STREAMABLE_HTTP_PATH = '/mcp/'
+
+
+class LegacySsePathMiddleware:
+    """
+    Serves connector URLs configured before the SSE transport was removed (AI-4033).
+
+    Requests to `/sse` and `/sse/` are routed to the streamable-HTTP endpoint (`/mcp/`), so clients
+    that POST `initialize` first keep working with the same auth and middleware. A legacy SSE client
+    opening its event stream (a GET on `/sse` carrying neither `Mcp-Session-Id` nor `MCP-Protocol-Version`)
+    gets `410 Gone` naming the new URL instead of a standalone stream that never delivers an `endpoint`
+    event.
+
+    Legacy SSE clients cannot be told apart from others by their headers, so this is a trade-off: a
+    streamable-HTTP client that sends neither header also gets the 410. That is possible with the default
+    stateless mode (no session id) and a 2025-03-26-era client, as `MCP-Protocol-Version` was only mandated
+    in 2025-06-18. Its optional GET stream on `/sse` is answered with 410, where `/mcp` answers 405 (the
+    spec's "no GET stream" signal); its POSTs are unaffected.
+    """
+
+    def __init__(self, app: ASGIApp, public_url: str | None = None):
+        self._app = app
+        self._public_url = public_url.rstrip('/') if public_url else None
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope['type'] == 'http' and scope['path'] in LEGACY_SSE_PATHS:
+            if self._is_legacy_sse_handshake(scope):
+                await self._send_gone(scope, receive, send)
+                return
+            scope = dict(scope)
+            scope['path'] = STREAMABLE_HTTP_PATH
+            scope['raw_path'] = STREAMABLE_HTTP_PATH.encode()
+
+        await self._app(scope, receive, send)
+
+    @staticmethod
+    def _is_legacy_sse_handshake(scope: Scope) -> bool:
+        if scope['method'] != 'GET':
+            return False
+        header_names = {name.lower() for name, _ in scope.get('headers', [])}
+        return b'mcp-session-id' not in header_names and b'mcp-protocol-version' not in header_names
+
+    async def _send_gone(self, scope: Scope, receive: Receive, send: Send) -> None:
+        request = Request(scope)
+        if self._public_url:
+            mcp_url = f'{self._public_url}/mcp'
+        else:
+            mcp_url = str(request.url.replace(path=f'{scope.get("root_path", "")}/mcp', query=''))
+        LOG.info(f'Rejecting legacy SSE handshake on {scope["path"]}; user-agent={request.headers.get("user-agent")}')
+        response = JSONResponse(
+            status_code=HTTPStatus.GONE,
+            content={
+                'error': 'sse_transport_removed',
+                'message': (
+                    'The SSE transport is no longer supported. '
+                    f'Reconfigure your MCP client to use the Streamable HTTP endpoint: {mcp_url}'
+                ),
+                'mcp_url': mcp_url,
+            },
+        )
+        await response(scope, receive, send)
 
 
 class KeboolaMcpServer(FastMCP):
