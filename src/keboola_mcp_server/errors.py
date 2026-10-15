@@ -15,6 +15,8 @@ from fastmcp.exceptions import ToolError
 from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.server import middleware as fmw
 from fastmcp.server.middleware import CallNext, MiddlewareContext
+from fastmcp.server.middleware.logging import LoggingMiddleware
+from fastmcp.utilities.exceptions import get_http_status_code, is_timeout_error
 from fastmcp.utilities.types import find_kwarg_by_type
 from mcp import types as mt
 from pydantic import BaseModel, ValidationError
@@ -22,9 +24,11 @@ from pydantic_core import ErrorDetails
 
 from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import KeboolaClient
+from keboola_mcp_server.clients.encryption import REDACTED_SECRET_VALUE
 from keboola_mcp_server.clients.storage import StorageEventType
 from keboola_mcp_server.config import deployed_sa_token_path
 from keboola_mcp_server.mcp import CONVERSATION_ID, AggregateError, ServerState, get_http_request_or_none
+from keboola_mcp_server.redaction import ExceptionText, contains_secret, exception_text
 
 LOG = logging.getLogger(__name__)
 F = TypeVar('F', bound=Callable[..., Any])
@@ -39,6 +43,7 @@ MAX_ARG_VALUE_LEN = 10_000  # Maximum length (bytes) of a single tool argument v
 
 # 4xx statuses that signal throttling/timeouts of the upstream service rather than a caller mistake.
 _UPSTREAM_4XX = (HTTPStatus.REQUEST_TIMEOUT, HTTPStatus.TOO_MANY_REQUESTS)
+_MAX_CAUSE_DEPTH = 5
 
 
 class NotFoundError(ValueError):
@@ -88,21 +93,105 @@ class _JsonWrapper(BaseModel):
         return json.dumps(f'[value truncated, original length: {encoded_bytes} bytes]')
 
 
+class RedactedToolError(ToolError):
+    """A `ToolError` whose text goes to the caller but whose `log_text` is the only text that may be logged."""
+
+    def __init__(self, message: str, *, log_text: str):
+        super().__init__(message)
+        self.log_text = log_text
+
+
+class SanitizedLoggingMiddleware(LoggingMiddleware):
+    """
+    FastMCP's request logging, but a failed request is logged with only the text of its error that is fit for logs:
+    its `log_text` when it has one, else the omission note when the request carries a secret or the message shows a
+    secret key. The second case covers errors that never reach `tool_errors`, such as argument validation failures.
+    """
+
+    def _create_error_message(self, context: MiddlewareContext[Any], start_time: float, error: Exception):
+        message = super()._create_error_message(context, start_time, error)
+        log_text = getattr(error, 'log_text', None)
+        if log_text is None:
+            arguments = getattr(context.message, 'arguments', None)
+            shown = exception_text(error, contains_secret(arguments or {}))
+            log_text = shown.text if shown.omitted else None
+        if log_text is not None:
+            message['error'] = log_text
+        return message
+
+
+def _client_text(exception: BaseException, tool_name: str, text: str) -> str:
+    """The text FastMCP gives the caller for a plain exception: its retry hints for a 429 and a timeout, else the message."""
+    if get_http_status_code(exception) == 429:
+        return 'Rate limited by upstream API, please retry later'
+    if is_timeout_error(exception):
+        return 'Upstream request timed out, please retry'
+    return f'Error calling tool {tool_name!r}: {text}'
+
+
+def _plain_text(exception: BaseException) -> str:
+    try:
+        return str(exception)
+    except Exception:
+        return type(exception).__name__
+
+
+def _bound_arguments(func: Callable, args: tuple, kwargs: dict) -> dict[str, Any]:
+    bound_args = inspect.signature(func).bind(*args, **kwargs)
+    bound_args.apply_defaults()
+    return dict(bound_args.arguments)
+
+
+def _carries_secret(tool_arguments: Mapping[str, Any]) -> bool:
+    """True if the call carries a secret, or if that cannot be told."""
+    try:
+        return contains_secret(
+            {name: _JsonWrapper(data=value).model_dump(mode='json')['data'] for name, value in tool_arguments.items()}
+        )
+    except Exception:
+        return True
+
+
+def _sanitized_exception(exception: BaseException, call_carries_secret: bool, depth: int = 0) -> BaseException:
+    """A copy of the exception chain that keeps every traceback but carries only text fit for telemetry."""
+    sanitized_type = type(type(exception).__name__, (Exception,), {'__module__': type(exception).__module__})
+    sanitized = sanitized_type(
+        getattr(exception, 'log_text', None) or exception_text(exception, call_carries_secret).text
+    )
+    sanitized.with_traceback(exception.__traceback__)
+    cause = exception.__cause__ or (None if exception.__suppress_context__ else exception.__context__)
+    if cause is not None and depth < _MAX_CAUSE_DEPTH:
+        sanitized.__cause__ = _sanitized_exception(cause, call_carries_secret, depth + 1)
+    return sanitized
+
+
+def _sanitized_exc_info(exception: BaseException, call_carries_secret: bool) -> tuple[type, BaseException, Any]:
+    sanitized = _sanitized_exception(exception, call_carries_secret)
+    return type(sanitized), sanitized, sanitized.__traceback__
+
+
+def sanitized_failure(
+    exception: BaseException, arguments: Mapping[str, Any] | None
+) -> tuple[str, tuple[type, BaseException, Any]]:
+    """The text and `exc_info` of a failed tool call that are fit for logs outside of `tool_errors`."""
+    carries_secret = contains_secret(arguments or {})
+    return exception_text(exception, carries_secret).text, _sanitized_exc_info(exception, carries_secret)
+
+
 async def _trigger_event(
-    func: Callable, args: tuple, kwargs: dict, exception: Exception | None, execution_time: float
+    func: Callable,
+    ctx_param_name: str | None,
+    ctx: Any,
+    tool_arguments: Mapping[str, Any],
+    exception: Exception | None,
+    execution_time: float,
+    carries_secret: bool,
 ) -> None:
     # TODO: This is not always correct. In general tool functions can be registered
     #  in the MCP server under different names.
     tool_name = func.__name__
 
-    sig = inspect.signature(func)
-    bound_args = sig.bind(*args, **kwargs)
-    bound_args.apply_defaults()
-
-    ctx_param_name = find_kwarg_by_type(func, Context)
     assert ctx_param_name, f'The tool function {tool_name} must have a "Context" parameter.'
-
-    ctx = bound_args.arguments.get(ctx_param_name)
     assert isinstance(ctx, Context), (
         f'The tool function {tool_name} has invalid "{ctx_param_name}" parameter. '
         f'Expecting instance of "Context", got {type(ctx)}.'
@@ -120,6 +209,16 @@ async def _trigger_event(
     if not user_agent:
         user_agent = ''
 
+    arguments = [
+        {
+            'key': param_name,
+            'value': (
+                json.dumps(REDACTED_SECRET_VALUE) if carries_secret else _JsonWrapper.encode_truncated(param_value)
+            ),
+        }
+        for param_name, param_value in tool_arguments.items()
+    ]
+
     # See # https://github.com/keboola/event-schema/blob/main/schema/ext.keboola.mcp-server-tool.json
     # for the JSON schema describing the 'keboola.mcp-server-tool' component's event params.
     event_params: dict[str, Any] = {
@@ -134,15 +233,14 @@ async def _trigger_event(
         },
         'tool': {
             'name': tool_name,
-            'arguments': [
-                {'key': param_name, 'value': _JsonWrapper.encode_truncated(param_value)}
-                for param_name, param_value in bound_args.arguments.items()
-                if param_name not in [ctx_param_name, 'self', 'cls']
-            ],
+            'arguments': arguments,
         },
     }
     if exception:
-        message = f'MCP tool "{tool_name}" call failed. {type(exception).__name__}: {exception}'
+        message = (
+            f'MCP tool "{tool_name}" call failed. '
+            f'{type(exception).__name__}: {getattr(exception, "log_text", None) or exception_text(exception, carries_secret).text}'
+        )
         event_type: StorageEventType = 'error'
     else:
         message = f'MCP tool "{tool_name}" call succeeded.'
@@ -197,6 +295,12 @@ def tool_errors(
         @wraps(func)
         async def wrapped(*args, **kwargs):
             exception: Exception | None = None
+            ctx_param_name = find_kwarg_by_type(func, Context)
+            bound_arguments = _bound_arguments(func, args, kwargs)
+            tool_arguments = {
+                name: value for name, value in bound_arguments.items() if name not in [ctx_param_name, 'self', 'cls']
+            }
+            carries_secret = _carries_secret(tool_arguments)
             start = time.perf_counter()
 
             try:
@@ -223,6 +327,7 @@ def tool_errors(
                     error_msg = f'{e}\nRecovery: {recovery_msg}'
 
                 caller_fault = is_caller_error(e)
+                original_text = exception_text(e, carries_secret)
                 extra = {
                     'tool_name': func.__name__,
                     'error_type': type(e).__name__,
@@ -231,12 +336,27 @@ def tool_errors(
                 try:
                     if error_msg:
                         raise ToolError(error_msg) from e
-                    else:
-                        raise
+                    if original_text.omitted and not isinstance(e, ToolError):
+                        raise RedactedToolError(
+                            _client_text(e, func.__name__, _plain_text(e)), log_text=original_text.text
+                        ) from e
+                    raise
                 except Exception as e:
+                    shown: ExceptionText = exception_text(e, carries_secret)
+                    if original_text.omitted and not shown.omitted:
+                        shown = original_text
+                    if shown.omitted and isinstance(e, ToolError) and not hasattr(e, 'log_text'):
+                        e.log_text = shown.text
                     if caller_fault:
                         # Routine (expired token, missing object, bad input): no traceback, not an ERROR.
-                        LOG.warning(f'MCP tool "{func.__name__}" call failed: {str(e).splitlines()[0]}', extra=extra)
+                        first_line = next(iter(shown.text.splitlines()), type(e).__name__)
+                        LOG.warning(f'MCP tool "{func.__name__}" call failed: {first_line}', extra=extra)
+                    elif shown.omitted or original_text.omitted:
+                        LOG.error(
+                            f'MCP tool "{func.__name__}" call failed.',
+                            exc_info=_sanitized_exc_info(e, carries_secret),
+                            extra=extra,
+                        )
                     else:
                         LOG.exception(f'MCP tool "{func.__name__}" call failed.', extra=extra)
                     exception = e
@@ -244,10 +364,20 @@ def tool_errors(
 
             finally:
                 try:
-                    await _trigger_event(func, args, kwargs, exception, time.perf_counter() - start)
+                    await _trigger_event(
+                        func,
+                        ctx_param_name,
+                        bound_arguments.get(ctx_param_name),
+                        tool_arguments,
+                        exception,
+                        time.perf_counter() - start,
+                        carries_secret,
+                    )
                 except Exception as e:
                     # Event logging is best-effort telemetry — never fail the tool because of it.
                     # The tool result (success or failure) is already determined before this point.
+                    # The tool's own exception is the context of this one; keep it out of the traceback.
+                    e.__suppress_context__ = True
                     LOG.warning(f'Failed to trigger tool event for "{func.__name__}" tool: {e}', exc_info=True)
 
         return cast(F, wrapped)

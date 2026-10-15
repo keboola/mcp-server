@@ -20,11 +20,12 @@ from keboola_mcp_server.clients.base import InvalidArgumentError
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, NotFoundError, tool_errors
+from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, NotFoundError, RedactedToolError, tool_errors
 from keboola_mcp_server.mcp import AggregateError, ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
 from keboola_mcp_server.tools.validation import RecoverableValidationError, ValidationContext
+from tests.conftest import CANARY, formatted_logs
 
 PYDANTIC_DOCS_VERSION = '.'.join(pydantic.__version__.split('.')[:2])
 
@@ -605,3 +606,271 @@ async def test_event_step_up_header_only_for_own_stack(
     trigger_event.assert_awaited_once()
     storage_client = trigger_event.await_args.args[0]
     assert ('X-Kubernetes-Authorization' in storage_client.raw_client.headers) is expect_step_up_header
+
+
+@pytest.fixture
+def storage_event_post(monkeypatch, mocker, empty_context: Context):
+    """A real storage client with a mocked HTTP POST, so the `[trigger_event]` log line is emitted as well."""
+    monkeypatch.delenv('KBC_KUBERNETES_TOKEN_PATH', raising=False)
+    empty_context.session.state[KeboolaClient.STATE_KEY] = KeboolaClient(
+        storage_api_url='https://connection.keboola.com', legacy_storage_token='fake-token'
+    )
+    return mocker.patch.object(AsyncStorageClient, 'post', autospec=True, return_value={'id': '1'})
+
+
+def _originating_failure():
+    raise RuntimeError(f'Rejected credential {CANARY}')
+
+
+def _raise_jsonschema_error():
+    jsonschema.validate({'#password': CANARY}, {'properties': {'#password': {'type': 'integer'}}})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('parameters', 'failure', 'expected_message', 'expected_value'),
+    [
+        pytest.param(
+            {'#password': CANARY},
+            None,
+            'MCP tool "config_tool" call succeeded.',
+            '"[REDACTED]"',
+            id='success_with_secret',
+        ),
+        pytest.param(
+            {'#password': CANARY},
+            _originating_failure,
+            'ToolError: [details omitted: the call carries a secret]',
+            '"[REDACTED]"',
+            id='failure_with_secret',
+        ),
+        pytest.param(
+            {'#password': 'KBC::ProjectSecure::fake-cipher'},
+            None,
+            'MCP tool "config_tool" call succeeded.',
+            '"[REDACTED]"',
+            id='encrypted_secret',
+        ),
+        pytest.param(
+            {'host': 'db.example.com'},
+            None,
+            'MCP tool "config_tool" call succeeded.',
+            '{"host": "db.example.com"}',
+            id='success_without_secret',
+        ),
+        pytest.param(
+            {'host': 'db.example.com'},
+            lambda: _raise_runtime_error('HTTP 503 for config 7'),
+            'RuntimeError: HTTP 503 for config 7',
+            '{"host": "db.example.com"}',
+            id='failure_without_secret',
+        ),
+        pytest.param(
+            {'host': 'db.example.com'},
+            lambda: _raise_runtime_error(f'Upstream said #PASSWORD={CANARY}'),
+            '[details omitted: the message shows a secret key]',
+            '{"host": "db.example.com"}',
+            id='failure_message_shows_secret_key',
+        ),
+    ],
+)
+async def test_event_of_a_call_is_reported_without_what_could_be_a_secret(
+    parameters, failure, expected_message, expected_value, storage_event_post, caplog, empty_context: Context
+):
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
+        if failure:
+            failure()
+        return 'ok'
+
+    with caplog.at_level(logging.INFO, logger='keboola_mcp_server.clients.storage'):
+        if failure:
+            with pytest.raises((RuntimeError, ToolError)):
+                await config_tool(empty_context, parameters=parameters)
+        else:
+            await config_tool(empty_context, parameters=parameters)
+
+    data = storage_event_post.await_args.kwargs['data']
+    assert expected_message in data['message']
+    assert data['params']['tool']['arguments'] == [{'key': 'parameters', 'value': expected_value}]
+    assert CANARY not in json.dumps(data)
+    assert CANARY not in formatted_logs(caplog)
+
+
+def _raise_runtime_error(message: str):
+    raise RuntimeError(message)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('failure', 'recovery', 'expected_level'),
+    [
+        pytest.param(_raise_jsonschema_error, None, logging.WARNING, id='caller_error'),
+        pytest.param(_originating_failure, None, logging.ERROR, id='internal_error'),
+        pytest.param(_originating_failure, 'Retry later.', logging.ERROR, id='internal_error_with_recovery'),
+    ],
+)
+async def test_failure_logs_of_a_call_with_a_secret_do_not_show_it(
+    failure, recovery, expected_level, storage_event_post, caplog, empty_context: Context
+):
+    @tool_errors(default_recovery=recovery)
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
+        failure()
+        return 'ok'
+
+    with pytest.raises((RuntimeError, ToolError)):
+        await config_tool(empty_context, parameters={'#password': CANARY})
+
+    records = [r for r in caplog.records if r.name == 'keboola_mcp_server.errors']
+    assert [r.levelno for r in records] == [expected_level]
+    assert CANARY not in formatted_logs(caplog)
+    if failure is _originating_failure:
+        assert 'in _originating_failure' in logging.Formatter().format(records[0])
+
+
+@pytest.mark.asyncio
+async def test_internal_failure_of_a_call_without_a_secret_is_logged_as_it_is(
+    storage_event_post, caplog, empty_context: Context
+):
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
+        raise RuntimeError('HTTP 503 for config 7')
+
+    with pytest.raises(RuntimeError):
+        await config_tool(empty_context, parameters={'host': 'db.example.com'})
+
+    record = next(r for r in caplog.records if r.name == 'keboola_mcp_server.errors')
+    assert record.exc_info[0] is RuntimeError
+    assert 'HTTP 503 for config 7' in logging.Formatter().format(record)
+
+
+class _LinkedToolError(ToolError):
+    """Stands for `UrlActionRequiredError`: a `ToolError` subclass that a middleware catches by its type."""
+
+    def __init__(self, message: str, url: str):
+        super().__init__(message)
+        self.url = url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('parameters', 'failure', 'expected_type', 'expected_text', 'expected_log_text'),
+    [
+        pytest.param(
+            {'#password': CANARY},
+            lambda: _raise_runtime_error(f'Rejected {CANARY}'),
+            RedactedToolError,
+            f"Error calling tool 'config_tool': Rejected {CANARY}",
+            '[details omitted: the call carries a secret]',
+            id='secret_in_call',
+        ),
+        pytest.param(
+            {'host': 'db.example.com'},
+            lambda: _raise_runtime_error(f'Rejected {CANARY}'),
+            RuntimeError,
+            f'Rejected {CANARY}',
+            None,
+            id='no_secret',
+        ),
+        pytest.param(
+            {'host': 'db.example.com'},
+            lambda: _raise_runtime_error(f'Upstream said #password: {CANARY}'),
+            RedactedToolError,
+            "Error calling tool 'config_tool': Upstream said #password: " + CANARY,
+            '[details omitted: the message shows a secret key]',
+            id='message_shows_secret_key',
+        ),
+        pytest.param(
+            {'#password': CANARY},
+            lambda: _raise_linked_tool_error(f'Enable it first, {CANARY}'),
+            _LinkedToolError,
+            f'Enable it first, {CANARY}',
+            '[details omitted: the call carries a secret]',
+            id='tool_error_keeps_its_type',
+        ),
+        pytest.param(
+            {'host': 'db.example.com'},
+            lambda: _raise_linked_tool_error('Enable it first'),
+            _LinkedToolError,
+            'Enable it first',
+            None,
+            id='tool_error_without_secret_is_untouched',
+        ),
+    ],
+)
+async def test_failure_of_a_call_is_raised_so_that_only_safe_text_can_be_logged(
+    parameters, failure, expected_type, expected_text, expected_log_text, storage_event_post, empty_context: Context
+):
+    """FastMCP logs a plain exception with its message and traceback, and a `ToolError` without them."""
+
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
+        failure()
+        return 'ok'
+
+    with pytest.raises(Exception) as exc_info:
+        await config_tool(empty_context, parameters=parameters)
+
+    assert type(exc_info.value) is expected_type
+    assert str(exc_info.value) == expected_text
+    assert getattr(exc_info.value, 'log_text', None) == expected_log_text
+    if expected_type is _LinkedToolError:
+        assert exc_info.value.url == 'https://example.com/enable'
+
+
+def _raise_linked_tool_error(message: str):
+    raise _LinkedToolError(message, url='https://example.com/enable')
+
+
+@pytest.mark.asyncio
+async def test_event_post_failure_does_not_log_the_tool_exception_text(
+    storage_event_post, caplog, empty_context: Context
+):
+    storage_event_post.side_effect = RuntimeError('storage down')
+
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
+        raise RuntimeError(f'Rejected credential {CANARY}')
+
+    with pytest.raises((RuntimeError, ToolError)):
+        await config_tool(empty_context, parameters={'#password': CANARY})
+
+    assert [r for r in caplog.records if 'Failed to trigger tool event' in r.getMessage()]
+    assert CANARY not in formatted_logs(caplog)
+
+
+class _UnprintableError(Exception):
+    def __str__(self) -> str:
+        raise RuntimeError('str failed')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('parameters', 'expected_in_message'),
+    [({'#password': CANARY}, '[details omitted'), ({'host': 'db.example.com'}, '[details omitted')],
+    ids=['secret', 'no_secret'],
+)
+async def test_failure_with_unprintable_exception_is_still_raised(
+    parameters, expected_in_message, storage_event_post, empty_context
+):
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
+        raise _UnprintableError()
+
+    with pytest.raises(Exception) as exc_info:
+        await config_tool(empty_context, parameters=parameters)
+
+    assert isinstance(exc_info.value, _UnprintableError | ToolError)
+    assert expected_in_message in storage_event_post.await_args.kwargs['data']['message']
+
+
+@pytest.mark.asyncio
+async def test_unserializable_argument_counts_as_carrying_a_secret(storage_event_post, empty_context: Context):
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: object = None) -> str:
+        return 'ok'
+
+    await config_tool(empty_context, parameters=object())
+
+    data = storage_event_post.await_args.kwargs['data']
+    assert data['params']['tool']['arguments'] == [{'key': 'parameters', 'value': '"[REDACTED]"'}]
