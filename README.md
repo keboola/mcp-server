@@ -147,7 +147,10 @@ column-level policy are not listed, and a row-governed table shows no row count 
 query was restricted by is only written to the server log. Because policies live in the metastore,
 regular members' policies are read with the server's own Kubernetes ServiceAccount (step-up); a
 server where that step-up is unavailable (including a locally run one) refuses the query rather than returning it
-unfiltered.
+unfiltered. The metadata tools need the same policies to hide what the user cannot query (`get_tables`, `get_buckets`
+and table `search` in a project with the feature), so on such a server they fail with the same error instead of listing
+columns, counts or sizes a policy would have hidden: for storage discovery in a project with row-level security use a
+deployed server, or a token of a project without the feature.
 
 The identity `query_data` filters by is the caller's own OAuth login (an email) — there is no header
 or tool argument to set it. Column names in a policy are matched exactly (case-sensitively), as

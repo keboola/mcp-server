@@ -70,7 +70,7 @@ async def load_policy_rules(client: KeboolaClient, *, dialect: str) -> tuple[Rls
         # Without the step-up the metastore shows a regular member no policies at all, which would read
         # as "nothing is governed" and run the query unfiltered. Refuse instead.
         raise ValueError(
-            'RLS: the security policies can only be evaluated by a deployed MCP server, so the query is refused.'
+            'RLS: the security policies can only be evaluated by a deployed MCP server, so the request is refused.'
         )
     metastore = client.step_up_metastore_client(kubernetes_token_path)
     rls_objects, cls_objects = await asyncio.gather(

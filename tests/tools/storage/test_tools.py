@@ -2101,6 +2101,17 @@ class TestHideClsRestrictedColumns:
         assert [c.name for c in table.columns] == expected_columns
         assert table.primary_key == expected_pk
 
+    async def test_a_server_that_cannot_read_the_policies_refuses_instead_of_listing_everything(self, setup) -> None:
+        ctx, client, loader = setup
+        loader.side_effect = ValueError('RLS: the security policies can only be evaluated by a deployed MCP server')
+        table = self._table('in.c-rls_test.orders')
+
+        with pytest.raises(ValueError, match='deployed MCP server'):
+            await _apply_metadata_restrictions(ctx, client, WorkspaceManager.from_state(ctx.session.state), [table])
+
+        # Nothing was filtered, and nothing is returned to the caller: the error propagates out of get_tables.
+        assert len(table.columns) == 5
+
     async def test_ungoverned_table_is_untouched(self, setup) -> None:
         ctx, client, _ = setup
         ctx.session.state[OAUTH_USER_EMAIL_KEY] = 'member@x.com'
