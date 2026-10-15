@@ -337,8 +337,7 @@ def _redact_value(value: Any, found: set[str]) -> Any:
         secret_path = _is_secret_path(value.get('path'))
         redacted: dict[Any, Any] = {}
         for key, item in [*getattr(value, 'shadowed', ()), *value.items()]:
-            masked_key = is_secret_key(key)
-            if masked_key or (secret_path and key in _PATH_UPDATE_VALUE_KEYS):
+            if is_secret_key(key) or (secret_path and key in _PATH_UPDATE_VALUE_KEYS):
                 _ensure_examinable(item)
                 _collect_leaves(item, found)
                 redacted[key] = REDACTED_SECRET_VALUE
