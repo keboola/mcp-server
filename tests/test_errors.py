@@ -19,7 +19,7 @@ from mcp.types import ClientCapabilities, Implementation, InitializeRequestParam
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, tool_errors
+from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, RedactedToolError, tool_errors
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
@@ -669,7 +669,7 @@ def _formatted_logs(caplog: pytest.LogCaptureFixture) -> str:
         pytest.param(
             {'host': 'db.example.com'},
             lambda: _raise_runtime_error(f'Upstream said #PASSWORD={CANARY}'),
-            'RuntimeError: [details omitted: the message shows a secret key]',
+            '[details omitted: the message shows a secret key]',
             '{"host": "db.example.com"}',
             id='failure_message_shows_secret_key',
         ),
@@ -745,28 +745,82 @@ async def test_internal_failure_of_a_call_without_a_secret_is_logged_as_it_is(
     assert 'HTTP 503 for config 7' in logging.Formatter().format(record)
 
 
+class _LinkedToolError(ToolError):
+    """Stands for `UrlActionRequiredError`: a `ToolError` subclass that a middleware catches by its type."""
+
+    def __init__(self, message: str, url: str):
+        super().__init__(message)
+        self.url = url
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('parameters', 'expected_type'),
-    [({'#password': CANARY}, ToolError), ({'host': 'db.example.com'}, RuntimeError)],
-    ids=['secret_in_call', 'no_secret'],
+    ('parameters', 'failure', 'expected_type', 'expected_text', 'expected_log_text'),
+    [
+        pytest.param(
+            {'#password': CANARY},
+            lambda: _raise_runtime_error(f'Rejected {CANARY}'),
+            RedactedToolError,
+            f"Error calling tool 'config_tool': Rejected {CANARY}",
+            '[details omitted: the call carries a secret]',
+            id='secret_in_call',
+        ),
+        pytest.param(
+            {'host': 'db.example.com'},
+            lambda: _raise_runtime_error(f'Rejected {CANARY}'),
+            RuntimeError,
+            f'Rejected {CANARY}',
+            None,
+            id='no_secret',
+        ),
+        pytest.param(
+            {'host': 'db.example.com'},
+            lambda: _raise_runtime_error(f'Upstream said #password: {CANARY}'),
+            RedactedToolError,
+            "Error calling tool 'config_tool': [details omitted: the message shows a secret key]",
+            '[details omitted: the message shows a secret key]',
+            id='message_shows_secret_key',
+        ),
+        pytest.param(
+            {'#password': CANARY},
+            lambda: _raise_linked_tool_error(f'Enable it first, {CANARY}'),
+            _LinkedToolError,
+            f'Enable it first, {CANARY}',
+            '[details omitted: the call carries a secret]',
+            id='tool_error_keeps_its_type',
+        ),
+        pytest.param(
+            {'host': 'db.example.com'},
+            lambda: _raise_linked_tool_error('Enable it first'),
+            _LinkedToolError,
+            'Enable it first',
+            None,
+            id='tool_error_without_secret_is_untouched',
+        ),
+    ],
 )
-async def test_failure_of_a_call_with_a_secret_is_raised_as_a_tool_error(
-    parameters, expected_type, storage_event_post, empty_context: Context
+async def test_failure_of_a_call_is_raised_so_that_only_safe_text_can_be_logged(
+    parameters, failure, expected_type, expected_text, expected_log_text, storage_event_post, empty_context: Context
 ):
     """FastMCP logs a plain exception with its message and traceback, and a `ToolError` without them."""
 
     @tool_errors()
     async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
-        raise RuntimeError(f'Rejected {CANARY}')
+        failure()
+        return 'ok'
 
     with pytest.raises(Exception) as exc_info:
         await config_tool(empty_context, parameters=parameters)
 
     assert type(exc_info.value) is expected_type
-    assert f'Rejected {CANARY}' in str(exc_info.value)
-    if expected_type is ToolError:
-        assert str(exc_info.value) == f"Error calling tool 'config_tool': Rejected {CANARY}"
+    assert str(exc_info.value) == expected_text
+    assert getattr(exc_info.value, 'log_text', None) == expected_log_text
+    if expected_type is _LinkedToolError:
+        assert exc_info.value.url == 'https://example.com/enable'
+
+
+def _raise_linked_tool_error(message: str):
+    raise _LinkedToolError(message, url='https://example.com/enable')
 
 
 @pytest.mark.asyncio
@@ -813,4 +867,89 @@ async def test_unserializable_argument_counts_as_carrying_a_secret(storage_event
 
     await config_tool(empty_context, parameters=object())
 
-    assert storage_event_post.await_count <= 1
+    data = storage_event_post.await_args.kwargs['data']
+    assert data['params']['tool']['arguments'] == [{'key': 'parameters', 'value': '"[REDACTED]"'}]
+
+
+class TestFailingCallsThroughFastMcp:
+    """The same failures as above, through a real server with its middleware, checking every logger."""
+
+    @pytest.fixture
+    def mcp_server(self, mocker) -> FastMCP:
+        mocker.patch(
+            'keboola_mcp_server.clients.base.KeboolaServiceClient.get',
+            return_value={'owner': {'id': '123'}},
+        )
+        mocker.patch('keboola_mcp_server.clients.base.KeboolaServiceClient.post', return_value={'id': '1'})
+        config = Config.from_dict(
+            {
+                'storage_token': '123-test-storage-token',
+                'storage_api_url': 'https://connection.keboola.com',
+                'transport': 'stdio',
+            }
+        )
+        server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
+        assert isinstance(server, FastMCP)
+        for tool in (self.edit_config, self.call_upstream, self.fail_plainly):
+            server.add_tool(FunctionTool.from_function(tool))
+        return server
+
+    @staticmethod
+    @tool_errors()
+    async def edit_config(_ctx: Context, parameter_updates: list[dict[str, str]]) -> str:
+        raise ValueError(f'Search string "{CANARY}" not found in path "api.#token"')
+
+    @staticmethod
+    @tool_errors()
+    async def call_upstream(_ctx: Context, name: str) -> str:
+        raise RuntimeError(f'Upstream said #password: {CANARY}')
+
+    @staticmethod
+    @tool_errors()
+    async def fail_plainly(_ctx: Context, name: str) -> str:
+        raise RuntimeError('HTTP 503 for config 7')
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('tool', 'arguments', 'expected_client_text'),
+        [
+            pytest.param(
+                'edit_config',
+                {
+                    'parameter_updates': [
+                        {'op': 'str_replace', 'path': 'api.#token', 'search_for': CANARY, 'replace_with': 'x'}
+                    ]
+                },
+                f'Search string "{CANARY}" not found in path "api.#token"',
+                id='call_carrying_a_secret',
+            ),
+            pytest.param(
+                'call_upstream',
+                {'name': 'db'},
+                '[details omitted: the message shows a secret key]',
+                id='message_showing_a_secret_key',
+            ),
+        ],
+    )
+    async def test_no_logger_shows_the_secret(
+        self, tool: str, arguments: dict, expected_client_text: str, caplog, mcp_server: FastMCP
+    ):
+        caplog.set_level(logging.DEBUG)
+
+        async with Client(mcp_server) as client:
+            with pytest.raises(ToolError) as excinfo:
+                await client.call_tool(tool, arguments=arguments)
+
+        assert expected_client_text in str(excinfo.value)
+        assert {r.name for r in caplog.records} >= {'keboola_mcp_server.errors', 'fastmcp.middleware.logging'}
+        assert CANARY not in _formatted_logs(caplog)
+
+    @pytest.mark.asyncio
+    async def test_failure_without_a_secret_is_logged_as_it_is(self, caplog, mcp_server: FastMCP):
+        caplog.set_level(logging.DEBUG)
+
+        async with Client(mcp_server) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool('fail_plainly', arguments={'name': 'db'})
+
+        assert 'HTTP 503 for config 7' in _formatted_logs(caplog)
