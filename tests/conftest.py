@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from fastmcp import Context
 from fastmcp.server.context import FastMCPRequestContext
@@ -15,6 +17,13 @@ from keboola_mcp_server.clients.sync_actions import SyncActionsClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import CONVERSATION_ID, ServerState
 from keboola_mcp_server.workspace import WorkspaceManager
+
+CANARY = 'canary-s3cr3t-ai4029'
+
+
+def formatted_logs(caplog: pytest.LogCaptureFixture) -> str:
+    formatter = logging.Formatter()
+    return '\n'.join(formatter.format(record) for record in caplog.records)
 
 
 @pytest.fixture
