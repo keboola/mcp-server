@@ -9,7 +9,7 @@ from typing import Generic, TypeVar
 import httpx
 from pydantic import BaseModel, Field
 
-from keboola_mcp_server.errors import _is_caller_error
+from keboola_mcp_server.errors import is_caller_error
 from keboola_mcp_server.mcp import AggregateError
 
 LOG = logging.getLogger(__name__)
@@ -39,6 +39,19 @@ def _short_reason(exc: BaseException) -> str:
     else:
         reason = next(iter(str(exc).splitlines()), '') or type(exc).__name__
     return reason if len(reason) <= _MAX_REASON_LEN else f'{reason[: _MAX_REASON_LEN - 3]}...'
+
+
+class PartialLookupOutput(BaseModel):
+    """The IDs of a batch lookup that could not be retrieved; shared by the output of every batch lookup tool."""
+
+    not_found: list[LookupFailure] | None = Field(
+        default=None,
+        description='Requested IDs that do not exist or are not accessible, with reasons. Omitted if none.',
+    )
+    errors: list[LookupFailure] | None = Field(
+        default=None,
+        description='Requested IDs that failed with a server-side error (may be retried), with reasons. Omitted if none.',
+    )
 
 
 @dataclass(frozen=True)
@@ -76,7 +89,7 @@ def unwrap_lookup_results(
         if isinstance(result, BaseException):
             exceptions.append(result)
             failure = LookupFailure(id=item_id, reason=_short_reason(result))
-            if _is_caller_error(result):
+            if is_caller_error(result):
                 not_found.append(failure)
             else:
                 errors.append(failure)

@@ -18,7 +18,7 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
 )
 from keboola_mcp_server.clients.storage import APIFlowResponse, JsonDict
-from keboola_mcp_server.errors import NotFoundError, _is_caller_error
+from keboola_mcp_server.errors import NotFoundError, is_caller_error
 from keboola_mcp_server.mcp import process_concurrently
 from keboola_mcp_server.tools.components.utils import fetch_component
 from keboola_mcp_server.tools.flow.model import (
@@ -243,7 +243,7 @@ async def resolve_flow_by_id(client: KeboolaClient, flow_id: str) -> tuple[APIFl
             failures.append(e)
 
     if failures:
-        raise next((f for f in failures if not _is_caller_error(f)), failures[0])
+        raise next((f for f in failures if not is_caller_error(f)), failures[0])
     raise NotFoundError(f'Flow configuration "{flow_id}" not found')
 
 

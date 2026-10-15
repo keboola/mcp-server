@@ -45,7 +45,7 @@ class NotFoundError(ValueError):
     """The requested object does not exist."""
 
 
-def _is_caller_error(exc: BaseException) -> bool:
+def is_caller_error(exc: BaseException) -> bool:
     """
     True if the tool failed because of the caller's input/credentials rather than a server-side fault.
 
@@ -54,7 +54,7 @@ def _is_caller_error(exc: BaseException) -> bool:
     arguments are validated before ``tool_errors`` runs, so it means our own models rejected data.
     """
     if isinstance(exc, AggregateError):
-        return bool(exc.exceptions) and all(_is_caller_error(e) for e in exc.exceptions)
+        return bool(exc.exceptions) and all(is_caller_error(e) for e in exc.exceptions)
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
         return 400 <= status < 500 and status not in _UPSTREAM_4XX
@@ -222,7 +222,7 @@ def tool_errors(
                 elif recovery_msg:
                     error_msg = f'{e}\nRecovery: {recovery_msg}'
 
-                caller_fault = _is_caller_error(e)
+                caller_fault = is_caller_error(e)
                 extra = {
                     'tool_name': func.__name__,
                     'error_type': type(e).__name__,

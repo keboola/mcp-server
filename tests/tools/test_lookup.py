@@ -293,22 +293,33 @@ async def test_get_flows_schedule_failure_is_reported_per_flow(mocker: MockerFix
 
 
 @pytest.mark.asyncio
-async def test_get_jobs_log_failure_is_reported_per_job(mocker: MockerFixture, mcp_context_client: Context):
-    """A failing log request for one job must not discard the jobs that were retrieved completely."""
+@pytest.mark.parametrize('status', [403, 404, 503], ids=['forbidden', 'not_found', 'server_error'])
+@pytest.mark.parametrize('job_ids', [['a', 'b'], ['b']], ids=['two_jobs', 'only_job'])
+async def test_get_jobs_log_failure_keeps_the_job_without_logs(
+    status: int,
+    job_ids: list[str],
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+    caplog: pytest.LogCaptureFixture,
+):
+    """A job that exists is returned with empty logs when its events cannot be read, whatever the failure."""
     client = KeboolaClient.from_state(mcp_context_client.session.state)
 
     async def list_events(job_id: str, limit: int) -> list[dict[str, Any]]:
-        _outcome({'a': None, 'b': 503}, job_id)
+        _outcome({'a': None, 'b': status}, job_id)
         return [{'message': 'Started', 'type': 'info', 'created': '2024-01-01T00:00:01Z'}]
 
     client.storage_client.list_events = mocker.AsyncMock(side_effect=list_events)
 
-    result, found = await _run_get_jobs(mocker, mcp_context_client, {'a': None, 'b': None}, include_logs=True)
+    result, found = await _run_get_jobs(mocker, mcp_context_client, dict.fromkeys(job_ids), include_logs=True)
 
-    assert found == ['a']
-    assert [event.message for event in result.jobs[0].logs] == ['Started']
+    assert found == job_ids
+    logs = {job.id: job.logs for job in result.jobs}
+    assert logs['b'] == []
+    assert ('a' not in logs) or [event.message for event in logs['a']] == ['Started']
     assert result.not_found is None
-    assert [f.id for f in result.errors] == ['b']
+    assert result.errors is None
+    assert any('Failed to fetch logs for job b' in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.parametrize(

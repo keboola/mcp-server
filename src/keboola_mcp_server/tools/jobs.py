@@ -13,7 +13,7 @@ from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, ToonCompactFunctionTool, process_concurrently
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.scope import ProjectIdArg
-from keboola_mcp_server.tools.lookup import LookupFailure, unwrap_lookup_results
+from keboola_mcp_server.tools.lookup import PartialLookupOutput, unwrap_lookup_results
 
 LOG = logging.getLogger(__name__)
 
@@ -174,18 +174,10 @@ class GetJobsListOutput(BaseModel):
     links: list[Link] = Field(..., description='Links relevant to the jobs listing.')
 
 
-class GetJobsDetailOutput(BaseModel):
+class GetJobsDetailOutput(PartialLookupOutput):
     """Output of get_jobs tool when retrieving specific job_ids."""
 
     jobs: list[JobDetail] = Field(..., description='List of jobs with full details.')
-    not_found: list[LookupFailure] | None = Field(
-        default=None,
-        description='Requested IDs that do not exist or are not accessible, with reasons. Omitted if none.',
-    )
-    errors: list[LookupFailure] | None = Field(
-        default=None,
-        description='Requested IDs that failed with a server-side error (may be retried), with reasons. Omitted if none.',
-    )
 
 
 GetJobsOutput = GetJobsListOutput | GetJobsDetailOutput
@@ -398,7 +390,11 @@ async def get_jobs(
             LOG.info(f'Found job details for {job_id}.' if raw_job else f'Job {job_id} not found.')
             job = JobDetail.model_validate(raw_job | {'links': links})
             if include_logs:
-                await fetch_logs(job)
+                try:
+                    await fetch_logs(job)
+                except Exception as e:
+                    LOG.warning(f'Failed to fetch logs for job {job_id}: {e}')
+                    job.logs = []
             return job
 
         results = await process_concurrently(job_ids, fetch_job_detail)

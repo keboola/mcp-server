@@ -45,7 +45,7 @@ from keboola_mcp_server.clients.encryption import redact_secrets
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ComponentType, ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
-from keboola_mcp_server.tools.lookup import LookupFailure
+from keboola_mcp_server.tools.lookup import PartialLookupOutput
 
 # ============================================================================
 # TYPE DEFINITIONS
@@ -201,19 +201,11 @@ class Component(BaseModel):
         )
 
 
-class GetComponentsOutput(BaseModel):
+class GetComponentsOutput(PartialLookupOutput):
     """Output of the get_components tool."""
 
     components: list[Component] = Field(description='The components')
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
-    not_found: list[LookupFailure] | None = Field(
-        default=None,
-        description='Requested IDs that do not exist or are not accessible, with reasons. Omitted if none.',
-    )
-    errors: list[LookupFailure] | None = Field(
-        default=None,
-        description='Requested IDs that failed with a server-side error (may be retried), with reasons. Omitted if none.',
-    )
 
 
 # ============================================================================
@@ -870,16 +862,8 @@ class GetConfigsListOutput(BaseModel, frozen=True):
     )
 
 
-class GetConfigsDetailOutput(BaseModel, frozen=True):
+class GetConfigsDetailOutput(PartialLookupOutput, frozen=True):
     configs: list[Configuration] = Field(description='List of configurations')
-    not_found: list[LookupFailure] | None = Field(
-        default=None,
-        description='Requested IDs that do not exist or are not accessible, with reasons. Omitted if none.',
-    )
-    errors: list[LookupFailure] | None = Field(
-        default=None,
-        description='Requested IDs that failed with a server-side error (may be retried), with reasons. Omitted if none.',
-    )
 
 
 GetConfigsOutput = GetConfigsListOutput | GetConfigsDetailOutput
