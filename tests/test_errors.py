@@ -841,7 +841,7 @@ class _UnprintableError(Exception):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ('parameters', 'expected_in_message'),
-    [({'#password': CANARY}, '[details omitted'), ({'host': 'db.example.com'}, '_UnprintableError')],
+    [({'#password': CANARY}, '[details omitted'), ({'host': 'db.example.com'}, '[details omitted')],
     ids=['secret', 'no_secret'],
 )
 async def test_failure_with_unprintable_exception_is_still_raised(

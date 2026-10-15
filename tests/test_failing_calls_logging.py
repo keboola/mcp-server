@@ -7,11 +7,16 @@ from fastmcp import Client, Context, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware.logging import LoggingMiddleware
 from fastmcp.tools import FunctionTool
+from pydantic import BaseModel
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.errors import SanitizedLoggingMiddleware, tool_errors
 from keboola_mcp_server.server import create_server
 from tests.conftest import CANARY, formatted_logs
+
+
+class _ParameterModel(BaseModel):
+    parameters: dict[str, int]
 
 
 class TestFailingCallsThroughFastMcp:
@@ -33,7 +38,14 @@ class TestFailingCallsThroughFastMcp:
         )
         server = create_server(config, runtime_info=ServerRuntimeInfo(transport='stdio'))
         assert isinstance(server, FastMCP)
-        for tool in (self.edit_config, self.call_upstream, self.fail_plainly, self.validated, self.rate_limited):
+        for tool in (
+            self.edit_config,
+            self.call_upstream,
+            self.fail_plainly,
+            self.validated,
+            self.rate_limited,
+            self.fail_validating,
+        ):
             server.add_tool(FunctionTool.from_function(tool))
         return server
 
@@ -59,6 +71,12 @@ class TestFailingCallsThroughFastMcp:
 
     @staticmethod
     @tool_errors()
+    async def fail_validating(_ctx: Context, name: str) -> str:
+        _ParameterModel.model_validate({'parameters': {'db': {'#pw': CANARY, 'x': 1}}})
+        return 'ok'
+
+    @staticmethod
+    @tool_errors()
     async def rate_limited(_ctx: Context, kind: str, parameters: dict | None = None) -> str:
         if kind == 'timeout':
             raise httpx.ReadTimeout('read timed out')
@@ -75,6 +93,17 @@ class TestFailingCallsThroughFastMcp:
                 await client.call_tool('validated', arguments={'parameters': {'#pw': CANARY}})
 
         assert any('validated' in r.getMessage() for r in caplog.records)
+        assert CANARY not in formatted_logs(caplog)
+
+    @pytest.mark.asyncio
+    async def test_prettified_validation_error_showing_a_secret_is_not_logged(self, caplog, mcp_server: FastMCP):
+        caplog.set_level(logging.DEBUG)
+
+        async with Client(mcp_server) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool('fail_validating', arguments={'name': 'db'})
+
+        assert {r.name for r in caplog.records} >= {'keboola_mcp_server.errors', 'fastmcp.middleware.logging'}
         assert CANARY not in formatted_logs(caplog)
 
     @pytest.mark.asyncio

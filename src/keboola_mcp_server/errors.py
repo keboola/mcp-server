@@ -147,7 +147,9 @@ def _carries_secret(tool_arguments: Mapping[str, Any]) -> bool:
 def _sanitized_exception(exception: BaseException, call_carries_secret: bool, depth: int = 0) -> BaseException:
     """A copy of the exception chain that keeps every traceback but carries only text fit for telemetry."""
     sanitized_type = type(type(exception).__name__, (Exception,), {'__module__': type(exception).__module__})
-    sanitized = sanitized_type(exception_text(exception, call_carries_secret).text)
+    sanitized = sanitized_type(
+        getattr(exception, 'log_text', None) or exception_text(exception, call_carries_secret).text
+    )
     sanitized.with_traceback(exception.__traceback__)
     cause = exception.__cause__ or (None if exception.__suppress_context__ else exception.__context__)
     if cause is not None and depth < _MAX_CAUSE_DEPTH:
@@ -229,7 +231,7 @@ async def _trigger_event(
     if exception:
         message = (
             f'MCP tool "{tool_name}" call failed. '
-            f'{type(exception).__name__}: {exception_text(exception, carries_secret).text}'
+            f'{type(exception).__name__}: {getattr(exception, "log_text", None) or exception_text(exception, carries_secret).text}'
         )
         event_type: StorageEventType = 'error'
     else:
@@ -333,6 +335,8 @@ def tool_errors(
                     raise
                 except Exception as e:
                     shown: ExceptionText = exception_text(e, carries_secret)
+                    if original_text.omitted and not shown.omitted:
+                        shown = original_text
                     if shown.omitted and isinstance(e, ToolError) and not hasattr(e, 'log_text'):
                         e.log_text = shown.text
                     if caller_fault:
