@@ -134,11 +134,6 @@ def _bound_arguments(func: Callable, args: tuple, kwargs: dict) -> dict[str, Any
     return dict(bound_args.arguments)
 
 
-def _tool_arguments(func: Callable, bound_arguments: Mapping[str, Any]) -> dict[str, Any]:
-    ctx_param_name = find_kwarg_by_type(func, Context)
-    return {name: value for name, value in bound_arguments.items() if name not in [ctx_param_name, 'self', 'cls']}
-
-
 def _carries_secret(tool_arguments: Mapping[str, Any]) -> bool:
     """True if the call carries a secret, or if that cannot be told."""
     try:
@@ -175,7 +170,9 @@ def sanitized_failure(
 
 async def _trigger_event(
     func: Callable,
-    bound_arguments: Mapping[str, Any],
+    ctx_param_name: str | None,
+    ctx: Any,
+    tool_arguments: Mapping[str, Any],
     exception: Exception | None,
     execution_time: float,
     carries_secret: bool,
@@ -184,10 +181,7 @@ async def _trigger_event(
     #  in the MCP server under different names.
     tool_name = func.__name__
 
-    ctx_param_name = find_kwarg_by_type(func, Context)
     assert ctx_param_name, f'The tool function {tool_name} must have a "Context" parameter.'
-
-    ctx = bound_arguments.get(ctx_param_name)
     assert isinstance(ctx, Context), (
         f'The tool function {tool_name} has invalid "{ctx_param_name}" parameter. '
         f'Expecting instance of "Context", got {type(ctx)}.'
@@ -212,7 +206,7 @@ async def _trigger_event(
                 json.dumps(REDACTED_SECRET_VALUE) if carries_secret else _JsonWrapper.encode_truncated(param_value)
             ),
         }
-        for param_name, param_value in _tool_arguments(func, bound_arguments).items()
+        for param_name, param_value in tool_arguments.items()
     ]
 
     # See # https://github.com/keboola/event-schema/blob/main/schema/ext.keboola.mcp-server-tool.json
@@ -291,8 +285,12 @@ def tool_errors(
         @wraps(func)
         async def wrapped(*args, **kwargs):
             exception: Exception | None = None
+            ctx_param_name = find_kwarg_by_type(func, Context)
             bound_arguments = _bound_arguments(func, args, kwargs)
-            carries_secret = _carries_secret(_tool_arguments(func, bound_arguments))
+            tool_arguments = {
+                name: value for name, value in bound_arguments.items() if name not in [ctx_param_name, 'self', 'cls']
+            }
+            carries_secret = _carries_secret(tool_arguments)
             start = time.perf_counter()
 
             try:
@@ -354,7 +352,15 @@ def tool_errors(
 
             finally:
                 try:
-                    await _trigger_event(func, bound_arguments, exception, time.perf_counter() - start, carries_secret)
+                    await _trigger_event(
+                        func,
+                        ctx_param_name,
+                        bound_arguments.get(ctx_param_name),
+                        tool_arguments,
+                        exception,
+                        time.perf_counter() - start,
+                        carries_secret,
+                    )
                 except Exception as e:
                     # Event logging is best-effort telemetry — never fail the tool because of it.
                     # The tool result (success or failure) is already determined before this point.
