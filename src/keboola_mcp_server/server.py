@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastmcp import FastMCP
-from fastmcp.server.middleware.logging import LoggingMiddleware
 from pydantic import AliasChoices, BaseModel, Field
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
@@ -25,7 +24,7 @@ from keboola_mcp_server.config import (
     resolve_mcp_server_url,
 )
 from keboola_mcp_server.elicitation import UrlElicitationMiddleware
-from keboola_mcp_server.errors import ValidationErrorMiddleware
+from keboola_mcp_server.errors import SanitizedLoggingMiddleware, ValidationErrorMiddleware
 from keboola_mcp_server.mcp import KeboolaMcpServer, ServerState, SessionStateMiddleware, ToolsFilteringMiddleware
 from keboola_mcp_server.multiproject import MultiProjectMiddleware
 from keboola_mcp_server.oauth import SimpleOAuthProvider, UntrustedAuthorizeRedirectMiddleware
@@ -395,7 +394,7 @@ def create_server(
         lifespan=create_keboola_lifespan(server_state, oauth_provider),
         auth=oauth_provider,
         middleware=[
-            LoggingMiddleware(log_level=logging.DEBUG),
+            SanitizedLoggingMiddleware(log_level=logging.DEBUG),
             SessionStateMiddleware(),
             ToolAuthorizationMiddleware(),
             ToolDeferralMiddleware(),

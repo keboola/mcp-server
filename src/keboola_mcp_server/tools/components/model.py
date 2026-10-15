@@ -45,6 +45,7 @@ from keboola_mcp_server.clients.encryption import redact_secrets
 from keboola_mcp_server.clients.storage import ComponentAPIResponse, ComponentType, ConfigurationAPIResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
+from keboola_mcp_server.tools.lookup import PartialLookupOutput
 
 # ============================================================================
 # TYPE DEFINITIONS
@@ -200,7 +201,7 @@ class Component(BaseModel):
         )
 
 
-class GetComponentsOutput(BaseModel):
+class GetComponentsOutput(PartialLookupOutput):
     """Output of the get_components tool."""
 
     components: list[Component] = Field(description='The components')
@@ -861,7 +862,7 @@ class GetConfigsListOutput(BaseModel, frozen=True):
     )
 
 
-class GetConfigsDetailOutput(BaseModel, frozen=True):
+class GetConfigsDetailOutput(PartialLookupOutput, frozen=True):
     configs: list[Configuration] = Field(description='List of configurations')
 
 

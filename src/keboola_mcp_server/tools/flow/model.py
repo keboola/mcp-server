@@ -13,6 +13,7 @@ from keboola_mcp_server.clients.storage import APIFlowResponse
 from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.flow.scheduler_model import SchedulesOutput
+from keboola_mcp_server.tools.lookup import PartialLookupOutput
 
 LOG = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class GetFlowsListOutput(BaseModel, frozen=True):
     links: list[Link] = Field(description='The list of links relevant to the flows.')
 
 
-class GetFlowsDetailOutput(BaseModel, frozen=True):
+class GetFlowsDetailOutput(PartialLookupOutput, frozen=True):
     """Output of get_flows tool when retrieving specific flow_ids."""
 
     flows: list['Flow'] = Field(description='The retrieved flow configurations with full details.')
@@ -456,6 +457,10 @@ class Flow(BaseModel):
     created: str | None = Field(None, description='Creation timestamp')
     updated: str | None = Field(None, description='Last update timestamp')
     schedules: SchedulesOutput | None = Field(default=None, description='List of schedules for this flow')
+    schedules_error: str | None = Field(
+        default=None,
+        description='Why the schedules could not be read, in which case `schedules` is unset; omitted otherwise.',
+    )
     links: list[Link] = Field(default_factory=list, description='MCP-specific links for UI navigation')
 
     @classmethod

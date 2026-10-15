@@ -537,21 +537,19 @@ async def fetch_schedules_for_flow_summaries(
     return flow_summaries
 
 
-async def fetch_schedules_for_flows(
-    client: KeboolaClient, links_manager: ProjectLinksManager, list_of_flows: list[Flow]
-) -> list[Flow]:
+async def fetch_schedules_for_flow(
+    client: KeboolaClient, links_manager: ProjectLinksManager, flow: Flow
+) -> SchedulesOutput:
     """
-    Fetch schedules for a list of flows.
+    Fetch the schedules of a flow.
 
     :param client: KeboolaClient instance
     :param links_manager: The links manager to use
-    :param list_of_flows: The list of flows to fetch the schedules for
-    :return: The list of flows with the schedules added
+    :param flow: The flow to fetch the schedules for
+    :return: The schedules of the flow with a link to their detail
     """
-    for flow in list_of_flows:
-        schedules = await list_schedules_for_config(
-            client=client, component_id=flow.component_id, configuration_id=flow.configuration_id
-        )
-        link = links_manager.get_scheduler_detail_link(flow.configuration_id, flow.component_id)
-        flow.schedules = SchedulesOutput(schedules=schedules, n_schedules=len(schedules), links=[link])
-    return list_of_flows
+    schedules = await list_schedules_for_config(
+        client=client, component_id=flow.component_id, configuration_id=flow.configuration_id
+    )
+    link = links_manager.get_scheduler_detail_link(flow.configuration_id, flow.component_id)
+    return SchedulesOutput(schedules=schedules, n_schedules=len(schedules), links=[link])
