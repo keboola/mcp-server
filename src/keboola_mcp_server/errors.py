@@ -128,22 +128,23 @@ def _plain_text(exception: BaseException) -> str:
         return type(exception).__name__
 
 
-def _call_arguments(func: Callable, args: tuple, kwargs: dict) -> dict[str, Any]:
-    """The arguments of a tool call except the context, as plain JSON data."""
-    ctx_param_name = find_kwarg_by_type(func, Context)
+def _bound_arguments(func: Callable, args: tuple, kwargs: dict) -> dict[str, Any]:
     bound_args = inspect.signature(func).bind(*args, **kwargs)
     bound_args.apply_defaults()
-    return {
-        name: _JsonWrapper(data=value).model_dump(mode='json')['data']
-        for name, value in bound_args.arguments.items()
-        if name not in [ctx_param_name, 'self', 'cls']
-    }
+    return dict(bound_args.arguments)
 
 
-def _call_carries_secret(func: Callable, args: tuple, kwargs: dict) -> bool:
+def _tool_arguments(func: Callable, bound_arguments: Mapping[str, Any]) -> dict[str, Any]:
+    ctx_param_name = find_kwarg_by_type(func, Context)
+    return {name: value for name, value in bound_arguments.items() if name not in [ctx_param_name, 'self', 'cls']}
+
+
+def _carries_secret(tool_arguments: Mapping[str, Any]) -> bool:
     """True if the call carries a secret, or if that cannot be told."""
     try:
-        return contains_secret(_call_arguments(func, args, kwargs))
+        return contains_secret(
+            {name: _JsonWrapper(data=value).model_dump(mode='json')['data'] for name, value in tool_arguments.items()}
+        )
     except Exception:
         return True
 
@@ -174,24 +175,19 @@ def sanitized_failure(
 
 async def _trigger_event(
     func: Callable,
-    args: tuple,
-    kwargs: dict,
+    bound_arguments: Mapping[str, Any],
     exception: Exception | None,
     execution_time: float,
-    carries_secret: bool | None = None,
+    carries_secret: bool,
 ) -> None:
     # TODO: This is not always correct. In general tool functions can be registered
     #  in the MCP server under different names.
     tool_name = func.__name__
 
-    sig = inspect.signature(func)
-    bound_args = sig.bind(*args, **kwargs)
-    bound_args.apply_defaults()
-
     ctx_param_name = find_kwarg_by_type(func, Context)
     assert ctx_param_name, f'The tool function {tool_name} must have a "Context" parameter.'
 
-    ctx = bound_args.arguments.get(ctx_param_name)
+    ctx = bound_arguments.get(ctx_param_name)
     assert isinstance(ctx, Context), (
         f'The tool function {tool_name} has invalid "{ctx_param_name}" parameter. '
         f'Expecting instance of "Context", got {type(ctx)}.'
@@ -209,8 +205,6 @@ async def _trigger_event(
     if not user_agent:
         user_agent = ''
 
-    if carries_secret is None:
-        carries_secret = _call_carries_secret(func, args, kwargs)
     arguments = [
         {
             'key': param_name,
@@ -218,8 +212,7 @@ async def _trigger_event(
                 json.dumps(REDACTED_SECRET_VALUE) if carries_secret else _JsonWrapper.encode_truncated(param_value)
             ),
         }
-        for param_name, param_value in bound_args.arguments.items()
-        if param_name not in [ctx_param_name, 'self', 'cls']
+        for param_name, param_value in _tool_arguments(func, bound_arguments).items()
     ]
 
     # See # https://github.com/keboola/event-schema/blob/main/schema/ext.keboola.mcp-server-tool.json
@@ -298,7 +291,8 @@ def tool_errors(
         @wraps(func)
         async def wrapped(*args, **kwargs):
             exception: Exception | None = None
-            carries_secret: bool | None = None
+            bound_arguments = _bound_arguments(func, args, kwargs)
+            carries_secret = _carries_secret(_tool_arguments(func, bound_arguments))
             start = time.perf_counter()
 
             try:
@@ -325,7 +319,6 @@ def tool_errors(
                     error_msg = f'{e}\nRecovery: {recovery_msg}'
 
                 caller_fault = _is_caller_error(e)
-                carries_secret = _call_carries_secret(func, args, kwargs)
                 original_text = exception_text(e, carries_secret)
                 extra = {
                     'tool_name': func.__name__,
@@ -336,12 +329,8 @@ def tool_errors(
                     if error_msg:
                         raise ToolError(error_msg) from e
                     if original_text.omitted and not isinstance(e, ToolError):
-                        # FastMCP logs a plain exception with its message and traceback, but a `ToolError` without
-                        # them. The caller still gets the text it would have got: the real one when only the call
-                        # carries a secret, the omission note when the message itself shows a secret key.
-                        shown_text = _plain_text(e) if carries_secret else original_text.text
                         raise RedactedToolError(
-                            _client_text(e, func.__name__, shown_text), log_text=original_text.text
+                            _client_text(e, func.__name__, _plain_text(e)), log_text=original_text.text
                         ) from e
                     raise
                 except Exception as e:
@@ -365,7 +354,7 @@ def tool_errors(
 
             finally:
                 try:
-                    await _trigger_event(func, args, kwargs, exception, time.perf_counter() - start, carries_secret)
+                    await _trigger_event(func, bound_arguments, exception, time.perf_counter() - start, carries_secret)
                 except Exception as e:
                     # Event logging is best-effort telemetry — never fail the tool because of it.
                     # The tool result (success or failure) is already determined before this point.
