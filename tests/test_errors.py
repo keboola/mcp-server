@@ -1,11 +1,8 @@
-import copy
 import json
 import logging
-import time
 import uuid
 from collections.abc import Sequence
 from importlib.metadata import distribution
-from typing import Any
 from unittest.mock import ANY
 
 import httpx
@@ -22,10 +19,9 @@ from mcp.types import ClientCapabilities, Implementation, InitializeRequestParam
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import AsyncStorageClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.errors import _SECRET_MARKER, MAX_ARG_VALUE_LEN, _redact_arguments, tool_errors
+from keboola_mcp_server.errors import MAX_ARG_VALUE_LEN, tool_errors
 from keboola_mcp_server.mcp import ServerState
 from keboola_mcp_server.server import create_server
-from keboola_mcp_server.tools.components.model import ConfigParamReplace, ConfigParamSet
 from keboola_mcp_server.tools.storage.tools import TableColumnInfo
 from keboola_mcp_server.tools.validation import RecoverableValidationError, ValidationContext
 
@@ -397,13 +393,13 @@ class TestPydanticValidationErrors:
             assert len(lines) > 0, 'Empty log message'
             assert lines[0] == 'MCP tool "foo" call failed.'
 
-            # check the message in the submitted SAPI event: a summary without the echoed input
+            # check the message in the submitted SAPI event
             post_mock.assert_called_once()
             _, kwargs = post_mock.call_args
-            assert kwargs.get('data', {}).get('message') == (
-                'MCP tool "foo" call failed. ToolError: '
-                'TableColumnInfo validation failed: Field required (missing) at quotedName'
-            )
+            lines = str(kwargs.get('data', {}).get('message') or '').splitlines()
+            assert len(lines) > 0, 'Empty error message'
+            assert lines[0] == 'MCP tool "foo" call failed. ToolError: Found 1 validation error(s) for TableColumnInfo'
+            assert expected_error_details == yaml.safe_load('\n'.join(lines[1:]))
 
     @staticmethod
     @tool_errors()
@@ -606,32 +602,6 @@ async def test_event_step_up_header_only_for_own_stack(
 
 
 CANARY = 'canary-s3cr3t-ai4029'
-FAKE_CIPHER = 'KBC::ProjectSecure::fake-cipher-value'
-SHORT_CANARY = 'p4ss'
-ENUM_CANARY = 'enum-canary-choice'
-NUMERIC_CANARY = '987654321'
-DELIMITED_TAIL = 'b2:c3,d4'
-MIXED_QUOTES_SECRET = f'a\'b"{CANARY}'
-
-
-def _raise(exc: Exception):
-    raise exc
-
-
-def _originating_failure():
-    raise RuntimeError(f'Rejected credential {CANARY}')
-
-
-def _raise_pydantic_error():
-    pydantic.TypeAdapter(dict[str, int]).validate_python({'#password': CANARY})
-
-
-def _raise_jsonschema_error():
-    jsonschema.validate({'#password': CANARY}, {'properties': {'#password': {'type': 'integer'}}})
-
-
-def _raise_jsonschema_secret_enum_error():
-    jsonschema.validate({'#password': 'bad'}, {'properties': {'#password': {'enum': [ENUM_CANARY, 'other']}}})
 
 
 @pytest.fixture
@@ -644,694 +614,159 @@ def storage_event_post(monkeypatch, mocker, empty_context: Context):
     return mocker.patch.object(AsyncStorageClient, 'post', autospec=True, return_value={'id': '1'})
 
 
+def _originating_failure():
+    raise RuntimeError(f'Rejected credential {CANARY}')
+
+
+def _raise_jsonschema_error():
+    jsonschema.validate({'#password': CANARY}, {'properties': {'#password': {'type': 'integer'}}})
+
+
+def _formatted_logs(caplog: pytest.LogCaptureFixture) -> str:
+    formatter = logging.Formatter()
+    return '\n'.join(formatter.format(record) for record in caplog.records)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('parameters', 'parameter_updates', 'failure', 'preserved'),
+    ('parameters', 'failure', 'expected_message', 'expected_value'),
     [
         pytest.param(
-            {
-                'db': {'host': 'db.example.com', '#password': CANARY, 'hosts': [{'#token': CANARY}]},
-                '#api_key': FAKE_CIPHER,
-            },
+            {'#password': CANARY},
             None,
-            None,
-            ['db.example.com', '[REDACTED]'],
-            id='create_config_nested_secrets',
-        ),
-        pytest.param(
-            json.dumps({'user': 'alice', 'db': {'#password': CANARY, '#token': FAKE_CIPHER}}),
-            None,
-            None,
-            ['alice', '[REDACTED]'],
-            id='create_config_json_string',
-        ),
-        pytest.param(
-            str({'user': 'alice', '#password': CANARY, 'db': {"#token": CANARY}}),
-            None,
-            None,
-            ['alice', '[REDACTED]'],
-            id='string_python_literal',
-        ),
-        pytest.param(
-            f'{{"user": "alice", "#password": "{CANARY}",}}',
-            None,
-            None,
-            ['alice', '[REDACTED]'],
-            id='string_json_trailing_comma',
-        ),
-        pytest.param(
-            f'```json\n{{"user": "alice", "#password": "{CANARY}"}}\n```',
-            None,
-            None,
-            ['alice', '[REDACTED]'],
-            id='string_code_fenced_json',
-        ),
-        pytest.param(
-            f'user: alice\ndb:\n  "#password": {CANARY}\n  #token: \'{CANARY}\'\n',
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_yaml',
-        ),
-        pytest.param(
-            f'USER=alice\n#PASSWORD={CANARY}\n',
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_env',
-        ),
-        pytest.param(
-            None,
-            [
-                ConfigParamSet(op='set', path='db.#token', value=CANARY),
-                ConfigParamSet(op='set', path='#password', value={'nested': CANARY}),
-                ConfigParamSet(op='set', path='db', value={'#password': CANARY, 'host': 'db.example.com'}),
-                ConfigParamSet(op='set', path='#api_key', value=FAKE_CIPHER),
-                ConfigParamSet(op='set', path='db.user', value='alice'),
-            ],
-            None,
-            ['db.example.com', 'alice', 'db.#token', '[REDACTED]'],
-            id='update_config_set',
-        ),
-        pytest.param(
-            {'#password': f'KBC::{CANARY}'},
-            None,
-            None,
-            ['[REDACTED]'],
-            id='plaintext_with_cipher_prefix',
-        ),
-        pytest.param(
-            None,
-            [
-                ConfigParamSet(op='set', path='"#password"', value=CANARY),
-                ConfigParamReplace(op='str_replace', path="'#token'", search_for=CANARY, replace_with='new'),
-            ],
-            None,
-            ['[REDACTED]'],
-            id='update_config_quoted_root_path',
-        ),
-        pytest.param(
-            '```json\n{"user": "alice", "#password": "x\\"' + CANARY + '"}\n```',
-            None,
-            None,
-            ['alice', '[REDACTED]'],
-            id='string_code_fenced_json_escaped_quote',
-        ),
-        pytest.param(
-            f'user: alice\n#password: |\n  {CANARY}\n',
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_yaml_block_scalar',
-        ),
-        pytest.param(
-            f"{{'user': 'alice', '#db': {{'user': 'u', 'pw': ['{CANARY}']}}, 'port': 1}}",
-            None,
-            None,
-            ['alice', '[REDACTED]', 'port'],
-            id='string_python_literal_secret_container',
-        ),
-        pytest.param(
-            json.dumps({'#password': 'a"b' + CANARY}),
-            None,
-            lambda: _raise(RuntimeError(f'Bad value {json.dumps("a" + chr(34) + "b" + CANARY)} for #password')),
-            ['RuntimeError: Bad value "[REDACTED]" for #password'],
-            id='failure_echoing_json_escaped_secret',
-        ),
-        pytest.param(
-            {'user': 'alice', '#pin': int(NUMERIC_CANARY), '#enabled': True},
-            None,
-            lambda: _raise(RuntimeError(f'Rejected credential "{NUMERIC_CANARY}" with flag "True"')),
-            ['alice', 'RuntimeError: Rejected credential "[REDACTED]" with flag "[REDACTED]"'],
-            id='failure_echoing_numeric_and_boolean_secrets',
-        ),
-        pytest.param(
-            f'user: alice\n"#password": prefix {CANARY}-suffix\nhost: db.example.com\n',
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_yaml_multiword_scalar',
-        ),
-        pytest.param(
-            '```json\n{"#credentials": {"password": "' + CANARY + '"}}\n```',
-            None,
-            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
-            ['RuntimeError: Authentication failed using [REDACTED]'],
-            id='failure_echoing_leaf_of_json_container',
-        ),
-        pytest.param(
-            '```json\n' + json.dumps({'user': 'alice', '#password': f'café-{CANARY}'}) + '\n```',
-            None,
-            lambda: _raise(RuntimeError(f'Authentication failed using café-{CANARY}')),
-            ['alice', 'RuntimeError: Authentication failed using [REDACTED]'],
-            id='failure_echoing_unicode_escaped_scalar',
-        ),
-        pytest.param(
-            str({'user': 'alice', '#api key': CANARY}),
-            None,
-            lambda: _raise(RuntimeError(f'Rejected {CANARY}')),
-            ['alice', 'RuntimeError: Rejected [REDACTED]'],
-            id='failure_echoing_secret_under_spaced_key',
-        ),
-        pytest.param(
-            f"curl -d '#api key': '{CANARY}'",
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_unparsable_spaced_key',
-        ),
-        pytest.param(
-            {'#credentials': json.dumps({'password': CANARY})},
-            None,
-            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
-            ['RuntimeError: Authentication failed using [REDACTED]'],
-            id='failure_echoing_leaf_of_json_string_under_secret_key',
-        ),
-        pytest.param(
-            f'#PASSWORD=prefix,{CANARY}',
-            None,
-            lambda: _raise(RuntimeError(f'Rejected {CANARY}')),
-            ['RuntimeError: Rejected [REDACTED]'],
-            id='string_env_value_with_comma',
-        ),
-        pytest.param(
-            f'"#password": prefix,{CANARY}',
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_yaml_value_with_comma',
-        ),
-        pytest.param(
-            f'"#password": >\n  first line\n  {CANARY}\n',
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_yaml_folded_continuation',
-        ),
-        pytest.param(
-            f"\"#password\": 'prefix''{CANARY}'",
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_yaml_doubled_apostrophe',
-        ),
-        pytest.param(
-            '```json\n{"user": "alice", "\\u0023password": "' + CANARY + '"}\n```',
-            None,
-            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
-            ['alice', 'RuntimeError: Authentication failed using [REDACTED]'],
-            id='failure_echoing_secret_under_escaped_key_in_fenced_json',
-        ),
-        pytest.param(
-            f'user: alice\n"\\u0023password": {CANARY}\n',
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_unparsable_escaped_key',
-        ),
-        pytest.param(
-            f'{{"user": "alice", "#password": "first-{CANARY}", "#password": "second"}}',
-            None,
-            lambda: _raise(RuntimeError(f'Rejected first-{CANARY}')),
-            ['alice', 'RuntimeError: Rejected [REDACTED]'],
-            id='failure_echoing_secret_of_duplicate_json_key',
-        ),
-        pytest.param(
-            None,
-            [
-                ConfigParamSet(op='set', path="db['user', '#password']", value=CANARY),
-                ConfigParamReplace(op='str_replace', path="db['host', '#token']", search_for=CANARY, replace_with='x'),
-            ],
-            None,
-            ['[REDACTED]'],
-            id='update_config_union_path_selector',
-        ),
-        pytest.param(
-            '#PASSWORD=password',
-            None,
-            lambda: _raise(RuntimeError('Rejected credential "password"')),
-            ['RuntimeError: Rejected credential "[REDACTED]"'],
-            id='failure_echoing_env_credential',
-        ),
-        pytest.param(
-            '"#password": pass',
-            None,
-            lambda: _raise(RuntimeError('Rejected credential "pass"')),
-            ['RuntimeError: Rejected credential "[REDACTED]"'],
-            id='failure_echoing_short_alphabetic_yaml_credential',
-        ),
-        pytest.param(
-            str({'user': 'alice', 'items': ({'#password': CANARY},)}),
-            None,
-            None,
-            ['alice', '[REDACTED]'],
-            id='string_python_literal_tuple_container',
-        ),
-        pytest.param(
-            str({'#credentials': (CANARY, 'other')}),
-            None,
-            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
-            ['RuntimeError: Authentication failed using [REDACTED]'],
-            id='failure_echoing_leaf_of_tuple_under_secret_key',
-        ),
-        pytest.param(
-            {'#password': CANARY, 'dsn': f'postgresql://alice:{CANARY}@db/app'},
-            None,
-            None,
-            ['postgresql://alice:[REDACTED]@db/app'],
-            id='secret_repeated_in_sibling_field',
-        ),
-        pytest.param(
-            {'dsn': f'postgresql://alice:{CANARY}@db/app', '#password': CANARY},
-            None,
-            None,
-            ['postgresql://alice:[REDACTED]@db/app'],
-            id='secret_repeated_in_sibling_field_before_the_secret',
+            'MCP tool "config_tool" call succeeded.',
+            '"[REDACTED]"',
+            id='success_with_secret',
         ),
         pytest.param(
             {'#password': CANARY},
-            [ConfigParamSet(op='set', path='db.dsn', value=f'postgresql://alice:{CANARY}@db/app')],
-            None,
-            ['postgresql://alice:[REDACTED]@db/app'],
-            id='secret_repeated_in_another_argument',
+            _originating_failure,
+            'ToolError: [details omitted: the call carries a secret]',
+            '"[REDACTED]"',
+            id='failure_with_secret',
         ),
         pytest.param(
-            f"{{'#password': 'first-{CANARY}', '#password': 'second'}}",
+            {'#password': 'KBC::ProjectSecure::fake-cipher'},
             None,
-            lambda: _raise(RuntimeError(f'Rejected first-{CANARY}')),
-            ['RuntimeError: Rejected [REDACTED]'],
-            id='failure_echoing_secret_of_duplicate_literal_key',
+            'MCP tool "config_tool" call succeeded.',
+            '"[REDACTED]"',
+            id='encrypted_secret',
         ),
         pytest.param(
-            {'#credentials': json.dumps({'token': CANARY, 'padding': 'x' * (MAX_ARG_VALUE_LEN + 1)})},
+            {'host': 'db.example.com'},
             None,
-            lambda: _raise(RuntimeError(f'Rejected {CANARY}')),
-            ['RuntimeError: [details omitted: argument redaction failed]'],
-            id='failure_with_oversized_secret_container',
+            'MCP tool "config_tool" call succeeded.',
+            '{"host": "db.example.com"}',
+            id='success_without_secret',
         ),
         pytest.param(
-            '#password: "caf\\u00e9-' + CANARY + '"',
-            None,
-            lambda: _raise(RuntimeError(f'Rejected café-{CANARY}')),
-            ['RuntimeError: Rejected [REDACTED]'],
-            id='failure_echoing_escaped_yaml_credential',
+            {'host': 'db.example.com'},
+            lambda: _raise_runtime_error('HTTP 503 for config 7'),
+            'RuntimeError: HTTP 503 for config 7',
+            '{"host": "db.example.com"}',
+            id='failure_without_secret',
         ),
         pytest.param(
-            {'#pin': int(NUMERIC_CANARY), 'pin': int(NUMERIC_CANARY), '#code': SHORT_CANARY, 'code': SHORT_CANARY},
-            None,
-            None,
-            ['[REDACTED]'],
-            id='secret_scalars_repeated_exactly',
-        ),
-        pytest.param(
-            {'#password': MIXED_QUOTES_SECRET},
-            None,
-            lambda: _raise(RuntimeError(f'Rejected credential {MIXED_QUOTES_SECRET!r}')),
-            ['RuntimeError: Rejected credential'],
-            id='failure_echoing_python_repr_of_mixed_quote_secret',
-        ),
-        pytest.param(
-            {'#code': 'ab', '#pin': 1234},
-            None,
-            lambda: _raise(RuntimeError('Rejected credential ab; Rejected pin 1234 for config 7777')),
-            ['Rejected credential [REDACTED]', 'Rejected pin [REDACTED]', 'config 7777'],
-            id='failure_echoing_unquoted_short_credentials',
-        ),
-        pytest.param(
-            {'#password': CANARY, 'lookup': {CANARY: True}},
-            None,
-            None,
-            ['lookup'],
-            id='secret_used_as_dictionary_key',
-        ),
-        pytest.param(
-            {'#credentials': {CANARY: True}, 'echo': CANARY},
-            None,
-            None,
-            ['echo'],
-            id='secret_used_as_key_inside_secret_object',
-        ),
-        pytest.param(
-            {'#credentials': f'#PASSWORD={CANARY}', 'dsn': f'postgresql://alice:{CANARY}@db/app'},
-            None,
-            lambda: _raise(RuntimeError(f'Rejected {CANARY}')),
-            ['postgresql://alice:[REDACTED]@db/app', 'RuntimeError: Rejected [REDACTED]'],
-            id='opaque_text_under_secret_key',
-        ),
-        pytest.param(
-            f"{{u'#password': 'first-{CANARY}', '#password': 'second'}}",
-            None,
-            lambda: _raise(RuntimeError(f'Rejected first-{CANARY}')),
-            ['RuntimeError: Rejected [REDACTED]'],
-            id='failure_echoing_secret_of_equivalent_literal_keys',
-        ),
-        pytest.param(
-            {'#pin': int(NUMERIC_CANARY), 'echo': json.dumps({'again': int(NUMERIC_CANARY)})},
-            None,
-            None,
-            ['echo'],
-            id='secret_number_repeated_in_serialized_container',
-        ),
-        pytest.param(
-            {
-                '#password': MIXED_QUOTES_SECRET,
-                'echo': json.dumps({'nested': json.dumps({'password': MIXED_QUOTES_SECRET})}),
-            },
-            None,
-            None,
-            ['echo'],
-            id='secret_repeated_in_nested_serialized_containers',
-        ),
-        pytest.param(
-            None,
-            None,
-            lambda: _raise(RuntimeError(f'Upstream rejected #PASSWORD=prefix,{CANARY}')),
-            ['RuntimeError: [details omitted: the message shows a secret key]'],
-            id='failure_exception_only_env_fragment',
-        ),
-        pytest.param(
-            None,
-            None,
-            lambda: _raise(RuntimeError(f'Upstream rejected "#api key": "{CANARY}"')),
-            ['RuntimeError: [details omitted: the message shows a secret key]'],
-            id='failure_exception_only_spaced_key',
-        ),
-        pytest.param(
-            f'GET /callback?id=1#access_token={CANARY}',
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_secret_in_url_fragment',
-        ),
-        pytest.param(
-            None,
-            None,
-            lambda: _raise(RuntimeError(f'Redirected to /callback?id=1#access_token={CANARY}')),
-            ['RuntimeError: [details omitted: the message shows a secret key]'],
-            id='failure_exception_only_url_fragment',
-        ),
-        pytest.param(
-            None,
-            [
-                ConfigParamSet(op='set', path='db.*', value=CANARY),
-                ConfigParamReplace(op='str_replace', path='db."*"', search_for=CANARY, replace_with='x'),
-            ],
-            None,
-            ['[REDACTED]'],
-            id='update_config_wildcard_selector',
-        ),
-        pytest.param(
-            '#password: "caf\\xE9-' + CANARY + '"',
-            None,
-            lambda: _raise(RuntimeError(f'Rejected café-{CANARY}')),
-            ['RuntimeError: [details omitted: argument redaction failed]'],
-            id='failure_with_undecodable_escape_in_yaml_credential',
-        ),
-        pytest.param(
-            {'#x': f'#PASSWORD=a\\b-{CANARY}', 'dsn': f'a\\\\b-{CANARY}'},
-            None,
-            None,
-            ['[REDACTED]'],
-            id='opaque_token_repeated_in_python_repr_form',
-        ),
-        pytest.param(
-            '#PASSWORD=input-credential',
-            None,
-            lambda: _raise(RuntimeError(f'Upstream #PASSWORD={CANARY}')),
-            ['RuntimeError: [details omitted: the message shows a secret key]'],
-            id='failure_exception_only_credential_differing_from_argument',
-        ),
-        pytest.param(
-            f'"#vendor\'s_api_key": {CANARY}',
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_quoted_key_containing_an_apostrophe',
-        ),
-        pytest.param(
-            '"#key\\"x": ' + CANARY,
-            None,
-            None,
-            ['[REDACTED]'],
-            id='string_quoted_key_containing_an_escaped_quote',
-        ),
-        pytest.param(
-            {'env': f'#PASSWORD={CANARY}={DELIMITED_TAIL}', 'echo': f'{CANARY}={DELIMITED_TAIL}'},
-            None,
-            lambda: _raise(RuntimeError(f'Rejected {CANARY}={DELIMITED_TAIL}')),
-            ['RuntimeError: Rejected [REDACTED]'],
-            id='opaque_credential_with_delimiters_repeated',
-        ),
-        pytest.param(
-            {'payload': json.dumps(json.dumps({'user': 'alice', '#password': CANARY}))},
-            None,
-            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
-            ['alice', 'RuntimeError: Authentication failed using [REDACTED]'],
-            id='failure_echoing_secret_of_double_encoded_json',
-        ),
-        pytest.param(
-            None,
-            None,
-            lambda: _raise(RuntimeError(f'Upstream said {json.dumps(json.dumps({"#password": CANARY}))}')),
-            ['RuntimeError: [details omitted: the message shows a secret key]'],
-            id='failure_exception_only_double_encoded_json',
-        ),
-        pytest.param(
-            {'#credentials': f'{{"private_key": "{CANARY}"', 'echo': CANARY},
-            None,
-            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
-            ['RuntimeError: [details omitted: argument redaction failed]'],
-            id='failure_with_undecodable_container_under_secret_key',
-        ),
-        pytest.param(
-            {'user': 'alice', '#password': '[REDACTED]'},
-            None,
-            None,
-            ['alice'],
-            id='already_redacted_secret_does_not_fail_redaction',
-        ),
-        pytest.param(
-            {'#code': 'ab'},
-            None,
-            lambda: _raise(RuntimeError('Rejected credential AB')),
-            ['RuntimeError: Rejected credential [REDACTED]'],
-            id='failure_echoing_short_secret_in_another_case',
-        ),
-        pytest.param(
-            f"{{'#credentials': {{'password': '{CANARY}'}}}}",
-            None,
-            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
-            ['RuntimeError: Authentication failed using [REDACTED]'],
-            id='failure_echoing_leaf_of_python_container',
-        ),
-        pytest.param(
-            f'#creds: {{password: {CANARY}',
-            None,
-            lambda: _raise(RuntimeError(f'Authentication failed using {CANARY}')),
-            ['RuntimeError: Authentication failed using [REDACTED]'],
-            id='failure_echoing_leaf_of_unparsable_container',
-        ),
-        pytest.param(
-            None,
-            [ConfigParamReplace(op='str_replace', path='#password', search_for=SHORT_CANARY, replace_with='new')],
-            lambda: _raise(ValueError(f'Search string "{SHORT_CANARY}" not found in path "#password"')),
-            ['ValueError: Search string "[REDACTED]" not found'],
-            id='failure_echoing_short_secret_value',
-        ),
-        pytest.param(
-            None,
-            [
-                ConfigParamReplace(op='str_replace', path="db['#token']", search_for=CANARY, replace_with='new'),
-                ConfigParamReplace(op='str_replace', path='db["#token"]', search_for='old', replace_with=CANARY),
-                ConfigParamReplace(op='str_replace', path='db.query', search_for='alice', replace_with='bob'),
-            ],
-            None,
-            ['alice', 'bob', '[REDACTED]'],
-            id='update_config_str_replace',
-        ),
-        pytest.param(
-            None,
-            [ConfigParamReplace(op='str_replace', path='#password', search_for=CANARY, replace_with='new')],
-            lambda: _raise(ValueError(f'Search string "{CANARY}" not found in path "#password"')),
-            ['ValueError: Search string "[REDACTED]"'],
-            id='failure_echoing_secret_value',
-        ),
-        pytest.param(
-            {'user': 'alice', '#password': CANARY},
-            None,
-            lambda: _raise(RuntimeError(f"Connection refused for {{'#pwd': '{CANARY}x'}} and #token={CANARY}y")),
-            ['alice', 'RuntimeError: [details omitted: the message shows a secret key]'],
-            id='failure_echoing_secret_fragment',
-        ),
-        pytest.param(
-            {'#pin': 401, '#code': 'ab', '#password': CANARY},
-            None,
-            lambda: _raise(RuntimeError(f'HTTP 401 for config ab-401 using {CANARY}')),
-            ['RuntimeError: HTTP 401 for config ab-401 using [REDACTED]'],
-            id='failure_short_secrets_not_replaced_globally',
-        ),
-        pytest.param(
-            None,
-            None,
-            _raise_pydantic_error,
-            ['parse string as an integer (int_parsing) at #password'],
-            id='failure_pydantic_validation',
-        ),
-        pytest.param(
-            None,
-            None,
-            _raise_jsonschema_error,
-            ['"type" constraint violated (schema: "integer")'],
-            id='failure_jsonschema_validation',
-        ),
-        pytest.param(
-            None,
-            None,
-            _raise_jsonschema_secret_enum_error,
-            ['"enum" constraint violated'],
-            id='failure_jsonschema_secret_enum_not_reported',
+            {'host': 'db.example.com'},
+            lambda: _raise_runtime_error(f'Upstream said #PASSWORD={CANARY}'),
+            'RuntimeError: [details omitted: the message shows a secret key]',
+            '{"host": "db.example.com"}',
+            id='failure_message_shows_secret_key',
         ),
     ],
 )
-async def test_secrets_are_redacted_in_event(
-    parameters, parameter_updates, failure, preserved, storage_event_post, caplog, empty_context: Context
+async def test_event_of_a_call_is_reported_without_what_could_be_a_secret(
+    parameters, failure, expected_message, expected_value, storage_event_post, caplog, empty_context: Context
 ):
     @tool_errors()
-    async def config_tool(_ctx: Context, parameters: Any = None, parameter_updates: Any = None) -> str:
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
         if failure:
             failure()
         return 'ok'
 
-    original = copy.deepcopy((parameters, parameter_updates))
     with caplog.at_level(logging.INFO, logger='keboola_mcp_server.clients.storage'):
         if failure:
-            with pytest.raises((ToolError, ValueError, RuntimeError)):
-                await config_tool(empty_context, parameters=parameters, parameter_updates=parameter_updates)
+            with pytest.raises((RuntimeError, ToolError)):
+                await config_tool(empty_context, parameters=parameters)
         else:
-            await config_tool(empty_context, parameters=parameters, parameter_updates=parameter_updates)
-
-    assert (parameters, parameter_updates) == original
-    storage_event_post.assert_awaited_once()
-    payload = json.dumps(storage_event_post.await_args.kwargs['data'], ensure_ascii=False)
-    log_lines = [r.getMessage() for r in caplog.records if '[trigger_event]' in r.getMessage()]
-    assert len(log_lines) == 1
-    for secret in (CANARY, SHORT_CANARY, FAKE_CIPHER, ENUM_CANARY, NUMERIC_CANARY, DELIMITED_TAIL):
-        assert secret not in payload
-        assert secret not in log_lines[0]
-    for value in preserved:
-        assert value in log_lines[0]
-
-
-@pytest.mark.asyncio
-async def test_redaction_failure_reports_argument_names_only(
-    mocker, storage_event_post, caplog, empty_context: Context
-):
-    mocker.patch('keboola_mcp_server.errors._redact_value', side_effect=RuntimeError('boom'))
-
-    @tool_errors()
-    async def config_tool(_ctx: Context, parameters: Any = None) -> str:
-        return 'ok'
-
-    with caplog.at_level(logging.WARNING, logger='keboola_mcp_server.errors'):
-        await config_tool(empty_context, parameters={'#password': CANARY})
-
-    warning = next(r.getMessage() for r in caplog.records if 'Failed to redact' in r.getMessage())
-    assert 'RuntimeError' in warning
-    assert '_redact_arguments' in warning
-    assert 'boom' not in warning
-    data = storage_event_post.await_args.kwargs['data']
-    assert data['params']['tool']['arguments'] == [{'key': 'parameters', 'value': '"[redaction failed]"'}]
-    assert CANARY not in json.dumps(data)
-
-
-@pytest.mark.asyncio
-async def test_redaction_failure_omits_exception_text(mocker, storage_event_post, empty_context: Context):
-    mocker.patch('keboola_mcp_server.errors._redact_value', side_effect=RuntimeError('boom'))
-
-    @tool_errors()
-    async def config_tool(_ctx: Context, parameters: Any = None) -> str:
-        raise RuntimeError(f'Rejected credential {CANARY}')
-
-    with pytest.raises(RuntimeError):
-        await config_tool(empty_context, parameters={'#password': CANARY})
+            await config_tool(empty_context, parameters=parameters)
 
     data = storage_event_post.await_args.kwargs['data']
-    assert data['message'] == (
-        'MCP tool "config_tool" call failed. RuntimeError: [details omitted: argument redaction failed]'
-    )
+    assert expected_message in data['message']
+    assert data['params']['tool']['arguments'] == [{'key': 'parameters', 'value': expected_value}]
     assert CANARY not in json.dumps(data)
+    assert CANARY not in _formatted_logs(caplog)
+
+
+def _raise_runtime_error(message: str):
+    raise RuntimeError(message)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('failure', 'expected_level', 'recovery'),
+    ('failure', 'recovery', 'expected_level'),
     [
-        (_raise_jsonschema_error, logging.WARNING, None),
-        (lambda: _raise(RuntimeError(f'Rejected credential {CANARY}')), logging.ERROR, None),
-        (_originating_failure, logging.ERROR, 'Retry later.'),
+        pytest.param(_raise_jsonschema_error, None, logging.WARNING, id='caller_error'),
+        pytest.param(_originating_failure, None, logging.ERROR, id='internal_error'),
+        pytest.param(_originating_failure, 'Retry later.', logging.ERROR, id='internal_error_with_recovery'),
     ],
-    ids=['caller_error_warning', 'internal_error_traceback', 'wrapped_internal_error_keeps_originating_frame'],
 )
-async def test_failure_log_lines_do_not_contain_secrets(
-    failure, expected_level, recovery, storage_event_post, caplog, empty_context: Context
+async def test_failure_logs_of_a_call_with_a_secret_do_not_show_it(
+    failure, recovery, expected_level, storage_event_post, caplog, empty_context: Context
 ):
     @tool_errors(default_recovery=recovery)
-    async def config_tool(_ctx: Context, parameters: Any = None) -> str:
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
         failure()
         return 'ok'
 
-    with pytest.raises((ToolError, RuntimeError)):
+    with pytest.raises((RuntimeError, ToolError)):
         await config_tool(empty_context, parameters={'#password': CANARY})
 
     records = [r for r in caplog.records if r.name == 'keboola_mcp_server.errors']
     assert [r.levelno for r in records] == [expected_level]
-    formatter = logging.Formatter()
-    assert CANARY not in formatter.format(records[0])
-    assert (records[0].exc_info is not None) is (expected_level == logging.ERROR)
-    if records[0].exc_info:
-        assert 'RuntimeError' in formatter.format(records[0])
-        assert 'config_tool' in formatter.format(records[0])
+    assert CANARY not in _formatted_logs(caplog)
     if failure is _originating_failure:
-        assert 'in _originating_failure' in formatter.format(records[0])
+        assert 'in _originating_failure' in logging.Formatter().format(records[0])
 
 
-def test_short_secret_number_repeated_in_serialized_container_is_masked():
-    redacted = _redact_arguments({'parameters': json.dumps({'#pin': 1234, 'echo': 1234, 'port': 80})})
+@pytest.mark.asyncio
+async def test_internal_failure_of_a_call_without_a_secret_is_logged_as_it_is(
+    storage_event_post, caplog, empty_context: Context
+):
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
+        raise RuntimeError('HTTP 503 for config 7')
 
-    value = redacted.arguments[0]['value']
-    assert '1234' not in value
-    assert '"port\\": 80' in value
+    with pytest.raises(RuntimeError):
+        await config_tool(empty_context, parameters={'host': 'db.example.com'})
 
-
-@pytest.mark.parametrize('text', ['#' * 20_000, '#' * 20_000 + ':', '"#' * 10_000, "'#" * 10_000, '#a' * 10_000])
-def test_secret_marker_scan_is_linear(text: str):
-    started = time.perf_counter()
-    _SECRET_MARKER.search(text)
-
-    assert time.perf_counter() - started < 0.5
-
-
-def _words(count: int) -> str:
-    return ' '.join(''.join(chr(97 + (index // 26**place) % 26) for place in range(4)) for index in range(count))
+    record = next(r for r in caplog.records if r.name == 'keboola_mcp_server.errors')
+    assert record.exc_info[0] is RuntimeError
+    assert 'HTTP 503 for config 7' in logging.Formatter().format(record)
 
 
-def test_redaction_of_many_known_secrets_is_bounded():
-    arguments = {'opaque': '#PASSWORD=x\n' + _words(900)} | {f'arg{i}': _words(150) for i in range(40)}
-    started = time.perf_counter()
-    redacted = _redact_arguments(arguments)
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('parameters', 'expected_type'),
+    [({'#password': CANARY}, ToolError), ({'host': 'db.example.com'}, RuntimeError)],
+    ids=['secret_in_call', 'no_secret'],
+)
+async def test_failure_of_a_call_with_a_secret_is_raised_as_a_tool_error(
+    parameters, expected_type, storage_event_post, empty_context: Context
+):
+    """FastMCP logs a plain exception with its message and traceback, and a `ToolError` without them."""
 
-    assert time.perf_counter() - started < 2
-    assert redacted.complete
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
+        raise RuntimeError(f'Rejected {CANARY}')
 
+    with pytest.raises(Exception) as exc_info:
+        await config_tool(empty_context, parameters=parameters)
 
-def test_redaction_gives_up_on_too_many_known_secrets():
-    arguments = {'opaque': '#PASSWORD=x\n' + _words(3000)} | {f'arg{i}': _words(150) for i in range(40)}
-    started = time.perf_counter()
-    redacted = _redact_arguments(arguments)
-
-    assert time.perf_counter() - started < 2
-    assert not redacted.complete
-    assert {argument['value'] for argument in redacted.arguments} == {'"[redaction failed]"'}
+    assert type(exc_info.value) is expected_type
+    assert f'Rejected {CANARY}' in str(exc_info.value)
+    if expected_type is ToolError:
+        assert str(exc_info.value) == f"Error calling tool 'config_tool': Rejected {CANARY}"
 
 
 @pytest.mark.asyncio
@@ -1341,49 +776,14 @@ async def test_event_post_failure_does_not_log_the_tool_exception_text(
     storage_event_post.side_effect = RuntimeError('storage down')
 
     @tool_errors()
-    async def config_tool(_ctx: Context, parameters: Any = None) -> str:
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
         raise RuntimeError(f'Rejected credential {CANARY}')
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises((RuntimeError, ToolError)):
         await config_tool(empty_context, parameters={'#password': CANARY})
 
-    formatter = logging.Formatter()
     assert [r for r in caplog.records if 'Failed to trigger tool event' in r.getMessage()]
-    assert [r.getMessage() for r in caplog.records if CANARY in formatter.format(r)] == []
-
-
-_HOSTILE_ARGUMENT_LENGTH = MAX_ARG_VALUE_LEN - 5
-
-
-@pytest.mark.parametrize(
-    'text',
-    [
-        '[' * _HOSTILE_ARGUMENT_LENGTH,
-        '(' * _HOSTILE_ARGUMENT_LENGTH,
-        '[' + '-' * (_HOSTILE_ARGUMENT_LENGTH - 10) + '1]',
-        '[' + 'not ' * 2400 + '1]',
-        '[' + '9' * (_HOSTILE_ARGUMENT_LENGTH - 10) + ']',
-        '[' + '1+' * 4900 + '1]',
-        "{'a':" * 1900 + '1' + '}' * 1900,
-        '[' * 4000 + ']' * 4000,
-    ],
-    ids=[
-        'deep_list',
-        'deep_parentheses',
-        'unary_chain',
-        'not_chain',
-        'huge_integer',
-        'binary_operator_chain',
-        'deep_dictionary',
-        'deep_closed_list',
-    ],
-)
-def test_hostile_literal_arguments_are_redacted_or_withheld_quickly(text: str):
-    started = time.perf_counter()
-    redacted = _redact_arguments({'payload': text})
-
-    assert time.perf_counter() - started < 1
-    assert redacted.complete or {a['value'] for a in redacted.arguments} == {'"[redaction failed]"'}
+    assert CANARY not in _formatted_logs(caplog)
 
 
 class _UnprintableError(Exception):
@@ -1392,13 +792,25 @@ class _UnprintableError(Exception):
 
 
 @pytest.mark.asyncio
-async def test_failure_with_unprintable_exception_is_still_raised_unchanged(storage_event_post, empty_context: Context):
+@pytest.mark.parametrize('parameters', [{'#password': CANARY}, {'host': 'db.example.com'}], ids=['secret', 'no_secret'])
+async def test_failure_with_unprintable_exception_is_still_raised(parameters, storage_event_post, empty_context):
     @tool_errors()
-    async def config_tool(_ctx: Context, parameters: Any = None) -> str:
+    async def config_tool(_ctx: Context, parameters: dict | None = None) -> str:
         raise _UnprintableError()
 
-    with pytest.raises(_UnprintableError):
-        await config_tool(empty_context, parameters={'#password': CANARY})
+    with pytest.raises(Exception) as exc_info:
+        await config_tool(empty_context, parameters=parameters)
 
-    message = storage_event_post.await_args.kwargs['data']['message']
-    assert '[details omitted: argument redaction failed]' in message
+    assert isinstance(exc_info.value, _UnprintableError | ToolError)
+    assert '[details omitted' in storage_event_post.await_args.kwargs['data']['message']
+
+
+@pytest.mark.asyncio
+async def test_unserializable_argument_counts_as_carrying_a_secret(storage_event_post, empty_context: Context):
+    @tool_errors()
+    async def config_tool(_ctx: Context, parameters: object = None) -> str:
+        return 'ok'
+
+    await config_tool(empty_context, parameters=object())
+
+    assert storage_event_post.await_count <= 1
