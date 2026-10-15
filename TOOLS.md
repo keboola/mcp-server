@@ -3704,6 +3704,7 @@ LOG RETRIEVAL (only in MODE 1):
 - Use log_tail_lines to control how many recent log events to return (default 50, max 500)
 - Use log_event_types to filter by event type: ["error"] for just errors, ["error", "warn"] for errors and warnings
 - If a job has no runId (e.g., not yet started), logs will be None
+- If the log events cannot be read, the job is still returned: logs will be None and logs_error says why
 
 EXAMPLES WITH LOGS:
 - job_ids=["12345"], include_logs=True → job details + last 50 log events

@@ -13,7 +13,7 @@ from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import KeboolaMcpServer, ToonCompactFunctionTool, process_concurrently
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.scope import ProjectIdArg
-from keboola_mcp_server.tools.lookup import PartialLookupOutput, unwrap_lookup_results
+from keboola_mcp_server.tools.lookup import PartialLookupOutput, short_reason, unwrap_lookup_results
 
 LOG = logging.getLogger(__name__)
 
@@ -145,6 +145,10 @@ class JobDetail(JobListItem):
     links: list[Link] = Field(..., description='The links relevant to the job.')
     logs: list['JobLogEvent'] | None = Field(
         description='Execution log events for the job, populated when include_logs=True.',
+        default=None,
+    )
+    logs_error: str | None = Field(
+        description='Why the log events could not be read when include_logs=True; omitted otherwise.',
         default=None,
     )
 
@@ -359,6 +363,7 @@ async def get_jobs(
     - Use log_tail_lines to control how many recent log events to return (default 50, max 500)
     - Use log_event_types to filter by event type: ["error"] for just errors, ["error", "warn"] for errors and warnings
     - If a job has no runId (e.g., not yet started), logs will be None
+    - If the log events cannot be read, the job is still returned: logs will be None and logs_error says why
 
     EXAMPLES WITH LOGS:
     - job_ids=["12345"], include_logs=True → job details + last 50 log events
@@ -393,8 +398,9 @@ async def get_jobs(
                 try:
                     await fetch_logs(job)
                 except Exception as e:
-                    LOG.warning(f'Failed to fetch logs for job {job_id}: {e}')
-                    job.logs = []
+                    LOG.warning(f'Failed to fetch logs for job {job_id}: {e}', exc_info=True)
+                    job.logs = None
+                    job.logs_error = short_reason(e)
             return job
 
         results = await process_concurrently(job_ids, fetch_job_detail)

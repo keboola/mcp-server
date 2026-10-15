@@ -281,28 +281,47 @@ async def test_get_jobs_include_logs_with_failed_id(mocker: MockerFixture, mcp_c
 
 
 @pytest.mark.asyncio
-async def test_get_flows_schedule_failure_is_reported_per_flow(mocker: MockerFixture, mcp_context_client: Context):
-    """A failing schedule request for one flow must not discard the flows that were retrieved completely."""
+@pytest.mark.parametrize('status', [403, 404, 503], ids=['forbidden', 'not_found', 'server_error'])
+@pytest.mark.parametrize('flow_ids', [['a', 'b'], ['b']], ids=['two_flows', 'only_flow'])
+async def test_get_flows_schedule_failure_keeps_the_flow_without_schedules(
+    status: int,
+    flow_ids: list[str],
+    mocker: MockerFixture,
+    mcp_context_client: Context,
+    caplog: pytest.LogCaptureFixture,
+):
+    """A flow that exists is returned with its phases and tasks when its schedules cannot be read."""
     result, found = await _run_get_flows(
-        mocker, mcp_context_client, {'a': None, 'b': None}, schedule_outcomes={'a': None, 'b': 503}
+        mocker, mcp_context_client, dict.fromkeys(flow_ids), schedule_outcomes={'a': None, 'b': status}
     )
 
-    assert found == ['a']
+    assert found == flow_ids
+    flows = {flow.configuration_id: flow for flow in result.flows}
+    assert flows['b'].schedules is None
+    if 'a' in flows:
+        assert flows['a'].schedules is not None
     assert result.not_found is None
-    assert [f.id for f in result.errors] == ['b']
+    assert result.errors is None
+    record = next(r for r in caplog.records if 'Failed to fetch the schedules of flow b' in r.getMessage())
+    assert record.exc_info is not None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('status', [403, 404, 503], ids=['forbidden', 'not_found', 'server_error'])
+@pytest.mark.parametrize(
+    ('status', 'expected_reason'),
+    [(403, 'HTTP 403 Forbidden'), (404, 'HTTP 404 Not Found'), (503, 'HTTP 503 Service Unavailable')],
+    ids=['forbidden', 'not_found', 'server_error'],
+)
 @pytest.mark.parametrize('job_ids', [['a', 'b'], ['b']], ids=['two_jobs', 'only_job'])
-async def test_get_jobs_log_failure_keeps_the_job_without_logs(
+async def test_get_jobs_log_failure_keeps_the_job_and_says_why(
     status: int,
+    expected_reason: str,
     job_ids: list[str],
     mocker: MockerFixture,
     mcp_context_client: Context,
     caplog: pytest.LogCaptureFixture,
 ):
-    """A job that exists is returned with empty logs when its events cannot be read, whatever the failure."""
+    """A job that exists is returned when its events cannot be read, whatever the failure, with the reason."""
     client = KeboolaClient.from_state(mcp_context_client.session.state)
 
     async def list_events(job_id: str, limit: int) -> list[dict[str, Any]]:
@@ -314,12 +333,16 @@ async def test_get_jobs_log_failure_keeps_the_job_without_logs(
     result, found = await _run_get_jobs(mocker, mcp_context_client, dict.fromkeys(job_ids), include_logs=True)
 
     assert found == job_ids
-    logs = {job.id: job.logs for job in result.jobs}
-    assert logs['b'] == []
-    assert ('a' not in logs) or [event.message for event in logs['a']] == ['Started']
+    jobs = {job.id: job for job in result.jobs}
+    assert jobs['b'].logs is None
+    assert jobs['b'].logs_error == expected_reason
+    if 'a' in jobs:
+        assert [event.message for event in jobs['a'].logs] == ['Started']
+        assert jobs['a'].logs_error is None
     assert result.not_found is None
     assert result.errors is None
-    assert any('Failed to fetch logs for job b' in record.getMessage() for record in caplog.records)
+    record = next(r for r in caplog.records if 'Failed to fetch logs for job b' in r.getMessage())
+    assert record.exc_info is not None
 
 
 @pytest.mark.parametrize(

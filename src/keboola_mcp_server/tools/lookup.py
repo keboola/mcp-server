@@ -26,7 +26,7 @@ class LookupFailure(BaseModel, frozen=True):
     reason: str = Field(description='Short reason why the item could not be retrieved.')
 
 
-def _short_reason(exc: BaseException) -> str:
+def short_reason(exc: BaseException) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
         try:
@@ -88,7 +88,7 @@ def unwrap_lookup_results(
     for item_id, result in zip(ids, results, strict=True):
         if isinstance(result, BaseException):
             exceptions.append(result)
-            failure = LookupFailure(id=item_id, reason=_short_reason(result))
+            failure = LookupFailure(id=item_id, reason=short_reason(result))
             if is_caller_error(result):
                 not_found.append(failure)
             else:

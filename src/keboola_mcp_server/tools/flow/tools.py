@@ -714,7 +714,12 @@ async def get_flows(
                 api_flow.configuration_id, flow_name=api_flow.name, flow_type=found_type
             )
             flow = Flow.from_api_response(api_config=api_flow, flow_component_id=found_type, links=links)
-            await fetch_schedules_for_flows(client=client, links_manager=links_manager, list_of_flows=[flow])
+            try:
+                await fetch_schedules_for_flows(client=client, links_manager=links_manager, list_of_flows=[flow])
+            except Exception:
+                LOG.warning(
+                    f'Failed to fetch the schedules of flow {flow_id}; returning it without them.', exc_info=True
+                )
             return flow
 
         results = await process_concurrently(flow_ids, fetch_flow_detail)
