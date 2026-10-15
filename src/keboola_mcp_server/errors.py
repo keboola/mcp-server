@@ -15,6 +15,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.server import middleware as fmw
 from fastmcp.server.middleware import CallNext, MiddlewareContext
+from fastmcp.server.middleware.logging import LoggingMiddleware
 from fastmcp.utilities.types import find_kwarg_by_type
 from mcp import types as mt
 from pydantic import BaseModel, ValidationError
@@ -81,6 +82,31 @@ class _JsonWrapper(BaseModel):
         if encoded_bytes <= MAX_ARG_VALUE_LEN:
             return encoded
         return json.dumps(f'[value truncated, original length: {encoded_bytes} bytes]')
+
+
+class RedactedToolError(ToolError):
+    """A `ToolError` whose text goes to the caller but whose `log_text` is the only text that may be logged."""
+
+    def __init__(self, message: str, *, log_text: str):
+        super().__init__(message)
+        self.log_text = log_text
+
+
+class SanitizedLoggingMiddleware(LoggingMiddleware):
+    """FastMCP's request logging, but a failed request is logged with the `log_text` of its error when it has one."""
+
+    def _create_error_message(self, context: MiddlewareContext[Any], start_time: float, error: Exception):
+        message = super()._create_error_message(context, start_time, error)
+        if (log_text := getattr(error, 'log_text', None)) is not None:
+            message['error'] = log_text
+        return message
+
+
+def _plain_text(exception: BaseException) -> str:
+    try:
+        return str(exception)
+    except Exception:
+        return type(exception).__name__
 
 
 def _call_arguments(func: Callable, args: tuple, kwargs: dict) -> dict[str, Any]:
@@ -281,10 +307,7 @@ def tool_errors(
 
                 caller_fault = _is_caller_error(e)
                 carries_secret = _call_carries_secret(func, args, kwargs)
-                if error_msg is None and carries_secret:
-                    # FastMCP logs a plain exception with its message and traceback, so a call carrying a secret
-                    # raises a `ToolError` (which it logs without them) with the text the caller would get anyway.
-                    error_msg = f'Error calling tool {func.__name__!r}: {exception_text(e, False).text}'
+                original_text = exception_text(e, carries_secret)
                 extra = {
                     'tool_name': func.__name__,
                     'error_type': type(e).__name__,
@@ -293,15 +316,24 @@ def tool_errors(
                 try:
                     if error_msg:
                         raise ToolError(error_msg) from e
-                    else:
-                        raise
+                    if original_text.omitted and not isinstance(e, ToolError):
+                        # FastMCP logs a plain exception with its message and traceback, but a `ToolError` without
+                        # them. The caller still gets the text it would have got: the real one when only the call
+                        # carries a secret, the omission note when the message itself shows a secret key.
+                        client_text = _plain_text(e) if carries_secret else original_text.text
+                        raise RedactedToolError(
+                            f'Error calling tool {func.__name__!r}: {client_text}', log_text=original_text.text
+                        ) from e
+                    raise
                 except Exception as e:
                     shown: ExceptionText = exception_text(e, carries_secret)
+                    if shown.omitted and isinstance(e, ToolError) and not hasattr(e, 'log_text'):
+                        e.log_text = shown.text
                     if caller_fault:
                         # Routine (expired token, missing object, bad input): no traceback, not an ERROR.
                         first_line = next(iter(shown.text.splitlines()), type(e).__name__)
                         LOG.warning(f'MCP tool "{func.__name__}" call failed: {first_line}', extra=extra)
-                    elif shown.omitted:
+                    elif shown.omitted or original_text.omitted:
                         LOG.error(
                             f'MCP tool "{func.__name__}" call failed.',
                             exc_info=_sanitized_exc_info(e, carries_secret),
