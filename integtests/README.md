@@ -51,6 +51,9 @@ INTEGTEST_STORAGE_TOKENS=<token-project-A> <token-project-B>
 # Required — branch storage tests (dedicated project, not in pool)
 INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES=<token-for-project-WITH-storage-branches>
 
+# Optional — merge-request tests (dedicated project WITH branches-merge-requests, not in pool; skipped when unset)
+INTEGTEST_STORAGE_TOKEN_MERGE_REQUESTS=<token-for-project-WITH-branches-merge-requests>
+
 # Optional — second project for multi-client tests
 INTEGTEST_STORAGE_TOKEN_PRJ2=<token>
 INTEGTEST_WORKSPACE_SCHEMA_PRJ2=<WORKSPACE_XXX>
@@ -311,6 +314,7 @@ repository's GitHub Secrets/Variables:
 | `INTEGTEST_STORAGE_TOKENS` | Secret | Space-separated master tokens for all four pool projects |
 | `INTEGTEST_POOL_STORAGE_API_URL` | Variable | `https://connection.europe-west3.gcp.keboola.com` |
 | `INTEGTEST_STORAGE_TOKEN_STORAGE_BRANCHES` | Secret | Master token for a project **with** the `storage-branches` feature (used by `test_storage_branches.py`) |
+| `INTEGTEST_STORAGE_TOKEN_MERGE_REQUESTS` | Secret | Master token for a project **with** the `branches-merge-requests` feature (used by `test_merge_requests.py`; the tests are skipped when unset) |
 
 ### Concurrency
 
