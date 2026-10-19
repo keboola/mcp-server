@@ -12,7 +12,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 import httpx
 from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
@@ -31,6 +31,7 @@ from keboola_mcp_server.mcp import ToonCompactFunctionTool, process_concurrently
 from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.utils import (
     apply_configuration_folder,
+    build_folder_preview,
     folder_field_description,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
@@ -449,13 +450,20 @@ class DataApp(BaseModel):
     )
     links: list[Link] = Field(description='Navigation links for the web interface.', default_factory=list)
 
+    # Whether the Storage API returned the configuration `folder` field (False on stacks without folder support).
+    _has_folder_field: bool = PrivateAttr(default=False)
+
+    @property
+    def has_folder_field(self) -> bool:
+        return self._has_folder_field
+
     @classmethod
     def from_api_responses(
         cls,
         api_response: DataAppResponse,
         api_configuration: ConfigurationAPIResponse,
     ) -> 'DataApp':
-        return cls(
+        data_app = cls(
             component_id=api_configuration.component_id,
             configuration_id=api_configuration.configuration_id,
             data_app_id=api_response.id,
@@ -476,6 +484,8 @@ class DataApp(BaseModel):
             deployment_info=None,
             links=[],
         )
+        data_app._has_folder_field = 'folder' in api_configuration.model_fields_set
+        return data_app
 
     def with_links(self, links: list[Link]) -> 'DataApp':
         self.links = links
@@ -905,12 +915,7 @@ async def modify_streamlit_data_app_internal(
         ),
     )
 
-    folder_preview: dict | None = None
-    if folder is not None:
-        normalized_folder = folder.strip()
-        current_folder = data_app.folder
-        if normalized_folder != current_folder:
-            folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
+    folder_preview = build_folder_preview({'folder': data_app.folder} if data_app.has_folder_field else {}, folder)
 
     return data_app, updated_config, folder_preview
 

@@ -75,6 +75,7 @@ from keboola_mcp_server.tools.components.utils import (
     apply_configuration_folder,
     apply_configuration_variables,
     build_folder_hint,
+    build_folder_preview,
     check_suitable,
     create_transformation_configuration,
     expand_component_types,
@@ -1049,12 +1050,7 @@ async def update_sql_transformation_internal(
         )
         updated_configuration['storage'] = storage_cfg
 
-    folder_preview: dict | None = None
-    if folder is not None:
-        normalized_folder = folder.strip()
-        current_folder = config_details.get('folder') or ''
-        if normalized_folder != current_folder:
-            folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
+    folder_preview = build_folder_preview(config_details, folder)
 
     return config_details, updated_configuration, msg, folder_preview
 

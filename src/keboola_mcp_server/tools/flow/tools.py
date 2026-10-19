@@ -28,6 +28,7 @@ from keboola_mcp_server.mcp import ToonCompactFunctionTool, process_concurrently
 from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.utils import (
     build_folder_hint,
+    build_folder_preview,
     folder_field_description,
     get_config_folders,
     set_cfg_creation_metadata,
@@ -573,7 +574,15 @@ async def modify_flow(
                 configuration_id,
             )
     else:
-        folder_hint = await set_configuration_folder(client, flow_type, configuration_id, folder)
+        try:
+            folder_hint = await set_configuration_folder(client, flow_type, configuration_id, folder)
+        except Exception as exc:
+            LOG.warning(
+                'Unable to set folder for component "%s", configuration "%s".',
+                flow_type,
+                configuration_id,
+                exc_info=exc,
+            )
 
     links_manager = await ProjectLinksManager.from_client(client)
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
@@ -645,13 +654,7 @@ async def update_flow_internal(
             schedules=schedules,
         )
 
-    folder_preview: dict[str, Any] | None = None
-    if folder is not None:
-        normalized_folder = folder.strip()
-        current_folder = current_config.get('folder') or ''
-        if normalized_folder != current_folder:
-            folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
-
+    folder_preview = build_folder_preview(current_config, folder)
     combined_preview: dict[str, Any] | None = {**(mutator_preview or {}), **(folder_preview or {})} or None
     return current_config, flow_configuration, combined_preview
 

@@ -685,6 +685,24 @@ async def apply_configuration_folder(
     return None
 
 
+def build_folder_preview(current_config: Mapping[str, Any], folder: str | None) -> dict[str, str] | None:
+    """
+    Returns the folder change shown in a configuration preview.
+
+    :param current_config: The current configuration as returned by the Storage API (needs its `folder` field)
+    :param folder: The requested folder, None when the folder is not being changed
+    :return: Dict with `original_folder` and `updated_folder`, or None when no folder is requested, the folder
+        does not change, or the configuration has no `folder` field (a stack without configuration folder support)
+    """
+    if folder is None or 'folder' not in current_config:
+        return None
+    current_folder = current_config['folder'] or ''
+    normalized_folder = folder.strip()
+    if normalized_folder == current_folder:
+        return None
+    return {'original_folder': current_folder, 'updated_folder': normalized_folder}
+
+
 def folder_field_description(singular: str, plural: str) -> str:
     """Returns the standard Field description for a `folder` parameter.
 
