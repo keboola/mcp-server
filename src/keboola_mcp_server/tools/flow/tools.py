@@ -21,7 +21,6 @@ from keboola_mcp_server.clients.client import (
     KeboolaClient,
 )
 from keboola_mcp_server.clients.storage import CreateConfigurationAPIResponse
-from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
@@ -29,12 +28,11 @@ from keboola_mcp_server.mcp import ToonCompactFunctionTool, process_concurrently
 from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.utils import (
     build_folder_hint,
-    clear_configuration_folder_metadata,
     folder_field_description,
     get_config_folders,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
-    set_configuration_folder_metadata,
+    set_configuration_folder,
 )
 from keboola_mcp_server.tools.constants import (
     CONFIG_DIFF_PREVIEW_TAG,
@@ -228,19 +226,17 @@ async def create_flow(
     change_summary = None
     if folder:
         try:
-            await set_configuration_folder_metadata(client, flow_type, api_config.id, folder)
+            await set_configuration_folder(client, flow_type, api_config.id, folder)
         except Exception:
             LOG.warning(
-                'Unable to set folder metadata for component "%s", configuration "%s".',
+                'Unable to set folder for component "%s", configuration "%s".',
                 flow_type,
                 api_config.id,
             )
     else:
         try:
-            total, existing_folders, lower_bound = await get_config_folders(client, flow_type)
-            change_summary = build_folder_hint(
-                total, existing_folders, 'legacy flows', 'modify_flow', lower_bound=lower_bound
-            )
+            total, existing_folders = await get_config_folders(client, flow_type)
+            change_summary = build_folder_hint(total, existing_folders, 'legacy flows', 'modify_flow')
         except Exception:
             LOG.warning(
                 'Unable to fetch flow folders for component "%s" when creating flow "%s".',
@@ -326,19 +322,17 @@ async def create_conditional_flow(
     change_summary = None
     if folder:
         try:
-            await set_configuration_folder_metadata(client, flow_type, api_config.id, folder)
+            await set_configuration_folder(client, flow_type, api_config.id, folder)
         except Exception:
             LOG.warning(
-                'Unable to set folder metadata for component "%s", configuration "%s".',
+                'Unable to set folder for component "%s", configuration "%s".',
                 flow_type,
                 api_config.id,
             )
     else:
         try:
-            total, existing_folders, lower_bound = await get_config_folders(client, flow_type)
-            change_summary = build_folder_hint(
-                total, existing_folders, 'conditional flows', 'modify_flow', lower_bound=lower_bound
-            )
+            total, existing_folders = await get_config_folders(client, flow_type)
+            change_summary = build_folder_hint(total, existing_folders, 'conditional flows', 'modify_flow')
         except Exception:
             LOG.warning(
                 'Unable to fetch flow folders for component "%s" when creating flow "%s".',
@@ -569,11 +563,9 @@ async def modify_flow(
     folder_hint = None
     if folder is None:
         try:
-            total, existing_folders, lower_bound = await get_config_folders(client, flow_type)
+            total, existing_folders = await get_config_folders(client, flow_type)
             config_label = 'legacy flows' if flow_type == ORCHESTRATOR_COMPONENT_ID else 'conditional flows'
-            folder_hint = build_folder_hint(
-                total, existing_folders, config_label, 'modify_flow', lower_bound=lower_bound
-            )
+            folder_hint = build_folder_hint(total, existing_folders, config_label, 'modify_flow')
         except Exception:
             LOG.warning(
                 'Unable to fetch flow folders for component "%s" when updating flow "%s".',
@@ -581,11 +573,7 @@ async def modify_flow(
                 configuration_id,
             )
     else:
-        folder_stripped = folder.strip()
-        if folder_stripped:
-            await set_configuration_folder_metadata(client, flow_type, configuration_id, folder_stripped)
-        else:
-            await clear_configuration_folder_metadata(client, flow_type, configuration_id)
+        await set_configuration_folder(client, flow_type, configuration_id, folder)
 
     links_manager = await ProjectLinksManager.from_client(client)
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)
@@ -660,28 +648,9 @@ async def update_flow_internal(
     folder_preview: dict[str, Any] | None = None
     if folder is not None:
         normalized_folder = folder.strip()
-        try:
-            current_metadata = await client.storage_client.configuration_metadata_get(
-                component_id=flow_type, configuration_id=configuration_id
-            )
-            current_folder = next(
-                (
-                    m.get('value', '')
-                    for m in current_metadata
-                    if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
-                ),
-                '',
-            )
-            if normalized_folder != current_folder:
-                folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
-        except Exception as e:
-            LOG.warning(
-                'Failed to fetch configuration metadata for folder preview '
-                '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
-                flow_type,
-                configuration_id,
-                e,
-            )
+        current_folder = current_config.get('folder') or ''
+        if normalized_folder != current_folder:
+            folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
 
     combined_preview: dict[str, Any] | None = {**(mutator_preview or {}), **(folder_preview or {})} or None
     return current_config, flow_configuration, combined_preview

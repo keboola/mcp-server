@@ -10,7 +10,6 @@ from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import AppRunResponse, DataAppConfig, DataAppResponse, RuntimeResponse
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
-from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.links import Link
 from keboola_mcp_server.tools.data_apps import (
     _APP_RUN_LOG_LINES,
@@ -839,8 +838,8 @@ class TestFetchDataAppValidation:
         'folder',
         'app_count',
         'app_folders',
-        'expect_folder_metadata',
-        'expect_folder_delete',
+        'expect_folder_set',
+        'expect_folder_clear',
         'expect_hint',
     ),
     [
@@ -875,8 +874,8 @@ async def test_modify_streamlit_data_app_folder(
     folder,
     app_count: int,
     app_folders: list[str],
-    expect_folder_metadata: bool,
-    expect_folder_delete: bool,
+    expect_folder_set: bool,
+    expect_folder_clear: bool,
     expect_hint: bool,
 ) -> None:
     """Test folder metadata and change_summary hint for modify_streamlit_data_app (create and update paths)."""
@@ -931,12 +930,8 @@ async def test_modify_streamlit_data_app_folder(
 
     mocker.patch(
         'keboola_mcp_server.tools.components.utils.get_config_folders',
-        mocker.AsyncMock(return_value=(app_count, app_folders, False)),
+        mocker.AsyncMock(return_value=(app_count, app_folders)),
     )
-    keboola_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
-        return_value=[{'id': 'meta-1', 'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'OldFolder'}]
-    )
-    keboola_client.storage_client.configuration_metadata_delete = mocker.AsyncMock()
 
     result = await modify_streamlit_data_app(
         ctx=mcp_context_client,
@@ -951,24 +946,12 @@ async def test_modify_streamlit_data_app_folder(
     )
 
     assert isinstance(result, ModifiedDataAppOutput)
-    metadata_calls = [
-        call
-        for call in keboola_client.storage_client.configuration_metadata_update.call_args_list
-        if call.kwargs.get('metadata', {}).get(MetadataField.CONFIGURATION_FOLDER_NAME)
-    ]
-    if expect_folder_metadata:
-        assert len(metadata_calls) == 1
-        assert metadata_calls[0].kwargs['metadata'] == {MetadataField.CONFIGURATION_FOLDER_NAME: folder.strip()}
+    folder_calls = keboola_client.storage_client.configuration_folder_update.call_args_list
+    if expect_folder_set or expect_folder_clear:
+        assert len(folder_calls) == 1
+        assert folder_calls[0].kwargs['folder'] == folder.strip()
     else:
-        assert len(metadata_calls) == 0
-    if expect_folder_delete:
-        keboola_client.storage_client.configuration_metadata_delete.assert_called_once_with(
-            component_id=DATA_APP_COMPONENT_ID,
-            configuration_id=configuration_id,
-            metadata_id='meta-1',
-        )
-    else:
-        keboola_client.storage_client.configuration_metadata_delete.assert_not_called()
+        assert len(folder_calls) == 0
     if expect_hint:
         assert result.change_summary is not None
         assert str(app_count) in result.change_summary
@@ -1181,7 +1164,7 @@ async def test_modify_streamlit_data_app_update_skips_metadata_when_version_miss
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
     # Let the rest of the (best-effort) response building succeed.
     set_meta = mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
     mocker.patch('keboola_mcp_server.tools.data_apps._fetch_data_app', mocker.AsyncMock(return_value=existing_data_app))
 
     result = await modify_streamlit_data_app(
@@ -1307,7 +1290,7 @@ async def test_modify_python_js_data_app_create_prod_derives_or_honors_slug(
         )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     if expected_error is not None:
         with pytest.raises(ValueError, match=expected_error):
@@ -1382,7 +1365,7 @@ async def test_modify_python_js_data_app_update_slug(
     )
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(ctx=mcp_context_client, description='', configuration_id='cfg-1', **kwargs)
 
@@ -1460,7 +1443,7 @@ async def test_modify_python_js_data_app_create_calls_full_provisioning_chain(
 
     # avoid hitting Storage API for metadata helpers
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -1535,7 +1518,7 @@ async def test_modify_python_js_data_app_create_authentication_type(
         )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     _ = await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -1609,7 +1592,7 @@ async def test_modify_python_js_data_app_no_auth_rejected_only_on_drafts(
     )
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value={})
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     if expect_rejected:
         with pytest.raises(ValueError, match='not allowed on draft data apps'):
@@ -1688,7 +1671,7 @@ async def test_modify_python_js_data_app_update_patches_storage_config(
         )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -1765,7 +1748,7 @@ async def test_modify_python_js_data_app_update_repoints_external_git_branch(
     # Encryption must NOT be called on a branch-only repoint (the token stays encrypted verbatim).
     keboola_client.encryption_client = mocker.AsyncMock()
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -1897,7 +1880,7 @@ async def test_modify_python_js_data_app_create_storage_access(
         )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -2036,7 +2019,7 @@ async def test_modify_python_js_data_app_update_storage_access(
         )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -2111,7 +2094,7 @@ async def test_modify_python_js_data_app_update_storage_access_survives_unavaila
         )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -2149,7 +2132,7 @@ async def test_modify_python_js_data_app_create_passes_storage_through(
         )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     storage = {
         'output': {
@@ -2197,7 +2180,7 @@ async def test_modify_python_js_data_app_create_omits_empty_storage(
         )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     _ = await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -2256,7 +2239,7 @@ async def test_modify_python_js_data_app_update_replaces_storage(
         )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_update_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     new_storage = {
         'output': {
@@ -2374,7 +2357,7 @@ def python_js_image_client(mocker, mcp_context_client: Context, workspace_manage
     )
     for helper in ('set_cfg_creation_metadata', 'set_cfg_update_metadata'):
         mocker.patch(f'keboola_mcp_server.tools.data_apps.{helper}', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
     return keboola_client
 
 
@@ -2860,7 +2843,7 @@ async def test_modify_python_js_data_app_create_draft_uses_external_git(
     keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=fake_encrypt)
 
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -2966,7 +2949,7 @@ async def test_modify_python_js_data_app_create_draft_allows_main_branch_with_fl
     keboola_client.encryption_client = mocker.AsyncMock()
     keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda v, **_: v)
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -3022,7 +3005,7 @@ async def test_modify_python_js_data_app_create_draft_defaults_branch_to_unique_
     keboola_client.encryption_client = mocker.AsyncMock()
     keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda v, **_: v)
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     hex_suffixes = iter(('a1b2c3', 'd4e5f6'))
     mocker.patch(
@@ -3106,7 +3089,7 @@ async def test_modify_python_js_data_app_create_draft_auto_derives_slug(
     keboola_client.encryption_client = mocker.AsyncMock()
     keboola_client.encryption_client.encrypt = mocker.AsyncMock(side_effect=lambda v, **_: v)
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     await modify_python_js_data_app(
         ctx=mcp_context_client,
@@ -3251,7 +3234,7 @@ async def test_modify_python_js_data_app_create_prod_calls_get_app_git_repo_for_
         )
     )
     mocker.patch('keboola_mcp_server.tools.data_apps.set_cfg_creation_metadata', mocker.AsyncMock())
-    mocker.patch('keboola_mcp_server.tools.data_apps.apply_folder_metadata', mocker.AsyncMock(return_value=None))
+    mocker.patch('keboola_mcp_server.tools.data_apps.apply_configuration_folder', mocker.AsyncMock(return_value=None))
 
     result = await modify_python_js_data_app(ctx=mcp_context_client, name='Prod', description='', slug='demo')
 

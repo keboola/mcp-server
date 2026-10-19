@@ -494,6 +494,7 @@ class TestPreviewConfigDiff:
             'id': 'config-123',
             'name': 'Original Transformation',
             'description': 'Original transformation description',
+            'folder': 'Old Folder',
             'configuration': {
                 'parameters': {
                     'blocks': [
@@ -535,9 +536,6 @@ class TestPreviewConfigDiff:
             return copy.deepcopy(original_config_data)
 
         mock_client.storage_client.configuration_detail = mocker.AsyncMock(side_effect=mock_config_detail)
-        mock_client.storage_client.configuration_metadata_get = mocker.AsyncMock(
-            return_value=[{'key': 'KBC.configuration.folderName', 'value': 'Old Folder'}]
-        )
 
         mocker.patch('keboola_mcp_server.preview.KeboolaClient.from_state', return_value=mock_client)
 

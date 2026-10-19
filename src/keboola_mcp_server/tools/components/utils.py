@@ -70,7 +70,7 @@ R_TRANSFORMATION_ID = 'keboola.r-transformation-v2'
 DUCKDB_TRANSFORMATION_ID = 'keboola.duckdb-transformation'
 VARIABLES_COMPONENT_ID = 'keboola.variables'
 
-# Component IDs for which update_config actively manages folder metadata (set/clear/hint).
+# Component IDs for which update_config actively manages the configuration folder (set/clear/hint).
 # For all other components the folder parameter is accepted but silently skipped to avoid
 # unnecessary API calls on components where folder organisation is not expected.
 FOLDER_SUPPORTING_COMPONENT_IDS: frozenset[str] = frozenset(
@@ -417,97 +417,40 @@ async def set_cfg_update_metadata(
         LOG.exception(f'Failed to set "{updated_by_md_key}" metadata for configuration {configuration_id}')
 
 
-async def get_config_folders(client: KeboolaClient, component_id: str) -> tuple[int, list[str], bool]:
+async def get_config_folders(client: KeboolaClient, component_id: str) -> tuple[int, list[str]]:
     """
-    Returns the total number of existing configurations, the distinct folder names already in use,
-    and a flag indicating whether the count is a lower bound.
-
-    When ≥20 configs already carry folder metadata, the full configuration list is skipped for
-    performance. In that case the returned count equals the number of folder-bearing configs, which
-    is a lower bound on the real total (``lower_bound=True``). Callers that surface this count to
-    the user should phrase it as "at least N" to avoid misrepresenting the actual total.
+    Returns the total number of existing configurations and the distinct folder names already in use.
 
     :param client: KeboolaClient instance
     :param component_id: ID of the component (e.g. keboola.snowflake-transformation)
-    :return: Tuple of (count, distinct_folder_names, lower_bound)
+    :return: Tuple of (count, distinct_folder_names)
     """
-    # Fetch folder-bearing configs first — lighter than a full configuration_list for large projects.
-    folder_configs = await client.storage_client.component_configurations_search(
-        component_id=component_id,
-        metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
-    )
-    seen: set[str] = set()
-    folders: list[str] = []
-    for cfg in folder_configs:
-        for meta in cfg.get('metadata', []):
-            if meta.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME:
-                folder_name = meta.get('value', '').strip()
-                if folder_name and folder_name not in seen:
-                    seen.add(folder_name)
-                    folders.append(folder_name)
-
-    # If ≥20 configs already have folders, total must be at least that many — skip configuration_list.
-    if len(folder_configs) >= 20:
-        return len(folder_configs), folders, True
-
-    # Fewer than 20 folder-bearing configs — check actual total to decide whether to hint.
     raw_configs = await client.storage_client.configuration_list(component_id=component_id)
-    total = len(raw_configs)
-    if total < 20:
-        return total, [], False
-    return total, folders, False
+    folders: list[str] = []
+    for cfg in raw_configs:
+        folder_name = (cfg.get('folder') or '').strip()
+        if folder_name and folder_name not in folders:
+            folders.append(folder_name)
+    return len(raw_configs), folders
 
 
-async def set_configuration_folder_metadata(
+async def set_configuration_folder(
     client: KeboolaClient, component_id: str, configuration_id: str, folder: str
 ) -> None:
     """
-    Sets the KBC.configuration.folderName metadata for a configuration.
-    Strips whitespace from the folder name; does nothing if the result is empty.
+    Sets the UI folder of a configuration. Strips whitespace from the folder name; an empty result
+    removes the configuration from its folder.
 
     :param client: KeboolaClient instance
     :param component_id: ID of the component
     :param configuration_id: ID of the configuration
-    :param folder: Folder name to assign
+    :param folder: Folder name to assign, or an empty string to clear the folder
     """
-    normalized = folder.strip()
-    if not normalized:
-        return
-    await client.storage_client.configuration_metadata_update(
+    await client.storage_client.configuration_folder_update(
         component_id=component_id,
         configuration_id=configuration_id,
-        metadata={MetadataField.CONFIGURATION_FOLDER_NAME: normalized},
+        folder=folder.strip(),
     )
-
-
-async def clear_configuration_folder_metadata(client: KeboolaClient, component_id: str, configuration_id: str) -> None:
-    """Removes the KBC.configuration.folderName metadata entry if present."""
-    try:
-        metadata = await client.storage_client.configuration_metadata_get(
-            component_id=component_id, configuration_id=configuration_id
-        )
-        for entry in metadata:
-            if entry.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME:
-                metadata_id = entry.get('id')
-                if metadata_id is None:
-                    LOG.warning(
-                        'Unable to clear folder metadata for component "%s", configuration "%s": '
-                        'metadata entry is missing "id".',
-                        component_id,
-                        configuration_id,
-                    )
-                    continue
-                await client.storage_client.configuration_metadata_delete(
-                    component_id=component_id,
-                    configuration_id=configuration_id,
-                    metadata_id=metadata_id,
-                )
-    except Exception:
-        LOG.warning(
-            'Unable to clear folder metadata for component "%s", configuration "%s".',
-            component_id,
-            configuration_id,
-        )
 
 
 def _variables_config_name(component_id: str, config_id: str) -> str:
@@ -673,7 +616,7 @@ async def apply_configuration_variables(
     return result
 
 
-async def apply_folder_metadata(
+async def apply_configuration_folder(
     client: KeboolaClient,
     component_id: str,
     configuration_id: str,
@@ -684,7 +627,7 @@ async def apply_folder_metadata(
     is_new: bool = False,
 ) -> str | None:
     """
-    Sets or clears folder metadata for a configuration, or returns a hint when many exist.
+    Sets or clears the folder of a configuration, or returns a hint when many exist.
 
     :param kind: Human-readable plural noun for the hint (e.g. 'configurations', 'data apps').
     :param tool_name: Tool name for the hint (e.g. 'update_config', 'modify_streamlit_data_app').
@@ -697,10 +640,10 @@ async def apply_folder_metadata(
     # always recorded — a swallowed cause here kept a fully broken folder search invisible.
     if folder is None:
         try:
-            total, existing_folders, lower_bound = await get_config_folders(client, component_id)
-            return build_folder_hint(total, existing_folders, kind, tool_name, lower_bound=lower_bound)
+            total, existing_folders = await get_config_folders(client, component_id)
+            return build_folder_hint(total, existing_folders, kind, tool_name)
         except Exception as e:
-            # Cause is duplicated into the message text on purpose (see test_apply_folder_metadata_*).
+            # Cause is duplicated into the message text on purpose (see test_apply_configuration_folder_*).
             LOG.exception(
                 'Unable to fetch %s folders for component "%s" when processing configuration "%s": %s',
                 kind,
@@ -709,20 +652,17 @@ async def apply_folder_metadata(
                 e,  # noqa: TRY401
             )
             return None
-    normalized = folder.strip()
-    if normalized:
+    if folder.strip() or not is_new:
         try:
-            await set_configuration_folder_metadata(client, component_id, configuration_id, normalized)
+            await set_configuration_folder(client, component_id, configuration_id, folder)
         except Exception as e:
-            # Cause is duplicated into the message text on purpose (see test_apply_folder_metadata_*).
+            # Cause is duplicated into the message text on purpose (see test_apply_configuration_folder_*).
             LOG.exception(
-                'Unable to set folder metadata for component "%s", configuration "%s": %s',
+                'Unable to set folder for component "%s", configuration "%s": %s',
                 component_id,
                 configuration_id,
                 e,  # noqa: TRY401
             )
-    elif not is_new:
-        await clear_configuration_folder_metadata(client, component_id, configuration_id)
     return None
 
 
@@ -747,22 +687,18 @@ def build_folder_hint(
     existing_folders: list[str],
     config_label: str,
     update_tool: str,
-    *,
-    lower_bound: bool = False,
 ) -> str | None:
     """Returns a folder-organization hint for the LLM when a project has ≥20 configurations of the given type.
 
-    :param total: Total (or lower-bound) number of existing configurations for this component type
+    :param total: Total number of existing configurations for this component type
     :param existing_folders: List of folder names already in use
     :param config_label: Human-readable label for the config type (e.g. "SQL transformations", "flows")
     :param update_tool: Name of the tool to call to assign a folder (e.g. "update_sql_transformation")
-    :param lower_bound: When True, ``total`` is a lower bound; the hint says "at least N" instead of "N"
     :return: Hint string, or None if not enough configurations to warrant organizing
     """
     if total < 20:
         return None
-    count_str = f'at least {total}' if lower_bound else str(total)
-    hint = f'Note: This project already has {count_str} {config_label}. Consider organizing them with folders. '
+    hint = f'Note: This project already has {total} {config_label}. Consider organizing them with folders. '
     if existing_folders:
         hint += (
             f'Existing folders: {", ".join(existing_folders)}. '

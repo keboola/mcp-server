@@ -15,7 +15,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from keboola_mcp_server.clients.base import JsonDict
-from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient, get_metadata_property
+from keboola_mcp_server.clients.client import DATA_APP_COMPONENT_ID, KeboolaClient
 from keboola_mcp_server.clients.data_science import (
     AppRunResponse,
     CodeDataAppConfig,
@@ -24,14 +24,13 @@ from keboola_mcp_server.clients.data_science import (
     RuntimeResponse,
 )
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse
-from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import Link, ProjectLinksManager
 from keboola_mcp_server.mcp import PlainFunctionTool as FunctionTool
 from keboola_mcp_server.mcp import ToonCompactFunctionTool, process_concurrently
 from keboola_mcp_server.scope import ProjectIdArg
 from keboola_mcp_server.tools.components.utils import (
-    apply_folder_metadata,
+    apply_configuration_folder,
     folder_field_description,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
@@ -471,7 +470,7 @@ class DataApp(BaseModel):
             auto_suspend_after_seconds=api_response.auto_suspend_after_seconds,
             name=api_configuration.name,
             description=api_configuration.description,
-            folder=get_metadata_property(api_configuration.metadata, MetadataField.CONFIGURATION_FOLDER_NAME) or '',
+            folder=api_configuration.folder or '',
             configuration=api_configuration.configuration,
             git_branch=_config_git_branch(api_configuration.configuration),
             deployment_info=None,
@@ -781,7 +780,7 @@ async def modify_streamlit_data_app(
                     configuration_id=configuration_id,
                     configuration_version=int(new_version),
                 )
-            folder_hint = await apply_folder_metadata(
+            folder_hint = await apply_configuration_folder(
                 client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_streamlit_data_app'
             )
             data_app = await _fetch_data_app(client, configuration_id=configuration_id, data_app_id=None)
@@ -835,7 +834,7 @@ async def modify_streamlit_data_app(
                 component_id=DATA_APP_COMPONENT_ID,
                 configuration_id=data_app_resp.config_id,
             )
-            folder_hint = await apply_folder_metadata(
+            folder_hint = await apply_configuration_folder(
                 client,
                 DATA_APP_COMPONENT_ID,
                 data_app_resp.config_id,
@@ -909,28 +908,9 @@ async def modify_streamlit_data_app_internal(
     folder_preview: dict | None = None
     if folder is not None:
         normalized_folder = folder.strip()
-        try:
-            current_metadata = await client.storage_client.configuration_metadata_get(
-                component_id=DATA_APP_COMPONENT_ID, configuration_id=configuration_id
-            )
-            current_folder = next(
-                (
-                    m.get('value', '')
-                    for m in current_metadata
-                    if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
-                ),
-                '',
-            )
-            if normalized_folder != current_folder:
-                folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
-        except Exception as e:
-            LOG.warning(
-                'Failed to fetch configuration metadata for folder preview '
-                '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
-                DATA_APP_COMPONENT_ID,
-                configuration_id,
-                e,
-            )
+        current_folder = data_app.folder
+        if normalized_folder != current_folder:
+            folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
 
     return data_app, updated_config, folder_preview
 
@@ -1427,7 +1407,7 @@ async def modify_python_js_data_app(
             configuration_id=configuration_id,
             configuration_version=int(data_app.config_version),
         )
-        folder_hint = await apply_folder_metadata(
+        folder_hint = await apply_configuration_folder(
             client, DATA_APP_COMPONENT_ID, configuration_id, folder, 'data apps', 'modify_python_js_data_app'
         )
         # Without an explicit `slug`, a new slug is a never-deployed app's slug following its name.
@@ -1609,7 +1589,7 @@ async def modify_python_js_data_app(
             component_id=DATA_APP_COMPONENT_ID,
             configuration_id=data_app_resp.config_id,
         )
-        folder_hint = await apply_folder_metadata(
+        folder_hint = await apply_configuration_folder(
             client,
             DATA_APP_COMPONENT_ID,
             data_app_resp.config_id,

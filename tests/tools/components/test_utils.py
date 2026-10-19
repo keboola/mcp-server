@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.tools.components.model import (
     ALL_COMPONENT_TYPES,
     ComponentType,
@@ -29,13 +28,11 @@ from keboola_mcp_server.tools.components.model import (
 from keboola_mcp_server.tools.components.utils import (
     _apply_param_update,
     _normalize_jsonpath,
-    apply_folder_metadata,
+    apply_configuration_folder,
     clean_bucket_name,
-    clear_configuration_folder_metadata,
     create_transformation_configuration,
     expand_component_types,
     get_config_folders,
-    set_configuration_folder_metadata,
     set_nested_value,
     structure_summary,
     update_params,
@@ -1378,149 +1375,57 @@ def test_update_transformation_parameters(
 
 
 # ============================================================================
-# get_transformation_folders / set_configuration_folder_metadata TESTS
+# get_config_folders / set_configuration_folder TESTS
 # ============================================================================
 
 
-def _make_client(
-    configs: list[dict[str, Any]],
-    folder_configs: list[dict[str, Any]],
-) -> MagicMock:
+def _make_client(configs: list[dict[str, Any]]) -> MagicMock:
     """Create a minimal mock KeboolaClient for folder tests."""
     client = MagicMock()
     client.storage_client.configuration_list = AsyncMock(return_value=configs)
-    client.storage_client.component_configurations_search = AsyncMock(return_value=folder_configs)
-    client.storage_client.configuration_metadata_update = AsyncMock(return_value=[])
+    client.storage_client.configuration_folder_update = AsyncMock(return_value={})
     return client
 
 
 @pytest.mark.parametrize(
-    ('all_configs', 'expected_count'),
+    ('configs', 'expected_folders'),
     [
-        ([], 0),
-        ([{'id': str(i)} for i in range(5)], 5),
-    ],
-    ids=['no_configs', 'few_configs'],
-)
-@pytest.mark.asyncio
-async def test_get_config_folders_short_circuit(
-    all_configs: list[dict[str, Any]],
-    expected_count: int,
-) -> None:
-    """Test that configuration_list is still called (and returns early) when total < 20."""
-    client = _make_client(all_configs, [])
-    count, folders, lower_bound = await get_config_folders(client, 'keboola.snowflake-transformation')
-    assert count == expected_count
-    assert folders == []
-    assert lower_bound is False
-    client.storage_client.component_configurations_search.assert_called_once_with(
-        component_id='keboola.snowflake-transformation',
-        metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
-    )
-    client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
-
-
-@pytest.mark.asyncio
-async def test_get_config_folders_skips_list_when_enough_folder_configs() -> None:
-    """Test that configuration_list is skipped when ≥20 configs already have folder metadata."""
-    folder_configs = [
-        {
-            'id': str(i),
-            'idComponent': 'keboola.snowflake-transformation',
-            'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': f'Folder{i % 5}'}],
-        }
-        for i in range(22)
-    ]
-    client = _make_client([], folder_configs)  # configuration_list returns [] but should not be called
-    count, folders, lower_bound = await get_config_folders(client, 'keboola.snowflake-transformation')
-    assert count == 22
-    assert len(folders) == 5  # 22 configs across 5 distinct folders
-    assert lower_bound is True
-    client.storage_client.component_configurations_search.assert_called_once_with(
-        component_id='keboola.snowflake-transformation',
-        metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
-    )
-    client.storage_client.configuration_list.assert_not_called()
-
-
-_MANY_CONFIGS = [{'id': str(i)} for i in range(25)]
-
-
-@pytest.mark.parametrize(
-    ('folder_configs', 'expected_folders'),
-    [
-        # No folder metadata on any config
         ([], []),
-        # Two configs with distinct folders
+        ([{'id': str(i), 'folder': None} for i in range(25)], []),
         (
-            [
-                {
-                    'id': '1',
-                    'idComponent': 'keboola.snowflake-transformation',
-                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
-                },
-                {
-                    'id': '2',
-                    'idComponent': 'keboola.snowflake-transformation',
-                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Sales'}],
-                },
-            ],
+            [{'id': '1', 'folder': 'Analytics'}, {'id': '2', 'folder': 'Sales'}, {'id': '3', 'folder': None}],
             ['Analytics', 'Sales'],
         ),
-        # Duplicate folder names are deduplicated
-        (
-            [
-                {
-                    'id': '1',
-                    'idComponent': 'keboola.snowflake-transformation',
-                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
-                },
-                {
-                    'id': '2',
-                    'idComponent': 'keboola.snowflake-transformation',
-                    'metadata': [{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'value': 'Analytics'}],
-                },
-            ],
-            ['Analytics'],
-        ),
+        ([{'id': '1', 'folder': 'Analytics'}, {'id': '2', 'folder': 'Analytics'}], ['Analytics']),
+        ([{'id': '1'}, {'id': '2', 'folder': ''}], []),  # field missing or empty
     ],
-    ids=['no_folders', 'distinct_folders', 'deduplicated_folders'],
+    ids=['no_configs', 'no_folders', 'distinct_folders', 'deduplicated_folders', 'missing_or_empty_folder'],
 )
 @pytest.mark.asyncio
-async def test_get_config_folders(
-    folder_configs: list[dict[str, Any]],
-    expected_folders: list[str],
-) -> None:
-    """Test get_config_folders when count >= 20 (search endpoint is called)."""
-    client = _make_client(_MANY_CONFIGS, folder_configs)
-    count, folders, lower_bound = await get_config_folders(client, 'keboola.snowflake-transformation')
-    assert count == len(_MANY_CONFIGS)
+async def test_get_config_folders(configs: list[dict[str, Any]], expected_folders: list[str]) -> None:
+    """Test get_config_folders reads the `folder` field of the listed configurations."""
+    client = _make_client(configs)
+    count, folders = await get_config_folders(client, 'keboola.snowflake-transformation')
+    assert count == len(configs)
     assert folders == expected_folders
-    assert lower_bound is False
     client.storage_client.configuration_list.assert_called_once_with(component_id='keboola.snowflake-transformation')
-    client.storage_client.component_configurations_search.assert_called_once_with(
-        component_id='keboola.snowflake-transformation',
-        metadata_keys=[MetadataField.CONFIGURATION_FOLDER_NAME],
-    )
 
 
 @pytest.mark.asyncio
-async def test_apply_folder_metadata_logs_cause_when_folder_lookup_fails(
+async def test_apply_configuration_folder_logs_cause_when_folder_lookup_fails(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """
     Test that a failing folder lookup is logged with its cause and does not fail the caller.
 
-    A silent `except Exception` here hid a fully broken search endpoint: every call 400'd, the hint
+    A silent `except Exception` here once hid a fully broken folder search: every call 400'd, the hint
     was never produced, and nothing in the logs said why.
     """
-    client = _make_client([], [])
-    client.storage_client.component_configurations_search = AsyncMock(
-        side_effect=RuntimeError('componentId: "This field was not expected."')
-    )
+    client = _make_client([])
+    client.storage_client.configuration_list = AsyncMock(side_effect=RuntimeError('This field was not expected.'))
 
     with caplog.at_level(logging.ERROR):
-        result = await apply_folder_metadata(
+        result = await apply_configuration_folder(
             client, 'keboola.snowflake-transformation', 'cfg-1', None, 'configurations', 'update_config'
         )
 
@@ -1534,15 +1439,15 @@ async def test_apply_folder_metadata_logs_cause_when_folder_lookup_fails(
 
 
 @pytest.mark.asyncio
-async def test_apply_folder_metadata_logs_cause_when_setting_folder_fails(
+async def test_apply_configuration_folder_logs_cause_when_setting_folder_fails(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test that a failing folder write is logged with its cause and does not fail the caller."""
-    client = _make_client([], [])
-    client.storage_client.configuration_metadata_update = AsyncMock(side_effect=RuntimeError('boom'))
+    client = _make_client([])
+    client.storage_client.configuration_folder_update = AsyncMock(side_effect=RuntimeError('boom'))
 
     with caplog.at_level(logging.ERROR):
-        result = await apply_folder_metadata(
+        result = await apply_configuration_folder(
             client, 'keboola.snowflake-transformation', 'cfg-1', 'Analytics', 'configurations', 'update_config'
         )
 
@@ -1554,67 +1459,31 @@ async def test_apply_folder_metadata_logs_cause_when_setting_folder_fails(
 
 
 @pytest.mark.parametrize(
-    ('folder', 'expected_saved', 'expect_call'),
+    ('folder', 'is_new', 'expected_saved'),
     [
-        ('Analytics', 'Analytics', True),
-        ('  Analytics  ', 'Analytics', True),  # whitespace stripped
-        ('', None, False),
-        ('   ', None, False),  # whitespace-only skipped
+        ('Analytics', False, 'Analytics'),
+        ('  Analytics  ', False, 'Analytics'),  # whitespace stripped
+        ('', False, ''),  # empty clears the folder
+        ('   ', False, ''),  # whitespace-only clears the folder
+        ('Analytics', True, 'Analytics'),
+        ('', True, None),  # nothing to clear on a new configuration
     ],
-    ids=['normal', 'whitespace_stripped', 'empty', 'whitespace_only'],
+    ids=['normal', 'whitespace_stripped', 'empty_clears', 'whitespace_only_clears', 'new_normal', 'new_empty_skipped'],
 )
 @pytest.mark.asyncio
-async def test_set_configuration_folder_metadata(
-    folder: str,
-    expected_saved: str | None,
-    expect_call: bool,
-) -> None:
-    """Test set_configuration_folder_metadata: strips whitespace, skips empty, propagates errors."""
-    client = _make_client([], [])
-    await set_configuration_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1', folder)
-    if expect_call:
-        client.storage_client.configuration_metadata_update.assert_called_once_with(
-            component_id='keboola.snowflake-transformation',
-            configuration_id='cfg-1',
-            metadata={MetadataField.CONFIGURATION_FOLDER_NAME: expected_saved},
-        )
+async def test_apply_configuration_folder_sets_folder(folder: str, is_new: bool, expected_saved: str | None) -> None:
+    """Test apply_configuration_folder sends the stripped folder via the folder-only update (empty clears)."""
+    client = _make_client([])
+    result = await apply_configuration_folder(
+        client, 'keboola.snowflake-transformation', 'cfg-1', folder, 'configurations', 'update_config', is_new=is_new
+    )
+    assert result is None
+    if expected_saved is None:
+        client.storage_client.configuration_folder_update.assert_not_called()
     else:
-        client.storage_client.configuration_metadata_update.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    ('metadata', 'expected_delete_ids'),
-    [
-        ([], []),
-        ([{'key': 'other.key', 'id': '99'}], []),
-        ([{'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'id': '1'}], ['1']),
-        (
-            [
-                {'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'id': '1'},
-                {'key': MetadataField.CONFIGURATION_FOLDER_NAME, 'id': '2'},
-            ],
-            ['1', '2'],
-        ),
-        ([{'key': MetadataField.CONFIGURATION_FOLDER_NAME}], []),
-    ],
-    ids=['no_metadata', 'other_key', 'single_match', 'multiple_matches_all_deleted', 'missing_id_skipped'],
-)
-@pytest.mark.asyncio
-async def test_clear_configuration_folder_metadata(
-    metadata: list[dict[str, Any]],
-    expected_delete_ids: list[str],
-) -> None:
-    """Test clear_configuration_folder_metadata deletes all matching entries."""
-    client = _make_client([], [])
-    client.storage_client.configuration_metadata_get = AsyncMock(return_value=metadata)
-    client.storage_client.configuration_metadata_delete = AsyncMock()
-
-    await clear_configuration_folder_metadata(client, 'keboola.snowflake-transformation', 'cfg-1')
-
-    assert client.storage_client.configuration_metadata_delete.call_count == len(expected_delete_ids)
-    for metadata_id in expected_delete_ids:
-        client.storage_client.configuration_metadata_delete.assert_any_call(
+        client.storage_client.configuration_folder_update.assert_called_once_with(
             component_id='keboola.snowflake-transformation',
             configuration_id='cfg-1',
-            metadata_id=metadata_id,
+            folder=expected_saved,
         )
+    client.storage_client.configuration_list.assert_not_called()

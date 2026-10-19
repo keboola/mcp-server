@@ -39,7 +39,6 @@ from pydantic import Field
 
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.clients.storage import ConfigurationAPIResponse, JsonDict
-from keboola_mcp_server.config import MetadataField
 from keboola_mcp_server.errors import tool_errors
 from keboola_mcp_server.links import ProjectLinksManager
 from keboola_mcp_server.mcp import (
@@ -73,11 +72,10 @@ from keboola_mcp_server.tools.components.utils import (
     VARIABLES_COMPONENT_ID,
     _apply_vars_to_parent_cfg,
     add_ids,
+    apply_configuration_folder,
     apply_configuration_variables,
-    apply_folder_metadata,
     build_folder_hint,
     check_suitable,
-    clear_configuration_folder_metadata,
     create_transformation_configuration,
     expand_component_types,
     fetch_component,
@@ -88,7 +86,7 @@ from keboola_mcp_server.tools.components.utils import (
     list_configs_by_types,
     set_cfg_creation_metadata,
     set_cfg_update_metadata,
-    set_configuration_folder_metadata,
+    set_configuration_folder,
     set_nested_value,
     update_params,
     update_transformation_parameters,
@@ -541,23 +539,19 @@ async def create_sql_transformation(
     folder = folder.strip()
     if folder:
         try:
-            await set_configuration_folder_metadata(client, component_id, configuration_id, folder)
+            await set_configuration_folder(client, component_id, configuration_id, folder)
         except Exception:
             LOG.warning(
-                'Unable to set folder metadata for component "%s", configuration "%s".',
+                'Unable to set folder for component "%s", configuration "%s".',
                 component_id,
                 configuration_id,
             )
         change_summary = None
     else:
         try:
-            total, existing_folders, lower_bound = await get_config_folders(client, component_id)
+            total, existing_folders = await get_config_folders(client, component_id)
             change_summary = build_folder_hint(
-                total,
-                existing_folders,
-                'SQL transformations',
-                'update_sql_transformation',
-                lower_bound=lower_bound,
+                total, existing_folders, 'SQL transformations', 'update_sql_transformation'
             )
         except Exception:
             LOG.warning(
@@ -936,14 +930,8 @@ async def update_sql_transformation(
     folder_hint = None
     if folder is None:
         try:
-            total, existing_folders, lower_bound = await get_config_folders(client, sql_transformation_id)
-            folder_hint = build_folder_hint(
-                total,
-                existing_folders,
-                'SQL transformations',
-                'update_sql_transformation',
-                lower_bound=lower_bound,
-            )
+            total, existing_folders = await get_config_folders(client, sql_transformation_id)
+            folder_hint = build_folder_hint(total, existing_folders, 'SQL transformations', 'update_sql_transformation')
         except Exception:
             LOG.warning(
                 'Unable to fetch transformation folders for component "%s" when updating configuration "%s".',
@@ -951,29 +939,15 @@ async def update_sql_transformation(
                 configuration_id,
             )
     else:
-        folder_stripped = folder.strip()
-        if folder_stripped:
-            try:
-                await set_configuration_folder_metadata(
-                    client, sql_transformation_id, configuration_id, folder_stripped
-                )
-            except Exception as exc:
-                LOG.warning(
-                    'Unable to set folder metadata for component "%s", configuration "%s".',
-                    sql_transformation_id,
-                    configuration_id,
-                    exc_info=exc,
-                )
-        else:
-            try:
-                await clear_configuration_folder_metadata(client, sql_transformation_id, configuration_id)
-            except Exception as exc:
-                LOG.warning(
-                    'Unable to clear folder metadata for component "%s", configuration "%s".',
-                    sql_transformation_id,
-                    configuration_id,
-                    exc_info=exc,
-                )
+        try:
+            await set_configuration_folder(client, sql_transformation_id, configuration_id, folder)
+        except Exception as exc:
+            LOG.warning(
+                'Unable to set folder for component "%s", configuration "%s".',
+                sql_transformation_id,
+                configuration_id,
+                exc_info=exc,
+            )
 
     await set_cfg_update_metadata(
         client=client,
@@ -1078,28 +1052,9 @@ async def update_sql_transformation_internal(
     folder_preview: dict | None = None
     if folder is not None:
         normalized_folder = folder.strip()
-        try:
-            current_metadata = await client.storage_client.configuration_metadata_get(
-                component_id=sql_transformation_id, configuration_id=configuration_id
-            )
-            current_folder = next(
-                (
-                    m.get('value', '')
-                    for m in current_metadata
-                    if m.get('key') == MetadataField.CONFIGURATION_FOLDER_NAME
-                ),
-                '',
-            )
-            if normalized_folder != current_folder:
-                folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
-        except Exception as e:
-            LOG.warning(
-                'Failed to fetch configuration metadata for folder preview '
-                '(component_id=%s, configuration_id=%s): %s. Proceeding without folder preview.',
-                sql_transformation_id,
-                configuration_id,
-                e,
-            )
+        current_folder = config_details.get('folder') or ''
+        if normalized_folder != current_folder:
+            folder_preview = {'original_folder': current_folder, 'updated_folder': normalized_folder}
 
     return config_details, updated_configuration, msg, folder_preview
 
@@ -1615,7 +1570,9 @@ async def update_config(
     LOG.info(f'Updated configuration for component "{component_id}" with configuration id "{configuration_id}".')
 
     folder_hint = (
-        await apply_folder_metadata(client, component_id, configuration_id, folder, 'configurations', 'update_config')
+        await apply_configuration_folder(
+            client, component_id, configuration_id, folder, 'configurations', 'update_config'
+        )
         if component_id in FOLDER_SUPPORTING_COMPONENT_IDS
         else None
     )
