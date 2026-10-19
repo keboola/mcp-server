@@ -1068,6 +1068,9 @@ async def test_create_flow_folder(
 ) -> None:
     """Test folder metadata and change_summary hint for create_flow."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.configuration_folder_update = mocker.AsyncMock(
+        side_effect=lambda **kwargs: {'folder': kwargs['folder'] or None}
+    )
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
     mocker.patch(
         'keboola_mcp_server.tools.flow.tools.get_config_folders',
@@ -1134,6 +1137,9 @@ async def test_create_conditional_flow_folder(
         mocker.AsyncMock(return_value=component),
     )
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.configuration_folder_update = mocker.AsyncMock(
+        side_effect=lambda **kwargs: {'folder': kwargs['folder'] or None}
+    )
     keboola_client.storage_client.configuration_create = mocker.AsyncMock(
         return_value=mock_conditional_flow_create_update
     )
@@ -1209,6 +1215,9 @@ async def test_modify_flow_folder(
     mocker.patch('keboola_mcp_server.tools.flow.tools.get_project_info', side_effect=mock_get_project_info)
 
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.configuration_folder_update = mocker.AsyncMock(
+        side_effect=lambda **kwargs: {'folder': kwargs['folder'] or None}
+    )
     keboola_client.storage_client.configuration_detail = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
     keboola_client.storage_client.configuration_update = mocker.AsyncMock(return_value=mock_legacy_flow_create_update)
     mocker.patch(

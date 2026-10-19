@@ -880,6 +880,9 @@ async def test_modify_streamlit_data_app_folder(
 ) -> None:
     """Test folder metadata and change_summary hint for modify_streamlit_data_app (create and update paths)."""
     keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+    keboola_client.storage_client.configuration_folder_update = mocker.AsyncMock(
+        side_effect=lambda **kwargs: {'folder': kwargs['folder'] or None}
+    )
 
     workspace_manager.get_data_app_workspace_id = mocker.AsyncMock(return_value=1)
     workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='snowflake')

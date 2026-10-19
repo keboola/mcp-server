@@ -434,23 +434,41 @@ async def get_config_folders(client: KeboolaClient, component_id: str) -> tuple[
     return len(raw_configs), folders
 
 
+FOLDER_NOT_SUPPORTED_NOTE = (
+    'Note: The folder was not changed because configuration folders are not supported on this Keboola stack yet.'
+)
+
+
 async def set_configuration_folder(
     client: KeboolaClient, component_id: str, configuration_id: str, folder: str
-) -> None:
+) -> str | None:
     """
     Sets the UI folder of a configuration. Strips whitespace from the folder name; an empty result
     removes the configuration from its folder.
+
+    A stack whose Storage API does not support configuration folders yet ignores the unknown `folder`
+    field and responds with success, so a response without the `folder` field means the folder was not set.
 
     :param client: KeboolaClient instance
     :param component_id: ID of the component
     :param configuration_id: ID of the configuration
     :param folder: Folder name to assign, or an empty string to clear the folder
+    :return: None if the folder was set, or a note for the tool output if the stack does not support folders
     """
-    await client.storage_client.configuration_folder_update(
+    response = await client.storage_client.configuration_folder_update(
         component_id=component_id,
         configuration_id=configuration_id,
         folder=folder.strip(),
     )
+    if 'folder' not in response:
+        LOG.warning(
+            'Configuration folders are not supported on this stack; folder not set for component "%s", '
+            'configuration "%s".',
+            component_id,
+            configuration_id,
+        )
+        return FOLDER_NOT_SUPPORTED_NOTE
+    return None
 
 
 def _variables_config_name(component_id: str, config_id: str) -> str:
@@ -628,11 +646,12 @@ async def apply_configuration_folder(
 ) -> str | None:
     """
     Sets or clears the folder of a configuration, or returns a hint when many exist.
+    If the stack does not support configuration folders, returns a note saying the folder was not changed.
 
     :param kind: Human-readable plural noun for the hint (e.g. 'configurations', 'data apps').
     :param tool_name: Tool name for the hint (e.g. 'update_config', 'modify_streamlit_data_app').
     :param is_new: When True, an empty folder string is a no-op (no folder to remove on a new item).
-    :return: Folder hint string if applicable, else None.
+    :return: Folder hint or note string if applicable, else None.
     """
     # Both catches below stay broad on purpose: callers invoke this *after* the configuration has
     # already been written, so letting anything escape would report a failure for a change that
@@ -654,7 +673,7 @@ async def apply_configuration_folder(
             return None
     if folder.strip() or not is_new:
         try:
-            await set_configuration_folder(client, component_id, configuration_id, folder)
+            return await set_configuration_folder(client, component_id, configuration_id, folder)
         except Exception as e:
             # Cause is duplicated into the message text on purpose (see test_apply_configuration_folder_*).
             LOG.exception(

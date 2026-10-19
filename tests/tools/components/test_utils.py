@@ -26,6 +26,7 @@ from keboola_mcp_server.tools.components.model import (
     TransformationConfiguration,
 )
 from keboola_mcp_server.tools.components.utils import (
+    FOLDER_NOT_SUPPORTED_NOTE,
     _apply_param_update,
     _normalize_jsonpath,
     apply_configuration_folder,
@@ -1383,7 +1384,9 @@ def _make_client(configs: list[dict[str, Any]]) -> MagicMock:
     """Create a minimal mock KeboolaClient for folder tests."""
     client = MagicMock()
     client.storage_client.configuration_list = AsyncMock(return_value=configs)
-    client.storage_client.configuration_folder_update = AsyncMock(return_value={})
+    client.storage_client.configuration_folder_update = AsyncMock(
+        side_effect=lambda **kwargs: {'folder': kwargs['folder'] or None}
+    )
     return client
 
 
@@ -1470,17 +1473,28 @@ async def test_apply_configuration_folder_logs_cause_when_setting_folder_fails(
     ],
     ids=['normal', 'whitespace_stripped', 'empty_clears', 'whitespace_only_clears', 'new_normal', 'new_empty_skipped'],
 )
+@pytest.mark.parametrize('stack_supports_folder', [True, False], ids=['supported', 'not_supported'])
 @pytest.mark.asyncio
-async def test_apply_configuration_folder_sets_folder(folder: str, is_new: bool, expected_saved: str | None) -> None:
-    """Test apply_configuration_folder sends the stripped folder via the folder-only update (empty clears)."""
+async def test_apply_configuration_folder_sets_folder(
+    folder: str, is_new: bool, expected_saved: str | None, stack_supports_folder: bool
+) -> None:
+    """
+    Test apply_configuration_folder sends the stripped folder via the folder-only update (empty clears).
+
+    A stack without configuration folder support ignores the unknown `folder` field and responds
+    without it; the folder must then be reported as not changed instead of as set.
+    """
     client = _make_client([])
+    if not stack_supports_folder:
+        client.storage_client.configuration_folder_update = AsyncMock(return_value={'id': 'cfg-1'})
     result = await apply_configuration_folder(
         client, 'keboola.snowflake-transformation', 'cfg-1', folder, 'configurations', 'update_config', is_new=is_new
     )
-    assert result is None
     if expected_saved is None:
+        assert result is None
         client.storage_client.configuration_folder_update.assert_not_called()
     else:
+        assert result == (None if stack_supports_folder else FOLDER_NOT_SUPPORTED_NOTE)
         client.storage_client.configuration_folder_update.assert_called_once_with(
             component_id='keboola.snowflake-transformation',
             configuration_id='cfg-1',

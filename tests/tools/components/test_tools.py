@@ -63,6 +63,7 @@ from keboola_mcp_server.tools.components.tools import (
 )
 from keboola_mcp_server.tools.components.utils import (
     BIGQUERY_TRANSFORMATION_ID,
+    FOLDER_NOT_SUPPORTED_NOTE,
     FOLDER_SUPPORTING_COMPONENT_IDS,
     SNOWFLAKE_TRANSFORMATION_ID,
     VARIABLES_COMPONENT_ID,
@@ -995,6 +996,9 @@ async def test_create_sql_transformation_folder(
     workspace_manager = WorkspaceManager.from_state(context.session.state)
     workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
     keboola_client = KeboolaClient.from_state(context.session.state)
+    keboola_client.storage_client.configuration_folder_update = mocker.AsyncMock(
+        side_effect=lambda **kwargs: {'folder': kwargs['folder'] or None}
+    )
     mock_component['id'] = 'keboola.snowflake-transformation'
     mock_configuration['id'] = '9999'
     keboola_client.ai_service_client.get_component_detail = mocker.AsyncMock(return_value=mock_component)
@@ -1028,14 +1032,23 @@ async def test_create_sql_transformation_folder(
 
 
 @pytest.mark.parametrize(
-    ('folder', 'tf_count', 'tf_folders', 'expect_folder_set', 'expect_folder_clear', 'expect_hint'),
+    (
+        'folder',
+        'tf_count',
+        'tf_folders',
+        'expect_folder_set',
+        'expect_folder_clear',
+        'expect_hint',
+        'stack_supports_folder',
+    ),
     [
-        ('Sales', 0, [], True, False, False),
-        ('  Sales  ', 0, [], True, False, False),  # whitespace stripped
-        (None, 5, [], False, False, False),
-        (None, 25, ['Analytics'], False, False, True),
-        (None, 25, [], False, False, True),
-        ('', 5, [], False, True, False),  # empty string → delete
+        ('Sales', 0, [], True, False, False, True),
+        ('  Sales  ', 0, [], True, False, False, True),  # whitespace stripped
+        (None, 5, [], False, False, False, True),
+        (None, 25, ['Analytics'], False, False, True, True),
+        (None, 25, [], False, False, True, True),
+        ('', 5, [], False, True, False, True),  # empty string → delete
+        ('Sales', 0, [], True, False, False, False),  # stack ignores the unknown `folder` field
     ],
     ids=[
         'folder_provided',
@@ -1044,6 +1057,7 @@ async def test_create_sql_transformation_folder(
         'no_folder_many_with_folders',
         'no_folder_many_no_folders',
         'folder_empty_deletes',
+        'folder_not_supported_by_stack',
     ],
 )
 @pytest.mark.asyncio
@@ -1058,12 +1072,16 @@ async def test_update_sql_transformation_folder(
     expect_folder_set: bool,
     expect_folder_clear: bool,
     expect_hint: bool,
+    stack_supports_folder: bool,
 ) -> None:
-    """Test folder metadata and change_summary hint for update_sql_transformation."""
+    """Test folder update and change_summary hint for update_sql_transformation."""
     context = mcp_context_components_configs
     workspace_manager = WorkspaceManager.from_state(context.session.state)
     workspace_manager.get_data_app_sql_dialect = mocker.AsyncMock(return_value='Snowflake')
     keboola_client = KeboolaClient.from_state(context.session.state)
+    keboola_client.storage_client.configuration_folder_update = mocker.AsyncMock(
+        side_effect=lambda **kwargs: {'folder': kwargs['folder'] or None} if stack_supports_folder else {'id': 'x'}
+    )
     mock_component['id'] = 'keboola.snowflake-transformation'
     configuration_id = 'cfg-folder-test'
     existing = {
@@ -1100,6 +1118,8 @@ async def test_update_sql_transformation_folder(
     if expect_hint:
         assert result.change_summary is not None
         assert str(tf_count) in result.change_summary
+    elif not stack_supports_folder:
+        assert result.change_summary == FOLDER_NOT_SUPPORTED_NOTE
     else:
         assert result.change_summary is None
 
@@ -1736,6 +1756,9 @@ async def test_update_config_folder(
     """Test folder metadata is set/cleared and folder hint is returned by update_config."""
     context = mcp_context_components_configs
     keboola_client = KeboolaClient.from_state(context.session.state)
+    keboola_client.storage_client.configuration_folder_update = mocker.AsyncMock(
+        side_effect=lambda **kwargs: {'folder': kwargs['folder'] or None}
+    )
     mock_component['id'] = component_id
     configuration_id = 'cfg-folder-test'
     existing = {

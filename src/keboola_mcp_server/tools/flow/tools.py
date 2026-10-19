@@ -226,7 +226,7 @@ async def create_flow(
     change_summary = None
     if folder:
         try:
-            await set_configuration_folder(client, flow_type, api_config.id, folder)
+            change_summary = await set_configuration_folder(client, flow_type, api_config.id, folder)
         except Exception:
             LOG.warning(
                 'Unable to set folder for component "%s", configuration "%s".',
@@ -322,7 +322,7 @@ async def create_conditional_flow(
     change_summary = None
     if folder:
         try:
-            await set_configuration_folder(client, flow_type, api_config.id, folder)
+            change_summary = await set_configuration_folder(client, flow_type, api_config.id, folder)
         except Exception:
             LOG.warning(
                 'Unable to set folder for component "%s", configuration "%s".',
@@ -573,7 +573,7 @@ async def modify_flow(
                 configuration_id,
             )
     else:
-        await set_configuration_folder(client, flow_type, configuration_id, folder)
+        folder_hint = await set_configuration_folder(client, flow_type, configuration_id, folder)
 
     links_manager = await ProjectLinksManager.from_client(client)
     flow_links = links_manager.get_flow_links(flow_id=api_config.id, flow_name=api_config.name, flow_type=flow_type)

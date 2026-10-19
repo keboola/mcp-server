@@ -537,16 +537,16 @@ async def create_sql_transformation(
     )
 
     folder = folder.strip()
+    change_summary = None
     if folder:
         try:
-            await set_configuration_folder(client, component_id, configuration_id, folder)
+            change_summary = await set_configuration_folder(client, component_id, configuration_id, folder)
         except Exception:
             LOG.warning(
                 'Unable to set folder for component "%s", configuration "%s".',
                 component_id,
                 configuration_id,
             )
-        change_summary = None
     else:
         try:
             total, existing_folders = await get_config_folders(client, component_id)
@@ -940,7 +940,7 @@ async def update_sql_transformation(
             )
     else:
         try:
-            await set_configuration_folder(client, sql_transformation_id, configuration_id, folder)
+            folder_hint = await set_configuration_folder(client, sql_transformation_id, configuration_id, folder)
         except Exception as exc:
             LOG.warning(
                 'Unable to set folder for component "%s", configuration "%s".',
