@@ -209,6 +209,11 @@ class CustomRoutes:
                 title = message = (
                     'This application is not registered with Keboola. Ask your Keboola administrator to register it.'
                 )
+            elif error == 'invalid_target':
+                title = message = (
+                    'The application asked for access to another server than this Keboola MCP server. '
+                    'Check the MCP server URL configured in the application.'
+                )
             elif error == 'approval_limit_reached':
                 # The shared counter uses fixed UTC-day windows (see PostgresRateLimitStore.claim), so the budget
                 # resets at the next 00:00 UTC. The page computes it itself, nothing comes from the query string.

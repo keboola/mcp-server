@@ -1963,6 +1963,7 @@ class TestSimpleOAuthProvider:
             (None, ['https://other.example/mcp'], 400, None),
             (None, ['https://mcp/mcp?x=1'], 400, None),
             (None, ['https://mcp/mcp', 'https://mcp/'], 400, None),
+            (None, ['http://[::1'], 400, None),
         ],
     )
     def test_token_endpoint_binds_the_session_to_the_requested_resource(
@@ -2009,25 +2010,27 @@ class TestSimpleOAuthProvider:
         assert session is not None
         assert session.resource == expected_resource
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('session_resource', 'request_resources', 'expected_error'),
+        ('session_resource', 'request_resources', 'expected_status'),
         [
-            ('https://mcp/mcp', [], None),
-            ('https://mcp/mcp', ['https://mcp/mcp'], None),
-            ('https://mcp/mcp', ['https://other.example/mcp'], 'invalid_target'),
-            # a session from before RFC 8707 is not bound now
-            (None, ['https://other.example/mcp'], None),
+            ('https://mcp/mcp', [], 200),
+            ('https://mcp/mcp', ['https://mcp/mcp'], 200),
+            ('https://mcp/mcp', ['https://other.example/mcp'], 400),
+            # a session from before DMD-2469 is not bound now
+            (None, ['https://other.example/mcp'], 200),
         ],
     )
-    async def test_refresh_keeps_the_resource_of_the_session(
+    def test_refresh_keeps_the_resource_of_the_session(
         self,
         oauth_provider: SimpleOAuthProvider,
         monkeypatch: pytest.MonkeyPatch,
         session_resource: str | None,
         request_resources: list[str],
-        expected_error: str | None,
+        expected_status: int,
     ):
+        from starlette.applications import Starlette
+        from starlette.testclient import TestClient
+
         from keboola_mcp_server import oauth as oauth_module
         from keboola_mcp_server.auth_login import TokenSet
 
@@ -2035,31 +2038,104 @@ class TestSimpleOAuthProvider:
             return TokenSet(access_token='kbc_at_new', refresh_token='kbc_rt_new', expires_at=time.time() + 3600)
 
         monkeypatch.setattr(oauth_module, 'refresh_tokens', _fake_refresh_tokens)
-        _at, opaque_refresh_token, _session = await oauth_provider._session_store.create(
-            client_id='foo-client-id',
-            user_email=None,
-            kbc_access_token='kbc_at_old',
-            kbc_refresh_token='kbc_rt_old',
-            kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-            resource=session_resource,
+        _at, opaque_refresh_token, _session = asyncio.run(
+            oauth_provider._session_store.create(
+                client_id='foo-client-id',
+                user_email=None,
+                kbc_access_token='kbc_at_old',
+                kbc_refresh_token='kbc_rt_old',
+                kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                resource=session_resource,
+            )
         )
+        client = TestClient(Starlette(routes=oauth_provider.get_routes()))
+
+        response = client.post(
+            '/token',
+            data={
+                'grant_type': 'refresh_token',
+                'refresh_token': opaque_refresh_token,
+                'client_id': 'foo-client-id',
+                'resource': request_resources,
+            },
+        )
+
+        assert response.status_code == expected_status, response.text
+        if expected_status != 200:
+            assert response.json()['error'] == 'invalid_target'
+            return
+        loaded = asyncio.run(oauth_provider.load_access_token(response.json()['access_token']))
+        assert loaded is not None
+        assert loaded.resource == session_resource
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('resource', 'drop_from_state', 'expected_code_resource'),
+        [
+            ('https://mcp/mcp', False, 'https://mcp/mcp'),
+            (None, False, None),
+            # a state minted before this release has no `resource` key
+            ('https://mcp/mcp', True, None),
+        ],
+    )
+    async def test_the_authorized_resource_reaches_the_code(
+        self,
+        oauth_provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        resource: str | None,
+        drop_from_state: bool,
+        expected_code_resource: str | None,
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
-        refresh_token = await oauth_provider.load_refresh_token(client, opaque_refresh_token)
-        assert refresh_token is not None
-        assert refresh_token.resource == session_resource
-        token = oauth_module._TOKEN_REQUEST_RESOURCES.set(tuple(request_resources))
-        try:
-            if expected_error:
-                with pytest.raises(TokenError) as exc:
-                    await oauth_provider.exchange_refresh_token(client, refresh_token, [])
-                assert exc.value.error == expected_error
-            else:
-                oauth_token = await oauth_provider.exchange_refresh_token(client, refresh_token, [])
-                loaded = await oauth_provider.load_access_token(oauth_token.access_token)
-                assert loaded is not None
-                assert loaded.resource == session_resource
-        finally:
-            oauth_module._TOKEN_REQUEST_RESOURCES.reset(token)
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://claude.ai/api/mcp/auth_callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+            resource=resource,
+        )
+        state = parse_qs(urlparse(await oauth_provider.authorize(client, params)).query)['state'][0]
+        if drop_from_state:
+            state_data = oauth_provider._decode(state)
+            del state_data['resource']
+            state = oauth_provider._encode(state_data)
+        token_response = {'access_token': 'league-at', 'refresh_token': 'league-rt', 'expires_in': 3600}
+        transport = httpx.MockTransport(lambda _rq: httpx.Response(200, json=token_response))
+        monkeypatch.setattr(oauth_module, '_create_http_client', lambda **_kw: httpx.AsyncClient(transport=transport))
+
+        redirect = await oauth_provider.handle_oauth_callback('connection-code', state)
+
+        code = parse_qs(urlparse(redirect).query)['code'][0]
+        loaded = await oauth_provider.load_authorization_code(client, code)
+        assert loaded is not None
+        assert loaded.resource == expected_code_resource
+
+    @pytest.mark.asyncio
+    async def test_authorize_refuses_another_resource_before_consent(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    ):
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl('https://claude.ai/api/mcp/auth_callback'),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+            resource='https://mcp.eu-central-1.keboola.com/mcp',
+        )
+
+        url = await oauth_provider.authorize(client, params)
+
+        assert url.startswith(oauth_provider._mcp_callback_url)
+        assert parse_qs(urlparse(url).query)['error'] == ['invalid_target']
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

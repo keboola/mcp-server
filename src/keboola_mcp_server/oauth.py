@@ -1056,8 +1056,10 @@ def _resource_key(resource: str) -> tuple[str, str, int, str] | None:
     """What two spellings of one resource URL share (origin, and the path without a trailing slash), or None for a value
     that is not an absolute URL without query and fragment (RFC 8707 §2)."""
     origin = _origin(resource)
-    parsed = urlparse(resource)
-    if origin is None or parsed.query or parsed.fragment:
+    if origin is None:
+        return None
+    parsed = urlparse(resource)  # cannot raise: `_origin` already parsed it
+    if parsed.query or parsed.fragment:
         return None
     return *origin, parsed.path.rstrip('/')
 
@@ -1200,7 +1202,7 @@ class SimpleOAuthProvider(OAuthProvider):
         """Whether `resource` names this server, in any spelling a client may use (see `_own_resource_keys`)."""
         return _resource_key(resource) in self._own_resource_keys
 
-    def _token_resource(self, bound_resource: str | None) -> str | None:
+    def _token_resource(self, bound_resource: str | None, client_id: str) -> str | None:
         """The resource a /token request may issue tokens for, given the one the grant is already bound to (named at
         /authorize, or stored on the session): the request may repeat it or leave it out, never name another one.
 
@@ -1208,14 +1210,21 @@ class SimpleOAuthProvider(OAuthProvider):
             not this server.
         """
         requested = _TOKEN_REQUEST_RESOURCES.get()
-        if len(requested) > 1:
-            raise TokenError(error='invalid_target', error_description='Only one resource can be requested.')
         resource = bound_resource or (requested[0] if requested else None)
-        if requested and _resource_key(requested[0]) != _resource_key(cast(str, resource)):
-            raise TokenError(error='invalid_target', error_description='The resource differs from the one authorized.')
-        if resource is not None and not self.is_own_resource(resource):
-            raise TokenError(error='invalid_target', error_description='The resource is not this MCP server.')
-        return resource
+        if len(requested) > 1:
+            problem = 'Only one resource can be requested.'
+        elif requested and _resource_key(requested[0]) != _resource_key(cast(str, resource)):
+            problem = 'The resource differs from the one authorized.'
+        elif resource is not None and not self.is_own_resource(resource):
+            problem = 'The resource is not this MCP server.'
+        else:
+            return resource
+        # WARNING on purpose: a client that names this server in a spelling nobody foresaw cannot log in.
+        LOG.warning(
+            f'[token] Refused with invalid_target: {problem} client_id={_sanitize_client_id_for_log(client_id)}, '
+            f'bound={_sanitize_for_log(bound_resource or "")!r}, requested={[_sanitize_for_log(r) for r in requested]!r}'
+        )
+        raise TokenError(error='invalid_target', error_description=problem)
 
     def get_middleware(self) -> list[Middleware]:
         """Prepends `UntrustedAuthorizeRedirectMiddleware` and `DatabaseUnavailableMiddleware`
@@ -1341,6 +1350,19 @@ class SimpleOAuthProvider(OAuthProvider):
     async def _authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         redirect_uri_str = str(params.redirect_uri)
         connection_client_id = _connection_client_id(redirect_uri_str, self._client_id_key)
+
+        if params.resource is not None and not self.is_own_resource(params.resource):
+            # RFC 8707 §2 invalid_target, before the user goes through consent for tokens /token would refuse. On this
+            # server's own page, like every other error here (see the ERROR branch below for why).
+            LOG.warning(
+                f'[authorize] Refused with invalid_target: client_id={_sanitize_client_id_for_log(client.client_id)}, '
+                f'resource={_sanitize_for_log(params.resource)!r}'
+            )
+            return construct_redirect_uri(
+                self._mcp_callback_url,
+                error='invalid_target',
+                error_description='The requested resource is not this MCP server.',
+            )
 
         registration = await self._check_registration(connection_client_id, redirect_uri_str)
         if registration is _ClientRegistration.ERROR:
@@ -1700,7 +1722,7 @@ class SimpleOAuthProvider(OAuthProvider):
         # Check that we get the instance loaded by load_authorization_code() function.
         assert isinstance(authorization_code, _ExtendedAuthorizationCode)
         # Before the exchange: a refused resource must not cost a Keboola session.
-        resource = self._token_resource(authorization_code.resource)
+        resource = self._token_resource(authorization_code.resource, client.client_id)
 
         # Exchange the league OAuth access token for a whole-stack Keboola programmatic session.
         # The league token is used exactly once, here, and then never referenced again.
@@ -1897,8 +1919,10 @@ class SimpleOAuthProvider(OAuthProvider):
 
         assert isinstance(refresh_token, ProxyRefreshToken), f'Expected ProxyRefreshToken, got {type(refresh_token)}'
         assert refresh_token.session_id is not None
+        # A session from before DMD-2469 has no resource and is not bound now: binding it would refuse a client that
+        # worked until this release, for a resource this server does not check on such a session anyway.
         if refresh_token.resource is not None:
-            self._token_resource(refresh_token.resource)
+            self._token_resource(refresh_token.resource, client.client_id)
 
         # Raised as TokenError (not HTTPException): this method is invoked by the mcp SDK's own
         # /token endpoint handler, which only recognizes TokenError and formats it into a spec-
