@@ -18,8 +18,9 @@ If the user names no project, find it in step 1.
    conversation. Show the projects with their organization and SQL dialect. If there is exactly one, say which one
    you will use; otherwise ask the user which project or projects to explore. Do not guess.
    Do this even when the session looks scoped already or a data tool would work without it: this plugin
-   always narrows the session to the projects the user confirms. If `get_accessible_projects` reports that
-   the login is bound to a single project, confirm that project with the user and skip step 2.
+   always narrows the session to the projects the user confirms. If `get_accessible_projects` fails because
+   no programmatic token is present, the login is bound to one project: confirm it with the user and skip
+   step 2.
 2. **Scope the session.** Call `set_project_scope` with `project_ids=[...]` set to the user's choice and
    `read_only=true`. If the result carries a non-null `scope_token`, pass it on every later tool call. If the user
    later asks for a change, call `set_project_scope` again without `read_only` before any write.

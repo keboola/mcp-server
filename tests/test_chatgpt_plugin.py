@@ -14,7 +14,7 @@ import pytest
 from fastmcp.tools import Tool
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
-from keboola_mcp_server.mcp import ToolsFilteringMiddleware, is_read_only_tool
+from keboola_mcp_server.mcp import ToolsFilteringMiddleware, is_read_only_tool, is_semantic_tool
 from keboola_mcp_server.server import create_server
 
 PLUGIN_DIR = Path(__file__).parents[1] / 'integrations' / 'chatgpt-plugin'
@@ -58,8 +58,9 @@ def _oauth_denial(tool: Tool) -> str | None:
             ToolsFilteringMiddleware.authorize_tool_call(
                 tool_name=tool.name,
                 is_read_only=is_read_only_tool(tool),
-                is_semantic=False,
-                has_semantic_models=True,
+                # Most projects have no semantic models, so a skill must not depend on semantic tools.
+                is_semantic=is_semantic_tool(tool),
+                has_semantic_models=False,
                 token_role=token_role,
                 features=features,
                 is_oauth=True,
@@ -143,12 +144,17 @@ def test_skill_names_callable_tools_and_scopes_before_writes(skill_name: str, to
     denied = {name: reason for name in sorted(named_tools) if (reason := _oauth_denial(tools[name]))}
     assert not denied, f'{skill_name} names tools an OAuth session cannot call: {denied}'
 
-    arguments = {arg for tool in tools.values() for arg in tool.parameters.get('properties', {})}
-    unknown_arguments = sorted(set(_ARGUMENT_IN_BACKTICKS.findall(body)) - arguments)
-    assert not unknown_arguments, f'{skill_name} names arguments no tool takes: {unknown_arguments}'
+    # The skills write each argument after the tool it belongs to ("call `run_job` with `configuration_id=...`").
+    wrong_arguments = []
+    for match in _ARGUMENT_IN_BACKTICKS.finditer(body):
+        owners = [name for position, name in mentions if position < match.start()]
+        assert owners, f'{skill_name} names the argument {match.group(1)} before any tool'
+        if match.group(1) not in tools[owners[-1]].parameters.get('properties', {}):
+            wrong_arguments.append(f'{owners[-1]}({match.group(1)})')
+    assert not wrong_arguments, f'{skill_name} names arguments the tool does not take: {wrong_arguments}'
 
-    # The project-less grant reads across projects but writes only to the confirmed one, so every skill
-    # lists projects, then scopes the session, before it names any write tool.
+    # The skills narrow writes to the project the user confirmed (a prompt-level rule, see the package README),
+    # so every skill lists projects, then scopes the session, before it names any write tool.
     first_mention: dict[str, int] = {}
     for position, name in mentions:
         first_mention.setdefault(name, position)

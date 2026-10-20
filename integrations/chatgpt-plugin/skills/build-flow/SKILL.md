@@ -17,12 +17,14 @@ or ID.
 1. **Pick the project.** Call `get_accessible_projects` (with `with_llm_instruction=true` on the first call in the
    conversation) and ask the user which project the flow belongs in. Never pick a project on your own: confirm it.
    Do this even when the session looks scoped already or a data tool would work without it: this plugin
-   always narrows the session to the projects the user confirms. If `get_accessible_projects` reports that
-   the login is bound to a single project, confirm that project with the user and skip step 2.
+   always narrows the session to the projects the user confirms. If `get_accessible_projects` fails because
+   no programmatic token is present, the login is bound to one project: confirm it with the user and skip
+   step 2.
 2. **Scope the session to that project.** Call `set_project_scope` with `project_ids=[<the confirmed id>]`. This
    must happen before any write. If the result carries a non-null `scope_token`, pass it on every later tool call.
 3. **Get context.** Call `get_project_info`. It says whether conditional flows are enabled in the project, and its
-   `toolset_restrictions` say whether the user's role may set schedules.
+   `toolset_restrictions` say whether the user's role may set schedules. If they say only read-only tools are
+   available, tell the user they cannot create flows in this project and stop.
 4. **Collect the tasks.** Find every configuration the flow should run with `search`
    (`item_types=["configuration", "transformation"]`) and confirm the list with the user. Each task needs a
    component ID and a configuration ID; use `get_configs` with `configs=[...]` when a search hit does not show

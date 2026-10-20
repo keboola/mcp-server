@@ -18,12 +18,14 @@ existing transformation, its name or ID.
    conversation). Show the projects and ask the user which one the transformation belongs in. Never pick a project
    on your own, even when only one is listed: confirm it.
    Do this even when the session looks scoped already or a data tool would work without it: this plugin
-   always narrows the session to the projects the user confirms. If `get_accessible_projects` reports that
-   the login is bound to a single project, confirm that project with the user and skip step 2.
+   always narrows the session to the projects the user confirms. If `get_accessible_projects` fails because
+   no programmatic token is present, the login is bound to one project: confirm it with the user and skip
+   step 2.
 2. **Scope the session to that project.** Call `set_project_scope` with `project_ids=[<the confirmed id>]`. This
    must happen before any write. If the result carries a non-null `scope_token`, pass it on every later tool call.
 3. **Get context.** Call `get_project_info`. Note the SQL dialect (Snowflake or BigQuery). Python, R and DuckDB
-   transformations are out of scope for this skill; say so and stop.
+   transformations are out of scope for this skill; say so and stop. If its `toolset_restrictions` say only
+   read-only tools are available, tell the user they cannot save transformations in this project and stop.
 4. **Find the inputs.** Use `search` with `item_types=["table"]` for the source tables, then `get_tables` with
    `table_ids=[...]` for their `fullyQualifiedName` and column `quotedName` values.
 5. **Prototype the SQL.** Run the `SELECT` part through `query_data` with a small `LIMIT` and show the user sample
