@@ -27,6 +27,7 @@ from keboola_mcp_server.mcp import (
     ServerState,
     SessionStateMiddleware,
     _SerializingFunctionTool,
+    is_read_only_tool,
 )
 from keboola_mcp_server.oauth import SimpleOAuthProvider
 from keboola_mcp_server.server import CustomRoutes, create_server
@@ -433,10 +434,102 @@ async def test_keboola_injection_and_lifespan(
         assert result.content[0].text == 'value'
 
 
+# (tool_name, readOnlyHint, destructiveHint, idempotentHint, openWorldHint, tags) for every registered tool.
+# Every tool must be listed here, so a new tool cannot be registered without an explicit classification.
+TOOL_ANNOTATIONS = [
+    # components
+    ('get_components', True, False, True, False, {COMPONENT_TOOLS_TAG}),
+    ('get_configs', True, False, True, False, {COMPONENT_TOOLS_TAG}),
+    ('get_config_examples', True, False, True, False, {COMPONENT_TOOLS_TAG}),
+    ('create_config', False, False, False, False, {COMPONENT_TOOLS_TAG}),
+    ('update_config', False, True, True, False, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
+    ('add_config_row', False, False, False, False, {COMPONENT_TOOLS_TAG}),
+    ('update_config_row', False, True, True, False, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
+    ('run_sync_action', False, True, False, True, {COMPONENT_TOOLS_TAG}),
+    ('create_sql_transformation', False, False, False, False, {COMPONENT_TOOLS_TAG}),
+    ('update_sql_transformation', False, True, True, False, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
+    # storage
+    ('get_buckets', True, False, True, False, {STORAGE_TOOLS_TAG}),
+    ('get_tables', True, False, True, False, {STORAGE_TOOLS_TAG}),
+    ('update_descriptions', False, True, True, False, {STORAGE_TOOLS_TAG}),
+    ('get_shared_buckets', True, False, True, False, {STORAGE_TOOLS_TAG}),
+    ('link_shared_bucket', False, False, False, False, {STORAGE_TOOLS_TAG}),
+    # streams
+    ('get_streams', True, False, True, False, {STREAM_TOOLS_TAG}),
+    ('create_stream', False, False, False, False, {STREAM_TOOLS_TAG}),
+    # flows
+    ('create_flow', False, False, False, False, {FLOW_TOOLS_TAG}),
+    ('create_conditional_flow', False, False, False, False, {FLOW_TOOLS_TAG}),
+    ('get_flows', True, False, True, False, {FLOW_TOOLS_TAG}),
+    ('update_flow', False, True, True, False, {FLOW_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
+    ('modify_flow', False, True, False, False, {FLOW_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
+    ('get_flow_examples', True, False, True, False, {FLOW_TOOLS_TAG}),
+    ('get_flow_schema', True, False, True, False, {FLOW_TOOLS_TAG}),
+    # sql
+    ('query_data', True, False, True, False, {SQL_TOOLS_TAG}),
+    # jobs
+    ('get_jobs', True, False, True, False, {JOB_TOOLS_TAG}),
+    ('run_job', False, True, False, True, {JOB_TOOLS_TAG}),
+    # project/doc/search
+    ('get_project_info', True, False, True, False, {PROJECT_TOOLS_TAG}),
+    ('get_accessible_projects', True, False, True, False, {PROJECT_TOOLS_TAG}),
+    ('set_project_scope', True, False, True, False, {PROJECT_TOOLS_TAG}),
+    ('create_project', False, False, False, False, {PROJECT_TOOLS_TAG}),
+    ('update_project_description', False, True, True, False, {PROJECT_TOOLS_TAG}),
+    ('docs_query', True, False, True, False, {DOC_TOOLS_TAG}),
+    ('find_component_id', True, False, True, False, {SEARCH_TOOLS_TAG}),
+    ('search', True, False, True, False, {SEARCH_TOOLS_TAG}),
+    # semantic
+    ('search_semantic_context', True, False, True, False, {SEMANTIC_TOOLS_TAG}),
+    ('get_semantic_context', True, False, True, False, {SEMANTIC_TOOLS_TAG}),
+    ('get_semantic_schema', True, False, True, False, {SEMANTIC_TOOLS_TAG}),
+    ('validate_semantic_query', True, False, True, False, {SEMANTIC_TOOLS_TAG}),
+    # oauth
+    ('create_oauth_url', False, False, False, True, {OAUTH_TOOLS_TAG}),
+    # data apps
+    ('modify_streamlit_data_app', False, True, False, False, {DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
+    ('modify_python_js_data_app', False, True, False, False, {DATA_APP_TOOLS_TAG}),
+    ('create_python_js_data_app_git_credential', False, False, False, False, {DATA_APP_TOOLS_TAG}),
+    ('delete_python_js_data_app_draft', False, True, False, False, {DATA_APP_TOOLS_TAG}),
+    ('get_data_apps', True, False, True, False, {DATA_APP_TOOLS_TAG}),
+    ('deploy_data_app', False, True, False, False, {DATA_APP_TOOLS_TAG}),
+    ('get_data_app_preview_link', True, False, True, False, {DATA_APP_TOOLS_TAG}),
+]
+
+# The tools a `readonly` token role sees (filtered by readOnlyHint); changing this set changes that role's access.
+READ_ONLY_TOOLS = {
+    'docs_query',
+    'find_component_id',
+    'get_accessible_projects',
+    'get_buckets',
+    'get_components',
+    'get_config_examples',
+    'get_configs',
+    'get_data_app_preview_link',
+    'get_data_apps',
+    'get_flow_examples',
+    'get_flow_schema',
+    'get_flows',
+    'get_jobs',
+    'get_project_info',
+    'get_semantic_context',
+    'get_semantic_schema',
+    'get_shared_buckets',
+    'get_streams',
+    'get_tables',
+    'query_data',
+    'search',
+    'search_semantic_context',
+    'set_project_scope',
+    'validate_semantic_query',
+}
+
+
 @pytest.mark.asyncio
 async def test_tool_annotations_and_tags():
     """
-    Test that the tool annotations are properly set.
+    Test that every registered tool publishes a title, tags and all four annotation hints, and is classified
+    in TOOL_ANNOTATIONS.
     """
     server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
     assert isinstance(server, FastMCP)
@@ -445,81 +538,26 @@ async def test_tool_annotations_and_tags():
         published = tool.to_mcp_tool().model_dump(by_alias=True, exclude_none=True)
         assert published.get('title'), f'{tool.name} has no published title'
         assert len(published['name']) <= 64, f'{tool.name} exceeds the directory name limit'
-        assert published.get('annotations'), f'{tool.name} has no published annotations'
         assert tool.tags is not None, f'{tool.name} has no tags'
-        if tool.annotations is not None:
-            if tool.annotations.read_only_hint:
-                assert tool.annotations.destructive_hint is None, f'{tool.name} has destructiveHint'
-                assert tool.annotations.idempotent_hint is None, f'{tool.name} has idempotentHint'
-            elif tool.annotations.destructive_hint:
-                assert tool.annotations.read_only_hint is None, f'{tool.name} has readOnlyHint'
-            elif tool.annotations.destructive_hint is False:
-                assert tool.annotations.idempotent_hint is None, f'{tool.name} has idempotentHint'
-            if tool.annotations.idempotent_hint:
-                assert tool.annotations.read_only_hint is None, f'{tool.name} has readOnlyHint'
+        annotations = published.get('annotations') or {}
+        for hint in ('readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'):
+            assert isinstance(annotations.get(hint), bool), f'{tool.name} does not publish {hint}'
+
+    assert {t.name for t in tools} == {row[0] for row in TOOL_ANNOTATIONS}
+    assert {t.name for t in tools if is_read_only_tool(t)} == READ_ONLY_TOOLS
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ('tool_name', 'expected_readonly', 'expected_destructive', 'expected_idempotent', 'tags'),
-    [
-        # components
-        ('get_components', True, None, None, {COMPONENT_TOOLS_TAG}),
-        ('get_configs', True, None, None, {COMPONENT_TOOLS_TAG}),
-        ('get_config_examples', True, None, None, {COMPONENT_TOOLS_TAG}),
-        ('create_config', None, False, None, {COMPONENT_TOOLS_TAG}),
-        ('update_config', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
-        ('add_config_row', None, False, None, {COMPONENT_TOOLS_TAG}),
-        ('update_config_row', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
-        ('run_sync_action', None, True, None, {COMPONENT_TOOLS_TAG}),
-        ('create_sql_transformation', None, False, None, {COMPONENT_TOOLS_TAG}),
-        ('update_sql_transformation', None, True, None, {COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
-        # storage
-        ('get_buckets', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('get_tables', True, None, None, {STORAGE_TOOLS_TAG}),
-        ('update_descriptions', None, True, None, {STORAGE_TOOLS_TAG}),
-        # streams
-        ('get_streams', True, None, None, {STREAM_TOOLS_TAG}),
-        ('create_stream', None, False, None, {STREAM_TOOLS_TAG}),
-        # flows
-        ('create_flow', None, False, None, {FLOW_TOOLS_TAG}),
-        ('create_conditional_flow', None, False, None, {FLOW_TOOLS_TAG}),
-        ('get_flows', True, None, None, {FLOW_TOOLS_TAG}),
-        ('update_flow', None, True, None, {FLOW_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
-        ('modify_flow', None, True, None, {FLOW_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
-        ('get_flow_examples', True, None, None, {FLOW_TOOLS_TAG}),
-        ('get_flow_schema', True, None, None, {FLOW_TOOLS_TAG}),
-        # sql
-        ('query_data', True, None, None, {SQL_TOOLS_TAG}),
-        # jobs
-        ('get_jobs', True, None, None, {JOB_TOOLS_TAG}),
-        ('run_job', None, True, None, {JOB_TOOLS_TAG}),
-        # project/doc/search
-        ('get_project_info', True, None, None, {PROJECT_TOOLS_TAG}),
-        ('update_project_description', None, True, None, {PROJECT_TOOLS_TAG}),
-        ('docs_query', True, None, None, {DOC_TOOLS_TAG}),
-        ('find_component_id', True, None, None, {SEARCH_TOOLS_TAG}),
-        # semantic
-        ('search_semantic_context', True, None, None, {SEMANTIC_TOOLS_TAG}),
-        ('get_semantic_context', True, None, None, {SEMANTIC_TOOLS_TAG}),
-        ('get_semantic_schema', True, None, None, {SEMANTIC_TOOLS_TAG}),
-        ('validate_semantic_query', True, None, None, {SEMANTIC_TOOLS_TAG}),
-        # oauth
-        ('create_oauth_url', None, True, None, {OAUTH_TOOLS_TAG}),
-        # data apps
-        ('modify_streamlit_data_app', None, True, None, {DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG}),
-        ('modify_python_js_data_app', None, True, None, {DATA_APP_TOOLS_TAG}),
-        ('create_python_js_data_app_git_credential', None, False, None, {DATA_APP_TOOLS_TAG}),
-        ('get_data_apps', True, None, None, {DATA_APP_TOOLS_TAG}),
-        ('deploy_data_app', None, True, None, {DATA_APP_TOOLS_TAG}),
-        ('get_data_app_preview_link', True, None, None, {DATA_APP_TOOLS_TAG}),
-    ],
+    ('tool_name', 'expected_readonly', 'expected_destructive', 'expected_idempotent', 'expected_open_world', 'tags'),
+    TOOL_ANNOTATIONS,
 )
 async def test_tool_annotations_tags_values(
     tool_name: str,
-    expected_readonly: bool | None,
-    expected_destructive: bool | None,
-    expected_idempotent: bool | None,
+    expected_readonly: bool,
+    expected_destructive: bool,
+    expected_idempotent: bool,
+    expected_open_world: bool,
     tags: set[str],
 ) -> None:
     """
@@ -534,13 +572,11 @@ async def test_tool_annotations_tags_values(
 
     # check annotations
     tool = tools[tool_name]
-    if all(exp_val is None for exp_val in (expected_readonly, expected_destructive, expected_idempotent)):
-        assert tool.annotations is None, f'{tool_name} has annotations'
-    else:
-        assert tool.annotations is not None, f'{tool_name} has no annotations'
-        assert tool.annotations.read_only_hint is expected_readonly, f'{tool_name}.read_only_hint mismatch'
-        assert tool.annotations.destructive_hint is expected_destructive, f'{tool_name}.destructive_hint mismatch'
-        assert tool.annotations.idempotent_hint is expected_idempotent, f'{tool_name}.idempotent_hint mismatch'
+    assert tool.annotations is not None, f'{tool_name} has no annotations'
+    assert tool.annotations.read_only_hint is expected_readonly, f'{tool_name}.read_only_hint mismatch'
+    assert tool.annotations.destructive_hint is expected_destructive, f'{tool_name}.destructive_hint mismatch'
+    assert tool.annotations.idempotent_hint is expected_idempotent, f'{tool_name}.idempotent_hint mismatch'
+    assert tool.annotations.open_world_hint is expected_open_world, f'{tool_name}.open_world_hint mismatch'
 
     # check tags
     assert tool.tags == tags, f'{tool_name} tags mismatch'

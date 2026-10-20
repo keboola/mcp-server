@@ -30,14 +30,18 @@ def add_stream_tools(mcp: KeboolaMcpServer) -> None:
     mcp.add_tool(
         ToonCompactFunctionTool.from_function(
             get_streams,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={STREAM_TOOLS_TAG},
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             create_stream,
-            annotations=ToolAnnotations(destructiveHint=False),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+            ),
             tags={STREAM_TOOLS_TAG},
         )
     )

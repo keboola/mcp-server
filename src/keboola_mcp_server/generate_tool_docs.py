@@ -114,6 +114,8 @@ class ToolDocumentationGenerator:
             str_annotations.append('destructive')
         if annotations.idempotent_hint:
             str_annotations.append('idempotent')
+        if annotations.open_world_hint:
+            str_annotations.append('open-world')
         return f'`{", ".join(sorted(str_annotations))}`' if str_annotations else ''
 
     def _get_tags(self, tags: set[str]) -> str:

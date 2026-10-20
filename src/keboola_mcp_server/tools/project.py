@@ -53,7 +53,9 @@ def add_project_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_project_info,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={PROJECT_TOOLS_TAG},
         )
     )
@@ -62,7 +64,9 @@ def add_project_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             update_project_description,
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+            ),
             tags={PROJECT_TOOLS_TAG},
         )
     )
@@ -71,7 +75,9 @@ def add_project_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             get_accessible_projects,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={PROJECT_TOOLS_TAG},
         )
     )
@@ -80,7 +86,9 @@ def add_project_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             set_project_scope,
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
             tags={PROJECT_TOOLS_TAG},
         )
     )
@@ -89,7 +97,9 @@ def add_project_tools(mcp: FastMCP) -> None:
     mcp.add_tool(
         FunctionTool.from_function(
             create_project,
-            annotations=ToolAnnotations(destructiveHint=False),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+            ),
             tags={PROJECT_TOOLS_TAG},
         )
     )

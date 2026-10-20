@@ -52,49 +52,63 @@ def add_data_app_tools(mcp: FastMCP) -> None:
         FunctionTool.from_function(
             modify_streamlit_data_app,
             tags={DATA_APP_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             modify_python_js_data_app,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             create_python_js_data_app_git_credential,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=False),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         ToonCompactFunctionTool.from_function(
             get_data_apps,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             deploy_data_app,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             delete_python_js_data_app_draft,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_data_app_preview_link,
             tags={DATA_APP_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
         )
     )
     LOG.info('Data app tools initialized.')

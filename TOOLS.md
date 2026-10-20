@@ -585,7 +585,7 @@ EXAMPLES:
 ---
 <a name="get_components"></a>
 ## get_components
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `components`
 
@@ -640,7 +640,7 @@ EXAMPLES:
 ---
 <a name="get_config_examples"></a>
 ## get_config_examples
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `components`
 
@@ -678,7 +678,7 @@ EXAMPLES:
 ---
 <a name="get_configs"></a>
 ## get_configs
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `components`
 
@@ -781,7 +781,7 @@ EXAMPLES:
 ---
 <a name="run_sync_action"></a>
 ## run_sync_action
-**Annotations**: `destructive`
+**Annotations**: `destructive, open-world`
 
 **Tags**: `components`
 
@@ -838,7 +838,7 @@ WHEN TO USE:
 ---
 <a name="update_config"></a>
 ## update_config
-**Annotations**: `destructive`
+**Annotations**: `destructive, idempotent`
 
 **Tags**: `components, config-diff-preview`
 
@@ -1185,7 +1185,7 @@ WORKFLOW:
 ---
 <a name="update_config_row"></a>
 ## update_config_row
-**Annotations**: `destructive`
+**Annotations**: `destructive, idempotent`
 
 **Tags**: `components, config-diff-preview`
 
@@ -1473,7 +1473,7 @@ WORKFLOW:
 ---
 <a name="update_sql_transformation"></a>
 ## update_sql_transformation
-**Annotations**: `destructive`
+**Annotations**: `destructive, idempotent`
 
 **Tags**: `components, config-diff-preview`
 
@@ -2391,7 +2391,7 @@ Streamlit apps have no managed git repo, so `mode` has no effect on the deployed
 ---
 <a name="get_data_app_preview_link"></a>
 ## get_data_app_preview_link
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `data-apps`
 
@@ -2460,7 +2460,7 @@ Use it to see or test a python-js **draft** deployed with `deploy_data_app(actio
 ---
 <a name="get_data_apps"></a>
 ## get_data_apps
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `data-apps`
 
@@ -2957,7 +2957,7 @@ SQL & DATA TYPE RULES:
 # Documentation Tools
 <a name="docs_query"></a>
 ## docs_query
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `docs`
 
@@ -3155,7 +3155,7 @@ WHEN TO USE:
 ---
 <a name="get_flow_examples"></a>
 ## get_flow_examples
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `flows`
 
@@ -3196,7 +3196,7 @@ RULES:
 ---
 <a name="get_flow_schema"></a>
 ## get_flow_schema
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `flows`
 
@@ -3237,7 +3237,7 @@ RULES:
 ---
 <a name="get_flows"></a>
 ## get_flows
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `flows`
 
@@ -3505,7 +3505,7 @@ adjusting dependencies, or enabling/disabling flow execution
 ---
 <a name="update_flow"></a>
 ## update_flow
-**Annotations**: `destructive`
+**Annotations**: `destructive, idempotent`
 
 **Tags**: `config-diff-preview, flows`
 
@@ -3651,7 +3651,7 @@ or enabling/disabling flow execution
 # Jobs Tools
 <a name="get_jobs"></a>
 ## get_jobs
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `jobs`
 
@@ -3853,7 +3853,7 @@ EXAMPLES WITH LOGS:
 ---
 <a name="run_job"></a>
 ## run_job
-**Annotations**: `destructive`
+**Annotations**: `destructive, open-world`
 
 **Tags**: `jobs`
 
@@ -3916,7 +3916,7 @@ Starts a new job for a given component or transformation.
 # OAuth Tools
 <a name="create_oauth_url"></a>
 ## create_oauth_url
-**Annotations**: `destructive`
+**Annotations**: `open-world`
 
 **Tags**: `oauth`
 
@@ -4039,7 +4039,7 @@ tool call in this conversation: that is what keeps the session signed in to the 
 ---
 <a name="get_accessible_projects"></a>
 ## get_accessible_projects
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `project`
 
@@ -4077,7 +4077,7 @@ instructions grouped by dialect.
 ---
 <a name="get_project_info"></a>
 ## get_project_info
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `project`
 
@@ -4117,7 +4117,7 @@ pass `project_id` to pick which when the session is scoped to 2+ projects.
 ---
 <a name="set_project_scope"></a>
 ## set_project_scope
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `project`
 
@@ -4170,7 +4170,7 @@ which persist the confirmed scope server-side instead -- `scope_token` is null t
 ---
 <a name="update_project_description"></a>
 ## update_project_description
-**Annotations**: `destructive`
+**Annotations**: `destructive, idempotent`
 
 **Tags**: `project`
 
@@ -4213,7 +4213,7 @@ Updates the description of the current Keboola project.
 # Search Tools
 <a name="find_component_id"></a>
 ## find_component_id
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `search`
 
@@ -4249,7 +4249,7 @@ USAGE EXAMPLES:
 ---
 <a name="search"></a>
 ## search
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `search`
 
@@ -4463,7 +4463,7 @@ scopes=["storage"]
 # Semantic Tools
 <a name="get_semantic_context"></a>
 ## get_semantic_context
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `semantic`
 
@@ -4585,7 +4585,7 @@ EXAMPLES:
 ---
 <a name="get_semantic_schema"></a>
 ## get_semantic_schema
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `semantic`
 
@@ -4633,7 +4633,7 @@ WHEN TO USE:
 ---
 <a name="search_semantic_context"></a>
 ## search_semantic_context
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `semantic`
 
@@ -4743,7 +4743,7 @@ EXAMPLES:
 ---
 <a name="validate_semantic_query"></a>
 ## validate_semantic_query
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `semantic`
 
@@ -4887,7 +4887,7 @@ EXAMPLES:
 # SQL Tools
 <a name="query_data"></a>
 ## query_data
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `sql`
 
@@ -4992,7 +4992,7 @@ DATA VALIDATION:
 # Storage Tools
 <a name="get_buckets"></a>
 ## get_buckets
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `storage`
 
@@ -5032,7 +5032,7 @@ EXAMPLES:
 ---
 <a name="get_shared_buckets"></a>
 ## get_shared_buckets
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `storage`
 
@@ -5074,7 +5074,7 @@ Use `link_shared_bucket` to link a shared bucket returned here into this project
 ---
 <a name="get_tables"></a>
 ## get_tables
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `storage`
 
@@ -5234,7 +5234,7 @@ caller's current branch context directly.
 ---
 <a name="update_descriptions"></a>
 ## update_descriptions
-**Annotations**: `destructive`
+**Annotations**: `destructive, idempotent`
 
 **Tags**: `storage`
 
@@ -5509,7 +5509,7 @@ can request the feature. Tell the user how to request it.
 ---
 <a name="get_streams"></a>
 ## get_streams
-**Annotations**: `read-only`
+**Annotations**: `idempotent, read-only`
 
 **Tags**: `streams`
 

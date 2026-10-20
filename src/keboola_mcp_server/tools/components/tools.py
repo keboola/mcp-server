@@ -121,21 +121,27 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             get_components,
             tags={COMPONENT_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         ToonCompactFunctionTool.from_function(
             get_configs,
             tags={COMPONENT_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             get_config_examples,
             tags={COMPONENT_TOOLS_TAG},
-            annotations=ToolAnnotations(readOnlyHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+            ),
         )
     )
 
@@ -144,28 +150,36 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             create_config,
             tags={COMPONENT_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=False),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             update_config,
             tags={COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             add_config_row,
             tags={COMPONENT_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=False),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             update_config_row,
             tags={COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+            ),
         )
     )
 
@@ -174,7 +188,9 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             run_sync_action,
             tags={COMPONENT_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True
+            ),
         )
     )
 
@@ -183,14 +199,18 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
         FunctionTool.from_function(
             create_sql_transformation,
             tags={COMPONENT_TOOLS_TAG},
-            annotations=ToolAnnotations(destructiveHint=False),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+            ),
         )
     )
     mcp.add_tool(
         FunctionTool.from_function(
             update_sql_transformation,
             tags={COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
-            annotations=ToolAnnotations(destructiveHint=True),
+            annotations=ToolAnnotations(
+                readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+            ),
         )
     )
 
