@@ -191,8 +191,8 @@ class DataAppSummary(BaseModel):
     state: SafeState = Field(description='The state of the data app.')
     type: SafeType = Field(
         description=(
-            'The type of the data app. Currently, only "streamlit" is supported in the MCP. However, Keboola DSAPI '
-            'supports additional types, which can be retrieved from the API.'
+            'The type of the data app: "python-js" (the default for new apps) or "streamlit". Keboola DSAPI '
+            'may report other types as well.'
         )
     )
     deployment_url: str | None = Field(description='The URL of the running data app.', default=None)
@@ -376,8 +376,8 @@ class DataApp(BaseModel):
     state: SafeState = Field(description='The state of the data app.')
     type: SafeType = Field(
         description=(
-            'The type of the data app. Currently, only "streamlit" is supported in the MCP. However, Keboola DSAPI '
-            'supports additional types, which can be retrieved from the API.'
+            'The type of the data app: "python-js" (the default for new apps) or "streamlit". Keboola DSAPI '
+            'may report other types as well.'
         )
     )
     desired_state: str | None = Field(
@@ -676,6 +676,11 @@ async def modify_streamlit_data_app(
     project_id: ProjectIdArg = None,
 ) -> ModifiedDataAppOutput:
     """Creates or updates a Streamlit data app.
+
+    Python-js is the default type for new data apps when you can run git: create them with
+    `modify_python_js_data_app` (python-js source code is delivered only by `git push`). Use this tool to create
+    a new app when you cannot run git or when the user asks for Streamlit explicitly, and to update existing
+    Streamlit apps.
 
     Considerations:
     - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
@@ -1187,6 +1192,10 @@ async def modify_python_js_data_app(
     project_id: ProjectIdArg = None,
 ) -> ModifiedPythonJsDataAppOutput:
     """Creates or updates a python-js data app.
+
+    Python-js is the default type for new data apps when you can run git: this tool only creates the
+    configuration and the repository, and you deliver the source code by `git push`. Use
+    `modify_streamlit_data_app` instead when you cannot run git or when the user asks for Streamlit explicitly.
 
     Two-app project model. Every python-js project has a persistent **prod app** that owns the
     only managed git repository for the project, and zero or more **drafts** parented to that
