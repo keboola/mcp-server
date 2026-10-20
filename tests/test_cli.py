@@ -552,6 +552,59 @@ class TestLegacySsePath:
         assert prm['authorization_servers'] == [metadata['issuer']]
         assert metadata['authorization_response_iss_parameter_supported'] is True
 
+    @pytest.mark.parametrize(
+        ('session_resource', 'expected_status'),
+        [
+            ('https://mcp.keboola.com/mcp', 200),
+            # the PRM `resource`, in another spelling
+            ('https://MCP.keboola.com:443/', 200),
+            # minted for some other resource: not replayed here (RFC 8707)
+            ('https://mcp.eu-central-1.keboola.com/mcp', 401),
+            # every session from before DMD-2469
+            (None, 200),
+        ],
+    )
+    def test_mcp_refuses_a_token_bound_to_another_resource(
+        self, session_resource: str | None, expected_status: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from keboola_mcp_server.session_store.repository import OAuthSession, PostgresSessionStore
+
+        session = OAuthSession(
+            id='1',
+            client_id='client',
+            user_email=None,
+            kbc_access_token='kbc_at_x',
+            kbc_refresh_token='kbc_rt_x',
+            kbc_access_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            scope_project_ids=None,
+            scope_read_only=False,
+            scope_confirmed=False,
+            scope_scoped_token=None,
+            scope_scoped_expires_at=None,
+            oauth_projectless=True,
+            resource=session_resource,
+        )
+        monkeypatch.setattr(PostgresSessionStore, 'get_by_access_token', AsyncMock(return_value=session))
+        config = Config(
+            storage_api_url=STACK,
+            oauth_client_id='client-id',
+            oauth_client_secret='client-secret',
+            oauth_server_url=STACK,
+            mcp_server_url='https://mcp.keboola.com',
+            postgres_dsn='postgresql://user:pass@localhost:1/db',
+            session_encryption_key=base64.b64encode(b'0' * 32).decode(),
+        )
+        with _http_client(config) as client:
+            response = client.post(
+                '/mcp',
+                json=INITIALIZE_REQUEST,
+                headers={**STREAMABLE_HTTP_HEADERS, 'Authorization': 'Bearer opaque-token'},
+            )
+
+        assert response.status_code == expected_status, response.text
+
     @pytest.mark.parametrize('path', ['/mcp', '/sse', '/sse/'])
     def test_oauth_challenge(self, path: str) -> None:
         config = Config(

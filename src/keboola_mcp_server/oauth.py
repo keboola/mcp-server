@@ -12,10 +12,11 @@ import secrets
 import time
 from collections import OrderedDict, deque
 from collections.abc import Mapping
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Any, cast
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import parse_qs, urljoin, urlparse, urlunparse
 
 import httpx
 import jwt
@@ -1012,6 +1013,55 @@ class _PatchAuthServerMetadata:
         await self._app(scope, receive, capture)
 
 
+# The RFC 8707 `resource` values of the /token request being handled, for `SimpleOAuthProvider`: the SDK's token handler
+# passes them to the provider for no grant but the jwt-bearer one.
+_TOKEN_REQUEST_RESOURCES: ContextVar[tuple[str, ...]] = ContextVar('token_request_resources', default=())
+
+
+class _CaptureTokenRequestResource:
+    """Wraps the /token endpoint so that `SimpleOAuthProvider` can read the request's `resource` parameters: the body is
+    read here, put into `_TOKEN_REQUEST_RESOURCES`, and replayed to the wrapped handler unchanged."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope['type'] != 'http':
+            await self._app(scope, receive, send)
+            return
+
+        messages = []
+        body = b''
+        while True:
+            message = await receive()
+            messages.append(message)
+            if message['type'] != 'http.request':
+                break
+            body += message.get('body', b'')
+            if not message.get('more_body'):
+                break
+
+        async def replay() -> dict:
+            return messages.pop(0) if messages else await receive()
+
+        resources = tuple(parse_qs(body.decode('utf-8', 'replace')).get('resource', []))
+        token = _TOKEN_REQUEST_RESOURCES.set(resources)
+        try:
+            await self._app(scope, replay, send)
+        finally:
+            _TOKEN_REQUEST_RESOURCES.reset(token)
+
+
+def _resource_key(resource: str) -> tuple[str, str, int, str] | None:
+    """What two spellings of one resource URL share (origin, and the path without a trailing slash), or None for a value
+    that is not an absolute URL without query and fragment (RFC 8707 §2)."""
+    origin = _origin(resource)
+    parsed = urlparse(resource)
+    if origin is None or parsed.query or parsed.fragment:
+        return None
+    return *origin, parsed.path.rstrip('/')
+
+
 class SimpleOAuthProvider(OAuthProvider):
     def __init__(
         self,
@@ -1101,6 +1151,12 @@ class SimpleOAuthProvider(OAuthProvider):
         self.trusted_redirect_origins = frozenset(
             o for o in (_origin(mcp_server_url), _origin(server_url)) if o is not None
         )
+        # The RFC 8707 resources this server's tokens may be issued for: the PRM `resource` (the server's own URL) and
+        # the MCP endpoint a client was configured with (`/mcp`, or the legacy `/sse` that forwards to it).
+        own_path = urlparse(mcp_server_url).path.rstrip('/')
+        self._own_resource_keys = frozenset(
+            key for path in ('', '/mcp', '/sse') if (key := _resource_key(urljoin(mcp_server_url, own_path + path)))
+        )
 
     @property
     def issuer(self) -> str:
@@ -1129,13 +1185,37 @@ class SimpleOAuthProvider(OAuthProvider):
         )
 
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
-        """The SDK's routes, with the authorization-server metadata documents patched by `_PatchAuthServerMetadata`."""
-        return [
-            Route(route.path, endpoint=_PatchAuthServerMetadata(route.endpoint), methods=route.methods)
-            if isinstance(route, Route) and route.path.startswith(_METADATA_PATH_PREFIXES)
-            else route
-            for route in super().get_routes(mcp_path)
-        ]
+        """The SDK's routes, with the authorization-server metadata documents patched by `_PatchAuthServerMetadata` and
+        the token endpoint wrapped by `_CaptureTokenRequestResource`."""
+        routes: list[Route] = []
+        for route in super().get_routes(mcp_path):
+            if isinstance(route, Route) and route.path.startswith(_METADATA_PATH_PREFIXES):
+                route = Route(route.path, endpoint=_PatchAuthServerMetadata(route.endpoint), methods=route.methods)
+            elif isinstance(route, Route) and route.path == '/token':
+                route = Route(route.path, endpoint=_CaptureTokenRequestResource(route.endpoint), methods=route.methods)
+            routes.append(route)
+        return routes
+
+    def is_own_resource(self, resource: str) -> bool:
+        """Whether `resource` names this server, in any spelling a client may use (see `_own_resource_keys`)."""
+        return _resource_key(resource) in self._own_resource_keys
+
+    def _token_resource(self, bound_resource: str | None) -> str | None:
+        """The resource a /token request may issue tokens for, given the one the grant is already bound to (named at
+        /authorize, or stored on the session): the request may repeat it or leave it out, never name another one.
+
+        :raises TokenError: `invalid_target` (RFC 8707 §2) for more than one resource, a different one, or one that is
+            not this server.
+        """
+        requested = _TOKEN_REQUEST_RESOURCES.get()
+        if len(requested) > 1:
+            raise TokenError(error='invalid_target', error_description='Only one resource can be requested.')
+        resource = bound_resource or (requested[0] if requested else None)
+        if requested and _resource_key(requested[0]) != _resource_key(cast(str, resource)):
+            raise TokenError(error='invalid_target', error_description='The resource differs from the one authorized.')
+        if resource is not None and not self.is_own_resource(resource):
+            raise TokenError(error='invalid_target', error_description='The resource is not this MCP server.')
+        return resource
 
     def get_middleware(self) -> list[Middleware]:
         """Prepends `UntrustedAuthorizeRedirectMiddleware` and `DatabaseUnavailableMiddleware`
@@ -1319,6 +1399,8 @@ class SimpleOAuthProvider(OAuthProvider):
             'code_challenge': params.code_challenge,
             'state': params.state,
             'client_id': client.client_id,
+            # RFC 8707: bound to the code, then to the session (see `exchange_authorization_code`)
+            'resource': params.resource,
             'expires_at': time.time() + 5 * 60,  # 5 minutes from now
             # Carried through to exchange_authorization_code onto the session row. Always True
             # now: _CONNECTION_SCOPE below requests 'projectless' for every registered client.
@@ -1511,6 +1593,7 @@ class SimpleOAuthProvider(OAuthProvider):
             'expires_at': int(time.time() + 5 * 60),  # 5 minutes from now
             'scopes': scopes,
             'code_challenge': state_data['code_challenge'],
+            'resource': state_data.get('resource'),
             'oauth_access_token': access_token.model_dump(),
             'oauth_refresh_token': refresh_token.model_dump(),
             # Defaults to True (matching _ExtendedAuthorizationCode's own default) for a state JWT
@@ -1616,6 +1699,8 @@ class SimpleOAuthProvider(OAuthProvider):
         )
         # Check that we get the instance loaded by load_authorization_code() function.
         assert isinstance(authorization_code, _ExtendedAuthorizationCode)
+        # Before the exchange: a refused resource must not cost a Keboola session.
+        resource = self._token_resource(authorization_code.resource)
 
         # Exchange the league OAuth access token for a whole-stack Keboola programmatic session.
         # The league token is used exactly once, here, and then never referenced again.
@@ -1627,6 +1712,11 @@ class SimpleOAuthProvider(OAuthProvider):
             kbc_refresh_token=token_set.refresh_token,
             kbc_access_expires_at=datetime.fromtimestamp(token_set.expires_at, tz=timezone.utc),
             oauth_projectless=authorization_code.oauth_projectless,
+            resource=resource,
+        )
+        LOG.info(
+            f'[exchange_authorization_code] OAuth session created: session_id={session.id}, '
+            f'client_id={_sanitize_client_id_for_log(client.client_id)}, resource={_sanitize_for_log(resource or "")!r}'
         )
         await self._auto_confirm_project_scope(session.id, token_set.access_token)
         return self._oauth_token(access_token, refresh_token, authorization_code.scopes)
@@ -1696,6 +1786,13 @@ class SimpleOAuthProvider(OAuthProvider):
         if session is None:
             _log_debug(f'[load_access_token] Unknown or revoked token: {token}')
             return None
+        if session.resource is not None and not self.is_own_resource(session.resource):
+            # RFC 8707: a token minted for another resource is not replayed here. No resource is accepted as before.
+            LOG.warning(
+                f'[load_access_token] Token issued for another resource refused: session_id={session.id}, '
+                f'resource={_sanitize_for_log(session.resource)!r}'
+            )
+            return None
 
         if session.kbc_access_expires_at.timestamp() <= time.time() + 60:
             try:
@@ -1734,6 +1831,7 @@ class SimpleOAuthProvider(OAuthProvider):
             client_id=session.client_id,
             scopes=_scopes_for_session(session.oauth_projectless),
             expires_at=None,  # no client-visible expiry -- see load_access_token docstring
+            resource=session.resource,
             kbc_access_token=session.kbc_access_token,
             session_id=session.id,
             scope_project_ids=session.scope_project_ids,
@@ -1763,6 +1861,7 @@ class SimpleOAuthProvider(OAuthProvider):
             client_id=session.client_id,
             scopes=_scopes_for_session(session.oauth_projectless),
             expires_at=None,
+            resource=session.resource,
             kbc_refresh_token=session.kbc_refresh_token,
             session_id=session.id,
         )
@@ -1798,6 +1897,8 @@ class SimpleOAuthProvider(OAuthProvider):
 
         assert isinstance(refresh_token, ProxyRefreshToken), f'Expected ProxyRefreshToken, got {type(refresh_token)}'
         assert refresh_token.session_id is not None
+        if refresh_token.resource is not None:
+            self._token_resource(refresh_token.resource)
 
         # Raised as TokenError (not HTTPException): this method is invoked by the mcp SDK's own
         # /token endpoint handler, which only recognizes TokenError and formats it into a spec-
