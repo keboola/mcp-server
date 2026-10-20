@@ -396,23 +396,27 @@ def test_unwrap_results_all_exceptions():
 class TestToolsFilteringMiddleware:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('bearer_token', 'branch_id', 'listed_branch_id', 'branch_detail', 'expect_filtered'),
+        ('bearer_token', 'listed_branch_id', 'branch_detail', 'expect_filtered'),
         [
-            (None, '1234', None, None, True),
-            (None, None, None, None, False),
-            (None, None, '999', {'isDefault': False}, True),
-            (None, None, '999', {'isDefault': True}, False),
-            (None, None, '999', httpx.HTTPStatusError('Not found', request=MagicMock(), response=MagicMock()), False),
-            (None, None, '999', httpx.ConnectError('connection refused'), False),
-            ('kbc_at_abc', None, '999', {'isDefault': False}, True),
+            (None, None, None, False),
+            (None, '999', {'isDefault': False}, True),
+            (None, '999', {'isDefault': True}, False),
+            (None, '999', {}, False),
+            (None, '999', [{'id': 999}], False),
+            (None, '999', httpx.HTTPStatusError('Not found', request=MagicMock(), response=MagicMock()), False),
+            (None, '999', httpx.ConnectError('connection refused'), False),
+            (None, '999', ValueError('Expecting value'), False),
+            ('kbc_at_abc', '999', {'isDefault': False}, True),
         ],
         ids=[
-            'client_dev_branch',
-            'client_main_branch',
+            'no_listed_branch',
             'listed_dev_branch',
             'listed_default_branch',
+            'listed_branch_without_is_default',
+            'listed_branch_non_dict_detail',
             'listed_missing_branch',
             'listed_branch_lookup_error',
+            'listed_branch_non_json_detail',
             'programmatic_listed_dev_branch',
         ],
     )
@@ -420,13 +424,11 @@ class TestToolsFilteringMiddleware:
         self,
         mcp_context_client,
         bearer_token: str | None,
-        branch_id: str | None,
         listed_branch_id: str | None,
-        branch_detail: JsonDict | Exception | None,
+        branch_detail: JsonDict | list[JsonDict] | Exception | None,
         expect_filtered: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.branch_id = branch_id
         keboola_client.bearer_token = bearer_token
         keboola_client.project_id = '558' if bearer_token else None
         keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
@@ -460,6 +462,10 @@ class TestToolsFilteringMiddleware:
             else:
                 assert name in result_names
         assert 'other_tool' in result_names
+        if listed_branch_id:
+            keboola_client.storage_client.dev_branch_detail.assert_awaited_once_with(listed_branch_id)
+        else:
+            keboola_client.storage_client.dev_branch_detail.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_tools_programmatic_pre_scope_skips_verify(self, mcp_context_client) -> None:

@@ -1341,18 +1341,18 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         tools = self._filter_by_token_info(tools, token_info, context.fastmcp_context, is_main_branch)
         return await self._filter_semantic_tools(tools, client)
 
-    @classmethod
-    async def _is_listed_branch_main(cls, ctx: Context) -> bool:
+    @staticmethod
+    async def _is_listed_branch_main(ctx: Context) -> bool:
         branch_id = ctx.session.state.get(LISTED_BRANCH_ID)
         if not branch_id:
-            return cls.is_client_using_main_branch(ctx)
+            return True
         client = KeboolaClient.from_state(ctx.session.state)
         try:
             detail = await client.storage_client.dev_branch_detail(branch_id)
-        except httpx.HTTPError as e:
+        except Exception as e:
             LOG.info(f'Cannot resolve branch "{branch_id}" for tools/list, listing as the main branch: {e}')
             return True
-        return detail.get('isDefault') is True
+        return not isinstance(detail, dict) or detail.get('isDefault') is not False
 
     @classmethod
     async def _get_token_info_or_none(cls, ctx: Context) -> JsonDict | None:
