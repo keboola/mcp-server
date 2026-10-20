@@ -1314,22 +1314,37 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             return tools
 
         # Feature/role filtering needs verify_token (a Connection round-trip with a single project
-        # context). For a programmatic (kbc_*) session this doesn't work at list time: pre-scope there
-        # is no project (and the call would block connecting on a slow stack); post-scope the session
-        # holds a multi-project scoped token and verify without an X-KBC-ProjectId returns 401 — which
-        # made every tools/list fail and the client disconnect. So skip feature/role/branch filtering
-        # for ALL programmatic sessions and advertise the superset; the on_call_tool guards still
-        # enforce every rule per project (with the right project_id) when a tool is invoked.
-        # Semantic tools are the exception: once the client is narrowed to a project, the metastore
-        # check needs no verify_token, and leaving them listed for a project without models makes
-        # clients (Kai's semantic gate) require tools that on_call_tool then refuses (AI-4074).
+        # context). A programmatic (kbc_*) session has that context only once its client is narrowed
+        # to a project via X-KBC-ProjectId: pre-scope there is no project (and the call would block
+        # connecting on a slow stack), so advertise the superset. Post-scope, filter like any other
+        # session so tools/list matches on_call_tool (AI-4075), but never let a verify_token failure
+        # fail tools/list -- that 401 disconnected clients before (#605); fall back to the superset
+        # minus the semantic tools, whose metastore check needs no verify_token (AI-4074).
         client = KeboolaClient.from_state(context.fastmcp_context.session.state)
         if is_programmatic_token(client.bearer_token):
-            return await self._filter_semantic_tools(tools, client) if client.project_id else tools
+            if not client.project_id:
+                return tools
+            token_info = await self._get_token_info_or_none(context.fastmcp_context)
+            if token_info is None:
+                return await self._filter_semantic_tools(tools, client)
+        else:
+            token_info = await self.get_token_info(context.fastmcp_context)
 
-        token_info = await self.get_token_info(context.fastmcp_context)
-        features = self.get_project_features(token_info)
-        token_role = self.get_token_role(token_info).lower()
+        tools = self._filter_by_token_info(tools, token_info, context.fastmcp_context)
+        return await self._filter_semantic_tools(tools, client)
+
+    @classmethod
+    async def _get_token_info_or_none(cls, ctx: Context) -> JsonDict | None:
+        try:
+            return await cls.get_token_info(ctx)
+        except Exception as e:
+            LOG.warning(f'Failed to verify token for tools/list, listing all tools: {e}')
+            return None
+
+    @classmethod
+    def _filter_by_token_info(cls, tools: list[Tool], token_info: JsonDict, ctx: Context) -> list[Tool]:
+        features = cls.get_project_features(token_info)
+        token_role = cls.get_token_role(token_info).lower()
 
         if 'hide-conditional-flows' in features:
             tools = [t for t in tools if t.name != 'create_conditional_flow']
@@ -1338,13 +1353,13 @@ class ToolsFilteringMiddleware(fmw.Middleware):
 
         # Show modify_flow to: admin, share, OR OAuth users
         # Show update_flow to: everyone else (except readOnly, handled below)
-        is_oauth = self._is_oauth_authenticated(context.fastmcp_context)
+        is_oauth = cls._is_oauth_authenticated(ctx)
         if token_role in ('admin', 'share') or is_oauth:
             tools = [t for t in tools if t.name != UPDATE_FLOW_TOOL_NAME]
         else:
             tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
 
-        if not self.is_client_using_main_branch(context.fastmcp_context):
+        if not cls.is_client_using_main_branch(ctx):
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in DATA_APP_BRANCH_GATED_TOOLS]
 
@@ -1352,7 +1367,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             tools = [t for t in tools if is_read_only_tool(t)]
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
 
-        return await self._filter_semantic_tools(tools, client)
+        return tools
 
     @staticmethod
     async def _filter_semantic_tools(tools: list[Tool], client: KeboolaClient) -> list[Tool]:

@@ -453,20 +453,19 @@ class TestToolsFilteringMiddleware:
         assert {t.name for t in result} == {'get_tables', 'create_flow', 'get_semantic_context'}
 
     @pytest.mark.asyncio
-    async def test_list_tools_skips_verify_for_a_resolved_project_scoped_session(self, mcp_context_client) -> None:
-        # Regression (PSGO-280): the guard must check client.bearer_token, not
-        # client.legacy_storage_token. On a deployed, project-scoped programmatic session,
-        # legacy_storage_token has already been swapped for a server-minted per-project legacy
-        # Storage token (no kbc_at_/kbc_pat_ prefix) by KeboolaClient.create, while bearer_token
-        # still carries the original programmatic token -- checking the wrong one would
-        # re-enable verify_token here and risk the exact tools/list 401-and-disconnect regression
-        # the surrounding comment says this guard exists to prevent.
+    async def test_list_tools_project_scoped_verify_failure_lists_all_tools(self, mcp_context_client) -> None:
+        # A verify_token failure at list time must never fail tools/list (#605 disconnect regression).
+        # The guard checks client.bearer_token, not client.legacy_storage_token (PSGO-280): on a deployed
+        # session the latter is already the exchanged per-project legacy token, which would route this
+        # session to the non-programmatic path where a verify failure propagates.
         client = KeboolaClient.from_state(mcp_context_client.session.state)
         client.bearer_token = 'kbc_at_abc'
         client.legacy_storage_token = 'legacy-storage-token-for-active-project'
-        client.storage_client.verify_token = AsyncMock(side_effect=AssertionError('verify must not run'))
+        client.project_id = '558'
+        client.storage_client.verify_token = AsyncMock(side_effect=RuntimeError('401 Unauthorized'))
+        client.metastore_client.list_objects = AsyncMock(return_value=[MagicMock()])
 
-        tools = [_tool('get_tables', read_only=True), _tool('create_flow')]
+        tools = [_tool('get_tables', read_only=True), _tool('create_flow'), _tool('create_conditional_flow')]
 
         async def call_next(_):
             return tools
@@ -474,21 +473,25 @@ class TestToolsFilteringMiddleware:
         context = SimpleNamespace(fastmcp_context=mcp_context_client)
         result = await ToolsFilteringMiddleware().on_list_tools(context, call_next)
 
-        assert {t.name for t in result} == {'get_tables', 'create_flow'}
+        assert {t.name for t in result} == {'get_tables', 'create_flow', 'create_conditional_flow'}
+        client.storage_client.verify_token.assert_awaited_once()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('token_role', 'bearer_token', 'hidden_tools', 'visible_tools'),
+        ('token_role', 'bearer_token', 'project_id', 'hidden_tools', 'visible_tools'),
         [
-            ('admin', None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            ('share', None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
-            ('', None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
-            ('readOnly', None, {'modify_flow', 'update_flow'}, {'read_only_tool'}),
-            ('guest', None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            ('admin', None, None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('share', None, None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('', None, None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            ('readOnly', None, None, {'modify_flow', 'update_flow'}, {'read_only_tool'}),
+            ('guest', None, None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
             # OAuth users: regular/guest users get modify_flow access (different from SAPI)
-            ('', 'oauth_token', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('', 'oauth_token', None, {'update_flow'}, {'modify_flow', 'read_only_tool'}),
             # Empty bearer token behaves the same as no bearer token (SAPI regular)
-            ('', '', {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            ('', '', None, {'modify_flow'}, {'update_flow', 'read_only_tool'}),
+            # Project-scoped programmatic sessions are filtered like OAuth ones (AI-4075)
+            ('', 'kbc_at_abc', '558', {'update_flow'}, {'modify_flow', 'read_only_tool'}),
+            ('readOnly', 'kbc_at_abc', '558', {'modify_flow', 'update_flow'}, {'read_only_tool'}),
         ],
     )
     async def test_list_tools_filters_flow_tools_by_role(
@@ -497,10 +500,12 @@ class TestToolsFilteringMiddleware:
         keboola_client,
         token_role: str,
         bearer_token: str | None,
+        project_id: str | None,
         hidden_tools: set[str],
         visible_tools: set[str],
     ) -> None:
         keboola_client.bearer_token = bearer_token
+        keboola_client.project_id = project_id
         keboola_client.storage_client.verify_token = AsyncMock(
             return_value={'owner': {'features': []}, 'admin': {'role': token_role}}
         )
@@ -704,7 +709,7 @@ class TestToolsFilteringMiddleware:
         else:
             assert tool_name in result_names
         assert 'other_tool' in result_names
-        if bearer_token:
+        if bearer_token and not project_id:
             keboola_client.storage_client.verify_token.assert_not_called()
 
     @pytest.mark.asyncio
