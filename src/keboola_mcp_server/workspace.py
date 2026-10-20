@@ -741,6 +741,12 @@ class WorkspaceManager:
                 return info, prod_client
         return None
 
+    async def _is_governed(self, backend: str | None) -> bool:
+        """Whether the MCP workspace of this backend is governed: Query Service enforces the RLS policies in it and
+        nobody else can obtain its credentials. That is the case on Snowflake in a project with the RLS feature;
+        BigQuery has no governed login type yet (the Connection support is open)."""
+        return backend == 'snowflake' and await self._client.has_feature(RLS_FEATURE)
+
     async def _find_ws_in_branch(self) -> _WspInfo | None:
         """Finds the shared read-only MCP workspace in the current branch.
 
@@ -752,9 +758,6 @@ class WorkspaceManager:
         listing, no branch-metadata pointer, and therefore no elevated metadata write
         that a read-only user's token would be denied.
         """
-        # A project with the RLS feature gets a governed workspace on Snowflake, so an old ordinary one that the MCP
-        # server created before the feature was switched on is skipped (a new governed one is created instead).
-        governed_required = await self._client.has_feature(RLS_FEATURE)
         component_id = self.MCP_WORKSPACE_COMPONENT_ID
         for config in await self._client.storage_client.configuration_list(component_id):
             config_id = str(config['id'])
@@ -763,7 +766,9 @@ class WorkspaceManager:
                 info = _WspInfo.from_sapi_info(sapi_wsp_info)
                 if not (info.id and info.backend and info.schema and info.readonly):
                     continue
-                if governed_required and info.backend == 'snowflake' and info.login_type != GOVERNED_LOGIN_TYPE:
+                # An old ordinary workspace that the MCP server created before the feature was switched on is skipped,
+                # so that a governed one is created instead.
+                if await self._is_governed(info.backend) and info.login_type != GOVERNED_LOGIN_TYPE:
                     continue
                 return info
 
@@ -791,10 +796,7 @@ class WorkspaceManager:
         default_backend = owner_info.get('defaultBackend')
 
         if default_backend == 'snowflake':
-            # With the RLS feature the workspace is governed: Query Service enforces the policies and nobody else can
-            # obtain its credentials. BigQuery is not governed yet (the Connection support is open).
-            governed = await self._client.has_feature(RLS_FEATURE)
-            login_type = GOVERNED_LOGIN_TYPE if governed else 'snowflake-person-sso'
+            login_type = GOVERNED_LOGIN_TYPE if await self._is_governed(default_backend) else 'snowflake-person-sso'
         elif default_backend == 'bigquery':
             login_type = 'default'
         else:
