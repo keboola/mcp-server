@@ -23,8 +23,9 @@ items with `get_*` tools.
 
 ### Data Apps
 - Data App tools are not supported in development branches and can be used only in the production branch.
-- Create new data apps as python-js apps (`modify_python_js_data_app`). Use Streamlit (`modify_streamlit_data_app`)
-  only when the user asks for it explicitly, or to update an existing Streamlit app.
+- Create new data apps as python-js apps (`modify_python_js_data_app`) when you can run git: python-js source code is
+  delivered only by `git push`. Use Streamlit (`modify_streamlit_data_app`) when you cannot run git, when the user asks
+  for Streamlit explicitly, or to update an existing Streamlit app.
 
 ### Transformations
 
