@@ -543,7 +543,7 @@ async def test_tool_annotations_and_tags():
         for hint in ('readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'):
             assert isinstance(annotations.get(hint), bool), f'{tool.name} does not publish {hint}'
 
-    assert {t.name for t in tools} == {row[0] for row in TOOL_ANNOTATIONS}
+    assert sorted(t.name for t in tools) == sorted(row[0] for row in TOOL_ANNOTATIONS)
     assert {t.name for t in tools if is_read_only_tool(t)} == READ_ONLY_TOOLS
 
 
