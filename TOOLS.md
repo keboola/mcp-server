@@ -2534,6 +2534,9 @@ data app logs to investigate in-app errors. The logs may be updated after openin
 
 Creates or updates a python-js data app.
 
+Python-js is the default type for new data apps — use this tool to create a data app unless the user
+asks for Streamlit explicitly (then use `modify_streamlit_data_app`).
+
 Two-app project model. Every python-js project has a persistent **prod app** that owns the
 only managed git repository for the project, and zero or more **drafts** parented to that
 prod app. A draft is a Storage configuration with `parameters.dataApp.isDraft=true` and
@@ -2834,6 +2837,10 @@ working; tell the user both.
 **Description**:
 
 Creates or updates a Streamlit data app.
+
+Python-js is the default type for new data apps: create them with `modify_python_js_data_app`.
+Create a new Streamlit app only when the user asks for Streamlit explicitly, or when you cannot run git
+(python-js source code is delivered by `git push`). Use this tool to update existing Streamlit apps.
 
 Considerations:
 - The `source_code` parameter must be a complete and runnable Streamlit app. It must include a placeholder
