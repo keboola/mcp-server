@@ -838,7 +838,7 @@ WHEN TO USE:
 ---
 <a name="update_config"></a>
 ## update_config
-**Annotations**: `destructive, idempotent`
+**Annotations**: `destructive`
 
 **Tags**: `components, config-diff-preview`
 
@@ -1185,7 +1185,7 @@ WORKFLOW:
 ---
 <a name="update_config_row"></a>
 ## update_config_row
-**Annotations**: `destructive, idempotent`
+**Annotations**: `destructive`
 
 **Tags**: `components, config-diff-preview`
 
@@ -1473,7 +1473,7 @@ WORKFLOW:
 ---
 <a name="update_sql_transformation"></a>
 ## update_sql_transformation
-**Annotations**: `destructive, idempotent`
+**Annotations**: `destructive`
 
 **Tags**: `components, config-diff-preview`
 

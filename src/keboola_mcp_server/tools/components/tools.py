@@ -160,7 +160,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
             update_config,
             tags={COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
             annotations=ToolAnnotations(
-                readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
             ),
         )
     )
@@ -178,7 +178,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
             update_config_row,
             tags={COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
             annotations=ToolAnnotations(
-                readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
             ),
         )
     )
@@ -209,7 +209,7 @@ def add_component_tools(mcp: KeboolaMcpServer) -> None:
             update_sql_transformation,
             tags={COMPONENT_TOOLS_TAG, CONFIG_DIFF_PREVIEW_TAG},
             annotations=ToolAnnotations(
-                readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+                readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
             ),
         )
     )
