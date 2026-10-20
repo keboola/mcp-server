@@ -385,6 +385,11 @@ class KeboolaClient:
         """
         return self._branch_id
 
+    @property
+    def project_id(self) -> str | None:
+        """Gets the project ID this client is narrowed to via the X-KBC-ProjectId header, if any."""
+        return (self._headers or {}).get('X-KBC-ProjectId')
+
     async def has_feature(self, feature: str) -> bool:
         """Checks if the project has a specific feature enabled. Results are cached."""
         if self._features_cache is None:
