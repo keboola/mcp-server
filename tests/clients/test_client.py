@@ -543,6 +543,24 @@ class TestKeboolaClient:
         assert 'Authorization' not in headers
 
 
+@pytest.mark.parametrize(
+    ('headers', 'expected'),
+    [
+        ({'X-KBC-ProjectId': '558'}, '558'),
+        ({'User-Agent': 'test'}, None),
+        (None, None),
+    ],
+    ids=['project_header', 'other_headers', 'no_headers'],
+)
+def test_project_id_from_headers(headers: dict[str, str] | None, expected: str | None):
+    client = KeboolaClient(
+        storage_api_url='https://connection.keboola.com',
+        legacy_storage_token='dummy-token',
+        headers=headers,
+    )
+    assert client.project_id == expected
+
+
 def test_flow_schema_cache_roundtrip():
     client = KeboolaClient(
         storage_api_url='https://connection.keboola.com',

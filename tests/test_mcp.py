@@ -646,18 +646,24 @@ class TestToolsFilteringMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('has_semantic_models', 'tool_name', 'expect_filtered'),
+        ('has_semantic_models', 'tool_name', 'bearer_token', 'project_id', 'expect_filtered'),
         [
-            (False, 'search_semantic_context', True),
-            (False, 'get_semantic_schema', True),
-            (True, 'search_semantic_context', False),
-            (True, 'get_semantic_schema', False),
+            (False, 'search_semantic_context', None, None, True),
+            (False, 'get_semantic_schema', None, None, True),
+            (True, 'search_semantic_context', None, None, False),
+            (True, 'get_semantic_schema', None, None, False),
+            (False, 'validate_semantic_query', 'kbc_at_abc', '558', True),
+            (True, 'validate_semantic_query', 'kbc_at_abc', '558', False),
+            (False, 'validate_semantic_query', 'kbc_at_abc', None, False),
         ],
         ids=[
             'no_models_search',
             'no_models_schema',
             'with_models_search',
             'with_models_schema',
+            'programmatic_project_scoped_no_models',
+            'programmatic_project_scoped_with_models',
+            'programmatic_pre_scope_no_models',
         ],
     )
     async def test_list_tools_filters_semantic_tools_by_models(
@@ -665,9 +671,13 @@ class TestToolsFilteringMiddleware:
         mcp_context_client,
         has_semantic_models: bool,
         tool_name: str,
+        bearer_token: str | None,
+        project_id: str | None,
         expect_filtered: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
+        keboola_client.bearer_token = bearer_token
+        keboola_client.project_id = project_id
         keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
         keboola_client.metastore_client.list_objects = AsyncMock(
             return_value=[MagicMock()] if has_semantic_models else []
@@ -694,6 +704,8 @@ class TestToolsFilteringMiddleware:
         else:
             assert tool_name in result_names
         assert 'other_tool' in result_names
+        if bearer_token:
+            keboola_client.storage_client.verify_token.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

@@ -1317,12 +1317,15 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         # context). For a programmatic (kbc_*) session this doesn't work at list time: pre-scope there
         # is no project (and the call would block connecting on a slow stack); post-scope the session
         # holds a multi-project scoped token and verify without an X-KBC-ProjectId returns 401 — which
-        # made every tools/list fail and the client disconnect. So skip list-time filtering for ALL
-        # programmatic sessions and advertise the superset; the on_call_tool guards still enforce every
-        # feature/role/branch rule per project (with the right project_id) when a tool is invoked.
+        # made every tools/list fail and the client disconnect. So skip feature/role/branch filtering
+        # for ALL programmatic sessions and advertise the superset; the on_call_tool guards still
+        # enforce every rule per project (with the right project_id) when a tool is invoked.
+        # Semantic tools are the exception: once the client is narrowed to a project, the metastore
+        # check needs no verify_token, and leaving them listed for a project without models makes
+        # clients (Kai's semantic gate) require tools that on_call_tool then refuses (AI-4074).
         client = KeboolaClient.from_state(context.fastmcp_context.session.state)
         if is_programmatic_token(client.bearer_token):
-            return tools
+            return await self._filter_semantic_tools(tools, client) if client.project_id else tools
 
         token_info = await self.get_token_info(context.fastmcp_context)
         features = self.get_project_features(token_info)
@@ -1349,12 +1352,13 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             tools = [t for t in tools if is_read_only_tool(t)]
             LOG.debug(f'Read-only access: filtered to {len(tools)} read-only tools for role={token_role}')
 
-        client = KeboolaClient.from_state(context.fastmcp_context.session.state)
-        has_semantic_models = await project_has_semantic_models(client)
-        if not has_semantic_models:
-            tools = [t for t in tools if not is_semantic_tool(t)]
+        return await self._filter_semantic_tools(tools, client)
 
-        return tools
+    @staticmethod
+    async def _filter_semantic_tools(tools: list[Tool], client: KeboolaClient) -> list[Tool]:
+        if await project_has_semantic_models(client):
+            return tools
+        return [t for t in tools if not is_semantic_tool(t)]
 
     @staticmethod
     def authorize_tool_call(
