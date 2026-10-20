@@ -19,10 +19,12 @@ from starlette.requests import Request
 from keboola_mcp_server import auth_login
 from keboola_mcp_server.auth_login import TokenSet, save_tokens
 from keboola_mcp_server.clients.auth_bridge import StorageTokenResolver
+from keboola_mcp_server.clients.base import JsonDict
 from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     CONVERSATION_ID,
+    LISTED_BRANCH_ID,
     STORAGE_API_URL,
     AggregateError,
     ServerState,
@@ -394,21 +396,48 @@ def test_unwrap_results_all_exceptions():
 class TestToolsFilteringMiddleware:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('branch_id', 'expect_filtered'),
+        ('bearer_token', 'listed_branch_id', 'branch_detail', 'expect_filtered'),
         [
-            ('1234', True),
-            (None, False),
+            (None, None, None, False),
+            (None, '999', {'isDefault': False}, True),
+            (None, '999', {'isDefault': True}, False),
+            (None, '999', {}, False),
+            (None, '999', [{'id': 999}], False),
+            (None, '999', httpx.HTTPStatusError('Not found', request=MagicMock(), response=MagicMock()), False),
+            (None, '999', httpx.ConnectError('connection refused'), False),
+            (None, '999', ValueError('Expecting value'), False),
+            ('kbc_at_abc', '999', {'isDefault': False}, True),
+        ],
+        ids=[
+            'no_listed_branch',
+            'listed_dev_branch',
+            'listed_default_branch',
+            'listed_branch_without_is_default',
+            'listed_branch_non_dict_detail',
+            'listed_missing_branch',
+            'listed_branch_lookup_error',
+            'listed_branch_non_json_detail',
+            'programmatic_listed_dev_branch',
         ],
     )
     async def test_list_tools_filters_data_apps_by_branch(
         self,
         mcp_context_client,
-        branch_id: str | None,
+        bearer_token: str | None,
+        listed_branch_id: str | None,
+        branch_detail: JsonDict | list[JsonDict] | Exception | None,
         expect_filtered: bool,
     ) -> None:
         keboola_client = KeboolaClient.from_state(mcp_context_client.session.state)
-        keboola_client.branch_id = branch_id
+        keboola_client.bearer_token = bearer_token
+        keboola_client.project_id = '558' if bearer_token else None
         keboola_client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
+        keboola_client.storage_client.dev_branch_detail = AsyncMock(
+            side_effect=branch_detail if isinstance(branch_detail, Exception) else None,
+            return_value=branch_detail,
+        )
+        if listed_branch_id:
+            mcp_context_client.session.state[LISTED_BRANCH_ID] = listed_branch_id
 
         data_app_tools = [
             'modify_streamlit_data_app',
@@ -433,6 +462,10 @@ class TestToolsFilteringMiddleware:
             else:
                 assert name in result_names
         assert 'other_tool' in result_names
+        if listed_branch_id:
+            keboola_client.storage_client.dev_branch_detail.assert_awaited_once_with(listed_branch_id)
+        else:
+            keboola_client.storage_client.dev_branch_detail.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_tools_programmatic_pre_scope_skips_verify(self, mcp_context_client) -> None:
@@ -821,17 +854,19 @@ class TestSessionStateMiddleware:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ('method', 'expected_branch_id'),
+        ('method', 'expected_branch_id', 'expected_listed_branch_id'),
         [
-            ('tools/list', None),
-            ('resources/list', None),
-            ('prompts/list', None),
-            ('tools/call', '999'),
-            ('resources/read', '999'),
+            ('tools/list', None, '999'),
+            ('resources/list', None, None),
+            ('prompts/list', None, None),
+            ('tools/call', '999', None),
+            ('resources/read', '999', None),
         ],
         ids=['tools_list', 'resources_list', 'prompts_list', 'tools_call', 'resources_read'],
     )
-    async def test_on_request_branch_handling(self, method: str, expected_branch_id: str | None):
+    async def test_on_request_branch_handling(
+        self, method: str, expected_branch_id: str | None, expected_listed_branch_id: str | None
+    ):
         config = Config(
             storage_api_url='https://connection.test.keboola.com',
             storage_token='test-token',
@@ -876,6 +911,7 @@ class TestSessionStateMiddleware:
         assert result is expected_result
         assert len(captured_configs) == 1
         assert captured_configs[0].branch_id == expected_branch_id
+        assert session.state.get(LISTED_BRANCH_ID) == expected_listed_branch_id
         # The session's client is told which stack is the server's own one, so that it can decide
         # whether the Kubernetes step-up header may be sent.
         assert captured_own_stack_urls == ['https://connection.test.keboola.com']

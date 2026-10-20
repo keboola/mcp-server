@@ -94,6 +94,10 @@ from keboola_mcp_server.workspace import WorkspaceManager
 
 LOG = logging.getLogger(__name__)
 CONVERSATION_ID = 'conversation_id'
+# The branch a tools/list request was configured for. Its session client is always built on the main
+# branch (see `SessionStateMiddleware.on_request`), so `ToolsFilteringMiddleware` reads this to apply
+# the branch-gated filters.
+LISTED_BRANCH_ID = 'listed_branch_id'
 # The stack URL this session resolved to (header, env or CLI). Kept in the session state because a
 # bootstrap session (no credential yet, see `create_session_state`) has no KeboolaClient to read it
 # from, and `ServerState.config` holds only the server-level value, not the request's.
@@ -561,7 +565,8 @@ class SessionStateMiddleware(fmw.Middleware):
             # Skip branch validation for /list requests (tools/list, resources/list, prompts/list, etc.)
             # so that clients can discover available tools even when the configured branch ID doesn't
             # exist yet. For these requests the client is created without a branch ID. Otherwise, the branch is
-            # validated via a SAPI call.
+            # validated via a SAPI call. tools/list keeps the configured ID aside for its branch filters.
+            listed_branch_id = config.branch_id if context.method == 'tools/list' else None
             if is_list:
                 if config.branch_id:
                     LOG.info(f'Skipping branch validation for {context.method} request.')
@@ -585,6 +590,8 @@ class SessionStateMiddleware(fmw.Middleware):
                 state[SCOPE_KEY] = scope
             if oauth_session_id := self._read_oauth_session_id(http_rq):
                 state[OAUTH_SESSION_ID_KEY] = oauth_session_id
+            if listed_branch_id:
+                state[LISTED_BRANCH_ID] = listed_branch_id
             ctx.session.state = state
 
         try:
@@ -1330,8 +1337,22 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         else:
             token_info = await self.get_token_info(context.fastmcp_context)
 
-        tools = self._filter_by_token_info(tools, token_info, context.fastmcp_context)
+        is_main_branch = await self._is_listed_branch_main(context.fastmcp_context)
+        tools = self._filter_by_token_info(tools, token_info, context.fastmcp_context, is_main_branch)
         return await self._filter_semantic_tools(tools, client)
+
+    @staticmethod
+    async def _is_listed_branch_main(ctx: Context) -> bool:
+        branch_id = ctx.session.state.get(LISTED_BRANCH_ID)
+        if not branch_id:
+            return True
+        client = KeboolaClient.from_state(ctx.session.state)
+        try:
+            detail = await client.storage_client.dev_branch_detail(branch_id)
+        except Exception as e:
+            LOG.info(f'Cannot resolve branch "{branch_id}" for tools/list, listing as the main branch: {e}')
+            return True
+        return not isinstance(detail, dict) or detail.get('isDefault') is not False
 
     @classmethod
     async def _get_token_info_or_none(cls, ctx: Context) -> JsonDict | None:
@@ -1342,7 +1363,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             return None
 
     @classmethod
-    def _filter_by_token_info(cls, tools: list[Tool], token_info: JsonDict, ctx: Context) -> list[Tool]:
+    def _filter_by_token_info(
+        cls, tools: list[Tool], token_info: JsonDict, ctx: Context, is_main_branch: bool
+    ) -> list[Tool]:
         features = cls.get_project_features(token_info)
         token_role = cls.get_token_role(token_info).lower()
 
@@ -1359,7 +1382,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         else:
             tools = [t for t in tools if t.name != MODIFY_FLOW_TOOL_NAME]
 
-        if not cls.is_client_using_main_branch(ctx):
+        if not is_main_branch:
             # Filter out data app tools when the client is not using the main/production branch
             tools = [t for t in tools if t.name not in DATA_APP_BRANCH_GATED_TOOLS]
 
