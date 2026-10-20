@@ -78,8 +78,14 @@ _ALLOWED_CURSOR_HOSTS = frozenset({'anysphere.cursor-retrieval', 'anysphere.curs
 # table (a migration on the Connection side).
 # Not a trust decision -- it only picks which Connection row to ask about; /oauth/clients/validate
 # is still the sole authority on whether the pair is actually registered and active.
+#
+# Each entry ships only to stacks whose Connection release already registers its row: otherwise validate answers 404,
+# the user approves the literal id in Flow B and Connection stores it without 'projectless' (ChatGPT: the
+# PreRegisterChatGptOAuthClientMigration then refuses that row, DMD-2475).
 _WELL_KNOWN_CONNECTION_CLIENT_IDS: dict[str, str] = {
     'https://claude.ai/api/mcp/auth_callback': 'claude-ai',
+    # ChatGPT uses this stable callback only for an authorization server that returns RFC 9207 `iss` (DMD-2468).
+    'https://chatgpt.com/connector_platform_oauth_redirect': 'chatgpt',
 }
 
 # Cap on the in-process client_id -> client_name cache (see ConnectionClientRegistry.remember_client_name)
@@ -527,7 +533,7 @@ class ConnectionClientRegistry:
             self._http_client = None
 
     async def _check_registration_uncached(self, connection_client_id: str, redirect_uri: str) -> _ClientRegistration:
-        # A well-known pair (today: only claude.ai) is exempt from the local limiter -- a fixed,
+        # A well-known pair (today: claude.ai and ChatGPT) is exempt from the local limiter -- a fixed,
         # tiny handful of redirect_uris, so letting them always through Connection's own (much
         # higher, IP-shared) limit costs nothing. Without this, an attacker flooding /authorize with
         # distinct, never-cached redirect_uris exhausts the shared limiter budget, and once claude.ai's

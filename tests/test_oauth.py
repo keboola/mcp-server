@@ -384,10 +384,18 @@ class TestConnectionClientIdentity:
     client bookkeeping and the identity Connection's oauth2_client registry actually understands
     (see AI-2883 RFC, Resolution Strategy §4)."""
 
-    def test_well_known_redirect_uri_maps_to_pre_registered_client_id(self):
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'client_id'),
+        [
+            ('https://claude.ai/api/mcp/auth_callback', 'claude-ai'),
+            # DMD-2478: pre-registered by PreRegisterChatGptOAuthClientMigration (DMD-2475)
+            ('https://chatgpt.com/connector_platform_oauth_redirect', 'chatgpt'),
+        ],
+    )
+    def test_well_known_redirect_uri_maps_to_pre_registered_client_id(self, redirect_uri: str, client_id: str):
         from keboola_mcp_server.oauth import _connection_client_id
 
-        assert _connection_client_id('https://claude.ai/api/mcp/auth_callback', _KEY) == 'claude-ai'
+        assert _connection_client_id(redirect_uri, _KEY) == client_id
 
     def test_unknown_redirect_uri_derives_a_stable_short_id(self):
         from keboola_mcp_server.oauth import _connection_client_id
@@ -791,8 +799,9 @@ class TestSimpleOAuthProvider:
     @pytest.mark.parametrize(
         ('redirect_uri', 'pre_registered'),
         [
-            # pre-registered by Keboola in Connection (claude-ai)
+            # pre-registered by Keboola in Connection (claude-ai, chatgpt)
             ('https://claude.ai/api/mcp/auth_callback', True),
+            ('https://chatgpt.com/connector_platform_oauth_redirect', True),
             # became REGISTERED via the dynamic-approval screen (Flow B)
             ('https://my-self-service-tool.example/cb', False),
         ],
@@ -3093,6 +3102,10 @@ class TestAuthorizationServerMetadata:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        'redirect_uri',
+        ['https://claude.ai/api/mcp/auth_callback', 'https://chatgpt.com/connector_platform_oauth_redirect'],
+    )
+    @pytest.mark.parametrize(
         ('response_kind', 'expected_params'),
         [
             ('success', {'code', 'state', 'code_challenge', 'iss'}),
@@ -3106,12 +3119,12 @@ class TestAuthorizationServerMetadata:
         client,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
+        redirect_uri: str,
         response_kind: str,
         expected_params: set[str],
     ) -> None:
         from keboola_mcp_server import oauth as oauth_module
 
-        redirect_uri = 'https://claude.ai/api/mcp/auth_callback'
         state = await self._consent_state(provider, monkeypatch, redirect_uri, 'REGISTERED')
         if response_kind == 'success':
             token_response = {'access_token': 'league-at', 'refresh_token': 'league-rt', 'expires_in': 3600}
