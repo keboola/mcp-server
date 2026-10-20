@@ -79,9 +79,10 @@ _ALLOWED_CURSOR_HOSTS = frozenset({'anysphere.cursor-retrieval', 'anysphere.curs
 # Not a trust decision -- it only picks which Connection row to ask about; /oauth/clients/validate
 # is still the sole authority on whether the pair is actually registered and active.
 #
-# Each entry ships only to stacks whose Connection release already registers its row: otherwise validate answers 404,
-# the user approves the literal id in Flow B and Connection stores it without 'projectless' (ChatGPT: the
-# PreRegisterChatGptOAuthClientMigration then refuses that row, DMD-2475).
+# Each entry ships only to stacks whose Connection release already registers its row. Otherwise validate answers 404
+# and the user approves the literal id in Flow B, which Connection registers against this server's callback: the
+# check after approval asks about the client's own URI (`_connection_redirect_uri`), so login fails with 400 then
+# and on every retry, and the Connection migration that pre-registers the row stops on it (ChatGPT: DMD-2475).
 _WELL_KNOWN_CONNECTION_CLIENT_IDS: dict[str, str] = {
     'https://claude.ai/api/mcp/auth_callback': 'claude-ai',
     # ChatGPT uses this stable callback only for an authorization server that returns RFC 9207 `iss` (DMD-2468).
