@@ -167,6 +167,14 @@ class CustomRoutes:
         same shape as Connection's own "Deny gets no callback" behavior.
         """
         error = request.query_params.get('error')
+        # The user clicked Deny on Connection's consent screen: tell the client, when the state proves which one.
+        if (
+            error == 'access_denied'
+            and self.oauth_provider
+            and (state := request.query_params.get('state'))
+            and (redirect_uri := self.oauth_provider.access_denied_redirect(state))
+        ):
+            return RedirectResponse(status_code=302, url=redirect_uri)
         if error:
             # strip control/bidi chars so a crafted query param can't forge log lines
             safe_error = ''.join(ch for ch in error if ch.isprintable())[:200]
@@ -187,9 +195,9 @@ class CustomRoutes:
             # review, AI-2883). `authorize()`'s own fail-closed branch only ever emits two fixed
             # error_description strings, so a single fixed message loses nothing legitimate.
             #
-            # A user clicking Deny on Connection's consent screen lands here too (error=access_denied);
-            # that is not an outage, so it gets its own fixed message. Still never anything derived
-            # from the query string.
+            # A Deny on Connection's consent screen whose state does not prove the flow (see above) lands
+            # here too (error=access_denied); that is not an outage, so it gets its own fixed message.
+            # Still never anything derived from the query string.
             if error == 'access_denied':
                 title = message = 'Authorization was denied. You can close this window.'
             elif error == 'unregistered_client':

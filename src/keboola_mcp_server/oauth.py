@@ -957,15 +957,17 @@ class AuthorizeRateLimitMiddleware:
 _METADATA_PATH_PREFIXES = ('/.well-known/oauth-authorization-server', '/.well-known/openid-configuration')
 
 
-class _AdvertisePublicClients:
+class _PatchAuthServerMetadata:
     """Wraps an authorization-server metadata endpoint so that it also advertises `none` as a token endpoint
-    authentication method, first.
+    authentication method, first, and RFC 9207 issuer identification.
 
     The MCP SDK hardcodes `["client_secret_post", "client_secret_basic"]`, but this server's clients are public ones
     (PKCE, no secret) and its token endpoint accepts them: a client that picks its `token_endpoint_auth_method` from
-    this document (Open WebUI does) would otherwise register as a confidential client. The SDK bakes the metadata into
-    the handler when it builds the route, so the document is patched on its way out instead. An object, not a function:
-    Starlette would treat a function endpoint as a request handler rather than an ASGI app."""
+    this document (Open WebUI does) would otherwise register as a confidential client. The SDK has no way to set
+    `authorization_response_iss_parameter_supported` either, and ChatGPT uses its stable redirect URI only for an
+    authorization server that announces it. The SDK bakes the metadata into the handler when it builds the route, so
+    the document is patched on its way out instead. An object, not a function: Starlette would treat a function
+    endpoint as a request handler rather than an ASGI app."""
 
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
@@ -992,9 +994,12 @@ class _AdvertisePublicClients:
             assert start is not None
             try:
                 metadata = json.loads(body)
-                methods = metadata.get('token_endpoint_auth_methods_supported')
-                if start['status'] == 200 and isinstance(methods, list) and 'none' not in methods:
-                    metadata['token_endpoint_auth_methods_supported'] = ['none', *methods]
+                if start['status'] == 200 and isinstance(metadata, dict):
+                    methods = metadata.get('token_endpoint_auth_methods_supported')
+                    if isinstance(methods, list) and 'none' not in methods:
+                        metadata['token_endpoint_auth_methods_supported'] = ['none', *methods]
+                    # Every authorization response to the client carries `iss`: see `SimpleOAuthProvider.issuer`.
+                    metadata['authorization_response_iss_parameter_supported'] = True
                     body = json.dumps(metadata).encode()
             except ValueError:
                 pass  # not JSON (an error page, a preflight answer): forwarded as it is
@@ -1096,6 +1101,14 @@ class SimpleOAuthProvider(OAuthProvider):
             o for o in (_origin(mcp_server_url), _origin(server_url)) if o is not None
         )
 
+    @property
+    def issuer(self) -> str:
+        """The issuer identifier, exactly as the metadata `issuer` and the PRM `authorization_servers` serialize it.
+
+        RFC 9207: every authorization response this server sends to the client carries it as `iss`, and a client
+        compares that with the issuer it discovered by exact string, so it must come from the same value."""
+        return str(self.issuer_url)
+
     async def aclose(self) -> None:
         """Releases what the provider holds open (the pooled client of the client registry)."""
         await self._client_registry.aclose()
@@ -1115,9 +1128,9 @@ class SimpleOAuthProvider(OAuthProvider):
         )
 
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
-        """The SDK's routes, with the authorization-server metadata documents also advertising public clients."""
+        """The SDK's routes, with the authorization-server metadata documents patched by `_PatchAuthServerMetadata`."""
         return [
-            Route(route.path, endpoint=_AdvertisePublicClients(route.endpoint), methods=route.methods)
+            Route(route.path, endpoint=_PatchAuthServerMetadata(route.endpoint), methods=route.methods)
             if isinstance(route, Route) and route.path.startswith(_METADATA_PATH_PREFIXES)
             else route
             for route in super().get_routes(mcp_path)
@@ -1496,10 +1509,30 @@ class SimpleOAuthProvider(OAuthProvider):
             code=auth_code_jwt,
             state=state_data['state'],
             code_challenge=state_data['code_challenge'],
+            iss=self.issuer,
         )
         LOG.debug(f'[handle_oauth_callback] mcp_redirect_uri={mcp_redirect_uri}')
 
         return mcp_redirect_uri
+
+    def access_denied_redirect(self, state: str) -> str | None:
+        """The client's own redirect_uri with `error=access_denied` (RFC 6749 §4.1.2.1) and `iss` (RFC 9207), for a
+        user who clicked Deny on Connection's consent screen, so the client learns of the denial instead of timing out.
+
+        :param state: The state Connection sent back with the error, the one `authorize()` put on the consent URL.
+        :return: The redirect, or None when the state is not a live one of this server's consent flows. A pending state
+            (the client is not approved yet) names a redirect_uri nobody has registered, so sending the browser there
+            would be an open redirect.
+        """
+        try:
+            state_data = self._decode(state)
+        except jwt.InvalidTokenError:
+            return None
+        if not state_data or state_data.get('pending') or state_data.get('expires_at', 0) < time.time():
+            return None
+        return construct_redirect_uri(
+            cast(str, state_data['redirect_uri']), error='access_denied', state=state_data['state'], iss=self.issuer
+        )
 
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
