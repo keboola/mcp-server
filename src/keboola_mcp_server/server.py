@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+from urllib.parse import urlparse
 
 from fastmcp import FastMCP
 from pydantic import AliasChoices, BaseModel, Field
@@ -175,6 +176,9 @@ class CustomRoutes:
             and (state := request.query_params.get('state'))
             and (redirect_uri := self.oauth_provider.access_denied_redirect(state))
         ):
+            LOG.info(
+                f'Relaying access_denied to a pre-registered client: {urlparse(redirect_uri)._replace(query="").geturl()}'
+            )
             return RedirectResponse(status_code=302, url=redirect_uri)
         if error:
             # strip control/bidi chars so a crafted query param can't forge log lines

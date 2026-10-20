@@ -1533,7 +1533,13 @@ class SimpleOAuthProvider(OAuthProvider):
             state_data = self._decode(state)
         except jwt.InvalidTokenError:
             return None
-        if not state_data or state_data.get('pending') or state_data.get('expires_at', 0) < time.time():
+        # No 'state' key: some other JWT signed with the same secret (an MCP authorization code), not a state.
+        if (
+            not state_data
+            or 'state' not in state_data
+            or state_data.get('pending')
+            or state_data.get('expires_at', 0) < time.time()
+        ):
             return None
         redirect_uri = cast(str, state_data['redirect_uri'])
         if redirect_uri not in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
