@@ -16,6 +16,9 @@ whether it is needed.
 
 1. **Pick the project.** Call `get_accessible_projects` (with `with_llm_instruction=true` on the first call in the
    conversation) and ask the user which project the job ran in. Do not guess.
+   Do this even when the session looks scoped already or a data tool would work without it: this plugin
+   always narrows the session to the projects the user confirms. If `get_accessible_projects` reports that
+   the login is bound to a single project, confirm that project with the user and skip step 2.
 2. **Scope the session to that project.** Call `set_project_scope` with `project_ids=[<the confirmed id>]`. This
    must happen before any write in step 7. If the result carries a non-null `scope_token`, pass it on every later
    tool call.

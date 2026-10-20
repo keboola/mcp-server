@@ -17,8 +17,12 @@ enough for the internal workspace plugin; the public listing switches to the glo
 because a published plugin's MCP URL cannot change.
 
 Every skill starts with `get_accessible_projects` and `set_project_scope`, and no skill writes before the
-session is scoped to the project the user confirmed. `tests/test_chatgpt_plugin.py` fails when a skill names a
-tool the server does not register, or names a write tool before `set_project_scope`.
+session is scoped to the project the user confirmed. This is a prompt-level rule: the server lets a write tool
+target any project the OAuth consent granted. The skills do it even though the server instructions say not to
+scope preemptively, because the RFC requires it for the plugin.
+
+`tests/test_chatgpt_plugin.py` fails when a skill names a tool or a tool argument the server does not register, a
+tool that an OAuth session cannot call, or a write tool before `set_project_scope`.
 
 ## Try it locally
 

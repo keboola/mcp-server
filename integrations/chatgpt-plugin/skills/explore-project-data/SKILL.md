@@ -17,6 +17,9 @@ If the user names no project, find it in step 1.
 1. **Pick the project.** Call `get_accessible_projects` with `with_llm_instruction=true` on the first call in the
    conversation. Show the projects with their organization and SQL dialect. If there is exactly one, say which one
    you will use; otherwise ask the user which project or projects to explore. Do not guess.
+   Do this even when the session looks scoped already or a data tool would work without it: this plugin
+   always narrows the session to the projects the user confirms. If `get_accessible_projects` reports that
+   the login is bound to a single project, confirm that project with the user and skip step 2.
 2. **Scope the session.** Call `set_project_scope` with `project_ids=[...]` set to the user's choice and
    `read_only=true`. If the result carries a non-null `scope_token`, pass it on every later tool call. If the user
    later asks for a change, call `set_project_scope` again without `read_only` before any write.
@@ -37,7 +40,7 @@ If the user names no project, find it in step 1.
 
 - This skill never writes. Do not call create, update, modify, run or deploy tools here; hand over to the
   `build-sql-transformation` skill if the user wants to persist a result.
-- `query_data` takes read-only SQL only. Do not send `INSERT`, `UPDATE`, `DELETE`, `CREATE` or `DROP`.
+- `query_data` is for reading: send one `SELECT` per call, never `INSERT`, `UPDATE`, `DELETE`, `CREATE` or `DROP`.
 - If the question is about Keboola itself rather than the user's data, use `docs_query`.
 - If a tool fails because the login cannot reach a project, tell the user to reconnect the Keboola plugin or ask
   the project admin for access. Do not try another project on your own.

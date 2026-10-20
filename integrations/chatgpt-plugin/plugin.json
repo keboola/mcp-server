@@ -16,7 +16,7 @@
       "interface": {
         "displayName": "Keboola",
         "shortDescription": "Work with your Keboola data",
-        "longDescription": "Connect ChatGPT to your Keboola projects. Explore buckets and tables, query data with read-only SQL, build Snowflake or BigQuery SQL transformations, orchestrate them in flows, and find out why a job failed. You log in with your Keboola account, pick the projects to work on, and every change is made only in the project you confirm.",
+        "longDescription": "Connect ChatGPT to your Keboola projects. Explore buckets and tables, query data with SQL, build Snowflake or BigQuery SQL transformations, orchestrate them in flows, and find out why a job failed. You log in with your Keboola account and choose which projects ChatGPT may use; the plugin's workflows ask you to confirm the project before they change anything.",
         "developerName": "Keboola",
         "category": "Developer Tools",
         "capabilities": ["Read", "Write"],

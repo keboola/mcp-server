@@ -17,6 +17,9 @@ existing transformation, its name or ID.
 1. **Pick the project.** Call `get_accessible_projects` (with `with_llm_instruction=true` on the first call in the
    conversation). Show the projects and ask the user which one the transformation belongs in. Never pick a project
    on your own, even when only one is listed: confirm it.
+   Do this even when the session looks scoped already or a data tool would work without it: this plugin
+   always narrows the session to the projects the user confirms. If `get_accessible_projects` reports that
+   the login is bound to a single project, confirm that project with the user and skip step 2.
 2. **Scope the session to that project.** Call `set_project_scope` with `project_ids=[<the confirmed id>]`. This
    must happen before any write. If the result carries a non-null `scope_token`, pass it on every later tool call.
 3. **Get context.** Call `get_project_info`. Note the SQL dialect (Snowflake or BigQuery). Python, R and DuckDB
@@ -27,12 +30,14 @@ existing transformation, its name or ID.
    rows. Fix errors here, before anything is saved.
 6. **Save it.**
    - New transformation: call `create_sql_transformation`. Reference input tables by fully qualified name; create
-     output tables with plain delimited names (`CREATE TABLE "daily_orders" AS ...`) and list them in
-     `created_table_names=[...]`. Give it a name and description that state its purpose.
+     output tables with the dialect's delimited plain name (`"daily_orders"` on Snowflake, a backticked name on
+     BigQuery), never a fully qualified one, and list the names without delimiters in `created_table_names=[...]`.
+     Give it a name and description that state its purpose.
    - Existing transformation: find it with `search` and `item_types=["transformation"]`, read it with
      `get_configs` and `configs=[...]` to get the `block_id` and `code_id` values, then call
-     `update_sql_transformation` with targeted operations and a `change_description=...`. Storage mappings are
-     replaced as a whole: include every mapping you want to keep.
+     `update_sql_transformation` with `configuration_id=...`, `parameter_updates=[...]` (operations such as
+     `set_code` or `str_replace`) and `change_description=...`. A `storage=...` value replaces all mappings:
+     include every mapping you want to keep.
 7. **Run it, if the user asked.** Ask before running. Call `run_job` with the transformation's `component_id=...`
    and `configuration_id=...`, then poll `get_jobs` with `job_ids=[...]` until the job ends. On failure, continue
    with the `debug-failed-job` skill.
@@ -44,4 +49,4 @@ existing transformation, its name or ID.
 - Confirm with the user before overwriting SQL in an existing transformation and before every `run_job`.
 - Use the dialect's delimited identifiers everywhere and never mix quoting styles in one statement.
 - A destructive schema change (dropping, renaming or retyping a column) needs the output table removed before the
-  next run. Tell the user; do not try to drop it through `query_data`, which accepts only read-only SQL.
+  next run. Tell the user; `query_data` runs in a read-only workspace and cannot drop or change Storage tables.

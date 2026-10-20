@@ -1,25 +1,31 @@
 """Static checks of the ChatGPT plugin package in `integrations/chatgpt-plugin/`.
 
-The skills name MCP tools by their exact names, so a renamed or removed tool must fail here rather than in
+The skills name MCP tools and their arguments exactly, so a renamed or removed tool must fail here rather than in
 a ChatGPT conversation. Manifest limits are the ones OpenAI documents for plugin submission.
 """
 
+import asyncio
 import json
 import re
 import struct
 from pathlib import Path
 
 import pytest
+from fastmcp.tools import Tool
 
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
+from keboola_mcp_server.mcp import ToolsFilteringMiddleware, is_read_only_tool
 from keboola_mcp_server.server import create_server
 
 PLUGIN_DIR = Path(__file__).parents[1] / 'integrations' / 'chatgpt-plugin'
 SKILL_NAMES = ('explore-project-data', 'build-sql-transformation', 'debug-failed-job', 'build-flow')
 
-# Backticked snake_case words in the skills that are tool arguments or result fields, not tools.
-NON_TOOL_IDENTIFIERS = frozenset({'block_id', 'code_id', 'read_only', 'scope_token'})
-_SNAKE_CASE_IN_BACKTICKS = re.compile(r'`([a-z]+(?:_[a-z0-9]+)+)`')
+# Backticked lowercase words in the skills that are result fields or operation names, not tools.
+NON_TOOL_IDENTIFIERS = frozenset(
+    {'block_id', 'code_id', 'id', 'name', 'read_only', 'scope_token', 'set_code', 'str_replace', 'toolset_restrictions'}
+)
+_IDENTIFIER_IN_BACKTICKS = re.compile(r'`([a-z]+(?:_[a-z0-9]+)*)`')
+_ARGUMENT_IN_BACKTICKS = re.compile(r'`(\w+)=')
 _SKILL_REFERENCE = re.compile(r'`([a-z]+(?:-[a-z]+)+)` skill')
 
 
@@ -41,11 +47,35 @@ def _split_skill(skill_name: str) -> tuple[dict[str, str], str]:
     return frontmatter, match.group(2)
 
 
-async def _registered_tools() -> dict[str, bool]:
-    """Maps each registered tool name to whether it is read-only."""
+def _oauth_denial(tool: Tool) -> str | None:
+    """The reason an OAuth session (the only way ChatGPT connects) cannot call the tool, or None.
+
+    Checked for a write role and a guest; `create_flow` and `create_conditional_flow` depend on the project's
+    conditional-flows feature, so a tool passes when either feature state allows it.
+    """
+    for token_role in ('admin', 'guest'):
+        denials = [
+            ToolsFilteringMiddleware.authorize_tool_call(
+                tool_name=tool.name,
+                is_read_only=is_read_only_tool(tool),
+                is_semantic=False,
+                has_semantic_models=True,
+                token_role=token_role,
+                features=features,
+                is_oauth=True,
+                is_main_branch=True,
+            )
+            for features in (set(), {'hide-conditional-flows'})
+        ]
+        if all(denials):
+            return denials[0]
+    return None
+
+
+@pytest.fixture(scope='module')
+def tools() -> dict[str, Tool]:
     server = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
-    tools = await server.list_tools(run_middleware=False)
-    return {t.name: bool(t.annotations and t.annotations.read_only_hint) for t in tools}
+    return {t.name: t for t in asyncio.run(server.list_tools(run_middleware=False))}
 
 
 def test_plugin_manifest() -> None:
@@ -93,9 +123,8 @@ def test_skill_directories() -> None:
     assert sorted(p.name for p in (PLUGIN_DIR / 'skills').iterdir()) == sorted(SKILL_NAMES)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize('skill_name', SKILL_NAMES)
-async def test_skill_names_real_tools_and_scopes_before_writes(skill_name: str) -> None:
+def test_skill_names_callable_tools_and_scopes_before_writes(skill_name: str, tools: dict[str, Tool]) -> None:
     frontmatter, body = _split_skill(skill_name)
     assert frontmatter['name'] == skill_name
     assert frontmatter['description']
@@ -103,23 +132,29 @@ async def test_skill_names_real_tools_and_scopes_before_writes(skill_name: str) 
     for referenced_skill in _SKILL_REFERENCE.findall(body):
         assert referenced_skill in SKILL_NAMES, f'{skill_name} refers to an unknown skill {referenced_skill}'
 
-    tools = await _registered_tools()
     mentions = [
         (match.start(), match.group(1))
-        for match in _SNAKE_CASE_IN_BACKTICKS.finditer(body)
+        for match in _IDENTIFIER_IN_BACKTICKS.finditer(body)
         if match.group(1) not in NON_TOOL_IDENTIFIERS
     ]
-    unknown = sorted({name for _, name in mentions if name not in tools})
+    named_tools = {name for _, name in mentions}
+    unknown = sorted(named_tools - tools.keys())
     assert not unknown, f'{skill_name} names tools the server does not register: {unknown}'
+    denied = {name: reason for name in sorted(named_tools) if (reason := _oauth_denial(tools[name]))}
+    assert not denied, f'{skill_name} names tools an OAuth session cannot call: {denied}'
+
+    arguments = {arg for tool in tools.values() for arg in tool.parameters.get('properties', {})}
+    unknown_arguments = sorted(set(_ARGUMENT_IN_BACKTICKS.findall(body)) - arguments)
+    assert not unknown_arguments, f'{skill_name} names arguments no tool takes: {unknown_arguments}'
 
     # The project-less grant reads across projects but writes only to the confirmed one, so every skill
     # lists projects, then scopes the session, before it names any write tool.
-    first_mention = {}
+    first_mention: dict[str, int] = {}
     for position, name in mentions:
         first_mention.setdefault(name, position)
     assert 'get_accessible_projects' in first_mention, f'{skill_name} does not call get_accessible_projects'
     assert 'set_project_scope' in first_mention, f'{skill_name} does not call set_project_scope'
     assert first_mention['get_accessible_projects'] < first_mention['set_project_scope']
-    writes = [position for name, position in first_mention.items() if not tools[name]]
+    writes = [position for name, position in first_mention.items() if not is_read_only_tool(tools[name])]
     if writes:
         assert first_mention['set_project_scope'] < min(writes), f'{skill_name} names a write tool before scoping'
