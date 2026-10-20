@@ -197,7 +197,7 @@ class CustomRoutes:
             # can link `/oauth/callback?error=x&error_description=<arbitrary text>` and have that
             # text shown under a "Keboola login temporarily unavailable" heading here -- content
             # spoofing, not XSS (HTML-escaping alone doesn't stop that) (Vojtěch Biberle + Devin
-            # review, AI-2883). `authorize()`'s own fail-closed branch only ever emits two fixed
+            # review, AI-2883). `authorize()`'s own error branches only ever emit fixed
             # error_description strings, so a single fixed message loses nothing legitimate.
             #
             # A Deny on Connection's consent screen that is not relayed to the client (see above) lands
