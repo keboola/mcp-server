@@ -2741,6 +2741,40 @@ class TestAuthorizationServerMetadata:
         assert body['issuer'].rstrip('/') == 'https://mcp.example'
         assert body['authorization_response_iss_parameter_supported'] is True
 
+    @staticmethod
+    async def _consent_state(
+        provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, redirect_uri: str, registration: str
+    ) -> str:
+        """The state `authorize()` puts on the URL it sends the browser to (consent, or approval when not registered)."""
+        from keboola_mcp_server.oauth import _ClientRegistration
+
+        TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration[registration])
+        params = AuthorizationParams(
+            redirect_uri=AnyUrl(redirect_uri),
+            redirect_uri_provided_explicitly=True,
+            code_challenge='challenge',
+            state='client-state',
+            scopes=None,
+        )
+        client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='dcr-client-id')
+        return parse_qs(urlparse(await provider.authorize(client, params)).query)['state'][0]
+
+    @staticmethod
+    async def _callback(provider: SimpleOAuthProvider, query: str):
+        from starlette.requests import Request
+
+        from keboola_mcp_server.config import Config, ServerRuntimeInfo
+        from keboola_mcp_server.mcp import ServerState
+        from keboola_mcp_server.server import CustomRoutes
+
+        routes = CustomRoutes(
+            server_state=ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http')),
+            oauth_provider=provider,
+        )
+        return await routes.oauth_callback_handler(
+            Request({'type': 'http', 'headers': [], 'query_string': query.encode()})
+        )
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ('response_kind', 'expected_params'),
@@ -2758,27 +2792,10 @@ class TestAuthorizationServerMetadata:
         response_kind: str,
         expected_params: set[str],
     ) -> None:
-        from starlette.requests import Request
-
         from keboola_mcp_server import oauth as oauth_module
-        from keboola_mcp_server.config import Config, ServerRuntimeInfo
-        from keboola_mcp_server.mcp import ServerState
-        from keboola_mcp_server.oauth import _ClientRegistration
-        from keboola_mcp_server.server import CustomRoutes
 
-        TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
-        params = AuthorizationParams(
-            redirect_uri=AnyUrl('https://chatgpt.com/connector_platform_oauth_redirect'),
-            redirect_uri_provided_explicitly=True,
-            code_challenge='challenge',
-            state='client-state',
-            scopes=None,
-        )
-        consent_url = await provider.authorize(
-            _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='chatgpt-dcr-id'), params
-        )
-        state = parse_qs(urlparse(consent_url).query)['state'][0]
-
+        redirect_uri = 'https://claude.ai/api/mcp/auth_callback'
+        state = await self._consent_state(provider, monkeypatch, redirect_uri, 'REGISTERED')
         if response_kind == 'success':
             token_response = {'access_token': 'league-at', 'refresh_token': 'league-rt', 'expires_in': 3600}
             transport = httpx.MockTransport(lambda _rq: httpx.Response(200, json=token_response))
@@ -2788,17 +2805,12 @@ class TestAuthorizationServerMetadata:
             query = f'code=connection-code&state={state}'
         else:
             query = f'error=access_denied&error_description=The+user+denied+the+request&state={state}'
-        routes = CustomRoutes(
-            server_state=ServerState(config=Config(), runtime_info=ServerRuntimeInfo(transport='streamable-http')),
-            oauth_provider=provider,
-        )
-        response = await routes.oauth_callback_handler(
-            Request({'type': 'http', 'headers': [], 'query_string': query.encode()})
-        )
+
+        response = await self._callback(provider, query)
 
         assert response.status_code == 302
         location = urlparse(response.headers['location'])
-        assert f'{location.scheme}://{location.netloc}{location.path}' == str(params.redirect_uri)
+        assert f'{location.scheme}://{location.netloc}{location.path}' == redirect_uri
         response_params = parse_qs(location.query)
         assert set(response_params) == expected_params
         assert response_params['state'] == ['client-state']
@@ -2811,35 +2823,42 @@ class TestAuthorizationServerMetadata:
         assert client.get('/.well-known/oauth-protected-resource').json()['authorization_servers'] == [issuer]
 
     @pytest.mark.asyncio
-    async def test_a_denial_is_returned_to_the_client_only_for_a_live_consent_flow(
-        self, provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ('redirect_uri', 'registration', 'state_change'),
+        [
+            # not approved by anyone yet: sending the browser there would be an open redirect
+            ('https://claude.ai/api/mcp/auth_callback', 'NOT_REGISTERED', None),
+            # approved, but possibly by the very user who wants the redirect
+            ('https://attacker.example/cb', 'REGISTERED', None),
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'expired'),
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'forged'),
+            ('https://claude.ai/api/mcp/auth_callback', 'REGISTERED', 'garbage'),
+        ],
+    )
+    async def test_a_denial_is_relayed_only_for_a_live_flow_of_a_pre_registered_client(
+        self,
+        provider: SimpleOAuthProvider,
+        monkeypatch: pytest.MonkeyPatch,
+        redirect_uri: str,
+        registration: str,
+        state_change: str | None,
     ) -> None:
-        """A pending state names a redirect_uri nobody approved yet (an open redirect if the browser went there), and an
-        expired or forged state proves nothing: each of them keeps the generic page."""
-        from keboola_mcp_server.oauth import _ClientRegistration
-
-        def state_from(url: str) -> str:
-            return parse_qs(urlparse(url).query)['state'][0]
-
-        dcr_client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='some-client')
-        params = AuthorizationParams(
-            redirect_uri=AnyUrl('https://attacker.example/cb'),
-            redirect_uri_provided_explicitly=True,
-            code_challenge='challenge',
-            state='client-state',
-            scopes=None,
-        )
+        """Anyone can mint a state and send the denial themselves, so the relay is a redirect anyone can trigger: it must
+        stay limited to the redirect_uris Keboola vouches for. Every other denial keeps the generic page."""
         provider._dynamic_client_approval = True
-        TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration.NOT_REGISTERED)
-        pending_state = state_from(await provider.authorize(dcr_client, params))
-        TestSimpleOAuthProvider._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
-        live_state = provider._decode(state_from(await provider.authorize(dcr_client, params)))
+        state = await self._consent_state(provider, monkeypatch, redirect_uri, registration)
+        if state_change == 'expired':
+            state = provider._encode({**provider._decode(state), 'expires_at': time.time() - 1})
+        elif state_change == 'forged':
+            state = provider._encode(provider._decode(state), key='another-key')
+        elif state_change == 'garbage':
+            state = 'not-a-jwt'
 
-        assert provider.access_denied_redirect(pending_state) is None
-        assert provider.access_denied_redirect(provider._encode({**live_state, 'expires_at': time.time() - 1})) is None
-        assert provider.access_denied_redirect(provider._encode(live_state, key='another-key')) is None
-        assert provider.access_denied_redirect('not-a-jwt') is None
-        assert provider.access_denied_redirect(provider._encode(live_state)) is not None
+        assert provider.access_denied_redirect(state) is None
+        response = await self._callback(provider, f'error=access_denied&state={state}')
+        assert response.status_code == 400
+        assert response.headers['content-type'].startswith('text/html')
+        assert 'location' not in response.headers
 
     def test_a_preflight_answer_is_left_alone(self, client) -> None:
         response = client.options(

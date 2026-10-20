@@ -820,7 +820,8 @@ class UntrustedAuthorizeRedirectMiddleware:
     known origins: Connection's own `server_url` (`_oauth_server_auth_url` and `ConnectionClientRegistry`'s
     own `/oauth/authorize`) or this server's own `mcp_server_url` (`_mcp_callback_url`) -- it never
     redirects straight to the caller-supplied `redirect_uri` (that only happens later, from
-    `/oauth/callback`, after the real grant). So allowlisting the outgoing redirect's origin (scheme,
+    `/oauth/callback`, after the real grant or a denied one -- see `SimpleOAuthProvider.access_denied_redirect`).
+    So allowlisting the outgoing redirect's origin (scheme,
     host and effective port, not the hostname alone) to exactly those two closes the gap without
     touching the intentional "any https host" shape check. The same guard covers `/register`, `/token`,
     `/revoke` and the `/.well-known/*` discovery documents, and the trailing-slash form of each: Starlette's slash normalisation answers
@@ -1275,8 +1276,8 @@ class SimpleOAuthProvider(OAuthProvider):
             # would make this server 302 to an attacker-chosen host on demand (e.g. by exhausting
             # Connection's rate limit) -- an open redirect. Redirecting to our own callback endpoint
             # instead keeps the browser on this server's own origin; the caller gets no callback at
-            # all for this attempt (same shape as Connection's own Deny-gets-no-callback behavior)
-            # and must time out and retry, same as any other undeliverable authorize attempt.
+            # all for this attempt (same shape as a Deny on Connection's approval screen) and must
+            # time out and retry, same as any other undeliverable authorize attempt.
             return construct_redirect_uri(
                 self._mcp_callback_url,
                 error='temporarily_unavailable',
@@ -1516,13 +1517,17 @@ class SimpleOAuthProvider(OAuthProvider):
         return mcp_redirect_uri
 
     def access_denied_redirect(self, state: str) -> str | None:
-        """The client's own redirect_uri with `error=access_denied` (RFC 6749 §4.1.2.1) and `iss` (RFC 9207), for a
-        user who clicked Deny on Connection's consent screen, so the client learns of the denial instead of timing out.
+        """The client's own redirect_uri with `error=access_denied` (RFC 6749 §4.1.2.1) and `iss` (RFC 9207), for an
+        authorization Connection denied (the user clicked Deny on the consent screen, or Connection refused the grant),
+        so the client learns of the denial instead of timing out.
+
+        Nothing proves that the error came from Connection, and a state can be replayed until it expires, so this is a
+        redirect anyone can trigger to the state's redirect_uri. It is given only for a redirect_uri Keboola
+        pre-registered itself (`_WELL_KNOWN_CONNECTION_CLIENT_IDS`): a dynamically approved one may have been approved
+        by the very user who wants the redirect, and a pending one by nobody.
 
         :param state: The state Connection sent back with the error, the one `authorize()` put on the consent URL.
-        :return: The redirect, or None when the state is not a live one of this server's consent flows. A pending state
-            (the client is not approved yet) names a redirect_uri nobody has registered, so sending the browser there
-            would be an open redirect.
+        :return: The redirect, or None when the state is not a live consent flow of a pre-registered client.
         """
         try:
             state_data = self._decode(state)
@@ -1530,9 +1535,10 @@ class SimpleOAuthProvider(OAuthProvider):
             return None
         if not state_data or state_data.get('pending') or state_data.get('expires_at', 0) < time.time():
             return None
-        return construct_redirect_uri(
-            cast(str, state_data['redirect_uri']), error='access_denied', state=state_data['state'], iss=self.issuer
-        )
+        redirect_uri = cast(str, state_data['redirect_uri'])
+        if redirect_uri not in _WELL_KNOWN_CONNECTION_CLIENT_IDS:
+            return None
+        return construct_redirect_uri(redirect_uri, error='access_denied', state=state_data['state'], iss=self.issuer)
 
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str

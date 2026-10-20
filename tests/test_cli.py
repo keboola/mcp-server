@@ -531,6 +531,27 @@ class TestLegacySsePath:
         assert [r.status_code for r in responses] == [expected_status, expected_status]
         assert responses[0].json() == responses[1].json()
 
+    @pytest.mark.parametrize('prefix', ['', '/mcp'])
+    def test_oauth_metadata_names_one_issuer(self, prefix: str) -> None:
+        """RFC 9207 (DMD-2468): ChatGPT compares the `iss` of an authorization response with the issuer it discovered,
+        by exact string, so the authorization-server metadata and the PRM must name the very same one."""
+        config = Config(
+            storage_api_url=STACK,
+            oauth_client_id='client-id',
+            oauth_client_secret='client-secret',
+            oauth_server_url=STACK,
+            mcp_server_url='https://mcp.keboola.com',
+            postgres_dsn='postgresql://user:pass@localhost:1/db',
+            session_encryption_key=base64.b64encode(b'0' * 32).decode(),
+        )
+        with _http_client(config) as client:
+            metadata = client.get(f'{prefix}/.well-known/oauth-authorization-server').json()
+            prm = client.get('/.well-known/oauth-protected-resource').json()
+
+        assert metadata['issuer'] == 'https://mcp.keboola.com/'
+        assert prm['authorization_servers'] == [metadata['issuer']]
+        assert metadata['authorization_response_iss_parameter_supported'] is True
+
     @pytest.mark.parametrize('path', ['/mcp', '/sse', '/sse/'])
     def test_oauth_challenge(self, path: str) -> None:
         config = Config(
