@@ -5,8 +5,8 @@ Linear: [AJDA-3349](https://linear.app/keboola/issue/AJDA-3349/mcpkbagent-create
 ## Problem
 
 Agents (Claude Code, Kai, kbagent) can create data apps with HTTP basic auth or no auth only.
-`AuthenticationType` is `Literal['no-auth', 'basic-auth', 'default']` (`tools/data_apps.py:146`)
-and `_get_authorization()` (`tools/data_apps.py:2134`) emits either a single `simpleAuth` password
+`AuthenticationType` is `Literal['no-auth', 'basic-auth', 'default']` (`tools/data_apps.py:170`)
+and `_get_authorization()` (`tools/data_apps.py:2755`) emits either a single `simpleAuth` password
 provider or an empty provider list. There is no third option.
 
 Enterprise customers (Groupon, ČS) require SSO, so the agent path stops halfway: a human opens the
@@ -32,19 +32,42 @@ silent basic-auth downgrade on update — is removed.
 
 ### Why this works: the UI form prefills
 
-Verified in `kbc-ui` `modules/data-apps/legacy/components/AuthenticationSettings.tsx`:
+Checked against the UI's data app authentication form:
 
-- `resolveSavedMode()` reads `auth_providers[0].type`, so a provider written by the MCP with
-  `type: 'oidc'` opens the form already in OIDC mode.
-- `prepareProviderFormData()` seeds the form from the stored provider, so `client_id`, `issuer_url`
-  and `logout_url` are prefilled; `resolveProvider()` even preselects the right IdP preset by
-  matching `issuer_url` against each preset's domain.
-- `isDisabled()` requires `client_id`, `#client_secret` and every non-optional preset input before
-  Save is enabled. With the skeleton in place the only empty field is the secret, so the form
-  *cannot* be saved half-configured and the human's job is unambiguous: type the secret, save.
-- The form already renders the callback URL with "Register this as the redirect URI in your
-  identity provider", built by `getDataAppCallbackUrl()` as `<app url>/_proxy/callback` — the same
-  value this RFC returns from the tools.
+- A stored provider with `type: 'oidc'` opens the form already in OIDC mode.
+- `client_id`, `issuer_url` and `logout_url` are prefilled from the stored provider, and the IdP
+  preset is preselected by matching `issuer_url`.
+- Save stays disabled until `client_id`, `#client_secret` and every required preset input are set.
+  With the skeleton in place the only empty field is the secret, so the form *cannot* be saved
+  half-configured and the human's job is clear: type the secret, save.
+- The form already shows the callback URL (`<app url>/_proxy/callback`) as the redirect URI to
+  register — the same value this RFC returns from the tools.
+
+### Opening the UI form: URL-mode elicitation
+
+The human step is delivered with URL-mode elicitation, reusing `UrlElicitationMiddleware` and the
+helpers in `elicitation.py` (see [url_elicitation](../url_elicitation/RFC.md)). When the stored
+provider has no `#client_secret`, the tool asks the client to open the app's configuration page
+(`get_data_app_config_link`), with a message telling the user to enter the client secret in the
+Authentication section and save.
+
+The secret goes from the user's browser to the UI, and from the UI to Storage. It never passes
+through the MCP client, the server or the model — the property this design is built on.
+
+| Client / protocol | Behavior after the skeleton is written |
+| --- | --- |
+| URL-capable, 2026-07-28 | The call returns an `InputRequiredResult` keyed `open_url`. The client opens the page after consent and retries; the retry re-runs the same update — safe, because writing the same skeleton is idempotent and the merge keeps any `#client_secret` already saved — and returns the normal output. |
+| URL-capable, older protocol with a back-channel | `open_url_in_client()` during the call, then the normal output. |
+| Not URL-capable, or no way to ask | The normal output only; `change_summary` carries the link. |
+
+Unlike the Data Streams unlock, the tool call succeeds, so this is not a `UrlActionRequiredError`.
+A small success-path helper sits next to the middleware and shares `open_url_input_request()` and
+`open_url_in_client()`. Like the unlock flow, it does not wait for the user to finish
+(`URLElicitationRequiredError` / -32042 is not used): the agent cannot know when the secret is
+saved, so `oidc_setup_required` in the next tool output is the source of truth.
+
+Form-mode elicitation is not an option: the MCP spec forbids requesting sensitive data with it, and
+the typed secret would pass through the client.
 
 ## Required Behavior
 
@@ -112,22 +135,26 @@ No `#client_secret` key — the UI adds it. The app validates and deploys in thi
 complete a login until the secret is entered; that is the intended intermediate state, and the tool
 output says so plainly.
 
-### Verified downstream contract
+### Downstream contract
 
-Traced end-to-end rather than inferred. References recorded so a future change can re-check cheaply.
+No change is needed outside this repo — the platform already accepts this shape. The facts below
+were checked against the UI, the config validator and apps-proxy, and the design depends on them:
 
-| Stage | Where | What it establishes |
-| --- | --- | --- |
-| UI writer | kbc-ui `AuthenticationSettings.tsx` (OIDC branch), `constants.ts` (`basicProxyAuthorization`) | Provider id is the literal `'oidc-1'`; fields are `id`, `type`, `client_id`, `#client_secret`, `issuer_url`, `logout_url`; the auth rule comes from `basicProxyAuthorization` with `auth` repointed. Its basic and no-auth blocks are byte-identical to what `_get_authorization` already emits. |
-| Validation | `job-queue-job-configuration` `AppProxyDefinition.php`, vendored into sandboxes-service | `id` + `type` required per provider; `auth_rules` requires `type` and boolean `auth_required`; extra keys preserved (`ignoreExtraKeys(false)`), which is how `client_id` / `issuer_url` survive. Provider `type` is **not** enum-constrained — a typo passes validation and fails later in the proxy. |
-| Golden fixture | sandboxes-service `tests/Unit/AppConfig/AppConfigValidatorTest.php` | A validator-passing OIDC provider with exactly these field names. |
-| Decrypt + rename | sandboxes-service `ProxyConfigProvider::provideProxyConfig` → `ProxyConfigNormalizer::normalizeConfigKeys` | `decryptForConfiguration` resolves `KBC::` ciphers, then keys go snake_case→camelCase with the `#` prefix stripped: `#client_secret` → `clientSecret`, `issuer_url` → `issuerUrl`. |
-| Consumption | keboola-as-code `appsproxy/dataapps/auth/provider/oidc.go` | Reads `clientId`, `clientSecret`, `issuerUrl`, `logoutUrl`, `allowedRoles`. `AllowedRoles` is `*[]string`: nil means no requirement, an **empty slice is an explicit error**. |
-| Provider id visibility | keboola-as-code `authproxy/selector/selector.go` (`:108`), `provider/base.go` | The id labels the provider-selection page only when an app has 2+ providers; with one the selector short-circuits straight to the IdP. An OIDC app has one, so the id stays internal. |
-| Callback URL | keboola-as-code `config/static.go`, `authproxy/oauthproxy/config.go`, `dataapps/api/config.go`; kbc-ui `getDataAppCallbackUrl()` | `<scheme>://<slug>-<appId>.<hostname>/_proxy/callback` — one per **app**, not per provider. Depends on the app id, which does not exist before create: this is why the two-step flow is unavoidable and why a draft cannot share the prod app's block. MCP and UI derive it identically. |
-
-keboola-operator is **not** in this path — it provisions Kubernetes workloads and handles no
-data-app auth.
+- **UI writer:** the provider id is the literal `'oidc-1'`; fields are `id`, `type`, `client_id`,
+  `#client_secret`, `issuer_url`, `logout_url`. Its basic and no-auth blocks are identical to what
+  `_get_authorization` already emits.
+- **Validation:** `id` and `type` are required per provider, `auth_rules` needs `type` and a boolean
+  `auth_required`, and extra keys such as `client_id` / `issuer_url` are kept. Provider `type` is
+  not an enum — a typo passes validation and fails later in the proxy.
+- **Decrypt + rename:** `KBC::` ciphers are decrypted, then keys go snake_case → camelCase with the
+  `#` prefix removed (`#client_secret` → `clientSecret`).
+- **Consumption:** apps-proxy reads `clientId`, `clientSecret`, `issuerUrl`, `logoutUrl`,
+  `allowedRoles`. A missing `allowedRoles` means no requirement; an **empty list is an error**.
+- **Provider id:** shown only on the provider-selection page, which appears with 2+ providers. An
+  OIDC app has one, so the id stays internal.
+- **Callback URL:** `<scheme>://<slug>-<appId>.<hostname>/_proxy/callback` — one per **app**, not
+  per provider. It depends on the app id, which does not exist before create: this is why the
+  two-step flow is needed and why a draft cannot share the prod app's block.
 
 Two coupling rules fall out of the validator and must hold in `_build_authorization`:
 
@@ -166,13 +193,15 @@ Both output models gain:
   login, which is otherwise indistinguishable from a misconfigured IdP.
 
 `change_summary` carries the human-readable next step, including the app's UI link (the links
-manager already produces it) and, when `allowed_roles` was set, the ordering warning above.
+manager already produces it, and it is the page offered via URL elicitation) and, when
+`allowed_roles` was set, the ordering warning above.
 
 The docstrings document the full sequence:
 
 1. Create with `authentication_type='basic-auth'`.
 2. Read `oidc_callback_url`; register it as a redirect URI at the IdP; obtain `client_id`.
-3. Update with `authentication_type='oidc'` and the `oidc` block → skeleton written.
+3. Update with `authentication_type='oidc'` and the `oidc` block → skeleton written; URL-capable
+   clients are asked to open the app's configuration page.
 4. **Human opens the app's Authentication section in the UI, types the client secret, saves.**
 5. `deploy_data_app`.
 6. Only if using `allowed_roles`: a second `authentication_type='oidc'` update to reapply them.
@@ -184,25 +213,31 @@ The docstrings document the full sequence:
 - `AuthenticationType` gains `'oidc'`.
 - New `OidcAuthConfig(BaseModel)`: the fields above, a validator rejecting an empty `allowed_roles`,
   and no secret field.
-- `_get_authorization(auth_with_password: bool)` (`:2134`) is replaced by
+- `_get_authorization(auth_with_password: bool)` (`:2755`) is replaced by
   `_build_authorization(authentication_type, oidc=None, existing=None)`. The two existing branches
   are preserved unchanged; the OIDC branch builds the skeleton and performs the
   secret-preserving merge against `existing`, upholding the two coupling rules above. All four call
-  sites are updated: python-js create (`:1238`), python-js update (`:1601`), streamlit create via
-  `_build_data_app_config` (`:1879`), streamlit update via `_update_existing_data_app_config`
-  (`:1913`).
-- `_uses_basic_authentication()` (`:2261`) needs no change — it matches `simpleAuth` and already
+  sites are updated: python-js create (`:1509`), python-js update via
+  `_update_existing_code_data_app_config` (`:1941`), streamlit create via `_build_data_app_config`
+  (`:2405`), streamlit update via `_update_existing_data_app_config` (`:2439`).
+- `_uses_basic_authentication()` (`:2980`) needs no change — it matches `simpleAuth` and already
   returns `False` for an OIDC app, the correct input to `get_data_app_links`.
-- New `_reject_oidc_on_draft()` beside `_reject_no_auth_on_draft()` (`:158`), called at the same two
-  python-js draft checkpoints (`:1156`, `:1175`).
-- `ModifiedDataAppOutput` (`:401`) and `ModifiedPythonJsDataAppOutput` (`:411`) gain
+- New `_reject_oidc_on_draft()` beside `_reject_no_auth_on_draft()` (`:182`), called at the same two
+  python-js draft checkpoints (`:1365`, `:1388`).
+- `ModifiedDataAppOutput` (`:518`) and `ModifiedPythonJsDataAppOutput` (`:528`) gain
   `oidc_callback_url` and `oidc_setup_required`.
+
+### `elicitation.py`
+
+- A success-path helper that offers the app's configuration page while `oidc_setup_required` is
+  true, built on the existing `open_url_input_request()` / `open_url_in_client()`. On the
+  2026-07-28 retry (`open_url` in `ctx.input_responses`) it does not ask again.
 
 ### Independent hygiene fix (splittable)
 
 python-js prod create posts to the data-science API and bypasses Storage, and its
-`encryption_client.encrypt` call sits inside `if git_block is not None:` (`:1305`) — so it only runs
-for drafts. Streamlit create, on the same DSAPI route, encrypts unconditionally (`:673`); both
+`encryption_client.encrypt` call sits inside `if git_block is not None:` (`:1576`) — so it only runs
+for drafts. Streamlit create, on the same DSAPI route, encrypts unconditionally (`:824`); both
 update paths are covered fail-closed by `StorageClient._encrypt_secrets` (`clients/storage.py:360`).
 Dedenting that call closes the gap.
 
@@ -215,7 +250,7 @@ in the function. It can be split into its own PR without affecting the rest.
 
 `DataAppConfig.Authorization.AppProxy.auth_providers` is already `list[dict[str, Any]]` (`:88`), so
 no client model change is required. A typed `OidcProvider` model is deliberately **not** introduced:
-the provider dict is a platform contract owned by `AppProxyDefinition.php`, and mirroring it here
+the provider dict is a platform contract owned by the platform's config validator, and mirroring it here
 would add a second place to update whenever the platform adds a field, with no validation benefit
 `OidcAuthConfig` does not already give.
 
@@ -230,7 +265,7 @@ would add a second place to update whenever the platform adds a field, with no v
   `_encrypt_secrets` handle it is the right shape — it is what every other component config does.
 - **IdP presets** (`entra` / `google` / `okta` / `auth0` / `generic`). Each is a hardcoded URL
   template that rots when an IdP changes its scheme, and an LLM can produce the issuer URL for any
-  mainstream provider. Note the UI *does* carry presets (`OIDC_PROVIDERS`), so an agent-written
+  mainstream provider. Note the UI *does* carry presets, so an agent-written
   `issuer_url` still preselects the right one when the human opens the form — the ergonomics are
   had without the maintenance.
 - **A `client_secret_env` reference resolved by the MCP process.** Works for a locally run stdio
@@ -246,22 +281,24 @@ would add a second place to update whenever the platform adds a field, with no v
 - `oidc` on `modify_streamlit_data_app` and `modify_python_js_data_app`, with secret-preserving
   merge on update.
 - `oidc_callback_url` and `oidc_setup_required` on both output models.
+- URL elicitation of the app's configuration page while the secret is missing.
 - The python-js prod-create encryption fix (splittable — see above).
 - Tool docstrings and regenerated `TOOLS.md`.
 
 **Out of scope:**
 
-- kbagent `data-app create --auth oidc` (`keboola/cli`) — follow-up; consumes the shape this RFC
-  defines and cannot be reviewed in this repo's PR.
-- ai-kit `dataapp-development/references/authentication.md` — follow-up, same reason.
+- OIDC support in kbagent and the ai-kit data app docs — follow-ups in their own repos, built on
+  the shape this RFC defines.
 - `github` / `gitlab` / `jumpcloud` providers.
 - Exposing `allowed_roles` in the UI. Doing so would remove the round-trip footgun documented above
   and is the natural follow-up if ČS actually uses roles.
-- Stack-level `enforcedAppsAuth`. Worth knowing while it stays out of scope: `ProxyConfigProvider`
-  uses the stack's `ENFORCED_APPS_AUTH` config *instead of* the app's own `app_proxy` block when set,
+- Stack-level `enforcedAppsAuth`. Worth knowing while it stays out of scope: the platform
+  uses the stack's enforced auth config *instead of* the app's own `app_proxy` block when set,
   rather than merging. On such a stack an agent can write a valid OIDC block and see it silently
   ignored, with nothing in the tools able to detect it. A documentation matter for the ai-kit page.
-- Opening the generic `create_config` / `update_config` tools to `keboola.data-apps`.
+- Setting OIDC through the generic `create_config` / `update_config` tools. They already send
+  agents to the data-app tools for `keboola.data-apps`, and that stays: all data-app auth goes
+  through `modify_streamlit_data_app` / `modify_python_js_data_app`.
 
 ## Testing / Verification
 
@@ -277,8 +314,9 @@ adding parallel functions, per the project's testing conventions:
 | `allowed_roles` set | Written to the provider; `change_summary` carries the UI-round-trip warning |
 | Optional fields omitted | `logout_url` / `allowed_roles` keys absent, not null |
 | Generated `auth_rules` | `auth_required: true` ⇒ `auth` present; `false` ⇒ `auth` absent; every id in `auth` exists in `auth_providers` |
-| Golden fixture | Generated provider matches the sandboxes-service `AppConfigValidatorTest.php` fixture field-for-field, and the UI writer's field set |
+| Golden fixture | Generated provider matches the platform validator's OIDC fixture and the UI writer's field set, field for field |
 | `oidc_setup_required` | True while no `#client_secret` is stored, false once one is |
+| URL elicitation (in `tests/test_elicitation.py` style, real in-memory server) | Secret missing: URL-capable client asked once to open the config link, retry returns the normal output; secret stored: not asked; plain client: not asked, link in `change_summary` |
 | Four rejection conditions | `ValueError`, each message naming the remedy |
 | Encryption hygiene fix | `contains_plaintext_secrets()` is `False` on the payload handed to `create_data_app` — fails today on python-js prod create |
 
@@ -290,7 +328,8 @@ Manual verification on a dev stack, since neither unit tests nor CI can exercise
 2. Register the callback URL at an Entra test tenant; obtain `client_id`.
 3. Update with `authentication_type='oidc'`; confirm `oidc_setup_required` is true and the stored
    block matches the skeleton.
-4. Open the app's Authentication section in the UI: confirm the form opens in OIDC mode with the
+4. In Claude Code, confirm the "wants to open a URL" prompt appears and opens the app's
+   configuration page. In its Authentication section confirm the form opens in OIDC mode with the
    preset preselected, `client_id` / `issuer_url` prefilled, and Save disabled until the secret is
    typed. Enter the secret and save.
 5. `deploy_data_app`; confirm the browser is redirected to the IdP and login succeeds.
