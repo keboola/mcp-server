@@ -92,15 +92,18 @@ STATE_TRANSITION_DENIED_MESSAGE = (
 
 def add_merge_request_tools(mcp: KeboolaMcpServer) -> None:
     """Add merge-request tools to the MCP server."""
-    read_only = ToolAnnotations(readOnlyHint=True)
+    read_only = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
     # Repo convention: creating a new object is not destructive; replacing or deleting existing content is.
     # `resolve_merge_request_conflict` rebases (replaces) a configuration version and can delete it.
-    destructive = ToolAnnotations(destructiveHint=True)
-    write = ToolAnnotations(destructiveHint=False)
+    # Only `update_merge_request` is idempotent (it sets absolute values); the state transitions and the merge
+    # are events, and a client must not retry them as if they were.
+    destructive = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False)
+    set_fields = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False)
+    write = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
     for fn, annotations in (
         (get_merge_requests, read_only),
         (create_merge_request, write),
-        (update_merge_request, destructive),
+        (update_merge_request, set_fields),
         (request_merge_request_review, write),
         (approve_merge_request, write),
         (request_merge_request_changes, write),

@@ -500,6 +500,16 @@ TOOL_ANNOTATIONS = [
     # jobs
     ('get_jobs', True, False, True, False, {JOB_TOOLS_TAG}),
     ('run_job', False, True, False, True, {JOB_TOOLS_TAG}),
+    # merge requests
+    ('get_merge_requests', True, False, True, False, {MERGE_REQUEST_TOOLS_TAG}),
+    ('create_merge_request', False, False, False, False, {MERGE_REQUEST_TOOLS_TAG}),
+    ('update_merge_request', False, True, True, False, {MERGE_REQUEST_TOOLS_TAG}),
+    ('request_merge_request_review', False, False, False, False, {MERGE_REQUEST_TOOLS_TAG}),
+    ('approve_merge_request', False, False, False, False, {MERGE_REQUEST_TOOLS_TAG}),
+    ('request_merge_request_changes', False, False, False, False, {MERGE_REQUEST_TOOLS_TAG}),
+    ('merge_merge_request', False, True, False, False, {MERGE_REQUEST_TOOLS_TAG}),
+    ('get_merge_request_conflicts', True, False, True, False, {MERGE_REQUEST_TOOLS_TAG}),
+    ('resolve_merge_request_conflict', False, True, False, False, {MERGE_REQUEST_TOOLS_TAG}),
     # project/doc/search
     ('get_project_info', True, False, True, False, {PROJECT_TOOLS_TAG}),
     ('get_accessible_projects', True, False, True, False, {PROJECT_TOOLS_TAG}),
@@ -541,6 +551,8 @@ READ_ONLY_TOOLS = {
     'get_flow_schema',
     'get_flows',
     'get_jobs',
+    'get_merge_request_conflicts',
+    'get_merge_requests',
     'get_project_info',
     'get_semantic_context',
     'get_semantic_schema',
