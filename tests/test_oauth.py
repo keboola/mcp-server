@@ -682,6 +682,22 @@ class TestSimpleOAuthProvider:
         assert refresh_token.scopes == scopes
         assert 0 <= rt_expires_in - (refresh_token.expires_at - time.time()) < 1
 
+    def test_an_expired_oauth_token_is_refused_without_logging_the_tokens(
+        self, oauth_provider: SimpleOAuthProvider, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
+        from keboola_mcp_server import oauth as oauth_module
+
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)
+        data = {'access_token': 'league-at', 'refresh_token': 'league-rt', 'expires_in': 0}
+
+        with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'), pytest.raises(HTTPException) as exc:
+            oauth_provider._read_oauth_tokens(data=data, scopes=[])
+
+        assert exc.value.status_code == 400
+        assert 'Received already expired token' in caplog.text
+        assert 'league-at' not in caplog.text
+        assert 'league-rt' not in caplog.text
+
     @pytest.mark.parametrize(
         ('uri', 'valid'),
         [
@@ -2828,6 +2844,7 @@ class TestAuthorizationServerMetadata:
         else:
             query = f'error=access_denied&error_description=The+user+denied+the+request&state={state}'
 
+        monkeypatch.setattr(oauth_module, '_OAUTH_LOG_ALL', False)  # the gated _log_debug may log the tokens
         with caplog.at_level(logging.DEBUG, logger='keboola_mcp_server.oauth'):
             response = await self._callback(provider, query)
 

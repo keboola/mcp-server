@@ -1890,7 +1890,11 @@ class SimpleOAuthProvider(OAuthProvider):
         """
         expires_in = int(data['expires_in'])  # seconds
         if expires_in <= 0:
-            LOG.exception(f'[_read_oauth_tokens] Received already expired token: data={data}')
+            # Only the keys by default: the response carries the Connection access and refresh tokens.
+            LOG.error(
+                f'[_read_oauth_tokens] Received already expired token: expires_in={expires_in}, keys={sorted(data)}'
+            )
+            _log_debug(f'[_read_oauth_tokens] Received already expired token: data={data}')
             raise HTTPException(400, 'The original OAuth access token has already expired.')
 
         current_time = int(time.time())
