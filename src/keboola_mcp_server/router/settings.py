@@ -12,6 +12,9 @@ _DEFAULT_AUTHORIZE_RATE_LIMIT_PER_IP = 60
 _DEFAULT_TOKEN_RATE_LIMIT_PER_CREDENTIAL = 10
 # One plugin session's MCP requests: several tool calls a minute, each a handful of requests at most.
 _DEFAULT_MCP_RATE_LIMIT_PER_TOKEN = 600
+# A session's open GET stream and a few tool calls running side by side, for several conversations of one user; far
+# below `mcp_max_connections`, so filling a stack's pool takes many tokens.
+_DEFAULT_MCP_MAX_IN_FLIGHT_PER_TOKEN = 20
 
 
 def _env(env: Mapping[str, str], *names: str) -> str | None:
@@ -62,6 +65,9 @@ class RouterSettings:
     mcp_max_connections: int = 1000
     """Connections to one stack that `/mcp` may hold at once, per replica; each request holds one until its answer
     ends. Above it a request waits up to `upstream_timeout_seconds` for a free one, then gets 503."""
+    mcp_max_in_flight_per_token: int = _DEFAULT_MCP_MAX_IN_FLIGHT_PER_TOKEN
+    """`/mcp` requests one bearer token may have in flight at once, per replica, counted by its SHA-256; above it, 429.
+    The rate limit alone lets one token with slow tool calls hold `mcp_max_connections` of its stack."""
 
     @property
     def issuer(self) -> str:
@@ -102,6 +108,10 @@ class RouterSettings:
                 'KBC_ROUTER_MCP_MAX_CONNECTIONS', _env(env, 'KBC_ROUTER_MCP_MAX_CONNECTIONS')
             )
             or cls.mcp_max_connections,
+            mcp_max_in_flight_per_token=_positive_int(
+                'KBC_ROUTER_MCP_MAX_IN_FLIGHT_PER_TOKEN', _env(env, 'KBC_ROUTER_MCP_MAX_IN_FLIGHT_PER_TOKEN')
+            )
+            or _DEFAULT_MCP_MAX_IN_FLIGHT_PER_TOKEN,
             trusted_proxy_hops=_positive_int(
                 'KBC_OAUTH_TRUSTED_PROXY_HOPS', _env(env, 'KBC_OAUTH_TRUSTED_PROXY_HOPS', 'OAUTH_TRUSTED_PROXY_HOPS')
             )

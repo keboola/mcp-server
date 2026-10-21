@@ -97,3 +97,36 @@ class PerAddressRateLimitMiddleware:
             await self._app(scope, receive, send)
             return
         await too_many_requests(self._counter.seconds_left())(scope, receive, send)
+
+
+class InFlightLimiter:
+    """Requests in flight per key: what a rate limit cannot bound when each request may hold a pooled connection for
+    minutes. A key leaves the map when its last request ends, so the map is as large as the requests in flight."""
+
+    def __init__(self) -> None:
+        self._in_flight: dict[str, int] = {}
+
+    def acquire(self, key: str, limit: int, *, log_key: str) -> Callable[[], None] | None:
+        """Takes one of `key`'s `limit` slots: its release, which may be called more than once, or None when every
+        slot is taken.
+
+        :param log_key: What the log line names the key by, as in `FixedWindowCounter.over_limit`.
+        """
+        held = self._in_flight.get(key, 0)
+        if held >= limit:
+            LOG.warning(f'[router] Concurrency limit reached: key={log_key}, limit={limit}')
+            return None
+        self._in_flight[key] = held + 1
+        released = False
+
+        def release() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+            if (left := self._in_flight[key] - 1) > 0:
+                self._in_flight[key] = left
+            else:
+                del self._in_flight[key]
+
+        return release

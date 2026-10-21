@@ -27,6 +27,8 @@ _FORWARDED_REQUEST_HEADERS = (
 # Never the stack's `WWW-Authenticate`: it names the stack's own metadata, and a client following it would leave the
 # router's authorization server.
 _FORWARDED_RESPONSE_HEADERS = ('content-type', 'cache-control', 'mcp-session-id', 'mcp-protocol-version', 'allow')
+# A slot frees up when one of the token's own requests ends, so the client may retry soon.
+_IN_FLIGHT_RETRY_AFTER_SECONDS = 1
 
 
 def _bearer_token(request: Request) -> str | None:
@@ -49,17 +51,28 @@ def _unauthorized(resource_metadata_url: str, *, error_description: str | None) 
 
 class _UpstreamStreamingResponse(StreamingResponse):
     """Streams the stack's answer and closes it when the response ends, however it ends: a client that goes away
-    leaves Starlette's background task unrun on some paths, and an unclosed answer keeps its pooled connection."""
+    leaves Starlette's background task unrun on some paths, and an unclosed answer keeps its pooled connection. The
+    token's in-flight slot is released with it."""
 
-    def __init__(self, answer: httpx.Response, content: AsyncIterator[bytes], headers: Mapping[str, str]) -> None:
+    def __init__(
+        self,
+        answer: httpx.Response,
+        content: AsyncIterator[bytes],
+        headers: Mapping[str, str],
+        release: Callable[[], None],
+    ) -> None:
         super().__init__(content, status_code=answer.status_code, headers=headers)
         self._answer = answer
+        self._release = release
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
             await super().__call__(scope, receive, send)
         finally:
-            await self._answer.aclose()
+            try:
+                await self._answer.aclose()
+            finally:
+                self._release()
 
 
 def create_mcp_proxy(
@@ -71,6 +84,7 @@ def create_mcp_proxy(
     read_timeout_seconds: float,
     over_limit: Callable[[str], bool],
     retry_after: Callable[[], int],
+    acquire_slot: Callable[[str], Callable[[], None] | None],
 ) -> Callable[[Request], Awaitable[Response]]:
     """The `/mcp` handler.
 
@@ -80,6 +94,9 @@ def create_mcp_proxy(
     :param over_limit: Counts one request with a bearer token and says whether it is over the token's limit (the
         token is counted by its hash, see `rate_limit.credential_key`).
     :param retry_after: Seconds until the limit's window ends, for the 429's `Retry-After`.
+    :param acquire_slot: Takes one of the token's in-flight slots (counted by its hash too): its release, or None
+        when the token has as many requests in flight as it may. A slot is held from the upstream call until the
+        answer ends, so one token cannot hold the whole pool with slow tool calls.
     :param read_timeout_seconds: How long the stack may stay silent: before the response starts (a tool call that runs
         long) and between two chunks of a streamed one. Exceeded before the response starts, the client gets 504;
         later, the stream ends.
@@ -119,19 +136,30 @@ def create_mcp_proxy(
         upstream_request = upstream.build_request(
             request.method, url, content=await request.body(), headers=headers, timeout=timeout
         )
+        if (release := acquire_slot(token)) is None:
+            return too_many_requests(_IN_FLIGHT_RETRY_AFTER_SECONDS, 'Too many requests in progress. Try again.')
+        # Released on every way out but a streamed answer, which releases it when it ends; also when the handler is
+        # cancelled (the client went away) before the stack answers.
         try:
             answer = await upstream.send(upstream_request, stream=True)
         except httpx.HTTPError as e:
+            release()
             return upstream_failure(e, stack_key=stack.key, path='/mcp')
-
+        except BaseException:
+            release()
+            raise
         if answer.status_code == 401:
             # Revoked, or the stack no longer knows the token: log in again through the router, not the stack.
-            await answer.aclose()
+            try:
+                await answer.aclose()
+            finally:
+                release()
             return _unauthorized(resource_metadata_url, error_description='The access token is not valid.')
         return _UpstreamStreamingResponse(
             answer,
             relay(answer, stack),
             headers={name: value for name in _FORWARDED_RESPONSE_HEADERS if (value := answer.headers.get(name))},
+            release=release,
         )
 
     return proxy

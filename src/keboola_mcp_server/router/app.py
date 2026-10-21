@@ -23,7 +23,12 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from keboola_mcp_server.router.mcp_proxy import create_mcp_proxy
 from keboola_mcp_server.router.picker import PICKER_CSS, PICKER_HEADERS, PICKER_STYLESHEET_PATH, render_picker
-from keboola_mcp_server.router.rate_limit import FixedWindowCounter, PerAddressRateLimitMiddleware, credential_key
+from keboola_mcp_server.router.rate_limit import (
+    FixedWindowCounter,
+    InFlightLimiter,
+    PerAddressRateLimitMiddleware,
+    credential_key,
+)
 from keboola_mcp_server.router.responses import oauth_error, too_many_requests, upstream_failure
 from keboola_mcp_server.router.settings import RouterSettings
 from keboola_mcp_server.router.stacks import Stack, router_resource, stack_key_of
@@ -251,10 +256,15 @@ def create_router_app(
         rate_limit_clock, overflow_limit=_CREDENTIAL_OVERFLOW_LIMIT_PER_MINUTE
     )
     mcp_token_counter = FixedWindowCounter(rate_limit_clock)
+    mcp_in_flight = InFlightLimiter()
 
     def over_credential_limit(counter: FixedWindowCounter, path: str, credential: str, limit: int) -> bool:
         key = credential_key(credential)
         return counter.over_limit(f'credential:{path}', key, limit, log_key=f'sha256:{key[:12]}')
+
+    def acquire_mcp_slot(token: str) -> Callable[[], None] | None:
+        key = credential_key(token)
+        return mcp_in_flight.acquire(key, settings.mcp_max_in_flight_per_token, log_key=f'sha256:{key[:12]}')
 
     async def forward(request: Request, stack: Stack, path: str, body: bytes) -> Response:
         request.state.stack_key = stack.key
@@ -321,6 +331,7 @@ def create_router_app(
             mcp_token_counter, '/mcp', token, settings.mcp_rate_limit_per_token
         ),
         retry_after=mcp_token_counter.seconds_left,
+        acquire_slot=acquire_mcp_slot,
     )
 
     async def health_check(_request: Request) -> Response:

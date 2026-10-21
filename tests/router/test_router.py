@@ -835,6 +835,90 @@ class TestMcpProxy:
         assert 'Rate limit reached: group=credential:/mcp, key=sha256:' in logged
         assert 'us-aws.first' not in logged
 
+    @pytest.mark.asyncio
+    async def test_a_token_may_hold_only_its_in_flight_slots(self) -> None:
+        """A token whose slot holds a streamed answer gets 429 for the next request, another token does not, and the
+        slot frees up when the answer ends: the rate limit alone would let one token's slow calls hold the pool."""
+        finish = asyncio.Event()
+
+        async def held():
+            yield b'event: message\ndata: {}\n\n'
+            await finish.wait()
+
+        def answer(request: httpx.Request) -> httpx.Response:
+            if request.headers.get('mcp-session-id') == 'held':
+                return httpx.Response(200, headers={'Content-Type': 'text/event-stream'}, content=held())
+            return httpx.Response(200, json={})
+
+        router_settings = RouterSettings(
+            router_url=ROUTER_URL, stacks=parse_stacks(None), mcp_max_in_flight_per_token=1
+        )
+        app = create_router_app(router_settings, upstream_transport=httpx.MockTransport(answer))
+        streaming = asyncio.Event()
+
+        async def call(token: str, session: str = 'quick') -> dict:
+            requests = [{'type': 'http.request', 'body': json.dumps(_INITIALIZE).encode(), 'more_body': False}]
+            sent: list[dict] = []
+
+            async def receive() -> dict:
+                if requests:
+                    return requests.pop()
+                await asyncio.Event().wait()  # the client stays connected
+                raise AssertionError('unreachable')
+
+            async def send(message: dict) -> None:
+                sent.append(message)
+                if message['type'] == 'http.response.body' and message.get('body') and session == 'held':
+                    streaming.set()
+
+            scope = {
+                'type': 'http',
+                'asgi': {'version': '3.0'},
+                'http_version': '1.1',
+                'method': 'POST',
+                'scheme': 'https',
+                'server': ('mcp-router.example.com', 443),
+                'client': ('203.0.113.5', 50000),
+                'path': '/mcp',
+                'raw_path': b'/mcp',
+                'root_path': '',
+                'query_string': b'',
+                'headers': [(b'authorization', f'Bearer {token}'.encode()), (b'mcp-session-id', session.encode())],
+            }
+            await asyncio.wait_for(app(scope, receive, send), timeout=5)
+            return next(m for m in sent if m['type'] == 'http.response.start')
+
+        stream = asyncio.create_task(call('us-aws.first', 'held'))
+        await asyncio.wait_for(streaming.wait(), timeout=5)
+        refused = await call('us-aws.first')
+        other = await call('us-aws.second')
+        finish.set()
+        streamed = await stream
+        after = await call('us-aws.first')
+
+        assert refused['status'] == 429
+        assert (b'retry-after', b'1') in refused['headers']
+        assert [other['status'], streamed['status'], after['status']] == [200, 200, 200]
+
+    @pytest.mark.parametrize(
+        'answer',
+        [
+            httpx.Response(200, json={}),
+            httpx.Response(401),
+            httpx.ReadTimeout('a long tool call'),
+            httpx.ConnectError('down'),
+        ],
+    )
+    def test_every_way_out_frees_the_in_flight_slot(self, answer: httpx.Response | Exception) -> None:
+        with _client(_Upstream(answer), mcp_max_in_flight_per_token=1) as client:
+            statuses = [
+                client.post('/mcp', json=_INITIALIZE, headers={'Authorization': 'Bearer us-aws.t'}).status_code
+                for _ in range(3)
+            ]
+
+        assert 429 not in statuses
+        assert len(set(statuses)) == 1
+
     @pytest.mark.parametrize(
         'case',
         [
