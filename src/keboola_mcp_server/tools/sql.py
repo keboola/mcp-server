@@ -2,9 +2,10 @@ import asyncio
 import contextlib
 import csv
 import logging
+import re
 from collections.abc import Awaitable, Mapping
 from io import StringIO
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 import sqlglot
 from fastmcp import Context, FastMCP
@@ -16,6 +17,7 @@ from mcp.types import (
 )
 from pydantic import BaseModel, Field
 from sqlglot import exp
+from sqlglot.dialects.bigquery import BigQuery
 from sqlglot.errors import ParseError, TokenError
 from sqlglot.tokens import Token, TokenType
 from starlette.requests import Request
@@ -35,11 +37,20 @@ MAX_CHARS = 50_000
 # Mirrors the 1 s job-poll cadence in `_Workspace.execute_query`.
 _DISCONNECT_POLL_INTERVAL = 1.0
 
+
+class _BackendBigQuery(BigQuery):
+    class Tokenizer(BigQuery.Tokenizer):
+        # BigQuery applies the string escapes to quoted identifiers too; sqlglot's BigQuery tokenizer does not, so
+        # it would end the identifier at `\`` and see a different statement than BigQuery runs.
+        IDENTIFIER_ESCAPES: ClassVar[list[str]] = ['\\']
+
+
 # Workspace dialect names (`WorkspaceManager.get_sql_dialect`) mapped to sqlglot dialects.
-_SQLGLOT_DIALECTS = {'snowflake': 'snowflake', 'bigquery': 'bigquery'}
+_SQLGLOT_DIALECTS: dict[str, type[sqlglot.Dialect] | str] = {'snowflake': 'snowflake', 'bigquery': _BackendBigQuery}
+_EXPLAIN_OPTIONS = re.compile(r'^\s*USING\s+\w+\s', re.IGNORECASE)
 _READ_ONLY_EXPRESSIONS = (exp.Select, exp.SetOperation, exp.Subquery, exp.Show, exp.Describe)
 # Statements sqlglot cannot model fully are parsed as `exp.Command` named by their first keyword.
-_READ_ONLY_COMMANDS = frozenset({'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN'})
+_READ_ONLY_COMMANDS = frozenset({'SHOW', 'DESCRIBE', 'DESC'})
 _WRITE_EXPRESSIONS = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop, exp.Alter, exp.Command)
 _READ_ONLY_FIRST_TOKENS = frozenset(
     {TokenType.SELECT, TokenType.WITH, TokenType.SHOW, TokenType.DESCRIBE, TokenType.DESC, TokenType.L_PAREN}
@@ -113,11 +124,7 @@ def _is_read_only_tokens(tokens: list[Token]) -> bool:
     `_READ_ONLY_FIRST_TOKENS` cannot run another statement except through the `->>` pipe (rejected before this
     check) or a keyword in `_WRITE_TOKENS`. Re-check that before allowing another first token here.
     """
-    first = tokens[0]
-    if first.token_type == TokenType.COMMAND:
-        if first.text.upper() != 'EXPLAIN':
-            return False
-    elif first.token_type not in _READ_ONLY_FIRST_TOKENS:
+    if tokens[0].token_type not in _READ_ONLY_FIRST_TOKENS:
         return False
     return not any(token.token_type in _WRITE_TOKENS for token in tokens[1:])
 
@@ -126,11 +133,17 @@ def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> Non
     """Raises `InvalidArgumentError` unless `sql_query` is exactly one SELECT, WITH ... SELECT, SHOW, DESCRIBE
     or EXPLAIN statement in the given workspace dialect.
 
-    The sqlglot tokenizer drops comments and keeps string literals whole, so statements smuggled in either
-    are not counted. This is not a sandbox: side effects inside a SELECT (procedures, `SYSTEM$` functions)
-    are limited by the workspace's database role.
+    The sqlglot tokenizer drops comments and keeps string literals and quoted identifiers whole, so statements
+    smuggled in either are not counted. This is not a sandbox: side effects inside a SELECT (procedures,
+    `SYSTEM$` functions) are limited by the workspace's database role.
     """
     dialect = sqlglot.Dialect.get_or_raise(_SQLGLOT_DIALECTS.get((sql_dialect or '').lower()))
+    # sqlglot treats `{# ... #}` as a (Jinja) comment in every dialect; neither backend does, so expose its content
+    # to the checks. Replacing two characters with two others keeps all other token boundaries.
+    _validate_statement(dialect, sql_query.replace('{#', '{x'))
+
+
+def _validate_statement(dialect: sqlglot.Dialect, sql_query: str) -> None:
     try:
         tokens = dialect.tokenize(sql_query)
     except TokenError as e:
@@ -154,6 +167,13 @@ def validate_read_only_statement(sql_query: str, sql_dialect: str | None) -> Non
     # a JSON operator. BigQuery has no such operator.
     if any(token.token_type == TokenType.DARROW for token in statement):
         raise InvalidArgumentError(f'The pipe operator ->> is not allowed. {_NOT_READ_ONLY_MSG}')
+
+    first = statements[0][0]
+    if first.token_type == TokenType.COMMAND and first.text.upper() == 'EXPLAIN':
+        # The tokenizer keeps the explained statement as one raw string; check it as a statement of its own.
+        explained = statements[0][1].text if len(statements[0]) > 1 else ''
+        _validate_statement(dialect, _EXPLAIN_OPTIONS.sub('', explained, count=1))
+        return
 
     try:
         expressions = [e for e in dialect.parse(sql_query) if e is not None]

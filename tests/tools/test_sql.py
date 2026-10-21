@@ -104,6 +104,8 @@ _READ_ONLY_STATEMENTS = [
     'DESCRIBE TABLE "in.c-main"."orders"',
     'DESC TABLE "orders"',
     'EXPLAIN SELECT 1',
+    'EXPLAIN USING TEXT SELECT 1',
+    'EXPLAIN SELECT comment, load FROM "t"',  # keyword-named columns are not write keywords
     "SELECT ';DROP TABLE t;' AS \"s\"",
     'SELECT 1 /* ; DROP TABLE t */',
     'SELECT 1 -- ; DROP TABLE t',
@@ -142,6 +144,9 @@ _REJECTED_STATEMENTS = [
     'EXPLAIN DELETE FROM "t"',
     # The Snowflake pipe operator `->>` chains statements: parsed, command and fallback paths.
     'SELECT 1 ->> DELETE FROM "t"',
+    # sqlglot reads `{# ... #}` as a comment; the backends do not.
+    'SELECT 1 {# ; DROP TABLE "t"; #}',
+    'SELECT 1 {# ->> DROP TABLE "t" #}',
     'SHOW GRANTS ->> DROP TABLE "t"',
     'EXPLAIN SELECT 1 ->> DROP TABLE "t"',
     'SELECT 1 ->> SELECT 2 ->> UNDROP TABLE "t"',
@@ -175,6 +180,10 @@ def test_validate_read_only_statement_allows(sql_query: str, dialect: str):
     + [
         ('SELECT FROM WHERE UNDROP TABLE "t"', 'Snowflake'),
         ("SELECT 1 EXPORT DATA OPTIONS (uri = 'gs://b/*') AS SELECT 1", 'BigQuery'),
+        # BigQuery escapes a backtick in a quoted identifier with a backslash.
+        ('SELECT 1 AS `\\``; DROP TABLE d.t; SELECT 1 #`', 'BigQuery'),
+        ('SELECT * FROM `p.d.t` WHERE `\\`` = 1; DELETE FROM d.t WHERE TRUE; SELECT 1 #`', 'BigQuery'),
+        ('SELECT `\\``\n; TRUNCATE TABLE d.t --`', 'BigQuery'),
     ],
 )
 def test_validate_read_only_statement_rejects(sql_query: str, dialect: str):
