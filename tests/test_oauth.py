@@ -788,13 +788,18 @@ class TestSimpleOAuthProvider:
                 info.validate_redirect_uri(uri)
 
     @staticmethod
-    def _stub_client_registration(monkeypatch: pytest.MonkeyPatch, status) -> None:
+    def _stub_client_registration(monkeypatch: pytest.MonkeyPatch, status) -> list[tuple[str, str]]:
+        """Answers `status` for every pair; returns the (connection_client_id, redirect_uri) pairs asked about."""
         from keboola_mcp_server import oauth as oauth_module
 
+        checked: list[tuple[str, str]] = []
+
         async def _fake(self, connection_client_id: str, redirect_uri: str):
+            checked.append((connection_client_id, redirect_uri))
             return status
 
         monkeypatch.setattr(oauth_module.ConnectionClientRegistry, 'check_registration', _fake)
+        return checked
 
     @pytest.mark.parametrize(
         ('redirect_uri', 'pre_registered'),
@@ -818,9 +823,9 @@ class TestSimpleOAuthProvider:
         """Every REGISTERED client -- pre-registered or dynamically approved -- gets the whole-stack
         'projectless' grant via /oauth/consent, and the request is logged at INFO with its callback
         and whether it was pre-registered (Connection keeps no registry listing to inspect later)."""
-        from keboola_mcp_server.oauth import _ClientRegistration
+        from keboola_mcp_server.oauth import _WELL_KNOWN_CONNECTION_CLIENT_IDS, _ClientRegistration
 
-        self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
+        checked = self._stub_client_registration(monkeypatch, _ClientRegistration.REGISTERED)
         client = _OAuthClientInformationFull(redirect_uris=[AnyHttpUrl('http://foo')], client_id='foo-client-id')
         params = AuthorizationParams(
             redirect_uri=AnyUrl(redirect_uri),
@@ -836,6 +841,13 @@ class TestSimpleOAuthProvider:
         assert parsed.path == '/oauth/consent'
         query = parse_qs(parsed.query)
         assert query['scope'] == ['claudai projectless']
+
+        if pre_registered:
+            # one check, of the literal id against the client's own URI (the limiter exemption and the stale-REGISTERED
+            # fallback key on that pair)
+            assert checked == [(_WELL_KNOWN_CONNECTION_CLIENT_IDS[redirect_uri], redirect_uri)]
+        else:
+            assert checked[0][1] == oauth_provider._mcp_callback_url
 
         [record] = [r for r in caplog.records if 'Registered client proceeding to consent' in r.message]
         assert record.levelno == logging.INFO
