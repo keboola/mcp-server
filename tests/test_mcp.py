@@ -24,6 +24,7 @@ from keboola_mcp_server.clients.client import KeboolaClient
 from keboola_mcp_server.config import Config, ServerRuntimeInfo
 from keboola_mcp_server.mcp import (
     CONVERSATION_ID,
+    DIRECTORY_TOOLS,
     LISTED_BRANCH_ID,
     STORAGE_API_URL,
     AggregateError,
@@ -38,6 +39,7 @@ from keboola_mcp_server.mcp import (
     toon_serializer,
     unwrap_results,
 )
+from keboola_mcp_server.oauth import ProxyAccessToken
 from keboola_mcp_server.scope import (
     SCOPE_KEY,
     SCOPE_TOKEN_ARG,
@@ -2229,6 +2231,115 @@ class TestBootstrapSessionState:
         result = await ToolsFilteringMiddleware().on_list_tools(context, AsyncMock(return_value=tools))
 
         assert result == tools
+
+
+class TestDirectoryToolProfile:
+    """DMD-2482: a session created through the ChatGPT plugin (bound to the router's resource) gets only the reviewed
+    directory tools, on every tools/list path and for every call; every other session is unchanged."""
+
+    EXCLUDED = ('run_sync_action', 'create_project', 'create_python_js_data_app_git_credential')
+
+    @staticmethod
+    def _request(directory_profile: bool | None) -> Request | None:
+        """The HTTP request of an OAuth session (None: no HTTP request, e.g. stdio)."""
+        if directory_profile is None:
+            return None
+        token = ProxyAccessToken(
+            token='eu-aws.opaque',
+            client_id='chatgpt-dcr-id',
+            scopes=['claudai', 'projectless'],
+            kbc_access_token='kbc_at_x',
+            directory_profile=directory_profile,
+        )
+        return Request({'type': 'http', 'headers': [], 'user': AuthenticatedUser(token)})
+
+    def test_the_allow_list_decides_every_registered_tool(self) -> None:
+        """Every tool is either on the allow-list or deliberately excluded, so a new tool is a visible decision."""
+        from keboola_mcp_server.server import create_server
+
+        mcp = create_server(Config(), runtime_info=ServerRuntimeInfo(transport='stdio'))
+        registered = {t.name for t in asyncio.run(mcp.list_tools(run_middleware=False))}
+
+        assert DIRECTORY_TOOLS == registered - set(self.EXCLUDED)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'path',
+        [
+            'verified',
+            # token verification fails: tools/list falls back to the superset, which must still be the directory one
+            'verify_fails',
+            # no client in the session yet (bootstrap): the superset again
+            'bootstrap',
+        ],
+    )
+    @pytest.mark.parametrize(('directory_profile', 'expect_hidden'), [(True, True), (False, False), (None, False)])
+    async def test_list_tools(
+        self, mcp_context_client, path: str, directory_profile: bool | None, expect_hidden: bool
+    ) -> None:
+        client = KeboolaClient.from_state(mcp_context_client.session.state)
+        client.bearer_token = 'kbc_at_abc'
+        client.project_id = '558'
+        if path == 'verify_fails':
+            client.storage_client.verify_token = AsyncMock(side_effect=RuntimeError('401 Unauthorized'))
+        else:
+            client.storage_client.verify_token = AsyncMock(return_value={'owner': {'features': []}, 'admin': {}})
+        client.metastore_client.list_objects = AsyncMock(return_value=[MagicMock()])
+        if path == 'bootstrap':
+            del mcp_context_client.session.state[KeboolaClient.STATE_KEY]
+        allowed = ['get_tables', 'query_data', 'modify_flow']
+        tools = [_tool(name) for name in [*allowed, *self.EXCLUDED, 'a_tool_added_later']]
+
+        with patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(directory_profile)):
+            result = await ToolsFilteringMiddleware().on_list_tools(
+                SimpleNamespace(fastmcp_context=mcp_context_client), AsyncMock(return_value=tools)
+            )
+
+        names = {t.name for t in result}
+        assert set(allowed) <= names
+        for name in (*self.EXCLUDED, 'a_tool_added_later'):
+            assert (name not in names) is expect_hidden
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('tool_name', [*EXCLUDED, 'a_tool_added_later'])
+    @pytest.mark.parametrize(('directory_profile', 'expect_denied'), [(True, True), (False, False)])
+    async def test_call_tool(
+        self, mcp_context_client, keboola_client, tool_name: str, directory_profile: bool, expect_denied: bool
+    ) -> None:
+        keboola_client.bearer_token = 'kbc_at_abc'
+        keboola_client.storage_client.verify_token = AsyncMock(
+            return_value={'owner': {'features': []}, 'admin': {'role': 'admin'}}
+        )
+        mcp_context_client.fastmcp = SimpleNamespace(get_tool=AsyncMock(return_value=_tool(tool_name)))
+        context = SimpleNamespace(fastmcp_context=mcp_context_client, message=SimpleNamespace(name=tool_name))
+        expected = MagicMock()
+
+        with patch('keboola_mcp_server.mcp.get_http_request_or_none', return_value=self._request(directory_profile)):
+            if expect_denied:
+                with pytest.raises(ToolError, match='not available in the Keboola plugin'):
+                    await ToolsFilteringMiddleware().on_call_tool(context, AsyncMock(return_value=expected))
+                keboola_client.storage_client.verify_token.assert_not_called()
+            else:
+                assert (
+                    await ToolsFilteringMiddleware().on_call_tool(context, AsyncMock(return_value=expected)) is expected
+                )
+
+    def test_authorize_tool_call_applies_the_profile(self) -> None:
+        common = {
+            'is_read_only': False,
+            'is_semantic': False,
+            'has_semantic_models': False,
+            'token_role': 'admin',
+            'features': set(),
+            'is_oauth': True,
+            'is_main_branch': True,
+        }
+
+        assert ToolsFilteringMiddleware.authorize_tool_call(
+            tool_name='run_sync_action', directory_profile=True, **common
+        )
+        assert not ToolsFilteringMiddleware.authorize_tool_call(tool_name='run_job', directory_profile=True, **common)
+        assert not ToolsFilteringMiddleware.authorize_tool_call(tool_name='run_sync_action', **common)
 
 
 class TestUnauthorizedDropsARevokedSession:

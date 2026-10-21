@@ -3456,6 +3456,8 @@ class TestRouterFlows:
         loaded = asyncio.run(provider.load_access_token(tokens['access_token']))
         assert loaded is not None
         assert loaded.resource == resource
+        # DMD-2482: a router session gets the directory tool profile, whatever spelling of the router it stored
+        assert loaded.directory_profile is router_flow
 
         refreshed = client.post(
             '/token',

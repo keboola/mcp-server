@@ -150,6 +150,60 @@ DATA_APP_BRANCH_GATED_TOOLS = {
     'get_data_app_preview_link',
 }
 
+# The tools a session created through the ChatGPT plugin (bound to the global router's resource) may see and call: an
+# explicit allow-list, so that a tool added later stays hidden there until it is reviewed for the plugin directory
+# (OpenAI scans the plugin's tool list and holds new tools until approved). Not listed: `run_sync_action` (an arbitrary
+# action on any component, a generic executor by OpenAI's rules), `create_project` (an unowned PAYG project, next to
+# the commerce rules) and `create_python_js_data_app_git_credential` (returns a URL with an embedded secret).
+DIRECTORY_TOOLS = frozenset(
+    {
+        'add_config_row',
+        'create_conditional_flow',
+        'create_config',
+        'create_flow',
+        'create_oauth_url',
+        'create_sql_transformation',
+        'create_stream',
+        'delete_python_js_data_app_draft',
+        'deploy_data_app',
+        'docs_query',
+        'find_component_id',
+        'get_accessible_projects',
+        'get_buckets',
+        'get_components',
+        'get_config_examples',
+        'get_configs',
+        'get_data_app_preview_link',
+        'get_data_apps',
+        'get_flow_examples',
+        'get_flow_schema',
+        'get_flows',
+        'get_jobs',
+        'get_project_info',
+        'get_semantic_context',
+        'get_semantic_schema',
+        'get_shared_buckets',
+        'get_streams',
+        'get_tables',
+        'link_shared_bucket',
+        'modify_flow',
+        'modify_python_js_data_app',
+        'modify_streamlit_data_app',
+        'query_data',
+        'run_job',
+        'search',
+        'search_semantic_context',
+        'set_project_scope',
+        'update_config',
+        'update_config_row',
+        'update_descriptions',
+        'update_flow',
+        'update_project_description',
+        'update_sql_transformation',
+        'validate_semantic_query',
+    }
+)
+
 
 def _is_unauthorized(error: BaseException) -> bool:
     """True when `error` is, or was caused by, a 401 from a Keboola API.
@@ -371,6 +425,26 @@ def get_http_request_or_none() -> Request | None:
         return get_http_request()
     except RuntimeError:
         return None
+
+
+def is_directory_session() -> bool:
+    """Whether the request comes from a session bound to the global router's resource (`ProxyAccessToken.
+    directory_profile`), which gets only the `DIRECTORY_TOOLS`. Read from the session row through the bearer token,
+    before and independently of any Keboola token verification, so no fallback path can widen it."""
+    http_rq = get_http_request_or_none()
+    user = http_rq.scope.get('user') if http_rq is not None else None
+    return (
+        isinstance(user, AuthenticatedUser)
+        and isinstance(user.access_token, ProxyAccessToken)
+        and user.access_token.directory_profile
+    )
+
+
+def directory_denial(tool_name: str) -> str:
+    return (
+        f'The tool "{tool_name}" is not available in the Keboola plugin. '
+        'Use Keboola through its own MCP server URL to reach every tool.'
+    )
 
 
 #: Exceptions this middleware raises whose message *is* the answer the caller needs, rather than a
@@ -1312,6 +1386,9 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         self, context: MiddlewareContext[mt.ListToolsRequest], call_next: CallNext[mt.ListToolsRequest, list[Tool]]
     ) -> list[Tool]:
         tools = await call_next(context)
+        if is_directory_session():
+            # First, so that every path below (the bootstrap superset, the verify_token fallback) starts from it.
+            tools = [t for t in tools if t.name in DIRECTORY_TOOLS]
 
         # A bootstrap session (no credential yet -- see `create_session_state`) has no client to
         # verify a token with, so there is nothing to filter on. Advertise the superset; the
@@ -1409,6 +1486,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         features: set[str],
         is_oauth: bool,
         is_main_branch: bool,
+        directory_profile: bool = False,
     ) -> str | None:
         """
         Decide whether a call to ``tool_name`` is allowed given the project features, the token role,
@@ -1418,8 +1496,12 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         :meth:`on_call_tool` applies it to MCP tool calls; the raw ``/preview/configuration`` Starlette
         route reuses it (see ``preview.py``) so the preview path enforces exactly the same rules.
 
+        :param directory_profile: The session belongs to the ChatGPT plugin: only `DIRECTORY_TOOLS` may be called.
         :return: A denial message if the call is not allowed, or ``None`` if it is allowed.
         """
+        if directory_profile and tool_name not in DIRECTORY_TOOLS:
+            return directory_denial(tool_name)
+
         token_role = token_role.lower()
 
         if token_role == 'readonly' and not is_read_only:
@@ -1474,6 +1556,10 @@ class ToolsFilteringMiddleware(fmw.Middleware):
         call_next: CallNext[mt.CallToolRequestParams, mt.CallToolResult],
     ) -> mt.CallToolResult:
         tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
+        directory_profile = is_directory_session()
+        if directory_profile and tool.name not in DIRECTORY_TOOLS:
+            # Before everything else: the bootstrap exemption below and a failing verify_token must not reach the tool.
+            raise ToolError(directory_denial(tool.name))
 
         # Bootstrap tools (get_accessible_projects/set_project_scope) must work before any project
         # is chosen -- that's their entire purpose. verify_token() needs a single-project context
@@ -1511,6 +1597,7 @@ class ToolsFilteringMiddleware(fmw.Middleware):
             features=self.get_project_features(token_info),
             is_oauth=self._is_oauth_authenticated(context.fastmcp_context),
             is_main_branch=self.is_client_using_main_branch(context.fastmcp_context),
+            directory_profile=directory_profile,
         )
         if denial:
             raise ToolError(denial)

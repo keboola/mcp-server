@@ -758,6 +758,10 @@ class ProxyAccessToken(AccessToken):
     scope_confirmed: bool = False
     scope_scoped_token: str | None = None
     scope_scoped_expires_at: datetime | None = None
+    # Bound to the global router's resource, i.e. created through the ChatGPT plugin: such a session gets the directory
+    # tool profile (`mcp.DIRECTORY_TOOLS`). Decided here, by URL comparison (`is_router_resource`), not by the spelling
+    # the client stored.
+    directory_profile: bool = False
 
 
 class ProxyRefreshToken(RefreshToken):
@@ -2096,6 +2100,7 @@ class SimpleOAuthProvider(OAuthProvider):
             scope_confirmed=session.scope_confirmed,
             scope_scoped_token=session.scope_scoped_token,
             scope_scoped_expires_at=session.scope_scoped_expires_at,
+            directory_profile=self.is_router_resource(session.resource),
         )
         _log_debug(f'[load_access_token] token={token}, session_id={session.id}')
         return proxy_token
