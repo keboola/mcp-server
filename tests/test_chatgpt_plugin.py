@@ -24,8 +24,11 @@ SKILL_NAMES = ('explore-project-data', 'build-sql-transformation', 'debug-failed
 NON_TOOL_IDENTIFIERS = frozenset(
     {'block_id', 'code_id', 'id', 'name', 'read_only', 'scope_token', 'set_code', 'str_replace', 'toolset_restrictions'}
 )
-_IDENTIFIER_IN_BACKTICKS = re.compile(r'`([a-z]+(?:_[a-z0-9]+)*)`')
-_ARGUMENT_IN_BACKTICKS = re.compile(r'`(\w+)=')
+_BACKTICK_SPAN = re.compile(r'`[^`]+`')
+# A tool is a whole span (`run_job`) or a call written out in one (`run_job(component_id=...)`).
+_TOOL_IN_SPAN = re.compile(r'`([a-z]+(?:_[a-z0-9]+)*)[`(]')
+# An argument starts a span (`component_id=...`) or follows the bracket or a comma of a call in one.
+_ARGUMENT_IN_SPAN = re.compile(r'(?:^`|[(,]\s*)(\w+)=')
 _SKILL_REFERENCE = re.compile(r'`([a-z]+(?:-[a-z]+)+)` skill')
 
 
@@ -131,10 +134,11 @@ def test_skill_names_callable_tools_and_scopes_before_writes(skill_name: str, to
     for referenced_skill in _SKILL_REFERENCE.findall(body):
         assert referenced_skill in SKILL_NAMES, f'{skill_name} refers to an unknown skill {referenced_skill}'
 
+    spans = list(_BACKTICK_SPAN.finditer(body))
     mentions = [
-        (match.start(), match.group(1))
-        for match in _IDENTIFIER_IN_BACKTICKS.finditer(body)
-        if match.group(1) not in NON_TOOL_IDENTIFIERS
+        (span.start(), match.group(1))
+        for span in spans
+        if (match := _TOOL_IN_SPAN.match(span.group())) and match.group(1) not in NON_TOOL_IDENTIFIERS
     ]
     named_tools = {name for _, name in mentions}
     unknown = sorted(named_tools - tools.keys())
@@ -142,13 +146,19 @@ def test_skill_names_callable_tools_and_scopes_before_writes(skill_name: str, to
     denied = {name: reason for name in sorted(named_tools) if (reason := _oauth_denial(tools[name]))}
     assert not denied, f'{skill_name} names tools an OAuth session cannot call: {denied}'
 
+    # A tool named in plain text would skip every check here. Single-word names (`search`) are also English words.
+    plain_text = _BACKTICK_SPAN.sub(lambda span: ' ' * len(span.group()), body)
+    unquoted = sorted(name for name in tools if '_' in name and re.search(rf'\b{name}\b', plain_text))
+    assert not unquoted, f'{skill_name} names tools outside backticks: {unquoted}'
+
     # The skills write each argument after the tool it belongs to ("call `run_job` with `configuration_id=...`").
     wrong_arguments = []
-    for match in _ARGUMENT_IN_BACKTICKS.finditer(body):
-        owners = [name for position, name in mentions if position < match.start()]
-        assert owners, f'{skill_name} names the argument {match.group(1)} before any tool'
-        if match.group(1) not in tools[owners[-1]].parameters.get('properties', {}):
-            wrong_arguments.append(f'{owners[-1]}({match.group(1)})')
+    for span in spans:
+        for match in _ARGUMENT_IN_SPAN.finditer(span.group()):
+            owners = [name for position, name in mentions if position <= span.start() + match.start()]
+            assert owners, f'{skill_name} names the argument {match.group(1)} before any tool'
+            if match.group(1) not in tools[owners[-1]].parameters.get('properties', {}):
+                wrong_arguments.append(f'{owners[-1]}({match.group(1)})')
     assert not wrong_arguments, f'{skill_name} names arguments the tool does not take: {wrong_arguments}'
 
     # The skills narrow writes to the project the user confirmed (a prompt-level rule, see the package README),
