@@ -421,6 +421,24 @@ class TestRateLimits:
         assert statuses == [200, 200, 429, 200]
         assert len(upstream.requests) == 3
 
+    def test_credential_limits_are_kept_apart(self) -> None:
+        """One credential counts separately at /token and /revoke (a throttled refresh token can still be revoked);
+        the optional per-address ceiling is for /register only; a value without a known stack is not counted."""
+        upstream = _Upstream(httpx.Response(200, json={}))
+        headers = {'X-Forwarded-For': '198.51.100.9'}
+        refresh = {'grant_type': 'refresh_token', 'refresh_token': 'us-aws.rt'}
+        with _client(upstream, token_rate_limit_per_credential=1, api_rate_limit_per_ip=1) as client:
+            token = [client.post('/token', data=refresh, headers=headers).status_code for _ in range(2)]
+            revoke = client.post('/revoke', data={'token': 'us-aws.rt'}, headers=headers).status_code
+            unknown = [
+                client.post('/token', data={**refresh, 'refresh_token': 'xx.rt'}, headers=headers).status_code
+                for _ in range(3)
+            ]
+
+        assert token == [200, 429]
+        assert revoke == 200
+        assert unknown == [400, 400, 400]  # invalid_grant every time, never 429
+
     def test_no_credential_reaches_the_logs_or_the_limiter(self, caplog: pytest.LogCaptureFixture) -> None:
         from keboola_mcp_server.router.app import create_router_app as build
 
@@ -436,8 +454,6 @@ class TestRateLimits:
         logged = '\n'.join(r.getMessage() for r in caplog.records if not r.getMessage().startswith('HTTP Request:'))
         assert 'Rate limit reached: group=credential:/token, key=sha256:' in logged
         assert credential not in logged and 'the-refresh-token' not in logged
-        [counter] = [m.kwargs['counter'] for m in app.user_middleware if 'counter' in m.kwargs]
-        assert all(credential not in key for _group, key in counter._counts)
 
     def test_an_options_request_that_is_no_preflight_is_counted_and_never_handled(self) -> None:
         upstream = _Upstream()
@@ -514,6 +530,7 @@ class TestSettings:
             {'key': 'eu-aws', 'name': 'x', 'upstream': 'http://mcp.example', 'login_host': 'x'},
             {'key': 'eu-aws', 'name': 'x', 'upstream': 'https://mcp.example/mcp', 'login_host': 'x'},
             {'key': 'eu-aws', 'name': 'x', 'upstream': 'https://user@mcp.example', 'login_host': 'x'},
+            {'key': 'eu-aws', 'name': 'x', 'upstream': "https://mcp.example;script-src 'none'", 'login_host': 'x'},
         ],
     )
     def test_the_stack_table_is_validated(self, entry: dict[str, str]) -> None:

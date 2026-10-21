@@ -224,11 +224,15 @@ def create_router_app(
         )
         return response
 
-    counter = FixedWindowCounter(rate_limit_clock)
+    # Two counters, each with its own cap on distinct keys: a flood of distinct credentials must not stop the counting of
+    # addresses. Only a credential that names a known stack is counted: anything else is answered without an upstream
+    # call, and counting it would only fill the map.
+    address_counter = FixedWindowCounter(rate_limit_clock)
+    credential_counter = FixedWindowCounter(rate_limit_clock)
 
     def over_credential_limit(path: str, credential: str) -> bool:
         key = credential_key(credential)
-        return counter.over_limit(
+        return credential_counter.over_limit(
             f'credential:{path}', key, settings.token_rate_limit_per_credential, log_key=f'sha256:{key[:12]}'
         )
 
@@ -263,11 +267,11 @@ def create_router_app(
             return _oauth_error('invalid_request', f'The parameter {e} is repeated.')
         if value is None:
             return _oauth_error('invalid_request', f'The {parameter} parameter is missing.')
-        if over_credential_limit('/token', value):
-            return too_many_requests()
         if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # Answered here, without asking any stack: no stack issued a grant without a known prefix.
             return _oauth_error('invalid_grant', f'The {parameter} was not issued by this authorization server.')
+        if over_credential_limit('/token', value):
+            return too_many_requests()
         return await forward(request, stack, '/token', body)
 
     async def revoke(request: Request) -> Response:
@@ -278,11 +282,11 @@ def create_router_app(
             return _oauth_error('invalid_request', 'The parameter token is repeated.')
         if value is None:
             return _oauth_error('invalid_request', 'The token parameter is missing.')  # RFC 7009 §2.1
-        if over_credential_limit('/revoke', value):
-            return too_many_requests()
         if (stack := stacks.get(stack_key_of(value) or '')) is None:
             # RFC 7009 §2.2: an unknown token is answered with 200, there is nothing to revoke.
             return Response(status_code=200)
+        if over_credential_limit('/revoke', value):
+            return too_many_requests()
         return await forward(request, stack, '/revoke', body)
 
     async def openai_apps_challenge(_request: Request) -> Response:
@@ -343,7 +347,10 @@ def create_router_app(
         middleware=[
             Middleware(_RequestLogMiddleware, known_paths=frozenset(path for path, *_ in endpoints)),
             Middleware(
-                PerAddressRateLimitMiddleware, limits=limits, trusted_hops=settings.trusted_proxy_hops, counter=counter
+                PerAddressRateLimitMiddleware,
+                limits=limits,
+                trusted_hops=settings.trusted_proxy_hops,
+                counter=address_counter,
             ),
         ],
         lifespan=lifespan,

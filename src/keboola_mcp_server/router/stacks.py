@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 # A stack key is the part of a router-issued code or token before the first dot, so it cannot contain one.
 _STACK_KEY_PATTERN = re.compile(r'^[a-z0-9][a-z0-9-]{0,31}$')
 STACK_KEY_SEPARATOR = '.'
+_NETLOC_PATTERN = re.compile(r'^[A-Za-z0-9.-]+(:[0-9]{1,5})?$')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -49,6 +50,9 @@ def _upstream_origin(url: str) -> str:
     credentials = parsed.username is not None or parsed.password is not None
     if not parsed.hostname or parsed.path not in ('', '/') or parsed.query or parsed.fragment or credentials:
         raise ValueError(f'A stack upstream must be an origin (no path, query or credentials): {url!r}')
+    if not _NETLOC_PATTERN.match(parsed.netloc):
+        # The origin is written into the picker's CSP header too, so it must not carry anything but a host and port.
+        raise ValueError(f'A stack upstream must be a plain host name: {url!r}')
     return f'{parsed.scheme}://{parsed.netloc}'
 
 
